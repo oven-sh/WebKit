@@ -1,0 +1,139 @@
+--- Source/JavaScriptCore/heap/LocalAllocator.cpp	2026-06-10 09:25:38.333906443 +0000
++++ Tools/threads/bughunt/round2-td2/LocalAllocator.cpp	2026-06-10 09:25:29.003903000 +0000
+@@ -34,6 +34,14 @@
+ #include "Options.h"
+ #include "RaceAmplifier.h"
+ #include "ResourceExhaustion.h"
++
++// BUGHUNT TD-R2-2 instrumentation includes (revert after)
++#include <atomic>
++#include <cstdlib>
++#include <cstring>
++#include <sys/syscall.h>
++#include <unistd.h>
++#include <wtf/DataLog.h>
+ #include "SuperSampler.h"
+ 
+ namespace JSC {
+@@ -74,6 +82,91 @@
+ }
+ #endif
+ 
++// ===== BUGHUNT TD-R2-2 instrumentation (env-gated, revert after) =====
++// 3-point FreeList sanity check: (a) LocalAllocator::stopAllocating entry
++// (== MarkedBlock::Handle::stopAllocating entry — sole caller), context-tagged
++// by flush path (dirflush = conductor step-5 / clientstop / tlcSAFG = teardown);
++// (b) tryAllocateIn return (refill); enabled via JSC_BUGHUNT_FLCHECK=1.
++namespace BughuntFL {
++static bool enabled()
++{
++    static const bool e = [] {
++        bool on = !!getenv("BUGHUNT_FLCHECK");
++        if (on)
++            dataLogF("BUGHUNT-FLCHECK armed (pid=%d)\n", (int)getpid());
++        return on;
++    }();
++    return e;
++}
++static std::atomic<uint64_t> s_checkCount[2] { { 0 }, { 0 } }; // [0]=stopAllocating, [1]=refill
++static thread_local const char* t_context = "other";
++static std::atomic<unsigned> s_failSeq { 0 };
++static struct CheckCountDumper {
++    ~CheckCountDumper()
++    {
++        if (enabled())
++            dataLogF("BUGHUNT-FLCHECK summary: stopAllocating-checks=%llu refill-checks=%llu fails=%u\n",
++                (unsigned long long)s_checkCount[0].load(), (unsigned long long)s_checkCount[1].load(), s_failSeq.load());
++    }
++} s_checkCountDumper;
++
++static void validate(const char* site, const FreeList& fl, MarkedBlock::Handle* handle, const void* allocator)
++{
++    if (!enabled()) [[likely]]
++        return;
++    s_checkCount[site[0] == 'r' ? 1 : 0].fetch_add(1, std::memory_order_relaxed);
++    char* intervalStart = *std::bit_cast<char* const*>(std::bit_cast<const char*>(&fl) + FreeList::offsetOfIntervalStart());
++    char* intervalEnd = *std::bit_cast<char* const*>(std::bit_cast<const char*>(&fl) + FreeList::offsetOfIntervalEnd());
++    FreeCell* nextInterval = *std::bit_cast<FreeCell* const*>(std::bit_cast<const char*>(&fl) + FreeList::offsetOfNextInterval());
++    uint64_t secret = *std::bit_cast<const uint64_t*>(std::bit_cast<const char*>(&fl) + FreeList::offsetOfSecret());
++    unsigned cellSize = fl.cellSize();
++    char* payloadBegin = handle ? static_cast<char*>(handle->start()) : nullptr;
++    char* payloadEnd = handle ? static_cast<char*>(handle->end()) : nullptr;
++
++    auto fail = [&] (const char* what, const void* val) {
++        unsigned seq = s_failSeq.fetch_add(1, std::memory_order_relaxed);
++        dataLogF("BUGHUNT-FLCHECK FAIL seq=%u site=%s ctx=%s tid=%ld what=%s val=%p alloc=%p block=[%p,%p) cellSize=%u is=%p ie=%p ni=%p nChecks=%llu/%llu\n",
++            seq, site, t_context, (long)syscall(SYS_gettid), what, val, allocator,
++            (void*)payloadBegin, (void*)payloadEnd, cellSize, (void*)intervalStart, (void*)intervalEnd, (void*)nextInterval,
++            (unsigned long long)s_checkCount[0].load(std::memory_order_relaxed), (unsigned long long)s_checkCount[1].load(std::memory_order_relaxed));
++        WTFReportBacktrace();
++        if (getenv("BUGHUNT_FLCHECK_ABORT"))
++            CRASH();
++    };
++
++    if (!cellSize || cellSize > MarkedBlock::blockSize) {
++        fail("cellSize", (void*)(uintptr_t)cellSize);
++        return;
++    }
++    auto inPayloadAligned = [&] (char* p) {
++        return p >= payloadBegin && p < payloadEnd && !((p - payloadBegin) % cellSize);
++    };
++    // Current bump interval.
++    if (intervalStart < intervalEnd) {
++        if (!inPayloadAligned(intervalStart)) { fail("intervalStart", intervalStart); return; }
++        if (intervalEnd > payloadEnd || ((intervalEnd - intervalStart) % cellSize)) { fail("intervalEnd", intervalEnd); return; }
++    }
++    // Linked intervals: bounds-check BEFORE each decode so garbage is reported, not dereferenced.
++    FreeCell* cell = nextInterval;
++    size_t steps = 0;
++    while (!FreeList::isSentinel(cell)) {
++        if (!inPayloadAligned(std::bit_cast<char*>(cell))) { fail("nextInterval", cell); return; }
++        if (++steps > MarkedBlock::atomsPerBlock) { fail("cycle", cell); return; }
++        auto [offsetToNext, lengthInBytes] = cell->decode(secret);
++        char* is = std::bit_cast<char*>(cell);
++        char* ie = is + lengthInBytes;
++        if (!lengthInBytes || (lengthInBytes % cellSize) || ie > payloadEnd) { fail("intervalLength", (void*)(uintptr_t)lengthInBytes); return; }
++        cell = std::bit_cast<FreeCell*>(is + offsetToNext);
++    }
++}
++} // namespace BughuntFL
++
++void bughuntSetFLContext(const char* context)
++{
++    BughuntFL::t_context = context;
++}
++// ===== END BUGHUNT TD-R2-2 instrumentation =====
++
+ LocalAllocator::LocalAllocator(BlockDirectory* directory)
+     : m_directory(directory)
+     , m_freeList(directory->m_cellSize)
+@@ -124,6 +217,7 @@
+         return;
+     }
+     
++    BughuntFL::validate("stopAllocating", m_freeList, m_currentBlock, this); // BUGHUNT TD-R2-2 site (a)
+     m_currentBlock->stopAllocating(m_freeList);
+     m_lastActiveBlock = m_currentBlock;
+     m_currentBlock = nullptr;
+@@ -153,8 +247,13 @@
+ 
+ void LocalAllocator::stopAllocatingForGood()
+ {
++    // BUGHUNT TD-R2-2: tag teardown-path flushes unless a more specific caller tag is set.
++    const char* prev = BughuntFL::t_context;
++    if (!strcmp(prev, "other"))
++        BughuntFL::t_context = "SAFG-other";
+     stopAllocating();
+     reset();
++    BughuntFL::t_context = prev;
+ }
+ 
+ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
+@@ -377,6 +476,7 @@
+     // §5.2(2): this call is inside allocateSlowCase's MSPL section when
+     // shared (didAllocateInBlock debug-asserts that).
+     m_directory->markedSpace().didAllocateInBlock(m_currentBlock);
++    BughuntFL::validate("refill", m_freeList, m_currentBlock, this); // BUGHUNT TD-R2-2 site (b)
+     return result;
+ }
+ 

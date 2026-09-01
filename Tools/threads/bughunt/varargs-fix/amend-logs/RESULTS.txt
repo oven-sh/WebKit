@@ -1,0 +1,34 @@
+reproA run 1: rc=0 150s PASS
+reproA run 2: rc=0 151s PASS
+reproA run 3: rc=0 150s PASS
+reproA run 4: rc=0 151s PASS
+reproA run 5: rc=0 150s PASS
+reproA run 6: rc=0 149s PASS
+reproA run 7: rc=0 151s PASS
+reproA run 8: rc=0 167s PASS
+reproA run 9: rc=0 151s PASS
+reproA run 10: rc=0 150s PASS
+LEGSUMMARY reproA pass=10 fail=0
+releaseC run 1: rc=133 41s FAIL
+releaseC run 2: rc=133 28s FAIL
+releaseC run 3: rc=0 48s PASS
+releaseC run 4: rc=133 45s FAIL
+releaseC run 5: rc=0 47s PASS
+releaseC run 6: rc=0 48s PASS
+releaseC run 7: rc=133 34s FAIL
+releaseC run 8: rc=0 49s PASS
+releaseC run 9: rc=134 67s FAIL
+releaseC run 10: rc=134 62s FAIL
+LEGSUMMARY releaseC pass=4 fail=6
+smokeB run 1: rc=0 437s PASS
+smokeB run 2: rc=0 438s PASS
+smokeB run 3: rc=0 436s PASS
+smokeB run 4: rc=0 436s PASS
+smokeB run 5: rc=0 440s PASS
+smokeB run 6: rc=0 436s PASS
+smokeB run 7: rc=0 438s PASS
+smokeB run 8: rc=0 436s PASS
+smokeB run 9: rc=0 437s PASS
+smokeB run 10: rc=0 435s PASS
+LEGSUMMARY smokeB pass=10 fail=0
+SUMMARY done

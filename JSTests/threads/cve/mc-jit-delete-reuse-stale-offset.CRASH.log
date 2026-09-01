@@ -1,0 +1,19 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+ASSERTION FAILED: nextOffset == structure->transitionOffset()
+/root/WebKit/Source/JavaScriptCore/runtime/Structure.cpp(717) : PropertyTable *JSC::Structure::materializePropertyTable(VM &, bool)
+1   0x55f5b70e469c /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x692069c) [0x55f5b70e469c]
+2   0x55f5b53bbd18 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x4bf7d18) [0x55f5b53bbd18]
+3   0x55f5b53bea7c /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x4bfaa7c) [0x55f5b53bea7c]
+4   0x55f5b53bd85d /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x4bf985d) [0x55f5b53bd85d]
+5   0x55f5b29d2b27 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x220eb27) [0x55f5b29d2b27]
+6   0x55f5b29d12d6 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x220d2d6) [0x55f5b29d12d6]
+7   0x55f5b29cf508 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x220b508) [0x55f5b29cf508]
+8   0x55f5b29cf2e2 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x220b2e2) [0x55f5b29cf2e2]
+9   0x55f5b29ceadd /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x220aadd) [0x55f5b29ceadd]
+10  0x55f5b29ce738 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x220a738) [0x55f5b29ce738]
+11  0x55f5b29cde4e /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x2209e4e) [0x55f5b29cde4e]
+12  0x55f5b29da0fb /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x22160fb) [0x55f5b29da0fb]
+13  0x55f5b3e724a9 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x36ae4a9) [0x55f5b3e724a9]
+14  0x55f5b3e6fa5e /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x36aba5e) [0x55f5b3e6fa5e]
+15  0x55f5b3e6fec7 /root/WebKit/WebKitBuild/Debug/bin/jsc(+0x36abec7) [0x55f5b3e6fec7]
+16  0x7b0e92c34293 [0x7b0e92c34293]

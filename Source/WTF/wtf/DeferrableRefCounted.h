@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <wtf/Assertions.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -36,6 +37,15 @@ namespace WTF {
 // just being an additional "ref", except that you can detect if it has
 // specifically happened - this can be useful either for debugging, or
 // sometimes even for some additional functionality.
+//
+// The count is atomic (ThreadSafeRefCounted-style ordering): the only user
+// of this class is JSC::ArrayBuffer (via GCIncomingRefCounted), whose
+// wrappers are reachable from every thread through the shared JS heap once
+// shared-memory Threads are on — RefPtr<ArrayBuffer> is taken/dropped on the
+// C++ side from concurrent mutators (DataView/slice/structuredClone/wasm
+// memory) and from per-thread sweeps, so a plain count would be corruptible
+// (premature free / leak). The single-threaded cost is one uncontended
+// lock-prefixed RMW per ref/deref on a cold path; not worth a mode split.
 
 class DeferrableRefCountedBase {
     static constexpr uint32_t deferredFlag = 1;
@@ -44,7 +54,7 @@ class DeferrableRefCountedBase {
 public:
     void ref() const
     {
-        m_refCount += normalIncrement;
+        m_refCount.fetch_add(normalIncrement, std::memory_order_relaxed);
     }
 
     bool hasOneRef() const
@@ -54,12 +64,12 @@ public:
 
     uint32_t refCount() const
     {
-        return m_refCount / normalIncrement;
+        return m_refCount.load(std::memory_order_relaxed) / normalIncrement;
     }
 
     bool isDeferred() const
     {
-        return !!(m_refCount & deferredFlag);
+        return !!(m_refCount.load(std::memory_order_relaxed) & deferredFlag);
     }
 
 protected:
@@ -74,22 +84,23 @@ protected:
 
     bool derefBase() const
     {
-        m_refCount -= normalIncrement;
-        return !m_refCount;
+        // acq_rel: the release publishes this thread's writes to the object
+        // for whichever thread performs the final deref; the acquire on the
+        // final deref orders the delete after every other thread's release.
+        return m_refCount.fetch_sub(normalIncrement, std::memory_order_acq_rel) == normalIncrement;
     }
 
     bool setIsDeferredBase(bool value)
     {
         if (value) {
-            m_refCount |= deferredFlag;
+            m_refCount.fetch_or(deferredFlag, std::memory_order_acq_rel);
             return false;
         }
-        m_refCount &= ~deferredFlag;
-        return !m_refCount;
+        return (m_refCount.fetch_and(~deferredFlag, std::memory_order_acq_rel) & ~deferredFlag) == 0;
     }
 
 private:
-    mutable uint32_t m_refCount;
+    mutable std::atomic<uint32_t> m_refCount;
 };
 
 template<typename T>

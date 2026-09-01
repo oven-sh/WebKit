@@ -1,0 +1,24 @@
+scaling-gate: jsc        = WebKitBuild/Release/bin/jsc
+scaling-gate: mode       = REPORT-ONLY (host is noisy/shared; recording, not gating)
+scaling-gate: runs/cell  = 3 (median)
+scaling-gate: threads    = 1 2 4 8 16 32 64
+scaling-gate: work scale = 1
+scaling-gate: serial-identity tolerance = 5%
+
+== map-heavy ==
+  threads       T(N) ms     ideal ms    speedup
+  1            1634.933     1634.933      1.00x
+  2            3289.544     1634.933      0.99x
+  4            6517.079     1634.933      1.00x
+  8           13000.235     1634.933      1.01x
+  16          26107.157     1634.933      1.00x
+  32          52189.912     1634.933      1.00x
+  64         103943.781     1634.933      1.01x
+  serial identity: T(1) flag-on 1634.933 ms vs flag-off 1418.433 ms (15.26% vs +/-5%) VIOLATION
+  threshold: speedup(4) = 1.00x vs floor 2.8x VIOLATION
+  threshold: speedup(8) = 1.01x vs floor 4.5x VIOLATION
+
+== raytrace-like ==
+scaling-gate: /root/WebKit/JSTests/threads/scaling/raytrace-like.js (N=16, flag=on) FAILED:
+    | 
+scaling-gate: error: workload raytrace-like failed at N=16 (wrong answers are never noise)

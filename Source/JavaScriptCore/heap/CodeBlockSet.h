@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CollectionScope.h"
+#include <atomic>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -74,10 +75,38 @@ public:
     void add(CodeBlock*);
     void remove(CodeBlock*);
 
+    // Scalability early-out for VMTraps::handleTraps' per-poll breakpoint
+    // sweep (GIL-off): VM-trap breakpoints are installed in exactly one
+    // place — VMTraps::tryInstallTrapBreakpoints, on the signal-based
+    // (non-polling-traps) delivery path — and that site records the install
+    // here, under this set's lock, BEFORE any CodeBlock observes
+    // hasInstalledVMTrapsBreakpoints() == true. A reader that sees `false`
+    // can therefore skip the locked jettison sweep entirely: no block in
+    // this set can have breakpoints installed. The flag is STICKY (never
+    // cleared) — once any install ever happened, every subsequent sweep
+    // runs exactly as before, so this can never suppress a jettison that
+    // the unconditional sweep would have performed. Lives on the SET (not
+    // on a VMTraps instance) because GIL-off the Heap — and hence this set —
+    // is process-shared (useSharedGCHeap): an install by any VM sharing the
+    // heap must be visible to every sweeper of the shared set.
+    // Release/acquire pairing makes the install's preceding writes visible
+    // to a skipping reader; on the signal path the install additionally
+    // happens-before the mutator's resume (thread suspension), matching the
+    // pre-change ordering story.
+    bool mayHaveCodeBlocksWithInstalledVMTrapBreakpoints() const
+    {
+        return m_mayHaveCodeBlocksWithInstalledVMTrapBreakpoints.load(std::memory_order_acquire);
+    }
+    void noteCodeBlockMayHaveInstalledVMTrapBreakpoints(const AbstractLocker&)
+    {
+        m_mayHaveCodeBlocksWithInstalledVMTrapBreakpoints.store(true, std::memory_order_release);
+    }
+
 private:
     UncheckedKeyHashSet<CodeBlock*> m_codeBlocks;
     UncheckedKeyHashSet<CodeBlock*> m_currentlyExecuting;
     Lock m_lock;
+    std::atomic<bool> m_mayHaveCodeBlocksWithInstalledVMTrapBreakpoints { false };
 };
 
 } // namespace JSC

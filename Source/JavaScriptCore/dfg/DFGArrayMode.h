@@ -127,6 +127,7 @@ public:
         u.asBytes.action = Array::Write;
         u.asBytes.mayBeLargeTypedArray = false;
         u.asBytes.mayBeResizableOrGrowableSharedTypedArray = false;
+        u.asBytes.mayBeSegmentedButterfly = false;
     }
 
     explicit ArrayMode(Array::Type type, Array::Action action)
@@ -139,6 +140,7 @@ public:
         u.asBytes.action = action;
         u.asBytes.mayBeLargeTypedArray = false;
         u.asBytes.mayBeResizableOrGrowableSharedTypedArray = false;
+        u.asBytes.mayBeSegmentedButterfly = false;
     }
 
     ArrayMode(Array::Type type, Array::Action action, Array::Speculation speculation)
@@ -151,6 +153,7 @@ public:
         u.asBytes.action = action;
         u.asBytes.mayBeLargeTypedArray = false;
         u.asBytes.mayBeResizableOrGrowableSharedTypedArray = false;
+        u.asBytes.mayBeSegmentedButterfly = false;
     }
 
     ArrayMode(Array::Type type, Array::Class arrayClass, Array::Action action)
@@ -163,9 +166,10 @@ public:
         u.asBytes.action = action;
         u.asBytes.mayBeLargeTypedArray = false;
         u.asBytes.mayBeResizableOrGrowableSharedTypedArray = false;
+        u.asBytes.mayBeSegmentedButterfly = false;
     }
 
-    ArrayMode(Array::Type type, Array::Class arrayClass, Array::Speculation speculation, Array::Conversion conversion, Array::Action action, bool mayBeLargeTypedArray = false, bool mayBeResizableOrGrowableSharedTypedArray = false)
+    ArrayMode(Array::Type type, Array::Class arrayClass, Array::Speculation speculation, Array::Conversion conversion, Array::Action action, bool mayBeLargeTypedArray = false, bool mayBeResizableOrGrowableSharedTypedArray = false, bool mayBeSegmentedButterfly = false)
     {
         u.asWord = 0;
         u.asBytes.type = type;
@@ -175,6 +179,7 @@ public:
         u.asBytes.action = action;
         u.asBytes.mayBeLargeTypedArray = mayBeLargeTypedArray;
         u.asBytes.mayBeResizableOrGrowableSharedTypedArray = mayBeResizableOrGrowableSharedTypedArray;
+        u.asBytes.mayBeSegmentedButterfly = mayBeSegmentedButterfly;
     }
 
     ArrayMode(Array::Type type, Array::Class arrayClass, Array::Conversion conversion, Array::Action action)
@@ -187,6 +192,7 @@ public:
         u.asBytes.action = action;
         u.asBytes.mayBeLargeTypedArray = false;
         u.asBytes.mayBeResizableOrGrowableSharedTypedArray = false;
+        u.asBytes.mayBeSegmentedButterfly = false;
     }
     
     Array::Type type() const { return static_cast<Array::Type>(u.asBytes.type); }
@@ -196,6 +202,13 @@ public:
     Array::Action action() const { return static_cast<Array::Action>(u.asBytes.action); }
     bool mayBeLargeTypedArray() const { return u.asBytes.mayBeLargeTypedArray; }
     bool mayBeResizableOrGrowableSharedTypedArray() const { return u.asBytes.mayBeResizableOrGrowableSharedTypedArray; }
+    // T3-jit-segmented-arraymode (THREADS, SPEC-objectmodel §4): the profile
+    // saw the base's butterfly word in the segmented regime (top16 == 0xffff),
+    // so a flat-only GetButterfly + storage[index] would OSR-exit forever.
+    // Only ever set when Options::useJSThreads() and only for the dense
+    // contiguous shapes (Int32/Double/Contiguous); ArrayStorage never segments
+    // (I31), CoW never segments (I35), typed arrays don't have a butterfly.
+    bool mayBeSegmentedButterfly() const { return u.asBytes.mayBeSegmentedButterfly; }
 
     void setSpeculation(Array::Speculation speculation)
     {
@@ -213,37 +226,47 @@ public:
 
     ArrayMode withType(Array::Type type) const
     {
-        return ArrayMode(type, arrayClass(), speculation(), conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray());
+        return ArrayMode(type, arrayClass(), speculation(), conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), mayBeSegmentedButterfly());
     }
 
     ArrayMode withAction(Array::Action action) const
     {
-        return ArrayMode(type(), arrayClass(), speculation(), conversion(), action, mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray());
+        return ArrayMode(type(), arrayClass(), speculation(), conversion(), action, mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), mayBeSegmentedButterfly());
     }
 
     ArrayMode withSpeculation(Array::Speculation speculation) const
     {
-        return ArrayMode(type(), arrayClass(), speculation, conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray());
+        return ArrayMode(type(), arrayClass(), speculation, conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), mayBeSegmentedButterfly());
     }
 
     ArrayMode withConversion(Array::Conversion conversion) const
     {
-        return ArrayMode(type(), arrayClass(), speculation(), conversion, action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray());
+        return ArrayMode(type(), arrayClass(), speculation(), conversion, action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), mayBeSegmentedButterfly());
     }
 
     ArrayMode withTypeAndConversion(Array::Type type, Array::Conversion conversion) const
     {
-        return ArrayMode(type, arrayClass(), speculation(), conversion, action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray());
+        return ArrayMode(type, arrayClass(), speculation(), conversion, action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), mayBeSegmentedButterfly());
+    }
+
+    ArrayMode withArrayClassAndSpeculationAndFlags(Array::Class arrayClass, Array::Speculation speculation, bool mayBeLargeTypedArray, bool mayBeResizableOrGrowableSharedTypedArray, bool mayBeSegmentedButterfly) const
+    {
+        return ArrayMode(type(), arrayClass, speculation, conversion(), action(), mayBeLargeTypedArray, mayBeResizableOrGrowableSharedTypedArray, mayBeSegmentedButterfly);
     }
 
     ArrayMode withArrayClassAndSpeculation(Array::Class arrayClass, Array::Speculation speculation, bool mayBeLargeTypedArray, bool mayBeResizableOrGrowableSharedTypedArray) const
     {
-        return ArrayMode(type(), arrayClass, speculation, conversion(), action(), mayBeLargeTypedArray, mayBeResizableOrGrowableSharedTypedArray);
+        return ArrayMode(type(), arrayClass, speculation, conversion(), action(), mayBeLargeTypedArray, mayBeResizableOrGrowableSharedTypedArray, mayBeSegmentedButterfly());
     }
 
     ArrayMode withArrayClass(Array::Class arrayClass) const
     {
-        return ArrayMode(type(), arrayClass, speculation(), conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray());
+        return ArrayMode(type(), arrayClass, speculation(), conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), mayBeSegmentedButterfly());
+    }
+
+    ArrayMode withMayBeSegmentedButterfly(bool value) const
+    {
+        return ArrayMode(type(), arrayClass(), speculation(), conversion(), action(), mayBeLargeTypedArray(), mayBeResizableOrGrowableSharedTypedArray(), value);
     }
 
     static Array::Speculation speculationFromProfile(ArrayProfile profile, bool makeSafe)
@@ -295,11 +318,17 @@ public:
 
         Array::Speculation speculation = speculationFromProfile(profile, makeSafe);
 
-        return withArrayClassAndSpeculation(myArrayClass, speculation, profile.mayBeLargeTypedArray(), profile.mayBeResizableOrGrowableSharedTypedArray());
+        // T3-jit-segmented-arraymode: pull the side-band bit from the profile.
+        // Also gate on the option here so a stale profile bit (set in a prior
+        // flag-on run) cannot leak into a flag-off compilation.
+        bool maySeg = Options::useJSThreads() && profile.mayBeSegmentedButterfly();
+        return withArrayClassAndSpeculationAndFlags(myArrayClass, speculation, profile.mayBeLargeTypedArray(), profile.mayBeResizableOrGrowableSharedTypedArray(), maySeg);
     }
     
     static constexpr SpeculatedType unusedIndexSpeculatedType = SpecInt32Only;
     ArrayMode refine(Graph&, Node*, SpeculatedType base, SpeculatedType index, SpeculatedType value = SpecNone) const;
+    // T3-jit-segmented-arraymode: refine() helper, see DFGArrayMode.cpp.
+    ArrayMode withSegmentedFeedback(Graph&, Node*) const;
     
     bool alreadyChecked(Graph&, Node*, const AbstractValue&) const;
     
@@ -596,7 +625,27 @@ public:
             && speculation() == other.speculation()
             && conversion() == other.conversion()
             && mayBeLargeTypedArray() == other.mayBeLargeTypedArray()
-            && mayBeResizableOrGrowableSharedTypedArray() == other.mayBeResizableOrGrowableSharedTypedArray();
+            && mayBeResizableOrGrowableSharedTypedArray() == other.mayBeResizableOrGrowableSharedTypedArray()
+            && mayBeSegmentedButterfly() == other.mayBeSegmentedButterfly();
+    }
+
+    // T3-jit-segmented-arraymode: true iff this mode's DFG codegen handles a
+    // segmented butterfly word WITHOUT a separate GetButterfly storage child
+    // (the consumer re-loads the tagged word and dispatches itself). Only the
+    // dense contiguous shapes participate; everything else either cannot
+    // segment (ArrayStorage I31, CoW I35, typed arrays) or has no butterfly.
+    bool needsSegmentedAwareCodegen() const
+    {
+        if (!mayBeSegmentedButterfly())
+            return false;
+        switch (type()) {
+        case Array::Int32:
+        case Array::Double:
+        case Array::Contiguous:
+            return true;
+        default:
+            return false;
+        }
     }
     
 private:
@@ -645,10 +694,14 @@ private:
             uint8_t type;
             uint8_t arrayClass;
             uint8_t speculation;
-            uint8_t conversion : 4;
+            uint8_t conversion : 3;
             uint8_t action : 1;
             uint8_t mayBeLargeTypedArray : 1;
             uint8_t mayBeResizableOrGrowableSharedTypedArray : 1;
+            // T3-jit-segmented-arraymode: see mayBeSegmentedButterfly().
+            // conversion shrunk 4->3 (Array::Conversion has 2 values) to keep
+            // the struct exactly 4 bytes / 1 word.
+            uint8_t mayBeSegmentedButterfly : 1;
         } asBytes;
         unsigned asWord;
     } u;

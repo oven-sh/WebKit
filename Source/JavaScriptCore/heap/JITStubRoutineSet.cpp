@@ -66,6 +66,22 @@ void JITStubRoutineSet::add(GCAwareJITStubRoutine* routine)
     RELEASE_ASSERT(!isCompilationThread());
     ASSERT(!routine->m_isJettisoned);
 
+    // THREADS (AB18-F, gated in AB18-G): see m_lock's declaration comment — N
+    // mutators sharing one Heap reach this append concurrently from IC-miss
+    // slow paths. Flag-off there is exactly one mutator, so per the standing
+    // no-new-unconditional-flag-off-work rule (ab17c) the lock is taken only
+    // under useJSThreads(), matching the makeGCAware-at-creation gating one
+    // frame up.
+    if (Options::useJSThreads()) [[unlikely]] {
+        Locker locker { m_lock };
+        addImpl(routine);
+        return;
+    }
+    addImpl(routine);
+}
+
+ALWAYS_INLINE void JITStubRoutineSet::addImpl(GCAwareJITStubRoutine* routine)
+{
     if (routine->m_isCodeImmutable) {
         m_immutableCodeRoutines.append(routine);
         return;

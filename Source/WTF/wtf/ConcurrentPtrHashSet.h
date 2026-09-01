@@ -75,7 +75,7 @@ public:
     
     size_t size() const
     {
-        Table* table = m_table.loadRelaxed();
+        Table* table = tableConcurrently();
         if (table == m_stubTable.get())
             return sizeSlow();
         return table->load.loadRelaxed();
@@ -133,10 +133,25 @@ private:
         u.value = value;
         return u.ptr;
     }
-    
+
+    // THREADS/TSAN: lock-free readers race resizeIfNecessary's seq_cst publish
+    // of a fresh Table by design. TSAN r20.3.6: acquire under TSAN ONLY so the
+    // fresh Table block's pre-publication writes (malloc / TrailingArray ctor /
+    // mask, size) get an HB edge in TSAN's model; production keeps relaxed
+    // (dependency-ordered consume protocol; §13.4 gate shape, same as
+    // ConcurrentVector / ConcurrentBuffer).
+    ALWAYS_INLINE Table* tableConcurrently() const
+    {
+#if TSAN_ENABLED
+        return m_table.load(std::memory_order_acquire);
+#else
+        return m_table.loadRelaxed();
+#endif
+    }
+
     bool containsImpl(void* ptr) const
     {
-        Table* table = m_table.loadRelaxed();
+        Table* table = tableConcurrently();
         if (table == m_stubTable.get())
             return containsImplSlow(ptr);
 
@@ -157,7 +172,7 @@ private:
     // Returns true if a new entry was added.
     bool addImpl(void* ptr)
     {
-        Table* table = m_table.loadRelaxed();
+        Table* table = tableConcurrently();
         unsigned mask = table->mask;
         unsigned startIndex = hash(ptr) & mask;
         unsigned index = startIndex;

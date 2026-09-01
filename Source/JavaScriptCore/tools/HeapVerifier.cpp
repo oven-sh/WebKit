@@ -390,10 +390,16 @@ void HeapVerifier::reportCell(CellProfile& profile, int cycleIndex, HeapVerifier
         dataLog(" structure:", RawPointer(structure));
         if (jsCell->isObject()) {
             JSObject* obj = static_cast<JSObject*>(cell);
-            Butterfly* butterfly = obj->butterfly();
-            void* butterflyBase = butterfly->base(structure);
-            
-            dataLog(" butterfly:", RawPointer(butterfly), " (base:", RawPointer(butterflyBase), ")");
+            // THREADS-INTEGRATE(objectmodel) §10.7: print the raw tagged word
+            // when the butterfly may be segmented (never deref as flat).
+            if (obj->mayBeSegmentedButterfly()) [[unlikely]]
+                dataLog(" tagged butterfly word:", obj->taggedButterflyWord());
+            else {
+                Butterfly* butterfly = obj->butterfly();
+                void* butterflyBase = butterfly->base(structure);
+
+                dataLog(" butterfly:", RawPointer(butterfly), " (base:", RawPointer(butterflyBase), ")");
+            }
         }
     }
 

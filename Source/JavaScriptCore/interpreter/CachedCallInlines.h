@@ -58,7 +58,7 @@ ALWAYS_INLINE JSValue CachedCall::callWithArguments(JSGlobalObject* globalObject
     ASSERT(sizeof...(args) == static_cast<size_t>(m_protoCallFrame.argumentCount()));
     constexpr unsigned argumentCountIncludingThis = 1 + sizeof...(args);
     if constexpr (argumentCountIncludingThis <= 7) {
-        if (m_numParameters <= argumentCountIncludingThis) [[likely]] {
+        if (WTF::atomicLoad(&m_numParameters, std::memory_order_relaxed) <= argumentCountIncludingThis) [[likely]] {
             JSValue result = m_vm.interpreter.tryCallWithArguments(*this, thisValue, args...);
             RETURN_IF_EXCEPTION(scope, { });
             if (result)

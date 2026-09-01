@@ -62,23 +62,23 @@ void GCSegmentedArray<T>::clear()
         m_segments.remove(current);
         GCArraySegment<T>::destroy(current);
     }
-    m_top = 0;
+    storeTopRelaxed(0);
     m_numberOfSegments = 1;
 #if ASSERT_ENABLED
-    m_segments.head()->m_top = 0;
+    WTF::atomicStore(&m_segments.head()->m_top, static_cast<size_t>(0), std::memory_order_relaxed);
 #endif
 }
 
 template <typename T>
 void GCSegmentedArray<T>::expand()
 {
-    ASSERT(m_segments.head()->m_top == s_segmentCapacity);
-    
+    ASSERT(WTF::atomicLoad(&m_segments.head()->m_top, std::memory_order_relaxed) == s_segmentCapacity);
+
     GCArraySegment<T>* nextSegment = GCArraySegment<T>::create();
     m_numberOfSegments++;
-    
+
 #if ASSERT_ENABLED
-    nextSegment->m_top = 0;
+    WTF::atomicStore(&nextSegment->m_top, static_cast<size_t>(0), std::memory_order_relaxed);
 #endif
 
     m_segments.push(nextSegment);
@@ -110,7 +110,8 @@ void GCSegmentedArray<T>::fillVector(Vector<T>& vector)
         return;
 
     unsigned count = 0;
-    for (unsigned i = 0; i < m_top; ++i) {
+    size_t top = loadTopRelaxed();
+    for (unsigned i = 0; i < top; ++i) {
         ASSERT(currentSegment->data()[i]);
         vector[count++] = currentSegment->data()[i];
     }
@@ -141,38 +142,48 @@ inline void GCArraySegment<T>::destroy(GCArraySegment* segment)
 template <typename T>
 inline size_t GCSegmentedArray<T>::postIncTop()
 {
-    size_t result = m_top++;
-    ASSERT(result == m_segments.head()->m_top++);
+    size_t result = loadTopRelaxed();
+    storeTopRelaxed(result + 1);
+#if ASSERT_ENABLED
+    size_t segmentTop = WTF::atomicLoad(&m_segments.head()->m_top, std::memory_order_relaxed);
+    ASSERT(result == segmentTop);
+    WTF::atomicStore(&m_segments.head()->m_top, segmentTop + 1, std::memory_order_relaxed);
+#endif
     return result;
 }
 
 template <typename T>
 inline size_t GCSegmentedArray<T>::preDecTop()
 {
-    size_t result = --m_top;
-    ASSERT(result == --m_segments.head()->m_top);
+    size_t result = loadTopRelaxed() - 1;
+    storeTopRelaxed(result);
+#if ASSERT_ENABLED
+    size_t segmentTop = WTF::atomicLoad(&m_segments.head()->m_top, std::memory_order_relaxed) - 1;
+    ASSERT(result == segmentTop);
+    WTF::atomicStore(&m_segments.head()->m_top, segmentTop, std::memory_order_relaxed);
+#endif
     return result;
 }
 
 template <typename T>
 inline void GCSegmentedArray<T>::setTopForFullSegment()
 {
-    ASSERT(m_segments.head()->m_top == s_segmentCapacity);
-    m_top = s_segmentCapacity;
+    ASSERT(WTF::atomicLoad(&m_segments.head()->m_top, std::memory_order_relaxed) == s_segmentCapacity);
+    storeTopRelaxed(s_segmentCapacity);
 }
 
 template <typename T>
 inline void GCSegmentedArray<T>::setTopForEmptySegment()
 {
-    ASSERT(!m_segments.head()->m_top);
-    m_top = 0;
+    ASSERT(!WTF::atomicLoad(&m_segments.head()->m_top, std::memory_order_relaxed));
+    storeTopRelaxed(0);
 }
 
 template <typename T>
 inline size_t GCSegmentedArray<T>::top()
 {
-    ASSERT(m_top == m_segments.head()->m_top);
-    return m_top;
+    ASSERT(loadTopRelaxed() == WTF::atomicLoad(&m_segments.head()->m_top, std::memory_order_relaxed));
+    return loadTopRelaxed();
 }
 
 template <typename T>
@@ -188,7 +199,7 @@ inline void GCSegmentedArray<T>::validatePrevious() { }
 template <typename T>
 inline void GCSegmentedArray<T>::append(T value)
 {
-    if (m_top == s_segmentCapacity)
+    if (loadTopRelaxed() == s_segmentCapacity)
         expand();
     m_segments.head()->data()[postIncTop()] = value;
 }
@@ -196,7 +207,7 @@ inline void GCSegmentedArray<T>::append(T value)
 template <typename T>
 inline bool GCSegmentedArray<T>::canRemoveLast()
 {
-    return !!m_top;
+    return !!loadTopRelaxed();
 }
 
 template <typename T>
@@ -209,7 +220,7 @@ template <typename T>
 inline bool GCSegmentedArray<T>::isEmpty() const
 {
     // This happens to be safe to call concurrently. It's important to preserve that capability.
-    if (m_top)
+    if (loadTopRelaxed())
         return false;
     if (m_segments.head()->next())
         return false;
@@ -219,7 +230,7 @@ inline bool GCSegmentedArray<T>::isEmpty() const
 template <typename T>
 inline size_t GCSegmentedArray<T>::size() const
 {
-    return m_top + s_segmentCapacity * (m_numberOfSegments - 1);
+    return loadTopRelaxed() + s_segmentCapacity * (m_numberOfSegments - 1);
 }
 
 } // namespace JSC

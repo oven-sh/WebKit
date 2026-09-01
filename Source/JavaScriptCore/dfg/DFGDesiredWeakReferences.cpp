@@ -84,18 +84,28 @@ void DesiredWeakReferences::finalize()
     }
 }
 
-void DesiredWeakReferences::reallyAdd(VM& vm, CommonData* common)
+void DesiredWeakReferences::reallyAdd(VM& vm, CodeBlock* codeBlock, CommonData* common)
 {
     // We do not emit WriteBarrier here since (1) GC is deferred and (2) we emit write-barrier on CodeBlock when finishing DFG::Plan::reallyAdd.
     ASSERT_UNUSED(vm, vm.heap.isDeferred());
     if (!m_finalizedCells.isEmpty() || !m_finalizedStructures.isEmpty()) {
-        ASSERT(common->m_weakStructureReferences.isEmpty());
-        ASSERT(common->m_weakReferences.isEmpty());
         // This is just moving a pointer. And we already synchronized with Lock etc. with compiler threads.
         // So at this point, these vectors are fully constructed and baked by the compiler threads.
-        // We can just move these pointers to CommonData, and that's enough.
         static_assert(sizeof(m_finalizedStructures) == sizeof(void*));
         static_assert(sizeof(m_finalizedCells) == sizeof(void*));
+        // TSAN family dfg-weakrefs-reallyadd / SPEC-congc N-mutator: the
+        // upstream "GC is deferred" guarantee is single-mutator-only — under
+        // GIL-off N-mutators, DeferGC on the finalizing mutator does not stop
+        // another mutator from conducting a concurrent GC whose SlotVisitor
+        // calls CodeBlock::stronglyVisitWeakReferences / propagateTransitions.
+        // Those readers iterate common->m_weak{,Structure}References under
+        // ConcurrentJSLocker(codeBlock->m_lock); take the same lock here so
+        // the unique_ptr swap and the EmbeddedFixedVector header it publishes
+        // are ordered against the visitor's iteration. Once-per-DFG-compile
+        // slow path; matches DesiredTransitions / DesiredIdentifiers.
+        ConcurrentJSLocker locker(codeBlock->m_lock);
+        ASSERT(common->m_weakStructureReferences.isEmpty());
+        ASSERT(common->m_weakReferences.isEmpty());
         common->m_weakStructureReferences = WTF::move(m_finalizedStructures);
         common->m_weakReferences = WTF::move(m_finalizedCells);
     }

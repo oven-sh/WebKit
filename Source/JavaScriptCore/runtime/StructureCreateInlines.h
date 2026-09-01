@@ -34,6 +34,7 @@
 #include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/JSGlobalProxy.h>
 #include <JavaScriptCore/Structure.h>
+#include <JavaScriptCore/VMLiteShared.h>
 #include <JavaScriptCore/WriteBarrierInlines.h>
 
 namespace JSC {
@@ -73,8 +74,26 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
         object->didBecomePrototype(vm);
     }
 
-    Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
-    structure->finishCreation(vm);
+    Structure* structure;
+    {
+        // SPEC-objectmodel Task 3b (SPEC-vmstate §5.3/N5): every ID-creating
+        // Structure cell allocation runs under the process-global
+        // structure-allocation lock (SAL, heap rank 7a; a single predictable
+        // branch unless Options::useStructureAllocationLock()). The locker is
+        // acquired only AFTER didBecomePrototype() above — that path can
+        // itself create a Structure (becomePrototypeTransition) and the lock
+        // is non-recursive (nesting self-deadlocks by design, vmstate §5.2).
+        // The cell allocation is threaded through the locker's
+        // GCDeferralContext (SPEC-heap L5/I14): it may slow-path into fresh
+        // blocks but never triggers a synchronous collection or parks for
+        // STW while the lock is held (S1-S3). The locker's destructor runs a
+        // storeStoreFence before release (F5), publishing the fully
+        // initialized Structure to threads that consume its StructureID via
+        // dependency-carrying loads.
+        SharedVMState::StructureAllocationLocker structureAllocationLocker { vm };
+        structure = new (NotNull, allocateCell<Structure>(vm, structureAllocationLocker.deferralContext())) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
+        structure->finishCreation(vm);
+    }
     ASSERT(structure->type() == StructureType);
     return structure;
 }
@@ -82,8 +101,15 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
 inline Structure* Structure::createStructure(VM& vm)
 {
     ASSERT(!vm.structureStructure);
-    Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, CreatingEarlyCell);
-    structure->finishCreation(vm, CreatingEarlyCell);
+    Structure* structure;
+    {
+        // SPEC-objectmodel Task 3b: see Structure::create above. This is the
+        // structureStructure bootstrap; the SAL still brackets it (flag-on)
+        // so the very first StructureID also satisfies SPEC-vmstate I8.
+        SharedVMState::StructureAllocationLocker structureAllocationLocker { vm };
+        structure = new (NotNull, allocateCell<Structure>(vm, structureAllocationLocker.deferralContext())) Structure(vm, CreatingEarlyCell);
+        structure->finishCreation(vm, CreatingEarlyCell);
+    }
     return structure;
 }
 

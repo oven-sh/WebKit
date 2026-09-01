@@ -35,8 +35,12 @@ class GCDeferralContext;
 class Heap;
 class LocalAllocator;
 
-// This abstracts how we refer to LocalAllocator so that we could eventually support thread-local
-// caches.
+// This abstracts how we refer to LocalAllocator so that we can support thread-local caches.
+// SharedGC (SPEC-heap.md §5.3; THREADS T4): with Options::useSharedGCHeap(), the
+// LocalAllocator behind a non-iso Allocator is per-client — materialized and owned by a
+// GCClient::GCThreadLocalCache over the shared server BlockDirectories — and server-side
+// non-iso Allocators are never materialized (§5.5). Option off: the server-owned
+// allocator, exactly as before (I10).
 
 class Allocator {
 public:

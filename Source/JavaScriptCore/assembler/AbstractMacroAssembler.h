@@ -37,6 +37,8 @@
 #include "MacroAssemblerCodeRef.h"
 #include "MacroAssemblerHelpers.h"
 #include "Options.h"
+#include <wtf/Atomics.h>
+#include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Platform.h>
 #include <wtf/SetForScope.h>
@@ -86,12 +88,36 @@ protected:
     uint32_t random()
     {
         if (!m_randomSource)
-            initializeRandom();
+            m_randomSource.emplace(nextRandomSeed());
         return m_randomSource->getUint32();
     }
 
 private:
+    // Superseded by nextRandomSeed() below; the out-of-line definition in
+    // AbstractMacroAssembler.cpp is no longer called (its plain static counter increment was a
+    // data race between concurrent compiler threads). Declaration kept so that definition still
+    // compiles until it is removed.
     JS_EXPORT_PRIVATE void initializeRandom();
+
+    // Shared seed counter for per-assembler WeakRandom sources. Initialized once via CAS with a
+    // cryptographically random value; subsequent seeds are relaxed atomic increments. No strong
+    // cryptographic characteristics are necessary, and no ordering is implied — this only has to
+    // be data-race-free under concurrent JIT compilation.
+    static uint32_t nextRandomSeed()
+    {
+        // s_randomSeedState layout: low 32 bits hold the next seed; initializedBit marks the
+        // state as seeded. The flag lives at bit 63 so that low-half increments cannot carry
+        // into it.
+        constexpr uint64_t initializedBit = 1ull << 63;
+        while (!(s_randomSeedState.load(std::memory_order_relaxed) & initializedBit)) {
+            uint64_t fresh = initializedBit | cryptographicallyRandomNumber<uint32_t>();
+            if (s_randomSeedState.compareExchangeWeak(0, fresh, std::memory_order_relaxed))
+                break;
+        }
+        return static_cast<uint32_t>(s_randomSeedState.exchangeAdd(1, std::memory_order_relaxed));
+    }
+
+    static inline Atomic<uint64_t> s_randomSeedState;
 
     std::optional<WeakRandom> m_randomSource;
 };

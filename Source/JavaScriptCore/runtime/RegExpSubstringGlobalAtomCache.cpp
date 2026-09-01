@@ -75,7 +75,7 @@ JSValue RegExpSubstringGlobalAtomCache::collectMatches(JSGlobalObject* globalObj
     RETURN_IF_EXCEPTION(scope, { });
 
     auto regExpMatch = [&]() ALWAYS_INLINE_LAMBDA {
-        MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, substring, input, startIndex);
+        MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, substring, input, startIndex);
         if (scope.exception()) [[unlikely]]
             return;
 
@@ -91,7 +91,7 @@ JSValue RegExpSubstringGlobalAtomCache::collectMatches(JSGlobalObject* globalObj
             if (result.empty())
                 startIndex++;
 
-            result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, substring, input, startIndex);
+            result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, substring, input, startIndex);
             if (scope.exception()) [[unlikely]]
                 return;
         }
@@ -156,7 +156,7 @@ JSValue RegExpSubstringGlobalAtomCache::collectMatches(JSGlobalObject* globalObj
     JSArray* array = createPatternFilledArray(globalObject, jsString(vm, pattern), numberOfMatches);
     RETURN_IF_EXCEPTION(scope, { });
 
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, substring, lastResult, oneCharacterMatch);
+    threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regExp, substring, lastResult, oneCharacterMatch);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Cache

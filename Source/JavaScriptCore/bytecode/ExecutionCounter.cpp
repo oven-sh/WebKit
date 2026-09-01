@@ -42,7 +42,9 @@ ExecutionCounter<countingVariant>::ExecutionCounter()
 template<CountingVariant countingVariant>
 void ExecutionCounter<countingVariant>::forceSlowPathConcurrently()
 {
-    m_counter = 0;
+    // THREADS §5.7.1: relaxed store; racing fast-path adds at worst delay the slow path
+    // by one counting period.
+    storeCounterValueConcurrently(0);
 }
 
 template<CountingVariant countingVariant>
@@ -61,16 +63,18 @@ template<CountingVariant countingVariant>
 void ExecutionCounter<countingVariant>::setNewThreshold(int32_t threshold, CodeBlock* codeBlock)
 {
     reset();
-    m_activeThreshold = threshold;
+    storeActiveThresholdConcurrently(threshold); // THREADS §5.7.1/§5.7.7.
     setThreshold(codeBlock);
 }
 
 template<CountingVariant countingVariant>
 void ExecutionCounter<countingVariant>::deferIndefinitely()
 {
-    m_totalCount = 0;
-    m_activeThreshold = std::numeric_limits<int32_t>::max();
-    m_counter = std::numeric_limits<int32_t>::min();
+    // THREADS §5.7.1/§5.7.7: all three words are shared with concurrent threshold slow
+    // paths (and the JIT'd fast path for m_counter); every C++ access is a relaxed atomic.
+    storeTotalCountConcurrently(0);
+    storeActiveThresholdConcurrently(std::numeric_limits<int32_t>::max());
+    storeCounterValueConcurrently(std::numeric_limits<int32_t>::min());
 }
 
 double applyMemoryUsageHeuristics(int32_t value, CodeBlock* codeBlock)
@@ -147,15 +151,18 @@ bool ExecutionCounter<countingVariant>::hasCrossedThreshold(CodeBlock* codeBlock
     // small is arbitrarily picked to be half of the original threshold (i.e.
     // m_activeThreshold).
     
-    double modifiedThreshold = applyMemoryUsageHeuristics(m_activeThreshold, codeBlock);
-    
-    double actualCount = static_cast<double>(m_totalCount) + m_counter;
+    // THREADS §5.7.1/§5.7.7: snapshot the shared words with relaxed loads; a racing
+    // threshold rewrite at worst skews this advisory decision by one counting period.
+    int32_t activeThreshold = activeThresholdConcurrently();
+    double modifiedThreshold = applyMemoryUsageHeuristics(activeThreshold, codeBlock);
+
+    double actualCount = static_cast<double>(totalCountConcurrently()) + counterValueConcurrently();
     double desiredCount = modifiedThreshold - static_cast<double>(
-        std::min(m_activeThreshold, maximumExecutionCountsBetweenCheckpoints(countingVariant, codeBlock))) / 2;
-    
+        std::min(activeThreshold, maximumExecutionCountsBetweenCheckpoints(countingVariant, codeBlock))) / 2;
+
     bool result = actualCount >= desiredCount;
-    
-    CODEBLOCK_LOG_EVENT(codeBlock, "thresholdCheck", ("activeThreshold = ", m_activeThreshold, ", modifiedThreshold = ", modifiedThreshold, ", actualCount = ", actualCount, ", desiredCount = ", desiredCount));
+
+    CODEBLOCK_LOG_EVENT(codeBlock, "thresholdCheck", ("activeThreshold = ", activeThreshold, ", modifiedThreshold = ", modifiedThreshold, ", actualCount = ", actualCount, ", desiredCount = ", desiredCount));
     
     return result;
 }
@@ -163,51 +170,55 @@ bool ExecutionCounter<countingVariant>::hasCrossedThreshold(CodeBlock* codeBlock
 template<CountingVariant countingVariant>
 bool ExecutionCounter<countingVariant>::setThreshold(CodeBlock* codeBlock)
 {
-    if (m_activeThreshold == std::numeric_limits<int32_t>::max()) {
+    // THREADS §5.7.1/§5.7.7: relaxed snapshot; concurrent slow paths racing here at
+    // worst skew the next threshold, never break soundness.
+    int32_t activeThreshold = activeThresholdConcurrently();
+    if (activeThreshold == std::numeric_limits<int32_t>::max()) {
         deferIndefinitely();
         return false;
     }
-        
+
     // Compute the true total count.
     double trueTotalCount = count();
-    
+
     // Correct the threshold for current memory usage.
-    double threshold = applyMemoryUsageHeuristics(m_activeThreshold, codeBlock);
-        
+    double threshold = applyMemoryUsageHeuristics(activeThreshold, codeBlock);
+
     // Threshold must be non-negative and not NaN.
     ASSERT(threshold >= 0);
-        
+
     // Adjust the threshold according to the number of executions we have already
     // seen. This shouldn't go negative, but it might, because of round-off errors.
     threshold -= trueTotalCount;
-        
+
     if (threshold <= 0) {
-        m_counter = 0;
-        m_totalCount = trueTotalCount;
+        storeCounterValueConcurrently(0); // THREADS §5.7.1.
+        storeTotalCountConcurrently(trueTotalCount);
         return true;
     }
 
     threshold = clippedThreshold(codeBlock, threshold);
-    
-    m_counter = static_cast<int32_t>(-threshold);
-        
-    m_totalCount = trueTotalCount + threshold;
-        
+
+    storeCounterValueConcurrently(static_cast<int32_t>(-threshold)); // THREADS §5.7.1.
+
+    storeTotalCountConcurrently(trueTotalCount + threshold);
+
     return false;
 }
 
 template<CountingVariant countingVariant>
 void ExecutionCounter<countingVariant>::reset()
 {
-    m_counter = 0;
-    m_totalCount = 0;
-    m_activeThreshold = 0;
+    // THREADS §5.7.1/§5.7.7.
+    storeCounterValueConcurrently(0);
+    storeTotalCountConcurrently(0);
+    storeActiveThresholdConcurrently(0);
 }
 
 template<CountingVariant countingVariant>
 void ExecutionCounter<countingVariant>::dump(PrintStream& out) const
 {
-    out.printf("%lf/%lf, %d", count(), static_cast<double>(m_activeThreshold), m_counter);
+    out.printf("%lf/%lf, %d", count(), static_cast<double>(activeThresholdConcurrently()), counterValueConcurrently());
 }
 
 template class ExecutionCounter<CountingForBaseline>;

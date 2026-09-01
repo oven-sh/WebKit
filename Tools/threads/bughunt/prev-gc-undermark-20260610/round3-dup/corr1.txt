@@ -1,0 +1,886 @@
+VICTIM cell addr=0x7fc0ded5aa20 block=0x7fc0ded58000 atom=674
+   SNAP seq=2477 cycle=1 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=179 naPop=0
+   SNAP seq=6828 cycle=2 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=179 naPop=0
+   SNAP seq=11083 cycle=3 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=179 naPop=0
+   SNAP seq=15695 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=179 naPop=0
+   SNAP seq=20507 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=179 naPop=0
+   SNAP seq=25426 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=200 naPop=0
+   SNAP seq=30452 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=200 naPop=0
+   SNAP seq=35553 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=40768 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=46090 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=51513 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=57015 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=60113 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=65699 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SNAP seq=71287 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=214 naPop=0
+   SWEEP seq=187 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4208 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8756 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13014 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=17784 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22659 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=27625 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32711 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=37884 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43195 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48569 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54071 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62755 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68435 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=74434 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0dea7f1c0 block=0x7fc0dea7c000 atom=796
+   SNAP seq=2027 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=664 naPop=0
+   SNAP seq=6306 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=855 naPop=0
+   SNAP seq=10539 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=15108 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=19900 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=24809 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=29823 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=34915 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=40125 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=45444 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=50865 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=56362 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=59460 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=65037 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=70376 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SWEEP seq=132 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4080 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8636 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc08045c610 block=0x7fc08045c000 atom=97
+   SNAP seq=42739 cycle=9 cellSize=48 marksStale=0 naStale=0 markedHere=1 naHere=1 blockMarkPop=17 naPop=27
+   SNAP seq=48093 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=208 naPop=0
+   SNAP seq=53565 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=275 naPop=0
+   SNAP seq=59124 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=305 naPop=0
+   SNAP seq=62222 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=305 naPop=0
+   SNAP seq=67867 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=305 naPop=0
+   SNAP seq=73451 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=305 naPop=0
+   SWEEP seq=40099 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43959 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48779 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=53952 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0dea7f1d0 block=0x7fc0dea7c000 atom=797
+   SNAP seq=2027 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=664 naPop=0
+   SNAP seq=6306 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=855 naPop=0
+   SNAP seq=10539 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=15108 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=19900 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=24809 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=29823 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=34915 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=40125 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=45444 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=50865 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=56362 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=59460 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=65037 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SNAP seq=70376 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=925 naPop=0
+   SWEEP seq=132 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4080 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8636 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc0df7a4400 block=0x7fc0df7a4000 atom=64
+   SNAP seq=2802 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=7153 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=11392 cycle=3 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=16020 cycle=4 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=20832 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=25748 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=30777 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=37432 cycle=8 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=211 naPop=0
+   SNAP seq=42690 cycle=9 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=278 naPop=0
+   SNAP seq=48044 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=311 naPop=0
+   SNAP seq=53516 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=311 naPop=0
+   SNAP seq=59075 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=311 naPop=0
+   SNAP seq=62173 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=311 naPop=0
+   SNAP seq=67818 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=311 naPop=0
+   SNAP seq=73402 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=311 naPop=0
+   SWEEP seq=782 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4758 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9314 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13530 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18328 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23224 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28199 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33295 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33296 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=37987 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43031 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0df107600 block=0x7fc0df104000 atom=864
+   SNAP seq=2580 cycle=1 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=155 naPop=0
+   SNAP seq=6931 cycle=2 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=155 naPop=0
+   SNAP seq=11181 cycle=3 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=205 naPop=0
+   SNAP seq=15798 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=205 naPop=0
+   SNAP seq=20610 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=205 naPop=0
+   SNAP seq=25528 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=205 naPop=0
+   SNAP seq=30555 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=205 naPop=0
+   SNAP seq=35656 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=205 naPop=0
+   SNAP seq=40871 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SNAP seq=46191 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SNAP seq=51614 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SNAP seq=57116 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SNAP seq=60214 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SNAP seq=65800 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SNAP seq=71388 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=209 naPop=0
+   SWEEP seq=390 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4381 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8937 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13179 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=17963 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22857 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=27820 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32908 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=38081 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43391 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48793 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54286 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62973 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68656 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0df0c9230 block=0x7fc0df0c8000 atom=291
+   SNAP seq=2033 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=648 naPop=0
+   SNAP seq=6312 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=854 naPop=0
+   SNAP seq=10545 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=15114 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=19906 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=24815 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=29829 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=34921 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=40131 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=45450 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=50871 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=56368 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=59466 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=65043 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=70382 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SWEEP seq=375 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4242 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8722 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc0804ae3b0 block=0x7fc0804ac000 atom=571
+   SNAP seq=47336 cycle=10 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=53608 cycle=11 cellSize=48 marksStale=0 naStale=0 markedHere=1 naHere=1 blockMarkPop=102 naPop=185
+   SNAP seq=59167 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=227 naPop=0
+   SNAP seq=62265 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=227 naPop=0
+   SNAP seq=67910 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=288 naPop=0
+   SNAP seq=73494 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=313 naPop=0
+   SWEEP seq=45344 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=50734 tid=3959971 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=50735 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54953 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=63054 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68305 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0df0c9240 block=0x7fc0df0c8000 atom=292
+   SNAP seq=2033 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=648 naPop=0
+   SNAP seq=6312 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=854 naPop=0
+   SNAP seq=10545 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=15114 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=19906 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=24815 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=29829 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=34921 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=40131 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=45450 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=50871 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=56368 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=59466 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=65043 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=70382 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SWEEP seq=375 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4242 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8722 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc0803f4700 block=0x7fc0803f4000 atom=112
+   SNAP seq=42737 cycle=9 cellSize=48 marksStale=0 naStale=0 markedHere=0 naHere=0 blockMarkPop=17 naPop=25
+   SNAP seq=48091 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=196 naPop=0
+   SNAP seq=53563 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=273 naPop=0
+   SNAP seq=59122 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=62220 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=67865 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=73449 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SWEEP seq=40058 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43935 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48774 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=53887 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0df134aa0 block=0x7fc0df134000 atom=170
+   SNAP seq=2585 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=6936 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=11186 cycle=3 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=81 naPop=0
+   SNAP seq=15803 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=81 naPop=0
+   SNAP seq=20615 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=81 naPop=0
+   SNAP seq=25533 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=103 naPop=0
+   SNAP seq=30560 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=103 naPop=0
+   SNAP seq=35661 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=103 naPop=0
+   SNAP seq=40876 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=103 naPop=0
+   SNAP seq=46196 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=104 naPop=0
+   SNAP seq=51619 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=104 naPop=0
+   SNAP seq=57121 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=104 naPop=0
+   SNAP seq=60219 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=104 naPop=0
+   SNAP seq=65805 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=104 naPop=0
+   SNAP seq=71393 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=104 naPop=0
+   SWEEP seq=402 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4390 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8945 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13185 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=17972 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22863 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=27826 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32914 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=38098 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43396 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48802 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54293 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62986 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68661 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0dfe06700 block=0x7fc0dfe04000 atom=624
+   SNAP seq=2054 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=619 naPop=0
+   SNAP seq=6333 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=833 naPop=0
+   SNAP seq=10566 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=15135 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=19927 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=24836 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=29850 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=34942 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=40152 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=45471 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=50892 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=56389 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=59487 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=65064 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=70403 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SWEEP seq=1094 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4573 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8911 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc0df20a200 block=0x7fc0df208000 atom=544
+   SNAP seq=2618 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=6969 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=11217 cycle=3 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=15836 cycle=4 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=20648 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=25564 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=30593 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=35694 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=40909 cycle=9 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=46228 cycle=10 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=51651 cycle=11 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=58554 cycle=12 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=228 naPop=0
+   SNAP seq=61652 cycle=13 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=228 naPop=0
+   SNAP seq=67273 cycle=14 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=228 naPop=0
+   SNAP seq=72816 cycle=15 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=228 naPop=0
+   SWEEP seq=455 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4443 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9002 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13240 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18027 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22922 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=27884 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32967 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=38155 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43474 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48861 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54342 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54343 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0dfe06790 block=0x7fc0dfe04000 atom=633
+   SNAP seq=2054 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=619 naPop=0
+   SNAP seq=6333 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=833 naPop=0
+   SNAP seq=10566 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=15135 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=19927 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=24836 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=29850 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=34942 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=40152 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=45471 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=50892 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=56389 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=59487 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=65064 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=70403 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SWEEP seq=1094 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4573 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8911 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc082ca2dc0 block=0x7fc082ca0000 atom=732
+   SNAP seq=3477 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=7828 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=12041 cycle=3 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=16695 cycle=4 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=21507 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=26423 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=31452 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=36547 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=41768 cycle=9 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=47078 cycle=10 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=52500 cycle=11 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=58568 cycle=12 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=232 naPop=0
+   SNAP seq=61666 cycle=13 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=232 naPop=0
+   SNAP seq=67287 cycle=14 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=232 naPop=0
+   SNAP seq=72830 cycle=15 cellSize=64 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=232 naPop=0
+   SWEEP seq=1933 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=5868 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=10413 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=14576 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=19415 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=24323 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=29307 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=34414 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39598 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44925 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=50322 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=55780 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=55781 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082315360 block=0x7fc082314000 atom=310
+   SNAP seq=3159 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=7510 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=11734 cycle=3 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=16377 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=48 naPop=0
+   SNAP seq=21189 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=48 naPop=0
+   SNAP seq=26105 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=48 naPop=0
+   SNAP seq=31134 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=48 naPop=0
+   SNAP seq=36229 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=48 naPop=0
+   SNAP seq=41450 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SNAP seq=46760 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SNAP seq=52182 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SNAP seq=57688 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SNAP seq=60786 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SNAP seq=66374 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SNAP seq=71912 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=58 naPop=0
+   SWEEP seq=1386 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=5349 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9903 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=14077 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18907 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23806 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28794 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33901 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39077 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44425 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49811 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=55286 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=63986 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc083c05d40 block=0x7fc083c04000 atom=468
+   SNAP seq=15199 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=348 naPop=0
+   SNAP seq=19991 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=532 naPop=0
+   SNAP seq=24900 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=634 naPop=0
+   SNAP seq=29914 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=704 naPop=0
+   SNAP seq=35006 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=736 naPop=0
+   SNAP seq=40216 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=776 naPop=0
+   SNAP seq=45535 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=808 naPop=0
+   SNAP seq=50956 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=832 naPop=0
+   SNAP seq=56453 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=840 naPop=0
+   SNAP seq=59551 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=840 naPop=0
+   SNAP seq=65128 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=850 naPop=0
+   SNAP seq=70467 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=854 naPop=0
+   SWEEP seq=14010 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18371 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23137 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28004 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32882 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=37999 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43253 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48650 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54125 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62813 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68454 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=73983 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc0830f7c40 block=0x7fc0830f4000 atom=964
+   SNAP seq=7952 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=12162 cycle=3 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=16819 cycle=4 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=21631 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=26547 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=31576 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=36671 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=41892 cycle=9 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=47202 cycle=10 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=52624 cycle=11 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=58130 cycle=12 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=61228 cycle=13 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=67945 cycle=14 cellSize=48 marksStale=0 naStale=0 markedHere=1 naHere=1 blockMarkPop=182 naPop=316
+   SNAP seq=73529 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=182 naPop=0
+   SWEEP seq=6226 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=14770 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=19619 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=24528 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=29509 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=34610 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39795 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=45127 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=50510 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=56000 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=64673 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=64674 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc083c05d50 block=0x7fc083c04000 atom=469
+   SNAP seq=15199 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=348 naPop=0
+   SNAP seq=19991 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=532 naPop=0
+   SNAP seq=24900 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=634 naPop=0
+   SNAP seq=29914 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=704 naPop=0
+   SNAP seq=35006 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=736 naPop=0
+   SNAP seq=40216 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=776 naPop=0
+   SNAP seq=45535 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=808 naPop=0
+   SNAP seq=50956 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=832 naPop=0
+   SNAP seq=56453 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=840 naPop=0
+   SNAP seq=59551 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=840 naPop=0
+   SNAP seq=65128 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=850 naPop=0
+   SNAP seq=70467 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=854 naPop=0
+   SWEEP seq=14010 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18371 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23137 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28004 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32882 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=37999 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43253 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48650 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54125 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62813 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68454 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=73983 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc083fa0400 block=0x7fc083fa0000 atom=64
+   SNAP seq=21179 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=26095 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=31124 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=36219 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=41440 cycle=9 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=46750 cycle=10 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=53593 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=188 naPop=0
+   SNAP seq=59152 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=263 naPop=0
+   SNAP seq=62250 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=263 naPop=0
+   SNAP seq=67895 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=300 naPop=0
+   SNAP seq=73479 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=318 naPop=0
+   SWEEP seq=19840 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23787 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28778 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33877 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39065 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44397 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49774 tid=3959971 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49775 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54514 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62799 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68249 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0ded17da0 block=0x7fc0ded14000 atom=986
+   SNAP seq=2464 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=6815 cycle=2 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=11070 cycle=3 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=15682 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=20494 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=25413 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=30439 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=35540 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=40755 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=46077 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=51500 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=34 naPop=0
+   SNAP seq=57002 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=38 naPop=0
+   SNAP seq=60100 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=38 naPop=0
+   SNAP seq=65686 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=38 naPop=0
+   SNAP seq=71274 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=38 naPop=0
+   SWEEP seq=170 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4179 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8726 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=12990 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=17763 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22634 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=27597 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32695 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=37852 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43163 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48531 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54029 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62730 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68414 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=74321 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082a9a8d0 block=0x7fc082a98000 atom=653
+   SNAP seq=2073 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=578 naPop=0
+   SNAP seq=6352 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=803 naPop=0
+   SNAP seq=10585 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=894 naPop=0
+   SNAP seq=15154 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=19946 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=24855 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=29869 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=34961 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=40171 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=45490 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=50911 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=56408 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=59506 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=65083 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=70422 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SWEEP seq=1803 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4916 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9105 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=12999 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc080001750 block=0x7fc080000000 atom=373
+   SNAP seq=21742 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=26658 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=31687 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=37454 cycle=8 cellSize=48 marksStale=0 naStale=0 markedHere=1 naHere=1 blockMarkPop=81 naPop=119
+   SNAP seq=42712 cycle=9 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=220 naPop=0
+   SNAP seq=48066 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=286 naPop=0
+   SNAP seq=53538 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=310 naPop=0
+   SNAP seq=59097 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=310 naPop=0
+   SNAP seq=62195 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=310 naPop=0
+   SNAP seq=67840 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=310 naPop=0
+   SNAP seq=73424 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=310 naPop=0
+   SWEEP seq=19869 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=24709 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=29685 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=34782 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=34783 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=38582 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43291 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48381 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082a9a9a0 block=0x7fc082a98000 atom=666
+   SNAP seq=2073 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=578 naPop=0
+   SNAP seq=6352 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=803 naPop=0
+   SNAP seq=10585 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=894 naPop=0
+   SNAP seq=15154 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=19946 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=24855 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=29869 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=34961 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=40171 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=45490 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=50911 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=56408 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=59506 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=65083 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SNAP seq=70422 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=938 naPop=0
+   SWEEP seq=1803 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4916 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9105 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=12999 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc083fc4370 block=0x7fc083fc4000 atom=55
+   SNAP seq=20814 cycle=5 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=25730 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=32280 cycle=7 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=236 naPop=0
+   SNAP seq=37405 cycle=8 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=294 naPop=0
+   SNAP seq=42663 cycle=9 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SNAP seq=48017 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SNAP seq=53489 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SNAP seq=59048 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SNAP seq=62146 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SNAP seq=67791 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SNAP seq=73375 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=317 naPop=0
+   SWEEP seq=19849 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23193 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28159 tid=3959975 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28160 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=32639 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=37734 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0df5ab800 block=0x7fc0df5a8000 atom=896
+   SNAP seq=2746 cycle=1 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=7097 cycle=2 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=11340 cycle=3 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=15964 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=20776 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=25692 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=30721 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=35821 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=41037 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=46354 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=89 naPop=0
+   SNAP seq=51776 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=105 naPop=0
+   SNAP seq=57279 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=105 naPop=0
+   SNAP seq=60377 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=105 naPop=0
+   SNAP seq=65963 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=105 naPop=0
+   SNAP seq=71545 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=105 naPop=0
+   SWEEP seq=687 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4656 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9223 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13447 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18241 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23132 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28112 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33201 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=38382 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43713 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49098 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54591 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=63282 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68956 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0dfdb34d0 block=0x7fc0dfdb0000 atom=845
+   SNAP seq=2053 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=621 naPop=0
+   SNAP seq=6332 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=837 naPop=0
+   SNAP seq=10565 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=15134 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=19926 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=24835 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=29849 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=34941 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=40151 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=45470 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=50891 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=56388 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=59486 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=65063 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=70402 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SWEEP seq=1073 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4558 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8907 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc08032d8a0 block=0x7fc08032c000 atom=394
+   SNAP seq=36376 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=42725 cycle=9 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=194 naPop=0
+   SNAP seq=48079 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=276 naPop=0
+   SNAP seq=53551 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=59110 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=62208 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=67853 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=73437 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SWEEP seq=34881 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39319 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39320 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43611 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48600 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0dfdb34e0 block=0x7fc0dfdb0000 atom=846
+   SNAP seq=2053 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=621 naPop=0
+   SNAP seq=6332 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=837 naPop=0
+   SNAP seq=10565 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=15134 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=19926 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=24835 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=29849 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=34941 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=40151 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=45470 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=50891 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=56388 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=59486 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=65063 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SNAP seq=70402 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=911 naPop=0
+   SWEEP seq=1073 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4558 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=8907 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc08032d900 block=0x7fc08032c000 atom=400
+   SNAP seq=36376 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=42725 cycle=9 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=194 naPop=0
+   SNAP seq=48079 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=276 naPop=0
+   SNAP seq=53551 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=59110 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=62208 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=67853 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SNAP seq=73437 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=307 naPop=0
+   SWEEP seq=34881 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39319 tid=3959973 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39320 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43611 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=48600 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082ea7220 block=0x7fc082ea4000 atom=802
+   SNAP seq=7103 cycle=2 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=11345 cycle=3 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=15970 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=20782 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=25698 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=30727 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=35827 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=57 naPop=0
+   SNAP seq=41043 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=66 naPop=0
+   SNAP seq=46360 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=80 naPop=0
+   SNAP seq=51782 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=80 naPop=0
+   SNAP seq=57285 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=80 naPop=0
+   SNAP seq=60383 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=80 naPop=0
+   SNAP seq=65969 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=80 naPop=0
+   SNAP seq=71551 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=83 naPop=0
+   SWEEP seq=6064 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9236 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13455 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=18248 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=23149 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28119 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33216 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=38394 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=43720 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49109 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54598 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=63292 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68967 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082e91b90 block=0x7fc082e90000 atom=441
+   SNAP seq=6378 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=462 naPop=0
+   SNAP seq=10611 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=704 naPop=0
+   SNAP seq=15180 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=820 naPop=0
+   SNAP seq=19972 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=878 naPop=0
+   SNAP seq=24881 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=29895 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=34987 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=40197 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=45516 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=50937 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=56434 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=59532 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=65109 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=70448 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SWEEP seq=5944 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9732 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13407 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=17931 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22788 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc080879d20 block=0x7fc080878000 atom=466
+   SNAP seq=67948 cycle=14 cellSize=48 marksStale=0 naStale=0 markedHere=1 naHere=1 blockMarkPop=88 naPop=150
+   SNAP seq=73532 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=88 naPop=0
+   SWEEP seq=64916 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082e91ba0 block=0x7fc082e90000 atom=442
+   SNAP seq=6378 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=462 naPop=0
+   SNAP seq=10611 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=704 naPop=0
+   SNAP seq=15180 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=820 naPop=0
+   SNAP seq=19972 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=878 naPop=0
+   SNAP seq=24881 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=29895 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=34987 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=40197 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=45516 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=50937 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=56434 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=59532 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=65109 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SNAP seq=70448 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=920 naPop=0
+   SWEEP seq=5944 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9732 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=13407 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=17931 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=22788 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc080128280 block=0x7fc080128000 atom=40
+   SNAP seq=26055 cycle=6 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=31084 cycle=7 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=36179 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=41400 cycle=9 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=46710 cycle=10 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=53591 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=193 naPop=0
+   SNAP seq=59150 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=262 naPop=0
+   SNAP seq=62248 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=262 naPop=0
+   SNAP seq=67893 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=296 naPop=0
+   SNAP seq=73477 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=319 naPop=0
+   SWEEP seq=24784 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=28704 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=33811 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39000 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44335 tid=3959971 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49698 tid=3959974 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49699 tid=3959974 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54448 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62766 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68242 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082a81b00 block=0x7fc082a80000 atom=432
+   SNAP seq=3399 cycle=1 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=127 naPop=0
+   SNAP seq=7750 cycle=2 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=210 naPop=0
+   SNAP seq=11965 cycle=3 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=210 naPop=0
+   SNAP seq=16617 cycle=4 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=246 naPop=0
+   SNAP seq=21429 cycle=5 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=246 naPop=0
+   SNAP seq=26345 cycle=6 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=246 naPop=0
+   SNAP seq=31374 cycle=7 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=246 naPop=0
+   SNAP seq=36469 cycle=8 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=246 naPop=0
+   SNAP seq=41690 cycle=9 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=252 naPop=0
+   SNAP seq=47000 cycle=10 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=259 naPop=0
+   SNAP seq=52422 cycle=11 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=259 naPop=0
+   SNAP seq=57928 cycle=12 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=259 naPop=0
+   SNAP seq=61026 cycle=13 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=259 naPop=0
+   SNAP seq=66614 cycle=14 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=259 naPop=0
+   SNAP seq=72116 cycle=15 cellSize=32 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=259 naPop=0
+   SWEEP seq=1797 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=5744 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=10288 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=14452 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=19296 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=24197 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=29179 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=34292 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39472 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44804 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=50195 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=55672 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=64369 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc082887090 block=0x7fc082884000 atom=777
+   SNAP seq=2071 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=577 naPop=0
+   SNAP seq=6350 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=805 naPop=0
+   SNAP seq=10583 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=15152 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=19944 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=24853 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=29867 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=34959 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=40169 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=45488 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=50909 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=56406 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=59504 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=65081 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=70420 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SWEEP seq=1702 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4888 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9089 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc0808182e0 block=0x7fc080818000 atom=46
+   SNAP seq=59190 cycle=12 cellSize=48 marksStale=0 naStale=0 markedHere=1 naHere=1 blockMarkPop=6 naPop=10
+   SNAP seq=62288 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=6 naPop=0
+   SNAP seq=67933 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=184 naPop=0
+   SNAP seq=73517 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=265 naPop=0
+   SWEEP seq=56343 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=63777 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=68743 tid=3959974 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM cell addr=0x7fc0828870a0 block=0x7fc082884000 atom=778
+   SNAP seq=2071 cycle=1 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=577 naPop=0
+   SNAP seq=6350 cycle=2 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=805 naPop=0
+   SNAP seq=10583 cycle=3 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=15152 cycle=4 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=19944 cycle=5 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=24853 cycle=6 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=29867 cycle=7 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=34959 cycle=8 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=40169 cycle=9 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=45488 cycle=10 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=50909 cycle=11 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=56406 cycle=12 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=59504 cycle=13 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=65081 cycle=14 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SNAP seq=70420 cycle=15 cellSize=16 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=908 naPop=0
+   SWEEP seq=1702 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=4888 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=9089 tid=3959971 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+VICTIM butterfly-word addr=0x7fc080300670 block=0x7fc080300000 atom=103
+   SNAP seq=36542 cycle=8 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=41763 cycle=9 cellSize=32 marksStale=1 naStale=1 markedHere=0 naHere=0 blockMarkPop=0 naPop=0
+   SNAP seq=48107 cycle=10 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=189 naPop=0
+   SNAP seq=53579 cycle=11 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=261 naPop=0
+   SNAP seq=59138 cycle=12 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=295 naPop=0
+   SNAP seq=62236 cycle=13 cellSize=48 marksStale=0 naStale=1 markedHere=0 naHere=0 blockMarkPop=295 naPop=0
+   SNAP seq=67881 cycle=14 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=315 naPop=0
+   SNAP seq=73465 cycle=15 cellSize=48 marksStale=0 naStale=1 markedHere=1 naHere=0 blockMarkPop=315 naPop=0
+   SWEEP seq=34867 tid=3959973 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=39593 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44906 tid=3959975 toFL=0 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=44907 tid=3959975 toFL=1 empty=0(0=IsEmpty) marksMode=0(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=49240 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=54221 tid=3959973 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+   SWEEP seq=62625 tid=3959975 toFL=1 empty=1(0=IsEmpty) marksMode=1(0=NotStale?) naMode=1 ctx=other
+
+cycles=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] totalSnapBlocks=3560 totalSweepBlocks=3847

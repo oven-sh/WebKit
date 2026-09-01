@@ -47,6 +47,10 @@ inline HeapIterationScope::HeapIterationScope(JSC::Heap& heap)
     // but adding `ASSERT_WITH_MESSAGE(heap.vm().currentThreadIsHoldingAPILock(), "Trying to iterate the JS heap without the API lock");`
     // causes spurious crashes since the only thing technically needed is just heap.hasAccess() but that doesn't verify this thread is
     // the one with access only that *some* thread has access.
+    // SharedGC (T9): if the FIXME assert is ever added, it must NOT use the
+    // main-VM API-lock form above — once ISS the right predicate is
+    // "world stopped for all clients (conductor iteration, I5) or the calling
+    // thread holds ITS client's heap access" (§10A/currentThreadClient()).
     m_heap.willStartIterating();
 }
 

@@ -179,7 +179,17 @@ public:
     // restore the FP by following the call frame linked list numFramesToPop times,
     // and SP can be recovered by popping FP numFramesToPop-1 times and adding 16).
     void restoreInto(MacroAssembler&, char* savedRegisters, GPRReg result, unsigned numFramesToPop = 0) const;
-    
+
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): gilOff form. The savedRegisters buffer
+    // is per-thread (a per-lite baked-index scratch buffer), so its address
+    // cannot be baked into the shared exit stub; the caller materializes it
+    // into savedRegistersBaseGPR (loadVMLite -> segment -> [index], plus any
+    // static offset folded into savedRegistersOffset) and this emits the same
+    // restore sequence base-relative. Never clobbers savedRegistersBaseGPR
+    // (result must differ from it whenever this Location reads saved
+    // registers; callers use distinct registers unconditionally).
+    void restoreInto(MacroAssembler&, GPRReg savedRegistersBaseGPR, ptrdiff_t savedRegistersOffset, GPRReg result, unsigned numFramesToPop = 0) const;
+
 private:
     Kind m_kind;
     union {

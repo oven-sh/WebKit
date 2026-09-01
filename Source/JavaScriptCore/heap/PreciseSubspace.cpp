@@ -61,6 +61,12 @@ void PreciseSubspace::didBeginSweepingToFreeList(MarkedBlock::Handle*)
 
 void* PreciseSubspace::tryAllocate(size_t size)
 {
+    // SharedGC (§5.6/I16, T3b audit): mutator-path precise-registry mutation;
+    // one MSPL critical section when the server is shared. Our caller
+    // (allocate) runs collectIfNecessaryOrDefer before this (L2). No-op when
+    // !isSharedServer (I10).
+    MutatorSlowPathLocker mutatorSlowPathLocker(m_space.heap());
+
     PreciseAllocation* allocation = PreciseAllocation::tryCreate(m_space.heap(), size, this, 0);
     if (!allocation)
         return nullptr;

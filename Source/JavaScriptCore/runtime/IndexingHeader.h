@@ -26,6 +26,7 @@
 #pragma once
 
 #include "PropertyStorage.h"
+#include <wtf/Atomics.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -55,19 +56,36 @@ public:
         u.lengths.vectorLength = 0;
     }
     
-    uint32_t vectorLength() const { return u.lengths.vectorLength; }
-    
+    // TSAN-TRIAGE §3.15 (butterfly-words; SPEC-objectmodel C4): on shared
+    // butterflies these words are concurrently read by indexed fast paths and
+    // written by growers (Butterfly::bumpPublicLengthToAtLeast CAS,
+    // ensureLengthSlow's concurrent drivers). C4 makes every stale value
+    // legal — readers bound by min(publicLength, vectorLength) and
+    // re-dispatch — but the plain read/write side of that pairing is UB, so
+    // the runtime accessors are RELAXED atomics. Identical codegen to the
+    // plain MOV/LDR/STR on x86-64/arm64: flag-off (useJSThreads=false)
+    // semantics and codegen are unchanged, and JIT-emitted loads via
+    // offsetOfPublicLength()/offsetOfVectorLength() are untouched.
+    uint32_t vectorLength() const { return WTF::atomicLoad(const_cast<uint32_t*>(&u.lengths.vectorLength), std::memory_order_relaxed); }
+
     void setVectorLength(uint32_t length)
     {
         RELEASE_ASSERT(length <= maximumLength);
-        u.lengths.vectorLength = length;
+        WTF::atomicStore(&u.lengths.vectorLength, length, std::memory_order_relaxed);
     }
+
+    uint32_t publicLength() const { return WTF::atomicLoad(const_cast<uint32_t*>(&u.lengths.publicLength), std::memory_order_relaxed); }
+    void setPublicLength(uint32_t auxWord) { WTF::atomicStore(&u.lengths.publicLength, auxWord, std::memory_order_relaxed); }
     
-    uint32_t publicLength() const { return u.lengths.publicLength; }
-    void setPublicLength(uint32_t auxWord) { u.lengths.publicLength = auxWord; }
-    
-    ArrayBuffer* arrayBuffer() { return u.typedArray.buffer; }
-    void setArrayBuffer(ArrayBuffer* buffer) { u.typedArray.buffer = buffer; }
+    // r18 (post-closeout review): same discipline as the length words above
+    // — a stale wasteful-view probe (possiblySharedBufferImpl ->
+    // existingBufferInButterfly) can read this word on a butterfly whose
+    // MarkedBlock was re-handed-out (wave-7 dead-cell probe class; the
+    // probed buffer is revalidated by the OOB protocol). Relaxed atomics,
+    // identical codegen, flag-off unchanged; JIT loads via
+    // offsetOfArrayBuffer() untouched.
+    ArrayBuffer* arrayBuffer() { return WTF::atomicLoad(&u.typedArray.buffer, std::memory_order_relaxed); }
+    void setArrayBuffer(ArrayBuffer* buffer) { WTF::atomicStore(&u.typedArray.buffer, buffer, std::memory_order_relaxed); }
     
     static IndexingHeader* from(Butterfly* butterfly)
     {

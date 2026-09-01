@@ -47,8 +47,27 @@ private:
         : Base(vm, vm.getterSetterStructure.get())
     {
         WTF::storeStoreFence();
-        m_getter.set(vm, this, getter ? getter : globalObject->nullGetterFunction());
-        m_setter.set(vm, this, setter ? setter : globalObject->nullSetterFunction());
+        // TSAN wave 5 (triage family 10 jsvalue-slots, r4 key 'GetterSetter
+        // ctor x isGetter/SetterNull'): these slot inits must be relaxed
+        // atomic stores, not set()'s setEarlyValue (a plain
+        // RawPtrTraits::exchange). A GIL-off reader holding a stale ref to a
+        // recycled cell — or racing the publication of a fresh one via an
+        // unlocked sparse-map entry (SparseArrayEntry::get -> isGetterNull,
+        // the atomicsStoreOnPropertyGilOff cluster) — loads these words
+        // through the typed barrier's relaxed-atomic cell() accessor; a plain
+        // store on the same word is UB against those loads (OM §1 ground
+        // truth: JS cell slots are intentionally racy).
+        // setWithoutWriteBarrier routes through the relaxed storeCell; the
+        // explicit validateCell + vm.writeBarrier calls preserve set()'s
+        // debug checks and GC semantics. Codegen-identical flag-off.
+        JSObject* effectiveGetter = getter ? getter : globalObject->nullGetterFunction();
+        JSObject* effectiveSetter = setter ? setter : globalObject->nullSetterFunction();
+        validateCell(effectiveGetter);
+        validateCell(effectiveSetter);
+        m_getter.setWithoutWriteBarrier(effectiveGetter);
+        m_setter.setWithoutWriteBarrier(effectiveSetter);
+        vm.writeBarrier(this, effectiveGetter);
+        vm.writeBarrier(this, effectiveSetter);
     }
 
 public:

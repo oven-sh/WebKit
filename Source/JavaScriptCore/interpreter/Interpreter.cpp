@@ -396,13 +396,37 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void setupVarargsFrame(JSGlobalObject* globalObject, CallFrame* callFrame, CallFrame* newCallFrame, JSValue arguments, uint32_t offset, uint32_t length)
 {
-    VirtualRegister calleeFrameOffset(newCallFrame - callFrame);
-    
-    loadVarargs(
-        globalObject,
-        std::bit_cast<JSValue*>(&callFrame->r(calleeFrameOffset + CallFrame::argumentOffset(0))),
-        arguments, offset, length);
-    
+    // The destination is pure frame arithmetic: the callee frame's argument
+    // area. Do NOT route it through VirtualRegister + CallFrame::r(): that
+    // truncates (newCallFrame - callFrame) to int32, and CallFrame::r()
+    // decodes offsets >= FirstConstantRegisterIndex as CONSTANT operands —
+    // resolving the destination into the caller CodeBlock's constant pool
+    // (in-bounds index: loadVarargs silently overwrites shared constants;
+    // out-of-bounds: Vector CrashOnOverflow abort). Unreachable for any
+    // legitimate same-stack frame pair (calleeFrameForVarargs subtracts at
+    // most numUsedStackSlots + maxArguments + header registers << 2^30), but
+    // a frame pairing poisoned by cross-thread Group-2/3 scratch corruption
+    // (UNGIL §A.1.3 U-T1 pairing invariant; SPEC-vmstate §6.3 L1) took
+    // exactly this path (W>=16 signature A3). Direct arithmetic is
+    // bit-identical for all valid inputs and removes the truncation +
+    // constant-pool write hazard entirely.
+    //
+    // RELEASE_ASSERT, not ASSERT: the old constant-pool decode was an
+    // accidental but real Release-build tripwire for corrupted frame
+    // pairings (Vector CrashOnOverflow); removing the decode must not
+    // silently downgrade that fail-stop. Every legitimate caller (LLInt
+    // varargsSetup via calleeFrameForVarargs, JIT operationSetupVarargsFrame)
+    // builds the callee frame strictly below the caller frame, so this
+    // pointer compare never fires for valid pairs, has no int32-truncation
+    // blind spot (unlike a VirtualRegister isConstant() check), and is on a
+    // slow path. A corrupted pairing fail-stops here instead of issuing
+    // silent wild writes.
+    RELEASE_ASSERT(newCallFrame < callFrame);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    JSValue* firstElementDest = std::bit_cast<JSValue*>(newCallFrame->registers() + CallFrame::argumentOffset(0));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    loadVarargs(globalObject, firstElementDest, arguments, offset, length);
+
     newCallFrame->setArgumentCountIncludingThis(length + 1);
 }
 
@@ -581,7 +605,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 {
     AssertNoGC assertNoGC;
     VM& vm = this->vm();
-    CallFrame* callFrame = vm.topCallFrame;
+    CallFrame* callFrame = vm.group3Primitives().topCallFrame; // UNGIL §A.1.3 mode split.
     if (!callFrame || !maxStackSize)
         return;
 
@@ -776,7 +800,16 @@ CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
     if (m_valid) {
         m_type = handler->type();
 #if ENABLE(JIT)
-        m_nativeCode = handler->nativeCode;
+        // GIL-off (TSAN residual 2, CatchInfo vs setupWithUnlinkedBaselineCode):
+        // a sibling Thread's baseline finalization retargets
+        // handler.nativeCode (relaxed atomic store, CodeBlock.cpp) while this
+        // Thread unwinds through an LLInt frame of the same CodeBlock. Both
+        // the old (LLInt) and new (baseline) entries are valid catch targets
+        // — upstream already retargets handlers under live LLInt frames on
+        // tier-up — and m_jitData is fence-published before the retarget
+        // (AB18-B), so a relaxed atomic word load is sufficient.
+        static_assert(sizeof(handler->nativeCode) == sizeof(uintptr_t));
+        m_nativeCode = std::bit_cast<CodeLocationLabel<ExceptionHandlerPtrTag>>(WTF::atomicLoad(const_cast<uintptr_t*>(std::bit_cast<const uintptr_t*>(&handler->nativeCode)), std::memory_order_relaxed));
 #endif
 
         // handler->target is meaningless for getting a code offset when catching
@@ -932,7 +965,7 @@ private:
 // Replace an exception which passes across a marshalling boundary with a TypeError for its handler's global object.
 static void sanitizeRemoteFunctionException(VM& vm, JSRemoteFunction* remoteFunction, Exception* exception)
 {
-    ASSERT(vm.traps().isDeferringTermination());
+    ASSERT(vm.trapsForCurrentThread().isDeferringTermination()); // Per-thread deferral keying (DeferTermination.h).
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(exception);
     ASSERT(!vm.isTerminationException(exception));
@@ -984,7 +1017,7 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
         deferScope.emplace(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    ASSERT(reinterpret_cast<void*>(callFrame) != vm.topEntryFrame);
+    ASSERT(reinterpret_cast<void*>(callFrame) != vm.group3Primitives().topEntryFrame); // UNGIL §A.1.3 mode split.
     CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
 
     JSValue exceptionValue = exception->value();
@@ -1033,8 +1066,9 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
         ASSERT(!handler || handler->isCatchHandler());
         bool hasCatchHandler = !!handler;
         if (!hasCatchHandler) {
-            if (vm.topEntryFrame) {
-                auto* entryRecord = vmEntryRecord(vm.topEntryFrame);
+            EntryFrame* topEntryFrame = vm.group3Primitives().topEntryFrame; // UNGIL §A.1.3 mode split.
+            if (topEntryFrame) {
+                auto* entryRecord = vmEntryRecord(topEntryFrame);
                 if (entryRecord->m_context)
                     hasCatchHandler = true;
             }
@@ -1079,7 +1113,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError(globalObject, throwScope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]]
+    if (vm.disallowVMEntryCountSlot()) [[unlikely]]
         return VM::checkVMEntryPermission();
 
     // First check if the "program" is actually just a JSON object. If so,
@@ -1256,14 +1290,20 @@ failedJSONP:
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = program->generatedJITCode();
+            // ANNEX CBI item 3 (AB17c F4): gilOff, derive through the
+            // CodeBlock snapshot (matched pair; mirror may be transiently
+            // null during a live installCode).
+            if (vm.gilOff()) [[unlikely]]
+                jitCode = *codeBlock->jitCode();
+            else
+                jitCode = program->generatedJITCode();
             protoCallFrame.init(codeBlock, globalObject, globalCallee, thisObj, nullptr, 1);
         }
     }
 
     // Execute the code:
     throwScope.release();
-    ASSERT(jitCode == program->generatedJITCode().ptr());
+    ASSERT(vm.gilOff() || jitCode == program->generatedJITCode().ptr());
     return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
 }
 
@@ -1327,7 +1367,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]]
         return throwStackOverflowError(globalObject, scope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]]
+    if (vm.disallowVMEntryCountSlot()) [[unlikely]]
         return VM::checkVMEntryPermission();
 
     RefPtr<JSC::JITCode> jitCode;
@@ -1346,8 +1386,13 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            if (isJSCall)
-                jitCode = functionExecutable->generatedJITCodeForCall();
+            if (isJSCall) {
+                // ANNEX CBI item 3 (AB17c F4): see the program-code arm.
+                if (vm.gilOff()) [[unlikely]]
+                    jitCode = *newCodeBlock->jitCode();
+                else
+                    jitCode = functionExecutable->generatedJITCodeForCall();
+            }
             protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, context, argsCount, args.data());
         }
     }
@@ -1355,7 +1400,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     // Execute the code:
     scope.release();
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
+        ASSERT(vm.gilOff() || jitCode == functionExecutable->generatedJITCodeForCall().ptr());
         return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
     }
 
@@ -1421,7 +1466,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
         return nullptr;
     }
 
-    if (vm.disallowVMEntryCount) [[unlikely]] {
+    if (vm.disallowVMEntryCountSlot()) [[unlikely]] {
         VM::checkVMEntryPermission();
         return globalObject->globalThis();
     }
@@ -1442,8 +1487,13 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            if (isJSConstruct)
-                jitCode = constructData.js.functionExecutable->generatedJITCodeForConstruct();
+            if (isJSConstruct) {
+                // ANNEX CBI item 3 (AB17c F4): see the program-code arm.
+                if (vm.gilOff()) [[unlikely]]
+                    jitCode = *newCodeBlock->jitCode();
+                else
+                    jitCode = constructData.js.functionExecutable->generatedJITCodeForConstruct();
+            }
             protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, nullptr, argsCount, args.data());
         }
     }
@@ -1451,7 +1501,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     EncodedJSValue result;
     // Execute the code.
     if (isJSConstruct) {
-        ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
+        ASSERT(vm.gilOff() || jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
         result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame);
     } else
         result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
@@ -1476,7 +1526,7 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
     ASSERT(newCodeBlock);
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
-    cachedCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
+    WTF::atomicStore(&cachedCall.m_addressForCall, newCodeBlock->jitCode()->addressForCall(), std::memory_order_release); // THREADS: see CachedCall::unlinkOrUpgradeImpl.
     newCodeBlock->linkIncomingCall(nullptr, &cachedCall);
     return newCodeBlock;
 }
@@ -1494,7 +1544,12 @@ CodeBlock* Interpreter::prepareForMicrotaskCall(MicrotaskCall& microtaskCall, JS
     ASSERT(newCodeBlock);
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
-    microtaskCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
+    // THREADS: write codeBlock/numParameters BEFORE the release publish of the
+    // entry address (same order as MicrotaskCall::unlinkOrUpgradeImpl), so a
+    // cross-thread reader that acquires the entry sees a matching codeBlock.
+    WTF::atomicStore(&microtaskCall.m_codeBlock, newCodeBlock, std::memory_order_relaxed);
+    WTF::atomicStore(&microtaskCall.m_numParameters, newCodeBlock->numParameters(), std::memory_order_relaxed);
+    WTF::atomicStore(&microtaskCall.m_addressForCall, newCodeBlock->jitCode()->addressForCall(), std::memory_order_release);
     newCodeBlock->linkIncomingCall(nullptr, &microtaskCall);
     return newCodeBlock;
 }
@@ -1688,14 +1743,18 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = eval->generatedJITCode();
+            // ANNEX CBI item 3 (AB17c F4): see the program-code arm.
+            if (vm.gilOff()) [[unlikely]]
+                jitCode = *codeBlock->jitCode();
+            else
+                jitCode = eval->generatedJITCode();
             protoCallFrame.init(codeBlock, globalObject, callee, thisValue, nullptr, 1);
         }
     }
 
     // Execute the code:
     throwScope.release();
-    ASSERT(jitCode == eval->generatedJITCode().ptr());
+    ASSERT(vm.gilOff() || jitCode == eval->generatedJITCode().ptr());
     // eval code only uses scope at the beginning (op_enter).
     // We can replace the current scope for the subsequent run.
     callee->setScope(vm, scope);
@@ -1726,7 +1785,7 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError(globalObject, throwScope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]]
+    if (vm.disallowVMEntryCountSlot()) [[unlikely]]
         return VM::checkVMEntryPermission();
 
     if (scope->structure()->isUncacheableDictionary())
@@ -1759,7 +1818,11 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = executable->generatedJITCode();
+            // ANNEX CBI item 3 (AB17c F4): see the program-code arm.
+            if (vm.gilOff()) [[unlikely]]
+                jitCode = *codeBlock->jitCode();
+            else
+                jitCode = executable->generatedJITCode();
 
             // The |this| of the module is always `undefined`.
             // http://www.ecma-international.org/ecma-262/6.0/#sec-module-environment-records-hasthisbinding
@@ -1772,7 +1835,7 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
 
     // Execute the code:
     throwScope.release();
-    ASSERT(jitCode == executable->generatedJITCode().ptr());
+    ASSERT(vm.gilOff() || jitCode == executable->generatedJITCode().ptr());
     return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
 }
 

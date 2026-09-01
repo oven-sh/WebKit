@@ -1,0 +1,1 @@
+{"impl":"js","threads":16,"phaseA_ms":24578.26,"phaseB_ms":12098.72,"phaseC_ms":640.2,"total_ms":47284.84,"checksumA":"7e3aab7f9dd9dc57","postings":4158957,"checksumA2":"041784a9fac4e41e","checksumB":"c4bdd580f85ee058","checksumC":"c4846e6c731aaf5d","docsIngested":30800,"tokensProcessed":4579072,"writesDone":2800}

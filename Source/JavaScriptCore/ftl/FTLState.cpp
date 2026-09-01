@@ -174,6 +174,11 @@ PropertyInlineCache* State::addPropertyInlineCache()
     ASSERT(!graph.m_plan.isUnlinked());
     if (Options::useHandlerICInFTL())
         return jitCode->common.m_handlerPropertyInlineCaches.add();
+    // SPEC-jit §5.2 acceptance / I3: with shared-memory threads enabled, the FTL
+    // must never allocate a RepatchingPropertyInlineCache (M2b forces
+    // useHandlerICInFTL on under useJSThreads; the Repatching constructor
+    // RELEASE_ASSERTs as well, this just fails closer to the decision point).
+    RELEASE_ASSERT(!Options::useJSThreads());
     return jitCode->common.m_repatchingPropertyInlineCaches.add();
 }
 

@@ -91,8 +91,17 @@ public:
         IndexingType indexingType = array->indexingType() & IndexingShapeMask;
         unsigned length = array->length();
 
+        // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — the
+        // copy-on-write reuse and the Contiguous/Int32/Double fast loops below
+        // deref array->butterfly() through the flat-only accessor (§9.5
+        // CONTRACT). When the array may be in the segmented regime, skip them
+        // and take the generic getDirectIndex() loop, which routes through the
+        // regime-dispatching read paths (tryGetIndexQuicklyConcurrent /
+        // getOwnPropertySlotByIndex). Constant false flag-off (I22).
+        bool maySegment = array->mayBeSegmentedButterfly();
+
         // FIXME: JSCellButterfly::createFromArray should support re-using non contiguous indexing types as well.
-        if (isCopyOnWrite(indexingType)) {
+        if (!maySegment && isCopyOnWrite(indexingType)) {
             if (hasContiguous(indexingType))
                 return JSCellButterfly::fromButterfly(array->butterfly());
         }
@@ -106,7 +115,7 @@ public:
         if (!length)
             return result;
 
-        if (indexingType == ContiguousShape || indexingType == Int32Shape) {
+        if (!maySegment && (indexingType == ContiguousShape || indexingType == Int32Shape)) {
             for (unsigned i = 0; i < length; i++) {
                 JSValue value = array->butterfly()->contiguous().at(array, i).get();
                 value = !!value ? value : jsUndefined();
@@ -115,7 +124,7 @@ public:
             return result;
         }
 
-        if (indexingType == DoubleShape) {
+        if (!maySegment && indexingType == DoubleShape) {
             ASSERT(Options::allowDoubleShape());
             for (unsigned i = 0; i < length; i++) {
                 double d = array->butterfly()->contiguousDouble().at(array, i);

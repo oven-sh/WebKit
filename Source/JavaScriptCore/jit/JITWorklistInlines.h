@@ -43,6 +43,18 @@ void JITWorklist::iterateCodeBlocksForGC(Visitor& visitor, VM& vm, NOESCAPE cons
             continue;
         entry.value->iterateCodeBlocksForGC(visitor, func);
     }
+    // UNGIL AB18-R1-B: plans claimed for finalize left m_plans, but their
+    // CodeBlocks are still dereferenced by the finalizing mutator after its
+    // in-finalize park points (GIL-off: the GILOffCompilationLocker contended
+    // spin and the reallyAdd Class-A fire window both release heap access),
+    // during which a sibling-conducted shared GC can run. Walk them
+    // UNCONDITIONALLY (no isKnownToBeLiveDuringGC gate): the claim itself is
+    // the root. GIL-on / flag-off the table is invariantly empty.
+    for (auto& entry : m_finalizingPlans) {
+        if (entry.value->vm() != &vm)
+            continue;
+        entry.value->iterateCodeBlocksForFinalizeRoots(func);
+    }
 }
 
 #endif // ENABLE(JIT)

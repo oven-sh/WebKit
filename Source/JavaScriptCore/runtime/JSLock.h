@@ -52,8 +52,13 @@ namespace JSC {
 
 class CallFrame;
 class VM;
+class VMLite;
 class JSGlobalObject;
 class JSLock;
+
+namespace GCClient {
+class Heap;
+}
 
 // FIXME: We should either have a specialization of WTF::Locker for JSLock or only allow using JSLockHolder.
 // It's weird that WTF::Locker<JSLock> doesn't ref() the VM for the lifetime of the lock and it's unclear
@@ -89,7 +94,7 @@ public:
     std::optional<RefPtr<Thread>> ownerThread() const
     {
         if (m_hasOwnerThread.load(std::memory_order_acquire))
-            return m_ownerThread;
+            return RefPtr<Thread> { m_ownerThreadPtr.load(std::memory_order_relaxed) };
         return std::nullopt;
     }
 
@@ -100,12 +105,32 @@ public:
     {
         if (!m_hasOwnerThread.load(std::memory_order_acquire))
             return std::nullopt;
-        return m_ownerThread->uid();
+        if (Thread* thread = m_ownerThreadPtr.load(std::memory_order_relaxed))
+            return thread->uid();
+        return std::nullopt;
     }
 
-    bool currentThreadIsHoldingLock() { return m_hasOwnerThread.load(std::memory_order_acquire) && m_ownerThread.get() == &Thread::currentSingleton(); }
+    bool currentThreadIsHoldingLock() { return m_hasOwnerThread.load(std::memory_order_acquire) && m_ownerThreadPtr.load(std::memory_order_relaxed) == &Thread::currentSingleton(); }
 
     void NODELETE willDestroyVM(VM*);
+
+    // SPEC-vmstate §6.4.4: called at the TOP of ~VM (M6), while this thread
+    // still holds the API lock and before lastChanceToFinalize, so no
+    // thread's TLS dangles across teardown (I20). If this hold installed the
+    // main carrier, restore the entry value and clear the bookkeeping.
+    void uninstallVMLiteForVMDestruction();
+
+    // Shared-memory Thread API (docs/threads/SPEC-api.md 5.2 /
+    // INTEGRATE-api.md 9.2-9): fully releases the lock for a thread that is
+    // about to PARK, without running willReleaseLock()'s microtask drain
+    // (which would execute user JS inside the parking host call). The
+    // m_lockDropDepth bump is bumped AND restored while m_lock is still
+    // held, so it never escapes into the DropAllLocks strict-LIFO unwind
+    // protocol — N threads can park and wake in any order (the
+    // GILDroppedSection livelock fix is preserved). Returns the number of
+    // lock counts released; the caller reacquires with that many lock()
+    // calls. Sole caller: GILDroppedSection (runtime/LockObject.cpp).
+    JS_EXPORT_PRIVATE unsigned unlockAllForThreadParking();
 
     class DropAllLocks {
         WTF_MAKE_NONCOPYABLE(DropAllLocks);
@@ -154,12 +179,33 @@ private:
     // See https://bugs.webkit.org/show_bug.cgi?id=169042#c6
     std::atomic<bool> m_hasOwnerThread { false };
     bool m_shouldReleaseHeapAccess;
+    // m_ownerThread is the ref-holder only: it is written exclusively by the
+    // thread that just acquired m_lock (depth-0 in JSLock::lock) and is never
+    // read across threads. All cross-thread identity reads go through
+    // m_ownerThreadPtr, an atomic mirror of the pointer word, because
+    // contending threads in lock() call currentThreadIsHoldingLock() while a
+    // new owner is storing the RefPtr (TSAN data race on the plain pointer
+    // word under GILDroppedSection re-lock churn). The mirror is stored
+    // before the m_hasOwnerThread release-store, so any acquire-load of the
+    // flag that observes true also observes the matching owner pointer;
+    // relaxed loads of the mirror are therefore sufficient.
     RefPtr<Thread> m_ownerThread;
+    std::atomic<Thread*> m_ownerThreadPtr { nullptr };
     intptr_t m_lockCount;
     unsigned m_lockDropDepth;
     uint32_t m_lastOwnerThread { 0 };
     VM* m_vm;
-    AtomStringTable* m_entryAtomStringTable; 
+    AtomStringTable* m_entryAtomStringTable;
+    VMLite* m_entryVMLite { nullptr };
+    bool m_didInstallVMLite { false };
+    // UNGIL §A.3.6 (ANNEXES A36 + A36C; U-T1, dark): GIL-off the swapped TLS
+    // state is the TUPLE {lite, TID-tag, heap §10A.1 currentThreadClient
+    // slot}. The lite/tag halves ride m_entryVMLite + VMLite::setCurrent's
+    // tag hook; this is the saved client-slot half, restored LIFO at the
+    // depth-0 unlock. m_didInstallCarrierVMLite keys the GIL-off carrier
+    // path, disjoint from the GIL-on m_didInstallVMLite main-carrier path.
+    GCClient::Heap* m_entryThreadClient { nullptr };
+    bool m_didInstallCarrierVMLite { false };
 };
 
 } // namespace

@@ -42,6 +42,13 @@ ALWAYS_INLINE void* IsoSubspace::allocate(VM& vm, size_t cellSize, GCDeferralCon
     return m_localAllocator.allocate(vm.heap, cellSize, deferralContext, failureMode);
 }
 
+ALWAYS_INLINE void* IsoSubspace::allocateForClient(GCClient::Heap& client, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
+{
+    // SharedGC (§12.1 seam; T4): no VM-coupled preludes; the LocalAllocator
+    // is this client's own (iso allocation is per-client already).
+    return m_localAllocator.allocate(client.server(), cellSize, deferralContext, failureMode);
+}
+
 } // namespace GCClient
 
 inline void IsoSubspace::clearIsoCellSetBit(PreciseAllocation* preciseAllocation)

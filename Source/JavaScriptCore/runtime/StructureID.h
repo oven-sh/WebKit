@@ -28,6 +28,7 @@
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include <compare>
+#include <wtf/Compiler.h>
 #include <wtf/HashTraits.h>
 
 namespace JSC {
@@ -60,6 +61,36 @@ public:
 
     constexpr StructureID(WTF::HashTableDeletedValueType) : m_bits(nukedStructureIDBit) { }
     bool isHashTableDeletedValue() const { return *this == StructureID(WTF::HashTableDeletedValue); }
+
+    // V7 (TSAN, cell-header family): StructureID slots that are published to
+    // concurrent readers (WriteBarrierStructureID::m_structureID, Structure
+    // transition links) are read with relaxed atomic loads (see the
+    // WTF::atomicLoad + bit_cast pattern in StructureRareData.h /
+    // StructureChain.cpp). Writers to such slots must pair with these relaxed
+    // stores. These are TSAN-BUILD-ONLY atomics: non-TSAN builds compile to
+    // the identical plain 32-bit load/store, so flag-off codegen is unchanged
+    // and StructureID stays trivially copyable (std::bit_cast<StructureID>
+    // users depend on that — which is also why operator= itself cannot be
+    // made atomic).
+    static ALWAYS_INLINE StructureID relaxedLoad(const StructureID* location)
+    {
+#if TSAN_ENABLED
+        uint32_t bits;
+        __atomic_load(const_cast<uint32_t*>(&location->m_bits), &bits, __ATOMIC_RELAXED);
+        return StructureID(bits);
+#else
+        return *location;
+#endif
+    }
+
+    static ALWAYS_INLINE void relaxedStore(StructureID* location, StructureID value)
+    {
+#if TSAN_ENABLED
+        __atomic_store(&location->m_bits, &value.m_bits, __ATOMIC_RELAXED);
+#else
+        *location = value;
+#endif
+    }
 
 private:
     explicit constexpr StructureID(uint32_t bits) : m_bits(bits) { }

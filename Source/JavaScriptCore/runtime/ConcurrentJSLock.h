@@ -53,6 +53,7 @@ public:
     {
     }
 
+
     ~ConcurrentJSLockerBase()
     {
     }
@@ -80,6 +81,7 @@ public:
         , m_deferGC(vm)
     {
     }
+
 
     ~GCSafeConcurrentJSLocker()
     {

@@ -31,6 +31,8 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/LocalAllocator.h>
 #include <JavaScriptCore/MarkedBlock.h>
+#include <limits>
+#include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 #include <wtf/DebugHeap.h>
 #include <wtf/Lock.h>
@@ -58,7 +60,7 @@ class BlockDirectory {
     friend class LLIntOffsetsExtractor;
 
 public:
-    BlockDirectory(size_t cellSize);
+    BlockDirectory(Heap&, size_t cellSize);
     ~BlockDirectory();
     void NODELETE setSubspace(Subspace*);
     void lastChanceToFinalize();
@@ -106,6 +108,19 @@ public:
 
     Lock& bitvectorLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
 
+    // T7-mspl-per-directory: per-directory MSPL stripe (rank 7a). Held by
+    // MutatorSlowPathLocker(heap, directory) together with the shared side of
+    // Heap::MutatorSlowPathLockFacade. Serializes the SAME-directory refill
+    // path (own-directory cursor search, in-lock block sweep,
+    // tryAllocateBlock + addBlock — including the I5b m_bits resize) across N
+    // clients' LocalAllocators on this directory, while letting refills of
+    // OTHER directories proceed in parallel. The exclusive (server-wide)
+    // facade side excludes ALL stripes, so cross-directory operations
+    // (steal's foreign-directory sweep/removeBlock, IncrementalSweeper,
+    // sweepSynchronously) still see the single-lock semantics they were
+    // written against. Flag-off / !isSharedServer(): never taken.
+    Lock& refillLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_refillLock) { return m_refillLock; }
+
 #define BLOCK_DIRECTORY_BIT_ACCESSORS(lowerBitName, capitalBitName)     \
     bool is ## capitalBitName(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.is ## capitalBitName(index); } \
     bool is ## capitalBitName(MarkedBlock::Handle* block) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return is ## capitalBitName(block->index()); } \
@@ -136,16 +151,44 @@ public:
 #undef BLOCK_DIRECTORY_BIT_CALLBACK
     }
     
-    BlockDirectory* nextDirectory() const { return m_nextDirectory; }
-    BlockDirectory* nextDirectoryInSubspace() const { return m_nextDirectoryInSubspace; }
-    BlockDirectory* nextDirectoryInAlignedMemoryAllocator() const { return m_nextDirectoryInAlignedMemoryAllocator; }
-    
-    void setNextDirectory(BlockDirectory* directory) { m_nextDirectory = directory; }
-    void setNextDirectoryInSubspace(BlockDirectory* directory) { m_nextDirectoryInSubspace = directory; }
-    void setNextDirectoryInAlignedMemoryAllocator(BlockDirectory* directory) { m_nextDirectoryInAlignedMemoryAllocator = directory; }
+    // GIL-off (TSAN family gc-marking-residual): the m_nextDirectory list is
+    // traversed concurrently by the marker/sweeper while a mutator appends a
+    // newly created directory. The writer publishes the fully constructed
+    // directory with a storeStoreFence before linking (MarkedSpace.cpp
+    // addBlockDirectory), so relaxed atomics on the link word itself are
+    // sufficient; they only make the previously-plain pointer accesses
+    // well-defined C++. Codegen is identical to the plain accesses.
+    // TSAN r11 (reports 3-8, ctor-vs-findEmptyBlockToSteal): TSAN cannot see
+    // the storeStoreFence, so without an ordered link edge every constructor
+    // write of a freshly appended directory pairs against a sibling Thread's
+    // steal-walk reads. Under TSAN only, the link stores are release and the
+    // link loads acquire (all traversals are slow paths); production keeps
+    // the relaxed accesses (the fence is the real publication edge). Same
+    // gate shape as JSString::fiberConcurrently (TSAN-TRIAGE §13.4).
+#if TSAN_ENABLED
+    static constexpr std::memory_order linkLoadOrder = std::memory_order_acquire;
+    static constexpr std::memory_order linkStoreOrder = std::memory_order_release;
+#else
+    static constexpr std::memory_order linkLoadOrder = std::memory_order_relaxed;
+    static constexpr std::memory_order linkStoreOrder = std::memory_order_relaxed;
+#endif
+    BlockDirectory* nextDirectory() const { return WTF::atomicLoad(const_cast<BlockDirectory**>(&m_nextDirectory), linkLoadOrder); }
+    BlockDirectory* nextDirectoryInSubspace() const { return WTF::atomicLoad(const_cast<BlockDirectory**>(&m_nextDirectoryInSubspace), linkLoadOrder); }
+    BlockDirectory* nextDirectoryInAlignedMemoryAllocator() const { return WTF::atomicLoad(const_cast<BlockDirectory**>(&m_nextDirectoryInAlignedMemoryAllocator), linkLoadOrder); }
+
+    void setNextDirectory(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectory, directory, linkStoreOrder); }
+    void setNextDirectoryInSubspace(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectoryInSubspace, directory, linkStoreOrder); }
+    void setNextDirectoryInAlignedMemoryAllocator(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectoryInAlignedMemoryAllocator, directory, linkStoreOrder); }
     
     MarkedBlock::Handle* findEmptyBlockToSteal();
-    
+    // B2-serial-eden-block-churn (b): own-directory empty-block reuse for the
+    // T7-mspl-per-directory stripe leg. Same emptyBits & ~inUseBits scan as
+    // findEmptyBlockToSteal, but additionally clears canAllocate/empty so the
+    // returned block's bit state matches a findBlockForAllocation result (no
+    // double-pick once didConsumeFreeList drops inUse). isSharedServer()-only
+    // caller (LocalAllocator::allocateSlowCase stripe leg).
+    MarkedBlock::Handle* findOwnEmptyBlockForRefill();
+
     inline MarkedBlock::Handle* findBlockToSweep();
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
 
@@ -157,7 +200,29 @@ public:
 
     Subspace* subspace() const { return m_subspace; }
     MarkedSpace& NODELETE markedSpace() const;
-    
+
+    Heap& heap() const { return m_heap; }
+
+    // SharedGC (SPEC-heap.md §5.3; THREADS T4): slot index of this directory
+    // in every client's GCThreadLocalCache flat table — the owning
+    // CompleteSubspace's tlcIndexBase() plus the canonical size-class index.
+    // invalidTlcIndex for iso directories (those are lookup-only via the
+    // TLC's per-directory map). Assigned once, under
+    // MarkedSpace::m_directoryLock, at directory creation.
+    static constexpr unsigned invalidTlcIndex = std::numeric_limits<unsigned>::max();
+    unsigned tlcIndex() const { return m_tlcIndex; }
+    void setTlcIndex(unsigned index)
+    {
+        ASSERT(m_tlcIndex == invalidTlcIndex);
+        ASSERT(index != invalidTlcIndex);
+        m_tlcIndex = index;
+    }
+
+    // SharedGC (§5.3 teardown/I9; THREADS T4): unlink one client's
+    // LocalAllocator under m_localAllocatorsLock (rank 8); the caller holds
+    // MSPL (rank 7) when the server is shared. No-op if already unlinked.
+    void detachLocalAllocator(LocalAllocator&);
+
     void dump(PrintStream&) const;
     void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
 
@@ -168,8 +233,12 @@ private:
     friend class MarkedBlock;
     
     MarkedBlock::Handle* findBlockForAllocation(LocalAllocator&);
-    
-    MarkedBlock::Handle* tryAllocateBlock(Heap&);
+
+    // SharedGC (§5.2(3)): the AbstractLocker& is the caller's
+    // MutatorSlowPathLocker token — when the heap is a shared server, the
+    // server's MSPL must be held across tryAllocateBlock/addBlock
+    // (debug-asserted inside; a no-op locker is fine when !isSharedServer()).
+    MarkedBlock::Handle* tryAllocateBlock(const AbstractLocker& mutatorSlowPathLocker, Heap&);
     
     Vector<MarkedBlock::Handle*> m_blocks;
     Vector<unsigned> m_freeBlockIndices;
@@ -178,11 +247,15 @@ private:
     // concurrently to the mutator must lock this when accessing the bitvectors.
     BlockDirectoryBits m_bits WTF_GUARDED_BY_LOCK(m_bitvectorLock); // Don't access this directly use one of the accessors above.
     Lock m_bitvectorLock;
+    Lock m_refillLock; // T7-mspl-per-directory, rank 7a; see refillLock().
     Lock m_localAllocatorsLock;
     CellAttributes m_attributes;
 
+    Heap& m_heap; // SharedGC (T4): available from construction (before setSubspace()).
+
     unsigned m_cellSize;
-    
+    unsigned m_tlcIndex { invalidTlcIndex }; // SharedGC (§5.3): see tlcIndex().
+
     // After you do something to a block based on one of these cursors, you clear the bit in the
     // corresponding bitvector and leave the cursor where it was. We can use unsigned instead of size_t since
     // this number is bound by capacity of Vector m_blocks, which must be within unsigned.
@@ -192,9 +265,12 @@ private:
     // FIXME: All of these should probably be references.
     // https://bugs.webkit.org/show_bug.cgi?id=166988
     Subspace* m_subspace { nullptr };
-    BlockDirectory* m_nextDirectory { nullptr };
-    BlockDirectory* m_nextDirectoryInSubspace { nullptr };
-    BlockDirectory* m_nextDirectoryInAlignedMemoryAllocator { nullptr };
+    // THREADS/TSAN: null-initialized in the constructor body via relaxed atomic
+    // stores (a member-init plain write at a recycled malloc address pairs with
+    // stale lock-free walkers' atomic loads).
+    BlockDirectory* m_nextDirectory;
+    BlockDirectory* m_nextDirectoryInSubspace;
+    BlockDirectory* m_nextDirectoryInAlignedMemoryAllocator;
     
     SentinelLinkedList<LocalAllocator, BasicRawSentinelNode<LocalAllocator>> m_localAllocators;
 };

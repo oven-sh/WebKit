@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "recorded_at": "2026-06-05T08:59:40Z",
+    "runs": 15,
+    "jsc": "WebKitBuild/Release/bin/jsc",
+    "host": "Linux x86_64"
+  },
+  "benchmarks": {
+    "array-element-read": 54.446,
+    "array-element-write": 51.844,
+    "flat-butterfly-read": 13.546,
+    "flat-butterfly-write": 62.418,
+    "inline-property-read": 27.325,
+    "inline-property-write": 54.425,
+    "megamorphic-access": 1445.922,
+    "transition-heavy-constructor": 54.918
+  }
+}

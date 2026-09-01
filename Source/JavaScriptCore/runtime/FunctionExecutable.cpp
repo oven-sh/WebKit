@@ -84,7 +84,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_topLevelExecutable);
     visitor.append(thisObject->m_unlinkedExecutable);
-    if (RareData* rareData = thisObject->m_rareData.get()) {
+    if (RareData* rareData = thisObject->rareDataConcurrently()) { // THREADS: concurrent marker vs lazy publish.
         visitor.append(rareData->m_cachedPolyProtoStructureID);
         visitor.append(rareData->m_asString);
         if (TemplateObjectMap* map = rareData->m_templateObjectMap.get()) {
@@ -154,28 +154,55 @@ FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, J
 
 FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 {
-    ASSERT(!m_rareData);
+    // THREADS: serialize creation — two Threads can race to the slow path; a
+    // plain double-create would overwrite (and delete) the loser's RareData
+    // while its caller is already writing into it. Release-publish so the
+    // fast path's acquire load sees the fields initialized.
+    Locker locker { cellLock() };
+    if (RareData* existing = rareDataConcurrently())
+        return *existing;
     auto rareData = makeUnique<RareData>();
     rareData->m_lineCount = lineCount();
     rareData->m_endColumn = endColumn();
     rareData->m_parametersStartOffset = parametersStartOffset();
     rareData->m_functionStart = functionStart();
     rareData->m_functionEnd = functionEnd();
-    WTF::storeStoreFence();
-    m_rareData = WTF::move(rareData);
-    return *m_rareData;
+    RareData* result = rareData.release();
+    WTF::atomicStore(std::bit_cast<RareData**>(&m_rareData), result, std::memory_order_release);
+    return *result;
+}
+
+InlineWatchpointSet& FunctionExecutable::ensurePolyProtoWatchpointSlow()
+{
+    // THREADS: serialize creation (see the header comment): the losing side
+    // of an unserialized double-create would destroy a set the winner may
+    // already have published. Publication is a release store of the Box's
+    // single RefPtr word so the fast path's lock-free acquire probe is well
+    // defined; the local Box is neutralized after the transfer so its
+    // destructor does not deref the reference now owned by the member.
+    Locker locker { cellLock() };
+    if (!m_polyProtoWatchpoint) { // Plain read is safe: every writer holds cellLock().
+        Box<InlineWatchpointSet> set = Box<InlineWatchpointSet>::create(IsWatched);
+        static_assert(sizeof(Box<InlineWatchpointSet>) == sizeof(uintptr_t));
+        uintptr_t raw;
+        memcpy(&raw, &set, sizeof(raw));
+        WTF::atomicStore(std::bit_cast<uintptr_t*>(&m_polyProtoWatchpoint), raw, std::memory_order_release);
+        uintptr_t null = 0;
+        memcpy(&set, &null, sizeof(null)); // Ownership transferred to m_polyProtoWatchpoint.
+    }
+    return *m_polyProtoWatchpoint;
 }
 
 JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
-    ASSERT(m_rareData && !m_rareData->m_asString);
+    ASSERT(rareDataConcurrently() && !rareDataConcurrently()->m_asString);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     const auto& cache = [&](JSString* asString) {
         WTF::storeStoreFence();
-        m_rareData->m_asString.set(vm, this, asString);
+        rareDataConcurrently()->m_asString.set(vm, this, asString);
         return asString;
     };
 

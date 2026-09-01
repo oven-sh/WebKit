@@ -1,0 +1,212 @@
+scalebench: === preflight ===
+scalebench: pinned N_BASE from SPEC.md: 28000
+scalebench: building Bench.java -> /root/WebKit/Tools/threads/scalebench/out
+scalebench: building go/main.go -> /root/WebKit/Tools/threads/scalebench/out/bench-go
+scalebench: go:   go version go1.24.13 linux/amd64
+scalebench: java: openjdk version "21.0.10" 2026-01-20 LTS
+scalebench: jsc:  /root/WebKit/WebKitBuild/Release/bin/jsc [mtime+size: 1781068898 378642200] flags: --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1
+scalebench: smoke: W in {1 4} SCALEBENCH_SMOKE=1 across all three languages
+scalebench: smoke java W=1: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke go W=1: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke js W=1: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke java W=4: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke go W=4: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke js W=4: FAILED — known shared-GC-heap corruption (js/repro-bigint-shared-ingest.js)
+scalebench:   proceeding: js W>=4 cells will be recorded as failed (SPEC §6); js W>=2 checksums quarantined
+scalebench: smoke: checksums match across js/go/java at W in {1 4}
+scalebench: === matrix: W in {1 2 4 8 16 32 48 64}, langs interleaved java go js, 1 warmup + 5 measured reps ===
+scalebench: === warmup rep (executed, discarded) ===
+scalebench: run java-w1-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 1
+scalebench: run go-w1-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 1
+scalebench: run js-w1-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 1
+scalebench: run java-w2-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 2
+scalebench: run go-w2-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 2
+scalebench: run js-w2-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 2
+scalebench: run js-w2-rep0: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w4-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 4
+scalebench: run go-w4-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 4
+scalebench: run js-w4-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 4
+scalebench: run js-w4-rep0: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w8-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 8
+scalebench: run go-w8-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 8
+scalebench: run js-w8-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 8
+scalebench: run js-w8-rep0: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w16-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 16
+scalebench: run go-w16-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 16
+scalebench: run js-w16-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 16
+scalebench: run js-w16-rep0: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w32-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 32
+scalebench: run go-w32-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 32
+scalebench: run js-w32-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 32
+scalebench: run js-w32-rep0: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w48-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 48
+scalebench: run go-w48-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 48
+scalebench: run js-w48-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 48
+scalebench: run js-w48-rep0: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w64-rep0: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 64
+scalebench: run go-w64-rep0: /root/WebKit/Tools/threads/scalebench/out/bench-go 64
+scalebench: run js-w64-rep0: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 64
+scalebench: run js-w64-rep0: FAILED (exit 134) — recorded per SPEC §6
+scalebench: === measured rep 1/5 ===
+scalebench: run java-w1-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 1
+scalebench: run go-w1-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 1
+scalebench: run js-w1-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 1
+scalebench: run java-w2-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 2
+scalebench: run go-w2-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 2
+scalebench: run js-w2-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 2
+scalebench: run js-w2-rep1: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w4-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 4
+scalebench: run go-w4-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 4
+scalebench: run js-w4-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 4
+scalebench: run js-w4-rep1: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w8-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 8
+scalebench: run go-w8-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 8
+scalebench: run js-w8-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 8
+scalebench: run js-w8-rep1: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w16-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 16
+scalebench: run go-w16-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 16
+scalebench: run js-w16-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 16
+scalebench: run js-w16-rep1: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w32-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 32
+scalebench: run go-w32-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 32
+scalebench: run js-w32-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 32
+scalebench: run js-w32-rep1: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w48-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 48
+scalebench: run go-w48-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 48
+scalebench: run js-w48-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 48
+scalebench: run js-w48-rep1: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w64-rep1: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 64
+scalebench: run go-w64-rep1: /root/WebKit/Tools/threads/scalebench/out/bench-go 64
+scalebench: run js-w64-rep1: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 64
+scalebench: run js-w64-rep1: FAILED (exit 134) — recorded per SPEC §6
+scalebench: === measured rep 2/5 ===
+scalebench: run java-w1-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 1
+scalebench: run go-w1-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 1
+scalebench: run js-w1-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 1
+scalebench: run java-w2-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 2
+scalebench: run go-w2-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 2
+scalebench: run js-w2-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 2
+scalebench: run java-w4-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 4
+scalebench: run go-w4-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 4
+scalebench: run js-w4-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 4
+scalebench: run js-w4-rep2: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w8-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 8
+scalebench: run go-w8-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 8
+scalebench: run js-w8-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 8
+scalebench: run js-w8-rep2: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w16-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 16
+scalebench: run go-w16-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 16
+scalebench: run js-w16-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 16
+scalebench: run js-w16-rep2: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w32-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 32
+scalebench: run go-w32-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 32
+scalebench: run js-w32-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 32
+scalebench: run js-w32-rep2: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w48-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 48
+scalebench: run go-w48-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 48
+scalebench: run js-w48-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 48
+scalebench: run js-w48-rep2: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w64-rep2: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 64
+scalebench: run go-w64-rep2: /root/WebKit/Tools/threads/scalebench/out/bench-go 64
+scalebench: run js-w64-rep2: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 64
+scalebench: run js-w64-rep2: FAILED (exit 134) — recorded per SPEC §6
+scalebench: === measured rep 3/5 ===
+scalebench: run java-w1-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 1
+scalebench: run go-w1-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 1
+scalebench: run js-w1-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 1
+scalebench: run java-w2-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 2
+scalebench: run go-w2-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 2
+scalebench: run js-w2-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 2
+scalebench: run js-w2-rep3: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w4-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 4
+scalebench: run go-w4-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 4
+scalebench: run js-w4-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 4
+scalebench: run js-w4-rep3: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w8-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 8
+scalebench: run go-w8-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 8
+scalebench: run js-w8-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 8
+scalebench: run js-w8-rep3: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w16-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 16
+scalebench: run go-w16-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 16
+scalebench: run js-w16-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 16
+scalebench: run js-w16-rep3: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w32-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 32
+scalebench: run go-w32-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 32
+scalebench: run js-w32-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 32
+scalebench: run js-w32-rep3: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w48-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 48
+scalebench: run go-w48-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 48
+scalebench: run js-w48-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 48
+scalebench: run js-w48-rep3: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w64-rep3: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 64
+scalebench: load gate: loadavg 4.94 >= 4, sleeping 15s
+scalebench: load gate: loadavg 4.13 >= 4, sleeping 15s
+scalebench: run go-w64-rep3: /root/WebKit/Tools/threads/scalebench/out/bench-go 64
+scalebench: run js-w64-rep3: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 64
+scalebench: run js-w64-rep3: FAILED (exit 134) — recorded per SPEC §6
+scalebench: === measured rep 4/5 ===
+scalebench: run java-w1-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 1
+scalebench: run go-w1-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 1
+scalebench: run js-w1-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 1
+scalebench: run java-w2-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 2
+scalebench: run go-w2-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 2
+scalebench: run js-w2-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 2
+scalebench: run js-w2-rep4: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w4-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 4
+scalebench: run go-w4-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 4
+scalebench: run js-w4-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 4
+scalebench: run js-w4-rep4: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w8-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 8
+scalebench: run go-w8-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 8
+scalebench: run js-w8-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 8
+scalebench: run js-w8-rep4: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w16-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 16
+scalebench: run go-w16-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 16
+scalebench: run js-w16-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 16
+scalebench: run js-w16-rep4: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w32-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 32
+scalebench: run go-w32-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 32
+scalebench: run js-w32-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 32
+scalebench: run js-w32-rep4: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w48-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 48
+scalebench: run go-w48-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 48
+scalebench: run js-w48-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 48
+scalebench: run js-w48-rep4: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w64-rep4: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 64
+scalebench: run go-w64-rep4: /root/WebKit/Tools/threads/scalebench/out/bench-go 64
+scalebench: run js-w64-rep4: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 64
+scalebench: run js-w64-rep4: FAILED (exit 134) — recorded per SPEC §6
+scalebench: === measured rep 5/5 ===
+scalebench: run java-w1-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 1
+scalebench: run go-w1-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 1
+scalebench: run js-w1-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 1
+scalebench: run java-w2-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 2
+scalebench: run go-w2-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 2
+scalebench: run js-w2-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 2
+scalebench: run js-w2-rep5: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w4-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 4
+scalebench: run go-w4-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 4
+scalebench: run js-w4-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 4
+scalebench: run js-w4-rep5: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w8-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 8
+scalebench: run go-w8-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 8
+scalebench: run js-w8-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 8
+scalebench: run js-w8-rep5: FAILED (exit 139) — recorded per SPEC §6
+scalebench: run java-w16-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 16
+scalebench: run go-w16-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 16
+scalebench: run js-w16-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 16
+scalebench: run js-w16-rep5: FAILED (exit 3) — recorded per SPEC §6
+scalebench: run java-w32-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 32
+scalebench: run go-w32-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 32
+scalebench: run js-w32-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 32
+scalebench: run js-w32-rep5: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w48-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 48
+scalebench: run go-w48-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 48
+scalebench: run js-w48-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 48
+scalebench: run js-w48-rep5: FAILED (exit 134) — recorded per SPEC §6
+scalebench: run java-w64-rep5: java -cp /root/WebKit/Tools/threads/scalebench/out Bench 64
+scalebench: run go-w64-rep5: /root/WebKit/Tools/threads/scalebench/out/bench-go 64
+scalebench: run js-w64-rep5: /root/WebKit/WebKitBuild/Release/bin/jsc --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 /root/WebKit/Tools/threads/scalebench/bench.js -- 64
+scalebench: run js-w64-rep5: FAILED (exit 134) — recorded per SPEC §6
+scalebench: === aggregate ===
+scalebench: done: /root/WebKit/Tools/threads/scalebench/results.json + /root/WebKit/Tools/threads/scalebench/RESULTS.md

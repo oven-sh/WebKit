@@ -37,8 +37,14 @@ const ClassInfo JSResizableOrGrowableSharedDataView::s_info = { "DataView"_s, &B
 
 JSDataView::JSDataView(VM& vm, ConstructionContext& context, ArrayBuffer* buffer)
     : Base(vm, context)
-    , m_buffer(buffer)
 {
+    // GIL-off (TSAN residual 2): relaxed atomic init store — see the
+    // possiblySharedBuffer() comment in the header (recycled-cell stale
+    // probes pair against this constructor write).
+    WTF::atomicStore(&m_buffer, buffer, std::memory_order_relaxed);
+    // TSAN r13 (report 1): publication choke point — pairs with the
+    // HAPPENS_AFTER in possiblySharedBuffer(). No-op outside TSAN.
+    TSAN_ANNOTATE_HAPPENS_BEFORE(this);
 }
 
 JSDataView* JSDataView::create(

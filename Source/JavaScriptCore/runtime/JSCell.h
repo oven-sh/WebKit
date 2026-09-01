@@ -65,6 +65,62 @@ template<typename T> void* tryAllocateCell(VM&, size_t = sizeof(T));
 template<typename T> void* allocateCell(VM&, GCDeferralContext*, size_t = sizeof(T));
 template<typename T> void* tryAllocateCell(VM&, GCDeferralContext*, size_t = sizeof(T));
 
+// V7 (TSAN, Race C): with shared-memory threads GIL-off, transition protocols
+// atomically swap the 16-byte {header, butterfly} cell prefix via
+// dcasHeaderAndButterfly while foreign threads plain-load the header bytes
+// (m_type / m_indexingTypeAndMisc / m_flags / m_structureID) — atomic on one
+// side, plain on the other, the exact asymmetry TSAN reports. These are the
+// hottest loads in the engine and run flag-OFF on every property access, so
+// the annotation is TSAN-BUILD-ONLY: non-TSAN builds compile to the identical
+// plain load (zero codegen delta — the V5b bench rung is unaffected by
+// construction). Under TSAN the load is a relaxed atomic, pairing with the
+// (instrumented) 128-bit CAS publish. NOTE (review amendment D, recorded
+// residual): this assumes clang lowers the __sync 128-bit CAS to
+// TSAN-instrumented atomic IR (__tsan_atomic128_*); confirm empirically on
+// the rebuilt WebKitBuild/TSan binary — if the publish is invisible to TSAN,
+// these pairs exempt the header WORDS but the dcas frame keeps reporting.
+//
+// Wave-3 review amendment (§9.1): the load helper DELIBERATELY stays
+// TSAN-build-only. These are the hottest loads in the engine (every type
+// check / structure() / cellState() read); unconditional atomics would be
+// the same mov per access but would pin the optimizer (no CSE/merge of
+// adjacent header-byte loads) on exactly the paths the V5b bench gate has
+// historically punished. The reader side is the OM §3.0/GT#2-blessed half
+// of the protocol; the retained production-UB acceptance, the resulting
+// permanent TSAN blindness through this helper, and the designated
+// alternate coverage (object-model protocol tests + amplifier) are recorded
+// in docs/threads/TSAN-TRIAGE.md §9.1.
+template<typename T>
+ALWAYS_INLINE T cellHeaderConcurrentLoad(const T& field)
+{
+#if TSAN_ENABLED
+    static_assert(std::is_trivially_copyable_v<T>);
+    T result;
+    __atomic_load(const_cast<T*>(&field), &result, __ATOMIC_RELAXED);
+    return result;
+#else
+    return field;
+#endif
+}
+
+// V7 (TSAN, cell-header family; wave-3 review amendment §9.1): the
+// WRITER-side counterpart of cellHeaderConcurrentLoad. The reader side above
+// is blessed by SPEC-objectmodel §3.0/GT#2 (stale header bytes re-dispatch),
+// but a relaxed atomic load pairing with a PLAIN store is still a data race
+// in the C++ model. Every non-constructor header-byte/word writer
+// (setStructure, setStructureIDDirectly, clearStructure, setCellState,
+// early-cell init) stores through this helper, which is an UNCONDITIONAL
+// relaxed atomic per the campaign convention: a single-word relaxed store is
+// the identical mov flag-off (these are cold/warm slow-path writers, not the
+// hot allocation ctor — that ctor keeps its member-init-list / TSAN-only
+// 64-bit assembly, see JSCellInlines.h and TSAN-TRIAGE §9.1).
+template<typename T>
+ALWAYS_INLINE void cellHeaderConcurrentStore(T& field, std::type_identity_t<T> value)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+    __atomic_store(&field, &value, __ATOMIC_RELAXED);
+}
+
 #define DECLARE_EXPORT_INFO                                                  \
     protected:                                                               \
         static JS_EXPORT_PRIVATE const ::JSC::ClassInfo s_info;              \
@@ -124,14 +180,16 @@ protected:
 
 public:
     // Querying the type.
-    bool isString() const { return m_type == StringType; }
-    bool isHeapBigInt() const { return m_type == HeapBigIntType; }
-    bool isSymbol() const { return m_type == SymbolType; }
+    // V7 (TSAN): all type predicates route through type() so the header-byte
+    // load is the single (TSAN-annotated) load; codegen is identical non-TSAN.
+    bool isString() const { return type() == StringType; }
+    bool isHeapBigInt() const { return type() == HeapBigIntType; }
+    bool isSymbol() const { return type() == SymbolType; }
     JS_EXPORT_PRIVATE bool isObjectSlow() const;
-    bool isObject() const { return TypeInfo::isObject(m_type); }
-    bool isGetterSetter() const { return m_type == GetterSetterType; }
-    bool isCustomGetterSetter() const { return m_type == CustomGetterSetterType; }
-    bool isProxy() const { return m_type == GlobalProxyType || m_type == ProxyObjectType; }
+    bool isObject() const { return TypeInfo::isObject(type()); }
+    bool isGetterSetter() const { return type() == GetterSetterType; }
+    bool isCustomGetterSetter() const { return type() == CustomGetterSetterType; }
+    bool isProxy() const { JSType t = type(); return t == GlobalProxyType || t == ProxyObjectType; }
     bool isCallable();
     bool isConstructor();
     template<Concurrency> TriState isCallableWithConcurrency();
@@ -140,7 +198,7 @@ public:
     JS_EXPORT_PRIVATE bool inheritsSlow(const ClassInfo*) const;
     template<typename Target> inline bool inherits() const; // Defined inline in Structure.h
     JS_EXPORT_PRIVATE bool NODELETE isValidCallee() const;
-    bool isAPIValueWrapper() const { return m_type == APIValueWrapperType; }
+    bool isAPIValueWrapper() const { return type() == APIValueWrapperType; }
     
     // Each cell has a built-in lock. Currently it's simply available for use if you need it. It's
     // a full-blown WTF::Lock. Note that this lock is currently used in JSArray and that lock's
@@ -151,17 +209,35 @@ public:
     // Locker locker { cell->cellLock() };
     JSCellLock& cellLock() const { return *reinterpret_cast<JSCellLock*>(const_cast<JSCell*>(this)); }
     
-    JSType type() const { return m_type; }
-    IndexingType indexingTypeAndMisc() const { return m_indexingTypeAndMisc; }
+    JSType type() const { return cellHeaderConcurrentLoad(m_type); }
+    IndexingType indexingTypeAndMisc() const { return cellHeaderConcurrentLoad(m_indexingTypeAndMisc); }
     IndexingType indexingMode() const { return indexingTypeAndMisc() & AllArrayTypes; }
     IndexingType indexingType() const { return indexingTypeAndMisc() & AllWritableArrayTypes; }
-    StructureID structureID() const { return m_structureID; }
-    Structure* structure() const { return m_structureID.decode(); }
+    // SPEC-objectmodel M5: structureID() returns the RAW bits, NEVER nuke-masked —
+    // GC visitation (visitButterflyImpl) and every isNuked()/didRace test depend
+    // on observing the nuke bit (history §16.2).
+    StructureID structureID() const { return cellHeaderConcurrentLoad(m_structureID); }
+    // SPEC-objectmodel M5: with shared-memory threads (Options::useJSThreads())
+    // foreign readers can observe a transiently nuked StructureID mid-transition.
+    // structure() — and ONLY structure() — clears the nuke bit before decoding;
+    // the resulting pre-transition structure's offsets are always satisfied by
+    // the not-yet-replaced or superset storage, because live storage never
+    // shrinks (deletes quarantine slots — I18/I30; flat->segmented re-pairs old
+    // offsets via the TAG dispatch, not the structure; history §15.4). The
+    // decontaminate() is unconditional: flag-off no nuked ID is ever decoded
+    // through structure() (the nuking thread is the only observer and does not
+    // call it inside the window), so clearing an always-clear bit is
+    // behavior-identical (I22). Exact-decode paths (transition protocols, GC)
+    // use structureID() raw + StructureID::tryDecode/didRace instead.
+    Structure* structure() const { return cellHeaderConcurrentLoad(m_structureID).decontaminate().decode(); }
     void setStructure(VM&, Structure*);
-    void setStructureIDDirectly(StructureID id) { m_structureID = id; }
-    void clearStructure() { m_structureID = StructureID(); }
+    // V7 (TSAN): header writers store via cellHeaderConcurrentStore so they
+    // pair with the cellHeaderConcurrentLoad readers above (plain store
+    // non-TSAN — identical codegen).
+    void setStructureIDDirectly(StructureID id) { cellHeaderConcurrentStore(m_structureID, id); }
+    void clearStructure() { cellHeaderConcurrentStore(m_structureID, StructureID()); }
 
-    TypeInfo::InlineTypeFlags inlineTypeFlags() const { return m_flags; }
+    TypeInfo::InlineTypeFlags inlineTypeFlags() const { return cellHeaderConcurrentLoad(m_flags); }
     
     ASCIILiteral NODELETE className() const;
 
@@ -219,9 +295,13 @@ public:
     // The recommended idiom for using cellState() is to switch on it or perform an == comparison on it
     // directly. We deliberately avoid helpers for this, because we want transparency about how the various
     // CellState values influences our various algorithms. 
-    CellState cellState() const { return m_cellState; }
-    
-    void setCellState(CellState data) const { const_cast<JSCell*>(this)->m_cellState = data; }
+    // V7 (TSAN): m_cellState is flipped by CAS from GC threads
+    // (atomicCompareExchangeCellState*) and dcasHeaderAndButterfly swaps the
+    // whole header word; the plain load/store here must be (TSAN-only)
+    // relaxed atomics to pair with those — identical codegen non-TSAN.
+    CellState cellState() const { return cellHeaderConcurrentLoad(m_cellState); }
+
+    void setCellState(CellState data) const { cellHeaderConcurrentStore(const_cast<JSCell*>(this)->m_cellState, data); }
     
     bool atomicCompareExchangeCellStateWeakRelaxed(CellState oldState, CellState newState)
     {

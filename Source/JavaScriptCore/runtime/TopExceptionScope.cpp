@@ -38,7 +38,9 @@ TopExceptionScope::TopExceptionScope(VM& vm, ExceptionEventLocation location)
 
 TopExceptionScope::~TopExceptionScope()
 {
-    RELEASE_ASSERT(m_vm.m_topExceptionScope);
+    // UNGIL obligation 10 mode split: per-lite chain anchor GIL-off (the
+    // dtor runs on the scope's own thread); VM copy GIL-on — bit-identical.
+    RELEASE_ASSERT(m_vm.exceptionScopeVerificationState().m_topExceptionScope);
     m_vm.verifyExceptionCheckNeedIsSatisfied(m_recursionDepth, m_location);
 }
 

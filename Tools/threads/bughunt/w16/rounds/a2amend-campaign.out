@@ -1,0 +1,38 @@
+[a2amend-sig1] W=16 N=400 nojit #5 PASS
+[a2amend-sig1] W=16 N=400 nojit #1 PASS
+[a2amend-sig1] W=16 N=400 nojit #4 PASS
+[a2amend-sig1] W=16 N=400 nojit #3 PASS
+[a2amend-sig1] W=16 N=400 nojit #2 PASS
+[a2amend-sig1] round complete; failures: 0
+[a2amend-sig2] W=16 N=400 nojit #2 PASS
+[a2amend-sig2] W=16 N=400 nojit #3 PASS
+[a2amend-sig2] W=16 N=400 nojit #5 PASS
+[a2amend-sig2] W=16 N=400 nojit #1 PASS
+[a2amend-sig2] W=16 N=400 nojit #4 PASS
+[a2amend-sig2] round complete; failures: 0
+[a2amend-jit1] W=8 N=400 jiton #3 PASS
+[a2amend-jit1] W=8 N=400 jiton #1 PASS
+[a2amend-jit1] W=4 N=400 jiton #3 PASS
+[a2amend-jit1] W=8 N=400 jiton #2 PASS
+[a2amend-jit1] W=8 N=400 jiton #5 PASS
+[a2amend-jit1] W=8 N=400 jiton #4 PASS
+[a2amend-jit1] W=4 N=400 jiton #2 PASS
+[a2amend-jit1] W=4 N=400 jiton #5 PASS
+[a2amend-jit1] W=4 N=400 jiton #4 PASS
+[a2amend-jit1] W=4 N=400 jiton #1 PASS
+[a2amend-jit1] round complete; failures: 0
+[a2amend-jit2] W=8 N=400 jiton #3 PASS
+[a2amend-jit2] W=8 N=400 jiton #4 PASS
+[a2amend-jit2] W=4 N=400 jiton #3 PASS
+[a2amend-jit2] W=8 N=400 jiton #2 PASS
+[a2amend-jit2] W=8 N=400 jiton #1 PASS
+[a2amend-jit2] W=4 N=400 jiton #5 PASS
+[a2amend-jit2] W=8 N=400 jiton #5 PASS
+[a2amend-jit2] W=4 N=400 jiton #4 PASS
+[a2amend-jit2] W=4 N=400 jiton #1 PASS
+[a2amend-jit2] W=4 N=400 jiton #2 PASS
+[a2amend-jit2] round complete; failures: 0
+[gilon] #1 PASS
+[gilon] #2 PASS
+[gilon] #3 PASS
+ALLDONE

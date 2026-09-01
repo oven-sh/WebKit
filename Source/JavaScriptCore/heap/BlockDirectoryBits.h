@@ -95,7 +95,12 @@ public:
         uint32_t word(size_t index) const
         {
             ASSERT(index < WTF::fastBitVectorArrayLength(numBits()));
-            return m_segments[index].m_data[static_cast<unsigned>(kind)];
+            // Relaxed atomic load: lock-free readers (e.g. MarkedBlock::Handle::
+            // isAllocated() from another mutator's allocation/sweep path) race a
+            // locked writer's FastBitReference RMW on this word by design; the
+            // relaxed load removes the plain-access UB without changing codegen
+            // (plain mov on x86-64/arm64).
+            return WTF::atomicLoad(const_cast<uint32_t*>(&m_segments[index].m_data[static_cast<unsigned>(kind)]), std::memory_order_relaxed);
         }
 
         uint32_t& word(size_t index)

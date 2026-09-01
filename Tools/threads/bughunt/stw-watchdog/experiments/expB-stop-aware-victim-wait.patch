@@ -1,0 +1,67 @@
+# Experiment B (H2 probe) — H1 fire-under-lock RESTORED (stock); only the
+# victim-side waits at tryCacheGetBy and tryCachePutBy locker entry made
+# stop-aware (tryLock loop with GCClient heap access released).
+# Applied 2026-06-10; binary snapshot kept at
+# WebKitBuild/Release/bin/jsc-bughunt-expB.
+# Result: repro4 x30 = 22 pass / 4 WATCHDOG-ABORT / 4 TIMEOUT(150s hang).
+# Abort core bts/expB-core-807636.bt: victim wedged at a THIRD, unpatched
+# blind locker on the same codeBlock->m_lock — fireWatchpointsAndClearStubIfNeeded
+# (Repatch.cpp:518, via tryCacheGetBy:963) — while the restored 1360 fire held
+# the lock as conductor (deferred=0x0). H2 sufficiency (two-site closure)
+# REFUTED; victim-side gap is a CLASS of Section-7 lock waits. The 4 silent
+# 150s hangs (no watchdog => world stop completed or none pending) are a new
+# shape introduced by the probe itself — consistent with the probe's
+# acquireHeapAccess-while-holding-m_lock tail interacting with in-window work
+# that takes m_lock; not pinned (SIGKILL, no core).
+#
+# NOTE: hand-written patch (git unavailable in this run).
+
+--- a/Source/JavaScriptCore/runtime/ConcurrentJSLock.h
+@@ ConcurrentJSLockerBase @@
++    // BUGHUNT H2 probe (NOT FOR LANDING): adopt an already-held lock.
++    explicit ConcurrentJSLockerBase(WTF::AdoptLockTag, ConcurrentJSLock& lockable) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
++    {
++        m_locker.emplace(AdoptLock, lockable);
++    }
+@@ GCSafeConcurrentJSLocker @@
++    // BUGHUNT H2 probe (NOT FOR LANDING): adopt an already-held lock.
++    GCSafeConcurrentJSLocker(WTF::AdoptLockTag, ConcurrentJSLock& lockable, VM& vm)
++        : ConcurrentJSLockerBase(AdoptLock, lockable)
++        , m_deferGC(vm)
++    {
++    }
+
+--- a/Source/JavaScriptCore/bytecode/Repatch.cpp
+@@ after forceICFailure @@
++// BUGHUNT H2 probe (NOT FOR LANDING): stop-aware acquisition of a §7
++// CodeBlock::m_lock. On contention, release this thread's GCClient heap
++// access so the §A.3.2 conductor predicate counts the thread quiescent while
++// it waits (closing the victim-side no-poll gap), then poll tryLock. Returns
++// with the lock HELD; caller adopts it into the locker.
++static void bughuntStopAwareLockAcquire(ConcurrentJSLock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
++{
++    if (lock.tryLock()) [[likely]]
++        return;
++    GCClient::Heap* client = GCClient::Heap::currentThreadClient();
++    bool released = false;
++    if (Options::useJSThreads() && client && client->hasHeapAccess()) {
++        client->releaseHeapAccess();
++        released = true;
++    }
++    while (!lock.tryLock())
++        WTF::sleep(Seconds::fromMicroseconds(50));
++    if (released)
++        client->acquireHeapAccess();
++}
+@@ tryCacheGetBy locker entry (~:605) @@
+-        GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
++        bughuntStopAwareLockAcquire(codeBlock->m_lock); // BUGHUNT H2 probe (NOT FOR LANDING)
++        GCSafeConcurrentJSLocker locker(AdoptLock, codeBlock->m_lock, globalObject->vm());
+@@ tryCachePutBy locker entry (~:1238) @@
+-    {
+-        GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
++    {
++        // BUGHUNT H2 probe (NOT FOR LANDING): stop-aware victim-side wait;
++        // the H1 fire-under-lock at the ExistingProperty branch is RESTORED.
++        bughuntStopAwareLockAcquire(codeBlock->m_lock);
++        GCSafeConcurrentJSLocker locker(AdoptLock, codeBlock->m_lock, globalObject->vm());

@@ -34,6 +34,7 @@
 #include "CheckPrivateBrandStatus.h"
 #include "DFGAbstractInterpreter.h"
 #include "DFGAbstractInterpreterClobberState.h"
+#include "DFGClobberize.h"
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "DOMJITSignature.h"
@@ -425,6 +426,25 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     verifyEdges(node);
     
     m_state.createValueForNode(node);
+
+    // checktraps-dejank-invalidation-point, amend round 2 (AUDIT-checktraps
+    // P10b/P10c): GIL-off, parkable slow paths clobber heap facts in
+    // clobberize (pre-switch write(Heap) gated on the SAME predicate — see
+    // its comment in DFGClobberize.h). The abstract interpreter accounts for
+    // that write with didFoldClobberStructures(): this keeps the DFGCFAPhase
+    // AI-clobberize agreement assert (didClobberOrFolded() must match
+    // writesOverlap(JSCell_structureID)) satisfied WITHOUT destroying
+    // in-block AI precision. Soundness note: the clobberize write closes the
+    // code-motion widening this change introduced (LICM/CSE across parkable
+    // slow paths); AI's in-block structure propagation across the same parks
+    // is a PRE-EXISTING straight-line exposure that predates this change and
+    // is tracked as P10c-R in the audit (systemic closure = the AHA-edge
+    // epoch check, option (ii)). Placed before the switch, so a case that
+    // later calls clobberWorld()/clobberStructures() simply overrides the
+    // folded state, and fresh result values set by the case keep their
+    // precision. Flag-off/GIL-on the predicate is constant false.
+    if (jsThreadsParkableSlowPathClobbersHeapFacts(m_graph, node)) [[unlikely]]
+        didFoldClobberStructures();
     
     switch (node->op()) {
     case JSConstant:
@@ -3679,16 +3699,23 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case ToString:
     case CallStringConstructor: {
         switch (node->child1().useKind()) {
+        // KnownInt32Use / KnownCellUse come from FixupPhase's final
+        // check-hoisting pass strengthening Int32Use / CellUse edges of nodes
+        // in ExitInvalid stretches; treat them like their checked forms.
+        // Keep this switch in agreement with the one in clobberize()
+        // (DFGCFAPhase asserts AI-clobberize agreement on structure writes).
         case StringObjectUse:
         case StringOrOtherUse:
         case StringOrStringObjectUse:
         case Int32Use:
+        case KnownInt32Use:
         case Int52RepUse:
         case DoubleRepUse:
         case NotCellUse:
         case KnownPrimitiveUse:
             break;
         case CellUse:
+        case KnownCellUse:
         case UntypedUse:
             clobberWorld();
             break;
@@ -5756,6 +5783,32 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case CheckTraps:
+        // UNGIL §K.5 / SPEC-jit I21 (AB-10 closure): flag-on, the polling
+        // CheckTraps is a park site — the §A.3 window that runs while this
+        // thread is parked may rewrite any heap fact (haveABadTime butterfly
+        // conversion, Class-A transitions).
+        //
+        // checktraps-dejank-invalidation-point: GIL-off, with exit
+        // permission, the node is modeled exactly like InvalidationPoint
+        // above — codegen emits a jump-replacement watchpoint at the poll's
+        // rejoin and every conductor-side heap-fact rewrite inside a stop
+        // window jettisons the parked mutator's on-stack optimized code
+        // (firing that watchpoint), so any abstract fact that would be
+        // falsified by the window is unreachable: execution OSR-exits at the
+        // poll first. Gate MUST match the DFGClobberize.h CheckTraps case
+        // and both compileCheckTraps codegens (see the clobberize comment
+        // and docs/threads/AUDIT-checktraps.md). GIL-on flag-on, and for the
+        // (not expected) exitOK=false poll, keep the conservative mirror of
+        // clobberize's write(Heap).
+        if (Options::useJSThreads()) [[unlikely]] {
+            if (!Options::useThreadGIL() && node->origin.exitOK) {
+                m_state.setStructureClobberState(StructuresAreWatched);
+                m_state.observeInvalidationPoint();
+            } else
+                clobberWorld();
+        }
+        break;
+
     case LogShadowChickenPrologue:
     case LogShadowChickenTail:
     case ProfileType:

@@ -42,17 +42,17 @@ Ref<AtomStringImpl> Identifier::add8(VM& vm, std::span<const char16_t> s)
 
 Identifier Identifier::from(VM& vm, unsigned value)
 {
-    return Identifier(vm, vm.numericStrings.add(value));
+    return Identifier(vm, vm.liveNumericStrings().add(value));
 }
 
 Identifier Identifier::from(VM& vm, int value)
 {
-    return Identifier(vm, vm.numericStrings.add(value));
+    return Identifier(vm, vm.liveNumericStrings().add(value));
 }
 
 Identifier Identifier::from(VM& vm, double value)
 {
-    return Identifier(vm, vm.numericStrings.add(value));
+    return Identifier(vm, vm.liveNumericStrings().add(value));
 }
 
 void Identifier::dump(PrintStream& out) const

@@ -38,6 +38,10 @@ bool GCActivityCallback::s_shouldCreateGCTimer = true;
 
 const double timerSlop = 2.0; // Fudge factor to avoid performance cost of resetting timer.
 
+// SharedGC (T9): main-VM-only — activity callbacks are timers bound to the
+// main VM's run loop; once ISS they never FIRE collections (didAllocate()
+// skips eden-activity dispatch, §5.4/I15), so the main-VM binding is inert
+// when shared.
 GCActivityCallback::GCActivityCallback(JSC::Heap& heap, Synchronousness synchronousness)
     : GCActivityCallback(heap.vm(), synchronousness)
 {

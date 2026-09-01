@@ -1,0 +1,18 @@
+Program terminated with signal SIGABRT, Aborted.
+#0  0x00007f8be808d02c in __pthread_kill_implementation () from /lib64/libc.so.6
+[Current thread is 1 (Thread 0x7f8be872c640 (LWP 3563989))]
+#0  0x00007f8be808d02c in __pthread_kill_implementation () from /lib64/libc.so.6
+#1  0x00007f8be803fb86 in raise () from /lib64/libc.so.6
+#2  0x00007f8be8029873 in abort () from /lib64/libc.so.6
+#3  0x00007f8be84daff0 in std::__glibcxx_assert_fail(char const*, int, char const*, char const*) () from /lib64/libstdc++.so.6
+#4  0x000055dab18520f9 in std::array<unsigned long, 16ul>::operator[] (this=<optimized out>, __n=60934848) at /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/array:208
+#5  WTF::BitSet<1024ul, unsigned long>::clear (this=<optimized out>, n=140238877012016) at WTF/Headers/wtf/BitSet.h:274
+#6  JSC::MarkedBlock::clearNewlyAllocated (this=<optimized out>, p=<optimized out>) at JavaScriptCore/PrivateHeaders/JavaScriptCore/MarkedBlock.h:667
+#7  JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&)::$_1::operator()(JSC::HeapCell*) const (cell=<optimized out>, this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/heap/MarkedBlock.cpp:258
+#8  JSC::FreeList::forEach<JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&)::$_1>(JSC::MarkedBlock::Handle::stopAllocating(JSC::FreeList const&)::$_1 const&) const (this=0x7f8bde12d218, func=...) at JavaScriptCore/PrivateHeaders/JavaScriptCore/FreeListInlines.h:70
+#9  JSC::MarkedBlock::Handle::stopAllocating (this=0x7f8bde0248a0, freeList=...) at /root/WebKit/Source/JavaScriptCore/heap/MarkedBlock.cpp:252
+#10 0x000055dab1851f0f in JSC::LocalAllocator::stopAllocating (this=0x7f8bde12d200) at /root/WebKit/Source/JavaScriptCore/heap/LocalAllocator.cpp:127
+#11 0x000055dab1800198 in JSC::BlockDirectory::stopAllocating()::$_0::operator()(JSC::LocalAllocator*) const (allocator=0x3661d3, this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/heap/BlockDirectory.cpp:258
+#12 WTF::SentinelLinkedList<JSC::LocalAllocator, WTF::BasicRawSentinelNode<JSC::LocalAllocator, WTF::RawPtrTraits<JSC::LocalAllocator> > >::forEach<JSC::BlockDirectory::stopAllocating()::$_0>(JSC::BlockDirectory::stopAllocating()::$_0 const&) (this=0x7f8bde000c98, func=...) at WTF/Headers/wtf/SentinelLinkedList.h:151
+#13 JSC::BlockDirectory::stopAllocating (this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/heap/BlockDirectory.cpp:256
+#14 0x000055dab1856e78 in JSC::MarkedSpace::stopAllocating()::$_0::operator()(JSC::BlockDirectory&) const (directory=..., this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/heap/MarkedSpace.cpp:372

@@ -105,6 +105,8 @@ template<typename ContainerType, typename Visitor>
 void WeakBlock::specializedVisit(ContainerType& container, Visitor& visitor)
 {
     size_t count = weakImplCount();
+    // SharedGC (T9): conductor-context OK — marker context; see
+    // AbstractSlotVisitor::vm() (AbstractSlotVisitorInlines.h).
     HeapAnalyzer* heapAnalyzer = visitor.vm().activeHeapAnalyzer();
     for (size_t i = 0; i < count; ++i) {
         WeakImpl* weakImpl = &weakImpls()[i];

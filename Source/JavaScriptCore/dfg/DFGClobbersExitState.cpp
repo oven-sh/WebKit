@@ -112,10 +112,38 @@ bool clobbersExitState(Graph& graph, Node* node)
 
     default:
         // For all other nodes, we just care about whether they write to something other than SideState.
+        //
+        // GIL-off (useJSThreads && !useThreadGIL), clobberize() injects one
+        // pre-switch write(Heap) for nodes matching
+        // jsThreadsParkableSlowPathClobbersHeapFacts(): a parkable slow path
+        // admits a §A.3 window in which OTHER mutators rewrite heap facts.
+        // That write models cross-thread visibility — a CSE/LICM constraint —
+        // not an observable mutation performed by THIS node, so it must not
+        // count as clobbering exit state: exit state is a single-thread
+        // replay concept (the MovHint/stack map the OSR exit restores), and
+        // a foreign write becoming visible across a park is a legal
+        // interleaving whether or not we exit. Counting it broke nodes that
+        // phases insert with a preserved origin — DFGTierUpCheckInjectionPhase
+        // gives CheckTierUp* the terminal's origin (exitOK intact), which is
+        // sound precisely because CheckTierUp* never clobbered exit state
+        // flag-off (SideState-only). So skip exactly the injected pre-switch
+        // write; the node's own case-writes are still counted, restoring the
+        // flag-off answer for every predicate node. Flag-off/GIL-on the
+        // predicate is constant false and this is byte-for-byte the old
+        // computation. The skip relies on clobberize()'s documented ordering:
+        // the injected write(Heap) is the FIRST write the functor sees,
+        // before the switch emits anything (asserted below).
+        bool skipInjectedParkableSlowPathWrite = jsThreadsParkableSlowPathClobbersHeapFacts(graph, node);
         bool result = false;
         clobberize(
             graph, node, NoOpClobberize(),
             [&] (const AbstractHeap& heap) {
+                if (skipInjectedParkableSlowPathWrite) {
+                    ASSERT(heap == AbstractHeap(Heap));
+                    skipInjectedParkableSlowPathWrite = false;
+                    return;
+                }
+
                 // There shouldn't be such a thing as a strict subtype of SideState or HeapObjectCount.
                 // That's what allows us to use a fast != check, below.
                 ASSERT(!heap.isStrictSubtypeOf(SideState) && !heap.isStrictSubtypeOf(HeapObjectCount));

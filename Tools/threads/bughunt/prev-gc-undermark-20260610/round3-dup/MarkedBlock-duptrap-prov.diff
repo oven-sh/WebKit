@@ -1,0 +1,261 @@
+--- Tools/threads/bughunt/round3-dup/orig/MarkedBlock.cpp	2026-06-10 10:07:53.264413395 +0000
++++ Source/JavaScriptCore/heap/MarkedBlock.cpp	2026-06-10 10:12:44.794446919 +0000
+@@ -41,6 +41,212 @@
+ 
+ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+ 
++// ===== BUGHUNT round-3 duplicate-handout trap (env: BUGHUNT_DUPTRAP=1) =====
++// Cross-thread happens-before-enforced single-ownership registry for
++// freelisted MarkedBlocks. The existing m_isFreeListed FATAL in Handle::sweep
++// reads a plain bool with no cross-thread ordering; this map + lock catches
++// dual hand-outs even when the bool read would be stale.
++// REVERT AFTER ROUND 3. Diffs kept in Tools/threads/bughunt/round3-dup/.
++#include <atomic>
++#include <cstdlib>
++#include <sys/syscall.h>
++#include <unistd.h>
++#include <unordered_map>
++
++namespace JSC { namespace BughuntDupTrap {
++
++bool enabledFlag = !!getenv("BUGHUNT_DUPTRAP");
++thread_local const char* t_ctx = "other";
++
++struct Owner {
++    uint64_t tid;
++    uint64_t seq;
++    size_t cellSize;
++    const void* directory;
++    const char* ctx;
++};
++
++static WTF::Lock s_trapLock;
++static std::unordered_map<void*, Owner>* s_owners;
++static std::atomic<uint64_t> s_seq { 0 };
++
++static uint64_t currentTid() { return static_cast<uint64_t>(syscall(SYS_gettid)); }
++
++static std::unordered_map<void*, Owner>& owners()
++{
++    if (!s_owners)
++        s_owners = new std::unordered_map<void*, Owner>();
++    return *s_owners;
++}
++
++NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void trapDump(MarkedBlock::Handle* handle, const Owner& owner, FreeList* freeList, const char* site)
++{
++    BlockDirectory* dir = handle->directory();
++    WTF::dataFile().atomically([&](PrintStream& out) {
++        out.print("BUGHUNT-DUPTRAP site=", site, " handle=", RawPointer(handle), " block=", RawPointer(&handle->block()), "\n");
++        out.print("  second: tid=", currentTid(), " ctx=", t_ctx, " freeList=", RawPointer(freeList), " seqNow=", s_seq.load(), "\n");
++        out.print("  first : tid=", owner.tid, " ctx=", owner.ctx, " seq=", owner.seq, " cellSize=", owner.cellSize, " dir=", RawPointer(owner.directory), "\n");
++        out.print("  state : isFreeListed=", handle->isFreeListed(), " cellSize=", handle->cellSize(), " dir=", RawPointer(dir), "\n");
++        out.print("  bits  : empty=", dir->isEmpty(handle), " canAllocate=", dir->isCanAllocate(handle), " inUse=", dir->isInUse(handle),
++            " unswept=", dir->isUnswept(handle), " allocated=", dir->isAllocated(handle), " destructible=", dir->isDestructible(handle), "\n");
++        out.print("  vers  : marksStale=", handle->areMarksStale(), " spaceMarkingVersion=", handle->space()->markingVersion(),
++            " spaceNAVersion=", handle->space()->newlyAllocatedVersion(), "\n");
++    });
++    CRASH();
++}
++
++void sweepEntry(MarkedBlock::Handle* handle, FreeList* freeList)
++{
++    Locker locker { s_trapLock };
++    auto& map = owners();
++    auto it = map.find(handle);
++    if (it != map.end())
++        trapDump(handle, it->second, freeList, "sweep-entry");
++    if (freeList)
++        map[handle] = Owner { currentTid(), s_seq++, handle->cellSize(), handle->directory(), t_ctx };
++}
++
++void unregisterBlock(MarkedBlock::Handle* handle)
++{
++    Locker locker { s_trapLock };
++    owners().erase(handle);
++}
++
++} } // namespace JSC::BughuntDupTrap
++// ===== end BUGHUNT round-3 duplicate-handout trap =====
++
++// ===== BUGHUNT round-3 victim-provenance recorder (env: BUGHUNT_PROV=1) ====
++// Per-cycle endMarking snapshots of every MarkedBlock's version-current
++// mark/newlyAllocated bitmaps + a global log of every Handle::sweep with its
++// mode tuple, interleaved by one shared seq counter. Dumped at exit to
++// $BUGHUNT_PROV_OUT (default /tmp/bughunt-prov-<pid>.log) for offline
++// correlation with the $vm victim addresses printed by repro.js at CORRUPT.
++// REVERT AFTER ROUND 3. Diffs kept in Tools/threads/bughunt/round3-dup/.
++#include <cstdio>
++#include <vector>
++
++namespace JSC { namespace BughuntProv {
++
++bool enabledFlag = !!getenv("BUGHUNT_PROV");
++
++static WTF::Lock s_provLock;
++static std::atomic<uint64_t> s_provSeq { 0 };
++static uint32_t s_cycle { 0 };
++
++struct SweepRec {
++    uint64_t seq;
++    uint64_t tid;
++    const void* block;
++    uint8_t toFreeList;
++    uint8_t emptyMode;
++    uint8_t marksMode;
++    uint8_t naMode;
++    const char* ctx;
++};
++
++struct SnapRec {
++    uint64_t seq;
++    uint32_t cycle;
++    const void* block;
++    uint8_t marksStale;
++    uint8_t naStale;
++    uint32_t cellSize;
++    uint64_t marks[16];
++    uint64_t na[16];
++};
++
++static std::vector<SweepRec>* s_sweeps;
++static std::vector<SnapRec>* s_snaps;
++
++static uint64_t provTid() { return static_cast<uint64_t>(syscall(SYS_gettid)); }
++
++static void dumpAtExit()
++{
++    Locker locker { s_provLock };
++    char defaultPath[128];
++    snprintf(defaultPath, sizeof(defaultPath), "/tmp/bughunt-prov-%d.log", getpid());
++    const char* path = getenv("BUGHUNT_PROV_OUT");
++    FILE* f = fopen(path ? path : defaultPath, "w");
++    if (!f)
++        return;
++    if (s_snaps) {
++        for (auto& r : *s_snaps) {
++            fprintf(f, "SNAP seq=%llu cycle=%u block=%p marksStale=%u naStale=%u cellSize=%u marks=",
++                (unsigned long long)r.seq, r.cycle, r.block, r.marksStale, r.naStale, r.cellSize);
++            for (int i = 0; i < 16; i++)
++                fprintf(f, "%016llx", (unsigned long long)r.marks[i]);
++            fprintf(f, " na=");
++            for (int i = 0; i < 16; i++)
++                fprintf(f, "%016llx", (unsigned long long)r.na[i]);
++            fprintf(f, "\n");
++        }
++    }
++    if (s_sweeps) {
++        for (auto& r : *s_sweeps) {
++            fprintf(f, "SWEEP seq=%llu tid=%llu block=%p toFL=%u empty=%u marks=%u na=%u ctx=%s\n",
++                (unsigned long long)r.seq, (unsigned long long)r.tid, r.block,
++                r.toFreeList, r.emptyMode, r.marksMode, r.naMode, r.ctx);
++        }
++    }
++    fclose(f);
++}
++
++static void ensureInit() // s_provLock held
++{
++    if (!s_sweeps) {
++        s_sweeps = new std::vector<SweepRec>();
++        s_sweeps->reserve(1 << 20);
++        s_snaps = new std::vector<SnapRec>();
++        s_snaps->reserve(1 << 18);
++        atexit(dumpAtExit);
++    }
++}
++
++void recordSweep(MarkedBlock::Handle* handle, bool toFreeList, int emptyMode, int marksMode, int naMode)
++{
++    Locker locker { s_provLock };
++    ensureInit();
++    s_sweeps->push_back(SweepRec { s_provSeq++, provTid(), &handle->block(),
++        (uint8_t)toFreeList, (uint8_t)emptyMode, (uint8_t)marksMode, (uint8_t)naMode, BughuntDupTrap::t_ctx });
++}
++
++void beginCycle()
++{
++    Locker locker { s_provLock };
++    ensureInit();
++    s_cycle++;
++}
++
++void recordSnap(MarkedBlock::Handle* handle, HeapVersion markingVersion)
++{
++    MarkedBlock& block = handle->block();
++    SnapRec rec { };
++    rec.cycle = s_cycle;
++    rec.block = &block;
++    bool marksStale = block.areMarksStale(markingVersion);
++    bool naStale = block.isNewlyAllocatedStale();
++    rec.marksStale = marksStale;
++    rec.naStale = naStale;
++    rec.cellSize = (uint32_t)handle->cellSize();
++    char* base = (char*)&block;
++    char* begin = (char*)handle->start();
++    char* end = (char*)handle->end();
++    for (char* p = begin; p < end; p += MarkedBlock::atomSize) {
++        size_t atom = (p - base) / MarkedBlock::atomSize;
++        if (!marksStale && block.isMarkedRaw(p))
++            rec.marks[atom >> 6] |= 1ull << (atom & 63);
++        if (!naStale && block.isNewlyAllocated(p))
++            rec.na[atom >> 6] |= 1ull << (atom & 63);
++    }
++    Locker locker { s_provLock };
++    ensureInit();
++    rec.seq = s_provSeq++;
++    s_snaps->push_back(rec);
++}
++
++} } // namespace JSC::BughuntProv
++// ===== end BUGHUNT round-3 victim-provenance recorder =====
++
+ namespace JSC {
+ 
+ // NEVER_INLINE to prevent LTO from inlining this function, which can break
+@@ -210,6 +416,8 @@
+ 
+ void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
+ {
++    if (BughuntDupTrap::enabledFlag) [[unlikely]]
++        BughuntDupTrap::unregisterBlock(this);
+     RELEASE_ASSERT(m_isFreeListed);
+     m_isFreeListed = false;
+     m_directory->didFinishUsingBlock(this);
+@@ -217,6 +425,8 @@
+ 
+ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList)
+ {
++    if (BughuntDupTrap::enabledFlag) [[unlikely]]
++        BughuntDupTrap::unregisterBlock(this);
+     Locker locker { blockHeader().m_lock };
+     
+     if (MarkedBlockInternal::verbose)
+@@ -477,6 +687,8 @@
+     // writes below hold the directory's bitvector lock (addBlock's m_bits
+     // resize also holds it), and m_isFreeListed/handle state are confined to
+     // the handle's owner (I1: this thread holds the block via inUse).
++    if (BughuntDupTrap::enabledFlag) [[unlikely]]
++        BughuntDupTrap::unregisterBlock(this);
+     Locker locker { blockHeader().m_lock };
+     if (MarkedBlockInternal::verbose)
+         dataLog(RawPointer(this), ": MarkedBlock::Handle::didConsumeFreeList!\n");
+@@ -588,6 +800,8 @@
+ 
+ void MarkedBlock::Handle::sweep(FreeList* freeList)
+ {
++    if (BughuntDupTrap::enabledFlag) [[unlikely]]
++        BughuntDupTrap::sweepEntry(this, freeList);
+     // SharedGC (T8 audit, I5b): legal shared-mode contexts — allocation slow
+     // paths and synchronous sweeps under MSPL, or the conductor while the
+     // world is stopped for all clients (the IncrementalSweeper is disabled
+@@ -613,6 +827,9 @@
+     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
+     bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+ 
++    if (BughuntProv::enabledFlag) [[unlikely]]
++        BughuntProv::recordSweep(this, !!freeList, (int)emptyMode(), (int)marksMode(), (int)newlyAllocatedMode());
++
+     m_weakSet.sweep();
+ 
+     // If we don't "release" our read access without locking then the ThreadSafetyAnalysis code gets upset with the locker below.

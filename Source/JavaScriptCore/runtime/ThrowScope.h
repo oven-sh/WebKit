@@ -45,7 +45,7 @@ public:
     JS_EXPORT_PRIVATE ~ThrowScope();
 
     ThrowScope(const ThrowScope&) = delete;
-    ThrowScope(ThrowScope&&) = default;
+    ThrowScope(ThrowScope&&) = delete; // Scope-locked RAII; see ExceptionScope.
 
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, Exception*);
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, JSValue);
@@ -69,7 +69,7 @@ public:
         : ExceptionScope(vm)
     { }
     ThrowScope(const ThrowScope&) = delete;
-    ThrowScope(ThrowScope&&) = default;
+    ThrowScope(ThrowScope&&) = delete; // Scope-locked RAII; see ExceptionScope.
 
     ALWAYS_INLINE Exception* throwException(JSGlobalObject* globalObject, Exception* exception) { return m_vm.throwException(globalObject, exception); }
     ALWAYS_INLINE Exception* throwException(JSGlobalObject* globalObject, JSValue value) { return m_vm.throwException(globalObject, value); }

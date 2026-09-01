@@ -27,6 +27,7 @@
 
 #include "AbstractSlotVisitor.h"
 #include "HandleTypes.h"
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/MonotonicTime.h>
@@ -129,7 +130,7 @@ public:
     void NODELETE reset();
     void clearMarkStacks();
 
-    size_t bytesVisited() const { return m_bytesVisited; }
+    size_t bytesVisited() const { return WTF::atomicLoad(const_cast<size_t*>(&m_bytesVisited), std::memory_order_relaxed); } // Single-writer counter; cross-thread readers tolerate staleness (see AbstractSlotVisitor::visitCount()).
 
     void donate();
     void drain(MonotonicTime timeout = MonotonicTime::infinity());
@@ -161,7 +162,7 @@ public:
 
     HeapVersion markingVersion() const { return m_markingVersion; }
 
-    bool mutatorIsStopped() const final { return m_mutatorIsStopped; }
+    bool mutatorIsStopped() const final { return WTF::atomicLoad(const_cast<bool*>(&m_mutatorIsStopped), std::memory_order_relaxed); }
     
     Lock& rightToRun() LIFETIME_BOUND WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
     
@@ -214,6 +215,16 @@ private:
 
     void donateAll(const AbstractLocker&);
 
+    // SPEC-congc §9.1(2) checkpoint (b) (CG-3a; ANNEX CGP1): per-batch drain
+    // safepoint for HelperDrain visitors only — on ShouldPause the helper
+    // donates all local work, leaves the active counter for the paused one,
+    // parks until resume, then re-enters active. Granularity = one drained
+    // batch (the CG-I12 bound). Called from drain()'s safepoint site, gated
+    // on m_isDrainingFromSharedHelper — which is itself option-byte-gated
+    // (set only when useConcurrentSharedGCMarking is on), so flag-off this
+    // is never reached and the shared Heap line is never loaded per batch.
+    void helperDrainPauseCheckpointIfRequested();
+
     bool NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
 
@@ -234,6 +245,14 @@ private:
     bool m_mutatorIsStopped { false };
     bool m_canOptimizeForStoppedMutator { false };
     bool m_isInParallelMode { false };
+    // True exactly while this visitor's drainFromShared(HelperDrain) loop is
+    // inside drain() AND the C1 stage flag (useConcurrentSharedGCMarking) is
+    // on — the ANNEX CGP1 participant-set marker (F14: the pause pair covers
+    // EXACTLY the HelperDrain helpers; MainDrain slices and C4 assist
+    // visitors take NO checkpoint). Option-byte-first (FIX-V5B-F1 pattern):
+    // flag-off this stays false, so drain()'s per-batch checkpoint test
+    // touches only this visitor's own line. Owner-thread-only.
+    bool m_isDrainingFromSharedHelper { false };
     Lock m_rightToRun;
     
     // Put padding here to mitigate false sharing between multiple SlotVisitors.

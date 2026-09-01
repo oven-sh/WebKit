@@ -39,6 +39,44 @@
 
 namespace JSC { namespace DFG {
 
+// DW-1 instrumentation (deepwater LEDGER row 1) — see the header comment.
+SortComparatorOSRExitStashRecord& sortComparatorOSRExitStashRecord()
+{
+    static thread_local SortComparatorOSRExitStashRecord record;
+    return record;
+}
+
+void recordSortComparatorOSRExitStashIfApplicable(VM& vm, CodeBlock* dfgCodeBlock, const OSRExitBase& exit, uint32_t exitIndex)
+{
+    ASSERT_UNUSED(vm, vm.gilOff());
+    // Mirror reifyInlinedCallFrames' stash computation exactly: walk the
+    // exit's inline stack; the innermost ArraySortComparatorCall frame's TRUE
+    // CALLER is the frame the comparator-return trampoline recovers into. Its
+    // argumentCountIncludingThis tag gets CallSiteIndex(trueCaller bc) and
+    // its codeBlock slot gets that origin's baseline CodeBlock (toplevel:
+    // dfgCodeBlock->baselineAlternative(); inlined: the inline frame's
+    // baseline CodeBlock) — record both, plus the recording thread, so the
+    // recovery side can discriminate per-lite-vs-carrier CallSiteIndex
+    // routing from cross-thread CodeBlock replacement.
+    CodeBlock* baselineCodeBlock = dfgCodeBlock->baselineAlternative();
+    for (const CodeOrigin* codeOrigin = &exit.m_codeOrigin; codeOrigin && codeOrigin->inlineCallFrame();) {
+        InlineCallFrame* inlineCallFrame = codeOrigin->inlineCallFrame();
+        InlineCallFrame::Kind trueCallerCallKind;
+        CodeOrigin* trueCaller = inlineCallFrame->getCallerSkippingTailCalls(&trueCallerCallKind);
+        if (trueCaller && trueCallerCallKind == InlineCallFrame::ArraySortComparatorCall) {
+            auto& record = sortComparatorOSRExitStashRecord();
+            record.threadUid = Thread::currentSingleton().uid();
+            record.dfgCodeBlock = dfgCodeBlock;
+            record.expectedCallerBaselineCodeBlock = baselineCodeBlockForOriginAndBaselineCodeBlock(*trueCaller, baselineCodeBlock);
+            record.expectedCallSiteBits = CallSiteIndex(BytecodeIndex(trueCaller->bytecodeIndex().offset())).bits();
+            record.exitIndex = exitIndex;
+            record.armed = true;
+            return;
+        }
+        codeOrigin = trueCaller;
+    }
+}
+
 void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 {
     if (!exitKindMayJettison(exit.m_kind)) {
@@ -155,7 +193,9 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
     // Array.prototype.sort's comparator is inlined by the DFG ArraySortIntrinsic.
     // Same stack layout as Call, but on OSR exit inside the comparator its return
     // PC is arraySortComparatorReturnTrampoline, which discards the return value
-    // and re-dispatches the caller's op_call instead of advancing past it.
+    // and re-dispatches the caller's sort call site (op_call, op_call_ignore_result,
+    // or op_tail_call -- handleArraySort enforces that exact host-opcode set at
+    // parse time) instead of advancing past it.
     if (trueCallerCallKind == InlineCallFrame::ArraySortComparatorCall)
         return LLInt::arraySortComparatorReturnTrampolineThunk().code();
 
@@ -474,7 +514,49 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 
         if (exit.isExceptionHandler()) {
             jit.move(CCallHelpers::TrustedImmPtr(&currentInstruction), GPRInfo::regT2);
-            jit.storePtr(GPRInfo::regT2, &std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow));
+            if (vm.gilOff()) [[unlikely]] {
+                // UNGIL §A.1.3 (U-T4b): targetInterpreterPCForThrow is
+                // per-lite Group-2/3 state — this exit ramp is shared by
+                // every thread, so resolve the CURRENT lite instead of
+                // baking &vm's slot. Payload-only store into the variant,
+                // exactly like the GIL-on arm (the lite's field is the same
+                // default-engaged JSOrWasmInstruction; layout is identical
+                // by the M6 equivalence asserts).
+                GPRReg scratch = AssemblyHelpers::selectScratchGPR(GPRInfo::regT2, LLInt::Registers::pcGPR);
+                loadVMLite(jit, scratch);
+                const ptrdiff_t variantPayloadOffset =
+                    reinterpret_cast<char*>(&std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow))
+                    - reinterpret_cast<char*>(&vm.targetInterpreterPCForThrow);
+                // Same-VM guard (K4 table-I Group-3 row addendum; mirrors the
+                // shared-asm lite arms / getHostCallReturnValue thunk):
+                // reader/writer discriminator symmetry with
+                // VM::group3Primitives() — lite arm only when lite->vm == &vm
+                // (a codegen-time immediate). Foreign gilOff lite => VM-block
+                // word, the storage the writer selector would use. Never-taken
+                // under JSLock::didAcquireLock; defense-in-depth only.
+                auto foreignLitePC = jit.branchPtr(
+                    CCallHelpers::NotEqual,
+                    AssemblyHelpers::Address(scratch, static_cast<int32_t>(VMLite::offsetOfVM())),
+                    CCallHelpers::TrustedImmPtr(&vm));
+                jit.storePtr(
+                    GPRInfo::regT2,
+                    AssemblyHelpers::Address(
+                        scratch,
+                        static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_targetInterpreterPCForThrow() + variantPayloadOffset)));
+                auto pcForThrowStored = jit.jump();
+                foreignLitePC.link(&jit);
+#if ASSERT_ENABLED
+                // A2-amend round 4: foreign-lite arms fail-stop in
+                // assert-enabled builds — a taken fallback would be the
+                // silent cross-thread shared-word access this family
+                // eliminates. Release keeps the writer-symmetry fallback.
+                jit.breakpoint();
+#else
+                jit.storePtr(GPRInfo::regT2, &std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow));
+#endif
+                pcForThrowStored.link(&jit);
+            } else
+                jit.storePtr(GPRInfo::regT2, &std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow));
         }
 
         jit.move(CCallHelpers::TrustedImmPtr(codeBlockForExit->metadataTable()), LLInt::Registers::metadataTableGPR);
@@ -501,10 +583,60 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 
     if (exit.isExceptionHandler()) {
         ASSERT(!RegisterSet::vmCalleeSaveRegisters().contains(LLInt::Registers::pcGPR, IgnoreVectors));
-        jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR));
+        if (vm.gilOff()) [[unlikely]] {
+            // UNGIL §A.1.3 (U-T4b): topEntryFrame and callFrameForCatch are
+            // per-lite Group-3 state — resolve the CURRENT lite (this shared
+            // ramp runs on whichever thread exits). Same scratch budget as
+            // the GIL-on arm: only selectScratchGPR(pcGPR) is clobbered.
+            GPRReg scratch = AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR);
+            // Same-VM guards (K4 table-I Group-3 row addendum): see the
+            // targetInterpreterPCForThrow arm above — same rationale, same
+            // never-taken foreclosure, VM-block fallback for writer symmetry.
+            loadVMLite(jit, scratch);
+            auto foreignLiteEntryFrame = jit.branchPtr(
+                CCallHelpers::NotEqual,
+                AssemblyHelpers::Address(scratch, static_cast<int32_t>(VMLite::offsetOfVM())),
+                CCallHelpers::TrustedImmPtr(&vm));
+            jit.loadPtr(
+                AssemblyHelpers::Address(
+                    scratch,
+                    static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())),
+                scratch);
+            auto haveEntryFrame = jit.jump();
+            foreignLiteEntryFrame.link(&jit);
+#if ASSERT_ENABLED
+            jit.breakpoint(); // Foreign gilOff lite: didAcquireLock foreclosure violated (see the PC-for-throw arm above).
+#else
+            jit.loadPtr(&vm.topEntryFrame, scratch);
+#endif
+            haveEntryFrame.link(&jit);
+            jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(scratch); // Clobbers scratch.
 
-        // Since we're jumping to op_catch, we need to set callFrameForCatch.
-        jit.storePtr(GPRInfo::callFrameRegister, vm.addressOfCallFrameForCatch());
+            // Since we're jumping to op_catch, we need to set callFrameForCatch.
+            loadVMLite(jit, scratch);
+            auto foreignLiteCatchFrame = jit.branchPtr(
+                CCallHelpers::NotEqual,
+                AssemblyHelpers::Address(scratch, static_cast<int32_t>(VMLite::offsetOfVM())),
+                CCallHelpers::TrustedImmPtr(&vm));
+            jit.storePtr(
+                GPRInfo::callFrameRegister,
+                AssemblyHelpers::Address(
+                    scratch,
+                    static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())));
+            auto catchFrameStored = jit.jump();
+            foreignLiteCatchFrame.link(&jit);
+#if ASSERT_ENABLED
+            jit.breakpoint(); // Foreign gilOff lite: didAcquireLock foreclosure violated.
+#else
+            jit.storePtr(GPRInfo::callFrameRegister, vm.addressOfCallFrameForCatch());
+#endif
+            catchFrameStored.link(&jit);
+        } else {
+            jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR));
+
+            // Since we're jumping to op_catch, we need to set callFrameForCatch.
+            jit.storePtr(GPRInfo::callFrameRegister, vm.addressOfCallFrameForCatch());
+        }
     }
 
     jit.addPtr(AssemblyHelpers::TrustedImm32(JIT::stackPointerOffsetFor(codeBlockForExit) * sizeof(Register)), GPRInfo::callFrameRegister, AssemblyHelpers::stackPointerRegister);

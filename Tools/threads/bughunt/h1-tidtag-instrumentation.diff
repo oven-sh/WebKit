@@ -1,0 +1,42 @@
+--- /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	2026-06-11 01:24:59.586862465 +0000
++++ /tmp/LLIntSlowPaths.instrumented.cpp	2026-06-11 01:24:53.886853377 +0000
+@@ -2381,6 +2381,12 @@
+     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
+ }
+ 
++// BUGHUNT instrumentation (H1-varargs-shared-vm-scratch-slots): per-thread copy
++// of what this thread last stored into the shared vm.newCallFrameReturnValue /
++// vm.varargsLength scratch slots, so the reload site can detect a foreign overwrite.
++static thread_local CallFrame* g_bughuntVarargsFrameTL;
++static thread_local unsigned g_bughuntVarargsLengthTL;
++
+ LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
+ {
+     LLINT_BEGIN();
+@@ -2428,6 +2434,10 @@
+     CallFrame* calleeFrame = calleeFrameForVarargs(callFrame, numUsedStackSlots, length + 1);
+     vm.varargsLength = length;
+     vm.newCallFrameReturnValue = calleeFrame;
++    // BUGHUNT instrumentation (H1-varargs-shared-vm-scratch-slots): capture what
++    // THIS thread stored, to detect a foreign overwrite at the varargsSetup reload.
++    g_bughuntVarargsFrameTL = calleeFrame;
++    g_bughuntVarargsLengthTL = length;
+ 
+     LLINT_RETURN_CALLEE_FRAME(calleeFrame);
+ }
+@@ -2452,6 +2462,15 @@
+ 
+     CallFrame* calleeFrame = vm.newCallFrameReturnValue;
+     unsigned argumentCountIncludingThis = vm.varargsLength + 1;
++    // BUGHUNT instrumentation (H1-varargs-shared-vm-scratch-slots): if the shared
++    // slots no longer hold what THIS thread stored in size_frame_for_varargs,
++    // another thread clobbered them between the two slow calls.
++    if (calleeFrame != g_bughuntVarargsFrameTL || vm.varargsLength != g_bughuntVarargsLengthTL) {
++        dataLogLn("BUGHUNT H1 FOREIGN VARARGS SLOTS: thread=", RawPointer(reinterpret_cast<void*>(pthread_self())),
++            " storedFrame=", RawPointer(g_bughuntVarargsFrameTL), " reloadedFrame=", RawPointer(calleeFrame),
++            " storedLen=", g_bughuntVarargsLengthTL, " reloadedLen=", static_cast<unsigned>(vm.varargsLength));
++        RELEASE_ASSERT(calleeFrame == g_bughuntVarargsFrameTL && vm.varargsLength == g_bughuntVarargsLengthTL);
++    }
+     if constexpr (set == SetArgumentsWith::Object) {
+         setupVarargsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), getOperand(callFrame, bytecode.m_arguments), bytecode.m_firstVarArg, vm.varargsLength);
+         LLINT_CALL_CHECK_EXCEPTION(globalObject);

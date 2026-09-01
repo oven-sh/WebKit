@@ -852,9 +852,13 @@ inline void* throwWasmToJSException(CallFrame* callFrame, Wasm::ExceptionType ty
     } while (false);
 
     genericUnwind(vm, callFrame);
-    ASSERT(!!vm.callFrameForCatch);
-    ASSERT(!!vm.targetMachinePCForThrow);
-    return vm.targetMachinePCForThrow;
+    // UNGIL §A.1.3 (K4 table I Group-2/3 rows): per-lite unwind-word read;
+    // see operationWasmUnwind (WasmOperations.cpp). Foreclosed today by the
+    // useWasm GIL-off force-disable; reroute keeps reader/writer symmetry.
+    auto& primitives = vm.group3Primitives();
+    ASSERT(!!primitives.callFrameForCatch);
+    ASSERT(!!primitives.targetMachinePCForThrow);
+    return primitives.targetMachinePCForThrow;
 }
 
 } } // namespace JSC::Wasm

@@ -28,6 +28,7 @@
 
 #include "RegExpCache.h"
 #include "RegExpMatchesArray.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -36,7 +37,14 @@ void RegExpCachedResult::visitAggregateImpl(Visitor& visitor)
 {
     visitor.append(m_lastInput);
     visitor.append(m_lastRegExp);
-    if (m_reified) {
+    // SPEC-congc visitor-vs-init (TSAN wave 2, regexp-cached-result-visit):
+    // a HeapHelper marker can run visitAggregateImpl on the in-object
+    // RegExpCachedResult while another mutator's JSGlobalObject::init is
+    // mid-record() seeding the same struct (N-mutator conductSharedCollection).
+    // Benign by value — stale false skips null reified slots; stale true
+    // over-visits null WriteBarriers, which SlotVisitor::append tolerates —
+    // but the plain read is UB, so go through a relaxed atomic.
+    if (WTF::atomicLoad(&m_reified, std::memory_order_relaxed)) {
         visitor.append(m_reifiedInput);
         visitor.append(m_reifiedResult);
         visitor.append(m_reifiedLeftContext);
@@ -87,6 +95,15 @@ JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* 
         m_reifiedResult.setWithoutWriteBarrier(result);
         m_reifiedLeftContext.clear();
         m_reifiedRightContext.clear();
+        // GIL-OFF (AUD1.K2/SD19 bring-up): per-lite streams are single-thread-
+        // private once consumers route via threadRegExpGlobalData. During the
+        // staged-landing window the main carrier's in-object stream remains
+        // JIT-writable (DFG/FTL RecordRegExpCachedResult is not yet re-pointed;
+        // it writes record fields and never reads m_reified), so this fence is
+        // belt-and-suspenders: never let the m_reified flip become visible
+        // before m_reifiedResult.
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
+            WTF::storeStoreFence();
         m_reified = true;
         vm.writeBarrier(owner);
     }

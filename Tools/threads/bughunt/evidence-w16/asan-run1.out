@@ -1,0 +1,39 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+MISMATCH thread=3 iter=2 wantLen=5 gotLen=2 wantCode=100 gotCodes=[100,100] srcArrayNow=[100,100,100,100,100]
+MISMATCH thread=0 iter=34 wantLen=2 gotLen=5 wantCode=97 gotCodes=[97,97,0,0,0] srcArrayNow=[97,97]
+AddressSanitizer:DEADLYSIGNAL
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==2959919==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000040 (pc 0x55ec5b062025 bp 0x7b7b00bfdc90 sp 0x7b7b00bfdc70 T1)
+==2959919==The signal is caused by a WRITE memory access.
+==2959919==Hint: address points to the zero page.
+AddressSanitizer:DEADLYSIGNAL
+    #0 0x55ec5b062025 in JSC::ThrowScope::release() /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/ThrowScope.h:53:35
+    #1 0x55ec5ebdf2a0 in JSC::stringFromCharCode(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/StringConstructor.cpp:111:5
+    #2 0x55ec5f87bd8c in llint_native_call_trampoline LowLevelInterpreter.cpp
+
+==2959919==Register values:
+rax = 0x0000000000000040  rbx = 0x00007b79fe450d10  rcx = 0x000fffffffffffff  rdx = 0x0000000000000034  
+rdi = 0x0000000000000000  rsi = 0x00000000000000f3  rbp = 0x00007b7b00bfdc90  rsp = 0x00007b7b00bfdc70  
+ r8 = 0x0000000000000000   r9 = 0x00007fffffffff01  r10 = 0x00007fffffffff01  r11 = 0x00000f6fe0177b01  
+r12 = 0x00007d3b0abe09e0  r13 = 0x00007ccb0abf6380  r14 = 0x0000000000000003  r15 = 0x00007b79fe450d30  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/ThrowScope.h:53:35 in JSC::ThrowScope::release()
+Thread T1 (JS Thread) created by T0 here:
+    #0 0x55ec5b003d91 in pthread_create /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:250:3
+    #1 0x55ec60bd31e3 in WTF::Thread::establishHandle(WTF::Thread::NewThreadContext&, WTF::StackAllocationSpecification, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy) /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:354:17
+    #2 0x55ec60accd2b in WTF::Thread::create(WTF::ASCIILiteral, WTF::Function<void ()>&&, WTF::ThreadType, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy, WTF::StackAllocationSpecification) /root/WebKit/Source/WTF/wtf/Threading.cpp:330:32
+    #3 0x55ec5ed59232 in JSC::constructThread(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:467:5
+    #4 0x55ec5f87be68 in llint_native_construct_trampoline LowLevelInterpreter.cpp
+    #5 0x55ec5f878da4 in llint_op_construct LowLevelInterpreter.cpp
+    #6 0x55ec5f851641 in llint_call_javascript LowLevelInterpreter.cpp
+    #7 0x55ec5d4c53e4 in JSC::Interpreter::executeProgram(JSC::SourceCode const&, JSC::JSGlobalObject*, JSC::JSObject*) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:1234:28
+    #8 0x55ec5df312f9 in JSC::evaluate(JSC::JSGlobalObject*, JSC::SourceCode const&, JSC::JSValue, WTF::NakedPtr<JSC::Exception>&) /root/WebKit/Source/JavaScriptCore/runtime/Completion.cpp:145:37
+    #9 0x55ec5b1bc5e3 in runWithOptions(GlobalObject*, CommandLine&, bool&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:3957:35
+    #10 0x55ec5b10276b in jscmain(int, char**)::$_0::operator()(JSC::VM&, GlobalObject*, bool&) const /root/WebKit/Source/JavaScriptCore/jsc.cpp:4686:13
+    #11 0x55ec5b06be89 in int runJSC<jscmain(int, char**)::$_0>(CommandLine const&, bool, jscmain(int, char**)::$_0 const&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4472:13
+    #12 0x55ec5b065db2 in jscmain(int, char**) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4679:18
+    #13 0x55ec5b0656d2 in main /root/WebKit/Source/JavaScriptCore/jsc.cpp:3715:15
+    #14 0x7f7b0b82a60f in __libc_start_call_main (/lib64/libc.so.6+0x2a60f) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+
+==2959919==ABORTING

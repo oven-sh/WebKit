@@ -1,0 +1,2 @@
+[BUGHUNT-GR1] SHADOW-MISMATCH at merge: appends=10246 drained=0 expected-pending=10246 actual-size=10744
+[BUGHUNT-GR1] SHADOW-MISMATCH at merge: appends=10245 drained=0 expected-pending=10245 actual-size=11248

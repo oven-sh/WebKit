@@ -1,0 +1,24 @@
+[a6gate-w1] W=16 N=400 nojit #7 PASS
+[a6gate-w1] W=16 N=400 nojit #6 PASS
+[a6gate-w1] W=16 N=400 nojit #3 PASS
+[a6gate-w1] W=16 N=400 nojit #2 PASS
+[a6gate-w1] W=16 N=400 nojit #4 PASS
+[a6gate-w1] W=16 N=400 nojit #1 PASS
+[a6gate-w1] W=16 N=400 nojit #5 PASS
+[a6gate-w1] round complete; failures: 0
+[a6gate-w2] W=16 N=400 nojit #6 PASS
+[a6gate-w2] W=16 N=400 nojit #4 PASS
+[a6gate-w2] W=16 N=400 nojit #1 PASS
+[a6gate-w2] W=16 N=400 nojit #5 PASS
+[a6gate-w2] W=16 N=400 nojit #3 PASS
+[a6gate-w2] W=16 N=400 nojit #7 PASS
+[a6gate-w2] W=16 N=400 nojit #2 PASS
+[a6gate-w2] round complete; failures: 0
+[a6gate-w3] W=16 N=400 nojit #6 PASS
+[a6gate-w3] W=16 N=400 nojit #3 PASS
+[a6gate-w3] W=16 N=400 nojit #5 PASS
+[a6gate-w3] W=16 N=400 nojit #1 PASS
+[a6gate-w3] W=16 N=400 nojit #2 PASS
+[a6gate-w3] W=16 N=400 nojit #4 PASS
+[a6gate-w3] round complete; failures: 0
+GATE1-DONE

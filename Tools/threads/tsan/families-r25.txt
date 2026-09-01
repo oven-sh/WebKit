@@ -1,0 +1,16 @@
+====================================================================================================
+FAMILY count=19 key=('data race', 'aligned_alloc')
+  tests: dw2-marklistset-storm_js.logx7, congc-t4-alloc-steal-storm_js.logx5, congc-t8-stop-interleaving_js.logx3, congc-t5-celllock-audit_js.logx1, cve_mc-gc-finreg-cross-thread-gc_js.logx1, gc-stress_zombie-uaf-canary_js.logx1
+====================================================================================================
+FAMILY count=5 key=('data race', 'JSC::JSGlobalObject::init')
+  tests: congc-t8-stop-interleaving_js.logx5
+====================================================================================================
+FAMILY count=4 key=('data race', 'malloc')
+  tests: congc-t5-celllock-audit_js.logx4
+====================================================================================================
+FAMILY count=2 key=('data race', 'JSC::MarkedBlock::Header::Header')
+  tests: congc-t4-alloc-steal-storm_js.logx1, congc-t5-celllock-audit_js.logx1
+====================================================================================================
+FAMILY count=2 key=('data race', 'JSC::Butterfly::growArrayRight')
+  tests: gc-stress_havebadtime-vs-indexed-fastpath_js.logx2
+TOTAL families=5 reports=32

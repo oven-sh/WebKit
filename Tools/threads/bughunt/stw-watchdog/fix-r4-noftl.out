@@ -1,0 +1,21 @@
+run 1: rc=0 1.8s PASS
+run 2: rc=0 1.7s PASS
+run 3: rc=0 2.5s PASS
+run 4: rc=0 1.5s PASS
+run 5: rc=0 0.8s PASS
+run 6: rc=0 2.1s PASS
+run 7: rc=0 2.1s PASS
+run 8: rc=0 2.3s PASS
+run 9: rc=0 1.8s PASS
+run 10: rc=0 1.3s PASS
+run 11: rc=0 2.1s PASS
+run 12: rc=0 2.1s PASS
+run 13: rc=0 2.0s PASS
+run 14: rc=0 1.7s PASS
+run 15: rc=0 1.8s PASS
+run 16: rc=0 1.7s PASS
+run 17: rc=0 2.0s PASS
+run 18: rc=0 1.8s PASS
+run 19: rc=0 2.1s PASS
+run 20: rc=0 2.1s PASS
+SUMMARY tag=fix-r4-noftl N=4 scale=0.0625 runs=20 pass=20 abort134=0 segv=0 timeout=0 other=0

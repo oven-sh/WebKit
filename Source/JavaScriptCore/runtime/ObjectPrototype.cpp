@@ -105,6 +105,25 @@ bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* thisO
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        // AUD1.K4 row II.18 (SPEC-ungil §K.1): the HasOwnPropertyCache is
+        // VM-singular mutable state with multi-word entries
+        // {RefPtr<UniquedStringImpl> impl, structureID, result}. GIL-off,
+        // N mutators reach this from every tier (CommonSlowPaths /
+        // DFGOperations / the host function), and concurrent writes to one
+        // entry race the RefPtr ref/deref (atom StringImpl refcount
+        // corruption => UAF, the A5/pas face class) and can pair a key from
+        // thread A with a result from thread B (wrong-answer class). Until
+        // the ruled per-lite copy lands, skip the cache entirely: a miss is
+        // only a perf event (K4 table II preamble). This is also the
+        // cache's ONLY creation site, so in a GIL-off process the cache
+        // stays null and the DFG HasOwnProperty fast path (which bakes the
+        // shared cache pointer into code) is never selected. Flag-off and
+        // GIL-on behavior unchanged; this site is hot, so the gate is the
+        // F1-convention frozen-Config-page test (gilOffWithProcessGate).
+        PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+        RELEASE_AND_RETURN(scope, thisObject->hasOwnProperty(globalObject, propertyName, slot));
+    }
     Structure* structure = thisObject->structure();
     HasOwnPropertyCache& hasOwnPropertyCache = vm.ensureHasOwnPropertyCache();
     if (std::optional<bool> result = hasOwnPropertyCache.get(structure, propertyName)) {

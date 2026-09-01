@@ -39,6 +39,10 @@ EdenGCActivityCallback::~EdenGCActivityCallback() = default;
 
 void EdenGCActivityCallback::doCollection(VM& vm)
 {
+    // T4(c): fires again once the server heap is shared (the §5.4/I15
+    // blanket dispatch disable was lifted); runs on the main client's
+    // run-loop thread. collect() routes through the ISS reroutes
+    // (ticketing/election), so no fire-and-forget collection can result.
     setDidGCRecently(false);
     vm.heap.collect(m_synchronousness, CollectionScope::Eden);
 }

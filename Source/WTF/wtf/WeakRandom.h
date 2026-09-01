@@ -55,8 +55,8 @@ public:
         if (!seed)
             seed = 1;
 
-        m_low = seed;
-        m_high = seed;
+        __atomic_store_n(&m_low, static_cast<uint64_t>(seed), __ATOMIC_RELAXED);
+        __atomic_store_n(&m_high, static_cast<uint64_t>(seed), __ATOMIC_RELAXED);
         advance();
     }
 
@@ -126,13 +126,28 @@ public:
     }
 
 private:
+    // SCAN-TSAN-REVERIFY / TSAN-TRIAGE §15 relaxed-atomic class: in JSC's
+    // shared-memory Thread mode the VM-level WeakRandom is read-modify-written
+    // from multiple JS Threads at safepoint-jitter sites (tsan-deep r0 family
+    // ('WTF::WeakRandom::advance', 'WTF::WeakRandom::advance'), 268+263
+    // reports). The value is non-semantic — a torn or lost-update state simply
+    // degrades to a different random seed — so per the §15 ruling for "racy
+    // words whose value is non-semantic" the accesses are converted to
+    // RELAXED atomics over the existing plain storage. A single-word relaxed
+    // load/store compiles to the identical mov/ldr/str the plain access did
+    // (flag-off byte-identical preserved; same precedent as
+    // PropertyInlineCache.h icConcurrentRelaxed{Load,Store}). m_low/m_high
+    // stay plain uint64_t so lowOffset()/highOffset() and the manually-inlined
+    // JIT codegen (see the file-top comment) are unchanged; the JIT path is
+    // not compiled in the ENABLE_JIT=OFF TSAN config that observes this race.
     uint64_t advance()
     {
-        uint64_t x = m_low;
-        uint64_t y = m_high;
-        m_low = y;
-        m_high = nextState(x, y);
-        return m_high + m_low;
+        uint64_t x = __atomic_load_n(&m_low, __ATOMIC_RELAXED);
+        uint64_t y = __atomic_load_n(&m_high, __ATOMIC_RELAXED);
+        __atomic_store_n(&m_low, y, __ATOMIC_RELAXED);
+        uint64_t high = nextState(x, y);
+        __atomic_store_n(&m_high, high, __ATOMIC_RELAXED);
+        return high + y;
     }
 
     unsigned m_seed;

@@ -50,6 +50,7 @@
 #include "SyntheticModuleRecord.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
+#include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {

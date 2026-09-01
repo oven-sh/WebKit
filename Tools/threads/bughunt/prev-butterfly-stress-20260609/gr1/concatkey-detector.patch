@@ -1,0 +1,62 @@
+--- /root/WebKit/Source/JavaScriptCore/runtime/ConcatKeyAtomStringCacheInlines.h	2026-06-09 05:09:02.474424824 +0000
++++ ConcatKeyAtomStringCacheInlines.h.detector	2026-06-09 04:17:52.361883529 +0000
+@@ -30,9 +30,40 @@
+ #include "Identifier.h"
+ #include "SmallStrings.h"
+ #include "VM.h"
++#include <wtf/text/StringBuilder.h>
+ 
+ namespace JSC {
+ 
++// BUGHUNT-GR1 (scratch instrumentation): on a flag-on cache hit, verify the
++// returned JSString really is the concatenation of the three fibers. If the
++// cache (or the cell it points at) is the corruption vehicle, this converts
++// the silent wrong-value read into a named crash at the first bad return.
++ALWAYS_INLINE void bughuntVerifyConcatKeyCacheHit(JSString* s0, JSString* s1, JSString* s2, JSString* result)
++{
++    if (!result)
++        return;
++    auto rv = result->tryGetValueWithoutGC();
++    if (!rv->impl())
++        return;
++    StringBuilder expected;
++    auto appendPart = [&](JSString* s) -> bool {
++        if (!s)
++            return true;
++        auto v = s->tryGetValueWithoutGC();
++        if (!v->impl())
++            return false;
++        expected.append(StringView(*v->impl()));
++        return true;
++    };
++    if (!appendPart(s0) || !appendPart(s1) || !appendPart(s2))
++        return;
++    String expectedString = expected.toString();
++    if (expectedString != String(rv->impl())) [[unlikely]] {
++        dataLogLn("[BUGHUNT-GR1] CONCATKEY-VEHICLE: cache hit returned wrong atom: expected=\"", expectedString, "\" got=\"", String(rv->impl()), "\"");
++        RELEASE_ASSERT_NOT_REACHED();
++    }
++}
++
+ template<typename Func>
+ inline JSString* ConcatKeyAtomStringCache::getOrInsert(VM& vm, JSString* s0, JSString* s1, JSString* s2, const Func& func)
+ {
+@@ -92,9 +123,15 @@
+     // ordering is defensive. Flag-off: today's lock-free code, bit-identical.
+     if (Options::useJSThreads()) [[unlikely]] {
+         {
+-            Locker locker { m_lock };
+-            if (auto* result = m_cache.get(atomStringImpl))
+-                return result;
++            JSString* cachedHit = nullptr;
++            {
++                Locker locker { m_lock };
++                cachedHit = m_cache.get(atomStringImpl);
++            }
++            if (cachedHit) {
++                bughuntVerifyConcatKeyCacheHit(s0, s1, s2, cachedHit); // BUGHUNT-GR1
++                return cachedHit;
++            }
+         }
+         // func() allocates (jsAtomString) — never under m_lock (GC's
+         // visitAggregate takes it; no safepoint/alloc under a leaf lock).

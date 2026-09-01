@@ -32,20 +32,26 @@ namespace JSC {
 class AllocatingScope {
 public:
     AllocatingScope(JSC::Heap& heap)
-        : m_heap(heap)
+        // SharedGC (review round 2): per-THREAD slot, not the single server
+        // field — N clients run allocation slow paths concurrently once ISS,
+        // and these RELEASE_ASSERTs would otherwise trip the moment two
+        // clients are in allocateSlowCase at once. The reference is cached so
+        // ctor and dtor always hit the same slot (see
+        // JSC::Heap::mutatorStateSlot()).
+        : m_mutatorState(heap.mutatorStateSlot())
     {
-        RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Running);
-        m_heap.m_mutatorState = MutatorState::Allocating;
+        RELEASE_ASSERT(m_mutatorState == MutatorState::Running);
+        m_mutatorState = MutatorState::Allocating;
     }
-    
+
     ~AllocatingScope()
     {
-        RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Allocating);
-        m_heap.m_mutatorState = MutatorState::Running;
+        RELEASE_ASSERT(m_mutatorState == MutatorState::Allocating);
+        m_mutatorState = MutatorState::Running;
     }
 
 private:
-    JSC::Heap& m_heap;
+    MutatorState& m_mutatorState;
 };
 
 } // namespace JSC

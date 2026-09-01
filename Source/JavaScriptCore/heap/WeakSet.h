@@ -91,6 +91,9 @@ inline WeakSet::WeakSet(VM& vm)
 {
 }
 
+// SharedGC (T9): conductor-context OK — m_vm is captured at construction
+// from the server's heap.vm() (MarkedBlock/PreciseAllocation ctors), i.e.
+// always the main VM (deviation 3); thread-agnostic accessor.
 inline VM& WeakSet::vm() const
 {
     return *m_vm;
@@ -115,6 +118,16 @@ inline bool WeakSet::isTriviallyDestructible() const
     return true;
 }
 
+// SharedGC (review round 4): deliberately LOCK-FREE even when the server is
+// shared — deallocate is reachable from cell destructors that run inside
+// MSPL'd in-lock block sweeps (taking MSPL here would self-deadlock; WTF::
+// Lock is not recursive). Sound without a lock because the only code that
+// reads/rewrites WeakImpl states concurrently with a mutator is a weak
+// sweep, and those are excluded by construction: conducted sweeps run
+// world-stopped, and mutator-concurrent MSPL sweeps skip any block whose
+// WeakSet has WeakBlocks (the weak-bearing carve-out; rationale at
+// WeakSet::sweep). An impl being clear()ed lives in a weak-bearing block by
+// definition, so no sweep can be touching it.
 ALWAYS_INLINE void WeakSet::deallocate(WeakImpl* weakImpl)
 {
     weakImpl->clear();

@@ -1,0 +1,34 @@
+====================================================================================================
+FAMILY count=23 key=('data race', 'aligned_alloc')
+  tests: dw2-marklistset-storm_js.logx9, congc-t4-alloc-steal-storm_js.logx7, congc-t5-celllock-audit_js.logx5, congc-t3-barrier-storm_js.logx1, gc-stress_havebadtime-vs-indexed-fastpath_js.logx1
+====================================================================================================
+FAMILY count=4 key=('data race', 'JSC::MarkedBlock::Header::Header')
+  tests: congc-t4-alloc-steal-storm_js.logx3, congc-t8-stop-interleaving_js.logx1
+====================================================================================================
+FAMILY count=3 key=('data race', 'JSC::Butterfly::growArrayRight')
+  tests: gc-stress_havebadtime-vs-indexed-fastpath_js.logx3
+====================================================================================================
+FAMILY count=2 key=('data race', 'malloc')
+  tests: congc-t5-celllock-audit_js.logx1, cve_mc-grow-s4-detach-nullvec-repro_js.logx1
+====================================================================================================
+FAMILY count=2 key=('JSC::MachineThreads::tryCopyCooperativelyParkedThreadStack', 'WTF::Locker<WTF::Lock>::Locker')
+  tests: jit_int-gate-epoch-reclaim_js.logx2
+====================================================================================================
+FAMILY count=1 key=('JSC::MarkedBlock::handle', 'aligned_alloc')
+  tests: congc-t5-celllock-audit_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::MarkedBlock::Handle::cellSize', 'malloc')
+  tests: congc-t5-celllock-audit_js.logx1
+====================================================================================================
+FAMILY count=1 key=('data race', 'WTF::Atomic<bool>::Atomic')
+  tests: congc-t8-stop-interleaving_js.logx1
+====================================================================================================
+FAMILY count=1 key=('data race', 'calloc')
+  tests: cve_mc-grow-s4-detach-nullvec-repro_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::JSArrayBuffer::JSArrayBuffer', 'JSC::JSArrayBuffer::isResizableOrGrowableShared')
+  tests: cve_mc-life-detach-quarantine-storm_js.logx1
+====================================================================================================
+FAMILY count=1 key=('data race', 'WTF::DeferrableRefCountedBase::DeferrableRefCountedBase')
+  tests: cve_mc-life-detach-quarantine-storm_js.logx1
+TOTAL families=11 reports=40

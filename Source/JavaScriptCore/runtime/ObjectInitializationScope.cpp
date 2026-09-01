@@ -72,6 +72,11 @@ void ObjectInitializationScope::notifyInitialized(JSObject* object)
 
 void ObjectInitializationScope::verifyPropertiesAreInitialized(JSObject* object)
 {
+    // THREADS-INTEGRATE(objectmodel) §10.7 [assert-only]: the verification
+    // walk derefs the flat layout; the object is mid-initialization
+    // thread-private, so this fires only under stress modes.
+    if (object->mayBeSegmentedButterfly()) [[unlikely]]
+        return;
     Butterfly* butterfly = object->butterfly();
     Structure* structure = object->structure();
     IndexingType indexingType = structure->indexingType();

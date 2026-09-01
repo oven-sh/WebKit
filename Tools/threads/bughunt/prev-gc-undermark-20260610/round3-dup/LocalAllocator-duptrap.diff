@@ -1,0 +1,53 @@
+--- Tools/threads/bughunt/round3-dup/orig/LocalAllocator.cpp	2026-06-10 10:07:53.264413395 +0000
++++ Source/JavaScriptCore/heap/LocalAllocator.cpp	2026-06-10 10:08:55.254418904 +0000
+@@ -39,6 +39,13 @@
+ 
+ namespace JSC {
+ 
++// BUGHUNT round-3 duplicate-handout trap — defined in heap/MarkedBlock.cpp.
++// REVERT AFTER ROUND 3.
++namespace BughuntDupTrap {
++extern bool enabledFlag;
++extern thread_local const char* t_ctx;
++}
++
+ // UNGIL §A.3 (U-T5) cross-TU seams — defined in runtime/VMManager.cpp;
+ // declaration pattern matches heap/Heap.cpp:151 and
+ // bytecode/JSThreadsSafepoint.cpp:71/77 (VMManager.h is outside the writable
+@@ -313,7 +320,11 @@
+             // single-lock handout protocol IS the point (AMPLIFIER.md rule 3).
+             RaceAmplifier::perturb();
+ 
++            if (BughuntDupTrap::enabledFlag) [[unlikely]]
++                BughuntDupTrap::t_ctx = "steal";
+             block->sweep(nullptr);
++            if (BughuntDupTrap::enabledFlag) [[unlikely]]
++                BughuntDupTrap::t_ctx = "other";
+ 
+             block->removeFromDirectory();
+             m_directory->addBlock(block);
+@@ -361,8 +372,24 @@
+         }
+     }
+ 
++    // BUGHUNT round-3 duplicate-handout trap (env: BUGHUNT_DUPTRAP=1):
++    // geometry check (RUN 12 suggested a cross-size-class hand-out) + refill
++    // context tag for the sweep-entry single-ownership trap.
++    if (BughuntDupTrap::enabledFlag) [[unlikely]] {
++        if (block->cellSize() != m_directory->cellSize() || block->directory() != m_directory) {
++            dataLog("BUGHUNT-DUPTRAP geometry: block=", RawPointer(block), " blockCellSize=", block->cellSize(),
++                " dirCellSize=", m_directory->cellSize(), " blockDir=", RawPointer(block->directory()),
++                " myDir=", RawPointer(m_directory), "\n");
++            RELEASE_ASSERT_NOT_REACHED();
++        }
++        BughuntDupTrap::t_ctx = "refill";
++    }
++
+     block->sweep(&m_freeList);
+ 
++    if (BughuntDupTrap::enabledFlag) [[unlikely]]
++        BughuntDupTrap::t_ctx = "other";
++
+     // It's possible to stumble on a completely full block. Marking tries to retire these, but
+     // that algorithm is racy and may forget to do it sometimes.
+     if (m_freeList.allocationWillFail()) {

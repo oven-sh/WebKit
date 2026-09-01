@@ -38,7 +38,19 @@ MarkStackArray::MarkStackArray()
 void MarkStackArray::transferTo(MarkStackArray& other)
 {
     RELEASE_ASSERT(this != &other);
-    
+    // A flagged (multi-producer) source must not have its segment list
+    // mutated while a straggler mutator could still be in append(); hold the
+    // append lock for the duration. Uncontended when the world is stopped.
+    if (m_multiProducerAccess) [[unlikely]] {
+        Locker locker { m_appendLock };
+        transferToImpl(other);
+        return;
+    }
+    transferToImpl(other);
+}
+
+void MarkStackArray::transferToImpl(MarkStackArray& other)
+{
     // Remove our head and the head of the other list.
     GCArraySegment<const JSCell*>* myHead = m_segments.removeHead();
     GCArraySegment<const JSCell*>* otherHead = other.m_segments.removeHead();
@@ -65,6 +77,15 @@ void MarkStackArray::transferTo(MarkStackArray& other)
 
 size_t MarkStackArray::transferTo(MarkStackArray& other, size_t limit)
 {
+    if (m_multiProducerAccess) [[unlikely]] {
+        Locker locker { m_appendLock };
+        return transferToImpl(other, limit);
+    }
+    return transferToImpl(other, limit);
+}
+
+size_t MarkStackArray::transferToImpl(MarkStackArray& other, size_t limit)
+{
     size_t count = 0;
     while (count < limit && !isEmpty()) {
         refill();
@@ -79,6 +100,12 @@ size_t MarkStackArray::transferTo(MarkStackArray& other, size_t limit)
 
 void MarkStackArray::donateSomeCellsTo(MarkStackArray& other)
 {
+    // Donate/steal run only between per-visitor stacks (under
+    // Heap::m_markingMutex); a flagged multi-producer instance must never
+    // appear here -- its segment-list surgery is not covered by m_appendLock.
+    ASSERT(!m_multiProducerAccess);
+    ASSERT(!other.m_multiProducerAccess);
+
     // Try to donate about 1 / 2 of our cells. To reduce copying costs,
     // we prefer donating whole segments over donating individual cells,
     // even if this skews away from our 1 / 2 target.
@@ -121,6 +148,9 @@ void MarkStackArray::donateSomeCellsTo(MarkStackArray& other)
 
 void MarkStackArray::stealSomeCellsFrom(MarkStackArray& other, size_t idleThreadCount)
 {
+    ASSERT(!m_multiProducerAccess);
+    ASSERT(!other.m_multiProducerAccess);
+
     // Try to steal 1 / Nth of the shared array, where N is the number of idle threads.
     // To reduce copying costs, we prefer stealing a whole segment over stealing
     // individual cells, even if this skews away from our 1 / N target.

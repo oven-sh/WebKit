@@ -101,17 +101,25 @@ bool Random::reloadAndCheckShouldAuditSlow(VM& vm)
         return false;
     }
 
-    // Reload the trigger bits.
-    m_triggerBits = 1ull << 63;
+    // Reload the trigger bits. Build the new value in a local and publish it
+    // with a single store: with N mutators sharing this VM block (GIL-off
+    // lites), the lock-free shouldAudit() fast path can run concurrently with
+    // this reload, and incremental updates to m_triggerBits would let a
+    // concurrent fast-path shift observe (and shift out) the termination bit
+    // before the low bits are filled in. The fast path may still shift the
+    // published value afterwards — that is fine; a 1 bit always survives to
+    // force the next reload — but the value we publish must be complete.
+    uint64_t triggerBits = 1ull << 63;
 
     uint32_t threshold = UINT_MAX * Options::randomIntegrityAuditRate();
     for (int i = 0; i < numberOfTriggerBits; ++i) {
         bool trigger = vm.random().getUint32() <= threshold;
-        m_triggerBits = m_triggerBits | (static_cast<uint64_t>(trigger) << i);
+        triggerBits = triggerBits | (static_cast<uint64_t>(trigger) << i);
     }
     if (IntegrityInternal::verbose)
-        dataLogLn("reloaded Integrity trigger bits ", RawHex(m_triggerBits));
-    ASSERT(m_triggerBits >= (1ull << 63));
+        dataLogLn("reloaded Integrity trigger bits ", RawHex(triggerBits));
+    ASSERT(triggerBits >= (1ull << 63));
+    m_triggerBits = triggerBits;
     return vm.random().getUint32() <= threshold;
 }
 

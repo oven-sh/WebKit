@@ -32,19 +32,24 @@ namespace JSC {
 class CollectingScope {
 public:
     CollectingScope(JSC::Heap& heap)
-        : m_heap(heap)
-        , m_oldState(m_heap.m_mutatorState)
+        // SharedGC (review round 2): per-THREAD slot (cached reference), not
+        // the single server field — see JSC::Heap::mutatorStateSlot(). On the
+        // legacy collector thread (no client TLS stamp) this resolves to the
+        // server field, exactly today's behavior; a shared-mode conductor
+        // marks only its own thread Collecting.
+        : m_mutatorState(heap.mutatorStateSlot())
+        , m_oldState(m_mutatorState)
     {
-        m_heap.m_mutatorState = MutatorState::Collecting;
+        m_mutatorState = MutatorState::Collecting;
     }
-    
+
     ~CollectingScope()
     {
-        m_heap.m_mutatorState = m_oldState;
+        m_mutatorState = m_oldState;
     }
 
 private:
-    JSC::Heap& m_heap;
+    MutatorState& m_mutatorState;
     MutatorState m_oldState;
 };
 
