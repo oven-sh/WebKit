@@ -1237,22 +1237,19 @@ void Heap::deleteUnmarkedCompiledCode()
 
 // Baseline JIT code is cached on the UnlinkedCodeBlock (CodeBlock::setupWithUnlinkedBaselineCode) so a re-created
 // CodeBlock can reuse it, but nothing ever releases that cache: once every CodeBlock that used it has died, the machine
-// code stays for as long as the unlinked code does. Drop cache entries that have had no other owner across two
-// consecutive full collections; a later warm-up simply compiles baseline again.
+// code stays for as long as the unlinked code does. Drop cache entries that no CodeBlock has used for a baseline TTL
+// lease; a later warm-up simply compiles baseline again.
 void Heap::releaseUnusedSharedBaselineCode()
 {
 #if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     if (!Options::useBaselineJITCodeSharing() || !Options::useExecutionCountForCodeBlockAging())
         return;
+    ApproximateTime cutoff = ApproximateTime::now() - CodeBlock::timeToLive(JITType::BaselineJIT) * Options::codeBlockAgingLeaseMultiplier();
     // End phase: the world is stopped and allocation already is, so no HeapIterationScope.
-    auto visit = [] (HeapCell* cell, HeapCell::Kind) {
-        auto* unlinked = static_cast<UnlinkedCodeBlock*>(cell);
-        auto& code = unlinked->m_unlinkedBaselineCode;
-        if (code && code->hasOneRef() && unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC) {
+    auto visit = [&] (HeapCell* cell, HeapCell::Kind) {
+        auto& code = static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode;
+        if (code && code->hasOneRef() && code->m_ownerWentAwayAt < cutoff)
             code = nullptr;
-            unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = false;
-        } else
-            unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = code && code->hasOneRef();
     };
     for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
         if (space)

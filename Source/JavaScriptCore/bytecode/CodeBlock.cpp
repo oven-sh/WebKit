@@ -861,6 +861,9 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
             }
         }
         setBaselineJITData(WTF::move(baselineJITData));
+#if USE(BUN_JSC_ADDITIONS)
+        m_previousCounter = static_cast<BaselineJITData*>(m_jitData)->executeCounter().count();
+#endif
 
         // Set optimization thresholds only after instructions is initialized and JITData is initialized, since these
         // rely on the instruction count (and are in theory permitted to also inspect the instruction stream to more accurate assess the cost of tier-up).
@@ -899,6 +902,11 @@ CodeBlock::~CodeBlock()
     }
 
     VM& vm = *m_vm;
+
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
+    if (jitType() == JITType::BaselineJIT)
+        static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = ApproximateTime::now();
+#endif
 
     if (JITCode::isBaselineCode(jitType())) {
 #if ENABLE(JIT)
@@ -1301,7 +1309,7 @@ bool CodeBlock::shouldJettisonDueToWeakReference(VM& vm)
     return !vm.heap.isMarked(this);
 }
 
-static Seconds NODELETE timeToLive(JITType jitType)
+Seconds CodeBlock::timeToLive(JITType jitType)
 {
     if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]] {
         switch (jitType) {

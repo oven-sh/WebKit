@@ -927,6 +927,11 @@ private:
     template<typename Visitor> bool shouldVisitStrongly(const ConcurrentJSLocker&, Visitor&);
     bool shouldJettisonDueToWeakReference(VM&);
     template<typename Visitor> bool shouldJettisonDueToOldAge(const ConcurrentJSLocker&, Visitor&);
+public:
+    static Seconds timeToLive(JITType);
+    // Start the execution-count aging lease from the counter's current value (call when a tier's code is installed).
+    void snapshotExecutionCounterForAging(float count) { m_previousCounter = count; }
+private:
     
     template<typename Visitor> void propagateTransitions(const ConcurrentJSLocker&, Visitor&);
     template<typename Visitor> void determineLiveness(const ConcurrentJSLocker&, Visitor&);
