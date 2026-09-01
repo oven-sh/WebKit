@@ -61,7 +61,7 @@ public:
     };
 
     static ModuleLoadingContext* create(VM&, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    static ModuleLoadingContext* create(VM&, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
+    static ModuleLoadingContext* create(VM&, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
 
     Step step() const { return m_step; }
     void setStep(Step s) { m_step = s; }
@@ -78,10 +78,13 @@ public:
     bool dynamic() const { return m_flags.contains(ModuleLoadFlag::Dynamic); }
     bool useImportMap() const { return m_flags.contains(ModuleLoadFlag::UseImportMap); }
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
+#if USE(BUN_JSC_ADDITIONS)
+    int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+#endif
 
 private:
     ModuleLoadingContext(VM&, Structure*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    ModuleLoadingContext(VM&, Structure*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
+    ModuleLoadingContext(VM&, Structure*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
 
     Step m_step { Step::Main };
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
@@ -90,6 +93,9 @@ private:
     WriteBarrier<ModuleRegistryEntry> m_entry;
     WriteBarrier<Unknown> m_referrer;
     WriteBarrier<AbstractModuleRecord> m_module;
+#if USE(BUN_JSC_ADDITIONS)
+    int64_t m_referrerAsyncOrder { -1 };
+#endif
     OptionSet<ModuleLoadFlag> m_flags;
 };
 

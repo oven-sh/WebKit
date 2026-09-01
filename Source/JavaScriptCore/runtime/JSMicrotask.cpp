@@ -1191,7 +1191,11 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         if (context->useImportMap())
             innerLoadFlags.add(ModuleLoadFlag::UseImportMap);
         if (context->dynamic()) {
+#if USE(BUN_JSC_ADDITIONS)
+            combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred(), context->referrerAsyncOrder());
+#else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
+#endif
             loadPromise = globalObject->moduleLoader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
@@ -1481,7 +1485,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     if (!deferred) {
         // 6.c. Let evaluatePromise be module.Evaluate().
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise* evaluatePromise = module->evaluate(globalObject, capabilityPromise);
+        JSPromise* evaluatePromise = module->evaluate(globalObject, dynamicPayload->referrerAsyncOrder(), capabilityPromise);
 #else
         JSPromise* evaluatePromise = module->evaluate(globalObject);
 #endif
@@ -1514,7 +1518,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     MarkedArgumentBuffer asyncDepsEvaluationPromises;
     for (AbstractModuleRecord* dep : evaluationList) {
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise* depPromise = dep->evaluate(globalObject, capabilityPromise);
+        JSPromise* depPromise = dep->evaluate(globalObject, dynamicPayload->referrerAsyncOrder(), capabilityPromise);
 #else
         JSPromise* depPromise = dep->evaluate(globalObject);
 #endif
