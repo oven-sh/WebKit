@@ -95,6 +95,12 @@ inline void MicrotaskQueue::clearForGlobalObject(JSGlobalObject* targetGlobalObj
         return;
     m_queue.clearForGlobalObject(targetGlobalObject);
     m_toKeep.clearForGlobalObject(targetGlobalObject);
+    // GIL-off, tasks for this global may still sit in the foreign inbox (the
+    // owner splices it into m_queue only at its next drain), so it is filtered
+    // too; otherwise they would run against the cleared global at that drain.
+    // Flag-off: branch not taken.
+    if (m_acceptsForeignTasks) [[unlikely]]
+        clearForeignTasksForGlobalObjectSlow(targetGlobalObject);
 }
 #endif
 
