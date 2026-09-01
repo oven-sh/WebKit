@@ -51,12 +51,8 @@ inline void WriteBarrierBase<T, Traits>::setMayBeNull(VM& vm, const JSCell* owne
 template <typename T, typename Traits>
 inline void WriteBarrierBase<T, Traits>::setEarlyValue(VM& vm, const JSCell* owner, T* value)
 {
-    // GIL-off (TSAN r12 reports 6/8/9/10/13): the slot is probed concurrently
-    // through the relaxed-atomic cell() accessor (see the comment there); the
-    // plain Traits::exchange store raced those probes. Route through the same
-    // relaxed atomic store — codegen identical to the plain exchange, and the
-    // OM ground truth already blesses the cross-thread value race (probed
-    // cells are revalidated).
+    // The slot is probed concurrently through cell(); every store goes through
+    // storeCell() so both sides use the same access kind (see WriteBarrier.h).
     this->storeCell(value);
     vm.writeBarrier(owner, static_cast<JSCell*>(value));
 }
