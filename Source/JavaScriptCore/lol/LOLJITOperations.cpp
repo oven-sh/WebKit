@@ -99,13 +99,18 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    ResolveType resolveType = metadata.m_resolveType;
+    auto& metadata = bytecode.metadata(codeBlock);
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     switch (resolveType) {
     case GlobalProperty:
     case GlobalPropertyWithVarInjectionChecks:
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
+        // Flag-on, op_resolve_scope metadata is frozen after CodeBlock linking;
+        // see slow_path_resolve_scope in runtime/CommonSlowPaths.cpp.
+        if (Options::useJSThreads()) [[unlikely]]
+            break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
             bool hasProperty = globalObject->hasProperty(globalObject, ident);

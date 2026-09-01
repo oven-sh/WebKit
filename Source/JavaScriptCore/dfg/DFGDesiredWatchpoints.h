@@ -126,8 +126,9 @@ struct SetPointerAdaptor {
                 ConcurrentJSLocker locker(codeBlock->m_lock);
                 watchpoint.initialize(codeBlock);
             }
-            set->add(&watchpoint);
-            return true;
+            // Flag-on, add() refuses a set that a foreign mutator fired after
+            // the check above; failing here invalidates the compilation.
+            return set->add(&watchpoint);
         });
     }
     static bool hasBeenInvalidated(T set, Concurrency)

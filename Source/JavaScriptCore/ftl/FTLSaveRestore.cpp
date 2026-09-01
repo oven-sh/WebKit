@@ -37,15 +37,7 @@
 #include "VM.h"
 #include "VMLite.h"
 
-namespace JSC {
-
-// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
-// mirroring that TU's own pattern — no header owns this form yet (the
-// AssemblyHelpers.h member surface is macro-gated on
-// JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE, which the header-owning task defines).
-void loadVMLite(AssemblyHelpers&, GPRReg);
-
-namespace FTL {
+namespace JSC { namespace FTL {
 
 static size_t NODELETE bytesForGPRs()
 {
@@ -226,7 +218,7 @@ void restoreAllRegisters(AssemblyHelpers& jit, const ScopedLambda<void(AssemblyH
 void materializeBakedScratchBufferPointer(AssemblyHelpers& jit, unsigned bakedIndex, GPRReg dest)
 {
     ASSERT(bakedIndex < VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
-    loadVMLite(jit, dest);
+    jit.loadVMLite(dest);
     jit.loadPtr(
         MacroAssembler::Address(
             dest,
@@ -303,7 +295,7 @@ void restoreCalleeSavesFromCurrentVMLiteEntryFrameCalleeSavesBuffer(AssemblyHelp
 #endif
 
     // The delta vs the VM-baked original: topEntryFrame from the CURRENT lite.
-    loadVMLite(jit, scratch);
+    jit.loadVMLite(scratch);
     jit.loadPtr(
         MacroAssembler::Address(
             scratch,
