@@ -1333,8 +1333,10 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency, ModuleGraphInstance* instance)
 {
+    // In a graph instance the [[AsyncParentModules]] of a record live on its
+    // ModuleRecordInstance; the primary graph's are on the record.
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
         Vector<AbstractModuleRecord*, 8> work;
@@ -1345,10 +1347,22 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
                 return true;
             if (!seen.add(current).isNewEntry)
                 continue;
-            for (auto& parent : current->asyncParentModules())
+            ModuleRecordInstance* state = instance ? instance->recordInstance(current) : nullptr;
+            for (auto& parent : state ? state->asyncParentModules() : current->asyncParentModules())
                 work.append(parent.get());
         }
         return false;
+    };
+    // An AsyncModuleExecutionResume reaction's driver is the record in the
+    // primary graph and the ModuleRecordInstance in a graph instance; only one
+    // of this evaluation's instance can gate the dependency.
+    auto moduleForDriver = [&](JSCell* driver) -> AbstractModuleRecord* {
+        if (!driver)
+            return nullptr;
+        if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(driver))
+            return recordInstance->graphInstance() == instance ? recordInstance->record() : nullptr;
+        auto* module = dynamicDowncast<AbstractModuleRecord>(driver);
+        return module && !instance ? module : nullptr;
     };
 
     auto cellOf = [](JSValue value) -> JSCell* {
@@ -1385,13 +1399,12 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
                 break;
             if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(driver))
                 follow(generator->context());
-            else if (auto* module = dynamicDowncast<AbstractModuleRecord>(driver))
+            else if (AbstractModuleRecord* module = moduleForDriver(driver))
                 found = resumesDependency(module);
             break;
         }
         case InternalMicrotask::AsyncModuleExecutionResume: {
-            JSCell* driver = unwrapContext(context);
-            if (auto* module = driver ? dynamicDowncast<AbstractModuleRecord>(driver) : nullptr)
+            if (AbstractModuleRecord* module = moduleForDriver(unwrapContext(context)))
                 found = resumesDependency(module);
             break;
         }
@@ -1582,7 +1595,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 12.b.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
             if (cyclic->asyncEvaluationOrder(instance).hasOrder()) {
 #if USE(BUN_JSC_ADDITIONS)
-                if (!dynamicImportPromise || !importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic)) {
+                if (!dynamicImportPromise || !importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic, instance)) {
 #endif
                 // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
                 module->setPendingAsyncDependencies(instance, module->pendingAsyncDependencies(instance).value() + 1);
