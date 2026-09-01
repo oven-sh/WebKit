@@ -48,6 +48,7 @@
 #include "ParserError.h"
 #include "Symbol.h"
 #include "SyntheticModuleRecord.h"
+#include "ThreadManager.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Scope.h>
@@ -480,6 +481,16 @@ JSPromise* JSModuleLoader::importModule(JSGlobalObject* globalObject, JSString* 
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // GIL-off, a spawned Thread may not start a module graph load: the
+    // installed loader hooks drive embedder IO with main-thread affinity, so
+    // dynamic import() is refused before any hook is consulted. The callers
+    // turn this exception into the rejected import() promise. GIL-on and
+    // flag-off are unchanged.
+    if (vm.gilOff() && ThreadManager::isJSThreadCurrent()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "import() is not available on a spawned JS Thread under GIL-off"_s);
+        return nullptr;
+    }
 
     auto attributes = retrieveImportAttributesFromDynamicImportOptions(globalObject, parameters, { vm.propertyNames->type.impl() });
     RETURN_IF_EXCEPTION(scope, nullptr);

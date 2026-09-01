@@ -327,6 +327,13 @@ SamplingProfiler::SamplingProfiler(VM& vm, Ref<Stopwatch>&& stopwatch)
         sNumFailedWalks = 0;
     }
 
+    // GIL-off the entry scope, top call frame and executing RegExp of the thread
+    // to sample live in its VMLite, which takeSample cannot resolve; refuse here
+    // rather than record nothing silently (createThreadIfNecessary never starts
+    // the timer thread for this VM).
+    if (vm.gilOff()) [[unlikely]]
+        dataLogLn("JSC: refusing to run the sampling profiler on a GIL-off VM (per-thread entry and frame state cannot be read off-thread); no samples will be taken.");
+
     m_currentFrames.grow(256);
     vm.heap.objectSpace().enablePreciseAllocationTracking();
 }
@@ -338,6 +345,10 @@ void SamplingProfiler::createThreadIfNecessary()
     ASSERT(m_lock.isLocked());
 
     if (m_thread)
+        return;
+
+    // Refused at construction: a gilOff VM is never sampled.
+    if (m_vm.gilOff()) [[unlikely]]
         return;
 
     RefPtr<SamplingProfiler> profiler = this;
@@ -372,15 +383,10 @@ void SamplingProfiler::timerLoop()
 void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
-    // UNGIL AB-22 (recorded residue of IU obligation 1): GIL-off the raw VM
-    // member below is NEVER written (entry records are per-lite), so this
-    // gate is constantly false and the profiler is deliberately DORMANT on a
-    // gilOff VM — it samples nothing rather than suspend-and-walk a thread
-    // whose Group-3 state it cannot resolve (the per-lite registry-resolve +
-    // WhileTargetSuspendedScope wiring is the open U-T8d .cpp half; see
-    // SamplingProfiler.h:323-360). The AUD1.K1 carrier-only v1 capture
-    // therefore does NOT yet deliver carrier samples gilOff. GIL-on:
-    // byte-identical (the member is the live record).
+    // The VM members read below (entryScope, topCallFrame, topEntryFrame,
+    // m_executingRegExp) are the sampled thread's state only under the GIL; a
+    // gilOff VM never creates the timer thread, so it never gets here.
+    ASSERT(!m_vm.gilOff());
     if (m_vm.entryScope) {
         auto [ nowTime, timestamp ] = m_stopwatch->elapsedTimeAndTimestamp();
 
@@ -774,13 +780,8 @@ void SamplingProfiler::pause()
 void SamplingProfiler::noticeCurrentThreadAsJSCExecutionThreadWithLock()
 {
     ASSERT(m_lock.isLocked());
-    // UNGIL §A.1.7 / AUD1.K1 (the SamplingProfiler.cpp half of U-T8d's
-    // bind-consult, wired by the review round): GIL-off a SPAWNED TS thread
-    // must never bind as m_jscExecutionThread — takeSample suspends and
-    // walks the bound thread, and suspending a free-running parallel
-    // mutator's stack is exactly the SD18 "spawned unsampled" refusal.
-    // Keep the existing binding instead. GIL-on/flag-off the predicate is
-    // constantly true: today's rebind-on-acquisition is byte-identical.
+    // GIL-off a spawned JS thread is never the sampled thread; keep the
+    // existing carrier binding.
     if (!shouldBindCurrentThreadAsJSCExecutionThread()) [[unlikely]]
         return;
     m_jscExecutionThread = &Thread::currentSingleton();
@@ -801,11 +802,7 @@ void SamplingProfiler::noticeJSLockAcquisition()
 void SamplingProfiler::noticeVMEntry()
 {
     Locker locker { m_lock };
-    // UNGIL IU obligation 1 (raw-consumer re-point; AB-22): noticeVMEntry
-    // runs on the entering thread, so the mode-split accessor resolves the
-    // CURRENT lite's record GIL-off (the raw member is never written there
-    // and this ASSERT would fire on the first gilOff VM entry). GIL-on:
-    // byte-identical.
+    // Runs on the entering thread; GIL-off the entry record is in its VMLite.
     ASSERT(m_vm.currentThreadEntryScope());
     noticeCurrentThreadAsJSCExecutionThreadWithLock();
     createThreadIfNecessary();

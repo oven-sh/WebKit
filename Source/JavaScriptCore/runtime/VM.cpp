@@ -216,54 +216,17 @@ static void purgePromiseRejectionHandoffRecordsAtVMDestruction(VM&);
 // (DeferredWorkTimer.cpp) is consumed in ~VM below via its ThreadManager.h
 // declaration (already included by this TU).
 
-// ===========================================================================
-// UNGIL §A.1.1 (U-T3): g_jscCurrentVMLite — the JIT/LLInt-visible mirror of
-// vmstate L4's `t_currentVMLite` (runtime/VMLite.cpp). The L4 freeze keeps
-// the C++ accessors (VMLite::current/currentIfExists/setCurrent) backed by
-// the plain thread_local in VMLite.cpp; generated code instead reads THIS
-// symbol, per SPEC-jit annex App. R5 mechanics (the g_jscButterflyTIDTag
-// precedent, jit/ConcurrentButterflyOperations.cpp):
-//
-// - ELF (Linux glibc+musl): initial-exec model => the symbol's TPOFF is
-//   link-time thread-invariant. The JIT-tier read is LANDED (the
-//   loadVMLite free-function emitter in jit/AssemblyHelpers.cpp; the
-//   member surface follows with the emission slice). The LLInt side —
-//   the `loadVMLite` offlineasm macro reading this symbol with
-//   initial-exec relocations (x86-64 `movq %fs:g_jscCurrentVMLite@TPOFF`;
-//   arm64 mrs + :tprel_hi12:/:tprel_lo12_nc:) plus the per-Group-3-site
-//   two-level selection and the JSCConfig `gilOffProcess` byte — is NOT
-//   YET LANDED: llint/ and runtime/JSCConfig.h are outside this slice's
-//   writable file set (OPEN U-T3 obligation, INTEGRATE-ungil.md 9b;
-//   escalated at the U-T3 amendment — the licensed flag-off golden-disasm
-//   re-baseline for the LLInt Group-3 branches happens when those branches
-//   land, not before). The symbol is extern "C" (unmangled
-//   asm-referenceable name) and defined OUTSIDE any ENABLE(JIT) region so
-//   that LLInt slice can bind to it unchanged.
-// - Darwin: Mach-O TLV has no constant offset; the JIT-visible copy lives in
-//   a pthread TSD slot whose key is to be published through the M4a-style
-//   JSCConfig slot (vmLiteTLSKey, beside butterflyTIDTagTLSKey). That slot,
-//   its key creation, and the per-thread pthread_setspecific are NOT YET
-//   LANDED (same writable-set constraint; see the Darwin arm in
-//   jit/AssemblyHelpers.cpp). This thread_local still exists there
-//   (harmless; generated code will read the TSD slot, not this symbol).
-//
-// COHERENCE CONTRACT (the App. R5 CS3 discipline, applied to the lite
-// pointer): VMLite::setCurrent — the SOLE writer of t_currentVMLite — must
-// mirror every TLS write here (and, on Darwin, pthread_setspecific the same
-// value into the vmLiteTLSKey slot), immediately after the t_currentVMLite
-// store and before its TID-tag hook fires — INCLUDING the null/uninstall
-// writes (carrier teardown, thread exit): an unmirrored clear would leave a
-// reused thread's generated code reading a stale/freed lite. STATUS: the
-// mirror store is NOT YET IMPLEMENTED (runtime/VMLite.cpp is outside this
-// slice's writable set), and NO existing INTEGRATE-ungil.md obligation row
-// covers it — obligation 9b covers only the Config byte / LLInt selection /
-// loadVMLite emitter / VMEntryRecord slot. A dedicated IU obligation row
-// (owner: the VMLite.cpp slice) must be added before any task emits live
-// reads of this symbol; escalated at the U-T3 amendment. Until the mirror
-// lands, this symbol stays null on every thread — dark-safe: only
-// gilOff-mode compilations (§A.1.3 COMPILED-FOR-VM-mode rule) emit reads of
-// it, and no shipping configuration constructs a gilOff VM.
-// ===========================================================================
+// g_jscCurrentVMLite is the sole per-thread "installed VMLite" word: the C++
+// accessors (VMLite::currentIfExists/current, inline in VMLite.h) and
+// generated code read the same slot, and VMLite::setCurrent (VMLite.cpp) is
+// its only writer, including the null store at uninstall. On ELF the
+// initial-exec model gives the symbol a link-time thread-invariant TPOFF,
+// which the LLInt loadVMLite macro (LowLevelInterpreter.asm) and the JIT
+// emitter (AssemblyHelpers.cpp) read directly; it is extern "C" and defined
+// outside any ENABLE(JIT) region so the offlineasm reference binds unchanged.
+// No other platform has a JIT-visible slot for it (Mach-O TLV has no constant
+// offset), so GIL-off is refused at option validation there (Options.cpp) and
+// the loadVMLite emitters fail-stop instead of emitting a load.
 #if OS(LINUX)
 extern "C" __attribute__((tls_model("initial-exec"))) thread_local VMLite* g_jscCurrentVMLite = nullptr;
 #else
@@ -282,6 +245,10 @@ thread_local const ClassInfo* VM::s_initializingObjectClass { nullptr };
 // same-library linkage, deliberately not declared in any header — the
 // predicate split is an implementation detail of the two functions below.
 bool currentThreadHoldsEntryToken(const VM&);
+
+// Defined in VMLite.cpp (the K4 §VIII cross-thread-entry note); ~VM retires
+// the note for a gilOff VM once all of its foreign lites are unregistered.
+void jsThreadsForgetCrossThreadEntry(VM&);
 
 bool VM::currentThreadIsHoldingAPILock() const
 {
@@ -431,12 +398,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
             // before m_gilOff was known. Stamp it now, while the VM is still
             // unpublished, so GIL-off Strong allocate/free take its lock.
             heap.strongSet()->noteOwnerVMDesignatedGILOff();
-            // U0c invariant check immediately before EVERY in-scope
-            // noteSharedServerSticky() trigger (annex U0C). The second
-            // trigger family — HeapClientSet::add's second-client site
-            // (HeapClientSet.cpp:69) — is OUTSIDE this slice's writable set
-            // and remains UNWIRED; see the declaration comment in
-            // heap/Heap.h and INTEGRATE-ungil.md ledger row 6 (still open).
+            // The designation check runs immediately before every
+            // noteSharedServerSticky() trigger; the other trigger is
+            // HeapClientSet::add's second-client site.
             heap.verifyStickySharedServerDesignation();
             heap.noteSharedServerSticky();
         }
@@ -788,9 +752,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // world-stopped once per collection of THIS server heap (legacy AND
     // shared protocols, heap CR §13.10d) and bumps ONLY that heap's slot in
     // the owned ButterflyQuarantineEpochs registry — NEVER a process-global
-    // counter (r13). Idempotent per heap; registration must precede client #2.
-    if (Options::useJSThreads()) [[unlikely]]
+    // counter (r13). Once per heap; registration must precede client #2. The
+    // ArrayBuffer mapping quarantine's hook is registered the same way (a
+    // no-op unless the process runs GIL-off).
+    if (Options::useJSThreads()) [[unlikely]] {
         registerButterflyQuarantineEpochHook(heap);
+        registerArrayBufferQuarantineSafepointHook(heap);
+    }
 
     // We must set this at the end only after the VM is fully initialized.
     WTF::storeStoreFence();
@@ -1035,7 +1003,7 @@ static void detachDeferredOwnCarrierClientForVMDestruction(VM& vm, VMLite* lite)
 // the walk's DETACHED flips signal the condition (both waiters are
 // predicate loops — cross-wakeups benign). Progress: every counted lite's
 // owner is in straight-line teardown that runs access-released holding NO
-// api or heap lock and acquires only the leaf registry lock — which this
+// api or heap lock and acquires only the registry lock — which this
 // waiter does NOT own while parked (Condition::wait drops it into the
 // parking lot) — so it always reaches its unregisterLite and signals
 // (EXIT1.6 acyclicity; join-then-destroy-VM is safe in every build
@@ -1125,6 +1093,11 @@ VM::~VM()
             // (U20 r31: EVERY physical removal). No TEARDOWN mark is needed
             // — a VM inside ~VM has no live conductors (§F.6).
             unregisterVMLiteAndNotifyTeardown(*m_mainVMLite);
+            // Every foreign lite is gone, so no install can re-note this VM;
+            // retire its cross-thread-entry note before the address can be
+            // reused. Done here rather than in ~VMLite, which may run after
+            // the VM is freed (deferred carrier destruction).
+            jsThreadsForgetCrossThreadEntry(*this);
         } else {
 #if ASSERT_ENABLED
             {
@@ -1207,7 +1180,7 @@ VM::~VM()
     heap.lastChanceToFinalize();
 
     if (Options::useVMLite()) [[unlikely]] {
-        // SPEC-vmstate §6.5(c): the same leaf lock that guards GC-marker
+        // SPEC-vmstate §6.5(c): the same lock that guards GC-marker
         // iteration (M11) and queue ctor/dtor list mutation (M12).
         Locker locker { VMLiteRegistry::singleton().lock };
         while (!m_microtaskQueues.isEmpty())
@@ -1638,12 +1611,65 @@ MacroAssemblerCodeRef<JITStubRoutinePtrTag> VM::getCTIVirtualCall(CallMode callM
 
 void VM::whenIdle(Function<void()>&& callback)
 {
+    if (m_gilOff) [[unlikely]] {
+        // The VM member entryScope is never written GIL-off; "entered" is a
+        // property of the registry, and the queue-or-run decision must be
+        // made against it atomically (see the helper's declaration).
+        if (queueDidPopListenerIfAnyThreadEntered(WTF::move(callback)))
+            return;
+        callback();
+        return;
+    }
     if (!entryScope) {
         callback();
         return;
     }
     m_didPopListeners.append(WTF::move(callback));
     requestEntryScopeService(EntryScopeService::PopListeners);
+}
+
+bool VM::queueDidPopListenerIfAnyThreadEntered(Function<void()>&& callback)
+{
+    ASSERT(m_gilOff);
+    auto& registry = VMLiteRegistry::singleton();
+    Locker locker { registry.lock };
+    bool anyThreadEntered = false;
+    for (VMLite* lite : registry.lites) {
+        if (lite->vm == this && lite->entryScope.load(std::memory_order_relaxed)) {
+            anyThreadEntered = true;
+            break;
+        }
+    }
+    if (!anyThreadEntered)
+        return false;
+    m_didPopListeners.append(WTF::move(callback));
+    // The fan-out of requestVMWideEntryScopeService, done under the lock we
+    // already hold.
+    uint16_t bit = packedServiceBits(EntryScopeService::PopListeners);
+    entryScopeServices().add(EntryScopeService::PopListeners);
+    for (VMLite* lite : registry.lites) {
+        if (lite->vm == this)
+            lite->entryScopeServicesRawBits.fetch_or(bit, std::memory_order_relaxed);
+    }
+    return true;
+}
+
+Vector<Function<void()>> VM::takeDidPopListenersIfNoThreadEntered()
+{
+    ASSERT(m_gilOff);
+    auto& registry = VMLiteRegistry::singleton();
+    Locker locker { registry.lock };
+    for (VMLite* lite : registry.lites) {
+        if (lite->vm == this && lite->entryScope.load(std::memory_order_relaxed))
+            return { };
+    }
+    uint16_t bit = packedServiceBits(EntryScopeService::PopListeners);
+    entryScopeServices().remove(EntryScopeService::PopListeners);
+    for (VMLite* lite : registry.lites) {
+        if (lite->vm == this)
+            lite->entryScopeServicesRawBits.fetch_and(static_cast<uint16_t>(~bit), std::memory_order_relaxed);
+    }
+    return WTF::move(m_didPopListeners);
 }
 
 void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)
@@ -1656,9 +1682,9 @@ void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)
 void VM::deleteAllCode(DeleteAllCodeEffort effort)
 {
     whenIdle([=, this] () {
-        m_codeCache->clear();
+        m_codeCache->clear(*this);
         m_builtinExecutables->clear();
-        m_regExpCache->deleteAllCode();
+        m_regExpCache->deleteAllCode(*this);
         {
             // The RegExp interpreter's backtracking pools past its first page are only a cache
             // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
@@ -1752,17 +1778,12 @@ void VM::setException(Exception* exception)
     if (Options::useVMLite())
         ASSERT(currentThreadIsHoldingAPILock());
 #endif
-    // UNGIL §A.1.3 mode split: the throwing thread's lite when gilOff (the
-    // GC root walk picks these up per registered lite, r6 F5).
-    // tsan-vm-setexception-cross-thread-r3: GIL'd useJSThreads shares this
-    // word across threads, and hasPendingTerminationException() is a
-    // sanctioned lock-free pointer-compare reader (jsc's runJSC result check
-    // after its JSLockHolder scope closes while spawned threads still run).
-    // Publish with a relaxed atomic store — codegen-identical to a plain
-    // store on all supported targets, so GIL-on/flag-off perf is unchanged.
-    // No ordering is required: the lock-free reader never dereferences, and
-    // all dereferencing readers hold the JSLock (SPEC-vmstate I15).
-    // m_lastException stays a plain store — it has no lock-free reader.
+    // The throwing thread's lite when gilOff (the GC root walk reads each
+    // registered lite's word with mutators stopped). Every access to
+    // m_exception is a relaxed atomic — codegen-identical to a plain store —
+    // so a cross-thread pointer-compare read is tear-free; dereferencing
+    // readers hold the JSLock (SPEC-vmstate I15). m_lastException stays a
+    // plain store: it has no cross-thread reader.
     auto& primitives = group3Primitives();
     WTF::atomicStore(&primitives.m_exception, exception, std::memory_order_relaxed);
     primitives.m_lastException = exception;
@@ -1863,15 +1884,12 @@ void VM::setStackPointerAtVMEntry(void* sp)
 
 size_t VM::updateSoftReservedZoneSize(size_t softReservedZoneSize)
 {
-    // THREADS: the read-modify-write is serialized under m_softReservedZoneSizeLock
-    // (ErrorHandlingScope save/restore can run on multiple Threads); the field's
-    // unlocked readers (updateStackLimits, softReservedZoneSize()) use relaxed loads.
-    size_t oldSoftReservedZoneSize;
-    {
-        Locker locker { m_softReservedZoneSizeLock };
-        oldSoftReservedZoneSize = WTF::atomicLoad(&m_currentSoftReservedZoneSize, std::memory_order_relaxed);
-        WTF::atomicStore(&m_currentSoftReservedZoneSize, softReservedZoneSize, std::memory_order_relaxed);
-    }
+    // GIL-off this is the current thread's lite word (VM.h), so concurrent
+    // ErrorHandlingScope save/restore pairs on different threads never
+    // interleave on one value.
+    size_t& slot = currentSoftReservedZoneSizeSlot();
+    size_t oldSoftReservedZoneSize = slot;
+    slot = softReservedZoneSize;
 #if ENABLE(C_LOOP)
     cloopStack().setSoftReservedZoneSize(softReservedZoneSize);
 #endif
@@ -1948,13 +1966,14 @@ void VM::updateStackLimits()
     // a spawned entry must never clobber the VM word another carrier's
     // mirrors read.
     auto& primitives = group3Primitives();
+    size_t softReservedZoneSize = currentSoftReservedZoneSizeSlot();
     void* newSoftStackLimit = 0;
     if (primitives.m_stackPointerAtVMEntry) {
         char* startOfStack = reinterpret_cast<char*>(primitives.m_stackPointerAtVMEntry);
-        newSoftStackLimit = stack.recursionLimit(startOfStack, Options::maxPerThreadStackUsage(), WTF::atomicLoad(&m_currentSoftReservedZoneSize, std::memory_order_relaxed));
+        newSoftStackLimit = stack.recursionLimit(startOfStack, Options::maxPerThreadStackUsage(), softReservedZoneSize);
         primitives.m_stackLimit = stack.recursionLimit(startOfStack, Options::maxPerThreadStackUsage(), reservedZoneSize);
     } else {
-        newSoftStackLimit = stack.recursionLimit(WTF::atomicLoad(&m_currentSoftReservedZoneSize, std::memory_order_relaxed));
+        newSoftStackLimit = stack.recursionLimit(softReservedZoneSize);
         primitives.m_stackLimit = stack.recursionLimit(reservedZoneSize);
     }
 
@@ -2386,12 +2405,15 @@ void VM::dumpTypeProfilerData()
 // it (didExhaustMicrotaskQueue returns early on spawned threads), so it needs
 // no lock and no per-lite copy; spawned events reach it via this queue.
 //
-// Strong discipline (§F.3): the ENQUEUER creates the record's Strong while
-// holding its entry token (asserted); the CARRIER clears it under its token
-// at flush; ~VM purges the queue on the destroying thread, which still holds
-// the token at that point (see ~VM). Strong create/destroy happens OUTSIDE
-// the queue lock so HandleSet::m_strongLock (also a leaf) is never nested
-// under it.
+// Strong discipline (§F.3): records are heap objects. The ENQUEUER builds the
+// record (creating its Strong) while holding its entry token (asserted) and
+// BEFORE taking the queue lock; the CARRIER clears the Strong under its token
+// at flush and destroys the record after dropping the lock; ~VM purges the
+// queue on the destroying thread, which still holds the token at that point
+// (see ~VM). Only record pointers move under the queue lock — Strong is not
+// movable (its "move" is a copy that allocates a handle), so the records are
+// never held by value in the guarded vector — and HandleSet::m_strongLock
+// (also a leaf) is therefore never nested under it.
 //
 // Lock placement note (recorded spec delta, U-T8e summary): §E.1b.4 names
 // "the annex-E7 m_pendingLock-guarded handoff queue" — i.e. DWT::m_taskLock.
@@ -2406,21 +2428,24 @@ void VM::dumpTypeProfilerData()
 // promises delivery at the NEXT carrier drain, which the §E.1b settling-
 // thread microtask protocol already forces whenever a carrier drains.
 //
-// Call-site status (gates U-T9): the four installed-hook invocation sites
-// (JSPromise.cpp:405/:464/:502/:637) still call the methodTable hook
-// directly; U-T9 re-points them at notifyPromiseRejectionTrackerCrossThread-
-// Aware() below (same-library linkage — redeclare in JSPromise.cpp, no
-// header changes; the currentThreadHoldsEntryToken pattern, JSLock.cpp).
-// Until then the DEFAULT tracker is already safe (its only effect,
-// VM::promiseRejected, gates internally below); embedder-installed hooks at
-// those sites run inline-on-spawned only until U-T9 lands the re-point.
-// Flag-off (useJSThreads=false => m_gilOff false): every path below is
-// bit-identical to the landed code.
+// Every JSPromise.cpp tracker invocation routes through
+// notifyPromiseRejectionTrackerCrossThreadAware() below (redeclared there;
+// same-library linkage, no header), so an embedder-installed hook never runs
+// inline on a spawned thread; the only direct methodTable hook calls are the
+// gate's own carrier arm and the flush. Flag-off (useJSThreads=false =>
+// m_gilOff false): every path below is bit-identical to the landed code.
 // =============================================================================
 
 namespace {
 
 struct PromiseRejectionTrackerHandoffRecord {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PromiseRejectionTrackerHandoffRecord);
+    PromiseRejectionTrackerHandoffRecord(VM& vm, JSPromise* promise, JSPromiseRejectionOperation operation)
+        : promise(vm, promise)
+        , operation(operation)
+    {
+    }
+
     Strong<JSPromise> promise;
     JSPromiseRejectionOperation operation;
 };
@@ -2428,7 +2453,7 @@ struct PromiseRejectionTrackerHandoffRecord {
 struct PromiseRejectionTrackerHandoffQueue {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PromiseRejectionTrackerHandoffQueue);
     Lock lock; // §LK leaf (spec home: DWT m_pendingLock; see block comment).
-    Vector<PromiseRejectionTrackerHandoffRecord> records WTF_GUARDED_BY_LOCK(lock);
+    Vector<std::unique_ptr<PromiseRejectionTrackerHandoffRecord>> records WTF_GUARDED_BY_LOCK(lock); // pointers only: growth is a memcpy, no Strong op under the lock.
     bool flushing WTF_GUARDED_BY_LOCK(lock) { false }; // re-entrant carrier drain guard.
 };
 
@@ -2461,16 +2486,14 @@ static PromiseRejectionTrackerHandoffQueue* promiseRejectionHandoffQueueFor(VM& 
 }
 
 // SD15 spawned-side append. No JS, no GC allocation beyond the Strong slot.
-// Exported within the library for U-T9's call-site re-point (redeclare, no
-// header).
 void enqueuePromiseRejectionTrackerHandoffRecord(VM& vm, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
     ASSERT(vm.gilOff());
     ASSERT(ThreadManager::isJSThreadCurrent());
     ASSERT(vm.currentThreadIsHoldingAPILock()); // §F.3: enqueuer holds its entry token across the Strong create.
-    // Strong created OUTSIDE the queue lock (leaf-vs-leaf, see block comment);
-    // moving it into the vector touches no HandleSet state.
-    PromiseRejectionTrackerHandoffRecord record { Strong<JSPromise>(vm, promise), operation };
+    // The record and its Strong are built OUTSIDE the queue lock (leaf-vs-leaf,
+    // see block comment); only the pointer moves under it.
+    auto record = makeUnique<PromiseRejectionTrackerHandoffRecord>(vm, promise, operation);
     auto* queue = promiseRejectionHandoffQueueFor(vm, /* createIfMissing */ true);
     Locker locker { queue->lock };
     queue->records.append(WTF::move(record));
@@ -2494,7 +2517,7 @@ void flushPromiseRejectionTrackerHandoffRecords(VM& vm)
     if (!queue)
         return;
 
-    Vector<PromiseRejectionTrackerHandoffRecord> records;
+    Vector<std::unique_ptr<PromiseRejectionTrackerHandoffRecord>> records;
     {
         Locker locker { queue->lock };
         if (queue->flushing || queue->records.isEmpty())
@@ -2507,14 +2530,14 @@ void flushPromiseRejectionTrackerHandoffRecords(VM& vm)
     size_t executed = 0;
     bool terminated = false;
     for (auto& record : records) {
-        JSPromise* promise = record.promise.get();
+        JSPromise* promise = record->promise.get();
         // The promise's realm global is kept alive by the Strong (cell ->
         // structure -> global); the hook contract takes the global whose
         // tracker fires (same realm choice as callPromiseRejectionCallback).
         JSGlobalObject* globalObject = promise->realm();
-        globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, promise, record.operation);
+        globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, promise, record->operation);
         ++executed;
-        record.promise.clear(); // §F.3: carrier clears under its token.
+        record->promise.clear(); // §F.3: carrier clears under its token.
         if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
             terminated = true;
             break;
@@ -2527,7 +2550,8 @@ void flushPromiseRejectionTrackerHandoffRecords(VM& vm)
         if (terminated && executed < records.size()) {
             // "Never lost while the carrier still drains": re-prepend the
             // unexecuted tail ahead of anything enqueued during the flush.
-            Vector<PromiseRejectionTrackerHandoffRecord> requeued;
+            // Pointer moves only (see block comment).
+            Vector<std::unique_ptr<PromiseRejectionTrackerHandoffRecord>> requeued;
             requeued.reserveInitialCapacity(records.size() - executed + queue->records.size());
             for (size_t i = executed; i < records.size(); ++i)
                 requeued.append(WTF::move(records[i]));
@@ -2536,14 +2560,14 @@ void flushPromiseRejectionTrackerHandoffRecords(VM& vm)
             queue->records = WTF::move(requeued);
         }
     }
-    // Executed records' (already-cleared) Strongs are destroyed here, outside
+    // Executed records (already-cleared Strongs) are destroyed here, outside
     // the queue lock, still under the carrier's token.
 }
 
-// SD15 invocation gate: the shape U-T9 re-points the JSPromise.cpp call sites
-// at (redeclare in JSPromise.cpp; same-library linkage, no header). Carrier
-// (or GIL-on / flag-off): invoke the methodTable hook inline, bit-identical
-// to the landed call sites. Spawned GIL-off: append the tracker record.
+// SD15 invocation gate: every JSPromise.cpp tracker call site routes here
+// (redeclared there; same-library linkage, no header). Carrier (or GIL-on /
+// flag-off): invoke the methodTable hook inline, bit-identical to the landed
+// call sites. Spawned GIL-off: append the tracker record.
 void notifyPromiseRejectionTrackerCrossThreadAware(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
     VM& vm = globalObject->vm();
@@ -2574,7 +2598,7 @@ static void purgePromiseRejectionHandoffRecordsAtVMDestruction(VM& vm)
     }
     if (!queue)
         return;
-    Vector<PromiseRejectionTrackerHandoffRecord> records;
+    Vector<std::unique_ptr<PromiseRejectionTrackerHandoffRecord>> records;
     {
         Locker locker { queue->lock };
         ASSERT(!queue->flushing);
@@ -2649,9 +2673,6 @@ void VM::promiseRejected(JSPromise* promise)
 
 void VM::drainMicrotasks()
 {
-    if (m_drainMicrotaskDelayScopeCount.load(std::memory_order_relaxed)) [[unlikely]]
-        return;
-
     // UNGIL §E.1/I11 (U-T9): GIL-off, a spawned/non-main-carrier thread
     // drains ONLY its own per-lite queue (enqueued/drained by its owner —
     // I11; reaction jobs run on the SETTLING thread, SD10/§E.1b.1). The VM
@@ -2670,6 +2691,11 @@ void VM::drainMicrotasks()
     if (m_gilOff) [[unlikely]] {
         VMLite* lite = VMLite::currentIfExists();
         if (lite && lite->vm == this && lite != m_mainVMLite.get() && !lite->ownerHasNoTlsDtor) {
+            // Only a DrainMicrotaskDelayScope opened on this thread defers
+            // this drain: no other thread can drain this queue, and the
+            // thread's close drops whatever is still queued.
+            if (lite->drainMicrotaskDelayScopeCount) [[unlikely]]
+                return;
             MicrotaskQueue* queue = lite->defaultMicrotaskQueue.get();
             if (!queue) {
                 finalizeSynchronousJSExecution();
@@ -2714,6 +2740,9 @@ void VM::drainMicrotasks()
         // GIL-on: branch not taken, landed body byte-identical.
         RELEASE_ASSERT(WTF::isMainThread());
     }
+
+    if (m_drainMicrotaskDelayScopeCount.load(std::memory_order_relaxed)) [[unlikely]]
+        return;
 
     if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue->clear();
@@ -2889,9 +2918,11 @@ ScratchBuffer* VM::scratchBufferForSize(size_t size)
         VMLite* lite = VMLite::currentIfExists();
         if (lite && lite->vm == this)
             return lite->scratchBufferForSize(size);
-        // No installed same-VM lite (e.g. compiler-thread C++ paths):
-        // fall through to the VM-owned buffers below — those callers do not
-        // run JS and the buffers they get are still GC-scanned.
+        // No installed same-VM lite: hand out a VM-owned buffer. Its address
+        // must never be baked into compiled code, which runs on every thread
+        // of the VM; gilOff DFG/FTL emission bakes a ScratchBufferRegistry
+        // index (allocateBakedScratchBufferIndex) and resolves the current
+        // lite's buffer at run time instead.
     }
 
     Locker locker { m_scratchBufferLock };
@@ -2955,17 +2986,19 @@ bool VM::isScratchBuffer(void* ptr)
 
 unsigned VM::allocateBakedScratchBufferIndex(size_t size)
 {
-    // ANNEX A16 (UNGIL U-T1; dark until U-T4 emission): baked DFG/FTL
-    // scratch addresses become process-wide indices; install fans to this
+    // ANNEX A16: baked DFG/FTL scratch addresses become process-wide indices,
+    // one per power-of-two size class (shared by every site that requests
+    // that class, as GIL-on sites share the VM's buffer); install fans to this
     // VM's registered lites under the registry lock (§LK.6 re-rank legality
     // for the nested scratchBufferLock), registration backfills the rest.
     RELEASE_ASSERT(m_gilOff);
-    unsigned index = ScratchBufferRegistry::singleton().allocateIndex(size);
+    size_t classSize;
+    unsigned index = ScratchBufferRegistry::singleton().indexForSizeClass(size, classSize);
     auto& registry = VMLiteRegistry::singleton();
     Locker locker { registry.lock };
     for (VMLite* lite : registry.lites) {
         if (lite->vm == this)
-            lite->ensureScratchBufferAtIndex(index, size);
+            lite->ensureScratchBufferAtIndex(index, classSize);
     }
     return index;
 }
@@ -3140,24 +3173,18 @@ bool VM::isGILOffProcess()
 
 void Heap::verifyStickySharedServerDesignation()
 {
-    // UNGIL §0 U0c (ANNEX U0C, BINDING; U-T3):
-    // RELEASE_ASSERT(gilOffProcess => the server VM's m_gilOff == 1) before
-    // a noteSharedServerSticky() trigger. WIRED at the winner-ctor eager
-    // trigger (VM ctor, above); the annex-mandated HeapClientSet::add
-    // second-client site (HeapClientSet.cpp:69) is NOT YET WIRED — see the
-    // declaration comment in heap/Heap.h for the open-obligation record and
-    // the I13 interim backstop. Under
-    // gilOffProcess only the designation winner may ever see clientSet() > 1
-    // — a LOSER VM's U0b spawn refusal keeps its clientSet() <= 1, so a
-    // loser reaching the trigger IS a bug (and noteSharedServerSticky's
-    // inner I13 CAS firing right after is the correct behavior; this assert
-    // just makes the failure mode precise). GIL-on processes
-    // (!gilOffProcess) are exempt: the legacy "option && size() EVER > 1"
-    // sticky trigger is their sanctioned path.
+    // RELEASE_ASSERT(gilOffProcess => the server VM's m_gilOff == 1), run
+    // before both noteSharedServerSticky() triggers (the winner VM ctor's
+    // eager trigger above and HeapClientSet::add's second-client trigger).
+    // Under gilOffProcess only the designation winner may ever see
+    // clientSet() > 1 — a LOSER VM's spawn refusal keeps its clientSet()
+    // <= 1, so a loser reaching a trigger IS a bug; this assert makes the
+    // failure precise before noteSharedServerSticky's inner I13 CAS would.
+    // GIL-on processes (!gilOffProcess) are exempt: the legacy "option &&
+    // size() EVER > 1" sticky trigger is their sanctioned path.
     //
-    // Defined HERE (not Heap.cpp) because it needs the complete VM type
-    // (vm()/gilOff()) and Heap.cpp is outside U-T3's owned-file set — see
-    // INTEGRATE-ungil.md supersession ledger row 6. Declared in heap/Heap.h.
+    // Defined here rather than Heap.cpp because it needs the complete VM
+    // type (vm()/gilOff()). Declared in heap/Heap.h.
     if (!VM::isGILOffProcess())
         return;
     RELEASE_ASSERT(vm().gilOff());
@@ -3166,8 +3193,7 @@ void Heap::verifyStickySharedServerDesignation()
 bool VM::isAnyThreadEntered() const
 {
     // UNGIL §A.1.5: VM-wide "entered" consumers iterate the registry under
-    // its lock (leaf — nothing acquired while held). Replaced by the §A.3.1
-    // entered-thread set's non-emptiness when U-T5 lands it.
+    // its lock; nothing else is acquired here.
     auto& registry = VMLiteRegistry::singleton();
     Locker locker { registry.lock };
     for (VMLite* lite : registry.lites) {
@@ -3197,8 +3223,9 @@ void VM::requestVMWideEntryScopeService(EntryScopeService service)
 
 void VM::requestVMWideEntryScopeService(ConcurrentEntryScopeService service)
 {
-    // CONCURRENT_SAFE: the requester may hold NO lite (§A.1.5); the registry
-    // lock is a leaf, so this is callable from any thread.
+    // CONCURRENT_SAFE: the requester may hold NO lite (§A.1.5); only the
+    // registry lock is taken, and the registry lock is never taken under any
+    // lock this can be reached with, so this is callable from any thread.
     ASSERT(m_gilOff);
     uint16_t bit = packedServiceBits(service);
     auto& registry = VMLiteRegistry::singleton();
@@ -3207,6 +3234,19 @@ void VM::requestVMWideEntryScopeService(ConcurrentEntryScopeService service)
     for (VMLite* lite : registry.lites) {
         if (lite->vm == this)
             lite->entryScopeServicesRawBits.fetch_or(bit, std::memory_order_relaxed);
+    }
+}
+
+CONCURRENT_SAFE void VM::clearVMWideEntryScopeService(ConcurrentEntryScopeService service)
+{
+    ASSERT(m_gilOff);
+    uint16_t bit = packedServiceBits(service);
+    auto& registry = VMLiteRegistry::singleton();
+    Locker locker { registry.lock };
+    concurrentEntryScopeServices().remove(service);
+    for (VMLite* lite : registry.lites) {
+        if (lite->vm == this)
+            lite->entryScopeServicesRawBits.fetch_and(static_cast<uint16_t>(~bit), std::memory_order_relaxed);
     }
 }
 
@@ -3265,10 +3305,19 @@ void VM::executeEntryScopeServicesOnExit()
         watchdog->exitedVM();
 
     if (hasEntryScopeServiceRequest(EntryScopeService::PopListeners)) {
-        auto listeners = WTF::move(m_didPopListeners);
-        for (auto& listener : listeners)
-            listener();
-        clearEntryScopeService(EntryScopeService::PopListeners);
+        if (m_gilOff) [[unlikely]] {
+            // Every lite carries the bit; only the last thread out takes the
+            // list (and clears the bit VM-wide). Earlier exits leave their
+            // bit set so a re-entry keeps the slow exit path.
+            auto listeners = takeDidPopListenersIfNoThreadEntered();
+            for (auto& listener : listeners)
+                listener();
+        } else {
+            auto listeners = WTF::move(m_didPopListeners);
+            for (auto& listener : listeners)
+                listener();
+            clearEntryScopeService(EntryScopeService::PopListeners);
+        }
     }
 
     // Normally, we want to clear the hasTerminationRequest flag here. However, if the
@@ -3335,9 +3384,8 @@ void VM::removeLoopHintExecutionCounter(const JSInstruction* instruction)
 void VM::beginMarking()
 {
     if (Options::useVMLite()) [[unlikely]] {
-        // SPEC-vmstate §6.5: markers traverse the registration list while
-        // mutators run; markers hold no other lock here, and holders may
-        // acquire NO lock while holding it (leaf, §7).
+        // The registry lock guards list membership against a concurrent queue
+        // ctor/dtor; the cursor resets below take nothing else.
         Locker locker { VMLiteRegistry::singleton().lock };
         m_microtaskQueues.forEach([&](MicrotaskQueue* microtaskQueue) {
             microtaskQueue->beginMarking();
@@ -3363,10 +3411,14 @@ template<typename Visitor>
 void VM::visitAggregateImpl(Visitor& visitor)
 {
     if (Options::useVMLite()) [[unlikely]] {
-        // SPEC-vmstate §6.5 (M11): registry leaf lock around ONLY the
-        // forEach; protects LIST MEMBERSHIP against concurrent queue
-        // ctor/dtor (M12). Queue CONTENTS are visited with all mutators
-        // suspended (see the M11 scope note / cross-WS item 12).
+        // Registry lock around ONLY the forEach; protects list membership
+        // against a concurrent queue ctor/dtor. Queue contents are visited
+        // with all mutators stopped, except the foreign inbox, which the
+        // queue reads under its own lock. The registry lock is therefore not
+        // a leaf: MicrotaskQueue::m_foreignTasksLock and MarkedBlock locks
+        // nest under it here, and the per-lite trap signaling and stack
+        // mirror locks nest under it in VMLiteRegistry::registerLite; none of
+        // those ever takes the registry lock.
         Locker locker { VMLiteRegistry::singleton().lock };
         m_microtaskQueues.forEach([&](MicrotaskQueue* microtaskQueue) {
             microtaskQueue->visitAggregate(visitor);
@@ -3620,16 +3672,45 @@ VM::DrainMicrotaskDelayScope& VM::DrainMicrotaskDelayScope::operator=(VM::DrainM
     return *this;
 }
 
+// GIL-off, the current thread's lite when that thread's microtasks live on the
+// lite's own queue (spawned threads and non-main embedder carriers — the key
+// queueMicrotask and drainMicrotasks route on); null when the VM default queue
+// is the authority (the main thread's carrier, the no-lite window, GIL-on and
+// flag-off). A scope opened on such a thread counts on its lite, so it defers
+// only that thread's drains; it must be closed on the same thread.
+static ALWAYS_INLINE VMLite* perLiteMicrotaskQueueLite(VM& vm)
+{
+    if (!vm.gilOff()) [[likely]]
+        return nullptr;
+    VMLite* lite = VMLite::currentIfExists();
+    if (lite && lite->vm == &vm && lite != vm.mainVMLite() && !lite->ownerHasNoTlsDtor)
+        return lite;
+    return nullptr;
+}
+
 void VM::DrainMicrotaskDelayScope::increment()
 {
-    if (m_vm)
-        m_vm->m_drainMicrotaskDelayScopeCount.fetch_add(1, std::memory_order_relaxed);
+    if (!m_vm)
+        return;
+    if (VMLite* lite = perLiteMicrotaskQueueLite(*m_vm)) [[unlikely]] {
+        ++lite->drainMicrotaskDelayScopeCount;
+        return;
+    }
+    m_vm->m_drainMicrotaskDelayScopeCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 void VM::DrainMicrotaskDelayScope::decrement()
 {
     if (!m_vm)
         return;
+    if (VMLite* lite = perLiteMicrotaskQueueLite(*m_vm)) [[unlikely]] {
+        RELEASE_ASSERT(lite->drainMicrotaskDelayScopeCount);
+        if (!--lite->drainMicrotaskDelayScopeCount) {
+            JSLockHolder locker(*m_vm);
+            m_vm->drainMicrotasks();
+        }
+        return;
+    }
     ASSERT(m_vm->m_drainMicrotaskDelayScopeCount.load(std::memory_order_relaxed));
     if (m_vm->m_drainMicrotaskDelayScopeCount.fetch_sub(1, std::memory_order_relaxed) == 1) {
         JSLockHolder locker(*m_vm);

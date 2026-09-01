@@ -78,8 +78,9 @@ function next(value)
     // SuspendedX -> Executing on the state field and returns the observed
     // pre-claim state (Executing/Completed are returned WITHOUT claiming;
     // dispatch below is on that re-read). Flag-off / GIL-on keeps the landed
-    // plain read; @gilOffProcess is a bytecode-time constant, so every tier
-    // folds the branch. @generatorResume's Executing store is redundant
+    // plain read; @gilOffProcess is a bytecode-time constant and the bytecode
+    // generator emits only the live arm of an `if` on it, so no tier ever sees
+    // the branch or the dead arm. @generatorResume's Executing store is redundant
     // under the claim (same value) and remains the claiming store GIL-on.
     var state;
     if (@gilOffProcess)

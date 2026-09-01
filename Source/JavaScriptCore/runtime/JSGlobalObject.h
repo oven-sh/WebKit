@@ -775,6 +775,8 @@ public:
     WriteBarrierStructureID m_lockObjectStructure;
     WriteBarrierStructureID m_conditionObjectStructure;
     WriteBarrierStructureID m_threadObjectStructure;
+    WriteBarrierStructureID m_threadLocalObjectStructure;
+    WriteBarrierStructureID m_concurrentAccessErrorStructure;
 
     const GlobalObjectMethodTable* m_globalObjectMethodTable;
 
@@ -950,6 +952,7 @@ public:
     ShadowRealmPrototype* shadowRealmPrototype() const LIFETIME_BOUND { return m_shadowRealmPrototype.get(); }
     RegExpPrototype* regExpPrototype() const LIFETIME_BOUND { return m_regExpPrototype.get(); }
     JSObject* errorPrototype() const LIFETIME_BOUND;
+    JSObject* errorConstructor() const LIFETIME_BOUND { return m_errorStructure.constructor(this); }
     JSIteratorPrototype* iteratorPrototype() const LIFETIME_BOUND { return m_iteratorPrototype.get(); }
     JSIteratorHelperPrototype* iteratorHelperPrototype() const LIFETIME_BOUND { return m_iteratorHelperPrototype.get(); }
     AsyncIteratorPrototype* asyncIteratorPrototype() const LIFETIME_BOUND { return m_asyncIteratorPrototype.get(); }
@@ -1091,15 +1094,19 @@ public:
     Structure* callableProxyObjectStructure() const { return m_callableProxyObjectStructure.get(this); }
     Structure* proxyRevokeStructure() const { return m_proxyRevokeStructure.get(this); }
     // THREADS: see m_lockObjectStructure above. Set once from
-    // create{Lock,Condition,Thread}Property under Options::useJSThreads();
-    // never read flag-off (the host constructors that read them are only
-    // installed under the same flag).
+    // create{Lock,Condition,Thread,ThreadLocal,ConcurrentAccessError}Property
+    // under Options::useJSThreads(); never read flag-off (the host
+    // constructors that read them are only installed under the same flag).
     Structure* lockObjectStructure() const { return m_lockObjectStructure.get(); }
     Structure* conditionObjectStructure() const { return m_conditionObjectStructure.get(); }
     Structure* threadObjectStructure() const { return m_threadObjectStructure.get(); }
+    Structure* threadLocalObjectStructure() const { return m_threadLocalObjectStructure.get(); }
+    Structure* concurrentAccessErrorStructure() const { return m_concurrentAccessErrorStructure.get(); }
     void setLockObjectStructure(VM& vm, Structure* structure) { m_lockObjectStructure.set(vm, this, structure); }
     void setConditionObjectStructure(VM& vm, Structure* structure) { m_conditionObjectStructure.set(vm, this, structure); }
     void setThreadObjectStructure(VM& vm, Structure* structure) { m_threadObjectStructure.set(vm, this, structure); }
+    void setThreadLocalObjectStructure(VM& vm, Structure* structure) { m_threadLocalObjectStructure.set(vm, this, structure); }
+    void setConcurrentAccessErrorStructure(VM& vm, Structure* structure) { m_concurrentAccessErrorStructure.set(vm, this, structure); }
     Structure* disposableStackStructure() const { return m_disposableStackStructure.get(this); }
     Structure* asyncDisposableStackStructure() const { return m_asyncDisposableStackStructure.get(this); }
     Structure* restParameterStructure() const { return arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous); }
@@ -1353,6 +1360,7 @@ public:
     void queueMicrotask(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue, JSValue);
 #endif
     void queueMicrotaskSlow(VM&, QueuedTask&&);
+    JS_EXPORT_PRIVATE void queueMicrotaskGILOff(VM&, QueuedTask&&);
 
 #if ASSERT_ENABLED
     const JSGlobalObject* globalObjectAtDebuggerEntry() const { return m_globalObjectAtDebuggerEntry; }

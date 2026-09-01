@@ -363,35 +363,6 @@ public:
     // §A.1.3 two-level discriminator; r27/TERM1.4), not the process byte.
     bool gilOff() const { return m_gilOff; }
 
-    // cl-single-mutator-sticky-skip (GILOFF-TAX #4, T2): monotone sticky bit
-    // recording whether a SECOND same-VM MUTATOR VMLite has EVER been
-    // registered (m_mainVMLite is excluded — A36: GIL-off entry never
-    // installs it as a carrier, so it is not a mutator). While false, exactly
-    // one mutator exists, so the gilOff-introduced INTER-MUTATOR JSCellLock
-    // acquires (I31/L5, lockProtoFuncHold fast-callee cell lock, the
-    // Spread/varargs copy lock) guard against mutators that do not exist and
-    // may be elided — `gilOffMultiMutator()` is the gate for those sites.
-    // SCOPE: gates locks the threads project ADDED for inter-mutator
-    // exclusion ONLY. NEVER use it to elide a pre-existing cellLock that
-    // also serializes mutator-vs-GC-marker or mutator-vs-compiler reads —
-    // those readers run concurrently at W=1 too.
-    // The bit is set under the registry lock in VMLiteRegistry::registerLite
-    // (VMLiteShared.cpp) BEFORE the fresh lite's first heap access. Never
-    // cleared. NOT YET set spawner-side — DO NOT gate any site on this
-    // predicate until ThreadObject.cpp constructJSThread lands the companion
-    // `vm.noteSecondMutatorRegistered()` immediately before Thread::create
-    // (closes the spawner-side TOCTOU window between bit-check and the
-    // spawnee's registerLite); the consuming sites and that store must land
-    // atomically. INFRA-ONLY in this round: zero consumers; the
-    // lockProtoFuncHold / Spread gating is the LockObject.cpp owner's charge.
-    // Relaxed load is sufficient: the bit is monotone, and the release store
-    // in registerLite (under the registry lock) happens-before the fresh
-    // lite's first heap access; a single-mutator reader observing `false`
-    // races with no other mutator's heap access by construction.
-    bool everHadSecondMutator() const { return m_everHadSecondMutator.load(std::memory_order_relaxed); }
-    bool gilOffMultiMutator() const { return m_gilOff && m_everHadSecondMutator.load(std::memory_order_relaxed); }
-    void noteSecondMutatorRegistered() { m_everHadSecondMutator.store(true, std::memory_order_release); }
-
     // C++-side equivalent of the derived JSCConfig gilOffProcess byte
     // (§A.1.3 level (i); the Config byte itself + the LLInt consumer land
     // with U-T3 and MUST stay derivation-identical to this). U0 option
@@ -436,9 +407,10 @@ public:
 
     WeakRandom& random() LIFETIME_BOUND { return m_random; }
     WeakRandom& heapRandom() LIFETIME_BOUND { return m_heapRandom; }
-    // SharedGC (TSAN-DEEP-02): specializedSweep runs concurrently across
-    // per-directory stripes (T7-mspl-per-directory); advance() mutates two
-    // words. Slow path only (once per block sweep), so a leaf lock is fine.
+    // For sweeps that can run concurrently (GIL-off shared-server stripes):
+    // WeakRandom::getUint64() mutates its state, so those take a leaf lock.
+    // Flag-off and GIL-on sweeps are serialized and use heapRandom() directly
+    // (MarkedBlockInlines.h), so this is never on their path.
     uint64_t heapRandomUint64Concurrent()
     {
         Locker locker { m_heapRandomLock };
@@ -491,20 +463,13 @@ public:
     }
     bool hasPendingTerminationException() const
     {
-        // UNGIL §A.1.3: Group-3 exception state is per-lite when gilOff.
-        // tsan-vm-setexception-cross-thread-r3: under GIL'd useJSThreads
-        // (m_gilOff == 0 — U0 validation forces useThreadGIL=1 without the
-        // unsafe trio) this word is the shared VM block, and this predicate
-        // is the one sanctioned lock-free reader: jsc's runJSC result check
-        // runs after its JSLockHolder scope closes while a spawned thread
-        // may still be throwing under its own lock acquisition. Relaxed
-        // atomic load — codegen-identical to a plain load on all supported
-        // targets — makes the racing access tear-free. Sound at relaxed
-        // ordering because we only pointer-compare against the immutable,
-        // pre-created termination exception and never dereference; every
-        // dereferencing reader still holds the JSLock (SPEC-vmstate I15;
-        // carve-out for this lock-free, non-dereferencing predicate is
-        // pending the spec's next revision).
+        // Reads the calling thread's exception word: per-lite GIL-off, so the
+        // answer is meaningful only on the thread that may hold the
+        // termination and only while its lite is installed (the JSLock is
+        // held); the no-lite fallback is the never-written VM block. Relaxed
+        // atomic load, codegen-identical to a plain load: the word is
+        // pointer-compared against the immutable termination exception and
+        // never dereferenced here.
         Exception* exception = WTF::atomicLoad(&const_cast<VM*>(this)->group3Primitives().m_exception, std::memory_order_relaxed);
         return exception && isTerminationException(exception);
     }
@@ -630,7 +595,6 @@ private:
     // unchanged.
     Exception* m_terminationException { nullptr }; // Guarded by m_terminationExceptionLock for creation; relaxed-atomic reads.
     Lock m_terminationExceptionLock;
-    Lock m_softReservedZoneSizeLock; // Serializes updateSoftReservedZoneSize's read-modify-write (ErrorHandlingScope save/restore from N Threads).
 public:
     // NOTE: When throwing an exception while rolling back the call frame,
     // callFrameForCatch may be equal to topEntryFrame.
@@ -695,12 +659,11 @@ public:
     // m_gilOff designation (Config::latchGILOffProcess(), VM.cpp), so the
     // former useJSThreads fallback term has been DROPPED: flag-off this
     // predicate is a SINGLE predicted-false byte test on the Config page.
-    // The remaining gilOffWithProcessGate() callers are the C++ Group-3
-    // accessors (exception checks, frame tracers, soft-stack-limit paths)
-    // plus CodeBlock/ScriptExecutable/RegExp/JITOperations paths; the
-    // bench-hot Heap::allocationClientForCurrentThread site is NOT one of
-    // them — FIX-V5B-F1 already gates it on a single
-    // options.useJSThreads byte test (heap/Heap.h). The coherence-miss
+    // The gilOffWithProcessGate() callers are the C++ Group-3 accessors
+    // (exception checks, frame tracers, soft-stack-limit paths), the
+    // CodeBlock/ScriptExecutable/RegExp/JITOperations paths, and the
+    // bench-hot Heap::allocationClientForCurrentThread resolver
+    // (heap/Heap.h). The coherence-miss
     // mechanism IS real in flag-on configurations that have remote writers
     // (GIL'd useJSThreads watchdog / stop requests), which is also why the
     // word is now line-isolated by padding (see
@@ -771,30 +734,20 @@ public:
         return const_cast<VM*>(this)->group3Primitives();
     }
 
-    // M2-alloc-tax-residual (b): pre-resolved overload. After (a) made
-    // currentIfExists() a single IE-TLS load, the remaining per-C++-call
-    // overhead in the operation*HeapBigInt prologues (alloctax2 #2: +1.97G
-    // self-cyc across Xor/Mul/Add) is the 2-3 INDEPENDENT group3Primitives()
-    // resolutions (JITOperationPrologueCallFrameTracer + DECLARE_THROW_SCOPE
-    // + OPERATION_RETURN), each of which is gilOffProcess byte + m_gilOff +
-    // TLS load + (lite, lite->vm) compares. Hot operation bodies WILL cache
-    // `VMLitePrimitives& p = vm.group3Primitives()` once and pass it to the
-    // overloaded tracer/scope forms (FrameTracers.h) — OPEN: zero callers in
-    // this slice; the jit/JITOperations.cpp + dfg/DFGOperations.cpp wiring is
-    // a separate owned-file slice and alloctax2 #2 is NOT closed until that
-    // lands ((a) alone recovers the bulk). Flag-off this aliases
-    // mainVMLitePrimitives() (gilOffProcess==0), so an operation body that
-    // unconditionally caches+passes is byte-identical on the flag-off path:
-    // the no-arg forms it replaces would have resolved the same block.
-    //
-    // ASSERT keeps the §F.5 storage-identity invariant the existing tracers
-    // RELEASE_ASSERT in their dtors: a caller-supplied primitives reference
-    // MUST be the storage group3Primitives() would have resolved on this
-    // thread for this VM (catches a stale cache across a foreign-lite window).
-    ALWAYS_INLINE VMLitePrimitives& group3Primitives(VMLitePrimitives& preResolved)
+    // The soft reserved zone size feeds the per-thread soft stack limit
+    // (updateStackLimits), and ErrorHandlingScope saves/restores it around
+    // error creation on the overflowing thread, so GIL-off it lives on the
+    // current thread's lite (same selector shape as group3Primitives). The VM
+    // word serves GIL-on / flag-off and the no-same-VM-lite windows; GIL-off
+    // it is written only by the ctor, so no reader races a writer.
+    ALWAYS_INLINE size_t& currentSoftReservedZoneSizeSlot()
     {
-        ASSERT(&preResolved == &group3Primitives());
-        return preResolved;
+        if (gilOffWithProcessGate()) [[unlikely]] {
+            VMLite* lite = VMLite::currentIfExists();
+            if (lite && lite->vm == this) [[likely]]
+                return lite->softReservedZoneSize;
+        }
+        return m_currentSoftReservedZoneSize;
     }
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
@@ -891,6 +844,20 @@ private:
     // may hold NO lite (CONCURRENT_SAFE).
     JS_EXPORT_PRIVATE void requestVMWideEntryScopeService(EntryScopeService);
     JS_EXPORT_PRIVATE CONCURRENT_SAFE void requestVMWideEntryScopeService(ConcurrentEntryScopeService);
+    // The clear mirrors the fan-out: a VM-wide service is retired from the
+    // VM-level word and from every registered same-VM lite in one registry
+    // lock hold, so lites the requester is not running on (and lites
+    // registered later, which backfill from the VM word) stop taking the
+    // slow entry/exit path too.
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE void clearVMWideEntryScopeService(ConcurrentEntryScopeService);
+
+    // GIL-off, m_didPopListeners is shared by every thread and "idle" means
+    // no same-VM lite has a live entry scope; both are decided in one
+    // registry lock hold so an entry racing the decision either finds the
+    // listener queued (and its own exit services it) or is observed by the
+    // caller (which then queues). The listeners run on the last thread out.
+    bool queueDidPopListenerIfAnyThreadEntered(Function<void()>&&);
+    Vector<Function<void()>> takeDidPopListenersIfNoThreadEntered();
 
     OptionSet<EntryScopeService>& entryScopeServices()
     {
@@ -942,12 +909,6 @@ private:
     // the VM ctor (before any entry/codegen); never cleared (§10D never
     // clears it — it is not heap state).
     bool m_gilOff { false };
-    // cl-single-mutator-sticky-skip: see everHadSecondMutator() above. Laid
-    // out in the m_gilOff/didEnterVM hot byte group so gilOffMultiMutator()
-    // is one cache-line load. std::atomic<bool> is 1 byte and fits in the
-    // pre-m_vmEpoch alignment padding (3 bools before an 8-aligned uint64),
-    // so no subsequent VM member offset shifts.
-    std::atomic<bool> m_everHadSecondMutator { false };
     // ANNEX A36 carrier-map staleness epoch; see vmEpoch() above.
     uint64_t m_vmEpoch { 0 };
     RefPtr<CrossTaskToken> m_crossTaskToken;
@@ -961,11 +922,13 @@ private:
     Lock m_heapRandomLock;
     Integrity::Random m_integrityRandom;
 
-    // UNGIL §A.1.5: GIL-off, a thread services/clears the bits on ITS lite
-    // (every entered thread received VM-wide bits via the fan-out or the
-    // registration backfill). The VM-level word stays the GIL-on storage and
-    // the GIL-off backfill source; its transient-bit retirement protocol is
-    // refined when the trap fan-out lands (U-T2 rule 3; INTEGRATE-ungil.md).
+    // UNGIL §A.1.5: GIL-off, a thread services the bits on ITS lite (every
+    // entered thread received VM-wide bits via the fan-out or the
+    // registration backfill). A service is cleared on the lite alone unless
+    // one thread's servicing retires it for the whole VM (the concurrent
+    // services, PopListeners); those are cleared from the VM-level word and
+    // every same-VM lite together, since the VM word is also the backfill
+    // source for lites registered later.
     bool hasEntryScopeServiceRequest(EntryScopeService service)
     {
         if (gilOffWithProcessGate()) [[unlikely]] {
@@ -997,8 +960,9 @@ private:
     void clearEntryScopeService(ConcurrentEntryScopeService service)
     {
         if (gilOffWithProcessGate()) [[unlikely]] {
-            if (std::atomic<uint16_t>* bits = currentLiteEntryScopeServiceBits())
-                bits->fetch_and(static_cast<uint16_t>(~packedServiceBits(service)), std::memory_order_relaxed);
+            // Concurrent services are VM-wide (a stop or a termination
+            // request covers every thread), so their clear is too.
+            clearVMWideEntryScopeService(service);
             return;
         }
         concurrentEntryScopeServices().remove(service);
@@ -1019,24 +983,6 @@ public:
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
 #endif
     
-    // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (SHAREDHEAP-ALLOC-EVIDENCE.md §41
-    // T1) STAGED, NOT YET FLIPPED: the per-client GCClient::CompleteSubspace
-    // wrappers (Heap::allocationClientForCurrentThread(*this,
-    // clientHeap).<name>Client) and the fixed-capacity TLC table backing
-    // their precomputed slotBase pointers are LANDED (CompleteSubspace.h /
-    // Heap.h GCClient::Heap / GCThreadLocalCache.cpp). Rerouting these
-    // accessors through them — exactly as the iso accessors below do — is
-    // DEFERRED to a round that owns the JIT-side `JSC::CompleteSubspace&` /
-    // `JSC::CompleteSubspace*` consumers: AssemblyHelpers::
-    // emitAllocateVariableSized (jit/AssemblyHelpers.h:2337), FTL
-    // allocatorForSize (ftl/FTLLowerDFGToB3.cpp:23950), DFG
-    // tlcSlotForSubspace (dfg/DFGSpeculativeJIT.cpp:432/16669) and the
-    // address-of `&vm.auxiliarySpace()` sites. Changing the return type here
-    // without those edits is a build break; the implicit `operator
-    // JSC::CompleteSubspace&` on the wrapper covers reference-taking helpers
-    // but not address-of. Until the flip, T1 is served by H-TLS-TABLE
-    // (CompleteSubspaceInlines.h, same hot path), and these accessors stay
-    // byte-identical flag-off (LAW).
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
     ALWAYS_INLINE CompleteSubspace& auxiliarySpace() { return heap.auxiliarySpace; }
     ALWAYS_INLINE CompleteSubspace& immutableButterflyAuxiliarySpace() { return heap.immutableButterflyAuxiliarySpace; }
@@ -1454,7 +1400,7 @@ public:
     void* stackPointerAtVMEntry() const { return group3Primitives().m_stackPointerAtVMEntry; }
     void setStackPointerAtVMEntry(void*);
 
-    size_t softReservedZoneSize() const { return WTF::atomicLoad(const_cast<size_t*>(&m_currentSoftReservedZoneSize), std::memory_order_relaxed); } // THREADS: see updateSoftReservedZoneSize().
+    size_t softReservedZoneSize() const { return const_cast<VM*>(this)->currentSoftReservedZoneSizeSlot(); }
     size_t updateSoftReservedZoneSize(size_t softReservedZoneSize);
     
     static size_t committedStackByteCount();
@@ -1687,14 +1633,12 @@ public:
 
     MicrotaskQueue& defaultMicrotaskQueue();
 
+    // GIL-off, a scope defers only the drains of the thread that opened it
+    // (the count lives on that thread's lite when its microtasks do, see
+    // VMLite::drainMicrotaskDelayScopeCount) and must be closed on that
+    // thread; no thread can drain another thread's queue, so a VM-wide
+    // deferral would strand a spawned thread's tasks at its close.
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
-    // UNGIL review fix (GIL-removal round 5): the per-lite depth-0 release
-    // drains (JSLock.cpp -> VMLite::drainDefaultMicrotaskQueue) must honor
-    // the embedder's DrainMicrotaskDelayScope exactly like VM::drainMicrotasks
-    // does, so the count gains a cross-thread reader. Relaxed load matches
-    // the field's own comment: a spawned/carrier drain that observes a live
-    // scope defers; the scope-closing thread re-drains.
-    bool microtaskDrainIsDelayed() const { return !!m_drainMicrotaskDelayScopeCount.load(std::memory_order_relaxed); }
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
@@ -1771,8 +1715,8 @@ public:
     // fire would make thread B's RETURN_IF_EXCEPTION poll observe (and a
     // clearException clear) thread A's bit, desynchronizing the
     // EXCEPTION_ASSERT bit<->word invariant and losing pending exceptions.
-    // GIL-on / flag-off: vm.traps(), byte-identical (the config-page gate
-    // is the same two not-taken byte tests group3Primitives() pays). The
+    // GIL-on / flag-off: vm.traps(), behind the same not-taken
+    // gilOffWithProcessGate() byte test group3Primitives() pays. The
     // fallback arm (no installed same-VM gilOff lite) deliberately matches
     // group3Primitives()' VM-block fallback so the bit always tracks the
     // storage the exception word itself resolved to.
@@ -1804,7 +1748,9 @@ public:
     // RETURN_IF_EXCEPTION's poll gate: GIL-off the current lite's word OR
     // the VM-level word (mirrors handleTrapsForCurrentThreadIfNeeded's
     // lite-then-VM servicing dispatch, which hasExceptionsAfterHandlingTraps
-    // runs); flag-off/GIL-on the single VM-word test, unchanged.
+    // runs); flag-off/GIL-on the VM-word test behind the
+    // gilOffWithProcessGate() byte test, so every expansion pays that
+    // predicted-not-taken Config load and branch flag-off.
     ALWAYS_INLINE bool trapsMaybeNeedHandlingForCurrentThread() const
     {
         if (gilOffWithProcessGate()) [[unlikely]] {
@@ -1823,7 +1769,11 @@ public:
 
     CONCURRENT_SAFE void notifyNeedDebuggerBreak() { traps().fireTrap(VMTraps::NeedDebuggerBreak); }
     CONCURRENT_SAFE void notifyNeedShellTimeoutCheck() { traps().fireTrap(VMTraps::NeedShellTimeoutCheck); }
-    CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrap(VMTraps::NeedTermination); }
+    // Termination is VM-wide: GIL-off, parked threads poll only their own
+    // lite's word and a shielded carrier ignores a bare VM-word bit, so the
+    // raise must be fanned to every lite (fireTrapVMWide). GIL-on / flag-off
+    // it is exactly the single-word fireTrap.
+    CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrapVMWide(VMTraps::NeedTermination); }
     CONCURRENT_SAFE void notifyNeedWatchdogCheck() { traps().fireTrap(VMTraps::NeedWatchdogCheck); }
 
     // An embedder's wall-clock time limit on one bounded call: notifyNeedTermination() is called from a timer
@@ -2016,14 +1966,11 @@ private:
         clearNativeStackTraceOfLastThrow();
         verificationState.m_throwingThread = nullptr;
 #endif
-        // UNGIL §A.1.3 mode split. Relaxed atomic store for the same reason
-        // as VM::setException (tsan-vm-setexception-cross-thread-r3): the
-        // word has one sanctioned lock-free reader,
-        // hasPendingTerminationException(); a plain nullptr store here would
-        // be the same TSAN race from the clearing side.
+        // Mode split as in VM::setException; every access to this word is a
+        // relaxed atomic so a cross-thread pointer-compare read is tear-free.
         WTF::atomicStore(&group3Primitives().m_exception, static_cast<Exception*>(nullptr), std::memory_order_relaxed);
         // Same storage domain as the word above: per-lite GIL-off (see
-        // trapsForCurrentThread()), VM word GIL-on — byte-identical.
+        // trapsForCurrentThread()), VM word GIL-on and flag-off.
         trapsForCurrentThread().clearTrap(VMTraps::NeedExceptionHandling);
     }
 
@@ -2063,70 +2010,12 @@ private:
     size_t m_currentSoftReservedZoneSize;
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-    // UNGIL audit K4 table I: the verification bookkeeping (chain anchor +
-    // simulated-throw state) is classed PER-LITE (vmstate I15 — throw state
-    // is thread-local). INTEGRATE-ungil.md obligation 10 (owner U-T8b):
-    // LANDED — this block is now ONE struct member selected through the
-    // exceptionScopeVerificationState() mode-split accessor (declared next
-    // to group3Primitives() above); GIL-off lites carry their own copy as a
-    // debug-only L2 VMLite tail append, NOT part of the frozen
-    // VMLitePrimitives ABI.
-    //
-    // History (IT-1 review round; the first apply attempt was REJECTED 1/3
-    // as a truncated diff — the landed change satisfies the conditions
-    // below). The race was confirmed real: ExceptionScope's ctor/dtor used
-    // to push/pop one
-    // VM-shared m_topExceptionScope word, so a spawned lite's scope links
-    // m_previousScope into the carrier's stack; the carrier's pop unlinks
-    // the spawned scope (chain unwinds to null -> the
-    // TopExceptionScope.cpp RELEASE_ASSERT variant) and leaves the spawned
-    // ~ThrowScope dereferencing a popped, ASAN-poisoned frame via
-    // ExceptionScope::stackPosition() (the deterministic GIL-off
-    // stack-use-after-return; VMEntryScope.cpp status item (i)). The
-    // transmitted diff, however, was truncated and covered only
-    // VM.h/VMLite.h; landing it would have broken EVERY Debug/ASAN build
-    // (ENABLE(EXCEPTION_SCOPE_VERIFICATION) = ASSERT || ASAN).
-    //
-    // Landed as ONE complete change: group3Primitives()-style
-    // mode-split accessor (GIL-on / second-VM U0b alias to this block;
-    // gilOff lites use an L2 tail append on VMLite AFTER threadContext —
-    // debug-only, NOT part of the frozen VMLitePrimitives ABI, no
-    // generated-code offset moves) rerouting ALL raw-member sites:
-    //   - ExceptionScope.cpp ctor/dtor (the race site itself);
-    //   - ThrowScope.cpp simulateThrow + dtor verification;
-    //   - TopExceptionScope.cpp RELEASE_ASSERT;
-    //   - VM.cpp throwException capture, verifyExceptionCheckNeedIsSatisfied,
-    //     clearNativeStackTraceOfLastThrow;
-    //   - LockObject.cpp/.h GILParkSavedExecutionState save/clear/restore
-    //     (GIL-on arm only — GIL-off carrier takes the §J.2 early-return;
-    //     the split makes §J.2's "per-lite words" premise true, so also
-    //     fix the now-stale LockObject.cpp rationale comment near the
-    //     park-site predicate);
-    //   - VM.h getters (nativeStackTraceOfLastThrow/throwingThread/
-    //     needExceptionCheck), exception() const, clearException().
-    // Required at landing: ASSERT in the accessor's GIL-off fallback arm
-    // (no current lite, or lite->vm != this) that the thread is the
-    // carrier or holds m_lock — otherwise a future non-mutator scope user
-    // silently reopens the shared-word race; and note that a scope whose
-    // lifetime straddles a g_jscCurrentVMLite install/uninstall resolves
-    // DIFFERENT storage in ctor vs dtor (linked-list write-back is not
-    // idempotent, unlike the group3Primitives precedent) — keep scopes
-    // strictly inside a stable (thread, lite) window.
-    // Acceptance gate: clean Debug/ASAN build (the rename turns any missed
-    // site into a compile error) + the pinned GIL-off smoke command +
-    // ta-wait-thread-gate.js. Release smoke red/green does NOT count
-    // against this item — VMEntryScope.cpp status items (ii)/(iii) are
-    // separate legs. (Also: the proposal's file list named CatchScope.cpp,
-    // which does not exist in this tree — correct the list on resubmit.)
-    // The former loose members (m_topExceptionScope,
-    // m_simulatedThrowPointLocation/RecursionDepth, m_needExceptionCheck,
-    // m_nativeStackTraceOfLastThrow/SimulatedThrow, m_throwingThread) now
-    // live in this one struct, with names/types unchanged inside it — the
-    // relocation is the rename that turned every raw site into a compile
-    // error. ALL access goes through exceptionScopeVerificationState()
-    // (mode-split accessor above); this VM copy is the GIL-on / flag-off /
-    // fallback-window storage and is bit-identical in behavior to the old
-    // members for a single mutator.
+    // The ExceptionScope chain anchor and simulated-throw bookkeeping
+    // (VMExceptionScopeVerificationState.h). Accessed only through
+    // exceptionScopeVerificationState() above: this copy serves GIL-on,
+    // flag-off and the no-installed-lite windows; GIL-off each lite carries
+    // its own, so a spawned thread's scope chain never links through another
+    // thread's frames.
     VMExceptionScopeVerificationState m_exceptionScopeVerificationState;
 #endif
 
@@ -2181,14 +2070,12 @@ private:
     std::unique_ptr<FuzzerAgent> m_fuzzerAgent;
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
-    // UNGIL review fix: GIL-off, drainMicrotasks() (spawned-thread per-lite
-    // drains, ThreadObject completion) reads this count cross-thread while
-    // DrainMicrotaskDelayScope mutates it on the embedder's carrier. Relaxed
-    // atomic retires the TSAN data race; semantically the scope is
-    // carrier-scoped state and a spawned drain that observes a live scope
-    // still defers (the conservative reading of api 4.6.1 — the carrier's
-    // scope exit re-drains, and per-lite queues are drained again at the E.2
-    // close ladder once it is wired).
+    // Open DrainMicrotaskDelayScopes of the VM default queue's owner: the
+    // only thread GIL-on, the main thread's carrier GIL-off. A scope opened
+    // on a spawned or non-main carrier thread counts on that thread's lite
+    // instead (VMLite::drainMicrotaskDelayScopeCount), so this word is never
+    // read by a thread whose drains it does not govern; relaxed atomic only
+    // so a stray off-thread probe is race-free.
     std::atomic<uint64_t> m_drainMicrotaskDelayScopeCount { 0 };
 
     // FIXME: We should remove handled promises from this list at GC flip. <https://webkit.org/b/201005>
