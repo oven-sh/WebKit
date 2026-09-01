@@ -57,8 +57,9 @@ namespace WTF {
 // sharedAtomStringTableEnabled() and StringImpl::deref() sound (F4 — see the
 // coherence argument at sharedAtomStringTableEnabled() below).
 // Pre-latch atoms of the initializing thread are migrated into the shards
-// BEFORE the latch is published (enableSharedAtomStringTable() step (1):
-// migrate-then-latch, so a latch observer can never shard-miss a live atom);
+// BEFORE the latch is published (enableSharedAtomStringTable() migrates, then
+// latches, then clears the per-thread table, so a latch observer can never
+// shard-miss a live atom);
 // atoms created on any other thread before the latch are a contract
 // violation, detected fail-stop at that thread's death (invariant I17: in
 // shared mode the AtomStringTable destructor RELEASE_ASSERTs emptiness).
@@ -90,14 +91,9 @@ public:
     static_assert(sizeof(Shard) >= 128, "shards must not share cache lines");
     static_assert(alignof(Shard) >= 64);
 
-    // NeverDestroyed. DEFINED IN AtomStringTable.cpp, NOT in
-    // SharedAtomStringTable.cpp, on purpose (link-soundness):
-    // AtomStringImpl.cpp — an always-compiled WTF TU — calls this, but
-    // SharedAtomStringTable.cpp only enters the build once the M1 build-file
-    // hunk (INTEGRATE-vmstate.md) is applied. Defining it next to the latch
-    // in AtomStringTable.cpp keeps the bare tree linking AND guarantees one
-    // table instance per process even in DLL configurations (an inline
-    // local-static could duplicate across DSO boundaries). The thread-safe
+    // NeverDestroyed. Defined out of line (SharedAtomStringTable.cpp) so there
+    // is exactly one table per process even when WTF is a DLL; an inline
+    // local static could duplicate across DSO boundaries. The thread-safe
     // static init is forced before the latch is published
     // (enableSharedAtomStringTable()), so no post-latch reader races the
     // slow-path guard.
@@ -120,24 +116,19 @@ public:
 };
 
 // Internal latch storage. Set exactly once by enableSharedAtomStringTable();
-// immutable after. Defined in AtomStringTable.cpp so the AtomStringTable
-// destructor (invariant I17) reads it from its own translation unit. Readers
-// elsewhere should use sharedAtomStringTableEnabled().
+// immutable after. Defined in SharedAtomStringTable.cpp. Readers should use
+// sharedAtomStringTableEnabled(); StringImpl.h redeclares the variable so
+// StringImpl::deref() can read it without including this header.
 WTF_EXPORT_PRIVATE extern std::atomic<bool> g_sharedAtomStringTableEnabled;
 
-// Latch + migrate (§4.8); idempotent; init only. Out-of-line in
-// SharedAtomStringTable.cpp — reachable only via JSC::initialize (the M3 hunk
-// in INTEGRATE-vmstate.md) and the M14 unit tests, both of which arrive in
-// the same manifest batch as the M1 build-file hunk that compiles that TU.
+// Migrate the calling thread's atoms into the shards, then publish the latch.
+// Idempotent; init only. Called once from JSC::initialize.
 WTF_EXPORT_PRIVATE void enableSharedAtomStringTable();
 
-// Header-inline ON PURPOSE (link-soundness, like singleton()'s placement in
-// AtomStringTable.cpp: always-compiled TUs call this, and the defining TU for
-// out-of-line code here would be SharedAtomStringTable.cpp, which is not in
-// the build until M1 lands. A relaxed load of an exported atomic has no
-// duplication hazard, so inline is safe AND keeps the query branch-cheap).
+// Inline so the query stays a load and a branch; a relaxed load of an
+// exported atomic has no duplication hazard across DSO boundaries.
 //
-// F4 (SPEC-vmstate §4.6): relaxed is sound. The argument has two halves:
+// Relaxed is sound. The argument has two halves:
 //
 // (a) Threads created after the latch: thread creation synchronizes-with the
 //     created thread, so the latch store happens-before everything the new

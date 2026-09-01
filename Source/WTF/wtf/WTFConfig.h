@@ -101,6 +101,11 @@ struct Config {
     bool isPermanentlyFrozen;
     bool disabledFreezingForTesting;
     bool useSpecialAbortForExtraSecurityImplications;
+    // Set once, before the page freezes, by an embedder whose threads ref/deref
+    // DeferrableRefCounted objects concurrently without a lock (JSC latches it
+    // alongside JSC::Config::gilOffProcess). Clear, the count is a plain
+    // load/store (see wtf/DeferrableRefCounted.h).
+    bool useAtomicDeferrableRefCount;
 #if PLATFORM(COCOA) || OS(ANDROID)
     bool disableForwardingVPrintfStdErrToOSLog;
 #endif
