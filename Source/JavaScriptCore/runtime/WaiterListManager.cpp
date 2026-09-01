@@ -54,17 +54,6 @@ static constexpr bool verbose = false;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Waiter);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WaiterList);
 
-// UNGIL same-library seams (U-T11; the currentThreadHoldsEntryToken pattern —
-// redeclared here, not in any header, because LockObject.h/VMTraps.h header
-// edits are outside this task's owned-file set where new surface is needed):
-// the §A.2.4 rule-4 PARK-LITE D9 poll predicates (VMTraps.cpp), the §J.3
-// captured-lite record (JSLock.cpp), and the annex-W W1 parked-carrier
-// service episode (JSLock.cpp).
-bool parkLitePollTerminationRequested(VM&, VMLite* parkLite);
-bool parkLitePollWatchdogCheckRequested(VM&, VMLite* parkLite);
-VMLite* capturedParkLiteOfCurrentThreadIfAny(VM&);
-bool reacquireParkedCarrierAndServiceWatchdogCheck(VM&);
-
 Waiter::Waiter(VM* vm)
     : m_vm(vm)
     , m_isAsync(false)
@@ -165,40 +154,18 @@ WaiterListManager& WaiterListManager::singleton()
 //     on the SD8-fail premise, the "ok" disposition re-raises VM-wide to
 //     revoke it — see the disposition-(a) comment in the loop — the U-T11
 //     "exactly one of ok/timed-out, never both" arm).
-// The D8 single-flight gate (AtomicsObject.cpp) is obsoleted by per-wait
-// nodes and is deleted in both GIL modes at its owning file (SD6's other
-// half — OUTSIDE this task's owned-file set). Until that deletion lands the
-// gate is SAFE but MASKS SD6's user-visible delta: a second concurrent
-// non-spawned sync TA wait on the same VM still throws its TypeError instead
-// of parking on its own per-wait node, so the SD6 parallel-waiter corpus
-// arms and the U19 "both-mode edit SD6" expectation CANNOT pass until the
-// owning-file edit lands — SD6 is NOT complete with this file alone (open
-// obligation, recorded for the task log / orchestrator). Flag-off
-// (useJSThreads=false) keeps the landed vm.syncWaiter() + waitForSync +
-// central-wake shape byte-identical below. DELTA-LIST NOTE (per-task gate 3):
-// the waitSyncImpl branch below is a flag-off-executed runtime branch in
-// atomicsWaitImpl's sole callee — functionally the callee half of the
-// licensed delta (b) ("atomicsWaitImpl branches on useJSThreads"), but the
-// frozen list is enumerated, not a class, so an explicit amendment
-// (extending (b) to the waitSync callee) must be recorded in the ledger
-// (SPEC-ungil-history.md / INTEGRATE-ungil.md — outside this owned-file set)
-// before the U-T14 flag-off delta re-audit.
+// Per-wait nodes make concurrent sync waits on one VM independent, so
+// atomicsWaitImpl has no single-flight gate. Flag-off (useJSThreads=false)
+// keeps the landed vm.syncWaiter() + waitForSync + central-wake shape
+// byte-identical below.
 //
-// CALLER CONTRACT (recorded): GIL-off a main/embedder caller parks inside a
-// GILDroppedSection (m_lock + token + carrier heap access released, §J.3); a
-// SPAWNED caller is unreachable until the §C.4 4.5-1a vm.m_gilOff lift lands
-// (AtomicsObject.cpp, outside this owned-file set) and MUST then arrive
-// through the §J.3 spawned arm (token-kept, access-released) — parking with
+// CALLER CONTRACT: every caller parks inside a GILDroppedSection. GIL-off a
+// main/embedder caller has m_lock + token + carrier heap access released
+// (§J.3); a spawned caller (the 4.5-1a gate is GIL-on only) arrives through
+// the section's spawned arm (token kept, heap access released). Parking with
 // heap access held would stall the heap §10.4 barrier and the §A.3.2
-// conductor predicate for the wait's duration.
-// ORDERING CONSTRAINT (enforced, not just recorded): the 4.5-1a lift MUST
-// land together with (or after) the GILDroppedSection GIL-off-by-caller
-// split (J.3 spawned arm = token-only; LockObject.cpp, IU rows 28-29). Until
-// then a spawned caller that somehow bypassed the 4.5-1a throw fail-stops
-// deterministically at JSLock::unlockAllForThreadParking's
-// RELEASE_ASSERT(currentThreadIsHoldingLock()) inside the GILDroppedSection
-// ctor — spawned threads never own m_lock GIL-off — BEFORE reaching this
-// function, so the unsplit section can never silently corrupt a park.
+// conductor predicate for the wait's duration, which the entry assert below
+// refuses.
 // =============================================================================
 template <typename ValueType>
 static WaiterListManager::WaitSyncResult waitSyncWithPerWaitNode(VM& vm, Ref<WaiterList> list, ValueType* ptr, ValueType expectedValue, Seconds timeout) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -215,16 +182,15 @@ static WaiterListManager::WaitSyncResult waitSyncWithPerWaitNode(VM& vm, Ref<Wai
     if (gilOff)
         parkLite = isSpawned ? VMLite::currentIfExists() : capturedParkLiteOfCurrentThreadIfAny(vm);
 
-    // SELF-ENFORCED CALLER CONTRACT (review r33; was comment-only above):
     // GIL-off this site parks in D9 quanta polling termination and carrier
     // watchdog-check only — it never polls the §A.3 stop word — so its
     // stop-convergence argument is entirely that the caller arrives
-    // access-released (carrier: the GILDroppedSection bracket in
-    // AtomicsObject.cpp; spawned: the §J.3 spawned arm once the 4.5-1a lift
-    // lands). A caller parking here with its per-thread client access held
-    // would wedge every jettison/Class-A stop into the 30s watchdog
-    // fail-stop for up to the full user-specified timeout (potentially
-    // Infinity). Fail-stop at entry instead of 30s later with no site named.
+    // access-released (the GILDroppedSection bracket in AtomicsObject.cpp:
+    // carrier and spawned arms alike). A caller parking here with its
+    // per-thread client access held would wedge every jettison/Class-A stop
+    // into the 30s watchdog fail-stop for up to the full user-specified
+    // timeout (potentially Infinity). Fail-stop at entry instead of 30s later
+    // with no site named.
     if (gilOff) [[unlikely]] {
         GCClient::Heap* client = GCClient::Heap::currentThreadClient();
         RELEASE_ASSERT(!client || !client->hasHeapAccess());
@@ -456,10 +422,9 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSync(VM& vm, int64_t* p
 // settles via DWT scheduleWorkSoon MAIN-side (a spawned registrant's ticket
 // took the §E.7.3 internal arm at addPendingWork, so with embedder hooks the
 // settle lands in the carrier handoff queue — hooks never see it). The §E.7.5
-// registrant re-home is REJECTED v1 (it covers PROPERTY waitAsync only,
-// whose deadlines live on ThreadState::waitDeadlines); the finite-timeout
-// timer here stays on vm.runLoop() (waitAsyncImpl below) — the landed
-// GIL-on-identical shape.
+// registrant re-home is REJECTED v1 (it covers PROPERTY waitAsync only); the
+// finite-timeout timer here stays on vm.runLoop() (waitAsyncImpl below) — the
+// landed GIL-on-identical shape.
 //
 // Lock-context fix (gilOffProcess only; flag-off byte-identical): the landed
 // notify/timeout paths invoked scheduleWorkSoon while HOLDING list->lock —
@@ -469,7 +434,12 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSync(VM& vm, int64_t* p
 // ticket extract + timer clear) and ACT (scheduleWorkSoon) after the drop —
 // sound because a dequeued waiter with a cleared ticket is unreachable to
 // any racing notifier/timeout (both re-check ticket() under the lock), so
-// exactly one settler schedules.
+// exactly one settler schedules. The act-after-drop settle is limited to
+// waiters whose VM is the settling thread's own (notify: the notifier's VM;
+// timeout: the timer fires on the waiter VM's run loop): nothing else keeps a
+// waiter's VM alive once list->lock is dropped, and ~VM's unregister(VM*)
+// only finds waiters still on a list. A foreign VM's waiter therefore settles
+// under list->lock, serialized with that unregister exactly as flag-off.
 // =============================================================================
 
 void WaiterListManager::timeoutAsyncWaiter(void* ptr, Ref<Waiter>&& waiter)
@@ -522,34 +492,41 @@ void WaiterListManager::timeoutAsyncWaiter(void* ptr, Ref<Waiter>&& waiter)
     notifyWaiterImpl(NoLockingNecessary, WTF::move(waiter), ResolveResult::Timeout);
 }
 
-unsigned WaiterListManager::notifyWaiter(void* ptr, unsigned count)
+unsigned WaiterListManager::notifyWaiter(VM& vm, void* ptr, unsigned count)
 {
     ASSERT(ptr);
     unsigned notified = 0;
     RefPtr<WaiterList> list = findList(ptr);
     if (list) {
         if (VM::isGILOffProcess()) [[unlikely]] {
-            // Decide-under-lock / act-after-drop (see banner). Sync waiters
-            // keep the in-lock condition notify (rank-4-class park internals,
-            // not a settle).
-            Vector<std::pair<RefPtr<DeferredWorkTimer::TicketData>, VM*>, 4> pendingSettles;
+            // Decide-under-lock / act-after-drop (see banner) for the
+            // notifying VM's own async waiters. A waiter of another VM is
+            // settled under list->lock: that VM's ~VM runs unregister(VM*)
+            // under the same lock, so either the settle reaches its still-live
+            // deferredWorkTimer first or the waiter is still listed and is
+            // cancelled there. Sync waiters keep the in-lock condition notify
+            // (rank-4-class park internals, not a settle).
+            Vector<RefPtr<DeferredWorkTimer::TicketData>, 4> pendingSettles;
             {
                 Locker listLocker { list->lock };
                 while (notified < count && list->size()) {
                     Ref<Waiter> waiter = list->takeFirst(listLocker);
-                    if (waiter->isAsync()) {
+                    if (!waiter->isAsync())
+                        waiter->condition().notifyOne();
+                    else if (waiter->vm() != &vm)
+                        notifyWaiterImpl(listLocker, WTF::move(waiter), ResolveResult::Ok);
+                    else {
                         if (auto ticket = waiter->ticket(listLocker)) {
-                            pendingSettles.append({ WTF::move(ticket), waiter->vm() });
+                            pendingSettles.append(WTF::move(ticket));
                             waiter->clearTicket(listLocker);
                         }
                         waiter->clearTimer(listLocker);
-                    } else
-                        waiter->condition().notifyOne();
+                    }
                     notified++;
                 }
             }
-            for (auto& pending : pendingSettles) {
-                pending.second->deferredWorkTimer->scheduleWorkSoon(pending.first.get(), [](DeferredWorkTimer::Ticket dwtTicket) {
+            for (auto& ticket : pendingSettles) {
+                vm.deferredWorkTimer->scheduleWorkSoon(ticket.get(), [](DeferredWorkTimer::Ticket dwtTicket) {
                     JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
                     JSGlobalObject* globalObject = promise->realm();
                     VM& vm = promise->vm();

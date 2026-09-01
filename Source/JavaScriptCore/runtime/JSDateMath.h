@@ -44,13 +44,12 @@
 #pragma once
 
 #include <JavaScriptCore/DateInstanceCache.h>
+#include <JavaScriptCore/JSCConfig.h>
 #include <JavaScriptCore/JSCTimeZone.h>
 #include <JavaScriptCore/JSExportMacros.h>
-#include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
 #include <wtf/DateMath.h>
 #include <wtf/GregorianDateTime.h>
-#include <wtf/Lock.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TimeZone.h>
@@ -90,18 +89,7 @@ public:
     DateCache();
     ~DateCache();
 
-    bool hasTimeZoneChange()
-    {
-#if USE(TIME_ZONE_CHANGE_NOTIFICATIONS)
-        // Relaxed is sufficient: this is a monotonic staleness check. A stale read just
-        // means we take (or skip) the slow path one call late; clearForTimeZoneChange()
-        // re-reads lastTimeZoneID under m_lock before publishing m_cachedTimeZoneID.
-        return m_cachedTimeZoneID.load(std::memory_order_relaxed) != WTF::lastTimeZoneID();
-#else
-        return true;
-#endif
-    }
-
+    bool hasTimeZoneChange() { return live().hasTimeZoneChangeImpl(); }
     JS_EXPORT_PRIVATE void clearForTimeZoneChange();
 
     TimeZone defaultTimeZone();
@@ -165,13 +153,41 @@ private:
         int32_t m_day { 0 };
     };
 
+    // GIL-off (g_jscConfig.gilOffProcess): vm.dateCache is reachable from N mutator
+    // threads and every cache it embeds is multi-word, so each public entry point runs
+    // on the calling thread's own DateCache (a pure value cache: a cold copy is only a
+    // perf event). The VM member is then just the entry point, and the time zone
+    // generation (WTF::lastTimeZoneID()) is the only state shared between threads; each thread
+    // observes a change at its next outermost VM entry, exactly as the single cache
+    // did. GIL-on / flag-off: the GIL serializes and everything runs on this instance.
+    ALWAYS_INLINE DateCache& live()
+    {
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            return gilOffPerThreadCache();
+        return *this;
+    }
+    JS_EXPORT_PRIVATE static DateCache& gilOffPerThreadCache();
+
+    bool hasTimeZoneChangeImpl()
+    {
+#if USE(TIME_ZONE_CHANGE_NOTIFICATIONS)
+        return m_cachedTimeZoneID != WTF::lastTimeZoneID();
+#else
+        return true;
+#endif
+    }
+    void clearForTimeZoneChangeImpl();
+
+    ALWAYS_INLINE TimeZone defaultTimeZoneImpl();
+    ALWAYS_INLINE String timeZoneDisplayNameImpl(bool isDST);
+    ALWAYS_INLINE void msToGregorianDateTimeImpl(double millisecondsFromEpoch, TimeType outputTimeType, GregorianDateTime&);
+    ALWAYS_INLINE double gregorianDateTimeToMSImpl(const GregorianDateTime&, double milliseconds, TimeType);
+    ALWAYS_INLINE double localTimeToMSImpl(double milliseconds, TimeType);
+    ALWAYS_INLINE double parseDateImpl(JSGlobalObject*, VM&, const WTF::String&);
+    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCacheImpl(int32_t days);
+
     void timeZoneCacheSlow();
-    // Assumes m_lock is held when gilOffProcess (see JSDateMath.cpp DateCacheLocker).
-    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCacheAssumingLock(int32_t days);
-    // Assumes m_lock is held when gilOffProcess.
     LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
-    // Takes m_lock itself (for callers running outside a locked public entry point).
-    LocalTimeOffset localTimeOffsetTakingLock(int64_t millisecondsFromEpoch, TimeType);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);
 
@@ -183,18 +199,9 @@ private:
     String m_cachedDateString;
     double m_cachedDateStringValue;
     DateInstanceCache m_dateInstanceCache;
-    WTF::Atomic<uint64_t> m_cachedTimeZoneID { 0 };
+    uint64_t m_cachedTimeZoneID { 0 };
     String m_timeZoneStandardDisplayNameCache;
     String m_timeZoneDSTDisplayNameCache;
-
-    // GIL-off (g_jscConfig.gilOffProcess): vm.dateCache is shared by N mutator threads,
-    // so all mutable state above is serialized on this leaf lock (SPEC-ungil §K.2;
-    // TSAN-TRIAGE §3.29). GIL-on / flag-off: never taken — the GIL is the serializer,
-    // so flag-off behavior and cost are unchanged. Lock ordering: m_lock is a leaf
-    // except for the WTF-internal timeZoneCacheLock taken inside
-    // retrieveTimeZoneInformation() (m_lock -> timeZoneCacheLock only; never reversed).
-    // Nothing GC-allocates, throws, or parks while holding m_lock.
-    Lock m_lock;
 };
 
 ALWAYS_INLINE bool isUTCEquivalent(StringView timeZone)

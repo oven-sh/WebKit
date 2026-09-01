@@ -30,6 +30,7 @@
 #include "GenericTypedArrayViewInlines.h"
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferViewInlines.h"
+#include "JSCConfig.h"
 #include "JSCellInlines.h"
 #include "JSGenericTypedArrayView.h"
 #include "JSGenericTypedArrayViewInlinesLight.h"
@@ -325,14 +326,20 @@ bool JSGenericTypedArrayView<Adaptor>::setFromTypedArray(JSGlobalObject* globalO
             return false;
 
         RELEASE_ASSERT(JSC::elementSize(Adaptor::typeValue) == JSC::elementSize(other->type()));
-        typename Adaptor::Type* dst = typedVector() + offset;
-        typename Adaptor::Type* src = std::bit_cast<typename Adaptor::Type*>(other->vector()) + objectOffset;
+        typename Adaptor::Type* dstBase = typedVector();
+        typename Adaptor::Type* srcBase = std::bit_cast<typename Adaptor::Type*>(other->vector());
         if (vm.gilOffWithProcessGate()) [[unlikely]] {
-            // TSAN-TRIAGE §3.24: GIL-off, both ranges may be raced by other JS
-            // threads, so the bulk memmove (plain C++ accesses) is replaced by
-            // relaxed lane copies. memmove overlap semantics are preserved by
-            // picking the copy direction from the pointer order. Flag-off/
-            // GIL-on keeps the byte-identical memmove (one predicted branch).
+            // GIL-off, both ranges may be raced by other JS threads, so the bulk
+            // memmove is replaced by relaxed lane copies in memmove order. A detach
+            // on another thread clears a view's base word with no stop, so a base
+            // loaded after the bounds proof can be null; skipping the copy is the
+            // lost write that race is allowed to produce. A base observed non-null
+            // stays mapped through the next stop, so a stale length is only a
+            // value race. Flag-off/GIL-on keeps the memmove.
+            if (!dstBase || !srcBase)
+                return true;
+            typename Adaptor::Type* dst = dstBase + offset;
+            typename Adaptor::Type* src = srcBase + objectOffset;
             if (dst <= src) {
                 for (size_t i = 0; i < length; ++i)
                     typedArrayLaneStoreRelaxed(dst + i, typedArrayLaneLoadRelaxed(src + i));
@@ -341,7 +348,7 @@ bool JSGenericTypedArrayView<Adaptor>::setFromTypedArray(JSGlobalObject* globalO
                     typedArrayLaneStoreRelaxed(dst + i, typedArrayLaneLoadRelaxed(src + i));
             }
         } else
-            memmove(dst, src, length * elementSize);
+            memmove(dstBase + offset, srcBase + objectOffset, length * elementSize);
         return true;
     };
 
@@ -434,10 +441,14 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
     // numbers in TA elements, never followed as cell pointers. Flag-off all
     // tag bits are zero (I22): the snapshot is exactly array->butterfly()
     // and the [[unlikely]] arm is dead — byte-identical to the original.
+    // GIL-off always takes the per-element path: the bulk copyElements below
+    // re-reads the destination base after the caller's bounds proof, which a
+    // detach on another thread can have nulled with no stop, whereas
+    // setIndexQuicklyToNativeValue snapshots the base and bails on null.
     Butterfly* sourceButterfly;
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t snapshotWord = array->taggedButterflyWord();
-        if (isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+        if (g_jscConfig.gilOffProcess || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
             || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
             for (size_t i = 0; i < length; ++i) {
                 JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -498,10 +509,11 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
     // relabels on a shared word are per-event STW (§4.7/§10.6), so the
     // raw-double read of the snapshot's lanes never follows a cell pointer.
     // Flag-off byte-identical (I22).
+    // GIL-off always takes the per-element path; see copyFromInt32ShapeArray.
     Butterfly* sourceButterfly;
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t snapshotWord = array->taggedButterflyWord();
-        if (isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+        if (g_jscConfig.gilOffProcess || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
             || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
             for (size_t i = 0; i < length; ++i) {
                 JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -1078,38 +1090,20 @@ template<typename Adaptor> inline bool JSGenericTypedArrayView<Adaptor>::canSetI
 
 template<typename Adaptor> inline typename Adaptor::Type JSGenericTypedArrayView<Adaptor>::getIndexQuicklyAsNativeValue(size_t i) const
 {
-    // SPEC-ungil annex N6 (torn-pair table): GIL-off, the caller's bounds proof
-    // (canGetIndexQuickly / inBounds at the call site) and this access are two
-    // separate fetches of the view's {length, base} pair; a concurrent
-    // detach/shrink/resize between them is legal. Load the base ONCE and
-    // re-validate against that single snapshot:
-    //  - null base: detach raced. JSArrayBufferView::detachFromArrayBuffer()
-    //    clears the view's m_vector synchronously (N6's quarantine defers the
-    //    unmap of ArrayBuffer::m_data, NOT the view's base word), so we must
-    //    bail rather than dereference nullptr + i. Behave as a bounds-fail and
-    //    return the zero element (within the corpus oracle {sentinel, 0,
-    //    undefined}).
-    //  - non-null base with stale length: the quarantine keeps the old mapping
-    //    committed and sized >= any length the caller could have proven against
-    //    it (N6 stale-but-safe rows), so the relaxed lane load is a legal value
-    //    race. A failing inBounds() re-fetch here is the second-fetch shape N6
-    //    forbids treating as an invariant; we bail conservatively instead of
-    //    asserting.
-    // GIL-on/flag-off keeps the exact assert and identical codegen on the
-    // likely path, preserving the oracle's full assert strength.
-    // FIXME(threads): the cleaner long-term fix is to defer the m_vector
-    // clear/poison in JSArrayBufferView::detachFromArrayBuffer() to the heap
-    // §10 stop (mirroring clearBaseWordAtStop for ArrayBuffer::m_data); that
-    // file is outside this item's scope.
+    // GIL-off, the caller's bounds proof and this access are separate fetches of
+    // the view's {length, base} pair, and a detach on another thread clears the
+    // base word with no stop. The base is loaded once and is the only base
+    // dereferenced: null means a detach raced and reads as the zero element; a
+    // base observed non-null stays mapped through the next stop, so a stale
+    // length is only a value race. Flag-off/GIL-on pays one predicted-false
+    // Config-page byte test before the original load.
     const typename Adaptor::Type* vector = typedVector();
-    if (VM::isGILOffProcess()) [[unlikely]] {
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
         if (!vector || !inBounds(i)) [[unlikely]]
             return typename Adaptor::Type();
-        // TSAN-TRIAGE §3.24: relaxed lane load (see typedArrayLaneLoadRelaxed above).
         return typedArrayLaneLoadRelaxed(vector + i);
     }
     ASSERT(inBounds(i));
-    // TSAN-TRIAGE §3.24: relaxed lane load (see typedArrayLaneLoadRelaxed above).
     return typedArrayLaneLoadRelaxed(vector + i);
 }
 
@@ -1120,28 +1114,17 @@ template<typename Adaptor> inline JSValue JSGenericTypedArrayView<Adaptor>::getI
 
 template<typename Adaptor> inline void JSGenericTypedArrayView<Adaptor>::setIndexQuicklyToNativeValue(size_t i, typename Adaptor::Type value)
 {
-    // SPEC-ungil annex N6 (torn-pair table): same second-fetch shape as
-    // getIndexQuicklyAsNativeValue above. Single base snapshot; GIL-off, bail
-    // on a raced detach (null m_vector — cleared synchronously by
-    // JSArrayBufferView::detachFromArrayBuffer(); the N6 quarantine covers
-    // ArrayBuffer::m_data, not the view's base word) or a raced shrink (stale
-    // index) by dropping the store — a legal lost-value race; re-grow
-    // zeroFills. A non-null base lands in the quarantined (still committed)
-    // mapping, which N6 classifies stale-but-safe. GIL-on/flag-off keeps the
-    // exact assert and identical codegen on the likely path.
-    // FIXME(threads): long-term, defer the m_vector clear in
-    // JSArrayBufferView::detachFromArrayBuffer() to the heap §10 stop
-    // (out of this item's file scope).
+    // Same single-base-snapshot shape as getIndexQuicklyAsNativeValue above:
+    // GIL-off, a null base or a stale index drops the store, which is the lost
+    // write a raced detach or shrink is allowed to produce.
     typename Adaptor::Type* vector = typedVector();
-    if (VM::isGILOffProcess()) [[unlikely]] {
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
         if (!vector || !inBounds(i)) [[unlikely]]
             return;
-        // TSAN-TRIAGE §3.24: relaxed lane store (see typedArrayLaneStoreRelaxed above).
         typedArrayLaneStoreRelaxed(vector + i, value);
         return;
     }
     ASSERT(inBounds(i));
-    // TSAN-TRIAGE §3.24: relaxed lane store (see typedArrayLaneStoreRelaxed above).
     typedArrayLaneStoreRelaxed(vector + i, value);
 }
 
@@ -1181,7 +1164,9 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::toAdapt
 
 template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() -> SortResult
 {
-    RELEASE_ASSERT(!isDetached());
+    // A detached view fails here (the caller throws), including GIL-off when a
+    // detach on another thread raced the caller's validation.
+    Vector<ElementType, 16> forShared;
     IdempotentArrayBufferByteLengthGetter<std::memory_order_seq_cst> getter;
     auto lengthValue = integerIndexedObjectLength(this, getter);
     if (!lengthValue)
@@ -1211,32 +1196,24 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     }
 
     auto array = originalSpan.data();
-    Vector<ElementType, 16> forShared;
-    // CVE-AUDIT A2 / MC-DF S9 (mc-df-ta-sort-inplace.CRASH.log): r269531's
-    // isShared() gate is SAB-only. Under useJSThreads GIL-off a non-SAB
-    // ArrayBuffer is reachable from another mutator, so a racing lane writer
-    // breaks std::sort's strict-weak-ordering / element-stability assumptions
-    // and libstdc++ __unguarded_linear_insert walks past the front of the
-    // allocation (ASAN heap-buffer-overflow READ -4). Widen the r269531 gate
-    // to take the copy-out/sort/copy-back path whenever the backing may be
-    // raced — i.e. unconditionally under gilOffProcess (we cannot prove
-    // thread-locality here). Flag-off/GIL-on (gilOffProcess == 0) keeps the
-    // byte-identical in-place std::sort on the likely path — one
-    // predicted-false Config-page test; isShared() is immutable so hoisting
-    // it into the local preserves the original two-check semantics exactly.
-    // TSAN-TRIAGE §20.3.9 (typedarray-sort-memcpy): the copy-out/back touch
-    // live TA lanes that another mutator may atomic-write via
-    // trySetIndexQuicklyForTypedArrayConcurrent — plain memcpy is NOT the
-    // blessed accessor (OM §1 GT). Under gilOffProcess use the §3.24 relaxed
-    // lane load/store helpers (private-buffer side stays plain); flag-off
-    // keeps the byte-identical WTF::copyElements (SAB arm unchanged).
+    // In-place std::sort needs lanes no other thread writes; GIL-off any view can
+    // be reached from another mutator, so GIL-off always sorts a private copy
+    // moved in and out with relaxed lane accesses. The span's base is the single
+    // base snapshot this function dereferences: GIL-off a detach on another
+    // thread clears the base word with no stop, so it can be null despite the
+    // detach check above, and the sort then fails as detached. Flag-off/GIL-on
+    // keeps the in-place sort and the bulk copies behind one predicted-false
+    // Config-page byte test.
     bool mustCopyOut = isShared();
-    if (VM::isGILOffProcess()) [[unlikely]]
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (!array)
+            return SortResult::Failed;
         mustCopyOut = true;
+    }
     if (mustCopyOut) {
         if (!forShared.tryGrow(length)) [[unlikely]]
             return SortResult::OutOfMemory;
-        if (VM::isGILOffProcess()) [[unlikely]] {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
             auto* dst = forShared.mutableSpan().data();
             auto* src = originalSpan.data();
             for (size_t i = 0; i < length; ++i)
@@ -1262,9 +1239,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     }
 
     if (mustCopyOut) {
-        if (VM::isGILOffProcess()) [[unlikely]] {
-            // TSAN-TRIAGE §20.3.9: relaxed lane stores back into the live span;
-            // private-buffer reads stay plain.
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
             auto* dst = originalSpan.data();
             auto* src = forShared.span().data();
             for (size_t i = 0; i < length; ++i)
