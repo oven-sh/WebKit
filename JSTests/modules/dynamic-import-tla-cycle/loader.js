@@ -11,3 +11,10 @@ export async function loadAfterAwait(specifier) {
 export async function loadAll(specifier) {
     return await Promise.all([import(specifier), Promise.resolve(1)]);
 }
+
+export async function loadForAwait(specifier) {
+    await null;
+    function* lazily() { yield import(specifier); }
+    for await (const ns of lazily())
+        return ns;
+}
