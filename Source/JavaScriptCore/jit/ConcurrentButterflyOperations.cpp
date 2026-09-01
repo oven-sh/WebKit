@@ -26,36 +26,15 @@
 #include "config.h"
 #include "ConcurrentButterflyOperations.h"
 
-#include "FrameTracers.h"
 #include "JSCConfig.h"
 #include "Options.h"
-#include "ThrowScope.h"
-#include "VM.h"
+#include "VMLite.h"
 #include <atomic>
 #include <limits>
 #include <mutex>
 
 #if OS(DARWIN)
 #include <pthread.h>
-#endif
-
-// vmstate workstream (SPEC-vmstate section 6.7): sole provider of
-// currentButterflyTID() and setVMLiteTIDTagHook(). Until it lands we run a
-// main-thread-only interim shim (TID 0), the same pattern as
-// SPEC-objectmodel section 9.1. THREADS-INTEGRATE(jit): delete the shim when
-// VMLite.h is in-tree; INTEGRATE-jit.md records the swap.
-#if __has_include("VMLite.h")
-#include "VMLite.h"
-#define JSC_JIT_HAS_VMLITE 1
-#endif
-
-// Object-model workstream (SPEC-objectmodel section 9): segmented-butterfly
-// and shared-write helpers the R3 shims below forward to.
-// THREADS-INTEGRATE(jit): forwarding bodies are filled in (Tasks 8-10) once
-// runtime/ConcurrentButterfly.h lands; see the per-operation notes.
-#if __has_include("ConcurrentButterfly.h")
-#include "ConcurrentButterfly.h"
-#define JSC_JIT_HAS_CONCURRENT_BUTTERFLY 1
 #endif
 
 namespace JSC {
@@ -68,14 +47,6 @@ namespace JSC {
 extern "C" __attribute__((tls_model("initial-exec"))) thread_local uint64_t g_jscButterflyTIDTag = 0;
 #else
 extern "C" thread_local uint64_t g_jscButterflyTIDTag = 0;
-#endif
-
-#if !defined(JSC_JIT_HAS_VMLITE) && !defined(JSC_JIT_HAS_CONCURRENT_BUTTERFLY)
-// Interim shim until vmstate W3 lands: only the main thread runs JS, and the
-// main thread's butterfly TID is 0 (SPEC-vmstate I18). When the OM workstream's
-// ConcurrentButterfly.h is in-tree, ITS shim (OM section 9.1, same pattern)
-// provides this symbol instead; ours must not redeclare it.
-static ALWAYS_INLINE uint16_t currentButterflyTID() { return 0; }
 #endif
 
 // ===========================================================================
@@ -190,7 +161,6 @@ static void updateButterflyTIDTag(uint16_t tid)
 
 void initializeButterflyTIDTagForCurrentThread()
 {
-#if defined(JSC_JIT_HAS_VMLITE)
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
         // CS3: vmstate's VMLite::setCurrent invokes the hook post-TLS-write
@@ -198,7 +168,6 @@ void initializeButterflyTIDTagForCurrentThread()
         // direct spawn/detach calls below idempotent with the hook's.
         setVMLiteTIDTagHook(&updateButterflyTIDTag);
     });
-#endif
 
 #if defined(JSC_BUTTERFLY_TID_TAG_ELF_TLS)
     setUpButterflyTIDTagLoadForCurrentThread();
@@ -246,144 +215,5 @@ void assertButterflyTIDTagCoherent()
     }
 #endif
 }
-
-#if ENABLE(JIT)
-
-// ===========================================================================
-// R3 shims. Frozen call-side contracts (SPEC-jit section 5.5).
-//
-// Task 8 status: LLInt/Baseline emission routes every predicate failure to
-// the op's EXISTING generic slow path (see the choke points in
-// llint/LowLevelInterpreter64.asm and jit/CCallHelpers.cpp), so nothing
-// references these shims yet - they are the DFG/FTL tail-call form
-// (Tasks 9/10). Referencing the OM helpers (segmentedOutOfLineSlot /
-// ensureSharedWriteBit / locked AS ops) from here today would be an
-// undefined symbol: the OM header declares them but its .cpp definitions
-// land with OM Tasks 4-8. Each body keeps the standard JIT-operation
-// prologue so the forwarding fill is purely the marked line.
-//
-// Reviewers (R2-5, re-affirmed R3-8): the absence of regime-2 fast paths in
-// EVERY tier is a recorded, tripwired scope reduction, not an oversight —
-// see GIL-removal precondition 9 in docs/threads/INTEGRATE-jit.md (fill the
-// seven bodies + wire slow-case routing + run the shared-and-reshaped bench
-// leg before GIL removal); gilRemovalPreconditionsMet() is constexpr false
-// until then, and these RELEASE_ASSERT_NOT_REACHED bodies are unreachable
-// today (no emitter references them; all predicate failures route to
-// existing generic paths).
-//
-// B5 audit (precondition 10, docs/threads/cve/map-MC-CODE.md S6): these R3
-// shims are NOT consumers of the deferred-fire fact. They forward to OM
-// segmented-butterfly accessors and never re-use a code pointer gated on a
-// WatchpointSet state; the gilRemovalPreconditionsMet() reference here tracks
-// precondition 9 (regime-2 fast paths), not 10. No acquire-load of the
-// deferred-fire fact is needed at this site.
-// THREADS-INTEGRATE(jit)
-// ===========================================================================
-
-JSC_DEFINE_JIT_OPERATION(operationSegmentedButterflyLoad, EncodedJSValue, (VM* vmPointer, JSObject* object, int32_t offset))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(offset);
-    // THREADS-INTEGRATE(jit): forward to OM segmentedOutOfLineSlot(spine,
-    // offset)->get() through the object's tagged butterfly word (OM 9.3).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope, encodedJSUndefined());
-}
-
-JSC_DEFINE_JIT_OPERATION(operationSegmentedButterflyStore, void, (VM* vmPointer, JSObject* object, int32_t offset, EncodedJSValue encodedValue))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(offset);
-    UNUSED_PARAM(encodedValue);
-    // THREADS-INTEGRATE(jit): forward to OM segmentedOutOfLineSlot(spine,
-    // offset)->set(vm, object, value) (OM 9.3; barriered).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationSegmentedButterflyIndexedLoad, EncodedJSValue, (VM* vmPointer, JSObject* object, uint32_t index))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(index);
-    // THREADS-INTEGRATE(jit): forward to OM segmentedIndexedSlot(spine, index)
-    // (OM 9.3; bounds pre-checked by the caller per C4).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope, encodedJSUndefined());
-}
-
-JSC_DEFINE_JIT_OPERATION(operationSegmentedButterflyIndexedStore, void, (VM* vmPointer, JSObject* object, uint32_t index, EncodedJSValue encodedValue))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(index);
-    UNUSED_PARAM(encodedValue);
-    // THREADS-INTEGRATE(jit): forward to OM segmentedIndexedSlot(spine,
-    // index)->set(vm, object, value) (OM 9.3).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationButterflyEnsureSharedWrite, void, (VM* vmPointer, JSObject* object))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    // THREADS-INTEGRATE(jit): forward to OM ensureSharedWriteBit(vm, object)
-    // (OM 9.3: fire-then-DCAS, R-DOUBLE rebox, CoW materialize-first, PA
-    // locked flip). Caller performs its own store afterwards (non-AS only).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationSharedArrayStorageLoad, EncodedJSValue, (VM* vmPointer, JSObject* object, uint32_t index))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(index);
-    // THREADS-INTEGRATE(jit): cell-locked ArrayStorage read (OM I31: flag-on,
-    // EVERY AS access at any SW state is cell-locked on the runtime side; the
-    // generated fast path only reaches here when its SW test demands it).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope, encodedJSUndefined());
-}
-
-JSC_DEFINE_JIT_OPERATION(operationSharedArrayStorageStore, void, (VM* vmPointer, JSObject* object, uint32_t index, EncodedJSValue encodedValue))
-{
-    VM& vm = *vmPointer;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(index);
-    UNUSED_PARAM(encodedValue);
-    // THREADS-INTEGRATE(jit): write predicate case (4), AS arm (SPEC-jit
-    // section 5.5): fire F1, flip SW, and perform the write ITSELF under the
-    // cell lock / OM section 4.6 per-event-STW regime - never
-    // ensure-SW-then-store inline (I20/OM I31).
-    RELEASE_ASSERT_NOT_REACHED();
-    OPERATION_RETURN(scope);
-}
-
-#endif // ENABLE(JIT)
 
 } // namespace JSC

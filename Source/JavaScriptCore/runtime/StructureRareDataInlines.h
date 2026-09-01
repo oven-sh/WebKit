@@ -69,7 +69,7 @@ public:
         , m_structureRareData(nullptr)
     { }
 
-    void install(StructureRareData*, Structure*);
+    bool install(StructureRareData*, Structure*);
     void fireInternal(VM&, const FireDetail&);
 
 private:
@@ -191,10 +191,10 @@ inline void StructureRareData::cacheSpecialProperty(JSGlobalObject* globalObject
     return cacheSpecialPropertySlow(globalObject, vm, ownStructure, value, key, slot);
 }
 
-inline void StructureChainInvalidationWatchpoint::install(StructureRareData* structureRareData, Structure* structure)
+inline bool StructureChainInvalidationWatchpoint::install(StructureRareData* structureRareData, Structure* structure)
 {
     m_structureRareData = structureRareData;
-    structure->addTransitionWatchpoint(this);
+    return structure->addTransitionWatchpoint(this);
 }
 
 inline void StructureChainInvalidationWatchpoint::fireInternal(VM&, const FireDetail&)
@@ -226,7 +226,14 @@ inline bool StructureRareData::tryCachePropertyNameEnumeratorViaWatchpoint(VM&, 
         if (!structureID)
             break;
         Structure* structure = structureID.decode();
-        m_cachedPropertyNameEnumeratorWatchpoints[index].install(this, structure);
+        if (!m_cachedPropertyNameEnumeratorWatchpoints[index].install(this, structure)) {
+            // Flag-on only: a foreign transition fired this structure's set
+            // after the check above, so the enumerator can only be validated
+            // by traversing. The watchpoints already linked stay reachable
+            // through their sets until the GC retires them.
+            retireCachedPropertyNameEnumeratorWatchpoints();
+            return false;
+        }
         ++index;
     }
     return true;

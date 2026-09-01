@@ -100,8 +100,10 @@ public:
 
     // THREADS/TSAN: the executable/rare-data word is read by compiler threads
     // and other mutators while the owner installs rare data (release after
-    // storeStoreFence) or the constructor initializes it on recycled cell
-    // memory — all accesses are relaxed atomics (plain mov codegen).
+    // storeStoreFence; GIL-off a CAS, because ensure* callers are
+    // unsynchronized check-then-act and only one cell may be published) or
+    // the constructor initializes it on recycled cell memory — all other
+    // accesses are relaxed atomics (plain mov codegen).
     uintptr_t executableOrRareDataConcurrently() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_executableOrRareData), std::memory_order_relaxed); }
 
     ExecutableBase* executable() const
