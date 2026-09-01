@@ -29,6 +29,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/WTFConfig.h>
 
 namespace WTF {
 
@@ -38,14 +39,15 @@ namespace WTF {
 // specifically happened - this can be useful either for debugging, or
 // sometimes even for some additional functionality.
 //
-// The count is atomic (ThreadSafeRefCounted-style ordering): the only user
-// of this class is JSC::ArrayBuffer (via GCIncomingRefCounted), whose
-// wrappers are reachable from every thread through the shared JS heap once
-// shared-memory Threads are on — RefPtr<ArrayBuffer> is taken/dropped on the
-// C++ side from concurrent mutators (DataView/slice/structuredClone/wasm
-// memory) and from per-thread sweeps, so a plain count would be corruptible
-// (premature free / leak). The single-threaded cost is one uncontended
-// lock-prefixed RMW per ref/deref on a cold path; not worth a mode split.
+// The only user is JSC::ArrayBuffer (via GCIncomingRefCounted). Its count is
+// ref'd/deref'd without a lock from concurrently running mutators only when
+// JSC runs its JS threads without the GIL; JSC latches
+// g_wtfConfig.useAtomicDeferrableRefCount for the process in that shape,
+// before the first VM is published, and the count then uses atomic RMWs
+// (ThreadSafeRefCounted-style ordering). Otherwise every ref/deref is
+// serialized by the JSLock and the count stays a plain load/store: taking a
+// RefPtr<ArrayBuffer> is on the hot path of every typed-array view created
+// over an existing buffer (subarray, new TypedArray(buffer), DataView).
 
 class DeferrableRefCountedBase {
     static constexpr uint32_t deferredFlag = 1;
@@ -54,7 +56,11 @@ class DeferrableRefCountedBase {
 public:
     void ref() const
     {
-        m_refCount.fetch_add(normalIncrement, std::memory_order_relaxed);
+        if (g_wtfConfig.useAtomicDeferrableRefCount) [[unlikely]] {
+            m_refCount.fetch_add(normalIncrement, std::memory_order_relaxed);
+            return;
+        }
+        m_refCount.store(m_refCount.load(std::memory_order_relaxed) + normalIncrement, std::memory_order_relaxed);
     }
 
     bool hasOneRef() const
@@ -84,19 +90,34 @@ protected:
 
     bool derefBase() const
     {
-        // acq_rel: the release publishes this thread's writes to the object
-        // for whichever thread performs the final deref; the acquire on the
-        // final deref orders the delete after every other thread's release.
-        return m_refCount.fetch_sub(normalIncrement, std::memory_order_acq_rel) == normalIncrement;
+        if (g_wtfConfig.useAtomicDeferrableRefCount) [[unlikely]] {
+            // acq_rel: the release publishes this thread's writes to the object
+            // for whichever thread performs the final deref; the acquire on the
+            // final deref orders the delete after every other thread's release.
+            return m_refCount.fetch_sub(normalIncrement, std::memory_order_acq_rel) == normalIncrement;
+        }
+        uint32_t newValue = m_refCount.load(std::memory_order_relaxed) - normalIncrement;
+        m_refCount.store(newValue, std::memory_order_relaxed);
+        return !newValue;
     }
 
     bool setIsDeferredBase(bool value)
     {
+        if (g_wtfConfig.useAtomicDeferrableRefCount) [[unlikely]] {
+            if (value) {
+                m_refCount.fetch_or(deferredFlag, std::memory_order_acq_rel);
+                return false;
+            }
+            return (m_refCount.fetch_and(~deferredFlag, std::memory_order_acq_rel) & ~deferredFlag) == 0;
+        }
+        uint32_t newValue = m_refCount.load(std::memory_order_relaxed);
         if (value) {
-            m_refCount.fetch_or(deferredFlag, std::memory_order_acq_rel);
+            m_refCount.store(newValue | deferredFlag, std::memory_order_relaxed);
             return false;
         }
-        return (m_refCount.fetch_and(~deferredFlag, std::memory_order_acq_rel) & ~deferredFlag) == 0;
+        newValue &= ~deferredFlag;
+        m_refCount.store(newValue, std::memory_order_relaxed);
+        return !newValue;
     }
 
 private:
