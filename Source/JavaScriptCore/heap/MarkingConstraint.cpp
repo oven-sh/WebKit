@@ -100,9 +100,6 @@ void MarkingConstraint::doParallelWork(SlotVisitor& visitor, SharedTask<void(Slo
     task.run(visitor);
     if (verboseMarkingConstraint && visitCounter.visitCount())
         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in doParallelWork)");
-    // The relaxed atomic RMW supersedes the m_lock critical section that used
-    // to guard this add (doParallelWork was m_lock's only user; the member
-    // stays declared in MarkingConstraint.h pending a header-side pass).
     WTF::atomicExchangeAdd(&m_lastVisitCount, visitCounter.visitCount(), std::memory_order_relaxed);
 }
 

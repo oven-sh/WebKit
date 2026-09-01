@@ -221,8 +221,10 @@ private:
     // parks until resume, then re-enters active. Granularity = one drained
     // batch (the CG-I12 bound). Called from drain()'s safepoint site, gated
     // on m_isDrainingFromSharedHelper — which is itself option-byte-gated
-    // (set only when useConcurrentSharedGCMarking is on), so flag-off this
-    // is never reached and the shared Heap line is never loaded per batch.
+    // (set only when useConcurrentSharedGCMarking or g_jscConfig.gilOffProcess
+    // is on, the two shapes with a GCL-free Concurrent phase), so flag-off
+    // this is never reached and the shared Heap line is never loaded per
+    // batch.
     void helperDrainPauseCheckpointIfRequested();
 
     bool NODELETE hasWork(const AbstractLocker&);
@@ -246,12 +248,14 @@ private:
     bool m_canOptimizeForStoppedMutator { false };
     bool m_isInParallelMode { false };
     // True exactly while this visitor's drainFromShared(HelperDrain) loop is
-    // inside drain() AND the C1 stage flag (useConcurrentSharedGCMarking) is
-    // on — the ANNEX CGP1 participant-set marker (F14: the pause pair covers
-    // EXACTLY the HelperDrain helpers; MainDrain slices and C4 assist
-    // visitors take NO checkpoint). Option-byte-first (FIX-V5B-F1 pattern):
-    // flag-off this stays false, so drain()'s per-batch checkpoint test
-    // touches only this visitor's own line. Owner-thread-only.
+    // inside drain() AND a GCL-free Concurrent phase is possible (the C1
+    // stage flag useConcurrentSharedGCMarking, or the gilOff single-handoff
+    // arm, g_jscConfig.gilOffProcess) — the ANNEX CGP1 participant-set
+    // marker (F14: the pause pair covers EXACTLY the HelperDrain helpers;
+    // MainDrain slices and C4 assist visitors take NO checkpoint).
+    // Option-byte-first (FIX-V5B-F1 pattern): flag-off this stays false, so
+    // drain()'s per-batch checkpoint test touches only this visitor's own
+    // line. Owner-thread-only.
     bool m_isDrainingFromSharedHelper { false };
     Lock m_rightToRun;
     
