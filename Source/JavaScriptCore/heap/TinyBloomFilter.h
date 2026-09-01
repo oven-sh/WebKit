@@ -30,16 +30,15 @@
 
 namespace JSC {
 
-// Concurrency (TSAN triage 3.16, SPEC-objectmodel §5): add() (e.g. Structure
-// transition-table insert under the owner's lock) races with lock-free
-// ruleOut() from concurrent transition lookup / getConcurrently(). Bloom
-// false positives/negatives only steer callers to a re-validating slow path,
-// so stale values are fine — but a torn plain load/store of m_bits would be
-// UB. m_bits is therefore a relaxed WTF::Atomic word: same layout, relaxed
-// loads/stores compile to plain loads/stores, and add() uses a relaxed
-// fetch_or per the triage ruling (insert is the rare path). No ordering is
-// implied. JIT code reads the word directly via offsetOfBits(), which is
-// unchanged because Atomic<Bits> wraps a single std::atomic<Bits>.
+// m_bits is a relaxed WTF::Atomic word because lock-free ruleOut() readers
+// (concurrent transition lookup, getConcurrently()) race with add(): a stale
+// value only steers the caller to a re-validating slow path, but a torn plain
+// load would be UB. Every add() writer is serialized by its owner
+// (Structure::m_lock, the marked-space registry lock, or a stopped world), so
+// add() is a relaxed load and store, not an atomic RMW: it compiles to the
+// same plain load/or/store as a non-atomic word, and no ordering is implied.
+// JIT code reads the word directly via offsetOfBits(); Atomic<Bits> wraps a
+// single std::atomic<Bits>, so the layout is unchanged.
 template <typename Bits = uintptr_t>
 class TinyBloomFilter {
 public:
@@ -77,13 +76,13 @@ inline TinyBloomFilter<Bits>::TinyBloomFilter(Bits bits)
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::add(Bits bits)
 {
-    m_bits.exchangeOr(bits, std::memory_order_relaxed);
+    m_bits.storeRelaxed(m_bits.loadRelaxed() | bits);
 }
 
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::add(TinyBloomFilter& other)
 {
-    m_bits.exchangeOr(other.m_bits.loadRelaxed(), std::memory_order_relaxed);
+    m_bits.storeRelaxed(m_bits.loadRelaxed() | other.m_bits.loadRelaxed());
 }
 
 template <typename Bits>

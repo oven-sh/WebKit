@@ -166,98 +166,42 @@ void MachineThreads::tryCopyOtherThreadStack(const ThreadSuspendLocker& locker, 
     *size += stack.second;
 }
 
-// T5-rootscan-skip-coop-parked-suspend (SCALEBENCH §31, offcpu16 row #4):
-// same shape as tryCopyOtherThreadStack, but the registers and stackTop come
-// from a CurrentThreadState that the TARGET thread captured itself
-// (DECLARE_AND_COMPUTE_CURRENT_THREAD_STATE in its parking caller's frame)
-// and seq_cst-published into its GCClient::Heap immediately before
-// descending into pure libc futex/condvar machinery with heap access
-// released. The caller's frame stays live across the park, so both the
-// CurrentThreadState struct and the RegisterState it points at are stable
-// memory; everything below `snapshot.stackTop` is post-snapshot park
-// plumbing with no JSCell* (and may still be mutating between publish and
-// the actual futex sleep, or across a bounded-wait timeout tick), so we
-// deliberately do NOT extend by the OS red-zone the way captureStack() does
-// for a suspend-captured SP — the captured span is already an
-// at-least-as-conservative superset of the thread's JS-relevant roots.
-// Called BEFORE any thread is suspended (no ThreadSuspendLocker needed) and
-// uses copyMemory only (no malloc/locks), so the suspend-phase deadlock
-// rules are trivially satisfied.
+// Same shape as tryCopyOtherThreadStack, but the registers and stackTop come
+// from a CurrentThreadState the TARGET thread captured itself and seq_cst-
+// published into its GCClient::Heap before parking with heap access released.
+// Publisher contract: the snapshot is built by DECLARE_AND_COMPUTE_CURRENT_
+// THREAD_STATE in the frame that stays live across the park, so the struct,
+// the RegisterState it points at and stackTop all lie on the publishing
+// thread's own stack, and everything below stackTop is park plumbing with no
+// JSCell*. A register spill taken in a deeper frame that returns before the
+// park (an out-of-line RAII ctor, say) does not satisfy it: the caller's
+// callee-saves that frame's prologue parked are below stackTop and absent
+// from the spill. The span is not extended by the OS red-zone the way
+// captureStack() extends a suspend-captured SP: the memory below stackTop
+// may still be changing. Called BEFORE any thread is suspended and uses
+// copyMemory only (no malloc/locks).
 //
-// Returns true iff the cooperative snapshot was accepted (size accumulated;
-// caller marks the thread excluded from the suspend pass). Returns false iff
-// the snapshot was DECLINED at use time — caller MUST fall back to the
-// SIGUSR2 suspend()/getRegisters()/resume() path for this thread (the
-// pre-T5-optimisation behaviour; correctness-equivalent).
+// Returns true iff the snapshot was accepted (size accumulated; the caller
+// excludes the thread from the suspend pass). Returns false iff it was
+// declined; the caller then falls back to suspend()/getRegisters()/resume()
+// for this thread, which is always correct.
 SUPPRESS_ASAN
 bool MachineThreads::tryCopyCooperativelyParkedThreadStack(Thread& thread, CurrentThreadState& snapshot, void* buffer, size_t capacity, size_t* size)
 {
-    // SCAN-GCATEND-PARKEDSTACK / CVE-AUDIT B9 / SCAN-RESULTS.md residual #2
-    // (gcAtEnd × property-wait-termination.js, sweeps 01b/04/06): consumer-
-    // side re-validation of the cooperative snapshot AT USE TIME. The
-    // publish-side bounds-check in GCClient::Heap::publishParkedRootSnapshot
-    // (Heap.cpp, the A3-secondary fix) declines a snapshot whose
-    // [stackTop, stackOrigin] falls outside the publishing thread's real
-    // stack — that closes every case where stackTop is an ASAN
-    // detect_stack_use_after_return fake-stack address AT PUBLISH TIME
-    // (LockObject GILDroppedSection's `this`, DECLARE_AND_COMPUTE_CURRENT_
-    // THREAD_STATE's `&stateName`). What it structurally CANNOT close is the
-    // valid-at-publish, stale-at-use window: a snapshot that passed the
-    // publish bounds (e.g. a real-stack frame) but whose backing
-    // CurrentThreadState struct has since been popped/reused (watchdog-
-    // terminated waiter at end-of-process gcAtEnd; load→dereference race
-    // across a clear+republish under bounded-wait quanta; a publish frame
-    // that escaped UAR instrumentation via inline-asm). The conductor's
-    // seq_cst re-load (Heap.cpp coopParkedSnapshotLookup) returns a non-null
-    // pointer; the dereferenced fields below are then garbage and the
-    // (begin - end) span runs off the mapped stack — the
-    // repro-gcAtEnd-property-wait-termination.log SEGV (≈142MB span,
-    // page-aligned fault at the OS-stack guard).
+    // The publish-side check (GCClient::Heap::publishParkedRootSnapshot)
+    // validates the span at publish time. It cannot cover a snapshot that was
+    // valid then but whose backing frame has since been popped or reused (a
+    // terminated waiter at end-of-process GC; a load that races a clear and
+    // republish across bounded-wait quanta): the conductor's seq_cst load
+    // still returns a non-null pointer and the fields are garbage, so the
+    // (begin - end) span would run off the mapped stack. Re-validate here
+    // against the thread's real stack bounds and decline on any mismatch.
     //
-    // Decline-and-fall-back here, the SAME discipline as the publish-side
-    // check, applied at the single consumer chokepoint: a snapshot whose
-    // recorded span is not a sub-range of `thread.stack()` (the target
-    // thread's REAL stack bounds, queried now) is unusable for the
-    // cooperative copy. Return false; the caller leaves usedCoopSnapshot
-    // clear and the suspend pass captures the real SP from the signal
-    // context. SUPPRESS_ASAN above means dereferencing a poisoned/freed
-    // fake-stack `snapshot` is not itself diagnosed; the bounds check then
-    // catches the garbage values.
-    //
-    // PROTOCOL EXCEPTION (never-weaken-asserts rule): the prior Debug
-    // ASSERT(begin == thread.stack().origin()) is subsumed by this runtime
-    // check — same predicate, enforced in ALL builds as a correctness-
-    // preserving fall-back rather than a process abort. The invariant is
-    // not weakened: a violation is still detected, and the response (decline
-    // → suspend) is the conservative-correct outcome the abort would have
-    // been protecting. ASSERT_ENABLED-and-not-ASAN dataLog so an unexpected
-    // non-ASAN out-of-bounds USE is loud in Debug (mirrors the publish-side
-    // dataLog).
-    //
-    // Flag-off / non-shared: this function is only reached via the
-    // [[unlikely]] coopParkedSnapshotLookup branch in tryCopyOtherThreadStacks
-    // (gated on isSharedServer() in Heap::gatherStackRoots), so the flag-off
-    // EXECUTION PATH is unchanged (this body never runs; the void→bool
-    // signature change compiles unconditionally but is unreachable flag-off —
-    // same convention as the publish-side precedent in Heap.cpp). Non-ASAN /
-    // non-stale snapshots tautologically pass the bounds check, so the T5
-    // cooperative-scan optimisation is undisturbed.
-    //
-    // TOCTOU discipline: the threat model above explicitly includes the
-    // snapshot struct's BYTES mutating concurrently (clear+republish under
-    // bounded-wait quanta; popped/reused frame). Latch every field of
-    // `snapshot` into a local ONCE here, validate the LATCHED values, and use
-    // ONLY the latched values for the copy below — never re-read `snapshot.*`
-    // after this point. A second read could observe a value that was never
-    // validated (off-stack span → the very SEGV this fix targets, or an
-    // in-bounds-but-wrong span → silent under-scan / missed roots).
-    //
-    // Memory-ordering: in the well-behaved case the three field values are
-    // visible via the seq_cst m_parkedRootSnapshot pointer load in
-    // coopParkedSnapshotLookup (Heap.cpp) — the publisher writes the fields
-    // then seq_cst-stores the pointer, the conductor seq_cst-loads the
-    // pointer then reads the fields. In the stale window NO ordering is
-    // relied upon: the bounds-check on the latched locals is the defense.
+    // The struct's bytes may be mutating concurrently, so every field is
+    // latched exactly once; only the latched values are validated and used.
+    // In the well-behaved case they are ordered by the publisher's seq_cst
+    // pointer store and the conductor's seq_cst load; in the stale window no
+    // ordering is relied on and the bounds checks are the defense.
     const StackBounds& realStack = thread.stack();
     void* latchedStackOrigin = snapshot.stackOrigin;
     void* latchedStackTop = snapshot.stackTop;
@@ -273,21 +217,14 @@ bool MachineThreads::tryCopyCooperativelyParkedThreadStack(Thread& thread, Curre
         return false;
     }
 
-    // registerState bounds-check: in the stale-reused window stackOrigin is
-    // the field MOST likely to survive (written once to the per-thread-
-    // constant realStack.origin(), so a partially-overwritten struct often
-    // still passes the `==` test above) while registerState may hold
-    // arbitrary bytes. copyMemory()ing sizeof(RegisterState) from an
-    // arbitrary address is a bounded-size unmapped-page SEGV at best, or a
-    // few hundred bytes of arbitrary memory fed into the conservative-root
-    // set at worst. The DECLARE_AND_COMPUTE_CURRENT_THREAD_STATE macro
-    // ALLOCATE_AND_GET_REGISTER_STATEs the RegisterState on the publishing
-    // thread's real stack and stores its address, so a non-null value that
-    // does NOT lie wholly within [realStack.end(), realStack.origin()] is
-    // garbage by construction — decline-and-fall-back exactly as for the
-    // stack span. Null is the deliberate publish-side decline sentinel and
-    // is accepted (registers contribute nothing; the suspend fallback is not
-    // needed because the stack span itself validated).
+    // In the stale-reused window stackOrigin is the field most likely to
+    // survive (it is the per-thread constant realStack.origin()), while
+    // registerState may hold arbitrary bytes; copying sizeof(RegisterState)
+    // from an arbitrary address is an unmapped-page fault at best and foreign
+    // memory fed into the conservative root set at worst. Every publisher
+    // spills the RegisterState onto its own stack, so a non-null value not
+    // wholly inside [realStack.end(), realStack.origin()] is garbage. Null is
+    // accepted: the registers then contribute nothing.
     if (latchedRegisterState
         && (static_cast<void*>(latchedRegisterState) < realStack.end()
             || static_cast<void*>(latchedRegisterState + 1) > realStack.origin())) [[unlikely]] {

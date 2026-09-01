@@ -249,10 +249,21 @@ void StrongSet::forEachLiveCell(const Invocable<void(JSCell*)> auto& functor)
 
 void StrongSet::forEachStrongHandle(const Invocable<void(JSCell*)> auto& functor, const HashCountedSet<JSCell*>& skipSet)
 {
-    forEachLiveCell([&](JSCell* cell) {
-        if (!skipSet.contains(cell))
-            functor(cell);
-    });
+    auto walk = [&] {
+        forEachLiveCell([&](JSCell* cell) {
+            if (!skipSet.contains(cell))
+                functor(cell);
+        });
+    };
+    // Statistics path: GIL-off, other threads may allocate or free handles
+    // during the walk. The GC root scan (visitAggregate) runs with every
+    // mutator stopped and does not take the lock.
+    if (m_gilOff) [[unlikely]] {
+        Locker locker { m_gilOffLock };
+        walk();
+        return;
+    }
+    walk();
 }
 
 } // namespace JSC

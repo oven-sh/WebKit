@@ -114,9 +114,9 @@ public:
     // non-attached-thread branch — in BOTH cases strictly after the client's
     // last possible barrier (access permanently dropped => the CMS is
     // frozen) and strictly before HCS remove. Drains the client's CMS,
-    // under m_markingMutex then the CMS leaf lock, into the SERVER legacy
-    // m_mutatorMarkStack via its multi-producer append() (F44) — NOT into
-    // m_sharedMutatorMarkStack: a between-cycles flush there would pre-load
+    // under m_markingMutex then m_serverMutatorMarkStackLock then the CMS
+    // leaf lock, into the SERVER legacy m_mutatorMarkStack —
+    // NOT into m_sharedMutatorMarkStack: a between-cycles flush there would pre-load
     // the shared accounting before runBeginPhase's didReachTermination()
     // precondition (the CG-T8 Arm-1 RED root cause), and §9.2's F34 rule
     // forbids the phase read that could discriminate. See the CG-3c AMEND
@@ -136,18 +136,11 @@ public:
     // removeLast <- this helper <- GCClient::Heap::detachCurrentThread <-
     // tearDownSpawnedThreadForExit), reachable whenever an exiting thread
     // accumulated more than one segment (~500 cells) of barrier appends
-    // since the last WND-open drain. The implementation MUST use the same
-    // segment-boundary pattern as every other MarkStackArray drain
-    // (MarkStackArray::transferToImpl):
-    //   while (!cms->isEmpty()) {
-    //       cms->refill();
-    //       while (cms->canRemoveLast())
-    //           target->append(cms->removeLast());
-    //   }
-    // refill()'s head-segment destroy is licensed by the held CMS lock; the
-    // per-cell server append keeps taking the target's multi-producer
-    // m_appendLock (F44). Locking and §9.2(1) ordering are otherwise
-    // unchanged.
+    // since the last WND-open drain. The implementation therefore drains
+    // with MarkStackArray::transferTo, the same segment-boundary-safe
+    // pattern as the WND-open drain; its head-segment destroy is licensed by
+    // the held CMS lock and its appends into the server stack by the held
+    // m_serverMutatorMarkStackLock.
     static void flushClientMutatorMarkStackForExit(GCClient::Heap&);
 
 private:
