@@ -871,16 +871,16 @@ void Options::notifyOptionsChanged()
     // raw VM-block exception-word checks (VM::exceptionOffset() loads in
     // WasmToJS.cpp, JSToWasm.cpp, WebAssemblyBuiltinTrampoline.cpp) that are
     // inert spare storage GIL-off, so a throwing callee of a CARRIER-executed
-    // wasm<->JS call would be silently missed (the AB-15 SD7 refusal in
-    // VMEntryScope.cpp only covers SPAWNED threads calling carrier-created
-    // exports). Per the house rule (fail-stop/refusal over silent
-    // corruption), force wasm off under the GIL-off shape — LOLJIT precedent
-    // above. Flag-off and GIL-on are unaffected; delete this once the wasm
-    // glue is rerouted through the mode-keyed exception-slot pattern
+    // wasm<->JS call would be silently missed (the SD7 refusal in
+    // callWebAssemblyFunction only covers SPAWNED threads calling
+    // carrier-created exports). Per the house rule (fail-stop/refusal over
+    // silent corruption), force wasm off under the GIL-off shape — LOLJIT
+    // precedent above. Flag-off and GIL-on are unaffected; delete this once
+    // the wasm glue is rerouted through the mode-keyed exception-slot pattern
     // (AssemblyHelpers::loadException / materializeGILOffExceptionSlot) and
     // passes the §A.1.3 audit.
     if (Options::useJSThreads() && !Options::useThreadGIL() && Options::useWasm()) {
-        dataLogLn("JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).");
+        dataLogLn("JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM).");
         Options::useWasm() = false;
     }
 
@@ -910,30 +910,30 @@ void Options::notifyOptionsChanged()
     }
 #endif
 
-    // ANNEX U0C write-once latch backstop (U-T14 amend, reviewer round 2):
-    // gilOffProcess is OPTION-derived and IMMUTABLE for the process. The
-    // real latch — the JSCConfig gilOffProcess byte — is U-T3's open
-    // obligation 9b (INTEGRATE-ungil.md; see AB-1). Until it lands, this
-    // shadow latch closes the divergence window between
-    // construction-latched consumers (VM::m_gilOff, Watchdog::m_gilOff)
-    // and the live-read short forms (ArrayBuffer.cpp gilOffThreadsProcess,
-    // VMInspector.cpp isGILOffProcessForInspection, SamplingProfiler.h,
-    // JSLock.cpp, VM::isGILOffProcess): Options::setOptions /
-    // setOption(verify=true) re-run this function and could otherwise flip
-    // the derivation mid-process (including this very U0 normalization
-    // forcing useThreadGIL 0 -> 1), silently splitting the lock-arm /
-    // detach-table selection across consumers. Options::finalize() runs at
-    // the tail of JSC::initialize() (InitializeThreading.cpp), strictly
-    // before any VM can be constructed, so refusing post-finalization
-    // CHANGES of the derivation is exactly "latched at Config
-    // finalization" minus the JSCConfig storage. Pre-finalization calls
-    // (Options::initialize, the jsc-shell CommandLine::parseArguments
-    // setOption loop, embedder setOptions before JSC::initialize) re-latch
-    // freely. Flag-off and U19 GIL-on: the derivation is constant (false),
-    // so the assert is unreachable; codegen shape unaffected (host C++
-    // only). When the JSCConfig byte lands (U-T3), it subsumes this latch
-    // and the statics below should be replaced by it, keeping the
-    // RELEASE_ASSERT.
+#if !OS(LINUX)
+    // GIL-off generated code reaches the current thread's VMLite through the
+    // ELF initial-exec TLS offset of g_jscCurrentVMLite (the loadVMLite
+    // emitter in AssemblyHelpers.cpp and the LLInt macro). No other platform
+    // has a JIT-visible slot for it, so every emitter there fail-stops at the
+    // first gilOff compilation; refuse the shape at validation instead.
+    if (Options::useJSThreads() && !Options::useThreadGIL()) {
+        dataLogLn("JSC: refusing GIL-off configuration on a non-Linux build (generated code has no TLS slot for the current VMLite); forcing useThreadGIL=1.");
+        Options::useThreadGIL() = true;
+    }
+#endif
+
+    // gilOffProcess is option-derived and immutable for the process.
+    // Config::latchGILOffProcess() copies the derivation into the Config
+    // page once, from the first VM constructor, but VM::isGILOffProcess()
+    // and the other live-read consumers (ArrayBuffer.cpp, VMInspector.cpp,
+    // SamplingProfiler.h, JSLock.cpp) re-derive it from the options on every
+    // call, and Options::setOptions / setOption(verify=true) stay legal and
+    // re-run this function after Options::finalize() until the Config page
+    // freezes. This latch is permanent: it refuses any post-finalization
+    // change of the derivation (including the useThreadGIL forcing above)
+    // so the Config byte and the live readers can never disagree;
+    // pre-finalization callers re-latch freely, and flag-off / GIL-on derive
+    // false throughout, so the assert is unreachable there.
     {
         bool gilOffProcessDerivation = Options::useJSThreads() && !Options::useThreadGIL()
             && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
@@ -974,7 +974,7 @@ void Options::notifyOptionsChanged()
     // one. Flags-off (all default false): every condition is false —
     // byte-identical behavior. NOTE: the flags are development-only until
     // CG-3..CG-6 land the C1-C4 behavior behind them (the windowed arms CG-1
-    // staged activate via Heap::sharedGCWindowedStagesEnabled(), but the
+    // staged activate via sharedGCWindowedConductActive() in Heap.cpp, but the
     // stage semantics — kill-switch retires, marker scheduling, collector
     // thread, sweeping, assist — are not in-tree yet).
     if (Options::useConcurrentSharedGCMarking() && !Options::useSharedGCHeap()) {
@@ -1060,8 +1060,8 @@ void Options::notifyOptionsChanged()
         // prefix-rule cascade above runs BEFORE this block, so an unguarded
         // force here would bypass it on the U19 GIL-on / bare-useJSThreads
         // shape (sharedGCHeap=false) and flip
-        // Heap::sharedGCWindowedStagesEnabled() true on a non-shared heap —
-        // the exact invariant the Heap.h:1403 comment relies on; (b) the
+        // sharedGCWindowedConductActive() (Heap.cpp) true on a non-shared
+        // heap — the exact invariant its comment relies on; (b) the
         // GIL-on identity arm (useJSThreads=1 useThreadGIL=1
         // useSharedGCHeap=1) has NO congc A/B data — every cited number is
         // GIL-off — and Heap.cpp setMutatorShouldBeFenced drops the
@@ -1109,6 +1109,17 @@ void Options::notifyOptionsChanged()
         dataLogLn("FATAL: useJSThreads requires useHandlerICInFTL (SPEC-jit M2b).");
         CRASH();
     }
+    // useThreadedDFG and useThreadedFTL are tier kill switches. Neither
+    // optimizing tier has an unthreaded flag-on arm (compileGetButterfly's raw
+    // butterfly load is the flag-off path and cannot read TID-tagged words),
+    // so switching one off means not running that tier at all; the FTL needs
+    // the DFG below it. Flag-off both options are inert.
+    if (Options::useJSThreads() && !Options::useThreadedDFG()) {
+        Options::useDFGJIT() = false;
+        Options::useFTLJIT() = false;
+    }
+    if (Options::useJSThreads() && !Options::useThreadedFTL())
+        Options::useFTLJIT() = false;
     Options::forceUnlinkedDFG() = false; // Currently, IC is rapidly changing. We disable this until we get the final form of Data IC.
 
     if (!Options::allowDoubleShape())
@@ -1222,6 +1233,16 @@ void Options::notifyOptionsChanged()
 
     if (Options::useProfiler())
         Options::useConcurrentJIT() = false;
+
+    // useJSThreads forces useConcurrentJIT on above, because a synchronous
+    // JITWorklist::enqueue bypasses the dedup of same-key plans racing from
+    // N mutators; forceEagerCompilation and useProfiler clear it again, so
+    // the invariant is re-checked here, after the last reset. A JIT-less
+    // process has no worklist and is exempt.
+    if (Options::useJSThreads() && Options::useJIT() && !Options::useConcurrentJIT()) {
+        dataLogLn("FATAL: useJSThreads requires useConcurrentJIT; useProfiler and forceEagerCompilation disable it.");
+        CRASH();
+    }
 
     if (Options::alwaysUseShadowChicken())
         Options::maximumInliningDepth() = 1;

@@ -52,19 +52,6 @@ inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, Collectio
     vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(this);
 }
 
-inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeSpecializationKind kind, CodeBlock* newCodeBlock)
-{
-    if (kind == CodeSpecializationKind::CodeForCall) {
-        FunctionCodeBlock* oldCodeBlock = codeBlockForCall();
-        m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
-        return oldCodeBlock;
-    }
-    ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
-    FunctionCodeBlock* oldCodeBlock = codeBlockForConstruct();
-    m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
-    return oldCodeBlock;
-}
-
 inline JSString* FunctionExecutable::toString(JSGlobalObject* globalObject)
 {
     RareData& rareData = ensureRareData();

@@ -136,9 +136,9 @@ private:
     // slot.
     void* m_cloopStackLimit { nullptr };
 
-    // m_cloopStack must be declared after the m_mirrors list because CLoopStack
-    // initialization requires calling setCLoopStackLimit() which relies on
-    // m_mirrors (above) being already initialized.
+    // Publishes into m_cloopStackLimit and m_mirrors (above) through
+    // setCLoopStackLimit() once the running thread's segment exists; its
+    // constructor reserves and publishes nothing.
     CLoopStack m_cloopStack;
 #endif
     friend class LLIntOffsetsExtractor;

@@ -33,29 +33,26 @@
 #include "ModuleProgramExecutable.h"
 #include "ProgramExecutable.h"
 #include "VariableEnvironmentInlines.h"
-#include "VMTraps.h"
-#include <wtf/RecursiveLockAdapter.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/Threading.h>
 
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeCache);
 
-// UNGIL AB18-R1-C: CodeCacheMap (m_sourceCode) is a plain HashMap on the
-// shared VM. GIL-off, concurrent findCacheAndUpdateAge (which can prune ->
-// m_map.remove) vs addCache (rehash) from N mutators corrupts the table.
-// Serialize with the SAME IT-8 process-wide recursive compilation lock as
-// UnlinkedFunctionExecutable::unlinkedCodeBlockFor — deliberately NOT a
-// separate cache lock: Bun's eager generateUnlinkedCodeBlockForFunctions
-// recursion means getUnlinkedGlobalCodeBlock reaches unlinkedCodeBlockFor
-// under whatever this file holds, so a second lock would impose a
-// cache-before-codegen order that the ScriptExecutable prepareForExecutionImpl
-// path (codegen lock first, no cache lock) could invert via any future
-// updateCache change — one recursive lock has no order to violate. Cost is
-// fine at bring-up: these paths run once per program/eval/Function() source,
-// not per call, and GIL-on/flag-off never reaches the lock (one
-// predicted-untaken branch), preserving V5a flag-off identity.
+// CodeCacheMap (m_sourceCode) is a plain HashMap on the shared VM. GIL-off,
+// concurrent findCacheAndUpdateAge (which can prune -> m_map.remove) vs
+// addCache (rehash) from N mutators corrupts the table. Serialize with the
+// same process-wide recursive compilation lock (GILOffCompilationLocker,
+// bytecode/JSThreadsSafepoint.h) as UnlinkedFunctionExecutable::
+// unlinkedCodeBlockFor, deliberately not a separate cache lock: the eager
+// generateUnlinkedCodeBlockForFunctions recursion means
+// getUnlinkedGlobalCodeBlock reaches unlinkedCodeBlockFor under whatever this
+// file holds, so a second lock would impose a cache-before-codegen order that
+// the ScriptExecutable prepareForExecutionImpl path (codegen lock first, no
+// cache lock) could invert via any future updateCache change; one recursive
+// lock has no order to violate. These paths run once per program/eval/
+// Function() source, not per call, and GIL-on/flag-off never reaches the lock
+// (one predicted-untaken branch).
 //
 // Scope: the lock is held across the WHOLE check-then-act pair —
 // findCacheAndUpdateAge (including pruneSlowCase's m_map.remove) through
@@ -64,58 +61,14 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeCache);
 // sibling holds the lock is impossible (whole-pair hold); the loser observes
 // the winner's entry on its own pass.
 //
-// Deliberately NOT locked:
-//  - CodeCache::write(): only called from the jsc shell at teardown
-//    (jsc.cpp), single-mutator by construction, and has no VM& for the
-//    stop-protocol-safe bracket.
-//  - CodeCache::clear() (header-inline): runs via VM::deleteAllCode ->
-//    whenIdle, i.e. only when the VM is idle with no mutator in these paths.
+// CodeCache::clear() takes the same lock: VM::whenIdle runs its callback when
+// no thread of the VM is entered, but GIL-off nothing keeps a thread from
+// entering and reaching the lookup/insert pairs above while the callback runs,
+// so m_map.clear() must be serialized against them like any other mutation.
 //
-// Declared locally (not in a header) — keep in sync with the definition in
-// runtime/ScriptExecutable.cpp and the declarations in
-// bytecompiler/BytecodeGenerator.cpp, dfg/DFGPlan.cpp and
-// bytecode/UnlinkedFunctionExecutable.cpp.
-RecursiveLock& gilOffCompilationLock();
-
-namespace {
-
-// Stop-protocol-safe acquisition — same shape as the locker in
-// runtime/ScriptExecutable.cpp (see the rationale there): contended
-// acquisition spins on tryLock() servicing only NeedStopTheWorld, so a
-// waiting lite stays visible to the GIL-off stop fan, never parks raw while
-// holding heap access (no watchdogAssertStopProgress regression), and never
-// throws. The FIX-2 park poll first — deferral-immune §A.3 parking; see the
-// ScriptExecutable.cpp locker comment.
-class GILOffCompilationLocker {
-    WTF_MAKE_NONCOPYABLE(GILOffCompilationLocker);
-public:
-    GILOffCompilationLocker(VM& vm, bool shouldLock)
-        : m_shouldLock(shouldLock)
-    {
-        if (!m_shouldLock) [[likely]]
-            return;
-        RecursiveLock& lock = gilOffCompilationLock();
-        if (lock.tryLock()) [[likely]]
-            return;
-        while (!lock.tryLock()) {
-            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-                continue; // Parked across a §A.3 window: re-validate (retry tryLock).
-            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
-            Thread::yield();
-        }
-    }
-
-    ~GILOffCompilationLocker()
-    {
-        if (m_shouldLock) [[unlikely]]
-            gilOffCompilationLock().unlock();
-    }
-
-private:
-    bool m_shouldLock;
-};
-
-} // anonymous namespace
+// Deliberately NOT locked: CodeCache::write(), only called from the jsc shell
+// at teardown (jsc.cpp), single-mutator by construction, and has no VM& for
+// the stop-protocol-safe bracket.
 
 void CodeCacheMap::pruneSlowCase()
 {
@@ -327,10 +280,9 @@ UnlinkedModuleProgramCodeBlock* CodeCache::getUnlinkedModuleProgramCodeBlock(VM&
 
 UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& vm, const Identifier& name, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, OptionSet<CodeGenerationMode> codeGenerationMode, std::optional<int> functionConstructorParametersEndPosition, ParserError& error)
 {
-    // UNGIL AB18-R1-C mode split: same whole-pair hold as
-    // getUnlinkedGlobalCodeBlock — findCacheAndUpdateAge through addCache, plus
-    // the recordParse() bitfield RMW on the freshly created executable, all
-    // under the one recursive compilation lock (see above pruneSlowCase).
+    // Same whole-pair hold as getUnlinkedGlobalCodeBlock: findCacheAndUpdateAge
+    // through addCache under the one recursive compilation lock (see above
+    // pruneSlowCase).
     GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
 
     bool isArrowFunctionContext = false;
@@ -398,11 +350,18 @@ void CodeCache::updateCache(const UnlinkedFunctionExecutable* executable, const 
     parentSource.provider()->updateCache(executable, parentSource, kind, codeBlock);
 }
 
+void CodeCache::clear(VM& vm)
+{
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
+    write();
+    m_sourceCode.clear();
+}
+
 void CodeCache::write()
 {
-    // UNGIL AB18-R1-C: deliberately unlocked — jsc-shell teardown only,
-    // single-mutator by construction, and no VM& for the stop-protocol-safe
-    // bracket. See the rationale block above pruneSlowCase.
+    // Unlocked itself: clear(VM&) calls it under the compilation lock, and the
+    // jsc shell's teardown call is single-mutator and has no VM& for the
+    // stop-protocol-safe bracket.
     for (auto& it : m_sourceCode)
         writeCodeBlock(it.key, it.value);
 }

@@ -15,7 +15,7 @@
 // S7 shape (B14, CLOSED — per-thread epoch publication + R2 N-stack scan
 // landed): RetiredJITArtifacts::retireHandlerChain / retire() route through
 // the epoch facility flag-on (epochCoversEveryJSThread now true), and
-// retireOptimizedJITCode releases inline (R2's N-stack scan in
+// ~CodeBlock releases a dead optimized JITCode inline (R2's N-stack scan in
 // Heap::gatherStackRoots covers every mutator). The cross-thread arm makes
 // the retire rate JS-controllable: foreign touches fire TTL watchpoints,
 // jettisoning optimized code; IC megamorphic churn displaces handler
@@ -55,7 +55,7 @@ noInline(hotWrite);
 // Cross-thread arm: a spawned thread repeatedly touches the SAME zoo
 // (foreign reads + foreign transitions), firing TTL watchpoints and
 // jettisoning whatever optimized code the main thread tiered up — the
-// retireOptimizedJITCode leg (S7). It checkpoints through a shared cell.
+// optimized-code release leg (S7). It checkpoints through a shared cell.
 const ctl = { round: 0, stop: 0, sum: 0 };
 const toucher = new Thread((zoo, ctl) => {
     let localSum = 0;
@@ -113,7 +113,7 @@ for (let iter = 1; iter <= ITERS; ++iter) {
     victim.shared = iter % SHAPES; // value restored next round by hotWrite
 
     // Advance the toucher: foreign transitions over the whole zoo (TTL
-    // fires -> jettison -> retireOptimizedJITCode).
+    // fires -> jettison -> the dead CodeBlock's sweep releases its JITCode).
     Atomics.store(ctl, "round", iter);
     Atomics.notify(ctl, "round", Infinity);
 

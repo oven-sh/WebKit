@@ -47,7 +47,9 @@ public:
 
     const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 
-    void install(VM&);
+    // False (flag-on only) when the structure's transition set fired between
+    // the caller's watchability check and the link; nothing is linked then.
+    bool install(VM&);
 
     void fireInternal(VM&, const FireDetail&);
 
@@ -57,11 +59,11 @@ private:
     InlineWatchpointSet& m_watchpointSet;
 };
 
-inline void ObjectAdaptiveStructureWatchpoint::install(VM&)
+inline bool ObjectAdaptiveStructureWatchpoint::install(VM&)
 {
     RELEASE_ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges));
 
-    m_key.object()->structure()->addTransitionWatchpoint(this);
+    return m_key.object()->structure()->addTransitionWatchpoint(this);
 }
 
 inline void ObjectAdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail&)
@@ -69,10 +71,8 @@ inline void ObjectAdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDe
     if (m_owner->isPendingDestruction())
         return;
 
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
-        install(vm);
+    if (m_key.isWatchable(PropertyCondition::EnsureWatchability) && install(vm))
         return;
-    }
 
     m_watchpointSet.fireAll(vm, StringFireDetail("Object Property is added."));
 }

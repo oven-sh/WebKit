@@ -95,6 +95,30 @@ static ALWAYS_INLINE void runDebuggerWalkWithSpawnedThreadsStopped(VM& vm, const
     functor();
 }
 
+// Holds m_globalObjectsLock GIL-off only. A destructing global detaches inline
+// from whichever thread sweeps it (see detach), so m_globalObjects can be
+// mutated off the carrier; the lock is a leaf, held only across the set
+// operation, never across a park.
+class Debugger::GlobalObjectsLocker {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    GlobalObjectsLocker(Debugger& debugger) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+        : m_lock(debugger.m_vm.gilOff() ? &debugger.m_globalObjectsLock : nullptr)
+    {
+        if (m_lock) [[unlikely]]
+            m_lock->lock();
+    }
+
+    ~GlobalObjectsLocker() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        if (m_lock) [[unlikely]]
+            m_lock->unlock();
+    }
+
+private:
+    Lock* m_lock;
+};
+
 class DebuggerPausedScope {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
@@ -214,10 +238,19 @@ Debugger::~Debugger()
     // §A.3 stop GIL-off. The lock is taken only on the GIL-off branch
     // (stopTheWorldAndRun's requesting path requires the entered-mutator
     // contract); GIL-on / flag-off the loop below is byte-identical to the
-    // landed destructor.
-    if (m_vm.gilOff() && !m_globalObjects.isEmpty()) [[unlikely]] {
+    // landed destructor. An empty set needs no stop: no attached global means
+    // no sweep can be detaching from this debugger.
+    if (m_vm.gilOff()) [[unlikely]] {
+        bool hasGlobalObjects;
+        {
+            GlobalObjectsLocker locker(*this);
+            hasGlobalObjects = !m_globalObjects.isEmpty();
+        }
+        if (!hasGlobalObjects)
+            return;
         JSLockHolder locker(m_vm);
         runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+            GlobalObjectsLocker globalObjectsLocker(*this);
             for (auto* globalObject : m_globalObjects)
                 globalObject->setDebugger(nullptr);
         });
@@ -244,6 +277,7 @@ void Debugger::attach(JSGlobalObject* globalObject)
         JSLockHolder locker(m_vm);
         runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
             globalObject->setDebugger(this);
+            GlobalObjectsLocker globalObjectsLocker(*this);
             m_globalObjects.add(globalObject); // fastMalloc-only bookkeeping.
         });
     }
@@ -308,8 +342,6 @@ void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
         continueProgram();
     }
 
-    ASSERT(m_globalObjects.contains(globalObject));
-
     // §A.2.7: the detach state transition — membership removal + the
     // m_debugger flip — runs under a §A.3 stop GIL-off (see attach above for
     // the rationale: the flip races spawned threads' unguarded
@@ -320,10 +352,23 @@ void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
     // debugger while the walk below clears the old requests (the walk's
     // functor keys on the globalObject, not the debugger pointer, so the
     // hoist does not change what it clears — GIL-on behavior identical).
-    runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
-        m_globalObjects.remove(globalObject);
+    //
+    // A destructing global is unreachable, so no thread can load its
+    // debugger pointer and the flips need no stop. They must not request
+    // one: ~JSGlobalObject runs from a sweep that may hold the allocator
+    // stripe or the mutator slow-path lock, and a sibling blocked on that
+    // lock holds heap access with no park site, so the stop's quiescence
+    // predicate could never converge.
+    auto detachFromGlobalObject = [&] {
+        GlobalObjectsLocker globalObjectsLocker(*this);
+        bool wasAttached = m_globalObjects.remove(globalObject);
+        ASSERT_UNUSED(wasAttached, wasAttached);
         globalObject->setDebugger(nullptr);
-    });
+    };
+    if (reason == GlobalObjectIsDestructing)
+        detachFromGlobalObject();
+    else
+        runDebuggerWalkWithSpawnedThreadsStopped(m_vm, detachFromGlobalObject);
 
     // If the globalObject is destructing, then its CodeBlocks will also be
     // destructed. There is no need to do the debugger requests clean up, and
@@ -331,7 +376,15 @@ void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
     if (reason != GlobalObjectIsDestructing)
         clearDebuggerRequests(globalObject);
 
-    if (m_globalObjects.isEmpty())
+    bool hasGlobalObjects;
+    {
+        GlobalObjectsLocker globalObjectsLocker(*this);
+        hasGlobalObjects = !m_globalObjects.isEmpty();
+    }
+    // The parsed data is the carrier's (it reads m_parseDataMap unlocked
+    // while resolving breakpoints), so a spawned thread that swept the last
+    // attached global leaves it for the carrier's next detach or ~Debugger.
+    if (!hasGlobalObjects && !isSpawnedJSThreadGILOff(m_vm))
         clearParsedData();
 }
 
@@ -380,17 +433,32 @@ void Debugger::setSteppingMode(SteppingMode mode)
 
 void Debugger::registerCodeBlock(CodeBlock* codeBlock)
 {
-    // SD13: a CodeBlock installed by a spawned thread is not registered with
-    // the (carrier-singular) debugger — spawned-thread breakpoints are
-    // defined no-ops in v1, and applying them here would race the carrier's
-    // pause/breakpoint state. The carrier-side walks (setSteppingMode /
-    // toggleBreakpoint, under a §A.3 stop) own breakpoint application.
-    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]]
+    // A CodeBlock is registered once, when it is installed, and is then
+    // shared by every thread that calls the function, so a CodeBlock a
+    // spawned thread installs still needs the carrier's breakpoints and
+    // stepping mode (the op_debug slow path they enable early-returns on a
+    // spawned thread, SD13). Applying them reads m_breakpoints, m_steppingMode
+    // and observer state that only the carrier mutates, unlocked, so a
+    // spawned thread takes the same stop the carrier's walks take.
+    auto apply = [&] {
+        applyBreakpoints(codeBlock);
+        if (isStepping())
+            codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
+    };
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] {
+        runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
+            // The requester is access-released while it waits for its stop,
+            // so the carrier's detach (and a following ~Debugger) can have
+            // completed in between; the global's pointer is flipped only
+            // under a stop, so re-reading it here before touching this
+            // settles whether this debugger is still attached and alive.
+            if (codeBlock->globalObject()->debugger() != this)
+                return;
+            apply();
+        });
         return;
-
-    applyBreakpoints(codeBlock);
-    if (isStepping())
-        codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
+    }
+    apply();
 }
 
 void Debugger::forEachRegisteredCodeBlock(NOESCAPE const Function<void(CodeBlock*)>& callback)
@@ -682,10 +750,15 @@ void Debugger::toggleBreakpoint(Breakpoint& breakpoint, Debugger::BreakpointStat
 
 void Debugger::recompileAllJSFunctions()
 {
-    // §A.2.7: the CodeBlock-wide recompile runs under a §A.3 stop GIL-off so
-    // spawned threads cannot execute code being de-optimized mid-walk.
-    // (Flag-on jettisons already route through stopTheWorldAndRun; the R1.h
-    // already-stopped path makes the nesting inline.)
+    // VM::deleteAllCode clears code only while no thread of the VM is
+    // entered; GIL-off that is decided against the lite registry, and when
+    // any thread (this one included, e.g. Debugger.disable dispatched from
+    // the paused run loop) is entered the clear is deferred to the last
+    // thread's exit. The §A.3 stop GIL-off covers the immediate case: with
+    // the window open no spawned thread can enter and start executing the
+    // code being cleared. (Flag-on jettisons already route through
+    // stopTheWorldAndRun; the R1.h already-stopped path makes the nesting
+    // inline.)
     runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
         m_vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
     });

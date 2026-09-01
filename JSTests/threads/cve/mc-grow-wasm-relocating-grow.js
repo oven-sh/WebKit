@@ -30,7 +30,11 @@
 load("../resources/assert.js", "caller relative");
 
 if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") {
-    // No wasm in this build: surface unreachable, trivially pass.
+    // Wasm is refused GIL-off, so the relocating-grow stop arm this test
+    // targets cannot run; report SKIP so the run is never counted as a PASS.
+    print("THREADS-PREMISE-SKIP: WebAssembly is unavailable in the effective"
+        + " configuration (GIL-off wasm refusal); the relocating-grow surface"
+        + " cannot be exercised without it.");
 } else {
     const PATTERN = 0x5a;
     const READERS = 3;

@@ -35,6 +35,7 @@
 #include "JSCellInlines.h"
 #include "JSPIContextInlines.h"
 #include "JSPromise.h"
+#include "JSWebAssemblyHelpers.h"
 #include "PinballHandlerContext.h"
 #include "StackAlignment.h"
 #include "TopExceptionScope.h"
@@ -143,29 +144,52 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     in offlineasm.
 */
 
-extern "C" void SYSV_ABI pinballHandlerInitContextForFulfill(JSGlobalObject*, CallFrame*, PinballHandlerContext*);
-extern "C" void SYSV_ABI pinballHandlerInitContextForReject(JSGlobalObject*, CallFrame*, PinballHandlerContext*);
+extern "C" UCPURegister SYSV_ABI pinballHandlerInitContextForFulfill(JSGlobalObject*, CallFrame*, PinballHandlerContext*);
+extern "C" UCPURegister SYSV_ABI pinballHandlerInitContextForReject(JSGlobalObject*, CallFrame*, PinballHandlerContext*);
 extern "C" void SYSV_ABI pinballHandlerImplantSlice(PinballHandlerContext*, Register*, CallFrame*, CallerFrameAndPC*);
 extern "C" UCPURegister SYSV_ABI pinballHandlerFulfillFunctionContinue(PinballHandlerContext*);
 extern "C" void SYSV_ABI pinballHandlerFinishReject(PinballHandlerContext*);
 extern "C" void SYSV_ABI pinballHandlerRejectWithStackOverflow(PinballHandlerContext*);
 
-void pinballHandlerInitContextForFulfill(JSGlobalObject* globalObject, CallFrame* callFrame, PinballHandlerContext* context)
+// The handlers are ordinary promise reactions, so they run on whichever thread settles the suspension
+// promise. Wasm is refused on spawned JS Threads, and the evacuated frames must not be implanted on a
+// spawned thread's stack: the promising() result promise is rejected instead and the assembly driver
+// returns without building a context.
+static bool refuseResumptionOnSpawnedThread(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    ASSERT(callFrame->argumentCount() == 1);
-    new (context) PinballHandlerContext(globalObject, callFrame);
-    context->arguments[0] = JSValue::encode(callFrame->argument(0));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[likely]]
+        return false;
+    auto* handler = uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee());
+    auto* pinball = uncheckedDowncast<PinballCompletion>(handler->getField(JSFunctionWithFields::Field::PromiseHandlerPinballCompletion));
+    pinball->resultPromise()->rejectWithCaughtException(vm, scope);
+    return true;
 }
 
-void pinballHandlerInitContextForReject(JSGlobalObject* globalObject, CallFrame* callFrame, PinballHandlerContext* context)
+// Returns nonzero when the resumption was refused; the context is then left unconstructed.
+UCPURegister pinballHandlerInitContextForFulfill(JSGlobalObject* globalObject, CallFrame* callFrame, PinballHandlerContext* context)
 {
     ASSERT(callFrame->argumentCount() == 1);
+    if (refuseResumptionOnSpawnedThread(globalObject, callFrame)) [[unlikely]]
+        return 1;
+    new (context) PinballHandlerContext(globalObject, callFrame);
+    context->arguments[0] = JSValue::encode(callFrame->argument(0));
+    return 0;
+}
+
+UCPURegister pinballHandlerInitContextForReject(JSGlobalObject* globalObject, CallFrame* callFrame, PinballHandlerContext* context)
+{
+    ASSERT(callFrame->argumentCount() == 1);
+    if (refuseResumptionOnSpawnedThread(globalObject, callFrame)) [[unlikely]]
+        return 1;
     new (context) PinballHandlerContext(globalObject, callFrame);
     ASSERT(context->pinball->slices().size() == 1); // exceptions are only supported with slab slicing, expecting 1 slice
     JSValue reason = callFrame->argument(0);
 
     context->zombieFrameCallee = globalObject->zombieFrameCallee();
     context->exception = Exception::create(globalObject->vm(), reason);
+    return 0;
 }
 
 void pinballHandlerImplantSlice(PinballHandlerContext* context, Register *base, CallFrame* sentinelFrame, CallerFrameAndPC* returnFrame)

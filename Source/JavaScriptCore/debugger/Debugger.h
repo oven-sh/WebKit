@@ -33,6 +33,7 @@
 #include <wtf/DoublyLinkedList.h>
 #include <wtf/Forward.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
 #include <wtf/text/TextPosition.h>
@@ -306,6 +307,7 @@ private:
 
     class ClearCodeBlockDebuggerRequestsFunctor;
     class ClearDebuggerRequestsFunctor;
+    class GlobalObjectsLocker;
     class SetSteppingModeFunctor;
     class ToggleBreakpointFunctor;
 
@@ -349,6 +351,11 @@ private:
 
     VM& m_vm;
     UncheckedKeyHashSet<JSGlobalObject*> m_globalObjects;
+    // GIL-off, a destructing global detaches inline from whichever thread
+    // sweeps it, so m_globalObjects is touched off the carrier; every access
+    // holds this leaf lock there (GlobalObjectsLocker). GIL-on / flag-off the
+    // set is carrier-private and the lock is never taken.
+    Lock m_globalObjectsLock;
     UncheckedKeyHashMap<SourceID, DebuggerParseData, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_parseDataMap;
     UncheckedKeyHashSet<SourceID, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_reportedSourceIDs;
     UncheckedKeyHashMap<SourceID, BlackboxConfiguration, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_blackboxConfigurations;

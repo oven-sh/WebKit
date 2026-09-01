@@ -41,11 +41,11 @@ CachedSpecialPropertyAdaptiveStructureWatchpoint::CachedSpecialPropertyAdaptiveS
     RELEASE_ASSERT(!key.watchingRequiresReplacementWatchpoint());
 }
 
-void CachedSpecialPropertyAdaptiveStructureWatchpoint::install(VM&)
+bool CachedSpecialPropertyAdaptiveStructureWatchpoint::install(VM&)
 {
     RELEASE_ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges));
 
-    m_key.object()->structure()->addTransitionWatchpoint(this);
+    return m_key.object()->structure()->addTransitionWatchpoint(this);
 }
 
 void CachedSpecialPropertyAdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail&)
@@ -53,10 +53,8 @@ void CachedSpecialPropertyAdaptiveStructureWatchpoint::fireInternal(VM& vm, cons
     if (m_structureRareData->isPendingDestruction())
         return;
 
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
-        install(vm);
+    if (m_key.isWatchable(PropertyCondition::EnsureWatchability) && install(vm))
         return;
-    }
 
     CachedSpecialPropertyKey key = CachedSpecialPropertyKey::ToStringTag;
     if (m_key.uid() == vm.propertyNames->toStringTagSymbol.impl())

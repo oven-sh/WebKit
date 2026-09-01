@@ -28,18 +28,18 @@
 // VMLite — per-thread execution state for N threads sharing one logical VM
 // (SPEC-vmstate §6, frozen layout §6.3).
 //
-// Phase A (this milestone): VMLites are CARRIERS ONLY (§6.1). Under the GIL,
-// every JS-visible piece of execution state still lives in VM members under
-// today's names; no interpreter/JIT/runtime path consults a VMLite. The
-// carriers exist so threads can be tagged (tid), registered (VMLiteRegistry,
-// VMLiteShared.h §6.5.1), TLS-installed (setCurrent, L4), and so the frozen
-// VMLitePrimitives layout can be asserted layout-identical to the matching VM
-// member block (§6.4 M6 equivalence asserts).
-//
-// Phase B (UNOWNED — SPEC-vmstate Dev 10; frozen contract only): a pinned
-// register/TLS base makes `VM::field` accesses VMLitePrimitives-relative, and
-// per-thread VMThreadContext/VMTraps land per §6.8. The layout below is the
-// ABI Phase B consumes; freeze rules L1-L5 (§6.3) apply.
+// Flag-off and GIL-on, every JS-visible piece of execution state lives in the
+// VM members under today's names; the only lite traffic is the JSLock
+// installing and restoring the thread's carrier (tid, registration in
+// VMLiteRegistry, setCurrent). GIL-off (vm.gilOff()), the installed lite is
+// the authority for the Group 1-3 primitives (VM::group3Primitives()), the
+// per-thread traps and stack limits (threadContext), the scratch buffers, the
+// default microtask queue and the per-thread debug state below: C++ reaches
+// them through the VM's mode-split selectors, generated code through the
+// loadVMLite emitters (jit/AssemblyHelpers) and the g_jscCurrentVMLite loads
+// in LowLevelInterpreter.asm. The layout below is that ABI; freeze rules
+// L1-L5 (§6.3) apply, and the VM's own Group 1-3 block is asserted
+// layout-identical to VMLitePrimitives (§6.4 M6 equivalence asserts).
 
 #include "DFGDoesGCCheck.h" // AB18-C per-lite DoesGC validation word (only forward-declares VM — no cycle with the "must not include VM.h" rule below).
 #include "Interpreter.h" // JSOrWasmInstruction (interpreter/Interpreter.h:61); brings JSCJSValue.h (EncodedJSValue).
@@ -50,7 +50,6 @@
 #include <atomic>
 #include <memory>
 #include <type_traits>
-#include <wtf/BumpPointerAllocator.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
@@ -103,12 +102,12 @@ class VMLite;
 // backing-store replacement; currentIfExists()/current()/setCurrent()
 // signatures are unchanged.
 //
-// COHERENCE: VMLite::setCurrent (VMLite.cpp) is still the SOLE writer. On
-// Darwin it additionally pthread_setspecific's the value into the
-// g_jscConfig.vmLiteTLSKey slot for generated code (Mach-O TLV has no constant
-// offset); on ELF the JIT bakes this symbol's TPOFF directly. extern "C"
-// linkage so the offlineasm/JIT emitter and this header agree on the unmangled
-// name regardless of the enclosing namespace.
+// COHERENCE: VMLite::setCurrent (VMLite.cpp) is still the SOLE writer. The
+// JIT and LLInt bake this symbol's ELF TPOFF directly; GIL-off is refused at
+// option validation on platforms without that (Mach-O TLV has no constant
+// offset), see Options.cpp. extern "C" linkage so the offlineasm/JIT emitter
+// and this header agree on the unmangled name regardless of the enclosing
+// namespace.
 // =============================================================================
 #if OS(LINUX)
 extern "C" __attribute__((tls_model("initial-exec"))) thread_local VMLite* g_jscCurrentVMLite;
@@ -204,16 +203,22 @@ static_assert(OBJECT_OFFSETOF(VMLitePrimitives, topEntryFrame) == sizeof(void*),
 
 // =============================================================================
 // ScratchBufferRegistry — process-wide baked-scratch-buffer index space
-// (SPEC-ungil §A.1.6, ANNEX A16, BINDING; UNGIL U-T1, dark until U-T4 emits
-// against it).
+// (SPEC-ungil §A.1.6, ANNEX A16).
 //
 // GIL-off, scratchBufferForSize ADDRESSES baked into DFG/FTL code would be
-// shared by N threads. Instead, every baked site becomes
-// `loadVMLite -> segment -> [index]`: codegen allocates a process-wide
-// monotonic INDEX here (with an index->size map, never freed), and each
-// VMLite holds an append-only segmented pointer table (lock-free reads,
-// below). A buffer must exist at (lite, index) BEFORE the compiled code can
-// run: VM::allocateBakedScratchBufferIndex() fans the install to the VM's
+// shared by N threads (and a buffer taken from the compiling thread's lite
+// would die with that thread). Instead, every baked site — DFG and FTL node
+// spills, OSR exit and entry buffers, the exit thunks — becomes
+// `loadVMLite -> segment -> [index]`: codegen obtains a process-wide INDEX
+// here (with an index->size map), and each VMLite holds an append-only
+// segmented pointer table (lock-free reads, below). Indices are keyed by
+// power-of-two size class, one per class, never freed: scratch use never
+// nests on a thread (a site fills the buffer and consumes it before any other
+// site runs), so sites compiled at different times may share one buffer per
+// lite exactly as GIL-on sites share the VM's, and the index space is bounded
+// by the number of size classes no matter how many compilations occur. A
+// buffer must exist at (lite, index) BEFORE the compiled code can run:
+// VM::allocateBakedScratchBufferIndex() fans the install to the VM's
 // registered lites, and carrier/spawn registration backfills
 // (VMLite::backfillBakedScratchBuffers). Indices are process-wide but only
 // the single m_gilOff VM (U0b/U0c) ever allocates them, so cross-VM index
@@ -232,16 +237,19 @@ public:
     ScratchBufferRegistry() = default; // Construction reserved to singleton() (NeverDestroyed).
     JS_EXPORT_PRIVATE static ScratchBufferRegistry& singleton();
 
-    // Allocates the next monotonic index and records its size. Never freed,
-    // never reused (A16: "monotonic indices + an index->size map, never
-    // freed").
-    JS_EXPORT_PRIVATE unsigned allocateIndex(size_t);
+    static constexpr unsigned numSizeClasses = sizeof(size_t) * 8; // class c serves sizes in (2^(c-1), 2^c]
+
+    // Returns the index of size's power-of-two size class, allocating it on
+    // first use; classSize receives the buffer size recorded for that index.
+    JS_EXPORT_PRIVATE unsigned indexForSizeClass(size_t size, size_t& classSize);
     JS_EXPORT_PRIVATE size_t sizeForIndex(unsigned) const;
     JS_EXPORT_PRIVATE unsigned indexCount() const;
 
 private:
     mutable Lock m_lock; // §LK rank: outside VMLiteRegistry::lock (see class comment).
     Vector<size_t> m_sizes WTF_GUARDED_BY_LOCK(m_lock); // index -> size; append-only.
+    uint64_t m_sizeClassAllocated WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    unsigned m_sizeClassIndices[numSizeClasses] WTF_GUARDED_BY_LOCK(m_lock) { };
 };
 
 // =============================================================================
@@ -266,22 +274,25 @@ public:
                                   // immutable while installed, so reads need no sync.
     VM* vm { nullptr };           // Set by VMLiteRegistry::registerLite(lite, vm) (§6.5.1, sole
                                   // writer); immutable after.
-    // Group 4: regexp, lazy:
+    // Group 4: the RegExp this thread is matching. GIL-off,
+    // Yarr::MatchingContextHolder sets and clears the installed lite's slot;
+    // flag-off/GIL-on it uses VM::m_executingRegExp. Regexp bytecode
+    // compilation keeps the VM's BumpPointerAllocator under its own lock
+    // (RegExp.cpp), so there is no per-lite allocator.
     RegExp* executingRegExp { nullptr };
-    std::unique_ptr<BumpPointerAllocator> regExpAllocator;
-    // Group 5: scratch buffers (§6.6; Phase A inert — reserved for the frozen
-    // Phase-B contract: baked DFG/FTL scratch-buffer pointers become
-    // VMLite-relative):
+    // Group 5: scratch buffers (§6.6). GIL-off, VM::scratchBufferForSize
+    // dispatches to scratchBufferForSize below and baked DFG/FTL sites index
+    // scratchSegments; scratchBuffers is the ownership list behind both (GC
+    // root scan + teardown free). Flag-off/GIL-on: VM::m_scratchBuffers.
     Lock scratchBufferLock; // leaf rank (§7): fastMalloc only under it
     Vector<ScratchBuffer*> scratchBuffers;
-    // Group 6: microtasks (§6.5), lazy (Phase A: exercised only by unit tests;
-    // VM::queueMicrotask/drainMicrotasks are NOT rerouted):
+    // Group 6: microtasks (§6.5), lazy. GIL-off, VM::queueMicrotask and
+    // JSGlobalObject::queueMicrotask route a spawned or non-main carrier's
+    // enqueues here; the main thread's carrier keeps the VM default queue.
+    // Flag-off/GIL-on nothing routes here.
     RefPtr<MicrotaskQueue> defaultMicrotaskQueue;
 
-    // L2 (§6.3): new fields append after Group 6 only. Appended (task 7,
-    // §6.6 plumbing): logically Group-5 state — L2 forbids inserting it next
-    // to scratchBuffers above. Guarded by scratchBufferLock.
-    size_t sizeOfLastScratchBuffer { 0 };
+    // L2 (§6.3): new fields append after Group 6 only.
 
     // ---- UNGIL U-T1 L2 appends (SPEC-ungil; dark while every VM has
     // m_gilOff == 0). Append-only per L1/L2; nothing above moves. ----
@@ -316,20 +327,19 @@ public:
     GCClient::Heap* clientHeap { nullptr };
 
     // H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4; GILOFF-TAX #1/#2): cached mirror of
-    // this lite's GCThreadLocalCache flat table pointer + bound — the
-    // PROVISIONAL offsetOfTable/offsetOfTableBound contract (GCThreadLocalCache.h)
-    // collapsed to one lite-relative hop. Stamped by GCThreadLocalCache::growTable
-    // (owner thread, I2) and at the §10A.1 client-slot stamp
-    // (GCClient::Heap::setCurrentThreadClient — covers attach + the A36C
-    // carrier swap), so per-tier inline-allocate emitters resolve
+    // this lite's GCThreadLocalCache flat table pointer + bound (table() /
+    // tableBound()); this mirror is the only form generated code reads, one
+    // lite-relative hop. Stamped at the §10A.1 client-slot
+    // stamp (GCClient::Heap::setCurrentThreadClient — covers attach + the A36C
+    // carrier swap; owner thread, I2), so per-tier inline-allocate emitters resolve
     // `tlcTable[tlcIndexBase_const + sizeClassIndex]` instead of baking the
     // null Allocator that allocatorForConcurrently returns under gilOff (the
     // IT-9 {} return) and falling to the lazy-slow-path generation thunk on
     // EVERY allocation (operationCompileFTLLazySlowPath: 46.6M GIL-off vs 53
     // GIL-on, intcs W=1). Same-thread program order (I11 + I2): the JIT reader
     // is the owner thread, so no cross-thread fences; bound is stamped LAST so
-    // a bound-first reader never indexes past the published table (a stale
-    // bound is always <=, never > — grow-only, §5.3). GIL-on/flag-off: never
+    // a bound-first reader never indexes past the published table (the table
+    // is allocated at its lifetime capacity, §5.3). GIL-on/flag-off: never
     // read (every emitter is behind a vm.gilOff() codegen gate); zero-init.
     Allocator* tlcTable { nullptr };
     unsigned tlcTableBound { 0 };
@@ -389,8 +399,8 @@ public:
     // ONLY through VM::exceptionScopeVerificationState() (the
     // group3Primitives()-style mode split): GIL-off lites use this copy, so
     // a spawned thread's scope chain can never link into the carrier's
-    // stack (the deterministic GIL-off ExceptionScope::stackPosition()
-    // stack-use-after-return; VMEntryScope.cpp status item (i)). GIL-on /
+    // stack (a shared chain was a deterministic stack-use-after-return in
+    // ExceptionScope::stackPosition() on the spawned thread). GIL-on /
     // flag-off / second-VM U0b: this copy stays untouched (VM member is
     // authoritative).
     VMExceptionScopeVerificationState exceptionScopeVerificationState;
@@ -416,6 +426,23 @@ public:
     static ptrdiff_t offsetOfDoesGC() { UNREACHABLE_FOR_PLATFORM(); return 0; }
 #endif
 
+    // GIL-off, the soft reserved zone size is per thread like the soft stack
+    // limit it feeds (VM::updateStackLimits): ErrorHandlingScope saves and
+    // restores it around error creation on the overflowing thread only, so
+    // two threads' scopes cannot interleave on a shared word. Stamped from the
+    // VM word at registration (VMLiteRegistry::registerLite), owner-thread-only
+    // afterwards (VM::currentSoftReservedZoneSizeSlot). GIL-on / flag-off:
+    // never read (the VM word is authoritative).
+    size_t softReservedZoneSize { 0 };
+
+    // Open VM::DrainMicrotaskDelayScopes of this thread when its microtasks
+    // live on defaultMicrotaskQueue above (GIL-off spawned threads and
+    // non-main carriers): the scope defers only the owning thread's drains,
+    // because nobody else can drain a per-lite queue and a deferred drain at
+    // thread close would drop the tasks. Owner-thread-only (I11). The main
+    // thread's carrier, GIL-on and flag-off count on the VM word.
+    uint64_t drainMicrotaskDelayScopeCount { 0 };
+
     // B14 / MC-DOS S7 amendment note: a per-lite observedRetireEpoch slot was
     // proposed here as an "explicit per-LITE witness regardless of the
     // lite<->client mapping" for GCSafepointEpoch (SPEC-jit §4.4). Dropped at
@@ -425,7 +452,7 @@ public:
     // new release-build lock-site (VMLiteRegistry::lock) inside the conductor
     // window for zero functional gain. The §4.4 soundness rests on U-T6
     // (per-thread clients: every JS-executing lite has its own GCClient::Heap
-    // registered in clientSet()) — see epochCoversEveryJSThread() in
+    // registered in clientSet()) — see epochHeapFor() in
     // RetiredJITArtifacts.cpp for the full argument and the standing
     // obligation on any future change that lets a lite execute without a
     // distinct registered client.
@@ -461,26 +488,15 @@ public:
     JS_EXPORT_PRIVATE VMLite();
     JS_EXPORT_PRIVATE ~VMLite(); // I20: asserts not installed here, not registered; poisons in debug.
 
-    // Helpers defined in VMLiteInlines.h (I11 owner asserts build on these).
+    // Helper defined in VMLiteInlines.h (I11 owner asserts build on it).
     inline bool isInstalledOnCurrentThread() const;
-    inline BumpPointerAllocator& ensureRegExpAllocator(); // Group 4 lazy
 
-    // ---- §6.5 Group 6: per-thread default microtask queue (Phase A inert —
-    // VM::queueMicrotask/drainMicrotasks are NOT rerouted; Phase B routes
-    // enqueue/drain to the current thread's queue; cross-thread enqueue stays
-    // out of scope).
-    //
-    // COVERAGE STATUS (honest gap, tracked): these facilities (and the §6.6
-    // scratch-buffer ones below) are JS-UNREACHABLE in Phase A, so the
-    // JSTests/threads/vmstate suite cannot execute them; the task-7 C++ test
-    // obligations (owner-only enqueue/drain, lazy-creation idempotence,
-    // drain-exactly-once, scratchBufferForSize(0)==nullptr, geometric-growth
-    // reuse, dtor-frees-under-ASAN) are an UNMET PENDING item in
-    // INTEGRATE-vmstate.md and MUST land before any Phase-B routing consults
-    // a VMLite. Do not treat this block as gated by the existing suites.
-    // HARD GATE (review round 3): until that test lands, ANY new caller of
-    // these facilities in any workstream's diff is a blocker by construction
-    // — see the PENDING entry in INTEGRATE-vmstate.md. ----
+    // ---- §6.5 Group 6: per-thread default microtask queue. GIL-off,
+    // VM::queueMicrotask/drainMicrotasks and JSGlobalObject::queueMicrotask
+    // route a spawned or non-main carrier's enqueues and drains here, while
+    // the main thread's carrier keeps the VM default queue. Only the owning
+    // thread enqueues or drains this queue (I11); a cross-thread enqueue goes
+    // through MicrotaskQueue's foreign inbox, never here. ----
     //
     // Lazy creation. GC visibility (§6.5): the queue is built with
     // MicrotaskQueue::create(*vm), whose constructor appends it to
@@ -554,13 +570,11 @@ static_assert(OBJECT_OFFSETOF(VMLite, primitives) == 0);
 // =============================================================================
 // §6.7 — currentButterflyTID()
 //
-// SOLE defining TU is VMLite.cpp (INTEGRATE verifies ODR; the
-// ConcurrentButterfly.h §9.1 shim and the jit ConcurrentButterflyOperations.cpp
-// shim are both #if !__has_include("VMLite.h")-guarded and compile away now
-// that this header exists). Returns the installed carrier's tid, or 0 when no
-// VMLite is installed (I18: main thread / embedder threads / GIL phase — a
-// never-entering thread touches no JS objects, so 0 is unobservable there);
-// never notTTLTID (0x7fff).
+// SOLE definition is in VMLite.cpp; runtime/ConcurrentButterfly.h and
+// jit/ConcurrentButterflyOperations.cpp consume it through this header.
+// Returns the installed carrier's tid, or 0 when no VMLite is installed (I18:
+// main thread / embedder threads / GIL phase — a never-entering thread touches
+// no JS objects, so 0 is unobservable there); never notTTLTID (0x7fff).
 // =============================================================================
 
 JS_EXPORT_PRIVATE ButterflyTID currentButterflyTID();
@@ -588,5 +602,14 @@ JS_EXPORT_PRIVATE void setVMLiteTIDTagHook(void (*)(uint16_t));
 JS_EXPORT_PRIVATE void setCarrierTIDHooks(uint16_t (*allocate)(), void (*release)(uint16_t));
 JS_EXPORT_PRIVATE uint16_t allocateCarrierTID();
 JS_EXPORT_PRIVATE void releaseCarrierTIDIfHooked(uint16_t);
+
+// Process-wide stop generation (VMLite.cpp). Every stop-the-world conductor
+// that patches code bumps it after the patch; a mutator compares its
+// per-thread copy before entering JIT code and issues a cross-modifying-code
+// fence when it has fallen behind. The NVS exit variant fences
+// unconditionally and refreshes the per-thread copy.
+JS_EXPORT_PRIVATE void jsThreadsBumpStopGeneration();
+JS_EXPORT_PRIVATE void jsThreadsSyncToStopGenerationBeforeJITEntry();
+JS_EXPORT_PRIVATE void jsThreadsNVSExitInstructionSync();
 
 } // namespace JSC

@@ -61,7 +61,7 @@
 // the pre-cycle cells, so the crash dump recomputed
 // didReachTermination()=true). FIXED in this same amend
 // (Heap::openSharedGCStopWindow): the drain target is now OPEN-KIND SPLIT —
-// pre-cycle opens (FirstWindow / TicketDrainSuccessor) drain into the
+// the pre-cycle open (FirstWindow) drains into the
 // server legacy m_mutatorMarkStack (the landed pre-cycle barrier route,
 // still ahead of the window's first constraint pass via
 // MarkStackMergingConstraint, so §5.2(i)'s order holds); only the mid-cycle
