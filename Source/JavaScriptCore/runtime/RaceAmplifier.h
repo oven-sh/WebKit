@@ -41,48 +41,24 @@
 // effectively zero cost, and exactly zero cost at the sites that gate it
 // behind an existing slow-path branch.
 //
-// Intended call sites (slow paths ONLY — never in JIT-emitted fast paths,
-// LLInt assembly, or allocation fast paths). These are the safepoint-adjacent
-// windows where the shared-memory Thread work (see THREAD.md and
-// docs/threads/SPEC-*.md) is most likely to harbor interleaving bugs.
-// The list below is the integration plan; call sites land with the
-// workstream that owns each file:
+// Call sites belong on slow paths only — never in JIT-emitted fast paths,
+// LLInt assembly, or allocation fast paths. Each landed site sits in a
+// window where one thread publishes state that another thread may be racing
+// to observe (grep RaceAmplifier::perturb for the exact lines):
 //
-//   Object model / transitions:
-//   - JSObject::putDirectSlow / putByIdSlow paths (JSObject.cpp), between
-//     deciding a transition is needed and publishing the new butterfly —
-//     widens the flat->segmented conversion race window.
-//   - Structure::addPropertyTransition / nonPropertyTransition
-//     (Structure.cpp), before and after the transition-table lookup.
-//   - JSObject butterfly (re)allocation: allocateMoreOutOfLineStorage,
-//     ensureLengthSlow / array storage conversions (JSObject.cpp,
-//     JSArray.cpp), between allocate and store-with-fence.
-//   - JSCellLock::lockSlow / unlockSlow (JSCellInlines.h / Heap.cpp):
-//     immediately after acquiring and immediately before releasing the
-//     per-object lock.
-//
-//   Heap / GC:
-//   - LocalAllocator::allocateSlowCase (heap/LocalAllocator.cpp), at the
-//     marked FIXMEs where synchronized block handout will live.
-//   - BlockDirectory block handout / FreeList refill paths.
-//   - Mutator-side handshake points: Heap::stopIfNecessarySlow, the
-//     VMTraps deferred-work loop, and VMManager stop-the-world
-//     entry/exit (the N-mutator safepoint machinery).
-//
-//   JIT / code lifecycle:
-//   - Watchpoint fire sites: WatchpointSet::fireAllSlow (bytecode/
-//     Watchpoint.cpp) — perturb just before invalidation is published,
-//     to chase code running between watchpoint check and fire.
-//   - Handler IC case append under CodeBlock::m_lock
-//     (bytecode/StructureStubInfo.cpp / InlineCacheCompiler.cpp), between
-//     building the new case list and the atomic publish.
-//   - CodeBlock::jettison (CodeBlock.cpp), before reclamation is queued —
-//     stresses epoch-based reclamation once it exists.
-//
-//   Shared VM state:
-//   - Atom table insertion slow path (AtomStringTable / Identifier::add),
-//     once the table goes process-global.
-//   - Structure allocation lock in StructureIDTable / Structure creation.
+//   - Mutator allocation slow paths: LocalAllocator::allocateSlowCase and
+//     tryAllocateWithoutCollecting, CompleteSubspace::tryAllocateSlow and
+//     tryAllocateSlowForClient, around block handout.
+//   - Heap access handshakes: Heap::acquireHeapAccess, releaseHeapAccess
+//     and detachCurrentThread.
+//   - Epoch-based reclamation: GCSafepointEpoch::retire and bumpAndReclaim.
+//   - Thread-id lifecycle: ThreadManager::retireCarrierTID and the TID
+//     rebias run under a shared-heap stop (heap/Heap.cpp).
+//   - Thread and VM teardown: tearDownSpawnedThreadForExit
+//     (runtime/ThreadManager.cpp), carrier teardown at thread death
+//     (runtime/JSLock.cpp) and foreign-carrier collection during VM
+//     destruction (runtime/VM.cpp), between the unregister, detach and
+//     destroy steps.
 //
 // Usage at a call site:
 //
@@ -91,8 +67,8 @@
 //     RaceAmplifier::perturb();
 //
 // Initialization: RaceAmplifier::initialize() must be called once after
-// Options are finalized (from initializeThreading() / VM construction).
-// Calling perturb() before initialize() is safe and does nothing.
+// Options are finalized; the VM constructor does this. Calling perturb()
+// before initialize() is safe and does nothing.
 
 namespace JSC {
 
@@ -105,8 +81,6 @@ public:
     // Options::randomYieldMaxMicroseconds() and arms the amplifier.
     // Idempotent; safe to call from multiple VM constructions.
     JS_EXPORT_PRIVATE static void initialize();
-
-    static bool isEnabled() { return !!s_period; }
 
     // The injection point. On the off path this is one non-atomic load and a
     // fall-through branch; keep call sites on slow paths regardless.

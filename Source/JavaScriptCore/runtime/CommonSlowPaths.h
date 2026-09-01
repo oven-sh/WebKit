@@ -53,18 +53,14 @@ namespace JSC {
 
 namespace CommonSlowPaths {
 
-// THREADS §5.7.7 (racy-profiling tolerance): op_iterator_open/op_iterator_next mode
-// metadata (IterationModeMetadata::seenModes) is racily merged by the LLInt/baseline
-// try-fast slow paths (iteratorOpenTryFastImpl/iteratorNextTryFastImpl) and the DFG/FTL
-// operation (operationIteratorNextTryFast) on any of N mutators, and racily read by
-// compiler threads (DFG ByteCodeParser snapshots it when parsing the op). Merges are
-// tolerate-don't-synchronize: a racing merge may lose a bit, which only makes profiling
-// more conservative (the unseen mode compiles as Generic). Every store publishes
-// loadedValue|mode, so the maxNumberOfFastIterationModes popcount bound on the published
-// word still holds, and canUseFastIterationMode re-checks on every slow-path entry.
-// Plain mixed-thread accesses are C++ UB, so all C++ accesses go through these
-// relaxed-atomic helpers. Relaxed 16-bit load/store compile to plain moves on
-// x86-64/arm64: flag-off codegen unchanged.
+// IterationModeMetadata::seenModes is profiling state merged by the LLInt/baseline try-fast
+// slow paths and operationIteratorNextTryFast on any mutator and snapshotted by DFG compiler
+// threads, so all C++ accesses go through these relaxed-atomic helpers (relaxed 16-bit
+// load/store compile to plain moves on x86-64/arm64: flag-off codegen unchanged). Merges are
+// unsynchronized: a racing merge may drop a bit, which only makes profiling more conservative,
+// and because canUseFastIterationMode tests a snapshot taken before the merge, racing mutators
+// can publish more than maxNumberOfFastIterationModes fast bits. That bound is a code-size
+// heuristic, not an invariant: consumers must accept any subset of the IterationMode bits.
 ALWAYS_INLINE uint16_t loadIterationModeSeenModesConcurrently(const IterationModeMetadata& metadata)
 {
     return WTF::atomicLoad(const_cast<uint16_t*>(&metadata.seenModes), std::memory_order_relaxed);

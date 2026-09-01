@@ -465,7 +465,7 @@ private:
 
 #endif // ENABLE(SIGNAL_BASED_VM_TRAPS)
 
-void VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite(CallFrame* topCallFrame)
+void VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite()
 {
     // checktraps-dejank-invalidation-point: same walk shape as
     // invalidateCodeBlocksOnStack above, WITHOUT the one-shot
@@ -476,12 +476,16 @@ void VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite(CallFram
     // every poll rejoin, see DFGClobberize.h CheckTraps). Runs on the parked
     // mutator itself after resume, so vm()'s lite-aware resolution and
     // group3Primitives() resolve THIS thread's state (§A.1.3 mode split),
-    // exactly as in the NeedDebuggerBreak service path. CodeBlock::jettison
-    // re-enters stopTheWorldAndRun internally (section 5.3 choke point);
-    // that nested window is a pure code-lifecycle window (suppressed from
-    // the epoch), so this never cascades.
+    // exactly as in the NeedDebuggerBreak service path. Both frame words
+    // come from the same per-thread primitives: GIL-off the raw VM-block
+    // topCallFrame is never written (every writer stores through the current
+    // lite), so a walk started from it would visit nothing.
+    // CodeBlock::jettison re-enters stopTheWorldAndRun internally (section
+    // 5.3 choke point); that nested window is a pure code-lifecycle window
+    // (suppressed from the epoch), so this never cascades.
     VM& vm = this->vm();
-    EntryFrame* entryFrame = vm.group3Primitives().topEntryFrame;
+    VMLitePrimitives& primitives = vm.group3Primitives();
+    EntryFrame* entryFrame = primitives.topEntryFrame;
     if (!entryFrame)
         return; // Not running JS code. Nothing to jettison.
 
@@ -523,7 +527,7 @@ void VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite(CallFram
         std::optional<Locker<Lock>> codeBlockSetLocker;
         if (!vm.gilOff()) [[unlikely]]
             codeBlockSetLocker.emplace(vm.heap.codeBlockSet().getLock());
-        CallFrame* callFrame = topCallFrame;
+        CallFrame* callFrame = primitives.topCallFrame;
         while (callFrame) {
             CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
             if (codeBlock && JSC::JITCode::isOptimizingJIT(codeBlock->jitType())) {
@@ -712,7 +716,7 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
             return;
         if (JSThreadsSafepoint::conductorHeapFactRewriteEpoch() == heapFactRewriteEpochOnEntry) [[likely]]
             return;
-        jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite(vm.topCallFrame);
+        jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite();
     });
 
     // UNGIL §A.2.7/§A.2.8 (SD13/SD14/W0): GIL-off, a spawned Thread never
@@ -720,32 +724,35 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     // defined no-ops and spawned JS is watchdog-unobserved in v1. This mask
     // trim is the servicing-side enforcement of the rule-3 carrier-only
     // exemption (the bits also are not fanned into spawned lites).
+    //
+    // A carrier polling from outside any entry scope (a bare JSLockHolder at
+    // the JSLock off-JS poll sites) cannot service the watchdog check either:
+    // shouldTerminate needs the entry global, and Watchdog::timerDidFire is a
+    // one-shot dispatch that is re-armed only by an entered carrier, so
+    // taking the bit here would drop the check. Leave it in the word for the
+    // entered or parked carrier it targets.
     bool isSpawnedGILOff = false;
-    if (vm.gilOff() && ThreadManager::isJSThreadCurrent()) [[unlikely]] {
-        isSpawnedGILOff = true;
-        mask &= ~CarrierOnlyServicedEvents;
+    if (vm.gilOff()) [[unlikely]] {
+        if (ThreadManager::isJSThreadCurrent()) {
+            isSpawnedGILOff = true;
+            mask &= ~CarrierOnlyServicedEvents;
+        } else if (!vm.currentThreadEntryScope())
+            mask &= ~NeedWatchdogCheck;
         if (!mask)
             RELEASE_AND_RETURN(scope, false);
     }
 
-    // §A.2.2 item 3b: DeferTermination scopes write the VM-LEVEL instance's
-    // flags (deferTermination is reached via vm.traps()), so a PER-LITE
-    // servicing instance must consult the VM-level flags — its own copies
-    // are never set. GIL-on / flag-off: vmLevelTraps == *this,
-    // byte-identical.
-    //
-    // FIX (stw-watchdog-timeout, root cause B): the DeferTraps flag moved to
-    // the CURRENT THREAD's instance (trapsForCurrentThread(); see the ctor
-    // comment in VMTrapsInlines.h) — a sibling's deferral must not blind
-    // this thread's servicing, and this thread's own deferral must suppress
-    // exactly the jettison-bearing services on this thread. GIL-on /
-    // flag-off: trapsForCurrentThread() == vm.traps(), byte-identical.
+    // DeferTraps and DeferTermination scopes are properties of the deferring
+    // thread's stack and live in that thread's own instance
+    // (trapsForCurrentThread(); see VMTrapsInlines.h and DeferTermination.h),
+    // so only THIS thread's deferrals mask servicing here: a sibling's
+    // deferral never blinds this thread, and this thread's deferral suppresses
+    // exactly the services on this thread. GIL-on / flag-off:
+    // trapsForCurrentThread() == vm.traps(), byte-identical.
     VMTraps& vmLevelTraps = vm.traps();
     if (vm.trapsForCurrentThread().m_trapsDeferred)
         RELEASE_AND_RETURN(scope, false); // We'll service them on the next opportunity after deferring has stopped.
 
-    // Per-thread keying (see DeferTermination.h): only THIS thread's own
-    // deferral masks termination servicing on this thread.
     if (vm.trapsForCurrentThread().isDeferringTermination())
         mask &= ~NeedTermination;
 
@@ -868,12 +875,10 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
                 // delivery obligation is TOKEN-scoped — a token-holding
                 // sibling between entry scopes (teardown -> completion
                 // drain, or between drain iterations) re-enters with the
-                // bit gone if this clear fires in that window. POST-AB-17:
-                // the setUpSlow refusal tripwire that used to close that
-                // hole is RETIRED (perLiteSoftStackLimitRerouteLanded is
-                // true and §A.2.1 de-aliased the per-lite words, so both
-                // retirement keys are satisfied). Delivery to a
-                // between-entry-scope token holder is now guaranteed by the
+                // bit gone if this clear fires in that window. Nothing
+                // refuses a second concurrent entry any more (every gilOff
+                // lite has its own trap word), so delivery to a
+                // between-entry-scope token holder is guaranteed by the
                 // per-lite fanned words instead: fireTrapVMWide fans
                 // NeedTermination into every REGISTERED lite's OWN word
                 // (entered or not), so a sibling re-entering through a
@@ -931,7 +936,7 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
             // model is ever de-janked too.) Flag-off: dead branch.
             if (Options::useJSThreads()) [[unlikely]]
                 JSThreadsSafepoint::noteConductorHeapFactRewrite();
-            invalidateCodeBlocksOnStack(vm.topCallFrame);
+            invalidateCodeBlocksOnStack(vm.group3Primitives().topCallFrame);
             didHandleTrap = true;
             break;
 
@@ -944,29 +949,12 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
         case NeedWatchdogCheck: {
             ASSERT(vm.watchdog());
             ASSERT(!isSpawnedGILOff); // Masked above (annex W W0; SD14).
-            // UNGIL §A.1.5: the servicing thread's entry scope — per-lite
-            // GIL-off, the VM member (byte-identical) otherwise.
-            //
-            // GIL-off REVIEW FIX (null entry scope at off-JS poll sites):
-            // unlike the GIL-on world, where traps are only serviced from
-            // inside JS execution (entry scope guaranteed), GIL-off this is
-            // also reached from JSLock's off-JS poll sites — the DAL2
-            // bracket exit and completeDeferredForeignCarrierRestoreAfter-
-            // Unlock — on a carrier that holds only a bare JSLockHolder
-            // (host-API shape, no VMEntryScope). shouldTerminate() needs the
-            // entry global, so with no entry scope the check is skipped:
-            // the bit was already taken above, but the watchdog timer
-            // remains armed and re-fires NeedWatchdogCheck, which the next
-            // ENTERED poll services (Watchdog.cpp's parked-carrier path
-            // RELEASE_ASSERTs the same pointer because a parked carrier
-            // provably kept its entry scope live; no such precondition
-            // holds here). GIL-on: entryScope is the VM member and is
-            // always non-null at trap-service time — branch never taken.
+            // The servicing thread's entry scope: per-lite GIL-off, where the
+            // no-entry-scope trim above keeps the bit out of the mask, so it
+            // is non-null here; the VM member otherwise, non-null whenever the
+            // watchdog is active.
             VMEntryScope* entryScope = vm.currentThreadEntryScope();
-            if (!entryScope) [[unlikely]] {
-                didHandleTrap = true;
-                break;
-            }
+            ASSERT(entryScope || !vm.watchdog()->isActive());
             if (!vm.watchdog()->isActive() || !vm.watchdog()->shouldTerminate(entryScope->globalObject())) [[likely]]
                 continue;
             [[fallthrough]];
@@ -1064,9 +1052,10 @@ CONCURRENT_SAFE void VMTraps::fireTrapVMWide(Event event)
 
     {
         // §A.2.3 rule 3: under the registry lock, set the bit in every lite
-        // OF THIS VM (per-VM filter) + the VM word. The registry lock is a
-        // leaf — only lock-free atomic ORs happen under it; the stop-request
-        // machinery (m_trapSignalingLock) runs after release.
+        // OF THIS VM (per-VM filter) + the VM word. Each fanned lite's
+        // m_trapSignalingLock (and its StackManager::m_mirrorLock) nests
+        // under the registry lock here; THIS instance's stop-request update
+        // runs after release.
         assertNoPerLiteTrapSignalingLockHeldOnCurrentThread();
         auto& registry = VMLiteRegistry::singleton();
         Locker locker { registry.lock };
@@ -1157,8 +1146,7 @@ void VMTraps::fanOutTerminationToSiblingLites()
 
 void VMTraps::fireTerminationVMWideAfterParkedCarrierService()
 {
-    VM& vm = this->vm();
-    ASSERT(vm.gilOff());
+    ASSERT(this->vm().gilOff());
     ASSERT(!ThreadManager::isJSThreadCurrent()); // W1 services on carriers only.
     fireTrapVMWide(NeedTermination);
     // Annex W W1: the firing carrier has ALREADY serviced this termination
@@ -1331,11 +1319,9 @@ VMTraps::~VMTraps()
 //       performs the full §J.3 exit reacquisition and SERVICES
 //       Watchdog::shouldTerminate (callback consulted, extension honored —
 //       the U-T2 corpus shape (a)), terminating only on a terminate verdict.
-// Consumers: the SD6 per-wait TA sync park (WaiterListManager.cpp, U-T11);
-// the remaining §J.3/D9 park sites (LockObject.cpp / ConditionObject.cpp /
-// ThreadObject.cpp / ThreadAtomics.cpp PWT — outside this task's owned-file
-// set) re-point with their owning tasks. Same-library seams; consumers
-// redeclare (the currentThreadHoldsEntryToken pattern).
+// Declared in VMTraps.h; the consumers are the park sites in
+// WaiterListManager.cpp, LockObject.cpp, ConditionObject.cpp, ThreadObject.cpp
+// and ThreadAtomics.cpp.
 //
 // Quanta poll ONLY lock-free state (U2's bound): both predicates read atomic
 // trap words (+ the VM request flag) and take no lock — legal under a
