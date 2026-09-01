@@ -31,7 +31,7 @@
 #include "JSExportMacros.h"
 #include <limits.h>
 #include <wtf/Atomics.h>
-#include <wtf/Lock.h>
+#include <wtf/Locker.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/SharedTask.h>
 #include <wtf/TZoneMalloc.h>
@@ -99,7 +99,6 @@ private:
     ConstraintVolatility m_volatility;
     ConstraintConcurrency m_concurrency;
     ConstraintParallelism m_parallelism;
-    Lock m_lock;
 };
 
 } // namespace JSC

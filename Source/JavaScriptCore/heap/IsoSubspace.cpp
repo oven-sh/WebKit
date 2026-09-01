@@ -154,35 +154,14 @@ void IsoSubspace::destroyLowerTierPreciseFreeList()
 
 namespace GCClient {
 
-// SharedGC (T9) audit vs the GCClient::Heap::vm() standalone assert
-// (HeapInlines.h): GCClient::IsoSubspace never touches its owning client's
-// vm() — this ctor binds only the server-side BlockDirectory, allocate(VM&)
-// is the VM-coupled entry (a VM exists by definition there), and
-// allocateForClient() (§12.1 seam, IsoSubspaceInlines.h) reaches the server
-// via client.server(). Standalone (markStandalone()) clients can therefore
-// materialize and use iso LocalAllocators without tripping the vm()
-// RELEASE_ASSERT; the §10A.1 m_perDirectory registration (T4) is likewise
-// vm()-free.
+// GCClient::IsoSubspace never reaches its owning client's vm(): this ctor
+// binds only the server-side BlockDirectory and allocate(VM&) is the sole
+// allocation entry, so standalone (markStandalone()) clients can materialize
+// and register iso LocalAllocators without tripping the GCClient::Heap::vm()
+// RELEASE_ASSERT.
 IsoSubspace::IsoSubspace(JSC::IsoSubspace& server)
     : m_localAllocator(&server.m_directory)
 {
-}
-
-unsigned IsoSubspace::tlcSlot() const
-{
-    // H-ISO-TLCSLOT: server reach-through. m_localAllocator.directory() is the
-    // server's single BlockDirectory (bound at ctor above); its subspace() is
-    // the server JSC::IsoSubspace. The slot is write-once (stamped by the
-    // first GCThreadLocalCache ctor, serially during VM construction) and read
-    // here only at JIT compile time behind a vm.gilOff() codegen gate, so a
-    // plain load suffices — the first client's stamp happens-before any
-    // concurrent compile (compilation requires an entered VM; entry implies
-    // the stamping client exists). Subspaces never enumerated by
-    // FOR_EACH_JSC_ISO_SUBSPACE return invalidTlcIndex and the caller
-    // degrades to the legacy null-bake.
-    Subspace* server = m_localAllocator.directory().subspace();
-    ASSERT(server && server->isIsoSubspace());
-    return static_cast<const JSC::IsoSubspace*>(server)->tlcSlot();
 }
 
 } // namespace GCClient

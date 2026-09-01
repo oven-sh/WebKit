@@ -58,10 +58,10 @@ void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
         // TSAN-TRIAGE §17.2 row 17 (closeout review): flag-on, unlink the
         // dead block's incoming calls HERE, in the End phase while the world
         // is stopped, instead of waiting for the lazy-sweep destructor.
-        // Rationale: ~CodeBlock runs on an allocation-path sweep AFTER the
-        // world resumes (the IncrementalSweeper is disabled in shared mode),
-        // so between resume and sweep a sibling mutator can still call
-        // through a still-linked CallLinkInfo and load this dead cell's
+        // Rationale: ~CodeBlock runs on a later sweep (an allocation-path
+        // refill or the IncrementalSweeper's mutator-concurrent step) AFTER
+        // the world resumes, so between resume and sweep a sibling mutator
+        // can still call through a still-linked CallLinkInfo and load this dead cell's
         // pointer — a pointer acquired AFTER the conservative scan, hence
         // not pinned by it. Such a straggler races the sweep and, once the
         // IsoSubspace slot is recycled, binds the baseline prologue's
@@ -70,8 +70,8 @@ void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
         // inside the stop closes that acquisition window: any thread still
         // able to enter this block after resume must have held the pointer
         // at scan time, which conservatively marks the cell — contradiction,
-        // so it cannot be dead. The AB18-B / rows 7/8/16 field-keeping leaks
-        // remain as defense-in-depth for non-CLI entry vectors. The
+        // so it cannot be dead. This is what lets ~CodeBlock free its
+        // metadata and JIT data inline with the flag on, as flag-off does. The
         // destructor's own unlinkOrUpgradeIncomingCalls then drains an empty
         // list (no-op). World-stopped repatching has precedent in row 2
         // (resetStubAsJumpInAccess). Flag-off: byte-identical (unlink stays

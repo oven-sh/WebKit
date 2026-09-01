@@ -111,8 +111,8 @@ protected:
     size_t top();
 
     // GIL-off (TSAN family gc-marking-residual): m_top is mutated only by the
-    // owner (multi-producer instances serialize through MarkStackArray's
-    // m_appendLock), but it is read concurrently by other threads' lock-free
+    // owner (the shared Heap stacks are serialized by a Heap-owned lock at
+    // their call sites), but it is read concurrently by other threads' lock-free
     // heuristics (isEmpty()/size() during donation/stealing decisions). The
     // hand-off of mark-stack contents is fence-ordered elsewhere; these
     // relaxed atomics only make the previously-plain word accesses

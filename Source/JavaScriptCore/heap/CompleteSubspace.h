@@ -32,7 +32,6 @@
 namespace JSC {
 
 namespace GCClient {
-class CompleteSubspaceView;
 class GCThreadLocalCache;
 class Heap;
 }
@@ -86,20 +85,18 @@ public:
     // (Heap::verifyServerNonIsoAllocatorsNeverMaterialized()).
     void verifyNoAllocatorsMaterialized();
 
-    // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (SHAREDHEAP-ALLOC-EVIDENCE.md §41
-    // T1): reserve this subspace's contiguous numSizeClasses-slot range
-    // WITHOUT creating any directory. Same locking + write-once semantics as
-    // the in-ensureDirectoryForSizeClass reservation (CompleteSubspace.cpp:
-    // 88-89), so a later directory creation just observes the
-    // already-reserved base. directoryLock-only (rank 7b) — no MSPL, no GC
-    // dependency; idempotent. Called from GCThreadLocalCache's ctor under
-    // Options::useSharedGCHeap() so every per-client slotBase
-    // (= tlc.m_table + tlcIndexBase()) is computable at attach with no eager
-    // BlockDirectory allocation. Flag-off: never reached.
+    // Reserves this subspace's contiguous numSizeClasses-slot range without
+    // creating any directory, with the same directoryLock + write-once
+    // semantics as the reservation in ensureDirectoryForSizeClass, so a later
+    // directory creation just observes the already-reserved base. Idempotent.
+    // Called from GCThreadLocalCache's ctor under Options::useSharedGCHeap()
+    // so the JIT inline-allocate emitters, which bake tlcIndexBase() as a
+    // constant, see a reserved base from the first compile instead of
+    // falling back to the slow path until a recompile. Flag-off: never
+    // reached.
     void ensureTlcIndexBaseReserved();
 
 private:
-    friend class GCClient::CompleteSubspaceView; // wrapper calls allocateSlowForClient on the miss path.
     JS_EXPORT_PRIVATE Allocator allocatorForSlow(size_t);
     JS_EXPORT_PRIVATE BlockDirectory* ensureDirectoryForSizeStepSlow(size_t sizeStepIndex);
     // Creates (or returns) the directory serving sizeClass; caller holds
@@ -171,98 +168,6 @@ ALWAYS_INLINE BlockDirectory* CompleteSubspace::ensureDirectoryForSizeStep(size_
         return directory;
     return ensureDirectoryForSizeStepSlow(sizeStepIndex);
 }
-
-namespace GCClient {
-
-// H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1;
-// estMs=150 of the +1912ms W=1 GIL-off intcs tax): per-client view of one
-// server CompleteSubspace, mirroring the GCClient::IsoSubspace pattern. Holds
-// a precomputed `m_slotBase = client.threadLocalCache().m_table +
-// server.tlcIndexBase()` so allocate() collapses to one indexed load + null
-// test — byte-for-byte the GIL-on `m_allocatorForSizeStep[idx]` shape
-// (CompleteSubspace.h:130) — eliminating ALL of hop-2: the tlcIndexBase
-// acquire-load, the invalid-base check, the client.threadLocalCache() member
-// chase, the m_table pointer deref, and the bound-check
-// (GCThreadLocalCache.cpp allocatorForSizeStep). Distinct from
-// H-SOLECLIENT-SUBSPACE-MIRROR (which writes the W=1 sole client's allocators
-// into the SERVER m_allocatorForSizeStep): this is a per-client view, correct
-// at any W.
-//
-// m_slotBase validity REQUIRES the TLC table never reallocs after bind() —
-// guaranteed by the H-TLC-FIXEDTABLE-NOREALLOC pre-grow in
-// GCThreadLocalCache's ctor (full numCompleteSubspaces × numSizeClasses
-// capacity, useSharedGCHeap-gated; growTable() RELEASE_ASSERTs it never
-// re-enters its realloc leg). bind() is idempotent and is invoked from
-// Heap::setCurrentThreadClient (GCThreadLocalCache.cpp), which already runs
-// at every {attach, A36C carrier swap, main-client adoption} on the owning
-// thread (I2).
-//
-// STAGING NOTE (this round): the VM.h CompleteSubspace accessors are NOT yet
-// rerouted through allocationClientForCurrentThread().<name>Client — that
-// flip is source-incompatible with the JIT-side `CompleteSubspace&`/
-// `CompleteSubspace*` consumers (AssemblyHelpers::emitAllocateVariableSized,
-// FTL allocatorForSize, DFG tlcSlotForSubspace) which are outside this
-// hypothesis's owned-file set. The wrapper, the fixed table, and the bind
-// hook land here as INFRA so that flip is a single self-contained change in a
-// round that owns those call sites. Until then this class has no caller and
-// imposes ZERO codegen / behavior delta on either flag state beyond the
-// useSharedGCHeap-gated fixed-table pre-grow (which is itself a correctness
-// hardening for the in-flight H-TLS-TABLE / H-VMLITE-TLCPTR snapshots — the
-// table pointer they cache can no longer go stale across a free).
-//
-// Named CompleteSubspaceView (not CompleteSubspace) because
-// GCThreadLocalCache.h — outside this hypothesis's owned-file set — uses
-// unqualified `CompleteSubspace` from inside namespace GCClient
-// (allocatorForSizeStep's parameter); introducing a same-named GCClient class
-// would shadow that to a different type depending on include order (ODR
-// hazard + build break). The iso analogue is GCClient::IsoSubspace; rename to
-// GCClient::CompleteSubspace once GCThreadLocalCache.h qualifies its
-// reference as JSC::CompleteSubspace.
-class CompleteSubspaceView {
-    WTF_MAKE_NONCOPYABLE(CompleteSubspaceView);
-public:
-    CompleteSubspaceView() = default;
-
-    // Idempotent; owner thread only (I2). slotBase may be null when the
-    // server's tlcIndexBase is still unreserved (never the case once
-    // ensureTlcIndexBaseReserved() has run for all server subspaces in the
-    // TLC ctor) — allocate() then unconditionally takes the slow path.
-    void bind(JSC::CompleteSubspace& server, GCClient::Heap& client, Allocator* slotBase)
-    {
-        m_server = &server;
-        m_client = &client;
-        m_slotBase = slotBase;
-    }
-
-    JSC::CompleteSubspace& server() const { ASSERT(m_server); return *m_server; }
-    // Implicit conversion so reference-taking JIT-side helpers
-    // (emitAllocateVariableSized, allocatorForSize) keep compiling once the
-    // VM.h reroute lands. NOT sufficient for address-of call sites — those
-    // need the explicit .server() in the rerouting round.
-    operator JSC::CompleteSubspace&() const { return server(); }
-
-    // One indexed load on the 99%+ interval-bump path. Defined in
-    // CompleteSubspaceInlines.h (needs VM/Heap complete).
-    void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
-
-    // Forwarders for the remaining server-surface uses observed at the VM.h
-    // accessor call sites (.allocatorFor / .allocatorForNonInline /
-    // .reallocatePreciseAllocationNonVirtual): the wrapper is a transparent
-    // per-client front for allocate() and otherwise IS the server subspace.
-    Allocator allocatorFor(size_t size, AllocatorForMode mode) { return server().allocatorFor(size, mode); }
-    Allocator allocatorForNonInline(size_t size, AllocatorForMode mode) { return server().allocatorForNonInline(size, mode); }
-    void* reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* cell, size_t size, GCDeferralContext* ctx, AllocationFailureMode mode)
-    {
-        return server().reallocatePreciseAllocationNonVirtual(vm, cell, size, ctx, mode);
-    }
-
-private:
-    JSC::CompleteSubspace* m_server { nullptr };
-    GCClient::Heap* m_client { nullptr };
-    Allocator* m_slotBase { nullptr }; // = client TLC m_table + server.tlcIndexBase(); never dangles (fixed table).
-};
-
-} // namespace GCClient
 
 } // namespace JSC
 

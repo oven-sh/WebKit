@@ -1045,7 +1045,7 @@ ALWAYS_INLINE void JSString::swapToAtomString(VM& vm, RefPtr<AtomStringImpl>&& a
     String target(adoptRef(std::bit_cast<StringImpl*>(oldBits)));
     WTF::storeStoreFence(); // Publish the impl before the per-cell bit that advertises it.
     markAsAtom();
-    vm.heap.appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(this, WTF::move(target));
+    vm.heap.appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(this, WTF::move(target), vm.gilOff());
 }
 
 ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) const
