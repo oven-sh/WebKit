@@ -153,6 +153,12 @@ EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
 
+    // The base word is loaded once, before the length proof, and is the only base
+    // this function dereferences. GIL-off, a detach on another thread clears the
+    // view's base word with no stop, so a base re-read after a passing length check
+    // can be null; a base observed non-null stays mapped through the next stop.
+    uint8_t* base = static_cast<uint8_t*>(dataView->vector());
+
     IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;
     auto byteLengthValue = dataView->viewByteLength(getter);
     if (!byteLengthValue) [[unlikely]]
@@ -164,18 +170,26 @@ EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
 
     constexpr unsigned dataSize = sizeof(typename Adaptor::Type);
     std::array<uint8_t, dataSize> rawBytes { };
-    uint8_t* dataPtr = static_cast<uint8_t*>(dataView->vector()) + byteOffset;
 
-    // THREADS: relaxed atomic byte loads — DataView lanes over a (possibly
-    // shared/resizable) buffer are intentionally racy data words (SAB
-    // semantics); the atomics only make the racing access defined.
-    if (needToFlipBytesIfLittleEndian(littleEndian)) {
-        for (unsigned i = dataSize; i--;)
-            rawBytes[i] = WTF::atomicLoad(dataPtr++, std::memory_order_relaxed);
-    } else {
-        for (unsigned i = 0; i < dataSize; i++)
-            rawBytes[i] = WTF::atomicLoad(dataPtr++, std::memory_order_relaxed);
-    }
+    auto loadBytes = [&](auto&& loadByte) ALWAYS_INLINE_LAMBDA {
+        uint8_t* dataPtr = base + byteOffset;
+        if (needToFlipBytesIfLittleEndian(littleEndian)) {
+            for (unsigned i = dataSize; i--;)
+                rawBytes[i] = loadByte(dataPtr++);
+        } else {
+            for (unsigned i = 0; i < dataSize; i++)
+                rawBytes[i] = loadByte(dataPtr++);
+        }
+    };
+
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        if (!base)
+            return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
+        // Other JS threads may race these lanes; relaxed byte loads keep the value
+        // race defined. Flag-off and GIL-on cannot race and keep the plain byte loop.
+        loadBytes([](uint8_t* dataPtr) ALWAYS_INLINE_LAMBDA { return WTF::atomicLoad(dataPtr, std::memory_order_relaxed); });
+    } else
+        loadBytes([](uint8_t* dataPtr) ALWAYS_INLINE_LAMBDA { return *dataPtr; });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(Adaptor::toJSValue(globalObject, std::bit_cast<typename Adaptor::Type>(rawBytes))));
 }
@@ -204,6 +218,9 @@ EncodedJSValue setData(JSGlobalObject* globalObject, CallFrame* callFrame)
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
 
+    // Single base snapshot taken before the length proof; see getData above.
+    uint8_t* base = static_cast<uint8_t*>(dataView->vector());
+
     IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;
     auto byteLengthValue = dataView->viewByteLength(getter);
     if (!byteLengthValue) [[unlikely]]
@@ -213,16 +230,23 @@ EncodedJSValue setData(JSGlobalObject* globalObject, CallFrame* callFrame)
     if (elementSize > byteLength || byteOffset > byteLength - elementSize)
         return throwVMRangeError(globalObject, scope, "Out of bounds access"_s);
 
-    uint8_t* dataPtr = static_cast<uint8_t*>(dataView->vector()) + byteOffset;
+    auto storeBytes = [&](auto&& storeByte) ALWAYS_INLINE_LAMBDA {
+        uint8_t* dataPtr = base + byteOffset;
+        if (needToFlipBytesIfLittleEndian(littleEndian)) {
+            for (unsigned i = dataSize; i--;)
+                storeByte(dataPtr++, rawBytes[i]);
+        } else {
+            for (unsigned i = 0; i < dataSize; i++)
+                storeByte(dataPtr++, rawBytes[i]);
+        }
+    };
 
-    // THREADS: relaxed atomic byte stores (see getData above).
-    if (needToFlipBytesIfLittleEndian(littleEndian)) {
-        for (unsigned i = dataSize; i--;)
-            WTF::atomicStore(dataPtr++, rawBytes[i], std::memory_order_relaxed);
-    } else {
-        for (unsigned i = 0; i < dataSize; i++)
-            WTF::atomicStore(dataPtr++, rawBytes[i], std::memory_order_relaxed);
-    }
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        if (!base)
+            return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
+        storeBytes([](uint8_t* dataPtr, uint8_t byte) ALWAYS_INLINE_LAMBDA { WTF::atomicStore(dataPtr, byte, std::memory_order_relaxed); });
+    } else
+        storeBytes([](uint8_t* dataPtr, uint8_t byte) ALWAYS_INLINE_LAMBDA { *dataPtr = byte; });
 
     return JSValue::encode(jsUndefined());
 }

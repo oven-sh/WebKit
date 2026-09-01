@@ -43,15 +43,14 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSCConfig.h>
 #include <JavaScriptCore/JSCTimeZone.h>
 #include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/PlainGregorianDateTime.h>
 #include <JavaScriptCore/PureNaN.h>
-#include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
 #include <wtf/DateMath.h>
 #include <wtf/HashFunctions.h>
-#include <wtf/Lock.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TimeZone.h>
@@ -91,33 +90,16 @@ public:
     DateCache();
     ~DateCache();
 
-    bool hasTimeZoneChange()
-    {
-#if USE(TIME_ZONE_CHANGE_NOTIFICATIONS)
-        // Relaxed is sufficient: this is a monotonic staleness check. A stale read just
-        // means we take (or skip) the slow path one call late; clearForTimeZoneChange()
-        // re-reads lastTimeZoneID under m_lock before publishing m_cachedTimeZoneID.
-        return m_cachedTimeZoneID.load(std::memory_order_relaxed) != WTF::lastTimeZoneID();
-#else
-        return true;
-#endif
-    }
-
+    bool hasTimeZoneChange() { return live().hasTimeZoneChangeImpl(); }
     JS_EXPORT_PRIVATE void clearForTimeZoneChange();
 
     // A DateInstance's cached local-time breakdown is only valid for the zone it was computed in,
     // and nothing tracks which instances hold one, so a zone change has to sweep the heap. Skip
     // that walk entirely while no instance has decomposed a local time.
-    void noteCachedLocalGregorianDateTime() { m_mayHaveCachedLocalGregorianDateTime = true; }
-    bool takeMayHaveCachedLocalGregorianDateTime()
-    {
-        // Read before write: GIL-off the flag is never set (DateInstance.cpp), and N threads'
-        // VM entries must not all store to it.
-        if (!m_mayHaveCachedLocalGregorianDateTime)
-            return false;
-        m_mayHaveCachedLocalGregorianDateTime = false;
-        return true;
-    }
+    // GIL-off both run on the calling thread's cache (live()); DateInstance never notes one
+    // there (its per-instance words are bypassed, DateInstance.cpp), so the sweep never runs.
+    void noteCachedLocalGregorianDateTime() { live().m_mayHaveCachedLocalGregorianDateTime = true; }
+    bool takeMayHaveCachedLocalGregorianDateTime() { return std::exchange(live().m_mayHaveCachedLocalGregorianDateTime, false); }
 
     TimeZone defaultTimeZone();
     String timeZoneDisplayName(bool isDST);
@@ -131,6 +113,38 @@ public:
     JS_EXPORT_PRIVATE double parseDate(JSGlobalObject*, VM&, const WTF::String&);
 
 private:
+    // GIL-off (g_jscConfig.gilOffProcess): vm.dateCache is reachable from N mutator
+    // threads and every cache it embeds is multi-word, so each public entry point runs
+    // on the calling thread's own DateCache (a pure value cache: a cold copy is only a
+    // perf event). The VM member is then just the entry point, and the time zone
+    // generation (WTF::lastTimeZoneID()) is the only state shared between threads; each thread
+    // observes a change at its next outermost VM entry, exactly as the single cache
+    // did. GIL-on / flag-off: the GIL serializes and everything runs on this instance.
+    ALWAYS_INLINE DateCache& live()
+    {
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            return gilOffPerThreadCache();
+        return *this;
+    }
+    JS_EXPORT_PRIVATE static DateCache& gilOffPerThreadCache();
+
+    bool hasTimeZoneChangeImpl()
+    {
+#if USE(TIME_ZONE_CHANGE_NOTIFICATIONS)
+        return m_cachedTimeZoneID != WTF::lastTimeZoneID();
+#else
+        return true;
+#endif
+    }
+    void clearForTimeZoneChangeImpl();
+
+    ALWAYS_INLINE TimeZone defaultTimeZoneImpl();
+    ALWAYS_INLINE String timeZoneDisplayNameImpl(bool isDST);
+    ALWAYS_INLINE PlainGregorianDateTime msToGregorianDateTimeImpl(double millisecondsFromEpoch, TimeType outputTimeType, UseSharedCache);
+    ALWAYS_INLINE double gregorianDateTimeToMSImpl(int32_t year, int32_t month, int32_t monthDay, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType);
+    ALWAYS_INLINE double localTimeToMSImpl(double milliseconds, TimeType);
+    ALWAYS_INLINE double parseDateImpl(JSGlobalObject*, VM&, const WTF::String&);
+
     class DSTCache {
     public:
         static constexpr unsigned cacheSize = 32;
@@ -217,15 +231,11 @@ private:
     };
 
     void timeZoneCacheSlow();
-    // Assumes m_lock is held when gilOffProcess (see JSDateMath.cpp DateCacheLocker).
-    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCacheAssumingLock(int32_t days);
-    // Assumes m_lock is held when gilOffProcess.
     LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
-    // Takes m_lock itself (for callers running outside a locked public entry point).
-    LocalTimeOffset localTimeOffsetTakingLock(int64_t millisecondsFromEpoch, TimeType);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);
     PlainGregorianDateTime computeGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType);
+    std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCache(int32_t days);
 
     OpaqueICUTimeZone* timeZoneCache();
 
@@ -235,19 +245,10 @@ private:
     String m_cachedDateString;
     double m_cachedDateStringValue;
     std::array<BrokenDownDateCache, 2> m_brokenDownDateCaches;
-    WTF::Atomic<uint64_t> m_cachedTimeZoneID { 0 };
+    uint64_t m_cachedTimeZoneID { 0 };
     bool m_mayHaveCachedLocalGregorianDateTime { false };
     String m_timeZoneStandardDisplayNameCache;
     String m_timeZoneDSTDisplayNameCache;
-
-    // GIL-off (g_jscConfig.gilOffProcess): vm.dateCache is shared by N mutator threads,
-    // so all mutable state above is serialized on this leaf lock (SPEC-ungil §K.2;
-    // TSAN-TRIAGE §3.29). GIL-on / flag-off: never taken — the GIL is the serializer,
-    // so flag-off behavior and cost are unchanged. Lock ordering: m_lock is a leaf
-    // except for the WTF-internal timeZoneCacheLock taken inside
-    // retrieveTimeZoneInformation() (m_lock -> timeZoneCacheLock only; never reversed).
-    // Nothing GC-allocates, throws, or parks while holding m_lock.
-    Lock m_lock;
 };
 
 ALWAYS_INLINE bool isUTCEquivalent(StringView timeZone)

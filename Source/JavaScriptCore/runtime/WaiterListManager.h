@@ -232,7 +232,10 @@ public:
     JS_EXPORT_PRIVATE JSValue waitAsync(JSGlobalObject*, VM&, int64_t* ptr, int64_t expected, Seconds timeout);
 
     enum class ResolveResult : uint8_t { Ok, Timeout };
-    unsigned notifyWaiter(void* ptr, unsigned count);
+    // `vm` is the notifying thread's VM: it is the one VM whose waiters can be
+    // settled after list->lock is dropped, because it cannot be destroyed
+    // while this thread executes in it.
+    unsigned notifyWaiter(VM&, void* ptr, unsigned count);
 
     size_t waiterListSize(void* ptr);
 

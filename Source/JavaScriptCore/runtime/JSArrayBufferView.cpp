@@ -296,86 +296,136 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     DeferGCForAWhile deferGC(vm);
 
 #if USE(JSVALUE64)
-    // r47 (FUZZ.md §47, SCALEBENCH.md §47-NEW-residual; manifest-7 audit
-    // comment at JSObjectInlines.h:93): a worker reading .buffer / Atomics-
-    // validating a Fast/OversizeTypedArray created on another thread reaches
-    // here with a foreign-TID butterfly word, so the unconditional setButterfly
-    // below trips storeTaggedButterflyWordConcurrent's owner-TID RELEASE_ASSERT
-    // (r47-001). Independently the publication ORDER is wrong for concurrent
-    // readers: setButterfly(createOrGrowArrayRight(...)) publishes a butterfly
-    // whose IndexingHeader::arrayBuffer slot is still uninitialized (ASAN
-    // poison), then fills it under the cell lock - any concurrent
-    // existingBufferInButterfly() between those two steps derefs 0xbebebebe
-    // (r47-002 SEGV in DeferrableRefCountedBase::ref). Flag-on form, with the
-    // legacy block left byte-identical for flag-off:
-    //   (a) build the wastage butterfly in a LOCAL and fill its arrayBuffer
-    //       slot BEFORE any publication, with a storeStoreFence so concurrent
-    //       readers see arrayBuffer-then-butterfly;
-    //   (b) publish via a tag-PRESERVING cell-locked seq_cst CAS (the §4.6
-    //       AS-COPY shape, ala publishArrayStorageButterflyLocked), open-coded
-    //       because typed-array views are NonArray-indexing so casButterfly()'s
-    //       I31 hasAnyArrayStorage shape witness does not apply. Under the cell
-    //       lock no actor moves a typed-array view's butterfly word (no E4
-    //       element resize, no §4.4 indexed CAS, no §4.2/§4.3 segmented
-    //       conversion; named-property adds serialize on this same lock via
-    //       classifyConcurrentLockedAdd), so CAS failure is a logic error;
-    //   (c) storeStoreFence before the m_mode flip; the paired loadLoadFence
-    //       lives in existingBufferInButterfly() so a relaxed
-    //       m_mode==Wasteful observation orders before the butterfly +
-    //       arrayBuffer reads.
+    // Flag-on form; the legacy block below stays byte-identical for flag-off.
+    // The wastage transition gives the view an IndexingHeader (its
+    // ArrayBuffer*), so it dispatches on the tagged butterfly word:
+    //   - None / owner Flat: copy-grow into a header-bearing flat butterfly
+    //     and publish it with a cell-locked seq_cst CAS. Under the cell lock
+    //     the only actors that can move a typed-array view's word without
+    //     the lock are lock-free tag flips and foreign installs; a failed CAS
+    //     re-dispatches on the fresh word instead of asserting.
+    //   - Flat with a foreign TID or SW=1: under the GIL nothing races, so the
+    //     copy-grow publishes with the tag preserved. GIL-off the object
+    //     model forbids copying a shared-written flat butterfly (a racing
+    //     lock-free out-of-line store between the copy and the CAS would be
+    //     lost), so the view is converted to a segmented butterfly first -
+    //     outside the cell lock, as the conversion protocol requires - and
+    //     re-dispatched.
+    //   - Segmented: the spine has no header fragment (it was header-less at
+    //     conversion). Publish a replacement spine that aliases every
+    //     out-of-line fragment and adds one indexed fragment whose slot 0 is
+    //     the IndexingHeader, the location existingBufferInButterfly() and
+    //     the JIT read for a segmented Wasteful view. Nothing is copied by
+    //     value, so a racing store is never lost.
+    // Publication order: the header slot is filled before the word is
+    // published, except for the adopted Oversize vector, whose ArrayBuffer is
+    // created only after the CAS succeeds (a failed attempt must be able to
+    // drop its buffer, and an adopted buffer cannot be dropped without
+    // freeing the vector). Readers only consult the header after observing
+    // m_mode == Wasteful, which is flipped last behind a storeStoreFence that
+    // pairs with the loadLoadFence in existingBufferInButterfly().
     // The cell-locked re-check makes the transition idempotent: two threads
     // may both observe a stale m_mode==Fast/Oversize and enter; the loser
     // returns the winner's buffer instead of double-adopting (Oversize) or
     // leaking (Fast) a second ArrayBuffer.
     if (Options::useJSThreads()) [[unlikely]] {
         RefPtr<ArrayBuffer> buffer;
-        {
-            Locker locker { cellLock() };
-            if (hasArrayBuffer())
-                return existingBufferInButterfly();
-            // Re-checked under the lock; the !hasIndexingHeader witness below
-            // is only sound AFTER that re-check (a racing winner's m_mode flip
-            // makes hasIndexingHeader() true on the loser's pre-lock probe).
-            RELEASE_ASSERT(!hasIndexingHeader());
-            Structure* structure = this->structure();
+        for (;;) {
+            {
+                Locker locker { cellLock() };
+                if (hasArrayBuffer())
+                    return existingBufferInButterfly();
+                // Re-checked under the lock; the !hasIndexingHeader witness below
+                // is only sound AFTER that re-check (a racing winner's m_mode flip
+                // makes hasIndexingHeader() true on the loser's pre-lock probe).
+                RELEASE_ASSERT(!hasIndexingHeader());
+                RELEASE_ASSERT(m_mode == FastTypedArray || m_mode == OversizeTypedArray);
 
-            switch (m_mode) {
-            case FastTypedArray:
-                buffer = ArrayBuffer::tryCreate(span());
-                if (!buffer)
-                    return nullptr;
-                break;
-            case OversizeTypedArray:
-                buffer = ArrayBuffer::createAdopted(span());
-                break;
-            default:
-                RELEASE_ASSERT_NOT_REACHED();
-                break;
+                Atomic<uint64_t>* word = std::bit_cast<Atomic<uint64_t>*>(butterflyAddress());
+                uint64_t expected = word->load(std::memory_order_seq_cst);
+                bool segmented = isSegmentedButterfly(expected);
+                bool sharedFlat = !segmented && (expected & butterflyPointerMask)
+                    && (butterflyTID(expected) != currentButterflyTID() || butterflySharedWrite(expected));
+                if (sharedFlat && vm.gilOff()) {
+                    buffer = nullptr; // Only ever a Fast copy here; the Oversize adopt happens after publication.
+                    // Fall out of the lock scope and convert below.
+                } else {
+                    if (m_mode == FastTypedArray && !buffer) {
+                        buffer = ArrayBuffer::tryCreate(span());
+                        if (!buffer)
+                            return nullptr;
+                    }
+
+                    uint64_t desired;
+                    Butterfly* newButterfly = nullptr;
+                    ButterflyFragment* headerFragment = nullptr;
+                    if (segmented) {
+                        ButterflySpine* spine = butterflySpine(expected);
+                        spine->tsanConsume();
+                        RELEASE_ASSERT(!spine->indexedFragmentCountConcurrent());
+                        uint32_t outOfLineFragments = spine->outOfLineFragmentCountConcurrent();
+                        auto* newSpine = static_cast<ButterflySpine*>(vm.auxiliarySpace().allocate(
+                            vm, ButterflySpine::allocationSize(outOfLineFragments + 1), nullptr, AllocationFailureMode::Assert));
+                        butterflyConcurrentStore(&newSpine->outOfLineFragmentCount, outOfLineFragments);
+                        butterflyConcurrentStore(&newSpine->indexedFragmentCount, 1u);
+                        butterflyConcurrentStore(&newSpine->vectorLength, 0u);
+                        butterflyConcurrentStore(&newSpine->spineEpoch, butterflyConcurrentLoad(&spine->spineEpoch) + 1);
+                        butterflyConcurrentStore(&newSpine->aliasedAllocationBase, butterflyConcurrentLoad(&spine->aliasedAllocationBase));
+                        butterflyConcurrentStore(&newSpine->aliasedAllocationSize, butterflyConcurrentLoad(&spine->aliasedAllocationSize));
+                        for (uint32_t j = 0; j < outOfLineFragments; ++j)
+                            butterflyConcurrentStore(&newSpine->fragments()[j], spine->outOfLineFragment(j));
+                        headerFragment = static_cast<ButterflyFragment*>(
+                            vm.auxiliarySpace().allocate(vm, sizeof(ButterflyFragment), nullptr, AllocationFailureMode::Assert));
+                        for (size_t slotIndex = 0; slotIndex < butterflyFragmentSlots; ++slotIndex)
+                            headerFragment->slots[slotIndex].clear();
+                        std::bit_cast<IndexingHeader*>(&headerFragment->slots[0])->setArrayBuffer(buffer.get());
+                        butterflyConcurrentStore(&newSpine->fragments()[outOfLineFragments], headerFragment);
+                        newSpine->validateConsistency();
+                        newSpine->tsanPublish();
+                        desired = encodeSegmentedButterfly(newSpine);
+                    } else {
+                        StructureID id = structureID();
+                        if (id.isNuked())
+                            continue; // A racing publication is mid-flight; re-dispatch on the settled state.
+                        Structure* structure = id.decode();
+                        newButterfly = Butterfly::createOrGrowArrayRight(
+                            untaggedButterfly(expected), vm, this, structure,
+                            structure->outOfLineCapacity(), false, 0, 0);
+                        newButterfly->indexingHeader()->setArrayBuffer(buffer.get());
+                        // None word => N3 first install (currentTID, SW=0); otherwise
+                        // preserve TID/SW verbatim - never re-stamp an installer's tag.
+                        desired = (expected & butterflyPointerMask)
+                            ? encodeButterfly(newButterfly, butterflyTID(expected), butterflySharedWrite(expected))
+                            : encodeButterfly(newButterfly, currentButterflyTID(), false);
+                    }
+                    WTF::storeStoreFence(); // Header slot and spine contents before the butterfly word.
+
+                    uint64_t observed = word->compareExchangeStrong(expected, desired, std::memory_order_seq_cst);
+                    if (observed != expected)
+                        continue; // The word moved under us; the allocations drop unreferenced.
+                    vm.writeBarrier(this);
+
+                    if (!buffer) {
+                        ASSERT(m_mode == OversizeTypedArray);
+                        buffer = ArrayBuffer::createAdopted(span());
+                        if (segmented)
+                            std::bit_cast<IndexingHeader*>(&headerFragment->slots[0])->setArrayBuffer(buffer.get());
+                        else
+                            newButterfly->indexingHeader()->setArrayBuffer(buffer.get());
+                    }
+
+                    m_vector.setWithoutBarrier(buffer->data());
+                    WTF::storeStoreFence(); // Butterfly, header slot and vector before m_mode (pairs with existingBufferInButterfly's loadLoadFence).
+                    m_mode = WastefulTypedArray;
+                    break;
+                }
             }
-            RELEASE_ASSERT(buffer);
-
-            Butterfly* newButterfly = Butterfly::createOrGrowArrayRight(
-                butterfly(), vm, this, structure,
-                structure->outOfLineCapacity(), false, 0, 0);
-            newButterfly->indexingHeader()->setArrayBuffer(buffer.get());
-            WTF::storeStoreFence(); // (a) arrayBuffer slot before butterfly word.
-
-            // (b) tag-preserving cell-locked CAS publication. None word => N3
-            // first install (currentTID, SW=0); otherwise preserve TID/SW
-            // verbatim - never re-stamp a foreign installer's tag.
-            Atomic<uint64_t>* word = std::bit_cast<Atomic<uint64_t>*>(butterflyAddress());
-            uint64_t expected = word->load(std::memory_order_seq_cst);
-            RELEASE_ASSERT(!isSegmentedButterfly(expected));
-            uint64_t desired = (expected & butterflyPointerMask)
-                ? encodeButterfly(newButterfly, butterflyTID(expected), butterflySharedWrite(expected))
-                : encodeButterfly(newButterfly, currentButterflyTID(), false);
-            uint64_t observed = word->compareExchangeStrong(expected, desired, std::memory_order_seq_cst);
-            RELEASE_ASSERT(observed == expected);
-            vm.writeBarrier(this);
-
-            m_vector.setWithoutBarrier(buffer->data());
-            WTF::storeStoreFence(); // (c) butterfly + vector before m_mode (pairs with existingBufferInButterfly's loadLoadFence).
-            m_mode = WastefulTypedArray;
+            // GIL-off, shared-written flat word: convert to segmented outside the
+            // cell lock (the conversion takes it itself and may stop the world),
+            // then re-dispatch. A null return means the conversion fired the
+            // thread-local sets or lost a race and asks for a restart; the next
+            // pass re-classifies the word either way.
+            convertToSegmentedButterfly(vm, this, nullptr, nullptr, invalidOffset, JSValue());
         }
         heap->addReference(this, buffer.get());
         return buffer.unsafeGet();
