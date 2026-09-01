@@ -58,7 +58,7 @@ public:
     void initializeEnvironment(JSGlobalObject*, RefPtr<ScriptFetcher>);
     void link(JSGlobalObject*, RefPtr<ScriptFetcher>);
 #if USE(BUN_JSC_ADDITIONS)
-    JSPromise* evaluate(JSGlobalObject*, int64_t referrerAsyncOrder = -1, JSPromise* dynamicImportPromise = nullptr);
+    JSPromise* evaluate(JSGlobalObject*, JSPromise* dynamicImportPromise = nullptr);
 #else
     JSPromise* evaluate(JSGlobalObject*);
 #endif
