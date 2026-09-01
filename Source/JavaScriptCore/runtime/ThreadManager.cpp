@@ -41,6 +41,7 @@
 #include "WeakInlines.h"
 #include <wtf/Atomics.h>
 #include <wtf/Condition.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ThreadSpecific.h>
 
@@ -82,13 +83,13 @@ Ref<AsyncTicket> AsyncTicket::create(JSGlobalObject* globalObject, JSPromise* pr
     DeferredWorkTimer::Ticket ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, vm, promise, WTF::move(dependencies));
     Ref<AsyncTicket> result = adoptRef(*new AsyncTicket(vm, Ref { *ticket }, ensureCurrentThreadState(), extraDependency));
     result->m_promise.set(vm, promise);
-    // §E.3 INCREMENT, in-set (U-T9): a COUNTED registration (asyncHold /
-    // cond.asyncWait / property waitAsync — gate U-T9-INT1's boolean) arms
-    // here, BEFORE the ticket is returned and thus before it is visible to
-    // any settler. Only gilOff spawned registrants count (§E.7:
-    // main/embedder registrations never touch keepalive); armKeepalive
-    // asserts spawned+inbox-OPEN (U25), which holds because the counted
-    // host calls run inside fn, after openThreadInbox. GIL-on/flag-off:
+    // §E.3 INCREMENT: a COUNTED registration (see the ThreadManager.h
+    // keepalive banner for which sites count) arms here, BEFORE the ticket
+    // is returned and thus before it is visible to any settler. Only gilOff
+    // spawned registrants count (§E.7: main/embedder registrations never
+    // touch keepalive); armKeepalive asserts spawned+inbox-OPEN (U25), which
+    // holds because the counted host calls run inside fn or a drain-loop
+    // task, after openThreadInbox and before close. GIL-on/flag-off:
     // gilOff() is false and this is dead.
     if (countsKeepalive && vm.gilOff() && result->m_registrant->isSpawned) [[unlikely]]
         result->armKeepalive();
@@ -225,12 +226,21 @@ void AsyncTicket::retireUnsettled()
     bool expected = false;
     bool won = m_settled.compare_exchange_strong(expected, true);
     RELEASE_ASSERT(won);
-    // §E.3: the property-waitAsync registration is never-armed until gate
-    // U-T9-INT1 lands (countsKeepalive=false at the call site); if that gate
-    // ever flips, this retirement site must perform the rule-1 decrement
-    // under the registrant's inboxLock like the open settle arm does.
-    bool wasArmed = claimKeepaliveRelease();
-    ASSERT_UNUSED(wasArmed, !wasArmed);
+    // §E.3 rule 1 for a registration that will never enqueue: an ARMED
+    // ticket (won the false->true CAS) gives its increment back under the
+    // registrant's inboxLock, iff the inbox is still open (the counter is
+    // dead after close). Never-armed tickets lose the CAS and skip this.
+    // The registering host call runs on the registrant itself, so its drain
+    // loop is not waiting and needs no wake.
+    if (claimKeepaliveRelease()) {
+        ThreadState& registrant = m_registrant.get();
+        Locker locker { registrant.inboxLock };
+        if (registrant.inboxOpen) {
+            ASSERT(registrant.keepaliveCount);
+            if (registrant.keepaliveCount)
+                registrant.keepaliveCount--;
+        }
+    }
     if (!m_ticket->isCancelled())
         m_vm.deferredWorkTimer->cancelPendingWork(m_ticket.ptr());
     m_promise.clear();
@@ -308,89 +318,10 @@ ThreadManager& ThreadManager::singleton()
     return manager;
 }
 
-uint16_t ThreadManager::currentTID()
-{
-    // UNGIL §A.3.6 TID supersession (r9 F4; U-T6): GIL-off currentTID()
-    // returns the CARRIER TID — the installed lite's tid (it feeds
-    // tagging/TTL consumers, never JS; main/embedder ThreadState.tid STAYS
-    // 0, so thr.id/Thread.current.id are unchanged). Behavior-identical
-    // GIL-on/flag-off: an installed GIL-on lite is either m_mainVMLite
-    // (tid 0 == mainThreadTID) or a spawned lite whose tid equals its
-    // ThreadState's.
-    if (VMLite* lite = VMLite::currentIfExists())
-        return lite->tid;
-    if (ThreadState* state = currentThreadStateIfExists())
-        return state->tid;
-    return mainThreadTID;
-}
-
 bool ThreadManager::isJSThreadCurrent()
 {
     ThreadState* state = currentThreadStateIfExists();
     return state && state->isSpawned;
-}
-
-RefPtr<ThreadState> ThreadManager::allocateSpawnedThreadStateInternal()
-{
-    Locker locker { m_lock };
-    // UNGIL §D.1 phase 3 (U-T12): a Restamped snapshot is released HERE —
-    // post-resume, on a mutator, under m_lock — strictly before the
-    // exhaustion check below, so the SD9 RangeError gate lifts at exactly
-    // the first allocation after the in-stop restamp+fire (ANNEX D1:
-    // "m_freeTIDs released POST-RESUME under TM::m_lock BEFORE the gate
-    // lifts"). GIL-on/flag-off: state is always Idle, the call no-ops.
-    if (VM::isGILOffProcess()) [[unlikely]]
-        completeRebiasIfPendingLocked();
-    if (m_threads.size() >= Options::maxJSThreads())
-        return nullptr;
-    uint16_t tid;
-    if (!m_freeTIDs.isEmpty())
-        tid = m_freeTIDs.takeFirst();
-    else {
-        // UNGIL U-T6 split: spawned TIDs stop at carrierTIDBase — the upper
-        // half is the A36 carrier range (see ThreadManager.h; previously the
-        // bound was notTTLTID).
-        if (m_nextTID >= carrierTIDBase) {
-            // SD9 exhaustion window: the caller throws RangeError. U-T12:
-            // make sure the trigger is armed and any retired TIDs are
-            // sealed so the next full shared collection rebiases and the
-            // window closes (GIL-on keeps Dev 10: spawn fails forever).
-            if (VM::isGILOffProcess()) [[unlikely]] {
-                m_rebiasArmed.store(true, std::memory_order_relaxed);
-                maybeArmAndSealRebiasLocked();
-            }
-            return nullptr;
-        }
-        tid = m_nextTID++;
-    }
-    Ref<ThreadState> state = ThreadState::create(tid, true);
-    m_threads.add(tid, state.copyRef());
-    // UNGIL §D.1 trigger (U-T12): arm at >=75% consumption; seal eagerly if
-    // dead TIDs are already waiting (spawn-storm shape: arm + seal happen on
-    // the allocating mutator, pre-stop, under m_lock — the D1 phase-1 pass).
-    if (VM::isGILOffProcess()) [[unlikely]]
-        maybeArmAndSealRebiasLocked();
-    return RefPtr<ThreadState> { WTF::move(state) };
-}
-
-RefPtr<ThreadState> ThreadManager::allocateSpawnedThreadState()
-{
-    // UNGIL U0b BACKSTOP (U-T6): under gilOffProcess a spawn may only be
-    // licensed by the VM-aware overload below — this VM-blind form cannot
-    // prove the spawning VM is the m_gilOff winner (U0c), and a LOSER VM's
-    // spawn must be REFUSED (U0b: the host call throws RangeError), never
-    // allowed to run GIL'd phase-1 semantics with no per-thread GCClient.
-    // AB-11 landed: the spawn host call (ThreadObject.cpp constructThread)
-    // now uses the VM-aware overload, so under gilOffProcess this form has
-    // no callers — the null return remains as a fail-safe backstop against
-    // any FUTURE VM-blind call site (over-refusal: a RangeError, not silent
-    // wrong semantics or the lite->clientHeap==null fail-stop a
-    // wired-but-clientless spawned entry would hit). Flag-off (every
-    // shipping configuration): isGILOffProcess() is false and this is
-    // byte-identical to the landed behavior.
-    if (VM::isGILOffProcess()) [[unlikely]]
-        return nullptr;
-    return allocateSpawnedThreadStateInternal();
 }
 
 RefPtr<ThreadState> ThreadManager::allocateSpawnedThreadState(VM& vm)
@@ -400,9 +331,47 @@ RefPtr<ThreadState> ThreadManager::allocateSpawnedThreadState(VM& vm)
     // A loser VM's spawn returns null and the host call throws RangeError.
     if (VM::isGILOffProcess() && !vm.gilOff()) [[unlikely]]
         return nullptr;
-    RefPtr<ThreadState> state = allocateSpawnedThreadStateInternal();
+    RefPtr<ThreadState> state;
+    {
+        Locker locker { m_lock };
+        // UNGIL §D.1 phase 3 (U-T12): a Restamped snapshot is released HERE
+        // — post-resume, on a mutator, under m_lock — strictly before the
+        // exhaustion check below, so the SD9 RangeError gate lifts at
+        // exactly the first allocation after the in-stop restamp+fire
+        // (ANNEX D1: "m_freeTIDs released POST-RESUME under TM::m_lock
+        // BEFORE the gate lifts"). GIL-on/flag-off: state is always Idle,
+        // the call no-ops.
+        if (VM::isGILOffProcess()) [[unlikely]]
+            completeRebiasIfPendingLocked();
+        if (m_threads.size() >= Options::maxJSThreads())
+            return nullptr;
+        // UNGIL U-T6 split: spawned TIDs stop at carrierTIDBase — the upper
+        // half is the A36 carrier range (see ThreadManager.h).
+        std::optional<uint16_t> tid;
+        if (!m_freeTIDs.isEmpty())
+            tid = m_freeTIDs.takeFirst();
+        else if (m_nextTID < carrierTIDBase)
+            tid = m_nextTID++;
+        else if (VM::isGILOffProcess()) [[unlikely]] {
+            // SD9 exhaustion window: the caller throws RangeError. U-T12:
+            // force the trigger armed so the seal below captures any
+            // retired TIDs and the next full shared collection rebiases,
+            // closing the window (GIL-on keeps Dev 10: spawn fails forever).
+            m_rebiasArmed.store(true, std::memory_order_relaxed);
+        }
+        if (tid) {
+            state = ThreadState::create(*tid, true);
+            m_threads.add(*tid, Ref { *state });
+        }
+        // UNGIL §D.1 trigger (U-T12): arm at >=75% consumption; seal eagerly
+        // if dead TIDs are already waiting (spawn-storm shape: arm + seal
+        // happen on the allocating mutator, pre-stop, under m_lock — the D1
+        // phase-1 pass).
+        if (VM::isGILOffProcess()) [[unlikely]]
+            maybeArmAndSealRebiasLocked();
+    }
     // UNGIL §D.1 SD9 liveness (U-T12): an exhausted winner-VM spawn left a
-    // snapshot Sealed (the internal form armed + sealed under m_lock). The
+    // snapshot Sealed (armed + sealed under m_lock above). The
     // rebias only RUNS inside the next full shared collection — actually
     // request one from this mutator (a host call holding heap access; the
     // shouldDoFullCollection probe makes the granted cycle Full regardless
@@ -664,18 +633,31 @@ void tearDownSpawnedThreadForExit(VM& vm, VMLite& lite)
     // ThreadManager::unregisterThread + the E2A close already ran; caller
     // frees the lite AFTER this returns — the M12 default-queue removal in
     // that free is covered by the EXIT1.9 residual-tail rule, not by the
-    // fence). Exit is UN-GATED: nothing below polls a stop bit or parks.
+    // fence). Only step (1), with the lite still Live, can park (F8); from
+    // the TEARDOWN mark on, exit is UN-GATED: nothing polls a stop bit or
+    // parks.
     RELEASE_ASSERT(vm.gilOff());
     RELEASE_ASSERT(lite.vm == &vm);
     GCClient::Heap* client = lite.clientHeap;
     RELEASE_ASSERT(client);
 
-    // (1) Access release (seq_cst RHA, F8) — ordered BEFORE the TEARDOWN
+    // (1) Relinquish this client's allocators (the MSPL section of
+    // lastChanceToFinalize) while the lite is still Live: only a Live lite is
+    // counted by the §A.3 quiescence predicate, so a thread-granular stop
+    // (haveABadTime's stopAllocating over the shared directories' allocator
+    // lists) waits for our access release instead of running concurrently
+    // with the teardown of the same allocators. Access is required around
+    // the section; a fresh acquisition here is F8-gated and parks on a
+    // pending stop exactly like any other. The client dtor skips its own
+    // bracket once this has run, so it never re-acquires on the Teardown lite.
+    // Then the access release (seq_cst RHA, F8) — ordered BEFORE the TEARDOWN
     // mark so a conductor that samples the mark (or misses the lite) has
     // this thread's NoAccess release ordered before its sample (EXIT1.4(a)
     // soundness).
-    if (client->hasHeapAccess())
-        client->releaseHeapAccess();
+    if (!client->hasHeapAccess())
+        client->acquireHeapAccess();
+    client->lastChanceToFinalize();
+    client->releaseHeapAccess();
     RaceAmplifier::perturb(); // EXIT1.8 exit-storm stall point: post-release.
 
     // (2) TEARDOWN mark under the registry lock (LOGICAL removal: conductors
@@ -692,12 +674,10 @@ void tearDownSpawnedThreadForExit(VM& vm, VMLite& lite)
     RaceAmplifier::perturb(); // EXIT1.8 stall point: post-mark, pre-DCT.
 
     // TLS uninstall BEFORE the destroy step (I20: no thread's TLS may
-    // dangle into a destroyed lite; also keeps the EXIT1.4(a)
-    // "TEARDOWN lite never re-acquires" debug assert in
-    // GCClient::Heap::acquireHeapAccess keyed on a CURRENT lite from firing
-    // on ~Heap's own sanctioned teardown access bracket below — that
-    // bracket is the landed review-round-1 T5 order, not a JS re-entry).
-    // The tag clears through the setCurrent hook.
+    // dangle into a destroyed lite). Nothing below re-acquires heap access:
+    // a TEARDOWN lite never does (EXIT1.4(a), asserted in
+    // GCClient::Heap::acquireHeapAccess). The tag clears through the
+    // setCurrent hook.
     if (VMLite::currentIfExists() == &lite)
         VMLite::setCurrent(nullptr);
 
@@ -708,10 +688,10 @@ void tearDownSpawnedThreadForExit(VM& vm, VMLite& lite)
         client->detachCurrentThread();
     RaceAmplifier::perturb(); // EXIT1.8 stall point: mid-tail, pre-destroy.
 
-    // (4) Destroy the GCClient::Heap (the live-path dtor: access bracket +
-    // lastChanceToFinalize under MSPL + clientSet().remove against the
-    // still-alive server — the EXIT1.9 fence is what keeps the server alive
-    // through this). lite.clientHeap is left DANGLING, not nulled
+    // (4) Destroy the GCClient::Heap (the dtor skips its access bracket and
+    // lastChanceToFinalize — step (1) ran them — and does clientSet().remove
+    // against the still-alive server; the EXIT1.9 fence is what keeps the
+    // server alive through this). lite.clientHeap is left DANGLING, not nulled
     // (EXIT1.4(b): never nulled while registered; EXIT1.4(a): samplers never
     // dereference a TEARDOWN lite's client).
     delete client;
@@ -743,61 +723,6 @@ void openThreadInbox(ThreadState& state)
     state.inboxOpen = true;
 }
 
-void addThreadWaitDeadline(ThreadState& state, MonotonicTime deadline, Function<bool()>&& tryDequeue, Function<void()>&& settleTimedOut)
-{
-    // §C.3/§E.7.5 (r12 F3): finite-timeout PROPERTY waitAsync deadlines park
-    // on the spawned registrant TS; the E2A loop expires them locally (SD16
-    // — a registrant that never reaches its drain loop never times out; the
-    // §E.5 close harvest is the other expiry edge).
-    RELEASE_ASSERT(state.isSpawned);
-    Locker locker { state.inboxLock };
-    RELEASE_ASSERT(state.inboxOpen); // registration sites gate on spawned+open (U25 shape).
-    state.waitDeadlines.append(ThreadWaitDeadline { deadline, WTF::move(tryDequeue), WTF::move(settleTimedOut) });
-    // An idle E2A wait recomputes its sleep bound on wake.
-    state.runLoopCondition.notifyOne();
-}
-
-// §E.2 EXPIRE step (r12; the landed 5.6 timeout, inline): repeatedly take the
-// earliest due deadline under inboxLock, DROP inboxLock, dequeue under the
-// waiter's listLock inside tryDequeue (already-dequeued => skip — the
-// in-flight settle wins), then §E.4 settle "timed-out" (rule-1 decrement
-// applies inside the settle routing). Rank-3 locks are NEVER held together
-// (§LK): inboxLock is dropped before tryDequeue takes the list lock.
-static void expireDueThreadWaitDeadlines(ThreadState& state)
-{
-    while (true) {
-        std::optional<ThreadWaitDeadline> due;
-        {
-            Locker locker { state.inboxLock };
-            MonotonicTime now = MonotonicTime::now();
-            size_t dueIndex = notFound;
-            for (size_t i = 0; i < state.waitDeadlines.size(); ++i) {
-                if (state.waitDeadlines[i].deadline > now)
-                    continue;
-                if (dueIndex == notFound || state.waitDeadlines[i].deadline < state.waitDeadlines[dueIndex].deadline)
-                    dueIndex = i;
-            }
-            if (dueIndex == notFound)
-                break;
-            due.emplace(WTF::move(state.waitDeadlines[dueIndex]));
-            state.waitDeadlines.removeAt(dueIndex);
-        }
-        if (due->tryDequeue())
-            due->settleTimedOut();
-    }
-}
-
-// The earliest pending deadline, or infinity. Requires inboxLock.
-static MonotonicTime earliestThreadWaitDeadlineLocked(ThreadState& state) WTF_REQUIRES_LOCK(state.inboxLock)
-{
-    MonotonicTime earliest = MonotonicTime::infinity();
-    for (auto& entry : state.waitDeadlines) {
-        if (entry.deadline < earliest)
-            earliest = entry.deadline;
-    }
-    return earliest;
-}
-
 // The §E.5/E2A close block + the F5 completion protocol + the EXIT1.3
 // teardown handoff. `terminated` selects the TERM1.3 Failed publication.
 static void closeThreadInboxAndComplete(VM& vm, VMLite& lite, ThreadState& state, ThreadState::Phase phase, bool terminated)
@@ -810,28 +735,15 @@ static void closeThreadInboxAndComplete(VM& vm, VMLite& lite, ThreadState& state
     if (client->hasHeapAccess())
         client->releaseHeapAccess();
     Deque<ThreadTask> residue;
-    Vector<ThreadWaitDeadline> deadlines;
     {
         Locker locker { state.inboxLock };
         state.inboxOpen = false; // keepalive DEAD from here (E.3 rule 3).
         residue = std::exchange(state.taskQueue, { });
-        deadlines = std::exchange(state.waitDeadlines, { }); // r16 F5
     }
     // Post-drop §A.3.2b poll + re-acquisition: acquireHeapAccess is the
     // gated form (parks across any pending stop).
     if (!client->hasHeapAccess())
         client->acquireHeapAccess();
-
-    // Deadline harvest (r16 F5; SD8 ext: finite waitAsync never hangs —
-    // early "timed-out" at owner close/termination is the declared SD8
-    // EXTENSION). Each entry: dequeue under its listLock (already-dequeued
-    // => skip, the in-flight settle wins), drop the listLock, §E.4 settle
-    // "timed-out" — which takes the MAIN fallback since the inbox is closed;
-    // the rule-1 decrement skip is the existing exactly-once story.
-    for (auto& entry : deadlines) {
-        if (entry.tryDequeue())
-            entry.settleTimedOut();
-    }
 
     // Residue: route to main (E.4 dead rule) — the tickets are already
     // settled (CAS won at enqueue); their tasks run at the next carrier
@@ -863,6 +775,13 @@ static void closeThreadInboxAndComplete(VM& vm, VMLite& lite, ThreadState& state
             if (threadCell.isObject()) {
                 JSGlobalObject* globalObject = asObject(threadCell)->globalObject();
                 auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                // The loop's last task or microtask drain may have left the
+                // sticky termination exception pending in this lite's word
+                // (clearExceptionExceptTermination keeps it). It is not a
+                // createError failure: clear it first. This thread runs no
+                // more JS and the word dies with the lite.
+                ASSERT(!scope.exception() || vm.isTerminationException(scope.exception()));
+                scope.clearException();
                 terminationResult = createError(globalObject, "Thread terminated"_s);
                 if (scope.exception()) [[unlikely]] {
                     scope.clearExceptionExceptTermination();
@@ -955,14 +874,9 @@ void runSpawnedThreadDrainLoopAndClose(VM& vm, VMLite& lite, ThreadState& state,
             else if (!state.keepaliveCount)
                 doClose = true; // E2A exit predicate: queues empty + keepalive == 0 (U9: read under the same lock as the decrement+append).
             else {
-                // Bounded wait: min(10ms quantum, earliest waitDeadline).
-                // Wakeups: task append, stop/termination (quantum-bounded
-                // poll), deadline registration.
-                MonotonicTime bound = MonotonicTime::now() + drainQuantum;
-                MonotonicTime earliestDeadline = earliestThreadWaitDeadlineLocked(state);
-                if (earliestDeadline < bound)
-                    bound = earliestDeadline;
-                state.runLoopCondition.waitUntil(state.inboxLock, bound);
+                // Bounded wait (10ms quantum). Wakeups: task append,
+                // stop/termination (quantum-bounded poll).
+                state.runLoopCondition.waitUntil(state.inboxLock, MonotonicTime::now() + drainQuantum);
             }
         }
 
@@ -973,9 +887,6 @@ void runSpawnedThreadDrainLoopAndClose(VM& vm, VMLite& lite, ThreadState& state,
 
         if (doClose)
             break;
-
-        // EXPIRE deadlines (r12): inline, on the registrant (SD16).
-        expireDueThreadWaitDeadlines(state);
 
         if (task) {
             // Run the ThreadTask (arbitrary JS) under this thread's §F
@@ -1119,16 +1030,6 @@ void ThreadManager::pruneRestrictedObject(JSCell* cell, void* expectedEntry)
     m_restrictedCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
-// NOTE for reviewers: in THIS tree the only caller is threadFuncRestrict's
-// affinity step — that is by design, not an omission. The 14 generic-path
-// hook sites (JSObject.h / JSObjectInlines.h / JSObject.cpp) are
-// INTEGRATOR-applied after the obj-model merge, per the frozen SPEC-api I14
-// ("INT gate via 9.2-6; //@ skipped until then") and the exact ready-to-apply
-// diff in docs/threads/INTEGRATE-api.md 9.2-6. Those files belong to the
-// objectmodel workstream's merge surface, so the api workstream must not
-// land the hooks itself; JSTests/threads/api/thread-restrict.js stays
-// //@ skip'ped until the integrator applies the hook and deletes the skip
-// line (the 9.2-6 apply checklist).
 bool threadRestrictCheck(JSGlobalObject* globalObject, JSObject* object)
 {
     auto& manager = ThreadManager::singleton();

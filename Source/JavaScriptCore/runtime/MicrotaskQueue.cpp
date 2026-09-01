@@ -157,11 +157,12 @@ void MicrotaskQueue::visitAggregateImpl(Visitor& visitor)
 {
     m_queue.visitAggregate(visitor);
     m_toKeep.visitAggregate(visitor);
-    // UNGIL §E.1/§E.4: tasks parked in the foreign inbox hold JS values and
-    // must be marked like queued tasks. Visiting runs with mutators
-    // suspended (same M11 scope note as the deques above), but we take the
-    // leaf lock anyway — it is uncontended at that point and keeps every
-    // inbox access lock-disciplined. Flag-off: branch not taken.
+    // Tasks parked in the foreign inbox hold JS values and are marked like
+    // queued tasks. Unlike the deques above, the inbox is read under its
+    // lock: a foreign enqueuer need not be a stopped mutator. The marker
+    // reaches here under VMLiteRegistry::lock (VM::visitAggregateImpl), so
+    // that lock ranks above m_foreignTasksLock, which stays a leaf.
+    // Flag-off: branch not taken.
     if (m_acceptsForeignTasks) [[unlikely]] {
         Locker locker { m_foreignTasksLock };
         for (auto& task : m_foreignTasks) {
@@ -215,6 +216,18 @@ void MicrotaskQueue::clearForeignTasksSlow()
     Locker locker { m_foreignTasksLock };
     m_foreignTasks.clear();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void MicrotaskQueue::clearForeignTasksForGlobalObjectSlow(JSGlobalObject* targetGlobalObject)
+{
+    ASSERT(m_acceptsForeignTasks);
+    ASSERT(targetGlobalObject);
+    Locker locker { m_foreignTasksLock };
+    m_foreignTasks.removeAllMatching([&](const QueuedTask& task) {
+        return task.globalObject() == targetGlobalObject;
+    });
+}
+#endif
 
 void MicrotaskQueue::enqueueSlow(QueuedTask&& task)
 {

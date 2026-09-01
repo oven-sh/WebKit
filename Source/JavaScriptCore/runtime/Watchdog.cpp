@@ -178,26 +178,14 @@ bool Watchdog::shouldTerminate(JSGlobalObject* globalObject, CallerState callerS
 
 bool Watchdog::serviceCheckFromReacquiredParkedCarrier(VM& vm)
 {
-    // W1 (annex W): the caller is a main/embedder carrier that was parked
-    // under §J.3, observed the watchdog-check bit at a D9 quantum
-    // (parkLitePollWatchdogCheckRequested, VMTraps.cpp — the GIL-off W1
-    // split of the landed D9 predicate), and has already performed the FULL
-    // exit reacquisition — so the W4 predicate (real JSLock held, not
-    // spawned) holds here exactly as for an entered carrier.
-    //
-    // WIRING (U-T11; updated at AB-17): driven through the reacquire/
-    // service/re-release episode helper
-    // reacquireParkedCarrierAndServiceWatchdogCheck (JSLock.cpp). ALL §J.3
-    // park sites are now re-pointed consumers of this W1 episode: the SD6
-    // per-wait TA sync park (WaiterListManager.cpp, the first consumer,
-    // including the r15 F2 old-node disposition on the no-terminate return),
-    // join (ThreadObject.cpp), cond.wait (ConditionObject.cpp), lock.hold
-    // (LockObject.cpp), and property Atomics.wait (ThreadAtomics.cpp) — the
-    // AB-17 W1/D9 park-site split. The landed GIL-on fold-into-termination
-    // shape no longer runs GIL-off at any park site; the verdict below uses
-    // the parked-carrier mode of shouldTerminate() (wall clock authoritative
-    // — a parked carrier accrues no CPU, so the CPU-budget arm would
-    // livelock; see Watchdog.h CallerState).
+    // W1 (annex W): the caller is a main/embedder carrier that was parked,
+    // observed the watchdog-check bit at a park quantum
+    // (parkLitePollWatchdogCheckRequested, VMTraps.cpp), and has already
+    // performed the FULL exit reacquisition — so the W4 predicate (real
+    // JSLock held, not spawned) holds here exactly as for an entered carrier.
+    // Every park site (WaiterListManager, ThreadObject join, ConditionObject
+    // wait, LockObject hold, ThreadAtomics property wait) reaches this
+    // through reacquireParkedCarrierAndServiceWatchdogCheck (JSLock.cpp).
     ASSERT(vm.gilOff());
     ASSERT(!ThreadManager::isJSThreadCurrent()); // SD14: spawned threads never service the watchdog.
     ASSERT(vm.apiLock().currentThreadIsHoldingLock());
@@ -303,8 +291,14 @@ void Watchdog::exitedVM()
     }
 
     Locker locker { m_lock };
+    // A watchdog created from inside a live top-level entry (setTimeLimit from
+    // a host function) sees that entry's exit without a matching enteredVM().
+    // The depth must settle at zero rather than wrap: a wrapped depth keeps
+    // isActive() true forever and routes every timer firing to the carrier branch.
     ASSERT(m_carrierEnteredDepth);
-    if (!--m_carrierEnteredDepth) {
+    if (m_carrierEnteredDepth)
+        --m_carrierEnteredDepth;
+    if (!m_carrierEnteredDepth) {
         // W2 (exit deferral): the CPU budget is carrier-scoped — clear it.
         // PRESERVE m_deadline and the pending dispatched timer: while
         // spawned execution may continue, the watchdog stays armed for

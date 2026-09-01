@@ -354,10 +354,14 @@ private:
     // Foreign-inbox helpers (UNGIL §E.1/§E.4; see enqueueFromForeignThread).
     // takeForeignTasks: owner-only — splice the inbox into m_queue under the
     // lock; returns whether anything was spliced. hasForeignTasksSlow /
-    // clearForeignTasksSlow: locked probes used by isEmpty()/clear().
+    // clearForeignTasksSlow / clearForeignTasksForGlobalObjectSlow: locked
+    // probes used by isEmpty()/clear()/clearForGlobalObject().
     bool takeForeignTasks();
     JS_EXPORT_PRIVATE bool hasForeignTasksSlow() const;
     JS_EXPORT_PRIVATE void clearForeignTasksSlow();
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void clearForeignTasksForGlobalObjectSlow(JSGlobalObject*);
+#endif
 
     MarkedMicrotaskDeque m_queue;
     MarkedMicrotaskDeque m_toKeep;
@@ -368,7 +372,10 @@ private:
     // never-taken predicted test, leaving the landed single-Deque shape
     // byte-equivalent in behavior. The inbox is the only MicrotaskQueue
     // storage a non-owner thread may touch (under m_foreignTasksLock —
-    // a leaf: nothing is acquired under it).
+    // a leaf: nothing is acquired under it). Lock rank: the GC marker takes
+    // m_foreignTasksLock while holding VMLiteRegistry::lock
+    // (VM::visitAggregateImpl -> visitAggregate), so VMLiteRegistry::lock
+    // ranks above it; never take the registry lock under this one.
     bool m_acceptsForeignTasks { false };
     mutable Lock m_foreignTasksLock;
     Deque<QueuedTask> m_foreignTasks WTF_GUARDED_BY_LOCK(m_foreignTasksLock);

@@ -1,7 +1,8 @@
 //@ requireOptions("--useJSThreads=1", "--maxJSThreads=4")
-// API-I17: spawned thread ids are in [1, 0x7ffe] and unique; exceeding
-// maxJSThreads live Threads => RangeError at spawn; ids are reissued only by
-// the Dev-10 rebias (not yet landed), so fresh spawns get fresh ids.
+// API-I17: spawned thread ids are in [1, 0x3fff] (the spawned half of the
+// TID space; carrier lites take the upper half) and unique; exceeding
+// maxJSThreads live Threads => RangeError at spawn; GIL-on, retired ids are
+// never reissued, so fresh spawns get fresh ids.
 //
 // --maxJSThreads=4 makes the live-cap half testable cheaply. The 4 spawned
 // fns are gated on a Lock held by main across the 5th-spawn attempt, so all
@@ -32,7 +33,7 @@ gate.hold(() => {
     threads = spawnN(4, i => { gate.hold(() => {}); return i; });
     for (const t of threads) {
         shouldBeTrue(Number.isInteger(t.id), "id must be an integer");
-        shouldBeTrue(t.id >= 1 && t.id <= 0x7ffe, "spawned id in [1, 0x7ffe], got " + t.id);
+        shouldBeTrue(t.id >= 1 && t.id <= 0x3fff, "spawned id in [1, 0x3fff], got " + t.id);
         shouldBeFalse(ids.has(t.id), "ids must be unique");
         ids.add(t.id);
         shouldBe(t.id, t.id, "id is stable");
@@ -53,7 +54,7 @@ const t2 = new Thread(() => "again");
 // ...and pre-rebias (Dev 10) the new id is FRESH — never one of the retired
 // ids, and still in range.
 shouldBeFalse(ids.has(t2.id), "TIDs must not be reused before the Dev-10 rebias");
-shouldBeTrue(t2.id >= 1 && t2.id <= 0x7ffe);
+shouldBeTrue(t2.id >= 1 && t2.id <= 0x3fff);
 shouldBe(t2.join(), "again");
 
 // Repeated spawn/join cycles keep allocating monotonically fresh unique ids.
