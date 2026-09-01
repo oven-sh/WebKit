@@ -32,6 +32,7 @@
 #include "ProfilerDatabase.h"
 #include "SideDataRepository.h"
 #include "VM.h"
+#include "VMLite.h"
 #include "Watchdog.h"
 
 #if ENABLE(C_LOOP)
@@ -55,19 +56,45 @@ inline ActiveScratchBufferScope::~ActiveScratchBufferScope()
         m_scratchBuffer->setActiveLength(0);
 }
 
+// UNGIL §A.2.2 (AB-17 item 3, C++-reader leg only): GIL-off, the soft stack
+// limit is per-thread state on the current lite; the VM-level word serves
+// only no-lite threads. This helper reads the PLAIN per-lite soft limit
+// (StackManager::m_softStackLimit, dual-published by VM::updateStackLimits
+// from the entering thread's own StackBounds) — deliberately NOT the
+// trap-aware word: it changes which thread's OVERFLOW limit a C++ reader
+// compares against, never trap observability. Trap delivery is the per-lite
+// trap-aware word's job (item-3c stop fan + item-3b servicing dispatch, both
+// LANDED in the AB-17 change, as is the LLInt/JIT generated-code reroute —
+// those sites now read the per-lite word GIL-off; see the ACTIVATION
+// CHECKLIST — STATUS block in VMTraps.h).
+ALWAYS_INLINE void* softStackLimitForCurrentThread(const VM& vm)
+{
+    if (vm.gilOff()) [[unlikely]] {
+        VMLite* lite = VMLite::currentIfExists();
+        if (lite && lite->gilOff && lite->vm == &vm) {
+            // Null until this thread's first VMEntryScope publish; fall back
+            // to the VM word then (matches pre-reroute behavior — a null
+            // per-lite limit must not disable overflow detection).
+            if (void* liteLimit = lite->threadContext.traps().softStackLimit())
+                return liteLimit;
+        }
+    }
+    return vm.softStackLimit();
+}
+
 bool VM::ensureJSStackCapacityFor(Register* newTopOfStack)
 {
 #if !ENABLE(C_LOOP)
-    return newTopOfStack >= softStackLimit();
+    return newTopOfStack >= softStackLimitForCurrentThread(*this);
 #else
     return cloopStack().ensureCapacityFor(newTopOfStack);
 #endif
-    
+
 }
 
 bool VM::isSafeToRecurseSoft() const
 {
-    bool safe = isSafeToRecurse(softStackLimit());
+    bool safe = isSafeToRecurse(softStackLimitForCurrentThread(*this));
 #if ENABLE(C_LOOP)
     safe = safe && cloopStack().isSafeToRecurse();
 #endif
@@ -85,12 +112,19 @@ void VM::logEvent(CodeBlock* codeBlock, const char* summary, const Func& func)
 
 inline CallFrame* VM::topJSCallFrame() const
 {
-    CallFrame* frame = topCallFrame;
+    // UNGIL §A.1.3 mode split: GIL-off the live topCallFrame/topEntryFrame
+    // are the CURRENT lite's Group-3 words; the raw VM-block members are
+    // inert spare storage (stale or another thread's frame — walking them
+    // crashes in isZombieFrame, observed via VM::throwException on the
+    // smoke.js recursive-hold throw). GIL-on/flag-off group3Primitives()
+    // aliases the VM block, byte-identical behavior.
+    const VMLitePrimitives& primitives = group3Primitives();
+    CallFrame* frame = primitives.topCallFrame;
     if (!frame) [[unlikely]]
         return frame;
     if (!frame->isNativeCalleeFrame() && !frame->isZombieFrame()) [[likely]]
         return frame;
-    EntryFrame* entryFrame = topEntryFrame;
+    EntryFrame* entryFrame = primitives.topEntryFrame;
     do {
         frame = frame->callerFrame(entryFrame);
         ASSERT(!frame || !frame->isZombieFrame());

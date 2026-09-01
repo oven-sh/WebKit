@@ -437,7 +437,18 @@ public:
     template<typename T>
     static Dependency loadAndFence(const T* pointer, T& output)
     {
-#if CPU(ARM64) || CPU(ARM)
+#if TSAN_ENABLED
+        // SPEC-objectmodel §2/§3 + TSAN-TRIAGE §20.3.3: this is the consume-style
+        // dependency-ordered load that fencedButterfly() / aboutToMark() rely on.
+        // Writers are already atomic (AuxiliaryBarrier relaxed store, taggedButterflyWord
+        // CAS, MarkedBlock::Header ctor TSAN_ANNOTATE_HAPPENS_BEFORE). TSAN cannot model
+        // the dependency-ordering of the plain load below, so under TSAN make the load
+        // itself atomic-acquire. Production codegen (the branches below) is unchanged.
+        T value = std::bit_cast<const Atomic<T>*>(pointer)->load(std::memory_order_acquire);
+        Dependency dependency = Dependency::fence(value);
+        output = value;
+        return dependency;
+#elif CPU(ARM64) || CPU(ARM)
         T value = *opaque(pointer);
         Dependency dependency = Dependency::fence(value);
         output = opaque(value);

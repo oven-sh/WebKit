@@ -29,14 +29,41 @@
 #include <wtf/Atomics.h>
 #include <wtf/DebugHeap.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
 #include <wtf/PrintStream.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/SentinelLinkedList.h>
+#include <wtf/ThreadSanitizerSupport.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace JSC {
+
+// AB18-G: serializes WatchpointSet MEMBERSHIP — every SentinelLinkedList
+// link/unlink (WatchpointSet::add / WatchpointSet::take / ~WatchpointSet's
+// drain / Watchpoint::~Watchpoint's remove() / the unlink step of
+// fireAllWatchpoints / direct node removes such as
+// AdaptiveInferredPropertyValueWatchpointBase::fire) plus the
+// InlineWatchpointSet thin->fat inflation. Taken ONLY under
+// Options::useJSThreads() (flag-off there is one mutator and this lock is
+// never acquired, so the flag-off bench profile is unchanged).
+//
+// Why a single global lock: installs run on N-mutator IC-miss/compile slow
+// paths holding only per-CodeBlock locks (e.g. stub->watchpointSet().add for
+// SharedJITStubSet-shared stubs, Structure::addTransitionWatchpoint on the
+// shared object model), while removals run from retire paths
+// (InlineCacheHandler::disarmClearingWatchpointOnRetire via
+// RetiredJITArtifacts::retireHandlerChain), lazy-sweep destruction
+// (~CodeBlock -> aboutToDie -> m_watchpoint.reset()), and ~Watchpoint
+// generally — and ~Watchpoint cannot name its set (a bare node unlink), so a
+// per-set lock is unreachable from the destructor. All of these are slow
+// paths; a global leaf lock is correct and cheap. LOCK RANK: strict leaf —
+// no other lock is ever acquired while holding it, and watchpoint FIRING
+// (which can run arbitrary code) never runs under it: Class-A fires are
+// stop-conducted (no concurrent mutators) and fireAllWatchpoints only takes
+// it for the per-node unlink, releasing it before fire().
+JS_EXPORT_PRIVATE extern Lock g_watchpointMembershipLock;
 
 namespace DFG {
 struct ArrayBufferViewWatchpointAdaptor;
@@ -52,6 +79,15 @@ public:
     // This can't be pure virtual as it breaks our Dumpable concept.
     // FIXME: Make this virtual after we stop suppporting the Montery Clang.
     virtual void dump(PrintStream&) const { }
+
+    // SPEC-jit section 5.6 classification override for rare sites: a fire whose
+    // detail returns true here is treated as Class B (data-only) for THIS fire
+    // even when the set itself is Class A, i.e. it skips the stop-the-world
+    // protocol under Options::useJSThreads(). Only override this when the fire
+    // provably cannot invalidate any installed machine code (no Watchpoint on
+    // the set jettisons/patches/unlinks code, directly or transitively).
+    // Default false: every fire is Class A unless proven otherwise (I10).
+    virtual bool fireIsDataOnly() const { return false; }
 };
 
 class JS_EXPORT_PRIVATE StringFireDetail final : public FireDetail {
@@ -156,6 +192,29 @@ enum WatchpointState : uint8_t {
     IsInvalidated = 2
 };
 
+// SPEC-jit section 5.6 (I10): every watchpoint set is classified at
+// construction.
+//
+// - InvalidatesCode ("Class A", the DEFAULT): firing the set may invalidate
+//   installed machine code (jettison CodeBlocks, reset ICs, unlink calls).
+//   Under Options::useJSThreads(), Class-A fires ALWAYS run with every mutator
+//   stopped: WatchpointSet::fireAllSlow either fires inline when the world is
+//   already stopped, or requests a stop via JSThreadsSafepoint::
+//   stopTheWorldAndRun and fires inside the closure. There is deliberately NO
+//   ">1 mutator" fast gate (G7: VM construction does not synchronize with an
+//   in-flight inline fire). Non-owned/runtime sets get this default without
+//   any call-site edits (P2).
+//
+// - DataOnly ("Class B", explicit opt-in at construction): firing only updates
+//   plain data that no JIT'd code embeds; the fire runs exactly as today, with
+//   no stop. Opt a set into Class B only when every Watchpoint that can ever
+//   be added to it is provably code-invalidation-free. (A per-FIRE override
+//   for rare sites exists on FireDetail::fireIsDataOnly().)
+enum class WatchpointSetClassification : uint8_t {
+    InvalidatesCode, // Class A
+    DataOnly, // Class B
+};
+
 class InlineWatchpointSet;
 class DeferredWatchpointFire;
 class VM;
@@ -171,11 +230,11 @@ public:
     // this might be hard to get right, but still, it might be awesome.
     JS_EXPORT_PRIVATE ~WatchpointSet(); // Note that this will not fire any of the watchpoints; if you need to know when a WatchpointSet dies then you need a separate mechanism for this.
 
-    static Ref<WatchpointSet> create(WatchpointState state)
+    static Ref<WatchpointSet> create(WatchpointState state, WatchpointSetClassification classification = WatchpointSetClassification::InvalidatesCode)
     {
-        return adoptRef(*new WatchpointSet(state));
+        return adoptRef(*new WatchpointSet(state, classification));
     }
-    
+
     // It is always safe to call this from the main thread.
     // It is also safe to call this from another thread. It may return an old
     // state. Generally speaking, a safe pattern to use in a concurrent compiler
@@ -186,8 +245,20 @@ public:
     // }
     WatchpointState state() const
     {
-        WatchpointState result = static_cast<WatchpointState>(m_state);
-        return result;
+        // TSAN wave 2 (triage 3.6): racy-by-design read (JIT spec section 5.6); the
+        // relaxed atomic load makes the C++ access defined without adding ordering
+        // (states are monotonic, OM spec section 5; stale values are tolerated and
+        // re-checked under the Class-A stop, I11).
+        // TSAN r11 (reports 14/15/26/27, ctor-vs-compiler-probe): pairs with
+        // the HAPPENS_BEFORE at the end of the WatchpointSet constructor —
+        // a freshly created set is consume-published (release CAS / fence +
+        // relaxed pointer store) and probed lock-free by compiler threads;
+        // TSAN cannot model the consume edge, so it pairs the probe against
+        // the creator's malloc/ctor writes. The pair is trivially sound: the
+        // constructor of any set a reader can reach ran before the reader
+        // obtained the pointer. No-op outside TSAN.
+        TSAN_ANNOTATE_HAPPENS_AFTER(this);
+        return m_state.loadRelaxed();
     }
     
     // It is safe to call this from another thread.  It may return true
@@ -215,18 +286,18 @@ public:
     // set watchpoints that we believe will actually be fired.
     void startWatching()
     {
-        ASSERT(m_state != IsInvalidated);
-        if (m_state == IsWatched)
+        ASSERT(m_state.loadRelaxed() != IsInvalidated);
+        if (m_state.loadRelaxed() == IsWatched)
             return;
         WTF::storeStoreFence();
-        m_state = IsWatched;
+        m_state.storeRelaxed(IsWatched);
         WTF::storeStoreFence();
     }
 
     template <typename T>
     void fireAll(VM& vm, T& fireDetails)
     {
-        if (m_state != IsWatched) [[likely]]
+        if (m_state.loadRelaxed() != IsWatched) [[likely]]
             return;
         fireAllSlow(vm, fireDetails);
     }
@@ -248,7 +319,7 @@ public:
     {
         if (state() == IsWatched)
             fireAll(vm, detail);
-        m_state = IsInvalidated;
+        m_state.storeRelaxed(IsInvalidated);
     }
     
     void invalidate(VM& vm, const char* reason)
@@ -258,32 +329,88 @@ public:
     
     bool isBeingWatched() const
     {
-        return m_setIsNotEmpty;
+        // Racy-by-design read from compiler threads (same family as state();
+        // triage 3.6): relaxed atomic, no ordering implied.
+        return m_setIsNotEmpty.loadRelaxed();
     }
+
+    // SPEC-jit section 5.6 / I10: classification is fixed at construction.
+    WatchpointSetClassification classification() const
+    {
+        return m_invalidatesCode.loadRelaxed() ? WatchpointSetClassification::InvalidatesCode : WatchpointSetClassification::DataOnly;
+    }
+    bool invalidatesCompiledCode() const { return m_invalidatesCode.loadRelaxed(); }
 
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(WatchpointSet, m_state); }
 
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, const FireDetail&); // Call only if you've checked isWatched.
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, DeferredWatchpointFire* deferredWatchpoints); // Ditto.
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, const char* reason); // Ditto.
-    
+
 protected:
-    JS_EXPORT_PRIVATE WatchpointSet(WatchpointState);
+    JS_EXPORT_PRIVATE WatchpointSet(WatchpointState, WatchpointSetClassification = WatchpointSetClassification::InvalidatesCode);
 
 private:
     void fireAllWatchpoints(VM&, const FireDetail&);
     void NODELETE take(WatchpointSet* other);
-    
+
+    // Today's fire body (invalidate state + fire every Watchpoint + F4 fence
+    // pair), with no stop-the-world protocol. Flag-off this IS fireAllSlow;
+    // flag-on it runs only world-stopped (Class A) or for Class-B fires.
+    void fireAllNow(VM&, const FireDetail&);
+
+    // SPEC-jit section 5.6 Class-A protocol: (1) world already stopped =>
+    // fire inline; (2) else enqueue on the coalescing queue and request a stop
+    // via JSThreadsSafepoint::stopTheWorldAndRun; (3) the draining closure
+    // re-checks state() == IsWatched (I11); (4) runs the existing fire body;
+    // (5) jettisons triggered by watchpoints run in the SAME closure (they hit
+    // CodeBlock::jettison's R1.h already-stopped path); (6) on return the fire
+    // is COMPLETE (synchronous completion; RELEASE_ASSERTed).
+    void fireAllUnderClassAStop(VM&, const FireDetail&);
+
+    // Coalescing (REQUIRED, section 5.6): drains EVERY queued Class-A fire in
+    // one stop; concurrent losers' stopTheWorldAndRun returns only after their
+    // queued fire ran (either in the winner's stop or their own).
+    static void drainClassAFireQueue();
+
     friend class InlineWatchpointSet;
 
-    int8_t m_state;
-    int8_t m_setIsNotEmpty;
+    // TSAN wave 2 (triage 3.6): m_state and m_setIsNotEmpty are read racily BY
+    // DESIGN from compiler threads and other mutators (JIT spec section 5.6; OM spec
+    // section 5: states monotonic, fires only under the Class-A stop, I13). Relaxed
+    // Atomic makes those accesses defined C++ without changing flag-off codegen
+    // (a relaxed byte load/store compiles to a plain byte load/store); ALL
+    // ordering still comes from the pre-existing explicit fences and the
+    // stop-the-world protocol, exactly as before. The JIT/LLInt load m_state
+    // as a raw byte at offsetOfState(); the static_assert below the class
+    // pins that layout.
+    // TSAN wave 5 (triage 12.6, REOPENED family 9): ALL THREE members are
+    // initialized via relaxed stores in the constructor BODY, not via the
+    // Atomic value constructor — the value constructor is a plain (non-atomic)
+    // store, and a freshly inflateSlow'd fat set is reachable by lock-free
+    // compiler-thread readers as soon as the thin->fat word is published, so
+    // the construction writes themselves must be atomic accesses.
+    // m_invalidatesCode is in the same boat: it is read lock-free from
+    // compiler threads (InlineWatchpointSet::invalidatesCompiledCode ->
+    // fat(data)->invalidatesCompiledCode()), so it gets the same relaxed
+    // Atomic treatment (still one byte; relaxed byte accesses compile to plain
+    // byte accesses, flag-off codegen unchanged). It is immutable after
+    // construction (I10) except for the deferred-fire take() transfer.
+    Atomic<WatchpointState> m_state;
+    Atomic<bool> m_setIsNotEmpty;
+    Atomic<int8_t> m_invalidatesCode; // SPEC-jit section 5.6 classification bit; immutable after construction (I10).
 
     SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>> m_set;
 };
 
-// InlineWatchpointSet is a low-overhead, non-copyable watchpoint set. There is
-// a fairly simple tradeoff between WatchpointSet and InlineWatchpointSet:
+// JIT (branch8 at offsetOfState) and LLInt (bbeq WatchpointSet::m_state[...])
+// load the state as a single raw byte; the Atomic wrapper must not change that.
+static_assert(sizeof(Atomic<WatchpointState>) == 1);
+
+// InlineWatchpointSet is a low-overhead, non-copyable watchpoint set in which
+// it is not possible to quickly query whether it is being watched in a single
+// branch. There is a fairly simple tradeoff between WatchpointSet and
+// InlineWatchpointSet:
 //
 // Do you have to emit JIT code that tests whether the watchpoint set is being
 // watched? Both work, but WatchpointSet needs a single branch while
@@ -305,11 +432,11 @@ class InlineWatchpointSet {
     WTF_MAKE_NONCOPYABLE(InlineWatchpointSet);
     friend class LLIntOffsetsExtractor;
 public:
-    InlineWatchpointSet(WatchpointState state)
-        : m_data(encodeState(state))
+    InlineWatchpointSet(WatchpointState state, WatchpointSetClassification classification = WatchpointSetClassification::InvalidatesCode)
+        : m_data { encodeState(state) | (classification == WatchpointSetClassification::DataOnly ? ClassBFlag : 0) }
     {
     }
-    
+
     ~InlineWatchpointSet()
     {
         if (isThin())
@@ -320,9 +447,9 @@ public:
     // See comment about state() in Watchpoint above.
     WatchpointState state() const
     {
-        uintptr_t data = m_data;
+        uintptr_t data = m_data.loadRelaxed();
         if (isFat(data))
-            return fat(data)->state();
+            return consumeFat(data)->state();
         return decodeState(data);
     }
     
@@ -348,10 +475,19 @@ public:
             protect(fat())->startWatching();
             return;
         }
-        ASSERT(decodeState(m_data) != IsInvalidated);
-        m_data = encodeState(IsWatched);
+        ASSERT(decodeState(m_data.loadRelaxed()) != IsInvalidated);
+        setThinState(IsWatched);
     }
 
+    // SPEC-jit section 5.6 interception note: the fat case delegates to
+    // WatchpointSet::fireAll => fireAllSlow, which carries the Class-A
+    // stop-the-world protocol under Options::useJSThreads(). The thin case
+    // needs no stop: a thin set has NO Watchpoints installed, and installed
+    // machine code can only depend on a set through a Watchpoint (DFG/FTL
+    // DesiredWatchpoints inflate at finalization), so a thin fire cannot
+    // invalidate any code. Compile-time-only consumers use the
+    // isStillValid()/re-check pattern, which the plain invalidating store
+    // (plus fence) already serves, exactly as today.
     template <typename T>
     void fireAll(VM& vm, T fireDetails)
     {
@@ -359,9 +495,9 @@ public:
             protect(fat())->fireAll(vm, fireDetails);
             return;
         }
-        if (decodeState(m_data) == ClearWatchpoint)
+        if (decodeState(m_data.loadRelaxed()) == ClearWatchpoint)
             return;
-        m_data = encodeState(IsInvalidated);
+        setThinState(IsInvalidated);
         WTF::storeStoreFence();
     }
 
@@ -370,7 +506,17 @@ public:
         if (isFat())
             protect(fat())->invalidate(vm, detail);
         else
-            m_data = encodeState(IsInvalidated);
+            setThinState(IsInvalidated);
+    }
+
+    // SPEC-jit section 5.6 / I10. Thin: the construction-time classification
+    // bit; fat: the inflated set's bit (transferred at inflateSlow).
+    bool invalidatesCompiledCode() const
+    {
+        uintptr_t data = m_data.loadRelaxed();
+        if (isFat(data))
+            return consumeFat(data)->invalidatesCompiledCode();
+        return !(data & ClassBFlag);
     }
     
     JS_EXPORT_PRIVATE void fireAll(VM&, const char* reason);
@@ -383,14 +529,14 @@ public:
             protect(fat())->touch(vm, detail);
             return;
         }
-        uintptr_t data = m_data;
+        uintptr_t data = m_data.loadRelaxed();
         if (decodeState(data) == IsInvalidated)
             return;
         WTF::storeStoreFence();
         if (decodeState(data) == ClearWatchpoint)
-            m_data = encodeState(IsWatched);
+            setThinState(IsWatched);
         else
-            m_data = encodeState(IsInvalidated);
+            setThinState(IsInvalidated);
         WTF::storeStoreFence();
     }
     
@@ -433,8 +579,9 @@ public:
     //   the assumptions that the DFG thread used are still valid when the DFG code is installed.
     bool isBeingWatched() const
     {
-        if (isFat())
-            return fat()->isBeingWatched();
+        uintptr_t data = m_data.loadRelaxed();
+        if (isFat(data))
+            return consumeFat(data)->isBeingWatched();
         return false;
     }
 
@@ -470,42 +617,88 @@ public:
 private:
     static constexpr uintptr_t StateMask         = 6;
     static constexpr uintptr_t StateShift        = 1;
-    
+    // SPEC-jit section 5.6 classification bit (thin encoding ONLY: a fat
+    // pointer is >= 8-byte aligned so bits 0-2 are zero, but bit 3 of a real
+    // pointer is arbitrary; never consult ClassBFlag unless isThin()).
+    static constexpr uintptr_t ClassBFlag        = 8;
+
     static bool isThin(uintptr_t data) { return data & IsThinFlag; }
     static bool isFat(uintptr_t data) { return !isThin(data); }
-    
+
+    // Every thin state store preserves the classification bit (I10).
+    // Thin-state stores require the owner's serialization (as before); only
+    // the word access itself is (relaxed) atomic so concurrent lock-free
+    // readers are defined C++ (triage 3.6).
+    void setThinState(WatchpointState state)
+    {
+        ASSERT(isThin());
+        m_data.storeRelaxed(encodeState(state) | (m_data.loadRelaxed() & ClassBFlag));
+    }
+
     static WatchpointState decodeState(uintptr_t data)
     {
         ASSERT(isThin(data));
         return static_cast<WatchpointState>((data & StateMask) >> StateShift);
     }
     
-    bool isThin() const { return isThin(m_data); }
-    bool isFat() const { return isFat(m_data); };
+    bool isThin() const { return isThin(m_data.loadRelaxed()); }
+    bool isFat() const { return isFat(m_data.loadRelaxed()); };
     
     static WatchpointSet* fat(uintptr_t data)
     {
         return std::bit_cast<WatchpointSet*>(data);
     }
-    
+
+    // TSAN wave 5 (triage 12.6, REOPENED family 9): consume-ordered read of
+    // the fat pointer. inflateSlow publishes the fat pointer with a release
+    // CAS, but lock-free readers load m_data RELAXED — without an ordering
+    // edge on the reader side, the WatchpointSet's construction writes are not
+    // ordered before the dereference and a compiler thread can observe a
+    // mid-init set. Dependency::fence(data).consume(...) carries an address
+    // dependency from the m_data load to every load through the returned
+    // pointer (the mythical C++ consume), pairing with the release publish at
+    // zero ordering cost: a compiler fence on TSO, a self-eor on ARM. No
+    // acquire load, so flag-off fast paths keep plain loads.
+    static WatchpointSet* consumeFat(uintptr_t data)
+    {
+        ASSERT(isFat(data));
+        return Dependency::fence(data).consume(fat(data));
+    }
+
     WatchpointSet* fat()
     {
-        ASSERT(isFat());
-        return fat(m_data);
+        uintptr_t data = m_data.loadRelaxed();
+        ASSERT(isFat(data));
+        return consumeFat(data);
     }
-    
+
     const WatchpointSet* fat() const
     {
-        ASSERT(isFat());
-        return fat(m_data);
+        uintptr_t data = m_data.loadRelaxed();
+        ASSERT(isFat(data));
+        return consumeFat(data);
     }
 
     JS_EXPORT_PRIVATE WatchpointSet* inflateSlow();
     JS_EXPORT_PRIVATE void NODELETE freeFat();
-    
-    uintptr_t m_data;
+
+    // TSAN wave 2 (triage 3.6): the thin/fat word is read lock-free from
+    // compiler threads and other mutators while inflateSlow publishes the fat
+    // pointer; relaxed Atomic word, with the inflateSlow publish a release CAS
+    // (the WatchpointSet's contents are release-ordered before the fat pointer
+    // becomes visible). Flag-off codegen is unchanged: relaxed word
+    // loads/stores compile to plain loads/stores.
+    Atomic<uintptr_t> m_data;
 };
 
+// SPEC-jit section 5.6 deferral: the deferred fireAllSlow overload behaves as
+// today (invalidate the source set immediately, transfer its Watchpoints here;
+// callers may hold locks at that point — that is the reason deferral exists).
+// The actual FIRE happens at the holder's scope exit, after every lock has
+// been dropped, via m_watchpointsToFire.fireAll(...) => fireAllSlow, which is
+// where the Class-A stop-the-world protocol runs (lock-free by construction).
+// take() transfers the source set's classification so a deferred Class-B fire
+// stays Class B.
 class DeferredWatchpointFire {
     WTF_MAKE_NONCOPYABLE(DeferredWatchpointFire);
 public:
@@ -516,8 +709,51 @@ public:
 
     JS_EXPORT_PRIVATE void NODELETE takeWatchpointsToFire(WatchpointSet*);
 
+    // B5 / GIL-removal precondition 10 (docs/threads/cve/map-MC-CODE.md S6):
+    // gilOff EAGER fire entry point. The deferring caller, AFTER dropping
+    // every lock that motivated the deferral (SAL / cell locks) but BEFORE it
+    // PUBLISHES the watched-fact mutation (the setStructure / structureID
+    // store), calls this with the same FireDetail the scope-exit fire would
+    // have used. gilOff Class-A pending: runs the full Class-A
+    // stop-the-world fire NOW, so every CodeBlock that elided a check on the
+    // claimed source set is jettisoned BEFORE any other mutator can observe
+    // the about-to-be-published fact — closing the publication-before-fire
+    // window the scope-exit form left open. After this returns the holder is
+    // drained (state() != IsWatched) and the dtor's scope-exit fire is a
+    // no-op. Flag-off / GIL-on / Class-B / nothing-claimed: no-op (the
+    // dtor's fire stays the firing point — flag-off behaviour byte-identical).
+    //
+    // Adaptive-watchpoint cost (gilOff only, recorded): firing BEFORE the
+    // object's structureID is updated means an adaptive watchpoint observes
+    // the OLD structure, finds the source set already IsInvalidated, and
+    // takes its conservative path (jettison / give up) instead of
+    // re-installing on the new structure. Correctness > the gilOff re-adapt
+    // optimisation; the flag-off adapt-after-publish ordering is unchanged.
+    //
+    // Caller contract: must be a valid §A.3 stop-request point (no rank-3
+    // lock held, no SAL, may DeferGC) — exactly the same contract the
+    // scope-exit ~DeferredWatchpointFire fire already meets at every site.
+    JS_EXPORT_PRIVATE void fireEarlyForGILOff(VM&, const FireDetail&);
+
+    // B5 audit aid: true iff this holder has CLAIMED a Class-A source set
+    // whose fire has not yet run. NB this reads the stack-local HOLDER's
+    // (relaxed) state — it is a same-thread predicate only, not a
+    // cross-thread acquire. Cross-thread consumers do not see the holder;
+    // the release-publish of the deferred-fire fact is the claim CAS in
+    // WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire*) (seq_cst CAS
+    // on the SOURCE set's m_state, IsWatched -> IsInvalidated): any consumer
+    // that may re-use a not-yet-jettisoned code pointer either acquire-loads
+    // the source set's state() and observes IsInvalidated, or rides the §A.3
+    // stop barrier (every Class-A consumer in this tree does the latter — see
+    // the S6 audit in docs/threads/cve/map-MC-CODE.md).
+    bool hasClassAFirePending() const
+    {
+        return m_watchpointsToFire.state() == IsWatched && m_watchpointsToFire.invalidatesCompiledCode();
+    }
+
 protected:
     WatchpointSet& watchpointsToFire() { return m_watchpointsToFire; }
+    const WatchpointSet& watchpointsToFire() const { return m_watchpointsToFire; }
 
 private:
     WatchpointSet m_watchpointsToFire;

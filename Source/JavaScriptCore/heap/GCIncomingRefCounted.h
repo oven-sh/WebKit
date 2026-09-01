@@ -74,6 +74,16 @@ public:
     // It's generally not a good idea to call this directly, since if this
     // returns true, you're supposed to add this object to the GC's list.
     // Call GCIncomingRefCountedSet::addReference() instead.
+    // CONCURRENCY: the incoming-reference storage below (m_encodedPointer and
+    // the heap Vector it may point to) is not internally synchronized; ALL
+    // access — mutation AND reads — must happen under the owning
+    // GCIncomingRefCountedSet's lock. Mutation: addIncomingReference via
+    // addReference; filterIncomingReferences via sweep/lastChanceToFinalize.
+    // Readers: numberOfIncomingReferences()/incomingReferenceAt() walks
+    // (ArrayBuffer::notifyDetaching, ArrayBuffer::refreshAfterWasmMemoryGrow)
+    // snapshot the cell list under the lock and iterate the snapshot, because
+    // a concurrent addReference can repoint singleton->Vector or realloc the
+    // Vector buffer out from under an unlocked walk (the §3.27 UAF).
     bool addIncomingReference(JSCell*);
     
     // A filter function returns true if we wish to keep the incoming

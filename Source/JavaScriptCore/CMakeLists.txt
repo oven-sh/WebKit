@@ -314,6 +314,11 @@ list(APPEND JavaScriptCore_HEADERS
 
 if (WTF_CPU_X86_64)
     set(OFFLINE_ASM_BACKEND "X86_64")
+    # THREADS-INTEGRATE(objectmodel) manifest entry 3b: the 16-byte
+    # __sync_bool_compare_and_swap in JSC::dcasHeaderAndButterfly must inline
+    # to lock cmpxchg16b (I32); a libatomic lock-based fallback is forbidden
+    # (do NOT "fix" a __sync_bool_compare_and_swap_16 link error with -latomic).
+    add_compile_options(-mcx16)
 elseif (WTF_CPU_ARM64)
     if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64e")
         set(OFFLINE_ASM_BACKEND "ARM64E")
@@ -1226,7 +1231,10 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ConcatKeyAtomStringCache.h
     runtime/ConcatKeyAtomStringCacheInlines.h
     runtime/Concurrency.h
+    runtime/ConcurrentButterfly.h
+    runtime/ConcurrentButterflyInlines.h
     runtime/ConcurrentJSLock.h
+    runtime/ConditionObject.h
     runtime/ConfigFile.h
     runtime/ConsoleClient.h
     runtime/ConsoleObject.h
@@ -1579,6 +1587,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/LazyPropertyInlines.h
     runtime/LeafExecutable.h
     runtime/LiteralParser.h
+    runtime/LockObject.h
     runtime/Lookup.h
     runtime/MachineContext.h
     runtime/MapConstructor.h
@@ -1668,6 +1677,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/PutDirectIndexMode.h
     runtime/PutPropertySlot.h
     runtime/RandomizingFuzzerAgent.h
+    runtime/RaceAmplifier.h
     runtime/ReflectObject.h
     runtime/ReflectObjectInlines.h
     runtime/RegExp.h
@@ -1798,6 +1808,10 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/TemporalZonedDateTimeConstructor.h
     runtime/TemporalZonedDateTimePrototype.h
     runtime/TestRunnerUtils.h
+    runtime/ThreadAtomics.h
+    runtime/ThreadLocalObject.h
+    runtime/ThreadManager.h
+    runtime/ThreadObject.h
     runtime/ThrowScope.h
     runtime/ToNativeFromValue.h
     runtime/TypeError.h
@@ -1822,7 +1836,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/VM.h
     runtime/VMEntryScope.h
     runtime/VMEntryScopeInlines.h
+    runtime/VMExceptionScopeVerificationState.h
     runtime/VMInlines.h
+    runtime/VMLite.h
+    runtime/VMLiteInlines.h
+    runtime/VMLiteShared.h
     runtime/VMManager.h
     runtime/VMThreadContext.h
     runtime/VMTraps.h

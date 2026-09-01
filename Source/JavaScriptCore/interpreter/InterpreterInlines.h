@@ -114,16 +114,56 @@ ALWAYS_INLINE JSValue Interpreter::executeCachedCall(CachedCall& cachedCall)
     // We don't handle `NonDebuggerAsyncEvents` explicitly here. This is a JS function (since this is CachedCall),
     // so the called JS function always handles it.
 
-    auto* entry = cachedCall.m_addressForCall;
+    // THREADS (cachedcall-protoframe-crossthread): foreign-thread install
+    // drains do NOT rewrite our stack-resident m_protoCallFrame /
+    // m_addressForCall (CachedCall::unlinkOrUpgradeImpl foreign-skip); they
+    // bump m_staleGeneration instead. Absorb that here so the !entry relink
+    // path below performs the upgrade lazily on THIS thread. One relaxed
+    // acquire compare per call; no locking.
+    if (vm.gilOff()) [[unlikely]]
+        cachedCall.absorbForeignStaleGeneration();
+
+    auto* entry = WTF::atomicLoad(&cachedCall.m_addressForCall, std::memory_order_acquire); // THREADS: same-thread writers only after the foreign-skip; kept atomic for the existing publish shape.
     if (!entry) [[unlikely]] {
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
         cachedCall.relink();
         RETURN_IF_EXCEPTION(throwScope, throwScope.exception());
-        entry = cachedCall.m_addressForCall;
+        entry = WTF::atomicLoad(&cachedCall.m_addressForCall, std::memory_order_acquire);
     }
 
     // Execute the code:
     throwScope.release();
+    if (vm.gilOff()) [[unlikely]] {
+        // TSAN wave 2 (cachedcall-protoframe-crossthread) amendment: the
+        // foreign-thread writer described below is now closed — a foreign
+        // drain takes the m_ownerThread skip in unlinkOrUpgradeImpl and never
+        // touches m_protoCallFrame / m_addressForCall, so both words are
+        // owner-thread-only and the struct copy below is sequential. The
+        // snapshot-and-rederive is retained as defense-in-depth (matched-pair
+        // invariant against any future cross-word skew) and because the asm
+        // re-read it documents is independent of the C++ race.
+        //
+        // ANNEX CBI item 3 (w16 amend, jit-null-metadatatable-counter-bump
+        // round 2): (m_addressForCall, m_protoCallFrame.codeBlock) are two
+        // independent racy words against CachedCall::unlinkOrUpgradeImpl's
+        // live tier-up drain on another Thread. The drain's codeBlock-first /
+        // entry-second order only rules out NEW-entry+OLD-codeBlock; the
+        // OPPOSITE tear (OLD baseline entry + NEW DFG codeBlock) is the
+        // observed crash (baseline prologue argument-profiling against a DFG
+        // CodeBlock => null m_argumentValueProfiles storage => SIGSEGV at
+        // +0x8). And vmEntryToJavaScript re-reads the proto frame's codeBlock
+        // slot in asm — a THIRD racy read. Take ONE codeBlock snapshot,
+        // derive the entrypoint THROUGH it (a stale-but-matched pair is
+        // always executable; the snapshot is conservatively live in
+        // stack/registers and the jit leak keeps its machine code), and pass
+        // a private ProtoCallFrame copy carrying that same snapshot so the
+        // asm read cannot race the drain either.
+        ProtoCallFrame protoCallFrameCopy = cachedCall.m_protoCallFrame;
+        CodeBlock* codeBlockSnapshot = protoCallFrameCopy.codeBlock();
+        protoCallFrameCopy.setCodeBlock(codeBlockSnapshot);
+        entry = codeBlockSnapshot->jitCode()->addressForCall();
+        return JSValue::decode(vmEntryToJavaScript(entry, &vm, &protoCallFrameCopy));
+    }
     return JSValue::decode(vmEntryToJavaScript(entry, &vm, &cachedCall.m_protoCallFrame));
 }
 
@@ -146,13 +186,32 @@ ALWAYS_INLINE JSValue Interpreter::tryCallWithArguments(CachedCall& cachedCall, 
     // We don't handle `NonDebuggerAsyncEvents` explicitly here. This is a JS function (since this is CachedCall),
     // so the called JS function always handles it.
 
-    auto* entry = cachedCall.m_addressForCall;
+    // THREADS (cachedcall-protoframe-crossthread): see executeCachedCall —
+    // foreign-thread drains bump m_staleGeneration instead of rewriting our
+    // stack words; absorb it so the !entry fast-miss returns {} and the
+    // caller's fall-through to call() relink()s on this thread.
+    if (vm.gilOff()) [[unlikely]]
+        cachedCall.absorbForeignStaleGeneration();
+
+    auto* entry = WTF::atomicLoad(&cachedCall.m_addressForCall, std::memory_order_acquire); // THREADS: same-thread writers only after the foreign-skip.
     if (!entry) [[unlikely]]
         return { };
 
     // Execute the code:
     auto* codeBlock = cachedCall.m_protoCallFrame.codeBlock();
     auto* callee = cachedCall.m_protoCallFrame.callee();
+    if (vm.gilOff()) [[unlikely]] {
+        // ANNEX CBI item 3 (w16 amend, round 2 — see executeCachedCall): the
+        // entry/codeBlock words race CachedCall::unlinkOrUpgradeImpl's
+        // cross-thread tier-up rewrite; the drain's store order cannot rule
+        // out the OLD-entry+NEW-codeBlock tear, which faults in the baseline
+        // prologue (observed: scalebench W=16 sort comparators). Derive the
+        // entrypoint THROUGH the one codeBlock snapshot read above — the
+        // vmEntryToJavaScriptWithNArguments thunks store exactly this
+        // codeBlock into the callee frame, so the (entry, frame-codeBlock)
+        // pair is matched by construction.
+        entry = codeBlock->jitCode()->addressForCall();
+    }
 
     if constexpr (!sizeof...(args))
         return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, codeBlock, callee, thisValue, nullptr, args...));
@@ -177,7 +236,7 @@ inline UnwindFunctorBase::UnwindFunctorBase(VM& vm)
     : m_vm(vm)
 #if ENABLE(ASSEMBLER)
     , m_vmCalleeSaveBufferSlotsByRegIndex(RegisterSet::vmCalleeSaveBufferSlotsByRegIndex())
-    , m_vmEntryRecord(vm.topEntryFrame ? vmEntryRecord(vm.topEntryFrame) : nullptr)
+    , m_vmEntryRecord(vm.group3Primitives().topEntryFrame ? vmEntryRecord(vm.group3Primitives().topEntryFrame) : nullptr) // UNGIL §A.1.3 mode split: callee-save restore must target the THROWING thread's entry record.
 #endif
 {
 }

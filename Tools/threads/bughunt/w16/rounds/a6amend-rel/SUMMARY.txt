@@ -1,0 +1,16 @@
+host precondition:
+ 16:07:44 up 23 days,  8:50,  0 users,  load average: 2.20, 3.96, 8.85
+  no foreign jsc
+rel-1 rc=134 bytes=2378 class=STW-watchdog-30s (ab17b family)
+rel-2 rc=0 bytes=505 class=PASS
+rel-3 rc=134 bytes=2378 class=STW-watchdog-30s (ab17b family)
+rel-4 rc=0 bytes=506 class=PASS
+rel-5 rc=0 bytes=506 class=PASS
+rel-6 rc=134 bytes=2378 class=STW-watchdog-30s (ab17b family)
+rel-7 rc=133 bytes=356 class=pas-alloc-bit (open SPEC-jit family)
+rel-8 rc=134 bytes=3165 class=STW-watchdog-30s (ab17b family)
+rel-9 rc=0 bytes=504 class=PASS
+rel-10 rc=133 bytes=356 class=pas-alloc-bit (open SPEC-jit family)
+rel-11 rc=0 bytes=506 class=PASS
+rel-12 rc=0 bytes=504 class=PASS
+A6AMEND-REL-DONE

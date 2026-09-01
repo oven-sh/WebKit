@@ -27,6 +27,7 @@
 
 #include "ArityCheckMode.h"
 #include "CallMode.h"
+#include "JSCConfig.h"
 #include "JSCPtrTag.h"
 #include <wtf/CodePtr.h>
 #include <wtf/SentinelLinkedList.h>
@@ -109,9 +110,39 @@ public:
 
     ~CallLinkInfoBase()
     {
+        // AB17e F4 (object-lifetime closure of precondition 11): gilOff we
+        // must reach the lock even when isOnList() reads FALSE here — the
+        // locked drain (CodeBlock::unlinkOrUpgradeIncomingCalls) remove()s a
+        // node at the top of unlinkOrUpgradeImpl and KEEPS USING the object
+        // for the rest of the call (mode switch, revertCall, publishRecord,
+        // relink push). An unlocked false-read in that window let a sweeper
+        // skip the lock and free the object while the drain was mid-call on
+        // it. removeOnDestruction acquires the link lock unconditionally
+        // (blocking until the whole drain loop ends) and re-checks isOnList
+        // under it. Flag-off: one predicted not-taken byte test on the
+        // read-only Config page, then the historical inline pair — no
+        // out-of-line call, no Options re-derivation.
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            removeOnDestruction();
+            return;
+        }
         if (isOnList())
             remove();
     }
+
+    // AB17c F4 (precondition 11), amended AB17e: destruction-context removal
+    // runs on a lazy-sweep mutator with no caller-held link lock, but mutates
+    // the same incoming-calls sentinel lists the locked linkers mutate.
+    // Out-of-line (CallLinkInfoBase.cpp) so this header needs no lock
+    // includes; gilOff it takes CallLinkInfo::s_callLinkSerializationLock
+    // UNCONDITIONALLY (recursive — sweep can run from allocation inside a
+    // locked linker) and re-checks isOnList() under the lock: the caller's
+    // unlocked read may be stale against an in-flight drain. Most-derived
+    // destructors with member teardown the drain can touch (~CallLinkInfo,
+    // ~DirectCallLinkInfo, ~CachedCall, ~MicrotaskCall) must call this (or
+    // take the lock themselves) BEFORE any member teardown — delisting is
+    // the FIRST act of destruction, not the last.
+    JS_EXPORT_PRIVATE void removeOnDestruction();
 
     CallSiteType callSiteType() const { return m_callSiteType; }
 

@@ -1,0 +1,1406 @@
+diff --git a/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp b/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp
+index f48648471773..ed14727bc443 100644
+--- a/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp
++++ b/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp
+@@ -423,26 +423,55 @@ void SpeculativeJIT::emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure
+     move(TrustedImmPtr(nullptr), storageGPR);
+ 
+     VM& vm = this->vm();
++    // H-VMLITE-TLCPTR: GIL-off, server allocatorFor / allocatorForConcurrently
++    // are null (IT-9, §5.5); resolve both the auxiliary butterfly and the cell
++    // allocator lite-relative so the structured-object fast path stays inline.
+     if (size) {
+-        if (Allocator allocator = vm.auxiliarySpace().allocatorFor(size, AllocatorForMode::AllocatorIfExists)) {
++        std::optional<unsigned> auxSlot;
++        if (vm.gilOff()) [[unlikely]]
++            auxSlot = tlcSlotForSubspace(&vm.auxiliarySpace(), size);
++        if (auxSlot) {
++            emitLoadTLCAllocatorForSlot(scratchGPR, *auxSlot, slowCases);
++            emitAllocate(storageGPR, JITAllocator::variable(), scratchGPR, scratch2GPR, slowCases);
++
++            addPtr(
++                TrustedImm32(outOfLineCapacity * sizeof(JSValue) + sizeof(IndexingHeader)),
++                storageGPR);
++
++            if (hasIndexingHeader)
++                store32(TrustedImm32(vectorLength), Address(storageGPR, Butterfly::offsetOfVectorLength()));
++        } else if (Allocator allocator = vm.auxiliarySpace().allocatorFor(size, AllocatorForMode::AllocatorIfExists)) {
+             emitAllocate(storageGPR, JITAllocator::constant(allocator), scratchGPR, scratch2GPR, slowCases);
+-            
++
+             addPtr(
+                 TrustedImm32(outOfLineCapacity * sizeof(JSValue) + sizeof(IndexingHeader)),
+                 storageGPR);
+-            
++
+             if (hasIndexingHeader)
+                 store32(TrustedImm32(vectorLength), Address(storageGPR, Butterfly::offsetOfVectorLength()));
+         } else
+             slowCases.append(jump());
+     }
+ 
++    std::optional<unsigned> cellSlot;
++    if (vm.gilOff()) [[unlikely]] {
++        if (structure->typeInfo().type() == JSType::ArrayType)
++            cellSlot = tlcSlotForConcurrently<JSArray>(vm, JSArray::allocationSize(inlineCapacity));
++        else
++            cellSlot = tlcSlotForConcurrently<JSFinalObject>(vm, JSFinalObject::allocationSize(inlineCapacity));
++    }
+     Allocator allocator;
+-    if (structure->typeInfo().type() == JSType::ArrayType)
+-        allocator = allocatorForConcurrently<JSArray>(vm, JSArray::allocationSize(inlineCapacity), AllocatorForMode::AllocatorIfExists);
+-    else
+-        allocator = allocatorForConcurrently<JSFinalObject>(vm, JSFinalObject::allocationSize(inlineCapacity), AllocatorForMode::AllocatorIfExists);
+-    if (allocator) {
++    if (!cellSlot) {
++        if (structure->typeInfo().type() == JSType::ArrayType)
++            allocator = allocatorForConcurrently<JSArray>(vm, JSArray::allocationSize(inlineCapacity), AllocatorForMode::AllocatorIfExists);
++        else
++            allocator = allocatorForConcurrently<JSFinalObject>(vm, JSFinalObject::allocationSize(inlineCapacity), AllocatorForMode::AllocatorIfExists);
++    }
++    if (cellSlot) {
++        emitLoadTLCAllocatorForSlot(scratchGPR, *cellSlot, slowCases);
++        emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR, TrustedImmPtr(structure), storageGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
++        emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
++    } else if (allocator) {
+         emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR, TrustedImmPtr(structure), storageGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
+         emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
+     } else
+@@ -16632,7 +16661,18 @@ void SpeculativeJIT::compileNewButterflyWithSize(Node* node)
+     size_t allocationSize = Butterfly::totalSize(0, 0, hasIndexingHeader, butterflyLength * sizeof(JSValue));
+ 
+     JumpList slowCases;
+-    emitAllocate(storageGPR, JITAllocator::constant(vm().auxiliarySpace().allocatorForNonInline(allocationSize, AllocatorForMode::EnsureAllocator)), scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
++    if (vm().gilOff()) [[unlikely]] {
++        // H-VMLITE-TLCPTR: server allocatorForNonInline is null under
++        // sharedGCHeap (§5.5). Resolve lite-relative; nullopt (precise size)
++        // degrades to the unconditional slow-path jump the null-constant
++        // bake would have produced.
++        if (auto slot = tlcSlotForSubspace(&vm().auxiliarySpace(), allocationSize)) {
++            emitLoadTLCAllocatorForSlot(scratchGPR, *slot, slowCases);
++            emitAllocate(storageGPR, JITAllocator::variable(), scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
++        } else
++            slowCases.append(jump());
++    } else
++        emitAllocate(storageGPR, JITAllocator::constant(vm().auxiliarySpace().allocatorForNonInline(allocationSize, AllocatorForMode::EnsureAllocator)), scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
+ 
+     addSlowPathGenerator(slowPathCall(slowCases, this, operationAllocateUnitializedAuxiliaryBase, storageGPR, LinkableConstant::globalObject(*this, node), TrustedImmPtr(allocationSize)));
+ 
+@@ -17381,14 +17421,31 @@ void SpeculativeJIT::compileNewObject(Node* node)
+ 
+     RegisteredStructure structure = node->structure();
+     size_t allocationSize = JSFinalObject::allocationSize(structure->inlineCapacity());
+-    Allocator allocatorValue = allocatorForConcurrently<JSFinalObject>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists);
+-    if (!allocatorValue)
+-        slowPath.append(jump());
+-    else {
+-        auto butterfly = TrustedImmPtr(nullptr);
+-        emitAllocateJSObject(resultGPR, JITAllocator::constant(allocatorValue), allocatorGPR, TrustedImmPtr(structure), butterfly, scratchGPR, slowPath);
+-        emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
+-        mutatorFence(vm());
++    if (vm().gilOff()) [[unlikely]] {
++        // H-VMLITE-TLCPTR: allocatorForConcurrently is {} GIL-off (IT-9);
++        // resolve the per-thread LocalAllocator lite-relative so DFG
++        // NewObject keeps its inline fast path instead of taking
++        // operationNewObject every time. nullopt (base unreserved — in
++        // practice cellSpace is reserved long before DFG compiles) falls
++        // back to the unconditional slow-path jump.
++        if (auto slot = tlcSlotForConcurrently<JSFinalObject>(vm(), allocationSize)) {
++            auto butterfly = TrustedImmPtr(nullptr);
++            emitLoadTLCAllocatorForSlot(allocatorGPR, *slot, slowPath);
++            emitAllocateJSObject(resultGPR, JITAllocator::variable(), allocatorGPR, TrustedImmPtr(structure), butterfly, scratchGPR, slowPath);
++            emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
++            mutatorFence(vm());
++        } else
++            slowPath.append(jump());
++    } else {
++        Allocator allocatorValue = allocatorForConcurrently<JSFinalObject>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists);
++        if (!allocatorValue)
++            slowPath.append(jump());
++        else {
++            auto butterfly = TrustedImmPtr(nullptr);
++            emitAllocateJSObject(resultGPR, JITAllocator::constant(allocatorValue), allocatorGPR, TrustedImmPtr(structure), butterfly, scratchGPR, slowPath);
++            emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
++            mutatorFence(vm());
++        }
+     }
+ 
+     addSlowPathGenerator(slowPathCall(slowPath, this, operationNewObject, resultGPR, TrustedImmPtr(&vm()), structure));
+@@ -18714,8 +18771,20 @@ void SpeculativeJIT::compileMakeRope(Node* node)
+     GPRReg scratch2GPR = scratch2.gpr();
+ 
+     JumpList slowPath;
+-    Allocator allocatorValue = allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists);
+-    emitAllocateJSCell(resultGPR, JITAllocator::constant(allocatorValue), allocatorGPR, TrustedImmPtr(m_graph.registerStructure(vm().stringStructure.get())), scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);
++    if (vm().gilOff()) [[unlikely]] {
++        // H-VMLITE-TLCPTR: stringSpace is iso (per-client GCClient::IsoSubspace)
++        // so tlcSlotForConcurrently is nullopt today; the lite-relative arm is
++        // a no-op fallthrough to the null-constant bake. Kept so a future
++        // table-addressable iso scheme need only extend tlcSlotForConcurrently.
++        if (auto slot = tlcSlotForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString))) {
++            emitLoadTLCAllocatorForSlot(allocatorGPR, *slot, slowPath);
++            emitAllocateJSCell(resultGPR, JITAllocator::variable(), allocatorGPR, TrustedImmPtr(m_graph.registerStructure(vm().stringStructure.get())), scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);
++        } else
++            emitAllocateJSCell(resultGPR, JITAllocator::constant(allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists)), allocatorGPR, TrustedImmPtr(m_graph.registerStructure(vm().stringStructure.get())), scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);
++    } else {
++        Allocator allocatorValue = allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists);
++        emitAllocateJSCell(resultGPR, JITAllocator::constant(allocatorValue), allocatorGPR, TrustedImmPtr(m_graph.registerStructure(vm().stringStructure.get())), scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);
++    }
+ 
+     // This puts nullptr for the first fiber. It makes visitChildren safe even if this JSRopeString is discarded due to the speculation failure in the following path.
+     storePtr(TrustedImmPtr(JSString::isRopeInPointer), Address(resultGPR, JSRopeString::offsetOfFiber0()));
+diff --git a/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp b/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp
+index 9145efd8c50c..ddd3415fe9b9 100644
+--- a/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp
++++ b/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp
+@@ -2664,6 +2664,52 @@ private:
+         return patchpoint;
+     }
+ 
++    // H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4; GILOFF-TAX #1/#2): GIL-off
++    // resolution of the per-thread TLC LocalAllocator for a baked
++    // process-wide-constant TLC slot (tlcIndexBase + sizeClassIndex). Returns
++    // a value the existing allocateHeapCell consumes EXACTLY like the legacy
++    // server m_allocatorForSizeStep load: non-constant LValue =>
++    // JITAllocator::variable() => null-checked branch to slowPath. Bound miss
++    // (table not yet grown to slot on this thread) yields intPtrZero so the
++    // same null check covers it. Same-thread reads (I11 + I2) of fields the
++    // owner mutates only in C++ (growTable / setCurrentThreadClient stamps);
++    // m_heaps.root keeps the loads from being CSE'd across calls (the table
++    // pointer is freed-and-replaced by growTable). gilOff compilations only.
++    LValue tlcAllocatorForSlot(unsigned tlcSlot)
++    {
++        ASSERT(vm().gilOff());
++        LValue lite = currentVMLitePointer();
++        LBasicBlock haveSlot = m_out.newBlock();
++        LBasicBlock noSlot = m_out.newBlock();
++        LBasicBlock continuation = m_out.newBlock();
++        LBasicBlock lastNext = m_out.insertNewBlocksBefore(haveSlot);
++        LValue bound = m_out.load32(m_out.address(m_heaps.root, lite, VMLite::offsetOfTlcTableBound()));
++        m_out.branch(m_out.above(bound, m_out.constInt32(static_cast<int32_t>(tlcSlot))), usually(haveSlot), rarely(noSlot));
++        m_out.appendTo(haveSlot, noSlot);
++        LValue table = m_out.loadPtr(m_out.address(m_heaps.root, lite, VMLite::offsetOfTlcTable()));
++        static_assert(sizeof(Allocator) == sizeof(void*));
++        ValueFromBlock fast = m_out.anchor(m_out.loadPtr(m_out.address(m_heaps.root, table, static_cast<ptrdiff_t>(tlcSlot) * static_cast<ptrdiff_t>(sizeof(void*)))));
++        m_out.jump(continuation);
++        m_out.appendTo(noSlot, continuation);
++        ValueFromBlock slow = m_out.anchor(m_out.intPtrZero);
++        m_out.jump(continuation);
++        m_out.appendTo(continuation, lastNext);
++        return m_out.phi(pointerType(), fast, slow);
++    }
++
++    // H-VMLITE-TLCPTR convenience: tlcSlotForConcurrently<ClassType> at
++    // codegen time, falling back to the legacy null-constant bake (which
++    // allocateHeapCell turns into an unconditional slow-path jump) when the
++    // slot is not table-addressable (iso, base unreserved, precise size).
++    template<typename ClassType>
++    LValue tlcAllocatorOrLegacy(size_t allocationSize)
++    {
++        ASSERT(vm().gilOff());
++        if (auto slot = tlcSlotForConcurrently<ClassType>(vm(), allocationSize))
++            return tlcAllocatorForSlot(*slot);
++        return m_out.constIntPtr(allocatorForConcurrently<ClassType>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists).localAllocator());
++    }
++
+     // Mode-split publish of m_callFrame as the CURRENT thread's topCallFrame
+     // (direct native / custom accessor calls and callPreflight): GIL-off the
+     // per-lite Group-3 word — the word the callee's frame tracers and any
+@@ -12452,9 +12498,17 @@ IGNORE_CLANG_WARNINGS_END
+         LBasicBlock slowPath = m_out.newBlock();
+         LBasicBlock continuation = m_out.newBlock();
+ 
+-        Allocator allocator = allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists);
++        // H-VMLITE-TLCPTR: stringSpace is iso (per-client GCClient::IsoSubspace
++        // — never table-addressable), so tlcAllocatorOrLegacy degrades to the
++        // legacy null bake GIL-off; left in place so a future iso-TLC scheme
++        // need only extend tlcSlotForConcurrently.
++        LValue allocatorValue;
++        if (vm().gilOff()) [[unlikely]]
++            allocatorValue = tlcAllocatorOrLegacy<JSRopeString>(sizeof(JSRopeString));
++        else
++            allocatorValue = m_out.constIntPtr(allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists).localAllocator());
+ 
+-        LValue result = allocateCell(m_out.constIntPtr(allocator.localAllocator()), vm().stringStructure.get(), slowPath);
++        LValue result = allocateCell(allocatorValue, vm().stringStructure.get(), slowPath);
+ 
+         // This puts nullptr for the first fiber. It makes visitChildren safe even if this JSRopeString is discarded due to the speculation failure in the following path.
+         m_out.storePtr(m_out.constIntPtr(JSString::isRopeInPointer), result, m_heaps.JSRopeString_fiber0);
+@@ -19909,11 +19963,24 @@ IGNORE_CLANG_WARNINGS_END
+             LValue butterfly;
+ 
+             if (structure->outOfLineCapacity() || hasIndexedProperties(structure->indexingType())) {
+-                Allocator cellAllocator;
+-                if (structure->typeInfo().type() == JSType::ArrayType)
+-                    cellAllocator = allocatorForConcurrently<JSArray>(vm(), JSArray::allocationSize(structure->inlineCapacity()), AllocatorForMode::AllocatorIfExists);
+-                else
+-                    cellAllocator = allocatorForConcurrently<JSFinalObject>(vm(), JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::AllocatorIfExists);
++                // H-VMLITE-TLCPTR: GIL-off, allocatorForConcurrently is {} —
++                // resolve lite-relative so the cell half of the materialize
++                // fast path is reachable (the butterfly half goes through
++                // allocatorForSize, already handled above).
++                LValue cellAllocatorValue;
++                if (vm().gilOff()) [[unlikely]] {
++                    if (structure->typeInfo().type() == JSType::ArrayType)
++                        cellAllocatorValue = tlcAllocatorOrLegacy<JSArray>(JSArray::allocationSize(structure->inlineCapacity()));
++                    else
++                        cellAllocatorValue = tlcAllocatorOrLegacy<JSFinalObject>(JSFinalObject::allocationSize(structure->inlineCapacity()));
++                } else {
++                    Allocator cellAllocator;
++                    if (structure->typeInfo().type() == JSType::ArrayType)
++                        cellAllocator = allocatorForConcurrently<JSArray>(vm(), JSArray::allocationSize(structure->inlineCapacity()), AllocatorForMode::AllocatorIfExists);
++                    else
++                        cellAllocator = allocatorForConcurrently<JSFinalObject>(vm(), JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::AllocatorIfExists);
++                    cellAllocatorValue = m_out.constIntPtr(cellAllocator.localAllocator());
++                }
+ 
+                 bool hasIndexingHeader = hasIndexedProperties(structure->indexingType());
+                 unsigned indexingHeaderSize = 0;
+@@ -19971,7 +20038,7 @@ IGNORE_CLANG_WARNINGS_END
+                 m_out.store32(vectorLength, fastButterflyValue, m_heaps.Butterfly_vectorLength);
+ 
+                 LValue fastObjectValue = allocateObject(
+-                    m_out.constIntPtr(cellAllocator.localAllocator()), structure, fastButterflyValue,
++                    cellAllocatorValue, structure, fastButterflyValue,
+                     slowPath);
+ 
+                 ValueFromBlock fastObject = m_out.anchor(fastObjectValue);
+@@ -21308,9 +21375,19 @@ IGNORE_CLANG_WARNINGS_END
+         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowPath);
+ 
+         size_t sizeInBytes = sizeInValues * sizeof(JSValue);
+-        Allocator allocator = vm().auxiliarySpace().allocatorFor(sizeInBytes, AllocatorForMode::AllocatorIfExists);
+-        LValue startOfStorage = allocateHeapCell(
+-            m_out.constIntPtr(allocator.localAllocator()), slowPath);
++        // H-VMLITE-TLCPTR: server allocatorFor is null under sharedGCHeap
++        // (§5.5); the constIntPtr(null) sends every property-storage
++        // allocation through the lazy-slow-path generation thunk (the second
++        // GILOFF-TAX #1 contributor). Resolve lite-relative instead.
++        LValue allocatorValue;
++        if (vm().gilOff()) [[unlikely]] {
++            if (auto slot = tlcSlotForSubspace(&vm().auxiliarySpace(), sizeInBytes))
++                allocatorValue = tlcAllocatorForSlot(*slot);
++            else
++                allocatorValue = m_out.intPtrZero;
++        } else
++            allocatorValue = m_out.constIntPtr(vm().auxiliarySpace().allocatorFor(sizeInBytes, AllocatorForMode::AllocatorIfExists).localAllocator());
++        LValue startOfStorage = allocateHeapCell(allocatorValue, slowPath);
+         ValueFromBlock fastButterfly = m_out.anchor(
+             m_out.add(m_out.constIntPtr(sizeInBytes + sizeof(IndexingHeader)), startOfStorage));
+         m_out.jump(continuation);
+@@ -23774,6 +23851,11 @@ IGNORE_CLANG_WARNINGS_END
+     LValue allocateObject(
+         size_t size, StructureType structure, LValue butterfly, LBasicBlock slowPath)
+     {
++        if (vm().gilOff()) [[unlikely]] {
++            // H-VMLITE-TLCPTR: allocatorForConcurrently is {} GIL-off (IT-9);
++            // resolve the per-thread LocalAllocator lite-relative instead.
++            return allocateObject(tlcAllocatorOrLegacy<ClassType>(size), structure, butterfly, slowPath);
++        }
+         Allocator allocator = allocatorForConcurrently<ClassType>(vm(), size, AllocatorForMode::AllocatorIfExists);
+         return allocateObject(
+             m_out.constIntPtr(allocator.localAllocator()), structure, butterfly, slowPath);
+@@ -23795,6 +23877,19 @@ IGNORE_CLANG_WARNINGS_END
+             CompleteSubspace* actualSubspace = std::bit_cast<CompleteSubspace*>(subspace->asIntPtr());
+             size_t actualSize = size->asIntPtr();
+ 
++            if (vm().gilOff()) [[unlikely]] {
++                // H-VMLITE-TLCPTR: server m_allocatorForSizeStep is never
++                // populated under sharedGCHeap (§5.5); resolve through the
++                // per-thread TLC table mirror cached on VMLite instead.
++                if (auto slot = tlcSlotForSubspace(actualSubspace, actualSize))
++                    return tlcAllocatorForSlot(*slot);
++                LBasicBlock continuation = m_out.newBlock();
++                LBasicBlock lastNext = m_out.insertNewBlocksBefore(continuation);
++                m_out.jump(slowPath);
++                m_out.appendTo(continuation, lastNext);
++                return m_out.intPtrZero;
++            }
++
+             Allocator actualAllocator = actualSubspace->allocatorFor(actualSize, AllocatorForMode::AllocatorIfExists);
+             if (!actualAllocator) {
+                 LBasicBlock continuation = m_out.newBlock();
+@@ -23823,6 +23918,29 @@ IGNORE_CLANG_WARNINGS_END
+ 
+         m_out.appendTo(continuation, lastNext);
+ 
++        if (vm().gilOff()) [[unlikely]] {
++            // H-VMLITE-TLCPTR (dynamic-size leg): every caller passes a
++            // constant subspace (allocatorForSize(CompleteSubspace&, ...) or
++            // *subspaceForConcurrently), so tlcIndexBase bakes; only the
++            // sizeClassIndex is dynamic. Bound check guards the indexed load
++            // (table is grow-only, owner-thread; bound stamped LAST).
++            RELEASE_ASSERT(subspace->hasIntPtr());
++            CompleteSubspace* actualSubspace = std::bit_cast<CompleteSubspace*>(subspace->asIntPtr());
++            unsigned base = actualSubspace->tlcIndexBase();
++            if (base == BlockDirectory::invalidTlcIndex)
++                return m_out.intPtrZero; // allocateHeapCell's variable null-check -> slowPath.
++            LBasicBlock haveSlot = m_out.newBlock();
++            LBasicBlock lastNextDyn = m_out.insertNewBlocksBefore(haveSlot);
++            LValue lite = currentVMLitePointer();
++            LValue slot = m_out.add(sizeClassIndex, m_out.constIntPtr(static_cast<intptr_t>(base)));
++            LValue bound = m_out.zeroExtPtr(m_out.load32(m_out.address(m_heaps.root, lite, VMLite::offsetOfTlcTableBound())));
++            m_out.branch(m_out.aboveOrEqual(slot, bound), rarely(slowPath), usually(haveSlot));
++            m_out.appendTo(haveSlot, lastNextDyn);
++            LValue table = m_out.loadPtr(m_out.address(m_heaps.root, lite, VMLite::offsetOfTlcTable()));
++            static_assert(sizeof(Allocator) == sizeof(void*));
++            return m_out.loadPtr(m_out.baseIndex(m_heaps.root, table, slot, ScalePtr));
++        }
++
+         return m_out.loadPtr(
+             m_out.baseIndex(
+                 m_heaps.CompleteSubspace_allocatorForSizeStep,
+@@ -23857,7 +23975,18 @@ IGNORE_CLANG_WARNINGS_END
+     LValue allocateObject(RegisteredStructure structure)
+     {
+         size_t allocationSize = JSFinalObject::allocationSize(structure.get()->inlineCapacity());
+-        Allocator allocator = allocatorForConcurrently<JSFinalObject>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists);
++        // H-VMLITE-TLCPTR: GIL-off, allocatorForConcurrently is {} (IT-9) and
++        // the constIntPtr(null) below makes EVERY NewObject hit the
++        // operationNewObject lazy-slow-path generation thunk
++        // (operationCompileFTLLazySlowPath: 46.6M GIL-off vs 53 GIL-on, intcs
++        // W=1 — GILOFF-TAX #1). Resolve the per-thread LocalAllocator
++        // lite-relative instead; allocateHeapCell's variable null-check covers
++        // the not-yet-materialized slot.
++        LValue allocatorValue;
++        if (vm().gilOff()) [[unlikely]]
++            allocatorValue = tlcAllocatorOrLegacy<JSFinalObject>(allocationSize);
++        else
++            allocatorValue = m_out.constIntPtr(allocatorForConcurrently<JSFinalObject>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists).localAllocator());
+ 
+         // FIXME: If the allocator is null, we could simply emit a normal C call to the allocator
+         // instead of putting it on the slow path.
+@@ -23869,7 +23998,7 @@ IGNORE_CLANG_WARNINGS_END
+         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowPath);
+ 
+         ValueFromBlock fastResult = m_out.anchor(allocateObject(
+-            m_out.constIntPtr(allocator.localAllocator()), structure, m_out.intPtrZero, slowPath));
++            allocatorValue, structure, m_out.intPtrZero, slowPath));
+ 
+         m_out.jump(continuation);
+ 
+diff --git a/Source/JavaScriptCore/ftl/FTLOperations.cpp b/Source/JavaScriptCore/ftl/FTLOperations.cpp
+index c8f35717bdca..4c147b3b185f 100644
+--- a/Source/JavaScriptCore/ftl/FTLOperations.cpp
++++ b/Source/JavaScriptCore/ftl/FTLOperations.cpp
+@@ -958,23 +958,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTypeOfObjectAsTypeofType, UCPUStrictI
+ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLLazySlowPath, void*, (CallFrame* callFrame, unsigned index))
+ {
+     VM& vm = callFrame->deprecatedVM();
+-    // Don't need an ActiveScratchBufferScope here because we DeferGCForAWhile.
+-
+-    // We cannot GC. We've got pointers in evil places.
+-    DeferGCForAWhile deferGC(vm);
+-
+-    CodeBlock* codeBlock = callFrame->codeBlock();
+-    // SCALEBENCH §36 jitcode-refptr-bounce-14pct: gilOff U-T4b leaves the
+-    // patchable jump unpatched, so this operation runs on EVERY FTL slow-path
+-    // traversal forever; perf annotate puts 76% of this function's 13% W=16
+-    // self time on the `lock incl 0x8(jitCode)` from the by-value jitCode()
+-    // (FLAT-GAP-EVIDENCE round 2 §(1)). codeBlock is conservatively-live on
+-    // this stack and pins its JITCode; raw read is the same pointer the
+-    // by-value temporary held. Flag-off output-identical (one fewer
+-    // inc/dec on a single-threaded refcount).
+-    JITCode* jitCode = codeBlock->jitCodeRawPtr()->ftl();
+-
+-    LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
++    // Don't need an ActiveScratchBufferScope here: the !gilOff arm does
++    // DeferGCForAWhile, and the gilOff fast path neither allocates nor hits a
++    // safepoint (see the §41 defer-hoist-lazyslow comment in that arm).
+ 
+     if (vm.gilOff()) [[unlikely]] {
+         // UNGIL U-T4b / T8: the gilOff repatch skip (FTLLazySlowPath.cpp)
+@@ -985,17 +971,48 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLLazySlowPath, void*, (CallF
+         // re-check under the lock. generate() release-stores the tagged code
+         // pointer after the stub (and its executable memory) is fully
+         // constructed, so a non-null acquire-load here is safe to tail-call.
++        //
++        // SCALEBENCH §41 defer-hoist-lazyslow: at 46.6M traversals/run the
++        // steady state is just the acquire-load below — it cannot allocate
++        // and there is no safepoint on this path, so the "pointers in evil
++        // places" are safe without a DeferGCForAWhile guard. Constructing
++        // that guard up front cost 2× Heap::deferralDepthSlot() (isSharedServer
++        // atomic + client-TLS + identity compare + RMW) per traversal. Hoist
++        // it: only pay it under the generation lock for the one-time
++        // generate() call. The codeBlock/jitCode loads are pure reads (see
++        // the jitCodeRawPtr rationale in the !gilOff arm below).
++        CodeBlock* codeBlock = callFrame->codeBlock();
++        JITCode* jitCode = codeBlock->jitCodeRawPtr()->ftl();
++        LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
+         if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently())
+             return stubCodePtr;
+         Locker locker { ftlLazySlowPathGenerationLock };
+         if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently())
+             return stubCodePtr;
++        // We cannot GC across generate(). We've got pointers in evil places.
++        DeferGCForAWhile deferGC(vm);
+         lazySlowPath.generate(codeBlock);
+         void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently();
+         ASSERT(stubCodePtr);
+         return stubCodePtr;
+     }
+ 
++    // We cannot GC. We've got pointers in evil places.
++    DeferGCForAWhile deferGC(vm);
++
++    CodeBlock* codeBlock = callFrame->codeBlock();
++    // SCALEBENCH §36 jitcode-refptr-bounce-14pct: gilOff U-T4b leaves the
++    // patchable jump unpatched, so this operation runs on EVERY FTL slow-path
++    // traversal forever; perf annotate puts 76% of this function's 13% W=16
++    // self time on the `lock incl 0x8(jitCode)` from the by-value jitCode()
++    // (FLAT-GAP-EVIDENCE round 2 §(1)). codeBlock is conservatively-live on
++    // this stack and pins its JITCode; raw read is the same pointer the
++    // by-value temporary held. Flag-off output-identical (one fewer
++    // inc/dec on a single-threaded refcount).
++    JITCode* jitCode = codeBlock->jitCodeRawPtr()->ftl();
++
++    LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
++
+     lazySlowPath.generate(codeBlock);
+ 
+     return lazySlowPath.stub().code().taggedPtr();
+diff --git a/Source/JavaScriptCore/heap/CompleteSubspace.h b/Source/JavaScriptCore/heap/CompleteSubspace.h
+index 5d4be8a7765d..2e71ffcdfe79 100644
+--- a/Source/JavaScriptCore/heap/CompleteSubspace.h
++++ b/Source/JavaScriptCore/heap/CompleteSubspace.h
+@@ -32,6 +32,7 @@
+ namespace JSC {
+ 
+ namespace GCClient {
++class CompleteSubspaceView;
+ class GCThreadLocalCache;
+ class Heap;
+ }
+@@ -85,7 +86,20 @@ public:
+     // (Heap::verifyServerNonIsoAllocatorsNeverMaterialized()).
+     void verifyNoAllocatorsMaterialized();
+ 
++    // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (SHAREDHEAP-ALLOC-EVIDENCE.md §41
++    // T1): reserve this subspace's contiguous numSizeClasses-slot range
++    // WITHOUT creating any directory. Same locking + write-once semantics as
++    // the in-ensureDirectoryForSizeClass reservation (CompleteSubspace.cpp:
++    // 88-89), so a later directory creation just observes the
++    // already-reserved base. directoryLock-only (rank 7b) — no MSPL, no GC
++    // dependency; idempotent. Called from GCThreadLocalCache's ctor under
++    // Options::useSharedGCHeap() so every per-client slotBase
++    // (= tlc.m_table + tlcIndexBase()) is computable at attach with no eager
++    // BlockDirectory allocation. Flag-off: never reached.
++    void ensureTlcIndexBaseReserved();
++
+ private:
++    friend class GCClient::CompleteSubspaceView; // wrapper calls allocateSlowForClient on the miss path.
+     JS_EXPORT_PRIVATE Allocator allocatorForSlow(size_t);
+     JS_EXPORT_PRIVATE BlockDirectory* ensureDirectoryForSizeStepSlow(size_t sizeStepIndex);
+     // Creates (or returns) the directory serving sizeClass; caller holds
+@@ -138,6 +152,15 @@ ALWAYS_INLINE Allocator CompleteSubspace::allocatorFor(size_t size, AllocatorFor
+     return Allocator();
+ }
+ 
++inline void CompleteSubspace::ensureTlcIndexBaseReserved()
++{
++    if (m_tlcIndexBase.load(std::memory_order_acquire) != BlockDirectory::invalidTlcIndex)
++        return;
++    Locker locker { m_space.directoryLock() };
++    if (m_tlcIndexBase.load(std::memory_order_relaxed) == BlockDirectory::invalidTlcIndex)
++        m_tlcIndexBase.store(m_space.reserveThreadLocalCacheIndices(locker), std::memory_order_release);
++}
++
+ ALWAYS_INLINE BlockDirectory* CompleteSubspace::ensureDirectoryForSizeStep(size_t sizeStepIndex)
+ {
+     ASSERT(sizeStepIndex < MarkedSpace::numSizeClasses);
+@@ -149,5 +172,97 @@ ALWAYS_INLINE BlockDirectory* CompleteSubspace::ensureDirectoryForSizeStep(size_
+     return ensureDirectoryForSizeStepSlow(sizeStepIndex);
+ }
+ 
++namespace GCClient {
++
++// H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1;
++// estMs=150 of the +1912ms W=1 GIL-off intcs tax): per-client view of one
++// server CompleteSubspace, mirroring the GCClient::IsoSubspace pattern. Holds
++// a precomputed `m_slotBase = client.threadLocalCache().m_table +
++// server.tlcIndexBase()` so allocate() collapses to one indexed load + null
++// test — byte-for-byte the GIL-on `m_allocatorForSizeStep[idx]` shape
++// (CompleteSubspace.h:130) — eliminating ALL of hop-2: the tlcIndexBase
++// acquire-load, the invalid-base check, the client.threadLocalCache() member
++// chase, the m_table pointer deref, and the bound-check
++// (GCThreadLocalCache.cpp allocatorForSizeStep). Distinct from
++// H-SOLECLIENT-SUBSPACE-MIRROR (which writes the W=1 sole client's allocators
++// into the SERVER m_allocatorForSizeStep): this is a per-client view, correct
++// at any W.
++//
++// m_slotBase validity REQUIRES the TLC table never reallocs after bind() —
++// guaranteed by the H-TLC-FIXEDTABLE-NOREALLOC pre-grow in
++// GCThreadLocalCache's ctor (full numCompleteSubspaces × numSizeClasses
++// capacity, useSharedGCHeap-gated; growTable() RELEASE_ASSERTs it never
++// re-enters its realloc leg). bind() is idempotent and is invoked from
++// Heap::setCurrentThreadClient (GCThreadLocalCache.cpp), which already runs
++// at every {attach, A36C carrier swap, main-client adoption} on the owning
++// thread (I2).
++//
++// STAGING NOTE (this round): the VM.h CompleteSubspace accessors are NOT yet
++// rerouted through allocationClientForCurrentThread().<name>Client — that
++// flip is source-incompatible with the JIT-side `CompleteSubspace&`/
++// `CompleteSubspace*` consumers (AssemblyHelpers::emitAllocateVariableSized,
++// FTL allocatorForSize, DFG tlcSlotForSubspace) which are outside this
++// hypothesis's owned-file set. The wrapper, the fixed table, and the bind
++// hook land here as INFRA so that flip is a single self-contained change in a
++// round that owns those call sites. Until then this class has no caller and
++// imposes ZERO codegen / behavior delta on either flag state beyond the
++// useSharedGCHeap-gated fixed-table pre-grow (which is itself a correctness
++// hardening for the in-flight H-TLS-TABLE / H-VMLITE-TLCPTR snapshots — the
++// table pointer they cache can no longer go stale across a free).
++//
++// Named CompleteSubspaceView (not CompleteSubspace) because
++// GCThreadLocalCache.h — outside this hypothesis's owned-file set — uses
++// unqualified `CompleteSubspace` from inside namespace GCClient
++// (allocatorForSizeStep's parameter); introducing a same-named GCClient class
++// would shadow that to a different type depending on include order (ODR
++// hazard + build break). The iso analogue is GCClient::IsoSubspace; rename to
++// GCClient::CompleteSubspace once GCThreadLocalCache.h qualifies its
++// reference as JSC::CompleteSubspace.
++class CompleteSubspaceView {
++    WTF_MAKE_NONCOPYABLE(CompleteSubspaceView);
++public:
++    CompleteSubspaceView() = default;
++
++    // Idempotent; owner thread only (I2). slotBase may be null when the
++    // server's tlcIndexBase is still unreserved (never the case once
++    // ensureTlcIndexBaseReserved() has run for all server subspaces in the
++    // TLC ctor) — allocate() then unconditionally takes the slow path.
++    void bind(JSC::CompleteSubspace& server, GCClient::Heap& client, Allocator* slotBase)
++    {
++        m_server = &server;
++        m_client = &client;
++        m_slotBase = slotBase;
++    }
++
++    JSC::CompleteSubspace& server() const { ASSERT(m_server); return *m_server; }
++    // Implicit conversion so reference-taking JIT-side helpers
++    // (emitAllocateVariableSized, allocatorForSize) keep compiling once the
++    // VM.h reroute lands. NOT sufficient for address-of call sites — those
++    // need the explicit .server() in the rerouting round.
++    operator JSC::CompleteSubspace&() const { return server(); }
++
++    // One indexed load on the 99%+ interval-bump path. Defined in
++    // CompleteSubspaceInlines.h (needs VM/Heap complete).
++    void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
++
++    // Forwarders for the remaining server-surface uses observed at the VM.h
++    // accessor call sites (.allocatorFor / .allocatorForNonInline /
++    // .reallocatePreciseAllocationNonVirtual): the wrapper is a transparent
++    // per-client front for allocate() and otherwise IS the server subspace.
++    Allocator allocatorFor(size_t size, AllocatorForMode mode) { return server().allocatorFor(size, mode); }
++    Allocator allocatorForNonInline(size_t size, AllocatorForMode mode) { return server().allocatorForNonInline(size, mode); }
++    void* reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* cell, size_t size, GCDeferralContext* ctx, AllocationFailureMode mode)
++    {
++        return server().reallocatePreciseAllocationNonVirtual(vm, cell, size, ctx, mode);
++    }
++
++private:
++    JSC::CompleteSubspace* m_server { nullptr };
++    GCClient::Heap* m_client { nullptr };
++    Allocator* m_slotBase { nullptr }; // = client TLC m_table + server.tlcIndexBase(); never dangles (fixed table).
++};
++
++} // namespace GCClient
++
+ } // namespace JSC
+ 
+diff --git a/Source/JavaScriptCore/heap/CompleteSubspaceInlines.h b/Source/JavaScriptCore/heap/CompleteSubspaceInlines.h
+index a28ebc8920e9..b72bbe98820b 100644
+--- a/Source/JavaScriptCore/heap/CompleteSubspaceInlines.h
++++ b/Source/JavaScriptCore/heap/CompleteSubspaceInlines.h
+@@ -39,11 +39,54 @@ ALWAYS_INLINE void* CompleteSubspace::allocate(VM& vm, size_t cellSize, GCDeferr
+     // thread's client TLC (the server allocator table is never populated,
+     // §5.5). SPEC-ungil §B / I4: GIL-off, the CURRENT thread's client — not
+     // unconditionally vm.clientHeap — owns the LocalAllocators this thread
+-    // may pop from (Heap::allocationClientForCurrentThread is identity
+-    // GIL-on/flag-off). Option off: today's code (I10; the branch is the
+-    // only delta).
+-    if (Options::useSharedGCHeap()) [[unlikely]]
+-        return allocateForClient(Heap::allocationClientForCurrentThread(vm, vm.clientHeap), cellSize, deferralContext, failureMode);
++    // may pop from. Option off: today's code (I10; the branch is the only
++    // delta).
++    //
++    // H-TLS-TABLE (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1, ~250ms of the W=1
++    // GIL-off tax): the 99%+ interval-bump path resolves the per-(client,
++    // sizeClass) LocalAllocator with two IE-TLS loads + one indexed load,
++    // skipping hop-1 (allocationClientForCurrentThread: gilOff gate +
++    // s_currentThreadClient + server-identity compare) and hop-2
++    // (client.threadLocalCache() member chase) entirely. The TLS {table,
++    // bound} pair is restamped owner-thread-only at setCurrentThreadClient
++    // and growTable (GCThreadLocalCache.cpp), and the table is grow-only /
++    // write-once-per-slot (I2), so a non-null slot read here is the same
++    // Allocator allocateForClient would have returned. `slot` is computed in
++    // size_t so an unreserved tlcIndexBase (== invalidTlcIndex, UINT_MAX)
++    // can never satisfy `slot < bound` by wraparound. A miss (bound==0 for
++    // an unstamped/compilation thread, null slot before first
++    // materialization, large/precise size, or unreserved base) falls through
++    // to the resolver — that path carries the I2/FIX-3 ASSERTs and the
++    // ensure-directory + materialize work.
++    if (Options::useSharedGCHeap()) [[unlikely]] {
++        if (cellSize <= MarkedSpace::largeCutoff) {
++            unsigned bound = GCClient::Heap::currentThreadTLCBound();
++            size_t slot = static_cast<size_t>(tlcIndexBase()) + MarkedSpace::sizeClassToIndex(cellSize);
++            if (slot < bound) {
++                if (Allocator allocator = GCClient::Heap::currentThreadTLCTable()[slot]) {
++                    // I2 tripwire restored on the hit branch (REFUTER medium,
++                    // "no weakened asserts" gate): the bypassed resolver
++                    // (Heap::allocationClientForCurrentThread, Heap.h:2721)
++                    // asserted hasHeapAccess() on its stamped-client return;
++                    // skipping that on the 99%+ path would silently drop the
++                    // primary "allocating thread holds its client's access"
++                    // guard. The assert is conditional on a non-null stamped
++                    // client — exactly the resolver's stamped branch — NOT on
++                    // bound>0: under GIL-on sharedGCHeap the very first
++                    // allocateSlowForClient → growTable stamps the TLS
++                    // {table,bound} pair before any setCurrentThreadClient,
++                    // so bound>0 with a null client slot is reachable there
++                    // (and the resolver asserts nothing GIL-on). Debug-only;
++                    // Release codegen of this ALWAYS_INLINE is unchanged.
++                    ASSERT(!GCClient::Heap::currentThreadClient()
++                        || (&GCClient::Heap::currentThreadClient()->server() == &vm.heap
++                            && (GCClient::Heap::currentThreadClient()->hasHeapAccess() || vm.heap.worldIsStoppedForAllClients())));
++                    return allocator.allocate(vm.heap, allocator.cellSize(), deferralContext, failureMode);
++                }
++            }
++        }
++        return allocateSlowForClient(Heap::allocationClientForCurrentThread(vm, vm.clientHeap), cellSize, deferralContext, failureMode);
++    }
+ 
+     if (Allocator allocator = allocatorFor(cellSize, AllocatorForMode::AllocatorIfExists))
+         return allocator.allocate(vm.heap, allocator.cellSize(), deferralContext, failureMode);
+@@ -64,5 +107,38 @@ ALWAYS_INLINE void* CompleteSubspace::allocateForClient(GCClient::Heap& client,
+     return allocateSlowForClient(client, cellSize, deferralContext, failureMode);
+ }
+ 
++// H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (§41 T1): the per-client view's
++// allocate(). Reached via `Heap::allocationClientForCurrentThread(vm,
++// vm.clientHeap).<name>Client.allocate(...)` once the VM.h reroute lands, so
++// `m_client` IS the calling thread's client (I2/I4) and `m_slotBase[idx]` is
++// the same Allocator that allocateForClient() / the H-TLS-TABLE path would
++// have resolved — but with hop-2 fully precomputed: one indexed load, no
++// tlcIndexBase acquire-load, no bound-check (the fixed-capacity table makes
++// every reserved-base slot in-bounds for the client's lifetime). The slow leg
++// (large/precise size, or first-touch null slot before materialization) takes
++// the existing JS_EXPORT_PRIVATE allocateSlowForClient — that path carries
++// the I2 hasHeapAccess() ASSERT and the ensure-directory + materialize work.
++// validateDFGDoesGC verifyCanGC is preserved (the hop this wrapper bypasses
++// is dispatch-only, never the GC-safety prologue). STAGING: no caller this
++// round (see CompleteSubspace.h class comment); body is exercised only once
++// the VM.h flip owns the JIT-side `CompleteSubspace&` consumers.
++ALWAYS_INLINE void* GCClient::CompleteSubspaceView::allocate(VM& vm, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
++{
++    if constexpr (validateDFGDoesGC)
++        vm.verifyCanGC();
++    ASSERT(Options::useSharedGCHeap());
++    ASSERT(m_server && m_client);
++    ASSERT(&m_client->server() == &vm.heap);
++    // I2 tripwire (mirrors the bypassed allocationClientForCurrentThread
++    // stamped-branch assert, Heap.h:2721): the wrapper is reached only via
++    // the per-thread resolver, so the calling thread holds m_client's access.
++    ASSERT(m_client->hasHeapAccess() || vm.heap.worldIsStoppedForAllClients());
++    if (cellSize <= MarkedSpace::largeCutoff && m_slotBase) [[likely]] {
++        if (Allocator allocator = m_slotBase[MarkedSpace::sizeClassToIndex(cellSize)])
++            return allocator.allocate(vm.heap, allocator.cellSize(), deferralContext, failureMode);
++    }
++    return m_server->allocateSlowForClient(*m_client, cellSize, deferralContext, failureMode);
++}
++
+ } // namespace JSC
+ 
+diff --git a/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp b/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp
+index 99d66395a7e3..bfb382330ef0 100644
+--- a/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp
++++ b/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp
+@@ -32,6 +32,7 @@
+ #include "Heap.h"
+ #include "LocalAllocator.h"
+ #include "Options.h"
++#include "VMLite.h"
+ #include <algorithm>
+ #include <wtf/FastMalloc.h>
+ 
+@@ -64,10 +65,84 @@ namespace GCClient {
+ // unchanged.
+ 
+ thread_local Heap* Heap::s_currentThreadClient { nullptr };
++// H-TLS-TABLE (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1): direct snapshot of the
++// current thread's GCThreadLocalCache {m_table, m_tableBound} so the C++
++// non-iso allocate fast path (CompleteSubspaceInlines.h) skips both the
++// allocationClientForCurrentThread resolver and the client.threadLocalCache()
++// member chase. Restamped at the two owner-thread mutation points only:
++// setCurrentThreadClient (attach/detach/A36C swap) and growTable. Zero-init
++// → bound==0 → fast path falls through, so unstamped readers (compilation
++// threads, pre-attach bootstrap) preserve today's resolver semantics.
++thread_local Allocator* Heap::s_currentThreadTLCTable { nullptr };
++thread_local unsigned Heap::s_currentThreadTLCBound { 0 };
++
++void Heap::setCurrentThreadTLCSnapshot(Allocator* table, unsigned bound)
++{
++    // Same-thread reader (CompleteSubspace::allocate) does bound-check FIRST
++    // then indexed load; publish table BEFORE bound so a bound>0 read always
++    // sees the matching table pointer (program order on one thread; the fence
++    // is documentation of intent, not a cross-thread requirement).
++    s_currentThreadTLCTable = table;
++    WTF::compilerFence();
++    s_currentThreadTLCBound = bound;
++}
++
++// H-VMLITE-TLCPTR (§B.4 lite-mirror stamp): publish {table, bound} onto the
++// CURRENT thread's installed VMLite so the per-tier inline-allocate emitters
++// can resolve `tlcTable[tlcIndexBase + sizeClassIndex]` with one
++// lite-relative loadPtr. Owner-thread only (I2) and the JIT reader is the
++// owner thread (I11), so program order suffices; bound is published LAST so a
++// bound-first reader (the emitted bound>slot guard) never indexes past the
++// table just stored. Gated on the process-level gilOff bit so flag-off / a
++// GIL-on second VM never touch the lite (the fields are never read either).
++// `lite` may be null (pre-install bootstrap allocations, GC-helper threads):
++// the next stamp site re-stamps once the lite is installed.
++static ALWAYS_INLINE void stampTLCMirrorOnCurrentLite(Allocator* table, unsigned bound)
++{
++    if (!g_jscConfig.gilOffProcess) [[likely]]
++        return;
++    VMLite* lite = VMLite::currentIfExists();
++    if (!lite || !lite->gilOff)
++        return;
++    lite->tlcTable = table;
++    WTF::compilerFence(); // bound LAST (same-thread program-order guarantee for the bound-first JIT reader).
++    lite->tlcTableBound = bound;
++}
+ 
+ void Heap::setCurrentThreadClient(Heap* client)
+ {
+     s_currentThreadClient = client;
++    // H-VMLITE-TLCPTR attach stamp: every {attach, A36C carrier swap, main-
++    // client adoption} re-stamps the §10A.1 slot here, AFTER the carrier's
++    // VMLite::setCurrent (JSLock.cpp install ordering), so the lite mirror
++    // tracks the now-current client's already-grown table without waiting for
++    // the next growTable. Detach (null client) clears the mirror so a stale
++    // table pointer is never read past the client's lifetime.
++    // H-TLS-TABLE: restamp the IE-TLS {table, bound} snapshot at the same
++    // sites — the C++ fast path's correctness depends on exactly the same
++    // "current client's table" invariant the lite mirror does. Detach clears
++    // to {nullptr, 0} so a post-detach allocate() reads bound==0 and takes
++    // the resolver slow path (which is where the I2 ASSERTs live).
++    if (client) {
++        Allocator* table = client->threadLocalCache().table();
++        unsigned bound = client->threadLocalCache().tableBound();
++        setCurrentThreadTLCSnapshot(table, bound);
++        stampTLCMirrorOnCurrentLite(table, bound);
++        // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER bind: idempotent; computes each
++        // wrapper's slotBase = table + server.tlcIndexBase() now that (a) the
++        // fixed-capacity table exists (TLC ctor above) and (b) every server
++        // CompleteSubspace's tlcIndexBase is reserved (also TLC ctor). Gated
++        // on the option so a GIL-on / non-shared client never touches the
++        // wrappers (they stay default-constructed and have no caller). Runs
++        // on every {attach, A36C carrier swap, main-client adoption} — same
++        // sites as the TLS/lite restamps; first attach is the only one that
++        // changes state, the rest re-store identical pointers.
++        if (Options::useSharedGCHeap())
++            client->bindCompleteSubspaceClients();
++    } else {
++        setCurrentThreadTLCSnapshot(nullptr, 0);
++        stampTLCMirrorOnCurrentLite(nullptr, 0);
++    }
+ }
+ 
+ // --- End §10A.1 current-client TLS ---
+@@ -75,6 +150,38 @@ void Heap::setCurrentThreadClient(Heap* client)
+ GCThreadLocalCache::GCThreadLocalCache(JSC::Heap& server)
+     : m_server(server)
+ {
++    // H-TLC-FIXEDTABLE-NOREALLOC + H-GCCLIENT-COMPLETESUBSPACE-WRAPPER
++    // (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1): eagerly reserve every server
++    // CompleteSubspace's tlcIndexBase (write-once under directoryLock,
++    // idempotent across clients; NO BlockDirectory is created — see
++    // CompleteSubspace::ensureTlcIndexBaseReserved) and pre-grow m_table to
++    // its lifetime maximum so it NEVER reallocs. This makes every per-client
++    // slotBase pointer (= m_table + tlcIndexBase) and the H-TLS-TABLE /
++    // H-VMLITE-TLCPTR {table, bound} snapshots valid for the client's
++    // lifetime with no restamp-on-grow hazard. Flag-off: today's lazy
++    // {nullptr, 0} table — the branch is the only delta. RSS: 5 ×
++    // numSizeClasses × sizeof(Allocator) ≈ a few KB per client (well inside
++    // the +10% gate at W=16). Runs during GCClient::Heap construction, which
++    // for the first client (vm.clientHeap) is after JSC::Heap is fully
++    // constructed (VM member declaration order), so the server subspaces
++    // exist and directoryLock is takeable.
++    if (Options::useSharedGCHeap()) [[unlikely]] {
++        server.primitiveGigacageAuxiliarySpace.ensureTlcIndexBaseReserved();
++        server.auxiliarySpace.ensureTlcIndexBaseReserved();
++        server.immutableButterflyAuxiliarySpace.ensureTlcIndexBaseReserved();
++        server.cellSpace.ensureTlcIndexBaseReserved();
++        server.destructibleObjectSpace.ensureTlcIndexBaseReserved();
++        constexpr unsigned fixedCapacity = JSC::Heap::numCompleteSubspaces * static_cast<unsigned>(MarkedSpace::numSizeClasses);
++        // Direct allocate (NOT growTable): growTable would restamp the
++        // s_currentThreadTLCTable/Bound TLS pair and the lite mirror, but at
++        // ctor time this thread's stamped client (if any) is a DIFFERENT
++        // GCClient::Heap — the restamp would install the wrong table. The
++        // correct stamp for THIS client lands at setCurrentThreadClient
++        // (attach), which now also binds the per-client CompleteSubspace
++        // wrappers.
++        m_table = static_cast<Allocator*>(fastZeroedMalloc(static_cast<size_t>(fixedCapacity) * sizeof(Allocator)));
++        m_tableBound = fixedCapacity;
++    }
+ }
+ 
+ GCThreadLocalCache::~GCThreadLocalCache()
+@@ -181,6 +288,17 @@ void GCThreadLocalCache::growTable(unsigned neededBound)
+ {
+     if (neededBound <= m_tableBound)
+         return;
++    // H-TLC-FIXEDTABLE-NOREALLOC (§41 T1): with the fixed-capacity pre-grow
++    // in the ctor, the early-return above must always fire under
++    // Options::useSharedGCHeap() — m_table never reallocs, so the per-client
++    // slotBase pointers (GCClient::CompleteSubspace::m_slotBase) and the
++    // H-TLS-TABLE / H-VMLITE-TLCPTR snapshots never dangle. Reaching here
++    // means a tlcIndex exceeded numCompleteSubspaces × numSizeClasses, i.e. a
++    // 6th CompleteSubspace was added without bumping
++    // JSC::Heap::numCompleteSubspaces. The realloc/free leg below is retained
++    // verbatim for !useSharedGCHeap (where this whole class is inert today)
++    // and as the documented fallback shape; it is unreachable flag-on.
++    RELEASE_ASSERT_WITH_MESSAGE(!Options::useSharedGCHeap(), "GCThreadLocalCache fixed-capacity table overflow; bump JSC::Heap::numCompleteSubspaces");
+     static constexpr unsigned minimumBound = 32;
+     unsigned newBound = std::max(neededBound, std::max(m_tableBound * 2, minimumBound));
+     Allocator* newTable = static_cast<Allocator*>(fastMalloc(static_cast<size_t>(newBound) * sizeof(Allocator)));
+@@ -197,6 +315,19 @@ void GCThreadLocalCache::growTable(unsigned neededBound)
+     m_table = newTable;
+     WTF::storeStoreFence();
+     m_tableBound = newBound; // Grow-only (§5.3).
++    // H-VMLITE-TLCPTR + H-TLS-TABLE: re-stamp both the lite mirror and the
++    // IE-TLS snapshot BEFORE freeing the old table — the readers (JIT inline
++    // emitter via lite, CompleteSubspace::allocate via TLS) are this same
++    // thread (I2/I11) so there is no concurrent dereference of oldTable, but
++    // keeping the snapshots coherent with {m_table, m_tableBound} across the
++    // free preserves the bound-first/table-second invariant unconditionally.
++    // growTable is reachable only from materializeAllocator (owner thread,
++    // under Options::useSharedGCHeap()), so the restamp installs THIS
++    // thread's allocating client's table — exactly what
++    // allocationClientForCurrentThread would have resolved to on the call
++    // that landed here.
++    Heap::setCurrentThreadTLCSnapshot(newTable, newBound);
++    stampTLCMirrorOnCurrentLite(newTable, newBound);
+     if (oldTable)
+         fastFree(oldTable);
+ }
+diff --git a/Source/JavaScriptCore/heap/GCThreadLocalCache.h b/Source/JavaScriptCore/heap/GCThreadLocalCache.h
+index 2661773e14da..0c40e386379d 100644
+--- a/Source/JavaScriptCore/heap/GCThreadLocalCache.h
++++ b/Source/JavaScriptCore/heap/GCThreadLocalCache.h
+@@ -107,6 +107,13 @@ public:
+     static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(GCThreadLocalCache, m_table); }
+     static constexpr ptrdiff_t offsetOfTableBound() { return OBJECT_OFFSETOF(GCThreadLocalCache, m_tableBound); }
+ 
++    // H-VMLITE-TLCPTR: read-only snapshot for the lite-mirror stamp at the
++    // §10A.1 client-slot stamp site (setCurrentThreadClient). Owner thread
++    // only (I2); the pair is the same {pointer, grow-only bound} the JIT
++    // addressing contract above consumes.
++    Allocator* table() const { return m_table; }
++    unsigned tableBound() const { return m_tableBound; }
++
+ private:
+     Allocator materializeAllocator(BlockDirectory&); // slow path; I3 dedup.
+     void growTable(unsigned neededBound); // grow-only (§5.3); owner thread.
+diff --git a/Source/JavaScriptCore/heap/Heap.h b/Source/JavaScriptCore/heap/Heap.h
+index 756c9c63a83e..11d046716259 100644
+--- a/Source/JavaScriptCore/heap/Heap.h
++++ b/Source/JavaScriptCore/heap/Heap.h
+@@ -2028,6 +2028,21 @@ public:
+     CompleteSubspace cellSpace;
+     CompleteSubspace destructibleObjectSpace;
+ 
++    // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER / H-TLC-FIXEDTABLE-NOREALLOC
++    // (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1): exactly 5 CompleteSubspaces
++    // exist (the three auxiliary spaces above + cellSpace +
++    // destructibleObjectSpace); each reserves one contiguous
++    // MarkedSpace::numSizeClasses-slot range in every client's
++    // GCThreadLocalCache table, so the maximum non-iso tlcIndex is bounded by
++    // numCompleteSubspaces × numSizeClasses. GCThreadLocalCache's ctor
++    // pre-grows to that capacity under Options::useSharedGCHeap() so m_table
++    // NEVER reallocs after construction — the precomputed per-client
++    // slotBase pointers (GCClient::CompleteSubspace::m_slotBase) and the
++    // H-TLS-TABLE / H-VMLITE-TLCPTR snapshots stay valid for the client's
++    // lifetime. If a 6th CompleteSubspace is ever added, growTable() will
++    // RELEASE_ASSERT (and this constant must be bumped).
++    static constexpr unsigned numCompleteSubspaces = 5;
++
+ #define DECLARE_ISO_SUBSPACE(name, heapCellType, type) \
+     IsoSubspace name;
+ 
+@@ -2398,6 +2413,27 @@ public:
+     // site at attach/detach/JSLock A36C re-stamp is semantically unchanged.
+     ALWAYS_INLINE static Heap* currentThreadClient() { return s_currentThreadClient; }
+ 
++    // H-TLS-TABLE (SHAREDHEAP-ALLOC-EVIDENCE.md §41 T1): direct IE-TLS
++    // snapshot of the current thread's GCThreadLocalCache {m_table,
++    // m_tableBound} pair so CompleteSubspace::allocate's useSharedGCHeap leg
++    // resolves `table[tlcIndexBase + sizeClassIndex]` with two %fs:@TPOFF
++    // loads + one indexed load, skipping hop-1
++    // (allocationClientForCurrentThread: gilOff gate + s_currentThreadClient
++    // + server-identity compare) and hop-2 (client.threadLocalCache() member
++    // chase) entirely on the C++ non-iso hot path. The TLC table is grow-only
++    // / write-once-per-slot and owner-thread-mutated (I2;
++    // GCThreadLocalCache.cpp:161-210), so a same-thread snapshot never
++    // observes a torn or freed table: setCurrentThreadClient() and
++    // growTable() are the ONLY two restamp sites and both run on this thread
++    // strictly before the next allocate() that could read the pair.
++    // Zero-init: an unstamped thread (compilation thread, pre-attach
++    // bootstrap) reads bound==0 and falls through to the
++    // allocationClientForCurrentThread slow path, preserving the FIX-3
++    // carve-out semantics. Only READ inside `if (Options::useSharedGCHeap())`
++    // — flag-off codegen on every hot path is byte-identical.
++    ALWAYS_INLINE static Allocator* currentThreadTLCTable() { return s_currentThreadTLCTable; }
++    ALWAYS_INLINE static unsigned currentThreadTLCBound() { return s_currentThreadTLCBound; }
++
+     // GlobalGC FIXME resolved (T4): lastChanceToFinalize() relinquishes
+     // memory from this client's allocators — owned non-iso TLC allocators AND
+     // the IsoSubspace LocalAllocators (registered lookup-only in the TLC's
+@@ -2411,6 +2447,7 @@ private:
+     friend class JSC::HeapClientSet;
+     friend class JSC::GCSafepointEpoch; // §11: reads/stamps m_localEpoch (T7).
+     friend class JSC::JSLock; // UNGIL §A.3.6/A36C (U-T1): the carrier tuple swap re-stamps the §10A.1 client slot at install/LIFO-restore.
++    friend class GCThreadLocalCache; // H-TLS-TABLE: growTable() restamps the s_currentThreadTLCTable/Bound IE-TLS snapshot.
+ 
+     static constexpr uint8_t noAccessState = 0; // §10A m_accessState values.
+     static constexpr uint8_t hasAccessState = 1;
+@@ -2435,10 +2472,19 @@ private:
+     // GCThreadLocalCache.cpp includes this header).
+ #if OS(LINUX)
+     JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static thread_local Heap* s_currentThreadClient;
++    // H-TLS-TABLE: same IE-TLS rationale as s_currentThreadClient above
++    // (single `movq %fs:@TPOFF`; libJavaScriptCore is never dlopen()'d). The
++    // attribute on these declarations carries to the definitions in
++    // GCThreadLocalCache.cpp (same entity).
++    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static thread_local Allocator* s_currentThreadTLCTable;
++    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static thread_local unsigned s_currentThreadTLCBound;
+ #else
+     JS_EXPORT_PRIVATE static thread_local Heap* s_currentThreadClient;
++    JS_EXPORT_PRIVATE static thread_local Allocator* s_currentThreadTLCTable;
++    JS_EXPORT_PRIVATE static thread_local unsigned s_currentThreadTLCBound;
+ #endif
+     static void setCurrentThreadClient(Heap*); // §10A.1; defined in GCThreadLocalCache.cpp.
++    static void setCurrentThreadTLCSnapshot(Allocator*, unsigned); // H-TLS-TABLE restamp; defined in GCThreadLocalCache.cpp.
+ 
+     // I4(b) enforcement (§10.6/I12, T6): every thread that acquires heap
+     // access must first be registered with the server's MachineThreads so
+@@ -2488,8 +2534,53 @@ private:
+     IsoSubspace programExecutableSpace;
+     IsoSubspace unlinkedFunctionExecutableSpace;
+ 
++    // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (§41 T1): per-client views of the 5
++    // server CompleteSubspaces, mirroring the GCClient::IsoSubspace members
++    // above. Each holds a precomputed slotBase into m_threadLocalCache.m_table
++    // so allocate() is one indexed load (eliminates hop-2 entirely; see
++    // CompleteSubspace.h). Default-constructed (slotBase=null) and bound
++    // idempotently at setCurrentThreadClient — the ctor cannot bind them
++    // itself because Heap.cpp (the GCClient::Heap ctor TU) is outside this
++    // hypothesis's owned-file set. STAGING: no caller this round; the VM.h
++    // accessor reroute lands in a round that owns the JIT-side
++    // `CompleteSubspace&` consumers (see the GCClient::CompleteSubspace class
++    // comment). Declared AFTER m_threadLocalCache so
++    // GCClient::Heap::offsetOfThreadLocalCache() (consumed by the
++    // VMLite.cpp:445 hop-2 chain) is unshifted — flag-off layout / LAW.
++    //
++    // Bind all 5 wrappers' slotBase = m_threadLocalCache.table() +
++    // server.tlcIndexBase(). Idempotent; owner thread only (I2). REQUIRES the
++    // fixed-capacity table (H-TLC-FIXEDTABLE-NOREALLOC) so the pointer never
++    // dangles. Called from Heap::setCurrentThreadClient
++    // (GCThreadLocalCache.cpp) at every {attach, A36C carrier swap,
++    // main-client adoption} — that path already has the GCClient::Heap* and
++    // runs strictly after the TLC ctor has pre-grown the table and reserved
++    // every server subspace's tlcIndexBase. A still-unreserved base (only
++    // possible when !useSharedGCHeap, which never reaches the wrapper) leaves
++    // slotBase null and allocate() takes the slow path.
++    void bindCompleteSubspaceClients()
++    {
++        ASSERT(Options::useSharedGCHeap());
++        Allocator* table = m_threadLocalCache.table();
++        ASSERT(table); // Fixed-capacity pre-grow ran in the TLC ctor.
++        auto bindOne = [&](GCClient::CompleteSubspaceView& wrapper, JSC::CompleteSubspace& server) {
++            unsigned base = server.tlcIndexBase();
++            wrapper.bind(server, *this, base != BlockDirectory::invalidTlcIndex ? table + base : nullptr);
++        };
++        bindOne(primitiveGigacageAuxiliarySpaceClient, m_server.primitiveGigacageAuxiliarySpace);
++        bindOne(auxiliarySpaceClient, m_server.auxiliarySpace);
++        bindOne(immutableButterflyAuxiliarySpaceClient, m_server.immutableButterflyAuxiliarySpace);
++        bindOne(cellSpaceClient, m_server.cellSpace);
++        bindOne(destructibleObjectSpaceClient, m_server.destructibleObjectSpace);
++    }
++
+     // --- Shared heap client state (SPEC-heap.md; THREADS T2) ---
+     GCThreadLocalCache m_threadLocalCache; // §5.3; initialized after the iso subspaces (declaration order).
++    GCClient::CompleteSubspaceView primitiveGigacageAuxiliarySpaceClient;
++    GCClient::CompleteSubspaceView auxiliarySpaceClient;
++    GCClient::CompleteSubspaceView immutableButterflyAuxiliarySpaceClient;
++    GCClient::CompleteSubspaceView cellSpaceClient;
++    GCClient::CompleteSubspaceView destructibleObjectSpaceClient;
+     Atomic<uint8_t> m_accessState { noAccessState }; // §10A; seq_cst RMWs (F6/F8).
+     Atomic<WTF::Thread*> m_accessOwner { nullptr }; // §10A; step-0 idempotency, I2 hand-off re-stamping, debug cross-checks.
+     WTF::Thread* m_parkedRootSnapshotThread { nullptr }; // T5-rootscan-skip: written BEFORE the seq_cst m_parkedRootSnapshot publish; read by the conductor only when that load returns non-null (the seq_cst pair orders it). Never cleared independently (stale value is harmless — gated by the snapshot pointer).
+diff --git a/Source/JavaScriptCore/jit/AssemblyHelpers.cpp b/Source/JavaScriptCore/jit/AssemblyHelpers.cpp
+index 566ff234c50f..4a29a4c38351 100644
+--- a/Source/JavaScriptCore/jit/AssemblyHelpers.cpp
++++ b/Source/JavaScriptCore/jit/AssemblyHelpers.cpp
+@@ -1368,6 +1368,28 @@ void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const J
+     done.link(this);
+ }
+ 
++void AssemblyHelpers::emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned tlcSlot, JumpList& slowPath)
++{
++    // H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4; GILOFF-TAX #1/#2): the §B.4
++    // addressing chain collapsed to the lite mirror —
++    //   lite = loadVMLite
++    //   slot < [lite + offsetOfTlcTableBound] ? : slowPath   (32-bit)
++    //   table = [lite + offsetOfTlcTable]
++    //   allocatorGPR = [table + slot * sizeof(Allocator)]    (LocalAllocator* | null)
++    // The bound is stamped LAST (GCThreadLocalCache::growTable / the §10A.1
++    // attach stamp) and grow-only, so passing the bound check guarantees both
++    // table != null and table[slot] is an initialized Allocator word; a stale
++    // (smaller) bound only over-dispatches to the slow path. Same-thread (I11
++    // reads what I2 wrote) — no fences emitted. Caller passes the result
++    // through JITAllocator::variable() so emitAllocate adds the null check.
++    static_assert(sizeof(Allocator) == sizeof(void*));
++    JIT_COMMENT(*this, "TLC lite-relative allocator for baked slot ", tlcSlot);
++    loadVMLite(allocatorGPR);
++    slowPath.append(branch32(BelowOrEqual, Address(allocatorGPR, static_cast<int32_t>(VMLite::offsetOfTlcTableBound())), TrustedImm32(static_cast<int32_t>(tlcSlot))));
++    loadPtr(Address(allocatorGPR, static_cast<int32_t>(VMLite::offsetOfTlcTable())), allocatorGPR);
++    loadPtr(Address(allocatorGPR, static_cast<int32_t>(tlcSlot * sizeof(void*))), allocatorGPR);
++}
++
+ void AssemblyHelpers::emitAllocate(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult)
+ {
+     switch (allocator.kind()) {
+diff --git a/Source/JavaScriptCore/jit/AssemblyHelpers.h b/Source/JavaScriptCore/jit/AssemblyHelpers.h
+index cd6511e05218..7633a555365e 100644
+--- a/Source/JavaScriptCore/jit/AssemblyHelpers.h
++++ b/Source/JavaScriptCore/jit/AssemblyHelpers.h
+@@ -2275,8 +2275,20 @@ public:
+         UndefinedBehavior,
+     };
+     void emitAllocateWithNonNullAllocator(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
+-    
++
+     void emitAllocate(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
++
++    // H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4): GIL-off lite-relative resolution
++    // of the per-thread TLC LocalAllocator for a baked TLC slot
++    // (tlcIndexBase_const + sizeClassIndex_const). Emits
++    //   loadVMLite -> bound>slot? -> [tlcTable + slot*ptr]
++    // leaving allocatorGPR = LocalAllocator* | null; the bound-miss branch
++    // appends to slowPath. Callers feed the result through
++    // JITAllocator::variable() so emitAllocate supplies the null-allocator
++    // slow-path branch. ARM64: allocatorGPR must not be the data temp (same
++    // contract as loadVMLite). gilOff-mode emission ONLY — every call site is
++    // behind a vm.gilOff() codegen gate (flag-off byte-identity).
++    void emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned tlcSlot, JumpList& slowPath);
+     
+     template<typename StructureType>
+     void emitAllocateJSCell(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, StructureType structure, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult = SlowAllocationResult::ClearToNull)
+@@ -2297,6 +2309,18 @@ public:
+         VM& vm, GPRReg resultGPR, StructureType structure, StorageType storage, GPRReg scratchGPR1,
+         GPRReg scratchGPR2, JumpList& slowPath, size_t size, SlowAllocationResult slowAllocationResult = SlowAllocationResult::ClearToNull)
+     {
++        if (vm.gilOff()) [[unlikely]] {
++            // H-VMLITE-TLCPTR: allocatorForConcurrently returns {} GIL-off
++            // (IT-9), which would emit an unconditional slow-path jump. Bake
++            // the TLC slot instead and resolve the per-thread LocalAllocator
++            // lite-relative at run time. nullopt (iso subspace, base not yet
++            // reserved, precise size) falls through to the legacy null-bake.
++            if (auto slot = tlcSlotForConcurrently<ClassType>(vm, size)) {
++                emitLoadTLCAllocatorForSlot(scratchGPR1, *slot, slowPath);
++                emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
++                return;
++            }
++        }
+         Allocator allocator = allocatorForConcurrently<ClassType>(vm, size, AllocatorForMode::AllocatorIfExists);
+         emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
+     }
+diff --git a/Source/JavaScriptCore/runtime/ConcurrentButterfly.cpp b/Source/JavaScriptCore/runtime/ConcurrentButterfly.cpp
+index 57099c310699..c661827a977a 100644
+--- a/Source/JavaScriptCore/runtime/ConcurrentButterfly.cpp
++++ b/Source/JavaScriptCore/runtime/ConcurrentButterfly.cpp
+@@ -2656,19 +2656,24 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned
+             // thread and foreign first-writers - who must flip SW first,
+             // changing the word and failing the CAS below; a torn copy is
+             // therefore discarded, never published (I21).
+-            // V7 (TSAN): TSAN-visible relaxed word copy instead of memcpy — the
+-            // source payload's words may be concurrently stored ATOMICALLY by a
+-            // foreign first-writer that has not yet flipped SW (its flip changes
+-            // the word and fails our CAS, so a torn copy is discarded, never
+-            // published — the protocol argument above is unchanged; this only
+-            // makes the racing reads defined). Flag-on-only path.
++            // V7 (TSAN): the source payload's words may be concurrently stored
++            // ATOMICALLY by a foreign first-writer whose SW flip lands after
++            // our `word` snapshot (its flip changes the word and fails our CAS,
++            // so a torn copy is discarded, never published — the protocol
++            // argument above is unchanged); the destination is fresh aux memory
++            // whose recycled address can pair with stale readers. Both make the
++            // copy a benign-but-TSAN-visible race only.
++            // butterflyConcurrentCopyWords is the established treatment
++            // (Butterfly.h): the relaxed word loop UNDER TSAN ONLY, plain
++            // vectorized memcpy in production. seg-t1-atomic-copy-loop:
++            // restores parity with flag-off ensureLengthSlow's memmove via
++            // Butterfly::resizeArray and reuses the established helper; no
++            // measured wall-time delta on x86-64 (relaxed atomics compile to
++            // plain MOV, so the prior scalar loop already paid no
++            // atomic-instruction cost — SHAREDHEAP-ALLOC-EVIDENCE.md §41).
+             {
+                 size_t copyBytes = propertyCapacity * sizeof(EncodedJSValue) + sizeof(IndexingHeader) + static_cast<size_t>(oldVectorLength) * sizeof(EncodedJSValue);
+-                ASSERT(!(copyBytes % sizeof(uint64_t)));
+-                uint64_t* dst = std::bit_cast<uint64_t*>(newButterfly->base(0, propertyCapacity));
+-                uint64_t* src = std::bit_cast<uint64_t*>(butterfly->base(0, propertyCapacity));
+-                for (size_t wordIndex = 0; wordIndex < copyBytes / sizeof(uint64_t); ++wordIndex)
+-                    WTF::atomicStore(&dst[wordIndex], WTF::atomicLoad(&src[wordIndex], std::memory_order_relaxed), std::memory_order_relaxed); // dst store atomic too: fresh aux memory at a recycled address can pair with stale readers.
++                butterflyConcurrentCopyWords(newButterfly->base(0, propertyCapacity), butterfly->base(0, propertyCapacity), copyBytes);
+             }
+             if (hasDouble(type)) {
+                 for (unsigned i = oldVectorLength; i < newVectorLength; ++i)
+diff --git a/Source/JavaScriptCore/runtime/JSCellInlines.h b/Source/JavaScriptCore/runtime/JSCellInlines.h
+index c29318148c95..ed19c4a506e3 100644
+--- a/Source/JavaScriptCore/runtime/JSCellInlines.h
++++ b/Source/JavaScriptCore/runtime/JSCellInlines.h
+@@ -204,6 +204,48 @@ inline Allocator allocatorForConcurrently(VM& vm, size_t allocationSize, Allocat
+     return { };
+ }
+ 
++// H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4; GILOFF-TAX #1/#2): resolve the
++// per-thread TLC flat-table SLOT a JIT inline-allocate emitter bakes for
++// `allocationSize` in `subspace`. tlcIndexBase is per-subspace WRITE-ONCE
++// (under directoryLock), so the slot is a process-wide constant once
++// non-nullopt; the per-thread part is the lite-relative
++// `tlcTable[slot * sizeof(Allocator)]` load the emitter generates against the
++// VMLite mirror (offsetOfTlcTable / offsetOfTlcTableBound). Returns nullopt
++// for: iso subspaces (never enter m_table — m_perDirectory lookup-only,
++// §5.3); a subspace whose tlcIndexBase has not been reserved yet (first
++// directory not created — the runtime slow path will reserve it, and a later
++// recompile will see it); sizes past largeCutoff (precise path). GIL-off
++// callers only (the call is reached through a vm.gilOff() codegen gate, so
++// flag-off emission never evaluates it — flag-off byte-identity).
++inline std::optional<unsigned> tlcSlotForSubspace(Subspace* subspace, size_t allocationSize)
++{
++    if (!subspace || subspace->isIsoSubspace())
++        return std::nullopt;
++    if (allocationSize > MarkedSpace::largeCutoff)
++        return std::nullopt;
++    unsigned base = static_cast<CompleteSubspace*>(subspace)->tlcIndexBase();
++    if (base == BlockDirectory::invalidTlcIndex)
++        return std::nullopt;
++    return base + static_cast<unsigned>(MarkedSpace::sizeClassToIndex(allocationSize));
++}
++
++template<typename Type>
++inline std::optional<unsigned> tlcSlotForConcurrently(VM& vm, size_t allocationSize)
++{
++    auto* subspace = subspaceForConcurrently<Type>(vm);
++    // subspaceForConcurrently<Type> may yield CompleteSubspace*, IsoSubspace*,
++    // or GCClient::IsoSubspace* (NOT a JSC::Subspace) — the latter is the
++    // per-client iso allocator the IT-9 comment above forbids baking; it is
++    // never table-addressable.
++    if constexpr (std::is_convertible_v<decltype(subspace), Subspace*>)
++        return tlcSlotForSubspace(subspace, allocationSize);
++    else {
++        UNUSED_PARAM(subspace);
++        UNUSED_PARAM(allocationSize);
++        return std::nullopt;
++    }
++}
++
+ template<typename T, AllocationFailureMode failureMode>
+ ALWAYS_INLINE void* tryAllocateCellHelper(VM& vm, size_t size, GCDeferralContext* deferralContext)
+ {
+@@ -250,6 +292,39 @@ void* tryAllocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)
+     return tryAllocateCellHelper<T, AllocationFailureMode::ReturnNull>(vm, size, deferralContext);
+ }
+ 
++// H-CALLSITE-LASTSIZE-LA: WITHDRAWN (amender, post-refute). The mechanism is
++// strictly dominated by H-TLS-TABLE already in this tree
++// (CompleteSubspaceInlines.h): that change collapses the identical 3-hop
++// (allocationClientForCurrentThread -> allocatorForSizeStep -> allocate) to
++// two IE-TLS loads + one indexed load for EVERY CompleteSubspace::allocate
++// call — a strict superset of the call sites this routed (JSCellButterfly,
++// JSLexicalEnvironment, 5 Butterfly aux funnels all reach
++// CompleteSubspace::allocate via tryAllocateCellHelper /
++// vm.auxiliarySpace().allocate). The "subspace disambiguation" premise was
++// wrong: H-TLS-TABLE keys on per-subspace tlcIndexBase(), so cellSpace sz=64
++// and auxiliarySpace sz=64 resolve to distinct table slots. Against the
++// combined tree the marginal hit-path win was {sizeStep TLS + compare} vs
++// {tlcIndexBase load + bound IE-TLS + table[slot]}: a few cycles/cell, not
++// the ~250ms attributed. Correctness defects that would survive amendment:
++// (a) per-callsite static thread_local has NO invalidation hook at
++// setCurrentThreadClient (A36C carrier swap / attach-detach,
++// GCThreadLocalCache.cpp) — a same-OS-thread client swap leaves a stale
++// LocalAllocator* → wrong-client pop / UAF after the prior client's
++// GCThreadLocalCache teardown; adding a client-generation guard makes the hit
++// path 3 TLS loads + 2 compares, worse than H-TLS-TABLE's IE-TLS path;
++// (b) function-local static thread_local in an ALWAYS_INLINE template gets
++// COMDAT/weak linkage with no tls_model attribute — risk of general-dynamic
++// __tls_get_addr per allocation (the M2-alloc-tax-residual failure mode
++// Heap.h documents), i.e. SLOWER than the path it replaces; (c) the hit path
++// dropped the I2 hasHeapAccess() tripwire that H-TLS-TABLE was already
++// required to restore (no-weakened-asserts gate). IsoSubspace types
++// (JSRopeString 1.37%, JSArray/JSString/JSFunction 0.53% of the §41 T1
++// bucket) were structurally unreachable regardless. No amendment yields a
++// mechanism that independently removes T1 tax not already removed by
++// H-TLS-TABLE; the routed call sites are reverted to their unmodified
++// allocateCell / vm.auxiliarySpace().allocate forms so flag-off is
++// byte-identical and GIL-off takes the H-TLS-TABLE fast path.
++
+ // FIXME: Consider making getCallData concurrency-safe once NPAPI support is removed.
+ // https://bugs.webkit.org/show_bug.cgi?id=215801
+ template<Concurrency concurrency>
+diff --git a/Source/JavaScriptCore/runtime/VM.h b/Source/JavaScriptCore/runtime/VM.h
+index 03ed36550b2e..8f659b2181da 100644
+--- a/Source/JavaScriptCore/runtime/VM.h
++++ b/Source/JavaScriptCore/runtime/VM.h
+@@ -350,6 +350,35 @@ public:
+     // §A.1.3 two-level discriminator; r27/TERM1.4), not the process byte.
+     bool gilOff() const { return m_gilOff; }
+ 
++    // cl-single-mutator-sticky-skip (GILOFF-TAX #4, T2): monotone sticky bit
++    // recording whether a SECOND same-VM MUTATOR VMLite has EVER been
++    // registered (m_mainVMLite is excluded — A36: GIL-off entry never
++    // installs it as a carrier, so it is not a mutator). While false, exactly
++    // one mutator exists, so the gilOff-introduced INTER-MUTATOR JSCellLock
++    // acquires (I31/L5, lockProtoFuncHold fast-callee cell lock, the
++    // Spread/varargs copy lock) guard against mutators that do not exist and
++    // may be elided — `gilOffMultiMutator()` is the gate for those sites.
++    // SCOPE: gates locks the threads project ADDED for inter-mutator
++    // exclusion ONLY. NEVER use it to elide a pre-existing cellLock that
++    // also serializes mutator-vs-GC-marker or mutator-vs-compiler reads —
++    // those readers run concurrently at W=1 too.
++    // The bit is set under the registry lock in VMLiteRegistry::registerLite
++    // (VMLiteShared.cpp) BEFORE the fresh lite's first heap access. Never
++    // cleared. NOT YET set spawner-side — DO NOT gate any site on this
++    // predicate until ThreadObject.cpp constructJSThread lands the companion
++    // `vm.noteSecondMutatorRegistered()` immediately before Thread::create
++    // (closes the spawner-side TOCTOU window between bit-check and the
++    // spawnee's registerLite); the consuming sites and that store must land
++    // atomically. INFRA-ONLY in this round: zero consumers; the
++    // lockProtoFuncHold / Spread gating is the LockObject.cpp owner's charge.
++    // Relaxed load is sufficient: the bit is monotone, and the release store
++    // in registerLite (under the registry lock) happens-before the fresh
++    // lite's first heap access; a single-mutator reader observing `false`
++    // races with no other mutator's heap access by construction.
++    bool everHadSecondMutator() const { return m_everHadSecondMutator.load(std::memory_order_relaxed); }
++    bool gilOffMultiMutator() const { return m_gilOff && m_everHadSecondMutator.load(std::memory_order_relaxed); }
++    void noteSecondMutatorRegistered() { m_everHadSecondMutator.store(true, std::memory_order_release); }
++
+     // C++-side equivalent of the derived JSCConfig gilOffProcess byte
+     // (§A.1.3 level (i); the Config byte itself + the LLInt consumer land
+     // with U-T3 and MUST stay derivation-identical to this). U0 option
+@@ -899,6 +928,12 @@ private:
+     // the VM ctor (before any entry/codegen); never cleared (§10D never
+     // clears it — it is not heap state).
+     bool m_gilOff { false };
++    // cl-single-mutator-sticky-skip: see everHadSecondMutator() above. Laid
++    // out in the m_gilOff/didEnterVM hot byte group so gilOffMultiMutator()
++    // is one cache-line load. std::atomic<bool> is 1 byte and fits in the
++    // pre-m_vmEpoch alignment padding (3 bools before an 8-aligned uint64),
++    // so no subsequent VM member offset shifts.
++    std::atomic<bool> m_everHadSecondMutator { false };
+     // ANNEX A36 carrier-map staleness epoch; see vmEpoch() above.
+     uint64_t m_vmEpoch { 0 };
+     RefPtr<CrossTaskToken> m_crossTaskToken;
+@@ -970,6 +1005,24 @@ public:
+     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+ #endif
+     
++    // H-GCCLIENT-COMPLETESUBSPACE-WRAPPER (SHAREDHEAP-ALLOC-EVIDENCE.md §41
++    // T1) STAGED, NOT YET FLIPPED: the per-client GCClient::CompleteSubspace
++    // wrappers (Heap::allocationClientForCurrentThread(*this,
++    // clientHeap).<name>Client) and the fixed-capacity TLC table backing
++    // their precomputed slotBase pointers are LANDED (CompleteSubspace.h /
++    // Heap.h GCClient::Heap / GCThreadLocalCache.cpp). Rerouting these
++    // accessors through them — exactly as the iso accessors below do — is
++    // DEFERRED to a round that owns the JIT-side `JSC::CompleteSubspace&` /
++    // `JSC::CompleteSubspace*` consumers: AssemblyHelpers::
++    // emitAllocateVariableSized (jit/AssemblyHelpers.h:2337), FTL
++    // allocatorForSize (ftl/FTLLowerDFGToB3.cpp:23950), DFG
++    // tlcSlotForSubspace (dfg/DFGSpeculativeJIT.cpp:432/16669) and the
++    // address-of `&vm.auxiliarySpace()` sites. Changing the return type here
++    // without those edits is a build break; the implicit `operator
++    // JSC::CompleteSubspace&` on the wrapper covers reference-taking helpers
++    // but not address-of. Until the flip, T1 is served by H-TLS-TABLE
++    // (CompleteSubspaceInlines.h, same hot path), and these accessors stay
++    // byte-identical flag-off (LAW).
+     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
+     ALWAYS_INLINE CompleteSubspace& auxiliarySpace() { return heap.auxiliarySpace; }
+     ALWAYS_INLINE CompleteSubspace& immutableButterflyAuxiliarySpace() { return heap.immutableButterflyAuxiliarySpace; }
+diff --git a/Source/JavaScriptCore/runtime/VMLite.h b/Source/JavaScriptCore/runtime/VMLite.h
+index 67334e618703..443d1616af9c 100644
+--- a/Source/JavaScriptCore/runtime/VMLite.h
++++ b/Source/JavaScriptCore/runtime/VMLite.h
+@@ -61,6 +61,7 @@
+ 
+ namespace JSC {
+ 
++class Allocator;
+ class CallFrame;
+ class Exception;
+ class MicrotaskQueue;
+@@ -314,6 +315,25 @@ public:
+     // VM's single clientHeap; U-T6 replaces with per-thread clients.
+     GCClient::Heap* clientHeap { nullptr };
+ 
++    // H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4; GILOFF-TAX #1/#2): cached mirror of
++    // this lite's GCThreadLocalCache flat table pointer + bound — the
++    // PROVISIONAL offsetOfTable/offsetOfTableBound contract (GCThreadLocalCache.h)
++    // collapsed to one lite-relative hop. Stamped by GCThreadLocalCache::growTable
++    // (owner thread, I2) and at the §10A.1 client-slot stamp
++    // (GCClient::Heap::setCurrentThreadClient — covers attach + the A36C
++    // carrier swap), so per-tier inline-allocate emitters resolve
++    // `tlcTable[tlcIndexBase_const + sizeClassIndex]` instead of baking the
++    // null Allocator that allocatorForConcurrently returns under gilOff (the
++    // IT-9 {} return) and falling to the lazy-slow-path generation thunk on
++    // EVERY allocation (operationCompileFTLLazySlowPath: 46.6M GIL-off vs 53
++    // GIL-on, intcs W=1). Same-thread program order (I11 + I2): the JIT reader
++    // is the owner thread, so no cross-thread fences; bound is stamped LAST so
++    // a bound-first reader never indexes past the published table (a stale
++    // bound is always <=, never > — grow-only, §5.3). GIL-on/flag-off: never
++    // read (every emitter is behind a vm.gilOff() codegen gate); zero-init.
++    Allocator* tlcTable { nullptr };
++    unsigned tlcTableBound { 0 };
++
+     // §A.1.5 per-entry record: GIL-off, VM::entryScope/VM::isEntered() and
+     // the entry-scope service bits live per-lite; VM-wide consumers iterate
+     // the registry under its lock. Written by VMEntryScope::setUpSlow/
+@@ -402,6 +422,8 @@ public:
+     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(VMLite, vm); } // Reader-side same-VM guard in the Group-3 host-call-return-value discriminators (LLIntThunks.cpp / LowLevelInterpreter64.asm).
+     static constexpr ptrdiff_t offsetOfScratchSegments() { return OBJECT_OFFSETOF(VMLite, scratchSegments); } // A16 emission (U-T4).
+     static constexpr ptrdiff_t offsetOfThreadContext() { return OBJECT_OFFSETOF(VMLite, threadContext); } // §A.2.1 chained-offset emission (U-T3/U-T4).
++    static constexpr ptrdiff_t offsetOfTlcTable() { return OBJECT_OFFSETOF(VMLite, tlcTable); } // H-VMLITE-TLCPTR §B.4 inline-allocate emission.
++    static constexpr ptrdiff_t offsetOfTlcTableBound() { return OBJECT_OFFSETOF(VMLite, tlcTableBound); }
+ 
+     // TLS accessors (L4): backed by g_jscCurrentVMLite (see banner above the
+     // class). Signatures frozen; the backing store is the L4-sanctioned
+diff --git a/Source/JavaScriptCore/runtime/VMLiteShared.cpp b/Source/JavaScriptCore/runtime/VMLiteShared.cpp
+index 07918509ffe6..90d08114c474 100644
+--- a/Source/JavaScriptCore/runtime/VMLiteShared.cpp
++++ b/Source/JavaScriptCore/runtime/VMLiteShared.cpp
+@@ -138,6 +138,26 @@ void VMLiteRegistry::registerLite(VMLite& lite, VM& vm)
+     Locker locker { lock };
+     ASSERT(!lites.contains(&lite));
+     ASSERT(!lite.vm); // Sole writer (§6.5.1); was null, immutable after.
++    // cl-single-mutator-sticky-skip (GILOFF-TAX #4): if this VM already has a
++    // registered MUTATOR lite, this is the second-or-later mutator for `vm`;
++    // latch the sticky bit BEFORE publishing the fresh lite (and hence before
++    // its first heap access). The registry is process-global, so scan for
++    // same-VM entries rather than testing lites.size(). m_mainVMLite is
++    // EXCLUDED: A36 — GIL-off entry never installs it (every thread, the main
++    // one included, uses a per-(thread,VM) JSLock carrier), so it is not a
++    // mutator and counting it would latch the bit at W=1 on the very first
++    // carrier registration. Monotone → never cleared in unregisterLite. The
++    // spawner-side companion store (ThreadObject.cpp, before Thread::create)
++    // is NOT YET LANDED — see VM.h everHadSecondMutator(); this store covers
++    // the JSLock carrier-entry path and is the spawnee-side fence.
++    if (!vm.everHadSecondMutator()) {
++        for (VMLite* existing : lites) {
++            if (existing->vm == &vm && existing != vm.mainVMLite()) {
++                vm.noteSecondMutatorRegistered();
++                break;
++            }
++        }
++    }
+     lite.vm = &vm;
+     lites.append(&lite);
+ 

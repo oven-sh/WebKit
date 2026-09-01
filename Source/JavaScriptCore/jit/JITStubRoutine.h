@@ -28,6 +28,7 @@
 #include "ExecutableAllocator.h"
 #include "MacroAssemblerCodeRef.h"
 #include "StructureID.h"
+#include <atomic>
 
 namespace JSC {
 
@@ -103,15 +104,22 @@ public:
         return result;
     }
     
+    // SPEC-jit section 4.5: unconditionally atomic (covers all subclasses).
+    // Refs/derefs can race across mutators once handler chains are shared and
+    // retired chains drop their stub-routine refs at epoch expiry on the GC
+    // conductor (section 4.4). Relaxed increment; release decrement; acquire
+    // fence before observeZeroRefCount() so the zero-observing thread sees
+    // every prior release-decrementing thread's writes.
     void ref()
     {
-        m_refCount++;
+        m_refCount.fetch_add(1, std::memory_order_relaxed);
     }
-    
+
     void deref()
     {
-        if (--m_refCount)
+        if (m_refCount.fetch_sub(1, std::memory_order_release) != 1)
             return;
+        std::atomic_thread_fence(std::memory_order_acquire);
         observeZeroRefCount();
     }
     
@@ -156,7 +164,7 @@ protected:
     ALWAYS_INLINE void NODELETE runWithDowncast(const Func& function);
 
     MacroAssemblerCodeRef<JITStubRoutinePtrTag> m_code;
-    unsigned m_refCount;
+    std::atomic<unsigned> m_refCount; // SPEC-jit section 4.5.
     mutable unsigned m_hash { 0 };
     Type m_type;
 };

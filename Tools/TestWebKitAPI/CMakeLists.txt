@@ -148,6 +148,7 @@ set(TestWTF_SOURCES
     Tests/WTF/SentinelLinkedList.cpp
     Tests/WTF/SequenceLockedTest.cpp
     Tests/WTF/SetForScope.cpp
+    Tests/WTF/SharedAtomStringTable.cpp
     Tests/WTF/Signals.cpp
     Tests/WTF/SmallSet.cpp
     Tests/WTF/SortedArrayMap.cpp

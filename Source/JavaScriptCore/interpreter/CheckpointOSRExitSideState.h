@@ -28,6 +28,7 @@
 #include "BytecodeIndex.h"
 #include "Operands.h"
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Threading.h>
 
 namespace JSC {
 
@@ -36,9 +37,18 @@ struct CheckpointOSRExitSideState {
 public:
     CheckpointOSRExitSideState(CallFrame* frame)
         : associatedCallFrame(frame)
+        , owningThreadUid(Thread::currentSingleton().uid())
     { }
 
     CallFrame* associatedCallFrame;
+    // K4 §I ruling: checkpoint OSR-exit side state is per-lite GIL-off. The
+    // storage stays on the VM (one vector, so VM::scanSideState still walks
+    // every thread's tmps at a stopped world), but each entry is tagged with
+    // the pushing thread and every GIL-off reader filters on this tag under
+    // VM::m_checkpointSideStateLock (see VM.cpp). Per-thread == per-lite
+    // here: side state is pushed and consumed on one thread between the OSR
+    // exit and the checkpoint trampoline. GIL-on: tag is written, never read.
+    uint32_t owningThreadUid;
     BytecodeIndex bytecodeIndex;
     JSValue tmps[maxNumCheckpointTmps] { };
 };

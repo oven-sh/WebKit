@@ -1,0 +1,73 @@
+====================================================================================================
+FAMILY count=69 key=('data race', 'malloc')
+  tests: cve_mc-grow-buffer-storm_js.logx7, vmstate_regexp-churn-threads_js.logx7, semantics_atom-rope-torture_js.logx6, semantics_date-cache-churn_js.logx6, cve_mc-jit-ta-resize-hoisted-base_js.logx5, cve_mc-prim-generator-resume-claim_js.logx3
+====================================================================================================
+FAMILY count=68 key=('data race', 'aligned_alloc')
+  tests: cve_mc-init-direct-arguments-override_js.logx16, objectmodel_i08-named-vs-indexed-first-install_js.logx15, scaling_map-heavy_js.logx6, cve_mc-jit-ta-resize-hoisted-base_js.logx5, invariants_no-lost-elements_js.logx4, cve_mc-aint-poll-resume-stale-elided_js.logx2
+====================================================================================================
+FAMILY count=10 key=('JSC::ICSlowPathCallFrameTracer::ICSlowPathCallFrameTracer', 'malloc')
+  tests: cve_mc-prim-generator-resume-claim_js.logx2, cve_mc-code-deferred-fire-stale-window_js.logx1, gc-stress_havebadtime-vs-indexed-fastpath_js.logx1, jit_ic-publish-reset-loops_js.logx1, jit_spawned-thread-butterfly-stress_js.logx1, semantics_atom-rope-torture_js.logx1
+====================================================================================================
+FAMILY count=9 key=('data race', 'JSC::PropertyInlineCache::PropertyInlineCache')
+  tests: cve_mc-prim-generator-resume-claim_js.logx2, cve_mc-code-deferred-fire-stale-window_js.logx1, jit_ic-publish-reset-loops_js.logx1, jit_spawned-thread-butterfly-stress_js.logx1, semantics_atom-rope-torture_js.logx1, semantics_symbol-registry-cross-thread_js.logx1
+====================================================================================================
+FAMILY count=3 key=('data race', 'realloc')
+  tests: semantics_date-cache-churn_js.logx3
+====================================================================================================
+FAMILY count=2 key=('JSC::ArrayBufferContents::sizeInBytes', 'malloc')
+  tests: cve_mc-grow-buffer-storm_js.logx2
+====================================================================================================
+FAMILY count=2 key=('JSC::PropertyInlineCache::considerRepatchingCacheImpl', 'malloc')
+  tests: cve_mc-prim-generator-resume-claim_js.logx1, vmstate_exception-state-per-thread_js.logx1
+====================================================================================================
+FAMILY count=2 key=('WTF::VectorBufferBase<JSC::StructureID, WTF::FastMalloc>::VectorBufferBase', 'malloc')
+  tests: cve_mc-prim-generator-resume-claim_js.logx1, vmstate_exception-state-per-thread_js.logx1
+====================================================================================================
+FAMILY count=2 key=('WTF::VectorBuffer<JSC::StructureID, 0ul, WTF::FastMalloc>::adopt', 'malloc')
+  tests: cve_mc-prim-generator-resume-claim_js.logx1, vmstate_exception-state-per-thread_js.logx1
+====================================================================================================
+FAMILY count=1 key=('data race', 'JSC::CallLinkInfoBase::CallLinkInfoBase')
+  tests: cve_mc-code-calllink-writer-writer_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::JSDataView::JSDataView', 'JSC::JSDataView::possiblySharedBuffer')
+  tests: cve_mc-df-ta-detach-resize_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::IndexingHeader::arrayBuffer', 'aligned_alloc')
+  tests: cve_mc-grow-buffer-storm_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::MegamorphicCache::bumpEpoch', 'JSC::MegamorphicCache::bumpEpoch')
+  tests: cve_mc-life-detach-quarantine-storm_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::LazyClassStructure::Initializer::setConstructor', 'JSC::LazyClassStructure::Initializer::setConstructor')
+  tests: cve_mc-life-detach-quarantine-storm_js.logx1
+====================================================================================================
+FAMILY count=1 key=('data race', 'JSC::trySegmentedTransition')
+  tests: invariants_no-lost-properties-same-name_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::UnlinkedFunctionExecutable::lexicallyScopedFeatures', 'JSC::UnlinkedFunctionExecutable::recordParse')
+  tests: jit_int-gate-direct-call-relink_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::PutByStatus::computeFromLLInt', 'llint_slow_path_put_by_id')
+  tests: jit_int-gate-epoch-reclaim_js.logx1
+====================================================================================================
+FAMILY count=1 key=('WTF::Atomic<unsigned long>::store', 'WTF::String::isNull')
+  tests: objectmodel_i03-as-shift-unshift_js.logx1
+====================================================================================================
+FAMILY count=1 key=('WTF::StringView::StringView', 'malloc')
+  tests: objectmodel_i03-as-shift-unshift_js.logx1
+====================================================================================================
+FAMILY count=1 key=('WTF::Box<JSC::InlineWatchpointSet>::isValid', 'WTF::Box<JSC::InlineWatchpointSet>::operator=')
+  tests: objectmodel_i03-i37-same-shape-add-storm_js.logx1
+====================================================================================================
+FAMILY count=1 key=('data race', 'JSC::JSPropertyNameEnumerator::finishCreation')
+  tests: races_forin-enumerator-cache_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::CatchInfo::CatchInfo', 'JSC::CodeBlock::setupWithUnlinkedBaselineCode')
+  tests: vmstate_exception-state-per-thread_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::CodeBlock::linkIncomingCall', 'JSC::MicrotaskCall::relink')
+  tests: vmstate_microtask-ordering_js.logx1
+====================================================================================================
+FAMILY count=1 key=('JSC::CachedCall::unlinkOrUpgradeImpl', 'JSC::Interpreter::executeCachedCall')
+  tests: vmstate_regexp-churn-threads_js.logx1
+TOTAL families=24 reports=182

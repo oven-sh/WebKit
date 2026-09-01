@@ -29,6 +29,7 @@
 #pragma once
 
 #include <wtf/Assertions.h>
+#include <wtf/Atomics.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/MetaAllocatorHandle.h>
@@ -84,8 +85,11 @@ public:
         m_tracker = tracker;
     }
 
-    // Non-atomic methods for getting allocator statistics.
-    size_t bytesAllocated() { return m_bytesAllocated; }
+    // Non-locking methods for getting allocator statistics. bytesAllocated()
+    // is an advisory datum read without the pool lock (e.g. ExecutableAllocator
+    // fullness heuristics), so it uses a relaxed atomic load; the value may be
+    // stale but the read is well-defined.
+    size_t bytesAllocated() { return m_bytesAllocated.loadRelaxed(); }
     size_t bytesReserved() { return m_bytesReserved; }
     size_t bytesCommitted() { return m_bytesCommitted; }
     
@@ -202,7 +206,10 @@ private:
     UncheckedKeyHashMap<FreeSpacePtr, CheckedPtr<FreeSpaceNode>> m_freeSpaceEndAddressMap;
     UncheckedKeyHashMap<uintptr_t, size_t> m_pageOccupancyMap;
     
-    size_t m_bytesAllocated;
+    // Written only under m_lock; read without the lock by bytesAllocated(),
+    // hence relaxed Atomic. All stores are relaxed (the lock orders writers),
+    // so flag-off codegen is unchanged modulo the atomic access itself.
+    Atomic<size_t> m_bytesAllocated;
     size_t m_bytesReserved;
     size_t m_bytesCommitted;
     

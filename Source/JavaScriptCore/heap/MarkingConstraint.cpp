@@ -28,6 +28,7 @@
 
 #include "JSCInlines.h"
 #include "VisitCounter.h"
+#include <wtf/Atomics.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
@@ -49,7 +50,7 @@ MarkingConstraint::~MarkingConstraint() = default;
 
 void MarkingConstraint::resetStats()
 {
-    m_lastVisitCount = 0;
+    WTF::atomicStore(&m_lastVisitCount, static_cast<size_t>(0), std::memory_order_relaxed);
 }
 
 void MarkingConstraint::execute(SlotVisitor& visitor)
@@ -57,7 +58,10 @@ void MarkingConstraint::execute(SlotVisitor& visitor)
     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
     VisitCounter visitCounter(visitor);
     executeImpl(visitor);
-    m_lastVisitCount += visitCounter.visitCount();
+    // m_lastVisitCount is a stats counter feeding workEstimate() heuristics;
+    // concurrent execute()/doParallelWork() updates are tolerated by design.
+    // Relaxed atomic RMW makes that well-defined (no lost updates, no UB).
+    WTF::atomicExchangeAdd(&m_lastVisitCount, visitCounter.visitCount(), std::memory_order_relaxed);
     if (verboseMarkingConstraint && visitCounter.visitCount())
         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in execute)");
 }
@@ -84,7 +88,7 @@ void MarkingConstraint::prepareToExecute(const AbstractLocker& constraintSolving
     dataLogIf(Options::logGC(), abbreviatedName());
     VisitCounter visitCounter(visitor);
     prepareToExecuteImpl(constraintSolvingLocker, visitor);
-    m_lastVisitCount = visitCounter.visitCount();
+    WTF::atomicStore(&m_lastVisitCount, visitCounter.visitCount(), std::memory_order_relaxed);
     if (verboseMarkingConstraint && visitCounter.visitCount())
         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in prepareToExecute)");
 }
@@ -96,10 +100,10 @@ void MarkingConstraint::doParallelWork(SlotVisitor& visitor, SharedTask<void(Slo
     task.run(visitor);
     if (verboseMarkingConstraint && visitCounter.visitCount())
         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in doParallelWork)");
-    {
-        Locker locker { m_lock };
-        m_lastVisitCount += visitCounter.visitCount();
-    }
+    // The relaxed atomic RMW supersedes the m_lock critical section that used
+    // to guard this add (doParallelWork was m_lock's only user; the member
+    // stays declared in MarkingConstraint.h pending a header-side pass).
+    WTF::atomicExchangeAdd(&m_lastVisitCount, visitCounter.visitCount(), std::memory_order_relaxed);
 }
 
 void MarkingConstraint::prepareToExecuteImpl(const AbstractLocker&, AbstractSlotVisitor&)

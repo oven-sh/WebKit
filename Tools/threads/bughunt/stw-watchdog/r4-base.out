@@ -1,0 +1,14 @@
+run 1: rc=0 82.4s PASS
+run 2: rc=0 83.3s PASS
+run 3: rc=0 82.4s PASS
+run 4: rc=0 81.6s PASS
+run 5: rc=0 80.2s PASS
+run 6: rc=0 80.1s PASS
+run 7: rc=0 86.4s PASS
+./campaign.sh: line 15: 612594 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 8: rc=134 34.5s WATCHDOG-ABORT
+run 9: rc=0 81.1s PASS
+run 10: rc=0 80.0s PASS
+run 11: rc=0 80.9s PASS
+run 12: rc=0 81.6s PASS
+SUMMARY tag=r4-base N=4 scale=1 runs=12 pass=11 abort134=1 segv=0 timeout=0 other=0

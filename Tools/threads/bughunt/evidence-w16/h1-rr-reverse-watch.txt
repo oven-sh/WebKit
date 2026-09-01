@@ -1,0 +1,57 @@
+warning: BFD: warning: system-supplied DSO at 0x6fffd000 has a section extending past end of file
+warning: Discarding section .replay.text which has an invalid size (27) [in module system-supplied DSO at 0x6fffd000]
+0x00007f30ce4cbb30 in _start () from /lib64/ld-linux-x86-64.so.2
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+[New Thread 2962320.2962334]
+[New Thread 2962320.2962328]
+[New Thread 2962320.2962329]
+[New Thread 2962320.2962330]
+[New Thread 2962320.2962331]
+[New Thread 2962320.2962332]
+[New Thread 2962320.2962333]
+[New Thread 2962320.2962335]
+
+Thread 2 received signal SIGSEGV, Segmentation fault.
+[Switching to Thread 2962320.2962334]
+0x000055c090eacbd8 in JSC::JSCellButterfly::copyToArguments (this=0x46ae0cc5a7f0, firstElementDest=0x55c242b2a7c0, offset=0, length=9) at JavaScriptCore/PrivateHeaders/JavaScriptCore/JSCJSValue.h:1023
+1023	    u.asInt64 = reinterpretDoubleToInt64(d) + JSValue::DoubleEncodeOffset;
+Hardware watchpoint 1: -location *(unsigned long *) 0x46ae0c400068
+
+Thread 2 received signal SIGSEGV, Segmentation fault.
+0x000055c090eacbd8 in JSC::JSCellButterfly::copyToArguments (this=0x46ae0cc5a7f0, firstElementDest=0x55c242b2a7c0, offset=0, length=9) at JavaScriptCore/PrivateHeaders/JavaScriptCore/JSCJSValue.h:1023
+1023	    u.asInt64 = reinterpretDoubleToInt64(d) + JSValue::DoubleEncodeOffset;
+[Current thread is 2 (Thread 2962320.2962334)]
+#0  0x000055c090eacbd8 in JSC::JSCellButterfly::copyToArguments (this=0x46ae0cc5a7f0, firstElementDest=0x55c242b2a7c0, offset=0, length=9) at JavaScriptCore/PrivateHeaders/JavaScriptCore/JSCJSValue.h:1023
+#1  0x000055c090ad9989 in JSC::setupVarargsFrame (globalObject=0x46ae0cc5a7f0, callFrame=<optimized out>, newCallFrame=0x73a242b2a790, arguments=..., offset=0, length=9) at /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:369
+#2  JSC::setupVarargsFrameAndSetThis (globalObject=0x46ae0cc5a7f0, callFrame=<optimized out>, newCallFrame=0x73a242b2a790, thisValue=..., arguments=..., firstVarArgOffset=0, length=9) at /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:379
+#3  0x000055c090bf464d in JSC::LLInt::varargsSetup<JSC::OpCallVarargs, (JSC::LLInt::SetArgumentsWith)0> (callFrame=0x55c090217890, pc=<optimized out>) at /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2456
+#4  llint_slow_path_call_varargs (callFrame=0x55c090217890, pc=<optimized out>) at /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2473
+[Switching to Thread 2962320.2962335]
+
+Thread 9 hit Hardware watchpoint 1: -location *(unsigned long *) 0x46ae0c400068
+
+Old value = 127140740900752
+New value = 37091790391232
+llint_slow_path_size_frame_for_varargs (callFrame=<optimized out>, pc=0x67692101739b) at /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2430
+2430	    vm.newCallFrameReturnValue = calleeFrame;
+[Current thread is 9 (Thread 2962320.2962335)]
+#0  llint_slow_path_size_frame_for_varargs (callFrame=<optimized out>, pc=0x67692101739b) at /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2430
+#1  0x000055c09144da6e in llint_op_call_varargs ()
+#2  0x000046ae0c002960 in ?? ()
+#3  0x00006769210172e0 in ?? ()
+#4  0xfffe000000000000 in ?? ()
+[Switching to Thread 2962320.2962330]
+
+Thread 5 hit Hardware watchpoint 1: -location *(unsigned long *) 0x46ae0c400068
+
+Old value = 37091790391232
+New value = 140727893420720
+llint_slow_path_size_frame_for_varargs (callFrame=<optimized out>, pc=0x67692101739b) at /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2430
+2430	    vm.newCallFrameReturnValue = calleeFrame;
+[Current thread is 5 (Thread 2962320.2962330)]
+#0  llint_slow_path_size_frame_for_varargs (callFrame=<optimized out>, pc=0x67692101739b) at /root/WebKit/Source/JavaScriptCore/llint/LLIntSlowPaths.cpp:2430
+#1  0x000055c09144da6e in llint_op_call_varargs ()
+#2  0x000046ae0c002960 in ?? ()
+#3  0x00006769210172e0 in ?? ()
+#4  0xfffe000000000000 in ?? ()
+[Inferior 1 (process 2962320) detached]

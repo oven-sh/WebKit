@@ -132,7 +132,7 @@ void MetaAllocatorHandle::dump(PrintStream& out) const
 MetaAllocator::MetaAllocator(Lock& lock, size_t allocationGranule, size_t pageSize)
     : m_allocationGranule(allocationGranule)
     , m_pageSize(pageSize)
-    , m_bytesAllocated(0)
+    , m_bytesAllocated { 0 }
     , m_bytesReserved(0)
     , m_bytesCommitted(0)
     , m_lock(lock)
@@ -190,7 +190,9 @@ RefPtr<MetaAllocatorHandle> MetaAllocator::allocate(const Locker<Lock>&, size_t 
         }
     }
     incrementPageOccupancy(start.untaggedPtr(), sizeInBytes);
-    m_bytesAllocated += sizeInBytes;
+    // Writers are serialized by m_lock; the store only needs to be atomic
+    // (relaxed) because bytesAllocated() reads this without the lock.
+    m_bytesAllocated.store(m_bytesAllocated.loadRelaxed() + sizeInBytes, std::memory_order_relaxed);
 #if ENABLE(META_ALLOCATOR_PROFILE)
     m_numAllocations++;
 #endif
@@ -206,7 +208,7 @@ RefPtr<MetaAllocatorHandle> MetaAllocator::allocate(const Locker<Lock>&, size_t 
 MetaAllocator::Statistics MetaAllocator::currentStatistics(const Locker<Lock>&)
 {
     Statistics result;
-    result.bytesAllocated = m_bytesAllocated;
+    result.bytesAllocated = m_bytesAllocated.loadRelaxed();
     result.bytesReserved = m_bytesReserved;
     result.bytesCommitted = m_bytesCommitted;
     return result;
@@ -285,7 +287,8 @@ void MetaAllocator::addFreeSpaceFromReleasedHandle(FreeSpacePtr start, size_t si
 #if ENABLE(META_ALLOCATOR_PROFILE)
     m_numFrees++;
 #endif
-    m_bytesAllocated -= sizeInBytes;
+    // Writers are serialized by m_lock (callers hold it); relaxed store, see allocate().
+    m_bytesAllocated.store(m_bytesAllocated.loadRelaxed() - sizeInBytes, std::memory_order_relaxed);
     addFreeSpace(start, sizeInBytes);
 }
 
@@ -496,7 +499,7 @@ void MetaAllocator::dumpProfile()
 {
     dataLogF(
         "%d: MetaAllocator(%p): num allocations = %u, num frees = %u, allocated = %lu, reserved = %lu, committed = %lu\n",
-        getCurrentProcessID(), this, m_numAllocations, m_numFrees, m_bytesAllocated, m_bytesReserved, m_bytesCommitted);
+        getCurrentProcessID(), this, m_numAllocations, m_numFrees, m_bytesAllocated.loadRelaxed(), m_bytesReserved, m_bytesCommitted);
 }
 #endif
 

@@ -270,18 +270,18 @@ ArrayMode ArrayMode::refine(
     }
     case Array::Int32:
         if (!value || isInt32Speculation(value))
-            return *this;
+            return withSegmentedFeedback(graph, node);
         if (isFullNumberSpeculation(value))
-            return withTypeAndConversion(Array::Double, Array::Convert);
-        return withTypeAndConversion(Array::Contiguous, Array::Convert);
-        
+            return withTypeAndConversion(Array::Double, Array::Convert).withSegmentedFeedback(graph, node);
+        return withTypeAndConversion(Array::Contiguous, Array::Convert).withSegmentedFeedback(graph, node);
+
     case Array::Double:
         if (!value || isFullNumberSpeculation(value))
-            return *this;
-        return withTypeAndConversion(Array::Contiguous, Array::Convert);
-        
+            return withSegmentedFeedback(graph, node);
+        return withTypeAndConversion(Array::Contiguous, Array::Convert).withSegmentedFeedback(graph, node);
+
     case Array::Contiguous:
-        return *this;
+        return withSegmentedFeedback(graph, node);
 
     case Array::Int8Array:
     case Array::Int16Array:
@@ -371,6 +371,42 @@ ArrayMode ArrayMode::refine(
     default:
         return *this;
     }
+}
+
+// T3-jit-segmented-arraymode: fold the segmented-butterfly observation into the
+// refined Int32/Double/Contiguous mode. The bit comes from EITHER the
+// ArrayProfile (withProfile in DFGArrayMode.h) OR the BadIndexingType
+// exit-site at this origin: GetButterfly's flat-only predicate (SPEC-jit §5.5
+// / Task 9, DFGSpeculativeJIT::compileGetButterfly) speculation-checks
+// BadIndexingType when the tagged word is segmented, and segmentation does
+// NOT change the IndexingType — so the structure-ID feedback path cannot
+// distinguish a segmented ArrayWithInt32 from a flat one and the recompile
+// would speculate flat-only forever. The exit-site is the closing signal.
+//
+// Only ever set under Options::useJSThreads() (flag-off byte-identical: I22),
+// only for the dense contiguous shapes (others cannot segment, I31/I35), and
+// cleared when conversion() == Convert with an Original* class — Arrayify
+// publishes a fresh FLAT (currentTID, 0) butterfly, so the post-Arrayify
+// access is flat by construction. The Array::Array / PossiblyArray Convert
+// case (CoW seen) keeps the bit: a runtime non-CoW input may already be
+// segmented and Arrayify is a no-op on it.
+ArrayMode ArrayMode::withSegmentedFeedback(Graph& graph, Node* node) const
+{
+    if (!Options::useJSThreads()) [[likely]]
+        return *this;
+    switch (type()) {
+    case Array::Int32:
+    case Array::Double:
+    case Array::Contiguous:
+        break;
+    default:
+        return withMayBeSegmentedButterfly(false);
+    }
+    bool maySeg = mayBeSegmentedButterfly()
+        || graph.hasExitSite(node->origin.semantic, BadIndexingType);
+    if (maySeg && doesConversion() && isJSArrayWithOriginalStructure())
+        maySeg = false; // ArrayifyToStructure -> guaranteed flat (originals never segment until shared).
+    return withMayBeSegmentedButterfly(maySeg);
 }
 
 StructureSet ArrayMode::originalArrayStructures(Graph& graph, const CodeOrigin& codeOrigin) const
@@ -806,7 +842,12 @@ bool permitsBoundsCheckLowering(Array::Type type)
 
 bool ArrayMode::permitsBoundsCheckLowering() const
 {
-    return DFG::permitsBoundsCheckLowering(type()) && isInBounds();
+    // T3-jit-segmented-arraymode: a segmented spine has its own per-spine
+    // vectorLength (immutable, §4.1) decoupled from the flat IndexingHeader's,
+    // so a hoisted CheckInBounds against a CSE'd flat publicLength cannot
+    // speak for the segmented arm. Keep the bound co-located with the
+    // flat-vs-segmented dispatch in the consumer.
+    return DFG::permitsBoundsCheckLowering(type()) && isInBounds() && !mayBeSegmentedButterfly();
 }
 
 void ArrayMode::dump(PrintStream& out) const
@@ -816,6 +857,8 @@ void ArrayMode::dump(PrintStream& out) const
         out.print("+LargeTypedArray");
     if (mayBeResizableOrGrowableSharedTypedArray())
         out.print("+ResizableOrGrowableSharedTypedArray");
+    if (mayBeSegmentedButterfly())
+        out.print("+MaySegmentedButterfly");
 }
 
 } } // namespace JSC::DFG

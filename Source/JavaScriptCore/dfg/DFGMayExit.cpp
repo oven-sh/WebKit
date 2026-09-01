@@ -32,6 +32,7 @@
 #include "DFGNode.h"
 #include "DFGNullAbstractState.h"
 #include "JSCJSValueInlines.h"
+#include "Options.h"
 
 namespace JSC { namespace DFG {
 
@@ -104,14 +105,12 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case PutStructure:
     case StoreBarrier:
     case FencedStoreBarrier:
-    case PutByOffset:
     case PutClosureVar:
     case PutInternalField:
     case PutGlobalVariable:
     case GetInternalField:
     case RecordRegExpCachedResult:
     case NukeStructureAndSetButterfly:
-    case GetButterfly:
     case GetIndexedPropertyStorage:
     case FilterCallLinkStatus:
     case FilterGetByStatus:
@@ -132,6 +131,16 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case LogShadowChickenTail:
     case PerformPromiseThen:
     case PerformPromiseThenOneHandler:
+        break;
+
+    case GetButterfly:
+    case PutByOffset:
+        // SPEC-jit section 5.5 / Task 9: under Options::useJSThreads() these
+        // emit the frozen TID/SW butterfly predicates and OSR-exit on
+        // predicate failure (segmented dispatch, SW=1 ArrayStorage, write
+        // case-(4) fallback). Flag-off they do not exit, exactly as before.
+        if (Options::useJSThreads()) [[unlikely]]
+            result = Exits;
         break;
 
     case Switch: {
@@ -379,6 +388,18 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         switch (node->child1().useKind()) {
         case KnownPrimitiveUse:
         case Int32Use:
+        // KnownInt32Use is FixupPhase's check-hoisting strengthening of an
+        // Int32Use edge on a node in an ExitInvalid stretch; same behavior as
+        // Int32Use (and it must not report Exits — these nodes sit at
+        // ExitInvalid by construction; DFGValidate checks that).
+        case KnownInt32Use:
+        // KnownCellUse is the same check-hoisting strengthening applied to a
+        // CellUse edge (FixupPhase fixupChecksInBlock): the cell check is
+        // hoisted to the last ExitOK point, so the remaining codegen
+        // (operationToStringOnCell and friends) can only exit for exceptions.
+        // Like KnownInt32Use, these edges only exist at ExitInvalid positions,
+        // so reporting Exits here would trip DFGValidate.
+        case KnownCellUse:
         case Int52RepUse:
         case DoubleRepUse:
         case NotCellUse:

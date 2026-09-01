@@ -79,6 +79,11 @@ static inline bool NODELETE isCacheAlignedForPreciseAllocation(void* memory)
 
 PreciseAllocation* PreciseAllocation::tryCreate(JSC::Heap& heap, size_t size, Subspace* subspace, unsigned indexInSpace)
 {
+    // SharedGC (T9): any-client OK — heap.vm() is the main VM (deviation 3)
+    // from any allocating client incl. standalone; verifyCanGC() reads
+    // validation flags only. The WeakSet stamp in the ctor mirrors
+    // MarkedBlock::Handle (server-owned, thread-neutral). Same applies to
+    // tryCreateForLowerTierPrecise() below.
     if constexpr (validateDFGDoesGC)
         heap.vm().verifyCanGC();
 
@@ -273,6 +278,10 @@ void PreciseAllocation::sweep()
     m_weakSet.sweep();
     
     if (m_hasValidCell && !isLive()) {
+        // SharedGC (T9): conductor-context OK — precise allocations are
+        // eagerly swept by the conductor (I5/I16: precise-vector iteration is
+        // conductor-only while WSAC once shared); vm() is the destroy-callback
+        // argument convention (main VM), not a calling-thread assumption.
         if (m_attributes.destruction != DoesNotNeedDestruction)
             m_subspace->destroy(vm(), static_cast<JSCell*>(cell()));
         // We should clear IsoCellSet's bit before actually destroying PreciseAllocation
@@ -299,6 +308,8 @@ void PreciseAllocation::dump(PrintStream& out) const
 #if ASSERT_ENABLED
 void PreciseAllocation::assertValidCell(VM& vm, HeapCell* cell) const
 {
+    // SharedGC (T9): conductor-context OK — identity check against the one
+    // main VM (see MarkedBlock::assertValidCell()).
     ASSERT(&vm == &this->vm());
     ASSERT(cell == this->cell());
     ASSERT(m_hasValidCell);

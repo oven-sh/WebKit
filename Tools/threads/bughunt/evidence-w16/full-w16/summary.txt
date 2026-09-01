@@ -1,0 +1,6 @@
+run1 rc=0 dur=47.191157704s
+run2 rc=0 dur=48.967941757s
+run3 rc=0 dur=47.971248616s
+run4 rc=0 dur=47.821807645s
+run5 rc=139 dur=.022913881s
+TAG=full-w16 N=5 W=16 smoke=0 flags='' ok=4 sigtrap133=0 sigabrt134=0 sigsegv139=1 other=0

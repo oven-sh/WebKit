@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "JIT.h"
 #include "JITMathIC.h"
 #include "JumpTable.h"
 #include "PCToCodeOriginMap.h"
@@ -69,7 +70,18 @@ CodeLocationLabel<JSInternalPtrTag> BaselineJITCode::getCallLinkDoneLocationForB
 BaselineJITData::BaselineJITData(unsigned propertyCacheSize, unsigned poolSize, CodeBlock* codeBlock)
     : Base(propertyCacheSize, poolSize)
     , m_globalObject(codeBlock->globalObject())
-    , m_stackOffset(codeBlock->stackPointerOffset() * sizeof(Register))
+    // AB18-B: this constructor runs BEFORE setJITCode publishes the baseline m_jitCode
+    // (see CodeBlock::setupWithUnlinkedBaselineCode publication-order comment), so
+    // codeBlock->stackPointerOffset() must not be used here: its switch reads jitType(),
+    // which at this point is still the pre-publication tier. On a fresh CodeBlock (e.g.
+    // the shared-unlinked-baseline install in ScriptExecutable::prepareForExecutionImpl)
+    // or after jettison that tier is JITType::None, which hits the
+    // RELEASE_ASSERT_NOT_REACHED default in CodeBlock::frameRegisterCount; on the
+    // InterpreterThunk path it routes through LLInt::frameRegisterCountFor, which happens
+    // to compute the identical value. BaselineJITData only ever describes baseline frames,
+    // so compute the baseline offset directly from the UnlinkedCodeBlock, independent of
+    // m_jitCode state.
+    , m_stackOffset(JIT::stackPointerOffsetFor(codeBlock->unlinkedCodeBlock()) * sizeof(Register))
 {
 }
 
