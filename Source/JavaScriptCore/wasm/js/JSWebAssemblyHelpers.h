@@ -36,6 +36,7 @@
 #include "JSSourceCode.h"
 #include "JSWebAssemblyException.h"
 #include "JSWebAssemblyRuntimeError.h"
+#include "Options.h"
 #include "ThreadManager.h"
 #include "WasmAddressType.h"
 #include "WasmFormat.h"
@@ -47,39 +48,26 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-// UNGIL SPEC-ungil §I / SD7 (NORMATIVE in BOTH GIL modes): WebAssembly is
-// REFUSED on spawned JS Threads in v1 — the per-VM wasm state (memory/table
-// registries, Wasm::Worklist plans keyed per VM/context, signal-based bounds
-// handling, BBQ/OMG tier-up, calleeGroup publication) has never been audited
-// for N mutators in one VM and sits outside every threads charter. This is
-// the C++ ctor/compile-surface arm of the SD7 gate (§I item (1)); the
-// generated-code arm (§I item (2): VMLite::isSpawned JSToWasm prologue
-// check + jsCallICEntrypoint() returning nullptr under useJSThreads, which
-// covers WARM calls of exports created on the carrier) is tracked as
-// activation blocker AB-15 in INTEGRATE-ungil.md. Flag-off cost: one
-// predicate call on already-slow wasm entry points.
+// WebAssembly is refused on spawned JS Threads: the per-VM wasm state (memory
+// and table registries, worklist plans, signal-based bounds handling, tier-up
+// and calleeGroup publication) assumes one mutator per VM. It is also refused
+// on every thread of a gilOff VM, the carrier included, because the wasm tiers
+// and the IPInt read and store the VM-level exception slot rather than the
+// per-thread one, so a gilOff carrier would silently lose exceptions raised in
+// wasm. A spawned ThreadState and a gilOff VM both require useJSThreads, so
+// with the flag off this is a single predicted-false byte test and the
+// out-of-line TLS lookup in isJSThreadCurrent() is never reached.
 ALWAYS_INLINE bool throwIfWebAssemblyRefusedOnSpawnedThread(JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    if (ThreadManager::isJSThreadCurrent()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "WebAssembly is not available on spawned JS Thread instances (SD7)"_s);
-        return true;
-    }
-    // UNGIL §I SUPERSESSION (recorded in UNGIL-HANDOUT.md §I): GIL-off, wasm
-    // is refused on ALL threads of a gilOff VM — including the main/embedder
-    // carrier — not just spawned ones. Rationale: a gilOff carrier lite
-    // publishes exceptions per-lite (VM::setException -> group3Primitives()),
-    // but every wasm-tier emitted exception check still reads the inert
-    // VM-block word (WasmToJS.cpp / JSToWasm.cpp /
-    // WebAssemblyBuiltinTrampoline.cpp `Address(gpr, VM::exceptionOffset())`)
-    // and InPlaceInterpreter.asm raw-stores VM::m_exception — silently
-    // missed/lost exceptions in carrier wasm under GIL-off. Refusing at the
-    // ctor/compile surface makes wasm execution unreachable on a gilOff VM
-    // (vm.gilOff() is VM-immutable, designated before any JS runs). Lift this
-    // gate only together with a per-lite mode split of the wasm emission
-    // sites (incl. the IPInt asm arms). GIL-on / flag-off: unchanged.
-    if (getVM(globalObject).gilOff()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "WebAssembly is not available under GIL-off JS Threads in v1 (UNGIL section I supersession: wasm exception checks are not per-lite yet)"_s);
-        return true;
+    if (Options::useJSThreads()) [[unlikely]] {
+        if (ThreadManager::isJSThreadCurrent()) {
+            throwTypeError(globalObject, scope, "WebAssembly is not available on spawned JS Thread instances (SD7)"_s);
+            return true;
+        }
+        if (getVM(globalObject).gilOff()) {
+            throwTypeError(globalObject, scope, "WebAssembly is not available under GIL-off JS Threads in v1 (UNGIL section I supersession: wasm exception checks are not per-lite yet)"_s);
+            return true;
+        }
     }
     return false;
 }
