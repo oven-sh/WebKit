@@ -567,7 +567,7 @@ void ScriptExecutable::visitCodeBlockEdge(Visitor& visitor, CodeBlock* codeBlock
 
     bool agedOut = false;
 #if USE(BUN_JSC_ADDITIONS)
-    agedOut = codeBlock->m_agedOut;
+    agedOut = codeBlock->agedOut();
 #endif
     if (JSC::JITCode::isOptimizingJIT(codeBlock->jitType()) && !agedOut) {
         // If we jettison ourselves we'll install our alternative, so make sure that it

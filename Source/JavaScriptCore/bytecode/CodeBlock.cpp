@@ -1247,17 +1247,13 @@ bool CodeBlock::shouldVisitStrongly(const ConcurrentJSLocker& locker, Visitor& v
     if (Options::forceCodeBlockLiveness())
         return true;
 
-    m_agedOut = shouldJettisonDueToOldAge(locker, visitor);
-    if (m_agedOut) {
-        if (Options::verifyGC())
-            m_visitChildrenSkippedDueToOldAge = true;
+    // Under verifyGC the verifier's second visit must give the same answer as the real one.
+    if (m_visitChildrenSkippedDueToOldAge && Options::verifyGC()) [[unlikely]]
         return false;
-    }
 
-    if (m_visitChildrenSkippedDueToOldAge) [[unlikely]] {
-        RELEASE_ASSERT(Options::verifyGC());
+    m_visitChildrenSkippedDueToOldAge = shouldJettisonDueToOldAge(locker, visitor);
+    if (m_visitChildrenSkippedDueToOldAge)
         return false;
-    }
 
     // Interpreter and Baseline JIT CodeBlocks don't need to be jettisoned when
     // their weak references go stale. So if a basline JIT CodeBlock gets
@@ -1539,7 +1535,7 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     // Past its TTL with no execution observed: let it (and the baseline alternative it pins) go even though the
     // structures it references are still alive.
-    if (m_agedOut)
+    if (m_visitChildrenSkippedDueToOldAge)
         return;
 #endif
     
