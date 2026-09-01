@@ -885,9 +885,8 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         // storeStoreFence, invisible to TSAN), and its lockless slow-path
         // reads (callSiteIndex, countdown bytes, m_bufferedStructures) would
         // otherwise pair against this thread's allocation/ctor writes of the
-        // still-live BaselineJITData block (leaked flag-on in ~CodeBlock per
-        // SPEC-jit §5.3/I7 — never freed, so no UAF is maskable here). No-op
-        // outside TSAN builds.
+        // BaselineJITData block, which stays live for as long as this
+        // CodeBlock is reachable. No-op outside TSAN builds.
         for (auto& propertyCache : baselineJITData->propertyInlineCaches())
             TSAN_ANNOTATE_HAPPENS_BEFORE(&propertyCache);
 #endif
@@ -973,6 +972,12 @@ CodeBlock::~CodeBlock()
 
     VM& vm = *m_vm;
 
+    // With JS threads enabled this destructor frees everything inline exactly
+    // as it does with the flag off: the collection that unmarked this
+    // CodeBlock conservatively scanned every mutator thread's stack and its
+    // End phase unlinked every call link and executable edge naming it, so no
+    // thread is executing, or can still enter, this code when it is swept.
+
     if (JITCode::isBaselineCode(jitType())) {
 #if ENABLE(JIT)
         if (cc.isEnabled && m_jitData) {
@@ -987,26 +992,10 @@ CodeBlock::~CodeBlock()
         }
 #endif
         if (m_metadata) {
-            // TSAN-TRIAGE §17.2 row 18: flag-on, the OpCatch
-            // ValueProfileAndVirtualRegisterBuffer must be LEAKED with the
-            // metadata it lives in. The buffer is a PUBLISHED artifact
-            // (release-published in ensureCatchLivenessIsComputedForBytecodeIndexSlow,
-            // acquire readers in llint_slow_path_profile_catch,
-            // operationTryOSREnterAtCatchAndValueProfile, and
-            // validate/finalizeUnconditionally below), reachable from exactly
-            // the leaked metadata the row-16 ref-escape at the END of this
-            // destructor keeps alive for straggler baseline prologues. A
-            // straggler that throws and lands in op_catch reads
-            // metadata.m_buffer — freeing it here inline is the same
-            // published-artifact-bypass class as row 16, retained-leak
-            // defense-in-depth class as rows 7/8 (non-CLI vectors). Flag-off,
-            // destroy inline, byte-identical to upstream.
-            if (!Options::useJSThreads()) [[likely]] {
-                m_metadata->forEach<OpCatch>([&](auto& metadata) {
-                    if (metadata.m_buffer)
-                        ValueProfileAndVirtualRegisterBuffer::destroy(std::exchange(metadata.m_buffer, nullptr));
-                });
-            }
+            m_metadata->forEach<OpCatch>([&](auto& metadata) {
+                if (metadata.m_buffer)
+                    ValueProfileAndVirtualRegisterBuffer::destroy(std::exchange(metadata.m_buffer, nullptr));
+            });
         }
     }
 
@@ -1087,79 +1076,14 @@ CodeBlock::~CodeBlock()
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
         if (auto* jitData = dfgJITData()) {
-            // SPEC-jit section 5.3 / I7: flag-on, leak alongside m_jitCode
-            // (retired at the end of this destructor) - the leaked optimized
-            // machine code can still be entered by a parked sibling thread
-            // and may reach this JITData. THREADS-INTEGRATE(jit)
-            //
-            // Closeout review (TSAN-TRIAGE §17.2 row 7): flag-on, m_jitData
-            // must ALSO stay intact, mirroring the baseline AB18-B arm
-            // below. The exact straggler this leak exists for re-binds the
-            // field from the cell on every fresh entry and on unlinked
-            // OSR-exit dispatch:
-            //   compileSetupRegistersForEntry: loadPtr(Address(...,
-            //       CodeBlock::offsetOfJITData())) (DFGJITCompiler.cpp),
-            //   followed by compileEntryExecutionFlag's store8 to
-            //       JITData::offsetOfNeverExecutedEntry, and the exit-vector
-            //       farJump in the unlinked dispatch path.
-            // Nulling the field here turned that straggler into a near-null
-            // store8/load (fail-stop at best, a wild access once the cell
-            // slot is recycled) and made the leaked JITData unreachable —
-            // contradicting the rationale for leaking it. Flag-off, null
-            // then delete, byte-identical to upstream.
-            if (!Options::useJSThreads()) [[likely]] {
-                m_jitData = nullptr;
-                delete jitData;
-            } else {
-                // Disarm the privately-owned jettisoning watchpoints before
-                // leaking the shell: leaked-but-armed watchpoints keep
-                // m_owner pointing at this now-destructed CodeBlock cell,
-                // and a post-death fire trips fireInternal's
-                // ASSERT(!m_owner->wasDestructed()) on Debug or can jettison
-                // an unrelated live CodeBlock occupying the reused MarkedBlock
-                // slot on Release. Destroying them here is exactly as safe as
-                // the flag-off `delete jitData` above, which destroys the
-                // same watchpoints at the same point in the destructor.
-                jitData->clearWatchpoints();
-            }
+            m_jitData = nullptr;
+            delete jitData;
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
-            // UNGIL §5.7.2 (AB18-B): flag-on, leak the BaselineJITData AND keep
-            // m_jitData intact, mirroring the DFG arm above (SPEC-jit §5.3 / I7).
-            // The shared unlinked baseline machine code is retired epoch-deferred,
-            // not freed by this sweep, and a sibling lite that loaded
-            // {entrypoint, codeBlock} from a CallLinkInfo / ScriptExecutable before
-            // unlinkOrUpgradeIncomingCalls() above can still be entering the
-            // prologue, which does
-            //   loadPairPtr(Address(codeBlock, CodeBlock::offsetOfJITData()), ...)
-            // (JIT.cpp:651-653) on THIS cell. Nulling the field here is what turns
-            // that straggler into the near-null tier-up/constant-pool write at
-            // null+0x8..0x18; deleting it turns the same window into a UAF. Unlike
-            // the DFG arm, the field itself must survive because baseline reloads
-            // it at every entry and OSR-exit/loop-entry re-materialization.
-            //
-            // No clearWatchpoints() analogue is needed here: BaselineJITData owns
-            // no privately-owned jettisoning watchpoints (unlike DFG::JITData),
-            // and its property inline caches were already neutralized via
-            // aboutToDie()/deref(vm) above, which routes stubs through
-            // RetiredJITArtifacts flag-on. The asymmetry with the DFG arm is
-            // deliberate.
-            //
-            // Known residuals (accepted, same class as the DFG-arm leak):
-            // (a) a straggler executing an IC site (not just the prologue) can
-            //     still touch retired stub memory; (b) CLOSED — the prologue's
-            //     loadPairPtr also loads m_metadata; the identical flag-on leak
-            //     now lands at the END of this destructor (see the
-            //     MetadataTable ref-escape below, TSAN-TRIAGE §17.2 row 16);
-            //     (c) the "machine code stays valid" premise holds only for
-            //     shared baseline code — a non-shareable BaselineJITCode is
-            //     freed with the m_jitCode member ref regardless of jitData.
-            if (!Options::useJSThreads()) [[likely]] {
-                m_jitData = nullptr;
-                delete jitData;
-            }
+            m_jitData = nullptr;
+            delete jitData;
         }
     }
 #endif // ENABLE(JIT)
@@ -1212,51 +1136,6 @@ CodeBlock::~CodeBlock()
         }
         cc.set(CrashChecker::Destructed, 0xdd);
     }
-
-#if ENABLE(DFG_JIT)
-    // SPEC-jit section 5.3 / I7: flag-on, route the optimized JITCode release
-    // through RetiredJITArtifacts. B14 / MC-DOS S7: that path now drops the
-    // ref inline (the chartered leak is closed) — R2's N-stack conservative
-    // scan (Heap::gatherStackRoots, §10.6/T6) ran in the marking phase that
-    // led to this sweep and covers EVERY registered mutator thread, so no
-    // sibling's stack can hold a return address into this code; visitWeak
-    // unlinked it from live callers; §5.8 publish-time pins would have kept
-    // it marked if any record still named it. The original ASAN SEGV
-    // (llint_op_call into unmapped memory, tid-tag-3-threads.js et al.) was a
-    // phase-1 GIL artifact: the scan then covered only the GIL holder.
-    // Flag-off this branch is not taken and the member ~RefPtr drops the ref
-    // exactly as today (byte-identical). The call is kept (rather than
-    // letting the member dtor do it) so the I7 release point stays explicit
-    // and centrally documented in RetiredJITArtifacts.
-    if (Options::useJSThreads() && m_jitCode && JSC::JITCode::isOptimizingJIT(m_jitCode->jitType())) [[unlikely]]
-        RetiredJITArtifacts::retireOptimizedJITCode(vm, m_jitCode.take());
-#endif
-
-    // UNGIL §5.7.2 (AB18-B residual (b), CLOSED at thread-closeout final
-    // review): flag-on, the linked MetadataTable must be LEAKED, mirroring the
-    // m_jitData arms above. Without this, the member RefPtr's release at the
-    // end of this destructor runs MetadataTable::destroy on the last-ref drop,
-    // which (1) frees the metadata memory a sibling straggler's baseline
-    // prologue still reaches via loadPairPtr(offsetOfMetadataTable,
-    // offsetOfJITData) — the SAME straggler the AB18-B jitData leak above
-    // exists for — and (2) runs ~DataOnlyCallLinkInfo for every PUBLISHED
-    // call-op CLI embedded in the table (BytecodeList.rb embeds
-    // DataOnlyCallLinkInfo in op_call et al.), whose gilOff arm
-    // inline-deletes the §5.8 record a straggler mid-call-op can still hold
-    // (TSAN-TRIAGE §17.2 row 16 — row 13's "owning code unreachable" premise
-    // does not cover CLIs torn down by their owner's OWN destructor while
-    // stragglers exist). Escaping one ref keeps the table, the embedded CLIs
-    // and their records alive; the m_metadata field bits in this dead cell
-    // stay intact for prologue reloads (the member RefPtr dtor only derefs,
-    // it does not null the slot), same discipline as m_jitData. The leaked
-    // CLIs remain on callees' m_incomingCalls lists — already the accepted
-    // state for the leaked BaselineJITData CallLinkInfos (§17.2 rows 7/8/11;
-    // DFG CommonData CLIs are no longer leaked since B14 — their ~CallLinkInfo
-    // delists under s_callLinkSerializationLock, AB17e F4); the locked drains
-    // tolerate dead-owner nodes (see DirectCallLinkInfo::retireRecord's
-    // AB18-E comment).
-    if (Options::useJSThreads() && m_metadata) [[unlikely]]
-        m_metadata->ref();
 }
 
 bool CodeBlock::isConstantOwnedByUnlinkedCodeBlock(VirtualRegister reg) const
@@ -2560,53 +2439,6 @@ CodeBlock* CodeBlock::replacement()
 
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
-}
-
-// UNGIL FIX-2: see the declaration comment in runtime/FunctionExecutable.h.
-// Coherent by construction: ONE load of the publish slot, then everything is
-// address-dependent off that pointer (no second read of the executable's
-// m_jitCodeFor* mirrors, so no window for a sibling's installCode to swap the
-// pair underneath us). The only mutable hop is CodeBlock::m_jitCode, which
-// only ever upgrades IN PLACE on the same CodeBlock (LLInt thunk -> Baseline,
-// setupWithUnlinkedBaselineCode -> setJITCode); both the old and the new
-// value are valid code for THIS CodeBlock, so a race on that swap still
-// yields a matched (CodeBlock, entrypoint) pair.
-//
-// Lifetime, stated precisely (load-bearing fact, not hand-waving): the
-// unlocked RefPtr copy in jitCode() races setJITCode's locked in-place
-// replace. The reason load-pointer-then-ref() cannot ref freed memory is
-// that the ONLY in-place m_jitCode replace is shared-LLInt-thunk -> tier
-// code, and the displaced JITCode is isShared() (process-immortal), so the
-// writer dropping its ref never destroys it. The gilOff RELEASE_ASSERT below
-// trips loudly if a future tier is added to the in-place path whose displaced
-// JITCode is NOT shared (which would otherwise be a silent UAF; the assert
-// ideally belongs in CodeBlock::setJITCode on the displaced value — kept here
-// only because this change's write scope excludes CodeBlock.h).
-//
-// The returned entrypoint is kept alive by jitCodeKeeperOut, which the caller
-// must hold until the consuming call/install completes; the RefPtr taken here
-// is handed out, not dropped at return.
-FunctionCodeBlock* FunctionExecutable::codeBlockWithEntrypointFor(CodeSpecializationKind kind, ArityCheckMode arityCheck, CodePtr<JSEntryPtrTag>& entrypointOut, RefPtr<JSC::JITCode>& jitCodeKeeperOut)
-{
-    entrypointOut = nullptr;
-    jitCodeKeeperOut = nullptr;
-    FunctionCodeBlock* codeBlock = codeBlockFor(kind);
-    if (!codeBlock)
-        return nullptr;
-    if (RefPtr<JSC::JITCode> jitCode = codeBlock->jitCode()) {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
-            // Detect a violated immortality premise: if the CodeBlock's
-            // m_jitCode was replaced in place, the value we copied must be
-            // either the current one or the displaced shared LLInt thunk. A
-            // non-shared JITCode that is no longer the CodeBlock's current
-            // code means a non-shared in-place replace exists — the premise
-            // documented above is broken and this read path is a UAF risk.
-            RELEASE_ASSERT(jitCode->isShared() || jitCode == codeBlock->jitCode());
-        }
-        entrypointOut = jitCode->addressForCall(arityCheck);
-        jitCodeKeeperOut = WTF::move(jitCode);
-    }
-    return codeBlock;
 }
 
 #if ENABLE(JIT)

@@ -94,13 +94,13 @@ public:
         return !hasBeenInvalidated();
     }
     
-    // AB18-H: GIL-off, this routes through inflate() -> WatchpointSet::add().
-    // WatchpointSet::add()'s own GIL-off concurrency (plain m_state store and
-    // unlocked m_set mutation in Watchpoint.cpp) is NOT covered by this
-    // change; it is a separate AB18 follow-up item. This change only makes
-    // the InferredValue-side transitions (thin word, fat m_value/m_state)
-    // race-free among notifyWrite/invalidate/inflate callers.
-    void add(Watchpoint*);
+    // Routes through inflate() -> WatchpointSet::add(), which links under the
+    // membership lock and returns false (flag-on only) when the set is already
+    // IsInvalidated: GIL-off, a second closure's notifyWrite can flip the thin
+    // word to IsInvalidated between the installer's hasBeenInvalidated() check
+    // and this call, and the fat set then inherits that state. The caller must
+    // treat false as "not watchable" (the DFG fails the compilation).
+    bool add(Watchpoint*);
 
     void invalidate(VM& vm, const FireDetail& detail)
     {
@@ -445,9 +445,9 @@ void InferredValue<JSCellType>::notifyWriteSlow(VM& vm, JSCell* owner, JSCellTyp
 }
 
 template<typename JSCellType>
-void InferredValue<JSCellType>::add(Watchpoint* watchpoint)
+bool InferredValue<JSCellType>::add(Watchpoint* watchpoint)
 {
-    inflate()->add(watchpoint);
+    return inflate()->add(watchpoint);
 }
 
 template<typename JSCellType>

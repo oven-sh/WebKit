@@ -950,6 +950,7 @@ auto SectionParser::parseStorageType(StorageType& storageType) -> PartialResult
 
 auto SectionParser::parseStructType(uint32_t position, ParsedDef& structType) -> PartialResult
 {
+    WASM_PARSER_FAIL_IF(Options::useSharedGCHeap(), "GC types are not supported when the GC heap is shared"_s);
     uint32_t fieldCount;
     WASM_PARSER_FAIL_IF(!parseVarUInt32(fieldCount), "can't get "_s, position, "th struct type's field count"_s);
     WASM_PARSER_FAIL_IF(fieldCount > maxStructFieldCount, "number of fields for struct type at position "_s, position, " is too big "_s, fieldCount, " maximum "_s, maxStructFieldCount);
@@ -978,6 +979,7 @@ auto SectionParser::parseStructType(uint32_t position, ParsedDef& structType) ->
 
 auto SectionParser::parseArrayType(uint32_t position, ParsedDef& arrayType) -> PartialResult
 {
+    WASM_PARSER_FAIL_IF(Options::useSharedGCHeap(), "GC types are not supported when the GC heap is shared"_s);
     StorageType elementType;
     WASM_PARSER_FAIL_IF(!parseStorageType(elementType), "can't get array's element Type"_s);
 

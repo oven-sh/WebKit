@@ -85,7 +85,9 @@ private:
     Symbol(VM&, SymbolImpl& uid);
 
     static void destroy(JSCell*);
-    void finishCreation(VM&);
+    // Returns the cell registered in VM::symbolImplToSymbolMap for this uid:
+    // this cell, or the one another thread published first.
+    Symbol* finishCreation(VM&);
 
     PrivateName m_privateName;
     WriteBarrier<JSString> m_description;

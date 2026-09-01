@@ -98,6 +98,9 @@ struct Config {
                 // fail-stop with a diagnosable crash site instead.
                 RELEASE_ASSERT(!config.isPermanentlyFrozen());
                 config.gilOffProcess = 1;
+                // ArrayBuffer (WTF::DeferrableRefCounted) is ref'd/deref'd by
+                // concurrent mutators without the JSLock only in this shape.
+                g_wtfConfig.useAtomicDeferrableRefCount = true;
             }
         });
     }

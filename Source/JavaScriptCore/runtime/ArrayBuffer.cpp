@@ -36,7 +36,6 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
@@ -210,30 +209,25 @@ static inline bool gilOffThreadsProcess()
     return Options::useJSThreads() && !Options::useThreadGIL();
 }
 
-// ===== GIL-off detached-flag side table (annex N6 arm 1) =====
+// ===== GIL-off detached-buffer table (annex N6 arm 1) =====
 //
 // Annex N6 arm 1 requires a detached FLAG distinct from !m_data: GIL-off
 // detach leaves the stale base word in place until the next heap §10 stop, so
 // "!m_data" would report a detached buffer as live for the whole
-// detach->stop window. The flag is spec'd as an ArrayBuffer member with
-// isDetached() returning it, but ArrayBuffer.h is NOT in this slice's owned
-// files; until the header lands the member + accessor, the flag lives in this
-// side table, and every in-file N6 writer arm (detach / transferTo /
-// shareWith / resize) consults it through isArrayBufferDetachedGILOff().
-// Read-side isDetached() callers OUTSIDE this file still evaluate !m_data
-// during the window. That is memory-safe — the length is already 0, so every
-// guarded fast path bounds-fails, and the mapping stays alive until the stop —
-// but it is NOT the spec'd predicate for those sites and is a recorded U-T13
-// sign-off gap until the header change lands (see the task summary).
+// detach->stop window. That flag is ArrayBuffer::m_detachedGILOff, which
+// isDetached() reads; it is set here, under the table lock, by the arbiter
+// below and before the zero length is published, so every isDetached() caller
+// (this file's writer arms and the JS-visible checks elsewhere) sees a
+// detached buffer as detached from the moment the detach wins.
 //
-// The table doubles as the WRITER-WRITER arbiter the annex's single-writer
-// torn-pair table otherwise lacks: marking is a test-and-set under the table
-// lock, so of any number of racing detach()/transferTo() calls EXACTLY ONE
-// moves ownership into the quarantine and fires notifyDetaching — no double
-// enqueue, no double std::exchange of m_destructor. Entries carry a
-// generation so a stop-time clear can never hit a recycled ArrayBuffer*
-// (ABA): ~ArrayBuffer unregisters itself, and retirement clears the stale
-// contents words only while {pointer, generation} still match.
+// The table is the WRITER-WRITER arbiter the annex's single-writer torn-pair
+// table otherwise lacks: marking is a test-and-set under the table lock, so of
+// any number of racing detach()/transferTo() calls EXACTLY ONE moves ownership
+// into the quarantine and fires notifyDetaching — no double enqueue, no double
+// std::exchange of m_destructor. Entries carry a generation so a stop-time
+// clear can never hit a recycled ArrayBuffer* (ABA): ~ArrayBuffer unregisters
+// itself, and retirement clears the stale contents words only while {pointer,
+// generation} still match.
 //
 // Lock rank: leaf. Acquired under BufferMemoryHandle::lock() (detach/resize)
 // and under the quarantine retirement path; holders take no other lock.
@@ -264,8 +258,11 @@ GILOffDetachedBufferTable& gilOffDetachedBufferTable()
 std::atomic<uint64_t> s_gilOffDetachedPendingCount { 0 };
 
 // Returns the (nonzero) generation if this call newly marked the buffer
-// detached, 0 if a racing detach/transfer already won.
-uint64_t tryMarkArrayBufferDetachedGILOff(ArrayBuffer* buffer)
+// detached, 0 if a racing detach/transfer already won. The winner's sticky
+// isDetached() flag is set inside the table's critical section, so anything
+// ordered after this section (the zero-length publish, a later table-lock
+// holder) also sees the buffer as detached.
+uint64_t tryMarkArrayBufferDetachedGILOff(ArrayBuffer* buffer, std::atomic<bool>& detachedFlag)
 {
     GILOffDetachedBufferTable& table = gilOffDetachedBufferTable();
     Locker locker { table.lock };
@@ -274,27 +271,9 @@ uint64_t tryMarkArrayBufferDetachedGILOff(ArrayBuffer* buffer)
         return 0;
     table.nextGeneration++;
     s_gilOffDetachedPendingCount.fetch_add(1, std::memory_order_release);
+    detachedFlag.store(true, std::memory_order_seq_cst);
     return result.iterator->value;
 }
-
-} // anonymous namespace
-
-// The GIL-off detached predicate for this file's writer arms. Pre-stop it is
-// the table flag; post-stop (and GIL-on) the caller's !m_data check covers.
-// Flag-off / GIL-on cost: one relaxed load of a never-incremented counter.
-// Defined at namespace JSC scope (NOT in the anonymous namespace) because
-// AtomicsObject.cpp and JSArrayBufferPrototype.cpp declare and call it
-// cross-TU; the helpers it uses stay internal to this file.
-bool isArrayBufferDetachedGILOff(ArrayBuffer* buffer)
-{
-    if (!s_gilOffDetachedPendingCount.load(std::memory_order_acquire))
-        return false;
-    GILOffDetachedBufferTable& table = gilOffDetachedBufferTable();
-    Locker locker { table.lock };
-    return table.map.contains(buffer);
-}
-
-namespace {
 
 // ~ArrayBuffer hook: a buffer that dies between its detach and the stop must
 // not be touched by the stop-time clear (the entry's quarantined contents are
@@ -328,30 +307,13 @@ void unregisterDetachedArrayBufferGILOff(ArrayBuffer* buffer)
 // JIT-hoisted bases pending the S8 jettison discipline) never dereferences
 // an unmapped base — its paired length is necessarily pre-grow and in-bounds.
 //
-// Drained by arrayBufferQuarantineSafepointHook below, i.e. at any heap's
-// stop; under gilOffProcess there is exactly one sticky server heap (annex
-// U0C), so that is the right stop. If NO quarantine hook is registered yet
-// (no detach/shrink has happened in the process), stale handles are retained
-// until one is — a bounded keepalive, never an unsafety.
-struct StaleWasmMappingList {
-    Lock lock;
-    Vector<Ref<BufferMemoryHandle>> handles WTF_GUARDED_BY_LOCK(lock);
-};
+// The replaced handle is an entry in the quarantine of the growing VM's heap
+// (quarantineStaleWasmMappingGILOff below): only that heap's stop quiesces
+// every mutator that could still hold a pre-grow base, and its hook is
+// registered at VM init, so the keepalive always ends at that heap's next
+// collection.
 
-StaleWasmMappingList& staleWasmMappings()
-{
-    static NeverDestroyed<StaleWasmMappingList> list;
-    return list.get();
-}
-
-void quarantineStaleWasmMappingGILOff(Ref<BufferMemoryHandle>&& handle)
-{
-    StaleWasmMappingList& list = staleWasmMappings();
-    Locker locker { list.lock };
-    list.handles.append(WTF::move(handle));
-}
-
-// One quarantine entry. Exactly one of the two shapes is populated:
+// One quarantine entry. Exactly one of the three shapes is populated:
 // - DETACH/TRANSFER (annex N6 arms 1-2): `contents` carries the detached
 //   mapping's keepalive — m_data + m_destructor exclusively (moved out of the
 //   source), m_shared/m_memoryHandle as CO-refs (both ThreadSafeRefCounted;
@@ -374,6 +336,8 @@ void quarantineStaleWasmMappingGILOff(Ref<BufferMemoryHandle>&& handle)
 //   tailOffset + tailSize == handle->size(). (Established by
 //   deferShrinkTailGILOff's replace rule and consumeQuarantinedTailOnRegrow's
 //   trim rule, both of which run under the handle's lock.)
+// - STALE WASM MAPPING (annex N6 arm 4): `staleHandle` keeps a relocating
+//   grow's replaced mapping alive; retirement has nothing to do but release it.
 struct ArrayBufferQuarantineEntry {
     WTF_MAKE_NONCOPYABLE(ArrayBufferQuarantineEntry);
 public:
@@ -387,6 +351,8 @@ public:
     RefPtr<BufferMemoryHandle> tailHandle;
     size_t tailOffset { 0 };
     size_t tailSize { 0 };
+
+    RefPtr<BufferMemoryHandle> staleHandle;
 };
 
 struct ArrayBufferQuarantine {
@@ -400,15 +366,16 @@ public:
 
 // PER-SERVER-HEAP, never process-global (annex N6 "per-server quarantine
 // list"; same shape as ConcurrentButterfly's §6 epoch registry). Entries are
-// never removed from the map — a destroyed Heap's quarantine is simply left
-// drained in place (GIL-off the server heap is process-lifetime anyway,
-// UNGIL-HANDOUT gilOffProcess note), and a recycled Heap* re-adopts the old,
-// empty quarantine, which is sound: retirement is keyed by the collecting
-// heap and drains everything.
+// never removed from the map: a destroyed Heap's quarantine stays in place and
+// a recycled Heap* re-adopts it, which is sound because retirement is keyed by
+// the collecting heap and drains everything, and every entry re-validates the
+// buffer it names (clearBaseWordAtStop) or owns its mapping outright. The
+// safepoint hook is NOT tracked here: it lives in each Heap's own hook vector
+// (registerArrayBufferQuarantineSafepointHook, called once per Heap at VM
+// init), so a Heap reusing a destroyed Heap's address gets its own hook.
 struct ArrayBufferQuarantineRegistry {
     Lock lock;
     UncheckedKeyHashMap<JSC::Heap*, std::unique_ptr<ArrayBufferQuarantine>> quarantines WTF_GUARDED_BY_LOCK(lock);
-    UncheckedKeyHashSet<JSC::Heap*> hookRegistered WTF_GUARDED_BY_LOCK(lock);
 };
 
 ArrayBufferQuarantineRegistry& arrayBufferQuarantineRegistry()
@@ -469,17 +436,6 @@ void retireArrayBufferQuarantineEntry(ArrayBufferQuarantineEntry& entry)
 // handle lock -> quarantine lock).
 void arrayBufferQuarantineSafepointHook(JSC::Heap& heap)
 {
-    // Annex N6 arm 4 (partial): release stale relocated wasm mappings under
-    // quiescence. World-stopped, so no reader still holds a pre-stop
-    // {length, base} pair against any of these handles.
-    Vector<Ref<BufferMemoryHandle>> staleHandles;
-    {
-        StaleWasmMappingList& list = staleWasmMappings();
-        Locker locker { list.lock };
-        staleHandles = std::exchange(list.handles, { });
-    }
-    staleHandles.clear();
-
     ArrayBufferQuarantine* quarantine = existingArrayBufferQuarantine(heap);
     if (!quarantine)
         return;
@@ -491,39 +447,40 @@ void arrayBufferQuarantineSafepointHook(JSC::Heap& heap)
     for (auto& entry : retired)
         retireArrayBufferQuarantineEntry(entry);
     // Destroying `retired` releases the quarantined mappings (contents
-    // destructors / handle derefs), under quiescence.
+    // destructors / handle derefs / stale wasm handles), under quiescence.
 }
 
+// An entry enqueued here is retired at the heap's next collection: the hook
+// was registered at VM init (registerArrayBufferQuarantineSafepointHook).
 ArrayBufferQuarantine& ensureArrayBufferQuarantine(JSC::Heap& heap)
 {
-    ArrayBufferQuarantine* result;
-    bool needsHook = false;
-    {
-        ArrayBufferQuarantineRegistry& registry = arrayBufferQuarantineRegistry();
-        Locker locker { registry.lock };
-        auto addResult = registry.quarantines.ensure(&heap, [] {
-            return makeUnique<ArrayBufferQuarantine>();
-        });
-        result = addResult.iterator->value.get();
-        needsHook = registry.hookRegistered.add(&heap).isNewEntry;
-    }
-    // Heap::addStopTheWorldSafepointHook takes the heap's own hook lock, so it
-    // is called OUTSIDE the registry lock (which must stay a leaf). A racing
-    // first-enqueuer can momentarily see the quarantine before the hook is
-    // appended; its entry simply waits for the collection AFTER the winner's
-    // append completes — retirement timing is "some stop after enqueue", which
-    // annex N6 permits (only the enqueued-before-the-stop direction binds).
-    if (needsHook)
-        heap.addStopTheWorldSafepointHook(&arrayBufferQuarantineSafepointHook);
-    return *result;
+    ArrayBufferQuarantineRegistry& registry = arrayBufferQuarantineRegistry();
+    Locker locker { registry.lock };
+    return *registry.quarantines.ensure(&heap, [] {
+        return makeUnique<ArrayBufferQuarantine>();
+    }).iterator->value;
+}
+
+// Arm 4 enqueue. Runs inside the grow's stop-the-world closure, so it reports
+// no extra memory (a report may conduct a collection); the handle is released
+// by the hook at the next collection of `heap`.
+void quarantineStaleWasmMappingGILOff(JSC::Heap& heap, Ref<BufferMemoryHandle>&& handle)
+{
+    ArrayBufferQuarantineEntry entry;
+    entry.staleHandle = WTF::move(handle);
+    ArrayBufferQuarantine& quarantine = ensureArrayBufferQuarantine(heap);
+    Locker locker { quarantine.lock };
+    quarantine.pending.append(WTF::move(entry));
 }
 
 // Arms 1-2 enqueue. Caller must be at a point where reporting extra memory is
-// legal (it can trigger a synchronous collection, which may retire the entry
-// immediately — correct: the enqueuer is the conductor and is past every use
-// of the old {length, base} pair). Quarantine sizing (annex N6): entries are
-// byte-accounted against heap extra memory so a detach/shrink storm pulls the
-// next collection forward.
+// legal: it can trigger a synchronous collection, which may retire the entry
+// immediately and free the mapping. That is only sound once no {length, base}
+// pair against the mapping can still pass a bounds check anywhere — the
+// enqueuer is past its own uses, and every view's length must already have
+// been zeroed (ArrayBuffer::detach neuters the views before calling this).
+// Quarantine sizing (annex N6): entries are byte-accounted against heap extra
+// memory so a detach/shrink storm pulls the next collection forward.
 void enqueueArrayBufferQuarantineEntry(JSC::Heap& heap, ArrayBufferQuarantineEntry&& entry, size_t accountedBytes)
 {
     ArrayBufferQuarantine& quarantine = ensureArrayBufferQuarantine(heap);
@@ -599,6 +556,18 @@ void consumeQuarantinedTailOnRegrow(JSC::Heap& heap, BufferMemoryHandle& handle,
 }
 
 } // anonymous namespace
+
+// Called once per Heap, from the VM constructor (single-threaded for the heap,
+// before any client can detach, shrink or grow). The hook lives in the Heap's
+// own vector and dies with it, so a later Heap at the same address registers
+// its own. Only GIL-off enqueues entries, so only GIL-off pays the per-
+// collection hook.
+void registerArrayBufferQuarantineSafepointHook(JSC::Heap& heap)
+{
+    if (!gilOffThreadsProcess())
+        return;
+    heap.addStopTheWorldSafepointHook(&arrayBufferQuarantineSafepointHook);
+}
 
 ArrayBufferContents::ArrayBufferContents(void* data, size_t sizeInBytes, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&& destructor)
     : m_data(data)
@@ -895,9 +864,6 @@ RefPtr<ArrayBuffer> ArrayBuffer::sliceWithClampedIndex(size_t begin, size_t end)
 
 void ArrayBuffer::makeShared()
 {
-    // GIL-off the side-table flag is the detached predicate during the
-    // detach->stop window (annex N6 arm 1); !m_data alone would miss it.
-    ASSERT(!isArrayBufferDetachedGILOff(this));
     m_contents.makeShared();
     m_locked.store(true, std::memory_order_relaxed);
     ASSERT(!isDetached());
@@ -927,7 +893,7 @@ void ArrayBuffer::refreshAfterWasmMemoryGrow(VM& vm, Wasm::Memory* memory)
     ASSERT(isWasmMemory());
 
     void* oldData = m_contents.data();
-    m_contents.refreshAfterWasmMemoryGrow(memory);
+    m_contents.refreshAfterWasmMemoryGrow(vm, memory);
     void* newData = m_contents.data();
     if (newData == oldData)
         return;
@@ -958,11 +924,9 @@ void ArrayBuffer::setSharingMode(ArrayBufferSharingMode newSharingMode)
 
 bool ArrayBuffer::shareWith(ArrayBufferContents& result)
 {
-    // The flag arm matters GIL-off only (annex N6 arm 1 leaves a stale base
-    // word in place until the stop, so !m_data alone would miss a
-    // detached-but-not-yet-retired buffer); GIL-on the side table is empty
-    // and this is exactly the landed !m_data check.
-    if (isDetached() || isArrayBufferDetachedGILOff(this) || !m_contents.m_data || !isShared()) {
+    // isDetached() covers the GIL-off detach->stop window, where the stale
+    // base word is still in place (annex N6 arm 1).
+    if (isDetached() || !isShared()) {
         result.m_data = nullptr;
         return false;
     }
@@ -975,15 +939,13 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 {
     Ref<ArrayBuffer> protect(*this);
 
-    // GIL-off a detached buffer keeps a stale (quarantined) base word, so the
-    // flag — not !m_data — is the detached predicate (annex N6 arm 1). GIL-on
-    // the side table is empty and this is exactly the landed !m_data check.
-    // The check-then-act window against a concurrent detach is closed for
-    // OWNERSHIP by the flag test-and-set inside detach() (the copy below
-    // reads a stale-but-safe mapping, and our subsequent detach(vm) no-ops if
-    // it lost) — only the JS-visible outcome of the race is nondeterministic,
-    // never the memory safety.
-    if (isDetached() || isArrayBufferDetachedGILOff(this) || !m_contents.m_data) {
+    // isDetached() covers the GIL-off detach->stop window, where the stale
+    // base word is still in place (annex N6 arm 1). The check-then-act window
+    // against a concurrent detach is closed by the flag test-and-set inside
+    // detach(): the copy below reads a stale-but-safe mapping, and a transfer
+    // whose detach(vm) lost the flag fails as "already detached" (the GIL-off
+    // arm below), so exactly one racing detach/transfer of a buffer succeeds.
+    if (isDetached()) {
         result.m_data = nullptr;
         return false;
     }
@@ -1007,14 +969,14 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
         // quarantine-visible mapping), then the source runs arm 1 verbatim —
         // its contents, i.e. the original mapping, enter the quarantine
         // owning the free. Perf delta O(1) -> O(n), recorded and accepted v1.
-        // One atomic length snapshot for both arms: a concurrent detach()
-        // stores m_sizeInBytes atomically, so copyTo()'s plain read would be
-        // a data race. The snapshot pairs safely with the base (the mapping
-        // stays full-sized until the stop, annex N6 stale-but-safe row).
-        size_t currentByteLength = WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed);
+        // Atomic length snapshot: a concurrent detach() stores m_sizeInBytes
+        // atomically, so copyTo()'s plain read would be a data race. The
+        // snapshot pairs safely with the base (the mapping stays full-sized
+        // until the stop, annex N6 stale-but-safe row).
         if (!m_contents.m_hasMaxByteLength) {
             // Source without maxByteLength: plain copy (mirrors
-            // ArrayBufferContents::copyTo, with the snapshot above).
+            // ArrayBufferContents::copyTo, with the snapshot).
+            size_t currentByteLength = WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed);
             result.tryAllocate(currentByteLength, sizeof(char), ArrayBufferContents::InitializationPolicy::DontInitialize);
             if (!result.m_data)
                 return false;
@@ -1031,10 +993,33 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
             // BEFORE the memcpy of byteLength() bytes. The post-transferTo
             // resize of the transferee is thread-local (the JSArrayBuffer
             // wrapper is created only afterwards — no concurrent reader).
-            // Snapshot once (a concurrent detach() zeroes m_maxByteLength
-            // atomically) and use the same value for reservation + stamp.
-            size_t maxByteLength = WTF::atomicLoad(&m_contents.m_maxByteLength, std::memory_order_relaxed);
-            auto handle = tryAllocateResizableMemory(&vm, currentByteLength, maxByteLength);
+            // A concurrent detach() publishes flag, zero length and zero
+            // maxByteLength under the handle lock, so snapshot the pair under
+            // that lock: a torn {old length, 0} pair would send
+            // tryAllocateResizableMemory a size above its reservation. The
+            // allocation below gets no VM (like ArrayBuffer::tryCreate), so it
+            // cannot conduct the collection whose stop would retire a racing
+            // detach's or shrink's quarantine entry between this snapshot and
+            // the copy: with no stop in between, the snapshot's {length, base}
+            // pair stays mapped and full-sized (annex N6 stale-but-safe row).
+            size_t currentByteLength = 0;
+            size_t maxByteLength = 0;
+            bool detached = false;
+            auto snapshotSource = [&]() {
+                detached = isDetached();
+                currentByteLength = WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed);
+                maxByteLength = WTF::atomicLoad(&m_contents.m_maxByteLength, std::memory_order_relaxed);
+            };
+            if (RefPtr<BufferMemoryHandle> sourceHandle = m_contents.m_memoryHandle) {
+                Locker locker { sourceHandle->lock() };
+                snapshotSource();
+            } else
+                snapshotSource();
+            if (detached || currentByteLength > maxByteLength) {
+                result.m_data = nullptr;
+                return false;
+            }
+            auto handle = tryAllocateResizableMemory(nullptr, currentByteLength, maxByteLength);
             if (!handle) {
                 // OOM => transfer fails as the landed non-detachable arm does.
                 result.m_data = nullptr;
@@ -1047,8 +1032,14 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
         }
 
         // The source runs arm 1 verbatim (quarantine owning the free,
-        // length=0 seq_cst, detached flag, notifyDetaching as landed).
-        detach(vm);
+        // length=0 seq_cst, detached flag, notifyDetaching as landed). If a
+        // racing detach()/transferTo() won the flag first, the source was
+        // already detached when this transfer ran: release the copy and fail,
+        // leaving isDetached() true for the caller's error selection.
+        if (!detach(vm)) {
+            result = ArrayBufferContents();
+            return false;
+        }
         return true;
     }
 
@@ -1058,17 +1049,18 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 }
 
 // We allow detaching wasm memory ArrayBuffers even though they are locked.
-void ArrayBuffer::detach(VM& vm)
+bool ArrayBuffer::detach(VM& vm)
 {
     if (gilOffThreadsProcess()) [[unlikely]] {
         // SPEC-ungil annex N6 arm 1 (DETACH-AND-FREE), GIL-off only:
-        // publish length = 0 (seq_cst) plus a separate detached FLAG (the
-        // side-table flag above — NOT !m_data); the base word is NOT cleared.
-        // Ownership of the mapping moves INTO a per-server quarantine entry;
-        // a heap §10 stop clears/poisons the stale base word under quiescence
-        // and then releases the mapping. A racing reader can only observe
-        // {0, *} (bounds-fails) or {oldLen, oldBase} (stale-but-safe: the
-        // mapping stays mapped and full-sized until the stop).
+        // publish length = 0 (seq_cst) plus the sticky detached FLAG
+        // (m_detachedGILOff, which isDetached() reads — NOT !m_data); the base
+        // word is NOT cleared. Ownership of the mapping moves INTO a
+        // per-server quarantine entry; a heap §10 stop clears/poisons the
+        // stale base word under quiescence and then releases the mapping. A
+        // racing reader can only observe {0, *} (bounds-fails) or
+        // {oldLen, oldBase} (stale-but-safe: the mapping stays mapped and
+        // full-sized until the stop).
         //
         // The flag is set BEFORE the zero length (the annex lists them
         // together, unordered for readers): the test-and-set is also the
@@ -1087,7 +1079,7 @@ void ArrayBuffer::detach(VM& vm)
         size_t oldMaxByteLength = 0;
         uint64_t generation = 0;
         auto publishDetachGILOff = [&]() {
-            generation = tryMarkArrayBufferDetachedGILOff(this);
+            generation = tryMarkArrayBufferDetachedGILOff(this, m_detachedGILOff);
             if (!generation)
                 return;
             oldSizeInBytes = WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed);
@@ -1108,8 +1100,20 @@ void ArrayBuffer::detach(VM& vm)
             // A racing detach()/transferTo() already won the flag: it (alone)
             // moved ownership into the quarantine and fired notifyDetaching.
             // Idempotent return — no double enqueue of the same mapping.
-            return;
+            return false;
         }
+
+        // Neuter the views BEFORE the mapping enters the quarantine: the
+        // enqueue below reports extra memory, which can conduct a collection
+        // on this thread whose safepoint hook retires the entry and frees the
+        // mapping at once. A fixed-length view bounds-checks against its own
+        // length, which only detachFromArrayBuffer zeroes, so a view still
+        // holding its pre-detach length must not outlive the mapping. No new
+        // nonzero-length view can appear after this point: the flag and the
+        // zero length are already published. The detaching watchpoint fires
+        // as landed — hoisted-vector code jettisons; the quarantine
+        // additionally covers code that raced the jettison.
+        notifyDetaching(vm);
 
         if (m_contents.m_data) {
             size_t retainedBytes = handle ? handle->size() : oldSizeInBytes;
@@ -1150,43 +1154,39 @@ void ArrayBuffer::detach(VM& vm)
                 buffer->m_contents.m_data = nullptr;
                 buffer->m_contents.m_shared = nullptr;
                 buffer->m_contents.m_memoryHandle = nullptr;
-                // Past this point !m_data is true, so the header's landed
-                // isDetached() predicate takes over; drop the table entry.
+                // The sticky m_detachedGILOff flag keeps reporting detached;
+                // the table entry only arbitrated ownership and guarded this
+                // clear, so drop it.
                 table.map.remove(iterator);
                 s_gilOffDetachedPendingCount.fetch_sub(1, std::memory_order_release);
             };
 
             enqueueArrayBufferQuarantineEntry(vm.heap, WTF::move(entry), retainedBytes);
         }
-
-        // notifyDetaching/neutering watchpoints fire as landed —
-        // hoisted-vector code jettisons; the quarantine additionally covers
-        // code that raced the jettison.
-        notifyDetaching(vm);
-        return;
+        return true;
     }
 
     auto unused = m_contents.detach();
     notifyDetaching(vm);
+    return true;
 }
 
-// GIL-off, this buffer's incoming-reference storage is concurrently mutated
-// by other threads creating views on it (Heap::addReference under the
-// GCIncomingRefCountedSet lock), so all reads of that storage must also be
-// under that lock — the lock-free walk was the §3.27 r0 UAF signature
-// (Vector realloc / singleton->Vector repoint vs reader). The set lock is a
-// strict heap-rank leaf, so we must NOT call back into view code while
-// holding it (detachFromArrayBuffer takes the view's cellLock); instead we
-// snapshot the cell list under the lock and walk the snapshot. The snapshot
-// stays valid for the walk: this mutator is between safepoints, so the
-// stop-the-world collector cannot run, and incoming references are only
-// removed at GC sweep / lastChanceToFinalize — exactly the lifetime argument
-// the old unlocked walk already relied on.
+// GIL-off, other threads creating views on this buffer mutate its
+// incoming-reference storage concurrently (Heap::addReference under the
+// GCIncomingRefCountedSet lock), so the cell list is read under that lock.
+// The set lock is a strict leaf, so the walk itself runs on a snapshot
+// (detachFromArrayBuffer takes the view's cellLock). The snapshot stays valid
+// for the walk: this mutator is between safepoints, so the stop-the-world
+// collector cannot run, and incoming references are only removed at GC
+// sweep / lastChanceToFinalize. With the GIL, and flag-off, a single mutator
+// runs at a time and the lock is not taken.
 Vector<JSCell*, 8> ArrayBuffer::snapshotIncomingReferences(VM& vm)
 {
     Vector<JSCell*, 8> incomingReferences;
     {
-        Locker locker { vm.heap.arrayBufferIncomingReferencesLock() };
+        std::optional<Locker<Lock>> locker;
+        if (gilOffThreadsProcess()) [[unlikely]]
+            locker.emplace(vm.heap.arrayBufferIncomingReferencesLock());
         size_t count = numberOfIncomingReferences();
         incomingReferences.reserveInitialCapacity(count);
         for (size_t i = 0; i < count; ++i)
@@ -1236,9 +1236,10 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::grow(VM& vm, size_t newByteLength
 //   lock while a tail entry for it is pending), then pages are committed,
 //   THEN the larger length is release-published — both torn pairs index the
 //   one immutable mapping.
-// `sizeInBytesSlot` is &m_contents.m_sizeInBytes (passed by the member, which
-// has the friend access); `buffer` is used for its public data() only.
-static Expected<int64_t, GrowFailReason> resizeGILOff(VM& vm, ArrayBuffer& buffer, BufferMemoryHandle& memoryHandle, size_t* sizeInBytesSlot, size_t maxByteLength, bool isWasmMemoryBuffer, size_t newByteLength)
+// `sizeInBytesSlot` / `maxByteLengthSlot` are &m_contents.m_sizeInBytes and
+// &m_contents.m_maxByteLength (passed by the member, which has the friend
+// access); `buffer` is used for its public data() and isDetached() only.
+static Expected<int64_t, GrowFailReason> resizeGILOff(VM& vm, ArrayBuffer& buffer, BufferMemoryHandle& memoryHandle, size_t* sizeInBytesSlot, size_t* maxByteLengthSlot, bool isWasmMemoryBuffer, size_t newByteLength)
 {
     int64_t deltaByteLength = 0;
     size_t newlyQuarantinedBytes = 0;
@@ -1268,13 +1269,19 @@ static Expected<int64_t, GrowFailReason> resizeGILOff(VM& vm, ArrayBuffer& buffe
             // re-check fully serializes resize-vs-detach: if the flag is visible
             // we fail before mutating anything (no resurrected nonzero length on
             // a detached buffer); if it is not, any concurrent detach is ordered
-            // AFTER our publish below and its zero length wins. GIL-on a detached
-            // buffer fails the caller's null-m_memoryHandle check instead, with
-            // the same error.
-            if (isArrayBufferDetachedGILOff(&buffer))
+            // AFTER our publish below and its zero length wins. The flag is
+            // sticky, so this also catches a detach whose quarantine entry was
+            // already retired by a collection conducted during the unlocked
+            // allocation below (which nulled m_data and the handle word).
+            // GIL-on a detached buffer fails the caller's null-m_memoryHandle
+            // check instead, with the same error.
+            if (buffer.isDetached())
                 return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
 
-            // Keep in mind that newByteLength may not be page-size-aligned.
+            // Re-read under the lock: the caller's unlocked snapshot predates
+            // the allocation window. Keep in mind that newByteLength may not be
+            // page-size-aligned.
+            size_t maxByteLength = WTF::atomicLoad(maxByteLengthSlot, std::memory_order_relaxed);
             if (maxByteLength < newByteLength)
                 return makeUnexpected(GrowFailReason::InvalidGrowSize);
 
@@ -1386,15 +1393,15 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLeng
         return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
 
     if (gilOffThreadsProcess()) [[unlikely]] {
-        // Annex N6 arm 1: the flag — not !m_data — is the detached predicate.
+        // Annex N6 arm 1: isDetached() reads the sticky flag, not !m_data.
         // This check is advisory (TOCTOU); the binding one is resizeGILOff's
         // re-check under the handle lock, which detach() publishes under.
-        if (isArrayBufferDetachedGILOff(this))
+        if (isDetached())
             return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
+#if ENABLE(WEBASSEMBLY)
         // Atomic: a concurrent detach() zeroes m_maxByteLength with an
         // atomic store, and we are outside the handle lock here.
         size_t maxByteLength = WTF::atomicLoad(&m_contents.m_maxByteLength, std::memory_order_relaxed);
-#if ENABLE(WEBASSEMBLY)
         // The associated-wasm-memory delegation (landed: a page-count-changing
         // resize of a buffer associated with a non-shared Wasm memory routes
         // through the memory, which calls back refreshAfterWasmMemoryGrow) is
@@ -1425,7 +1432,7 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLeng
             }
         }
 #endif
-        return resizeGILOff(vm, *this, *memoryHandle, &m_contents.m_sizeInBytes, maxByteLength, isWasmMemory(), newByteLength);
+        return resizeGILOff(vm, *this, *memoryHandle, &m_contents.m_sizeInBytes, &m_contents.m_maxByteLength, isWasmMemory(), newByteLength);
     }
 
     int64_t deltaByteLength = 0;
@@ -1648,7 +1655,7 @@ std::optional<ArrayBufferContents> ArrayBufferContents::fromSpan(std::span<const
     return ArrayBufferContents { buffer, data.size_bytes(), std::nullopt, ArrayBuffer::primitiveGigacageDestructor() };
 }
 
-void ArrayBufferContents::refreshAfterWasmMemoryGrow(Wasm::Memory* memory)
+void ArrayBufferContents::refreshAfterWasmMemoryGrow(VM& vm, Wasm::Memory* memory)
 {
 #if ENABLE(WEBASSEMBLY)
     ASSERT(isResizableNonShared());
@@ -1670,16 +1677,16 @@ void ArrayBufferContents::refreshAfterWasmMemoryGrow(Wasm::Memory* memory)
     // parked while m_data / m_sizeInBytes / each view's vector are rewritten
     // — no reader can pair a post-grow length with the pre-grow base. The
     // quarantine half below is still required: the replaced handle is kept
-    // alive until a LATER stop so a captured/hoisted pre-grow {length, base}
-    // snapshot (in-bounds by construction) never dereferences an unmapped
-    // base. Discharges the U-T13 OPEN DEPENDENCY (CVE-AUDIT Tier-B B4,
-    // MC-GROW S5b / MC-LIFE S6).
+    // alive until a LATER stop of the growing VM's heap (the one whose
+    // mutators can hold a pre-grow base) so a captured/hoisted pre-grow
+    // {length, base} snapshot (in-bounds by construction) never dereferences
+    // an unmapped base.
     if (gilOffThreadsProcess()) [[unlikely]] {
         RefPtr<BufferMemoryHandle> oldHandle = m_memoryHandle;
         m_memoryHandle = memory->handle();
         m_data = memory->basePointer();
         if (oldHandle && oldHandle != m_memoryHandle)
-            quarantineStaleWasmMappingGILOff(oldHandle.releaseNonNull());
+            quarantineStaleWasmMappingGILOff(vm.heap, oldHandle.releaseNonNull());
         WTF::atomicStore(&m_sizeInBytes, m_memoryHandle->size(), std::memory_order_release);
     } else {
         m_memoryHandle = memory->handle();
@@ -1687,6 +1694,7 @@ void ArrayBufferContents::refreshAfterWasmMemoryGrow(Wasm::Memory* memory)
         WTF::atomicStore(&m_sizeInBytes, m_memoryHandle->size(), std::memory_order_relaxed);
     }
 #else
+    UNUSED_PARAM(vm);
     UNUSED_PARAM(memory);
 #endif
 }

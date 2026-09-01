@@ -246,9 +246,8 @@ macro doVMEntry(makeCall)
     else
         # UNGIL sec A.2.2 (AB-17 item 3): structural reroute only -- no
         # 32-bit platform has LLInt-visible TLS (GILOFF_TLS), so the
-        # discriminator assembles to nothing here (GIL-off is unsupported on
-        # 32-bit, jit App. R5; a set gilOffProcess byte fail-stops via the
-        # AB-1 tripwire on JSVALUE64 builds).
+        # discriminator assembles to nothing here (runtime/Options.cpp
+        # refuses the GIL-off shape on 32-bit builds).
         branchIfGilOffGroup3ToT5(.liteEntryStackCheck)
         bpbeq t3, VMSoftStackLimitOffset[vm], _llint_throw_stack_overflow_error_from_vm_entry
         if GILOFF_TLS

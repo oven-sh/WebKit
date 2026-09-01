@@ -37,6 +37,7 @@
 #include <wtf/DebugHeap.h>
 #include <wtf/Lock.h>
 #include <wtf/SharedTask.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -118,6 +119,17 @@ public:
     // written against. Flag-off / !isSharedServer(): never taken.
     Lock& refillLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_refillLock) { return m_refillLock; }
 
+#if ASSERT_ENABLED
+    // Owner witness for m_refillLock, maintained by MutatorSlowPathLocker's
+    // stripe form. Lock::isHeld() is true while any thread holds the lock;
+    // this lets an assertion require that the current thread holds THIS
+    // directory's stripe (a stripe on another directory excludes nothing
+    // here).
+    bool currentThreadHoldsRefillStripe() const { return m_refillStripeOwner.load(std::memory_order_relaxed) == &Thread::currentSingleton(); }
+    void didEnterRefillStripe() { m_refillStripeOwner.store(&Thread::currentSingleton(), std::memory_order_relaxed); }
+    void willExitRefillStripe() { m_refillStripeOwner.store(nullptr, std::memory_order_relaxed); }
+#endif
+
 #define BLOCK_DIRECTORY_BIT_ACCESSORS(lowerBitName, capitalBitName)     \
     bool is ## capitalBitName(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.is ## capitalBitName(index); } \
     bool is ## capitalBitName(MarkedBlock::Handle* block) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return is ## capitalBitName(block->index()); } \
@@ -178,13 +190,6 @@ public:
     void setNextDirectoryInAlignedMemoryAllocator(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectoryInAlignedMemoryAllocator, directory, linkStoreOrder); }
     
     MarkedBlock::Handle* findEmptyBlockToSteal();
-    // B2-serial-eden-block-churn (b): own-directory empty-block reuse for the
-    // T7-mspl-per-directory stripe leg. Same emptyBits & ~inUseBits scan as
-    // findEmptyBlockToSteal, but additionally clears canAllocate/empty so the
-    // returned block's bit state matches a findBlockForAllocation result (no
-    // double-pick once didConsumeFreeList drops inUse). isSharedServer()-only
-    // caller (LocalAllocator::allocateSlowCase stripe leg).
-    MarkedBlock::Handle* findOwnEmptyBlockForRefill();
 
     inline MarkedBlock::Handle* findBlockToSweep();
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
@@ -245,6 +250,9 @@ private:
     BlockDirectoryBits m_bits WTF_GUARDED_BY_LOCK(m_bitvectorLock); // Don't access this directly use one of the accessors above.
     Lock m_bitvectorLock;
     Lock m_refillLock; // T7-mspl-per-directory, rank 7a; see refillLock().
+#if ASSERT_ENABLED
+    std::atomic<Thread*> m_refillStripeOwner { nullptr };
+#endif
     Lock m_localAllocatorsLock;
     CellAttributes m_attributes;
 

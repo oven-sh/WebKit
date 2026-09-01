@@ -70,13 +70,6 @@ void GlobalExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(GlobalExecutable);
 
-CodeBlock* GlobalExecutable::replaceCodeBlockWith(VM& vm, CodeBlock* newCodeBlock)
-{
-    CodeBlock* oldCodeBlock = codeBlock();
-    m_codeBlock.setMayBeNull(vm, this, newCodeBlock);
-    return oldCodeBlock;
-}
-
 void GlobalExecutable::finalizeUnconditionally(VM& vm, CollectionScope)
 {
     finalizeCodeBlockEdge(vm, m_codeBlock);

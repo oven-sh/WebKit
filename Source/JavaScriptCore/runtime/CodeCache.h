@@ -232,7 +232,7 @@ public:
 
     void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*);
 
-    void clear() { m_sourceCode.clear(); }
+    void clear(VM&);
     JS_EXPORT_PRIVATE void write();
 
 private:

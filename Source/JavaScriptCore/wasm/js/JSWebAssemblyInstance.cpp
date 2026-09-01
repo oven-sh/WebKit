@@ -136,9 +136,9 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
         CompleteSubspace* subspace = JSWebAssemblyArray::subspaceFor<JSWebAssemblyArray, SubspaceAccess::OnMainThread>(vm);
         CompleteSubspace* structSubspace = JSWebAssemblyStruct::subspaceFor<JSWebAssemblyStruct, SubspaceAccess::OnMainThread>(vm);
         RELEASE_ASSERT(subspace == structSubspace);
-        // THREADS-INTEGRATE(heap) manifest 11: wasm-GC + shared heap is
-        // unsupported in phase 1 (§5.5 never-populate rule —
-        // prepareAllAllocators would materialize server LocalAllocators).
+        // prepareAllAllocators materializes server LocalAllocators, which a shared
+        // GC heap never populates. The section parser (CompileError) and tryCreate
+        // (LinkError) refuse wasm-GC modules first; this is the backstop.
         RELEASE_ASSERT(!Options::useSharedGCHeap());
         subspace->prepareAllAllocators();
         memcpySpan(allocators(), subspace->allocatorsForSizeSteps());
@@ -329,6 +329,12 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     // Disabled by CSP: https://w3c.github.io/webappsec-csp/#can-compile-wasm-bytes
     if (!globalObject->webAssemblyEnabled())
         return exception(createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage()));
+
+    // A wasm-GC instance copies this VM's server LocalAllocators into the cell,
+    // and a shared GC heap never materializes them. The section parser already
+    // rejects such modules; this keeps the constructor's assert unreachable from JS.
+    if (Options::useSharedGCHeap() && moduleInformation.hasGCObjectTypes())
+        return exception(createJSWebAssemblyLinkError(globalObject, vm, "WebAssembly GC types are not supported when the GC heap is shared"_s));
 
     WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleKey, moduleInformation);
     RETURN_IF_EXCEPTION(throwScope, nullptr);

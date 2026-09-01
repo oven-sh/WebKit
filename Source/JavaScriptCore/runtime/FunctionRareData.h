@@ -88,10 +88,21 @@ public:
     }
 
     void clear(const char* reason);
+    // GIL-off only: the clear that follows a .prototype store. Unlike clear(), it waits for an
+    // initializer that holds the cell lock, so the pair it publishes cannot outlive the store.
+    void clearAfterPrototypeStore(VM&, const char* reason);
 
     void initializeObjectAllocationProfile(VM&, JSGlobalObject*, JSObject* prototype, size_t inlineCapacity, JSFunction* constructor);
 
     bool isObjectAllocationProfileInitialized() { return !m_objectAllocationProfile.isNull(); }
+
+    // GIL-off consumers of the object allocation profile. The (structure, prototype) pair is
+    // published as independent stores and nulled by a racing clear(), so a snapshot can be null,
+    // half-published, half-cleared, or keyed to a superseded .prototype. Returns the structure only
+    // when the snapshot is complete and keyed to expectedPrototype (the constructor's live
+    // .prototype), with its paired prototype in |prototype|; otherwise nullptr, and the caller
+    // takes the uncached GetPrototypeFromConstructor path.
+    Structure* objectAllocationStructureKeyedTo(JSObject* expectedPrototype, JSObject*& prototype);
 
     Structure* internalFunctionAllocationStructure() { return m_internalFunctionAllocationProfile.structure(); }
     Structure* createInternalFunctionAllocationStructureFromBase(VM& vm, JSGlobalObject* baseGlobalObject, JSObject* prototype, Structure* baseStructure)
@@ -185,6 +196,21 @@ inline Watchpoint* FunctionRareData::createAllocationProfileClearingWatchpoint()
     RELEASE_ASSERT(!hasAllocationProfileClearingWatchpoint());
     m_allocationProfileClearingWatchpoint = makeUnique<AllocationProfileClearingWatchpoint>(this);
     return m_allocationProfileClearingWatchpoint.get();
+}
+
+inline Structure* FunctionRareData::objectAllocationStructureKeyedTo(JSObject* expectedPrototype, JSObject*& prototype)
+{
+    Structure* structure = m_objectAllocationProfile.structure();
+    JSObject* pairedPrototype = m_objectAllocationProfile.prototype();
+    if (!structure)
+        return nullptr;
+    if (structure->hasPolyProto()) {
+        if (pairedPrototype != expectedPrototype)
+            return nullptr;
+    } else if (structure->storedPrototypeObject() != expectedPrototype)
+        return nullptr;
+    prototype = pairedPrototype;
+    return structure;
 }
 
 } // namespace JSC

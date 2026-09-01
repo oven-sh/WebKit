@@ -82,7 +82,7 @@ enum WriteBarrierEarlyInitTag { WriteBarrierEarlyInit };
 // We have a separate base class with no constructors for use in Unions.
 template <typename T, typename Traits> class WriteBarrierBase {
     using StorageType = typename Traits::StorageType;
-    static_assert(std::is_pointer_v<StorageType>, "Concurrent (relaxed-atomic) slot accesses below assume a plain pointer-sized word");
+    static_assert(std::is_pointer_v<StorageType>, "Concurrent slot accesses below assume a plain pointer-sized word");
 
 public:
     void set(VM&, const JSCell* owner, T* value);
@@ -157,14 +157,30 @@ public:
 
 private:
     // JS cell slots are intentionally racy under shared-heap threading (object-model
-    // ground truth, same ruling as WriteBarrierBase<Unknown> below): all reads and
-    // writes of m_cell go through relaxed atomics — codegen-identical to plain
-    // pointer accesses flag-off, but defined behavior for the blessed cross-thread
-    // races flag-on. slot() remains the escape hatch for the GC visitors, which
-    // have their own protocol.
-    StorageType cell() const { return WTF::atomicLoad(const_cast<StorageType*>(&m_cell), std::memory_order_relaxed); }
+    // ground truth, same ruling as WriteBarrierBase<Unknown> below): every read and
+    // write of m_cell goes through these two accessors. Under TSAN they are relaxed
+    // atomics so the blessed cross-thread races are not reported; every other build
+    // uses plain pointer accesses, because LLVM neither vectorizes nor
+    // idiom-recognizes loops over atomics and fill/copy loops over WriteBarrier
+    // arrays would lose their memset/memcpy lowering. slot() remains the escape
+    // hatch for the GC visitors and for readers that need an explicit ordering.
+    StorageType cell() const
+    {
+#if TSAN_ENABLED
+        return WTF::atomicLoad(const_cast<StorageType*>(&m_cell), std::memory_order_relaxed);
+#else
+        return m_cell;
+#endif
+    }
 
-    void storeCell(StorageType value) { WTF::atomicStore(&m_cell, value, std::memory_order_relaxed); }
+    void storeCell(StorageType value)
+    {
+#if TSAN_ENABLED
+        WTF::atomicStore(&m_cell, value, std::memory_order_relaxed);
+#else
+        m_cell = value;
+#endif
+    }
 
     StorageType m_cell;
 };
@@ -175,8 +191,8 @@ public:
 
     // JS value slots are intentionally racy under shared-heap threading (object-model
     // ground truth): all reads/writes of m_value must go through the concurrent
-    // accessors (relaxed atomics on 64-bit — codegen-identical to plain accesses
-    // flag-off), never plain C++ loads/stores.
+    // accessors (relaxed atomics under TSAN, plain accesses otherwise; see
+    // JSCJSValue.h), never direct C++ loads/stores of m_value.
     void setWithoutWriteBarrier(JSValue value)
     {
         updateEncodedJSValueConcurrent(m_value, JSValue::encode(value));

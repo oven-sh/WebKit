@@ -29,7 +29,7 @@
 #include "DeferredWorkTimerInlines.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSGlobalObject.h"
-#include "JSLock.h"        // UNGIL §E.7.3 (U-T9): JSLockHolder in the runloop-dispatch flush fallback.
+#include "JSLock.h"        // UNGIL §E.7.3 (U-T9): the runloop-dispatch flush fallback locks m_apiLock and re-resolves the VM through it.
 #include "ThreadManager.h" // UNGIL §E.7 (U-T9): registrant routing + the cross-thread handoff API.
 #include "TopExceptionScope.h"
 #include "VM.h"
@@ -169,7 +169,7 @@ inline VM& DeferredWorkTimer::TicketData::vm()
 void DeferredWorkTimer::TicketData::cancel()
 {
     dataLogLnIf(DeferredWorkTimerInternal::verbose, "Canceling ticket: ", RawPointer(this));
-    m_isCancelled = true;
+    m_isCancelled.store(true, std::memory_order_relaxed);
 }
 
 inline void DeferredWorkTimer::TicketData::cancelAndClear()
@@ -341,7 +341,8 @@ void DeferredWorkTimer::runRunLoop()
     // The lock serializes the two cases: a cancel ordered before this
     // critical section is swept by the purge; one ordered after sees the
     // flag true and dispatches the on-loop recheck, which RunLoop::run()
-    // then services. GIL-on/flag-off: landed lock-free shape.
+    // then services. The non-gilOff arm below also takes m_taskLock (cold,
+    // uncontended), without the purge.
     if (VM* vm = m_apiLock->vm(); vm && vm->gilOff()) [[unlikely]] {
         bool hasLiveTickets;
         {
@@ -500,10 +501,17 @@ void DeferredWorkTimer::scheduleWorkSoon(Ticket ticket, Task&& task)
             else {
                 // Boot-check fallback (the FOURTH hook is REQUIRED with the
                 // other three; absent => drive completion through the VM
-                // run loop so nothing strands).
-                vm->runLoop().dispatch([protectedVM = Ref { *vm }] {
-                    JSLockHolder locker(protectedVM.get());
-                    jsThreadsFlushCrossThreadDeferredWork(protectedVM.get());
+                // run loop so nothing strands). The dispatch can outlive the
+                // VM — ~VM reaches this site through WaiterListManager::
+                // unregister — so it keeps the timer alive, not the VM, and
+                // re-resolves the VM under the API lock exactly as
+                // JSRunLoopTimer::timerDidFire does (willDestroyVM nulls it).
+                vm->runLoop().dispatch([protectedThis = Ref { *this }] {
+                    Locker locker { protectedThis->m_apiLock.get() };
+                    RefPtr<VM> vm = protectedThis->m_apiLock->vm();
+                    if (!vm)
+                        return;
+                    jsThreadsFlushCrossThreadDeferredWork(*vm);
                 });
             }
             return;
@@ -577,12 +585,16 @@ bool DeferredWorkTimer::cancelPendingWork(Ticket ticket)
                 needsRunLoopRecheck = m_shouldStopRunLoopWhenAllTicketsFinish;
             }
             if (needsRunLoopRecheck) {
-                gilOffVM->runLoop().dispatch([protectedVM = Ref { *gilOffVM }] {
-                    DeferredWorkTimer& timer = protectedVM->deferredWorkTimer.get();
+                // ~VM reaches this site (WaiterListManager::unregister ->
+                // Waiter::cancelAndClear) and the dispatch may run after the
+                // VM is gone, so it holds the timer, not the VM; m_runTasks
+                // is already false once stopRunningTasks() ran.
+                gilOffVM->runLoop().dispatch([protectedThis = Ref { *this }] {
+                    DeferredWorkTimer& timer = protectedThis.get();
                     Vector<Ticket> removed;
                     {
                         Locker locker { timer.m_taskLock };
-                        if (timer.m_shouldStopRunLoopWhenAllTicketsFinish) {
+                        if (timer.m_runTasks && timer.m_shouldStopRunLoopWhenAllTicketsFinish) {
                             timer.m_pendingTickets.removeIf([&](auto& pending) {
                                 if (!pending->isCancelled())
                                     return false;

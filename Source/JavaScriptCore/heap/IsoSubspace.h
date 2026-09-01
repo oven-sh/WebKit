@@ -39,7 +39,6 @@ namespace JSC {
 class IsoCellSet;
 
 namespace GCClient {
-class Heap;
 class IsoSubspace;
 }
 
@@ -134,26 +133,23 @@ public:
     Allocator allocatorFor(size_t, AllocatorForMode);
 
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
-    // SharedGC (SPEC-heap.md §12.1 seam; THREADS T4): same LocalAllocator as
-    // allocate(VM&) — iso allocators are already per-client; the seam only
-    // skips the VM coupling. Defined in IsoSubspaceInlines.h.
-    void* allocateForClient(GCClient::Heap&, size_t, GCDeferralContext*, AllocationFailureMode);
 
     // SharedGC (§5.3; T4): registered lookup-only in the owning client's
     // GCThreadLocalCache m_perDirectory at materialization (covers iso for
     // the §10A.1 ownership predicate and §5.3 teardown).
     LocalAllocator& localAllocator() LIFETIME_BOUND { return m_localAllocator; }
 
-    // H-ISO-TLCSLOT: server's stamped table slot, reached via the shared
-    // BlockDirectory (m_localAllocator.directory().subspace() is the server
-    // JSC::IsoSubspace; LocalAllocator binds it at ctor, IsoSubspace.cpp). Read
-    // by tlcSlotForConcurrentlyWithIso<T> on JIT compilation threads — the
-    // value is process-wide constant once stamped (first-client TLC ctor) and
-    // identical across every client of the same server, so the IT-9 carve-out
-    // (compile thread → vm.clientHeap's view) is harmless: any client's view
-    // returns the same slot. Out-of-line (IsoSubspace.cpp) so this header need
-    // not pull LocalAllocator.h.
-    JS_EXPORT_PRIVATE unsigned tlcSlot() const;
+    // The server JSC::IsoSubspace's stamped table slot, reached through the
+    // shared BlockDirectory bound at construction. Once stamped the slot is a
+    // per-type process-wide constant, identical across every client of the
+    // same server, so JIT compilation threads may read it through any client's
+    // view (tlcSlotForConcurrentlyWithIso uses vm.clientHeap's).
+    unsigned tlcSlot() const
+    {
+        Subspace* server = m_localAllocator.directory().subspace();
+        ASSERT(server && server->isIsoSubspace());
+        return static_cast<const JSC::IsoSubspace*>(server)->tlcSlot();
+    }
 
 private:
     LocalAllocator m_localAllocator;

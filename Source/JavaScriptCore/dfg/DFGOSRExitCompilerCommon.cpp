@@ -33,48 +33,30 @@
 #include "DFGOperations.h"
 #include "JIT.h"
 #include "JSCJSValueInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "LLIntData.h"
 #include "LLIntThunks.h"
 #include "PropertyInlineCache.h"
+#include <wtf/Lock.h>
 
 namespace JSC { namespace DFG {
 
-// DW-1 instrumentation (deepwater LEDGER row 1) — see the header comment.
-SortComparatorOSRExitStashRecord& sortComparatorOSRExitStashRecord()
+static Lock osrExitGenerationLock;
+
+OSRExitGenerationLocker::OSRExitGenerationLocker(VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    static thread_local SortComparatorOSRExitStashRecord record;
-    return record;
+    ASSERT(vm.gilOff());
+    while (!osrExitGenerationLock.tryLock()) {
+        if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            continue; // Parked across a stop-the-world window: retry the tryLock.
+        handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
+        Thread::yield();
+    }
 }
 
-void recordSortComparatorOSRExitStashIfApplicable(VM& vm, CodeBlock* dfgCodeBlock, const OSRExitBase& exit, uint32_t exitIndex)
+OSRExitGenerationLocker::~OSRExitGenerationLocker() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    ASSERT_UNUSED(vm, vm.gilOff());
-    // Mirror reifyInlinedCallFrames' stash computation exactly: walk the
-    // exit's inline stack; the innermost ArraySortComparatorCall frame's TRUE
-    // CALLER is the frame the comparator-return trampoline recovers into. Its
-    // argumentCountIncludingThis tag gets CallSiteIndex(trueCaller bc) and
-    // its codeBlock slot gets that origin's baseline CodeBlock (toplevel:
-    // dfgCodeBlock->baselineAlternative(); inlined: the inline frame's
-    // baseline CodeBlock) — record both, plus the recording thread, so the
-    // recovery side can discriminate per-lite-vs-carrier CallSiteIndex
-    // routing from cross-thread CodeBlock replacement.
-    CodeBlock* baselineCodeBlock = dfgCodeBlock->baselineAlternative();
-    for (const CodeOrigin* codeOrigin = &exit.m_codeOrigin; codeOrigin && codeOrigin->inlineCallFrame();) {
-        InlineCallFrame* inlineCallFrame = codeOrigin->inlineCallFrame();
-        InlineCallFrame::Kind trueCallerCallKind;
-        CodeOrigin* trueCaller = inlineCallFrame->getCallerSkippingTailCalls(&trueCallerCallKind);
-        if (trueCaller && trueCallerCallKind == InlineCallFrame::ArraySortComparatorCall) {
-            auto& record = sortComparatorOSRExitStashRecord();
-            record.threadUid = Thread::currentSingleton().uid();
-            record.dfgCodeBlock = dfgCodeBlock;
-            record.expectedCallerBaselineCodeBlock = baselineCodeBlockForOriginAndBaselineCodeBlock(*trueCaller, baselineCodeBlock);
-            record.expectedCallSiteBits = CallSiteIndex(BytecodeIndex(trueCaller->bytecodeIndex().offset())).bits();
-            record.exitIndex = exitIndex;
-            record.armed = true;
-            return;
-        }
-        codeOrigin = trueCaller;
-    }
+    osrExitGenerationLock.unlock();
 }
 
 void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
@@ -519,7 +501,7 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
                 // default-engaged JSOrWasmInstruction; layout is identical
                 // by the M6 equivalence asserts).
                 GPRReg scratch = AssemblyHelpers::selectScratchGPR(GPRInfo::regT2, LLInt::Registers::pcGPR);
-                loadVMLite(jit, scratch);
+                jit.loadVMLite(scratch);
                 const ptrdiff_t variantPayloadOffset =
                     reinterpret_cast<char*>(&std::get<const JSInstruction*>(vm.targetInterpreterPCForThrow))
                     - reinterpret_cast<char*>(&vm.targetInterpreterPCForThrow);
@@ -588,7 +570,7 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
             // Same-VM guards (K4 table-I Group-3 row addendum): see the
             // targetInterpreterPCForThrow arm above — same rationale, same
             // never-taken foreclosure, VM-block fallback for writer symmetry.
-            loadVMLite(jit, scratch);
+            jit.loadVMLite(scratch);
             auto foreignLiteEntryFrame = jit.branchPtr(
                 CCallHelpers::NotEqual,
                 AssemblyHelpers::Address(scratch, static_cast<int32_t>(VMLite::offsetOfVM())),
@@ -609,7 +591,7 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
             jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(scratch); // Clobbers scratch.
 
             // Since we're jumping to op_catch, we need to set callFrameForCatch.
-            loadVMLite(jit, scratch);
+            jit.loadVMLite(scratch);
             auto foreignLiteCatchFrame = jit.branchPtr(
                 CCallHelpers::NotEqual,
                 AssemblyHelpers::Address(scratch, static_cast<int32_t>(VMLite::offsetOfVM())),

@@ -40,6 +40,7 @@
 #include "SourceCode.h"
 #include "VariableEnvironment.h"
 #include <atomic>
+#include <wtf/Atomics.h>
 #include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -137,21 +138,19 @@ public:
         vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
     }
 
+    // recordParse on the parsing thread races readers (isInStrictContext() etc.)
+    // on other threads, so these three fields are dedicated bytes accessed with
+    // relaxed atomics, like the ScriptExecutable copies of the same fields.
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
-        // KNOWN RESIDUAL (TSAN family codeblock-init, 1 report): these are
-        // bit-fields (the class is size-capped at 96 bytes, so they cannot be
-        // dedicated atomically-accessed bytes); recordParse on the parsing
-        // thread can race isInStrictContext() readers on other threads. The
-        // ScriptExecutable copies of these fields ARE dedicated + atomic.
-        m_features = features;
-        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
-        m_hasCapturedVariables = hasCapturedVariables;
+        WTF::atomicStore(&m_features, features, std::memory_order_relaxed);
+        WTF::atomicStore(&m_lexicallyScopedFeatures, lexicallyScopedFeatures, std::memory_order_relaxed);
+        WTF::atomicStore(&m_hasCapturedVariables, hasCapturedVariables, std::memory_order_relaxed);
     }
 
-    CodeFeatures features() const { return m_features; }
-    LexicallyScopedFeatures lexicallyScopedFeatures() const { return m_lexicallyScopedFeatures; }
-    bool hasCapturedVariables() const { return m_hasCapturedVariables; }
+    CodeFeatures features() const { return WTF::atomicLoad(const_cast<CodeFeatures*>(&m_features), std::memory_order_relaxed); }
+    LexicallyScopedFeatures lexicallyScopedFeatures() const { return WTF::atomicLoad(const_cast<LexicallyScopedFeatures*>(&m_lexicallyScopedFeatures), std::memory_order_relaxed); }
+    bool hasCapturedVariables() const { return WTF::atomicLoad(const_cast<bool*>(&m_hasCapturedVariables), std::memory_order_relaxed); }
 
     PrivateBrandRequirement privateBrandRequirement() const { return static_cast<PrivateBrandRequirement>(m_privateBrandRequirement); }
 
@@ -298,7 +297,6 @@ private:
     unsigned m_firstLineOffset : 31;
     unsigned m_isGeneratedFromCache : 1;
     unsigned m_lineCount : 31;
-    unsigned m_hasCapturedVariables : 1;
     unsigned m_unlinkedFunctionStart: 31;
     unsigned m_isBuiltinFunction : 1;
     unsigned m_unlinkedBodyStartColumn : 31;
@@ -315,32 +313,26 @@ private:
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_parameterCount : 30;
     unsigned m_privateBrandRequirement : 1;
-    CodeFeatures m_features : bitWidthOfCodeFeatures;
+    // Every bit-field in this class is written only by the constructors.
     uint16_t m_constructorKind : 2;
-    SourceParseMode m_sourceParseMode;
     uint8_t m_implementationVisibility : bitWidthOfImplementationVisibility;
-    LexicallyScopedFeatures m_lexicallyScopedFeatures : bitWidthOfLexicallyScopedFeatures;
     uint8_t m_functionMode : 2; // FunctionMode
     uint8_t m_derivedContextType : 2;
     uint8_t m_inlineAttribute : 1;
     uint8_t m_evalContextType : 2;
-    // GIL-off (TSAN family codeblock-init): this advisory monotonic bit used to live
-    // in the packed bit-field word shared with m_parameterCount /
-    // m_privateBrandRequirement; cross-thread setSingletonHasBeenInvalidated()
-    // (e.g. JSFunction::create on a spawned thread) performed a plain read-modify-write
-    // of that word, racing the plain bit-field reads. Hoisted out of the bit-field into
-    // its own atomic byte, accessed relaxed (JIT spec §5.7.7 advisory datum; same shape
-    // as Thread::m_gcThreadType). ALL accesses must go through the relaxed
-    // singletonHasBeenInvalidated()/setSingletonHasBeenInvalidated() accessors: an
-    // implicit contextual read of a std::atomic<bool> is a seq_cst load, which on
-    // ARM64 codegens to ldar (an acquire-ordered load, NOT a plain ldrb) — a new
-    // ordered load on a flag-off path would violate the flag-off-codegen rule.
-    // Relaxed loads/stores compile to plain byte loads/stores on all supported
-    // targets, so flag-off codegen is unchanged. (Declared here, in the tail
-    // padding byte before the 8-aligned union, to keep sizeof <= 96; the member's
-    // default initializer covers construction, so ctor init-lists must not mention
-    // it — doing so in its old position would be a -Wreorder-ctor warning, which is
-    // a build break under -Werror configs.)
+    // m_features, m_lexicallyScopedFeatures, m_hasCapturedVariables and
+    // m_singletonHasBeenInvalidated are written after construction on one thread
+    // while other threads read them. Each is a dedicated uint16 or byte, never a
+    // bit-field, so a store cannot clobber a neighbor, and every access is a
+    // relaxed atomic, which is a plain load or store on every supported target
+    // (an implicit read of a std::atomic is seq_cst, an acquire load on ARM64, so
+    // m_singletonHasBeenInvalidated is touched only through its accessors).
+    // m_sourceParseMode is constructor-only and sits here so the group packs
+    // into the bytes before the 8-aligned union; sizeof stays 96.
+    CodeFeatures m_features;
+    SourceParseMode m_sourceParseMode;
+    LexicallyScopedFeatures m_lexicallyScopedFeatures;
+    bool m_hasCapturedVariables;
     std::atomic<bool> m_singletonHasBeenInvalidated { false };
 
     union {

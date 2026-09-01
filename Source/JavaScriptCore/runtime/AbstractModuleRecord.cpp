@@ -331,8 +331,13 @@ inline bool NODELETE AbstractModuleRecord::ResolveQuery::Hash::equal(const Resol
     return lhs.moduleRecord == rhs.moduleRecord && lhs.exportName == rhs.exportName;
 }
 
+// A shared module record is resolved from every thread that links an importer
+// of it or materializes its namespace, so m_resolutionCache is read and grown
+// under cellLock() like the other maps on this cell: a lookup must never walk
+// a bucket array that a concurrent add is rehashing.
 auto AbstractModuleRecord::tryGetCachedResolution(UniquedStringImpl* exportName) -> std::optional<Resolution>
 {
+    Locker locker { cellLock() };
     const auto iterator = m_resolutionCache.find(exportName);
     if (iterator == m_resolutionCache.end())
         return std::nullopt;
@@ -341,6 +346,7 @@ auto AbstractModuleRecord::tryGetCachedResolution(UniquedStringImpl* exportName)
 
 void AbstractModuleRecord::cacheResolution(UniquedStringImpl* exportName, const Resolution& resolution)
 {
+    Locker locker { cellLock() };
     m_resolutionCache.add(exportName, resolution);
 }
 

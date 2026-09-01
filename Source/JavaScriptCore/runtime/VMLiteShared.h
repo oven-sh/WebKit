@@ -67,15 +67,20 @@ public:
     JS_EXPORT_PRIVATE static SharedVMState& singleton(); // NeverDestroyed
 
     // Rank: SPEC-heap §6 rank 7a (§7). Recursive acquisition forbidden —
-    // nesting two StructureAllocationLockers self-deadlocks (§5.3: the
-    // integrator audits acquisition sites and never nests them).
+    // nesting two StructureAllocationLockers on one thread fail-stops in the
+    // inner ctor (§5.3: the integrator audits acquisition sites and never
+    // nests them).
     Lock& structureAllocationLock() { return m_structureAllocationLock; }
 
-    // RAII; no-op unless Options::useStructureAllocationLock() (I10: flag off
-    // compiles to one predictable branch on a latched option).
+    // RAII; no-op unless Options::useStructureAllocationLock(). The ctor and
+    // dtor are out-of-line calls, so a site must not construct the locker
+    // with the option off: every acquisition site (Structure.cpp,
+    // StructureCreateInlines.h) holds it in a std::optional and emplaces it
+    // only when the option is on, which keeps flag-off to one predictable
+    // byte test at the site and a null deferral context.
     //
-    // Ctor (frozen order, §5.2): lock; incrementSTWForbiddenScope() (N7 shim;
-    // SPEC-heap I14); emplace m_deferralContext(vm).
+    // Ctor (frozen order, §5.2): lock; incrementSTWForbiddenScope()
+    // (SPEC-heap I14); emplace m_deferralContext(vm).
     // Dtor: F5 storeStoreFence; decrementSTWForbiddenScope(); unlock; THEN
     // ~GCDeferralContext runs (the deferred collection, if any, happens
     // strictly after unlock — S1).
@@ -133,22 +138,36 @@ private:
 // Process-global registry of live VMLite carriers (SPEC-vmstate §6.5.1,
 // frozen; deliberately NOT part of the §6.3 VMLite body).
 //
-// Lock ranking (§7): leaf. Nothing may be acquired while holding it. Taken by
-// mutators (registerLite/unregisterLite; MicrotaskQueue ctor append / dtor
-// removal — M12; ~VM force-removal — M11) and by GC markers (iteration of
-// VM::m_microtaskQueues in beginMarking/visitAggregateImpl — M11; markers
-// hold no other lock there). The same lock guards VM::m_microtaskQueues.
+// Lock ranking: the registry lock is NOT a leaf. It ranks below the JSLock
+// (it is taken under the final JSLock hold at thread teardown and by JSLock
+// carrier registration) and above exactly these locks, which are acquired
+// while it is held:
+//   - a per-lite VMTraps::m_trapSignalingLock, and under that the same
+//     lite's StackManager::m_mirrorLock (registerLite's trap backfill and the
+//     VM-wide trap fan-outs in VMTraps.cpp);
+//   - VMLite::scratchBufferLock (VM::gatherScratchBufferRoots,
+//     VM::allocateBakedScratchBufferIndex);
+//   - MicrotaskQueue::m_foreignTasksLock (VM::visitAggregateImpl).
+// fastMalloc is allowed under it. Nothing else may be acquired under it, and
+// none of the locks above may be held when it is taken: a thread holding a
+// per-lite m_trapSignalingLock that enters a registry walk deadlocks against
+// the fan-out, which VMTraps.cpp checks with
+// assertNoPerLiteTrapSignalingLockHeldOnCurrentThread(). Taken by mutators
+// (registerLite/unregisterLite; MicrotaskQueue ctor append / dtor removal;
+// ~VM removal and the foreign-lite teardown wait) and by GC markers
+// (iteration of VM::m_microtaskQueues in beginMarking/visitAggregateImpl).
+// The same lock guards VM::m_microtaskQueues.
 //
 // Lifetime (frozen): a lite is unregistered before it is destroyed and before
 // its thread's teardown setCurrent(nullptr); a VM must not die while a
 // registered lite's vm points at it (§6.4.4 ~VM assert, under this lock).
 // N8 (api r11 4.6.1/5.2): unregister + setCurrent(nullptr) + tag clear run
-// UNDER the final JSLock hold, pre-release (this lock is a leaf, so taking it
-// under the JSLock is sound); the lite is destroyed after JSLock release.
+// UNDER the final JSLock hold, pre-release (this lock ranks below the JSLock,
+// so taking it there is sound); the lite is destroyed after JSLock release.
 struct VMLiteRegistry {
     JS_EXPORT_PRIVATE static VMLiteRegistry& singleton(); // NeverDestroyed
 
-    Lock lock;                                       // leaf rank (§7)
+    Lock lock;                                       // Rank: see the class comment.
     Vector<VMLite*> lites WTF_GUARDED_BY_LOCK(lock); // fastMalloc only
 
     // Takes lock; asserts the lite is absent; stores lite.vm = &vm (asserts

@@ -28,15 +28,9 @@
 
 #include "Heap.h"
 #include "VM.h"
+#include "VMManager.h"
 
 namespace JSC {
-
-// UNGIL §A.3 (AB-10) cross-TU seams — defined in runtime/VMManager.cpp;
-// declaration pattern matches heap/Heap.cpp:151, heap/LocalAllocator.cpp:45,
-// heap/BlockDirectory.cpp:45 and heap/MarkedSpace.cpp. Signatures must stay
-// byte-identical.
-bool jsThreadsThreadGranularWorldIsStopped(); // §A.3.2 post-quiescence depth.
-bool jsThreadsCurrentThreadIsStopConductor(); // §A.3.3 tenure check.
 
 WeakSet::~WeakSet()
 {

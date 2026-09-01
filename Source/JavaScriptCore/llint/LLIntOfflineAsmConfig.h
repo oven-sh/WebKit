@@ -165,30 +165,29 @@
 #define OFFLINE_ASM_HAVE_FAST_TLS 0
 #endif
 
-// SPEC-jit App. R5 (Task 8): ELF initial-exec TLS relocations for the
-// per-thread butterfly TID tag (g_jscButterflyTIDTag) are emitted only on
-// Linux; elsewhere (Darwin until the M4a JSCConfig key slot lands, Windows,
-// C_LOOP) the LLInt threaded WRITE fast paths fall back to the slow path.
+// ELF initial-exec TLS relocations for the per-thread butterfly TID tag
+// (g_jscButterflyTIDTag) are emitted only on Linux. Elsewhere (Darwin,
+// Windows, C_LOOP) loadButterflyTIDTagToT6 jumps to the slow path, so with
+// useJSThreads=1 every LLInt threaded WRITE fast path takes the C++ slow path
+// until tier-up; reads are unaffected.
 #if OS(LINUX)
 #define OFFLINE_ASM_LINUX 1
 #else
 #define OFFLINE_ASM_LINUX 0
 #endif
 
-// UNGIL §A.1.3 / AB-1 (obligation 9b, U-T3): the LLInt Group-3
-// storage-selection branches need an LLInt-visible TLS read of
-// g_jscCurrentVMLite. Same per-OS surface as SPEC-jit App. R5
-// (loadButterflyTIDTagToT6 / jit/AssemblyHelpers.cpp loadVMLite): ELF
-// initial-exec relocations on Linux x86-64/arm64. The C_LOOP backend IS
-// C++, so its "TLS loader" is a cloopDo call to VMLite::currentIfExists()
-// — the same thread_local the IE-model symbol mirrors (VM.cpp CS3
-// contract: VMLite::setCurrent is the sole writer, mirror store
-// immediately after) — so JSVALUE64 CLoop qualifies on any OS. Elsewhere
-// (Darwin hardware LLInt until the vmLiteTLSKey M4a slot lands, Windows
-// hardware LLInt, 32-bit cloop) a SET gilOffProcess byte fail-stops in
-// the LLInt (`break`) instead of silently reading VM-block Group-3 state
-// — the in-LLInt tripwire AB-1 records as absent (mirrors the JIT tiers'
-// Darwin RELEASE_ASSERT, AB-2).
+// The LLInt Group-3 storage-selection branches need an LLInt-visible TLS read
+// of g_jscCurrentVMLite: ELF initial-exec relocations on Linux x86-64/arm64
+// (the same surface as loadButterflyTIDTagToT6 and AssemblyHelpers'
+// loadVMLite). The C_LOOP backend is C++ and reads the lite through
+// cloopLoadCurrentVMLite (VMLite::currentIfExists(), the thread_local the
+// initial-exec symbol mirrors), so the JSVALUE64 cloop assembles the lite arms
+// on any OS; they are not reachable today, because runtime/Options.cpp forces
+// useThreadGIL=1 on every C_LOOP build and the gilOffProcess byte therefore
+// stays 0. Elsewhere (Darwin and Windows hardware LLInt, 32-bit cloop) the
+// discriminator assembles to nothing: runtime/Options.cpp refuses the GIL-off
+// shape on every non-Linux and non-x86-64/arm64 configuration, so the byte
+// stays 0 and the VM block is the only Group-3 storage.
 #if (OS(LINUX) && (CPU(X86_64) || CPU(ARM64)) && !ENABLE(C_LOOP) && USE(JSVALUE64)) \
     || (ENABLE(C_LOOP) && USE(JSVALUE64))
 #define OFFLINE_ASM_GILOFF_TLS 1

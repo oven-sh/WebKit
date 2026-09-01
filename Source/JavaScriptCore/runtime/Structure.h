@@ -327,9 +327,11 @@ public:
     //     m_lock — as today. O1: allocation under m_lock only under a
     //     pre-lock DeferGC (GCSafeConcurrentJSLocker or explicit DeferGC).
     // (iii) MUTATOR uncached table WALKS (Structure::get in
-    //     StructureInlinesLight.h, forEachProperty, isSealed/isFrozen,
+    //     StructureInlinesLight.h, isSealed/isFrozen,
     //     getPropertyNamesFromStructure, addOrReplacePropertyWithoutTransition's
-    //     find) hold m_lock across the walk.
+    //     find) hold m_lock across the walk; forEachProperty snapshots the
+    //     entries under m_lock and runs the caller's functor after releasing
+    //     it, because the functor may re-enter this structure's lock.
     // Flag-off, all paths are today's code, bit-identical (I22).
     // Compiler-thread Concurrently readers are unchanged.
     JS_EXPORT_PRIVATE static Structure* addPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&);
@@ -467,13 +469,13 @@ public:
     }
 
     // Type accessors.
-    // TSAN family structure-fields (§8.9): m_outOfLineTypeFlags/m_classInfo
-    // are constructor-written words read lock-free by foreign threads (54
-    // classInfoForCells + 29 typeInfo keys); reader and constructor sides pair
-    // through the TSAN-build-only relaxed helpers below (plain load non-TSAN).
-    TypeInfo typeInfo() const { return m_blob.typeInfo(concurrentRelaxedLoad(m_outOfLineTypeFlags)); }
+    // m_outOfLineTypeFlags and m_classInfo are constructor-written words read
+    // lock-free by foreign threads; reader and constructor sides pair through
+    // the TSAN-build-only relaxed helpers below (plain load non-TSAN, so the
+    // optimizer can still fold and CSE these hot loads).
+    TypeInfo typeInfo() const { return m_blob.typeInfo(tsanRelaxedLoad(m_outOfLineTypeFlags)); }
     bool isObject() const { return typeInfo().isObject(); }
-    const ClassInfo* classInfoForCells() const { return concurrentRelaxedLoad(m_classInfo); }
+    const ClassInfo* classInfoForCells() const { return tsanRelaxedLoad(m_classInfo); }
     CellState typeInfoDefaultCellState() const { return m_blob.defaultCellState(); }
 protected:
     // You probably want typeInfo().type()
@@ -860,16 +862,6 @@ public:
         return OBJECT_OFFSETOF(Structure, m_seenProperties) + SeenProperties::offsetOfBits();
     }
 
-    // SPEC-jit §5.5: the emitted butterfly-less (N1/N2) transition predicate
-    // compares the R5 thread tag against `Structure::m_transitionThreadLocalTID
-    // << 48` when not specialized on a concrete Structure, so JIT-emitted code
-    // needs the field's byte offset (16-bit load). Recorded for the jit
-    // workstream in INTEGRATE-objectmodel.md.
-    static constexpr ptrdiff_t transitionThreadLocalTIDOffset()
-    {
-        return OBJECT_OFFSETOF(Structure, m_transitionThreadLocalTID);
-    }
-
     static Structure* createStructure(VM&); // Defined in StructureCreateInlines.h; takes the SAL internally (Task 3b).
 
     bool transitionWatchpointSetHasBeenInvalidated() const
@@ -913,10 +905,12 @@ public:
         return dfgShouldWatch() && !hasPolyProto();
     }
         
-    void addTransitionWatchpoint(Watchpoint* watchpoint) const
+    // Flag-on this returns false when a foreign transition fired the set
+    // between the caller's validity check and the link; see WatchpointSet::add.
+    bool addTransitionWatchpoint(Watchpoint* watchpoint) const
     {
-        ASSERT(transitionWatchpointSetIsStillValid());
-        m_transitionWatchpointSet.add(watchpoint);
+        ASSERT(Options::useJSThreads() || transitionWatchpointSetIsStillValid());
+        return m_transitionWatchpointSet.add(watchpoint);
     }
     
     void NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
@@ -952,6 +946,11 @@ public:
     // The direct read in StructureInlines.h:transitionThreadLocalIsCurrent
     // stays with that header's owning slice.
     ButterflyTID transitionThreadLocalTID() const { return concurrentRelaxedLoad(m_transitionThreadLocalTID); }
+    // TID rebias (Heap.cpp): a dead thread's TID is restamped to 0 under the
+    // shared stop, and the TTL sets are fired in that same stop so no compiled
+    // code survives with the old TID baked in. Mutators are stopped, but
+    // compiler threads may still read the word, hence the relaxed atomic store.
+    void restampTransitionThreadLocalTID(ButterflyTID tid) { concurrentRelaxedStore(m_transitionThreadLocalTID, tid); }
 
     // E1 (I14): fast paths may omit the TID != notTTLTID check iff this is true
     // and a watchpoint is installed on the set. M6: JIT-side state reads need no
@@ -997,11 +996,7 @@ public:
     }
     void startWatchingPropertyForReplacements(VM&, PropertyName);
     WatchpointSet* propertyReplacementWatchpointSet(PropertyOffset);
-    // SPEC-jit §5.6 / M6.1: when `deferred` is non-null the set is invalidated
-    // immediately but its watchpoints FIRE at the deferred holder's scope exit
-    // (lock-free), where the Class-A stop protocol runs. Pass a deferred fire
-    // from any caller that may hold CodeBlock::m_lock or a cell lock.
-    WatchpointSet* firePropertyReplacementWatchpointSet(VM&, PropertyOffset, const char* reason, DeferredWatchpointFire* deferred = nullptr);
+    WatchpointSet* firePropertyReplacementWatchpointSet(VM&, PropertyOffset, const char* reason);
 
     void didReplaceProperty(PropertyOffset offset)
     {
@@ -1069,70 +1064,22 @@ public:
         Uncacheable = 3, // Prototype chain isn't covered by the watchpoint; always recompute.
     };
 
-// V7 fix (real lost-update bug, not an annotation): with shared-memory
-// threads GIL-off, two mutators can run set##upperName for DIFFERENT fields
-// of the SAME shared Structure concurrently (e.g. T1 setIsPinnedPropertyTable
-// vs T2 setIsWatchingReplacement). The plain load/mask/store RMW lets the
-// interleaving T1-load, T2-load, T2-store, T1-store silently erase T2's bit —
-// a replacement watchpoint that never fires (wrong-value caches survive) or a
-// lost pin (property table reclaimed under a dictionary). The setter therefore
-// takes a CAS loop when Options::useJSThreads() is on; that loop is outlined
-// into setBitFieldConcurrently (StructureInlines.h) so the flag-off path stays
-// the pre-threads plain RMW behind a single predicted-false byte test, per the
-// project rule (cf. the ab17c flag-off-bench-first precedent).
-// ITEM-2 STATUS (V5b transition-heavy-constructor): per-setter-load theory
-// REFUTED by the ITEM-2 perf protocol (2026-06-10, perf record -e cycles +
-// jitdump on the gated workload, flag-off, env scrubbed): in the 50 measured
-// iterations the bench never executes the transition-install clusters
-// (transitions run only in the 20 discarded warmup iterations, then
-// addPropertyTransitionToExistingStructure caching + the allocation profile
-// retire them) — FTL object allocation sinking materializes the 12-property
-// object as ONE inline-capacity allocation (butterfly == 0, no transition, no
-// butterfly (re)allocation), 79% of cycles sit inside the 480-byte FTL
-// make/run bodies, and Structure.cpp/JSObjectInlines.h/ConcurrentButterfly.h
-// symbols are below the 0.05% sampling floor (warmup only). The same binary
-// also produced a 51.9ms run vs the 54.918ms baseline (per-process bimodal
-// 52 vs 56-59 modes; eden-GC cadence deterministic at ~30 collections/run),
-// which argues against — though a single fast-mode run cannot strictly
-// exclude — an unconditional 2-3% per-op tax on this path. Do NOT add
-// coalescing-rescue edits to these setters for V5b. Residual median shift is
-// owned by the eden-GC/allocator bookkeeping C++ (~12%: didConsumeFreeList,
-// specializedSweep, GCActivityCallback::didAllocate,
-// EdenGCActivityCallback::deathRate/gcTimeSlice, runNotRunningPhase,
-// findBlockForAllocation) plus per-process code/data placement; see the V5b
-// item record for the heap-side audit list. Heap-side follow-up is
-// measure-first: perf-diff against a pre-threads reference built at the
-// baseline.json commit, and reconcile with the TSAN-TRIAGE.md family-26
-// "codegen-identical on x86/arm64" ruling before blaming any atomicization.
-// Any re-shape on the family-21/26 surfaces must keep flag-on codegen
-// atomically identical — only the flag-off arm may revert, and only to the
-// exact pre-threads upstream shape (flag-off IS the upstream configuration);
-// family 26 (BlockDirectoryBits word RMW / FastBitReference writer) is
-// rule-1-ineligible (real N-mutator race) and permanently ineligible for
-// TSAN_ENABLED-only treatment, and the BlockDirectory next-directory-link
-// release/acquire pair must remain flag-on (sole publication HB to concurrent
-// directory-list walkers; flag-off-only relaxation is the ceiling). Any
-// heap-side reshape gates per charter: two consecutive quiet-host bench-gate
-// runs + V3/V6 re-runs. GATE-COVERAGE GAP: with sinking eliding the
-// transition chain from the measured region, the SPEC invariant that
-// owner-thread transitions (valid transitionThreadLocal/writeThreadLocal
-// watchpoints) proceed with no locking or CAS at pre-threads speed is
-// currently enforced by no serial bench — a follow-up round should add a
-// sinking-defeating companion bench (escape the constructed object so
-// MaterializeNewObject cannot elide the transition chain) with its own
-// recorded baseline, WITHOUT editing the gated bench (protocol-pinned).
-// Readers are relaxed atomic loads unconditionally — identical MOV/LDR
-// codegen — so TSAN sees the reader side paired with the CAS writers. Note:
-// flag-off this intentionally mixes a plain non-atomic writer RMW with
-// relaxed-atomic readers on m_bitField; that is the pre-threads accepted
-// benign baseline (concurrent JIT/GC readers predate threads) and must not be
-// "fixed" by a flag-off TSAN pass — TSAN rungs run flag-on, where writers CAS.
-
-    // Flag-on slow path of DEFINE_BITFIELD's set##upperName: the lost-update
-    // CAS loop, outlined (AB17g F1 pattern) so flag-off transition paths carry
-    // only the predicted-false byte test + a never-taken call, not an inlined
-    // CAS loop per setter call site. Code placement only: the identical
-    // instruction sequence executes flag-on.
+    // Flag-on slow path of DEFINE_BITFIELD's set##upperName. GIL-off, two
+    // mutators can run the setters for DIFFERENT fields of the SAME shared
+    // Structure concurrently (e.g. T1 setIsPinnedPropertyTable vs T2
+    // setIsWatchingReplacement); a plain load/mask/store RMW lets the
+    // interleaving T1-load, T2-load, T2-store, T1-store erase T2's bit — a
+    // replacement watchpoint that never fires (wrong-value caches survive) or
+    // a lost pin (the property table reclaimed under a dictionary). So the
+    // setters CAS when Options::useJSThreads() is on. The loop is outlined
+    // (StructureInlines.h) so flag-off transition paths carry only the
+    // predicted-false byte test + a never-taken call, keeping the pre-threads
+    // plain RMW. Readers are relaxed atomic loads unconditionally (identical
+    // MOV/LDR codegen), so TSAN sees them paired with the CAS writers; flag-off
+    // this mixes the plain writer RMW with relaxed-atomic readers on
+    // m_bitField, which is the pre-threads baseline (concurrent JIT/GC readers
+    // predate threads) and must not be "fixed" by a flag-off TSAN pass — TSAN
+    // rungs run flag-on, where writers CAS.
     NEVER_INLINE void setBitFieldConcurrently(uint32_t setBits, uint32_t fieldBits);
 
     // TSAN family structure-fields (triage §8.9 fixShape (2); wave-3 review
@@ -1394,8 +1341,13 @@ private:
     
     void setPropertyTable(VM& vm, PropertyTable* table);
     
-    PropertyTable* takePropertyTableOrCloneIfPinned(VM&);
-    PropertyTable* copyPropertyTableForPinning(VM&);
+    // Both produce the table for |transition|, a not-yet-published successor
+    // of this structure. Flag-on they also re-copy m_seenProperties and
+    // m_propertyHash into |transition| under this structure's m_lock, so the
+    // filter and hash agree with the table even when a pinned source is
+    // being mutated in place by another thread.
+    PropertyTable* takePropertyTableOrCloneIfPinned(VM&, Structure* transition);
+    PropertyTable* copyPropertyTableForPinning(VM&, Structure* transition);
 
     void setPreviousID(VM&, Structure*);
 
@@ -1439,6 +1391,17 @@ private:
     void pin(const AbstractLocker&, VM&, PropertyTable*);
     void pinForCaching(const AbstractLocker&, VM&, PropertyTable*);
 
+    // Flag-on only. Called on an unpublished transition while holding
+    // |source|'s m_lock, at the moment source's table is stolen or cloned:
+    // a pinned source's filter and hash change under that lock on every
+    // in-place add, so the transition constructor's unlocked copies may
+    // predate entries the table now holds.
+    void copySeenPropertiesAndPropertyHashFrom(const AbstractLocker&, const Structure& source)
+    {
+        m_seenProperties.add(source.m_seenProperties.bits());
+        m_propertyHash = static_cast<uint32_t>(source.m_propertyHash);
+    }
+
     // SPEC-objectmodel F3 (Task 3): called on the RESULT structure right after a
     // pin()/pinForCaching() during a transition, with the transition's SOURCE,
     // OUTSIDE any §6-ranked lock. If any input TTL set (source's or result's) is
@@ -1458,10 +1421,25 @@ private:
     // inside that stop (owner-local objects keep their sets).
     bool flattenTriggerIsShared(JSObject*) const;
     Structure* flattenDictionaryStructureUnderStop(VM&, JSObject*);
+    // Sizing of the shrunk flat butterfly the impl's shift leg
+    // (JSObject::shiftButterflyAfterFlattening) publishes. Flag-on it is
+    // computed and allocated outside the stop and re-derived inside it; any
+    // difference is a refit (O4).
+    struct FlattenShrinkPlan {
+        bool needsShift { false };
+        size_t preCapacity { 0 };
+        size_t outOfLineCapacityAfter { 0 };
+        bool hasIndexingHeader { false };
+        size_t indexingPayloadSizeInBytes { 0 };
+        friend bool operator==(const FlattenShrinkPlan&, const FlattenShrinkPlan&) = default;
+    };
+    FlattenShrinkPlan flattenShrinkPlan(JSObject*);
     // Returns nullptr (flag-on, outside a §10.6 stop only; defensive - all
     // flag-on callers route through flattenDictionaryStructureUnderStop);
-    // nothing is mutated in that case.
-    Structure* flattenDictionaryStructureImpl(VM&, JSObject*, Vector<JSValue>& preallocatedValues);
+    // nothing is mutated in that case. preallocatedShrunkButterfly is the
+    // flag-on pre-allocation for the shift leg; flag-off passes null and the
+    // shift leg allocates in place as before.
+    Structure* flattenDictionaryStructureImpl(VM&, JSObject*, Vector<JSValue>& preallocatedValues, Butterfly* preallocatedShrunkButterfly);
 
     // F4 chain-fire body shared by the §9.4 fire functions; runs world-stopped.
     void fireThreadLocalSetsWithChainUnderStop(VM&, const char* reason, bool alsoFireTransitionThreadLocal);

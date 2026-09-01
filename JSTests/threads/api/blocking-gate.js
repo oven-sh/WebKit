@@ -1,10 +1,12 @@
-//@ requireOptions("--useJSThreads=1")
+//@ requireOptions("--useJSThreads=1", "--useDollarVM=1")
 //@ runDefault("--can-block-is-false")
 // API-I18: under --can-block-is-false (G34; per-VM, so under the GIL EVERY
 // thread of the shared VM is G11-false) the blocking primitives throw
 // TypeError: join(), CONTENDED hold(), cond.wait(), property Atomics.wait.
 // Async variants and uncontended hold() succeed — async paths never consult
-// G11.
+// G11. GIL-off, a spawned Thread may always block (SPEC-ungil G.1;
+// spawned-thread-may-block-gil-off.js), so the spawned-thread section below
+// asserts the gate only while the GIL is on.
 //
 // The runner appends --can-block-is-false (annex T2): Tools/threads/
 // run-tests.sh does it for this file, and the //@ runDefault line above
@@ -16,6 +18,8 @@
 // settles the promise; sharing it with later synchronous sections would
 // make their uncontended holds contended.
 load("../harness.js", "caller relative");
+
+const gilOn = typeof $vm === "undefined" || $vm.useThreadGIL();
 
 // Probe: with --can-block-is-false, typed-array Atomics.wait throws before
 // even looking at the value; without it, the mismatched expected value
@@ -103,10 +107,16 @@ asyncTestStart(3);
 // spawned thread is G11-false too (per-VM gate) ----
 {
     const t = new Thread(() => {
-        // Spawned threads share the VM's gate: same TypeErrors here.
+        const inner = new Thread(() => 5);
+        if (!gilOn) {
+            // GIL-off a spawned thread may block: the gate does not apply.
+            shouldBe(Atomics.wait({ k: 0 }, "k", 0, 0), "timed-out");
+            shouldBe(inner.join(), 5);
+            return inner.asyncJoin();
+        }
+        // Under the GIL, spawned threads share the VM's gate: same TypeErrors here.
         shouldThrow(TypeError, () => Atomics.wait({ k: 0 }, "k", 0),
             "Atomics.wait cannot be called from the current thread.");
-        const inner = new Thread(() => 5);
         // inner has not run (we hold the GIL): Running => join would block
         // => gated.
         shouldThrow(TypeError, () => inner.join(),

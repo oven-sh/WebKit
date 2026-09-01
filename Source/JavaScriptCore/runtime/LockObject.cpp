@@ -34,7 +34,6 @@
 #include "JSCInlines.h"
 #include "JSLock.h"
 #include "LLIntThunks.h" // hold-vmEntry-trampoline fast path: vmEntryToJavaScriptWith0Arguments.
-#include "MachineStackMarker.h" // T5-barrier-site: CurrentThreadState / RegisterState / ALLOCATE_AND_GET_REGISTER_STATE for the GILDroppedSection spawned-arm coop root snapshot.
 #include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "ObjectConstructor.h"
@@ -50,20 +49,6 @@
 #include <wtf/RunLoop.h>
 
 namespace JSC {
-
-// UNGIL §A.2.4 rule 4 / annex W W1 (AB-17 item 4) — park-lite predicates and
-// the W1 carrier service episode. Same-library seams (consumers redeclare;
-// the predicates of record live in VMTraps.cpp, the episode helper and the
-// captured-lite accessor in JSLock.cpp). GIL-on,
-// parkLitePollTerminationRequested(vm, nullptr) is byte-equivalent to the
-// landed jsThreadParkTerminationRequested (watchdog-check folded in);
-// GIL-off it is termination-ONLY against the PARK lite's word, and the
-// watchdog-check bit is serviced by the W1 episode instead of being treated
-// as a termination verdict.
-bool parkLitePollTerminationRequested(VM&, VMLite* parkLite);
-bool parkLitePollWatchdogCheckRequested(VM&, VMLite* parkLite);
-VMLite* capturedParkLiteOfCurrentThreadIfAny(VM&);
-bool reacquireParkedCarrierAndServiceWatchdogCheck(VM&);
 
 // ---------------- S2-parallel-cpu-waste instrumentation + W-adaptive spin ----------------
 //
@@ -346,29 +331,7 @@ struct GILDroppedSectionSpawnedArm {
     {
     }
     JSLock::DropAllLocks bracket;
-    // T5-barrier-site (SCALEBENCH §32 RUN-3.7, t5verify): coop root-snapshot
-    // STORAGE for the JS-level park span. Lives here (heap, via the
-    // makeUnique<GILDroppedSectionSpawnedArm> in GILDroppedSection's ctor)
-    // because the GILDroppedSection ctor's own stack frame RETURNS before the
-    // caller actually parks — a stack-local CurrentThreadState there would be
-    // dead memory by the time the conductor's gatherStackRoots reads it. The
-    // GILDroppedSection OBJECT itself is the caller's RAII local and stays
-    // live across the whole park, so `stackTop` is set to that address (see
-    // ctor below); the struct + RegisterState bytes live here until the dtor
-    // clears the snapshot and resets m_spawnedArm. alignas matches the
-    // RegisterState.h jmp_buf-fallback ALLOCATE_AND_GET_REGISTER_STATE so the
-    // consumer's roundUpToMultipleOf<sizeof(CPURegister)> end-pointer math is
-    // sound regardless of which RegisterState definition is selected.
-    CurrentThreadState parkedRootSnapshot;
-    alignas(alignof(void*) > alignof(RegisterState) ? alignof(void*) : alignof(RegisterState)) RegisterState parkedRootRegisterState;
 };
-
-// Defined in heap/Heap.cpp (T5-rootscan-skip-coop-parked-suspend): publish /
-// clear the cooperative root snapshot bracketing each pure-park span. Same
-// forward-decl shape as VMManager.cpp's existing T5 sites; kept out of Heap.h
-// so flag-off TUs that never reach a publish site see no symbol.
-void gcClientPublishParkedRootSnapshot(CurrentThreadState*);
-void gcClientClearParkedRootSnapshot();
 
 GILDroppedSection::GILDroppedSection(VM& vm)
     : m_vm(vm)
@@ -386,62 +349,13 @@ GILDroppedSection::GILDroppedSection(VM& vm)
         // Reaching unlockAllForThreadParking here would trip its AB-13
         // RELEASE_ASSERT (a spawned GIL-off thread never holds m_lock).
         m_spawnedArm = makeUnique<GILDroppedSectionSpawnedArm>(vm);
-        // T5-barrier-site (SCALEBENCH §32 RUN-3.7, t5verify pc1+pc2
-        // coopParked=0/16 accessReleased=16/16 on every one of 31 stops →
-        // 465 wasted SIGUSR2 suspend/resume round-trips). EVERY JS-level park
-        // — Condition.wait, contended Lock.hold, Thread.join, property/SAB
-        // Atomics.wait, jsThreadGILHandoffYield — funnels through THIS
-        // spawned-arm branch and lands in spawnedDropAllLocksBracketEnter
-        // (JSLock.cpp), which does releaseHeapAccess() ONLY: the sibling
-        // counts access-released for the §10.4 barrier but never publishes a
-        // coop root snapshot, so the conductor's gatherStackRoots falls back
-        // to suspend() for it. The earlier T5 wiring covered only
-        // safepoint/stop-protocol parks (JSThreadsSafepoint / VMManager
-        // notifyVMStop / Heap F8 acquire), all of which require a GC ALREADY
-        // in flight; a sibling parked at a JS Condition BEFORE the GC starts
-        // never reaches them. Publish HERE, at the single common wire-point.
-        //
-        // ORDERING (matches the protocol comment at Heap.cpp gatherStackRoots
-        // / GCClient::Heap::publishParkedRootSnapshot in Heap.h): the
-        // SpawnedArm ctor above has just run the DAL2 bracket's seq_cst
-        // releaseHeapAccess(); the seq_cst snapshot store below is the
-        // Dekker-paired publish. The dtor clears seq_cst BEFORE re-acquiring
-        // access (before m_spawnedArm = nullptr → spawnedDropAllLocksBracketExit
-        // → acquireHeapAccess), so a conductor that re-loads the snapshot at
-        // use time (Heap.cpp coopParkedSnapshotLookup) sees either the
-        // still-valid heap-backed struct or null (falls back to suspend).
-        //
-        // STORAGE: CurrentThreadState + RegisterState live in the
-        // heap-allocated m_spawnedArm (see GILDroppedSectionSpawnedArm above)
-        // so they outlive this ctor frame; `stackTop` is `this` — the
-        // GILDroppedSection object sits in the PARK-SITE CALLER's stack frame
-        // (the deepest frame guaranteed live across the whole park) and the
-        // span is pure-park (no HelperDrain entry, no JSCell* below it: only
-        // ParkingLot / futex / condvar machinery), so [this, stackOrigin] is
-        // an at-least-as-conservative superset of the thread's JS roots
-        // (tryCopyCooperativelyParkedThreadStack deliberately does NOT extend
-        // by the OS red-zone for the same reason). Callee-saves are spilled
-        // into a local via ALLOCATE_AND_GET_REGISTER_STATE (the per-arch asm
-        // macro DECLARES its destination, so it cannot target a member
-        // directly) and then byte-copied into the heap-backed member; the
-        // values are plain register words at the spill instant — copying them
-        // is sound for conservative scanning, including the jmp_buf fallback
-        // (never longjmp'd, just scanned).
-        //
-        // Flag-off / W=1: the enclosing predicate is `vm.gilOff() &&
-        // ThreadManager::isJSThreadCurrent()` — a SPAWNED GIL-off JS thread.
-        // Its existence implies main + ≥1 spawned client (clients ≥ 2), so
-        // this site structurally satisfies the W≥2-only / not-the-conductor
-        // gate the gcClientPublishParkedRootSnapshot contract (Heap.cpp)
-        // requires; flag-off and W=1 never enter this [[unlikely]] block at
-        // all. No clientSet().size() probe (would take the rank-6 registry
-        // lock on every JS park).
-        ALLOCATE_AND_GET_REGISTER_STATE(t5SpilledCalleeSaves);
-        memcpy(&m_spawnedArm->parkedRootRegisterState, &t5SpilledCalleeSaves, sizeof(RegisterState));
-        m_spawnedArm->parkedRootSnapshot.stackOrigin = Thread::currentSingleton().stack().origin();
-        m_spawnedArm->parkedRootSnapshot.stackTop = static_cast<void*>(this);
-        m_spawnedArm->parkedRootSnapshot.registerState = &m_spawnedArm->parkedRootRegisterState;
-        gcClientPublishParkedRootSnapshot(&m_spawnedArm->parkedRootSnapshot);
+        // No cooperative GC root snapshot is published for this park: a
+        // register spill taken in this out-of-line ctor misses the caller's
+        // callee-saved registers that the prologue parked in this frame,
+        // which is dead before the thread parks, and the park site's own
+        // frame keeps running code between here and the park. The conductor's
+        // root scan suspends the thread and captures its real registers and
+        // stack pointer instead (MachineThreads::tryCopyOtherThreadStacks).
         return;
     }
     // Main/embedder carriers (GIL-off) and every GIL-on caller: m_lock is
@@ -457,17 +371,6 @@ GILDroppedSection::GILDroppedSection(VM& vm)
 GILDroppedSection::~GILDroppedSection()
 {
     if (m_spawnedArm) [[unlikely]] {
-        // T5-barrier-site: clear the coop root snapshot seq_cst BEFORE the
-        // DAL2 bracket exit re-acquires heap access below (m_spawnedArm =
-        // nullptr → ~GILDroppedSectionSpawnedArm → ~DropAllLocks →
-        // spawnedDropAllLocksBracketExit → acquireHeapAccess). Once access is
-        // re-acquired the thread is a live mutator again and MUST be a
-        // suspend() target; the conductor's seq_cst re-load at use time
-        // (Heap.cpp gatherStackRoots coopParkedSnapshotLookup) sees null and
-        // falls back. Idempotent vs gcClientDidResumeFromThreadGranularStop's
-        // own clear. Runs before the storage in m_spawnedArm is freed, so the
-        // published pointer is never observed dangling.
-        gcClientClearParkedRootSnapshot();
         // §J.3 spawned exit: close the DAL2 bracket NOW (the §A.3.2b/§A.3.8-
         // gated heap-access re-acquire — may park across an in-flight
         // stop-the-world — then the deferred lite trap poll), explicitly
@@ -482,8 +385,8 @@ GILDroppedSection::~GILDroppedSection()
         // with a pending termination exception trips their
         // EXCEPTION_SCOPE_VERIFICATION scopes. Convert the delivery back to
         // the bits+request form: the site's own
-        // jsThreadParkTerminationRequested / parkLitePollTerminationRequested
-        // check (every park epilogue runs one) or the caller's next trap
+        // parkLitePollTerminationRequested check (every park epilogue runs
+        // one) or the caller's next trap
         // poll surfaces it — never lost, single canonical throw, no
         // double-throw.
         // (hasPendingTerminationException is the non-mutating per-lite read;
@@ -587,16 +490,6 @@ void jsThreadYieldForPendingParkResumptions(VM& vm)
     }
 }
 
-bool jsThreadParkTerminationRequested(VM& vm)
-{
-    // See the declaration comment (LockObject.h): hasTerminationRequest()
-    // is only ever set by trap handling on an executing mutator, so a park
-    // must read the trap bits themselves.
-    if (vm.hasTerminationRequest())
-        return true;
-    return vm.traps().needHandling(VMTraps::NeedTermination | VMTraps::NeedWatchdogCheck);
-}
-
 // ---------------- T5 fair handoff (wake-on-release for sync lock.hold) ----------------
 
 void NativeLockState::wakeOneSyncHoldParker()
@@ -612,15 +505,32 @@ void NativeLockState::wakeOneSyncHoldParker()
     std::atomic_thread_fence(std::memory_order_seq_cst);
     if (!m_syncHoldParkers.load(std::memory_order_relaxed)) [[likely]]
         return;
+    // Open the release->resumed window (LockObject.h m_parkResumptionPending)
+    // BEFORE the unpark, with the global increment ahead of the flag store so
+    // the parker that takes the window can never run its decrement first.
+    // The window is opened whether or not unparkOne finds a parked thread:
+    // a parker whose tryLock failed just before this unlock is about to
+    // retry (its park validation fails) and resumes through the same
+    // takeParkResumptionWindow path.
+    jsThreadNoteParkResumptionPending();
+    if (m_parkResumptionPending.exchange(true, std::memory_order_seq_cst))
+        jsThreadNoteParkResumptionDone(); // Still open from an earlier release; one window per lock.
+    else if (!m_syncHoldParkers.load(std::memory_order_seq_cst)) {
+        // The last parker left between the counter check above and the flag
+        // store, so it found no window to take and nobody is left to: close
+        // it here.
+        if (takeParkResumptionWindow())
+            jsThreadNoteParkResumptionDone();
+    }
     WTF::ParkingLot::unparkOne(&m_lock);
 }
 
 // ---------------- NativeLockState pump machinery (SPEC-api 5.5a) ----------------
 
-void NativeLockState::schedPumpLocked(VM& fallbackVM)
+bool NativeLockState::schedPumpLocked(VM& fallbackVM)
 {
     if (m_pumpPending)
-        return;
+        return false;
     m_pumpPending = true;
     // SPEC-api 5.5a schedPump: dispatch P on the HEAD ticket's vm.runLoop()
     // (G28), at most one pump per lock (m_pumpPending). In phase 1 there is
@@ -630,6 +540,21 @@ void NativeLockState::schedPumpLocked(VM& fallbackVM)
     // only schedule with m_asyncWaiters non-empty.
     ASSERT(!m_asyncWaiters.isEmpty());
     VM& dispatchVM = m_asyncWaiters.isEmpty() ? fallbackVM : m_asyncWaiters.first()->vm();
+    // GIL-off, when the head ticket is a counted registration of a spawned
+    // thread (its keepalive is still armed), the pump runs inline on the
+    // releasing or notifying thread (SPEC-ungil E.7 item 5): vm.runLoop() is
+    // the main thread's, and a main parked in join() never services it, so
+    // the grant would wait on P, the registrant's keepalive on the grant,
+    // and join on the registrant. pump() runs no JS (clear pending, tryLock,
+    // settle via the registrant's inbox), so the caller runs it after
+    // dropping m_queueLock (settle must hold no rank 1-3 lock). An uncounted
+    // ticket (asyncHold, or a registrant that already closed) keeps the
+    // run-loop dispatch: its settle reaches the main fallback, and granting
+    // it inline would let a main thread that next holds the lock
+    // synchronously wait forever for a release that only its own run loop
+    // can produce.
+    if (dispatchVM.gilOff() && !m_asyncWaiters.isEmpty() && m_asyncWaiters.first()->registrant().isSpawned && m_asyncWaiters.first()->keepaliveArmed()) [[unlikely]]
+        return true;
     // Capture Ref<VM>, mirroring the D5 waitAsync-timer fix
     // (docs/threads/INTEGRATE-api.md "Landed deviations"): WTF::RunLoop is
     // independently ref-counted and outlives the VM, so this task can
@@ -646,20 +571,31 @@ void NativeLockState::schedPumpLocked(VM& fallbackVM)
     dispatchVM.runLoop().dispatch([state = Ref { *this }, protectedVM = Ref { dispatchVM }] {
         state->pump();
     });
+    return false;
 }
 
 void NativeLockState::releasePump(VM& vm)
 {
-    Locker queueLocker { m_queueLock };
-    if (!m_asyncWaiters.isEmpty())
-        schedPumpLocked(vm);
+    bool pumpInline = false;
+    {
+        Locker queueLocker { m_queueLock };
+        if (!m_asyncWaiters.isEmpty())
+            pumpInline = schedPumpLocked(vm);
+    }
+    if (pumpInline) [[unlikely]]
+        pump();
 }
 
 void NativeLockState::enqueueAsyncAcquirer(Ref<AsyncTicket>&& ticket, VM& vm)
 {
-    Locker queueLocker { m_queueLock };
-    m_asyncWaiters.append(WTF::move(ticket));
-    schedPumpLocked(vm);
+    bool pumpInline;
+    {
+        Locker queueLocker { m_queueLock };
+        m_asyncWaiters.append(WTF::move(ticket));
+        pumpInline = schedPumpLocked(vm);
+    }
+    if (pumpInline) [[unlikely]]
+        pump();
 }
 
 void NativeLockState::asyncReleaseInternal(AsyncTicket& ticket, VM& vm)
@@ -746,15 +682,23 @@ void settleLockGrant(NativeLockState& state, AsyncTicket& ticket)
             state->m_asyncGrantRunner.store(&Thread::currentSingleton(), std::memory_order_relaxed);
             auto callData = JSC::getCallData(function);
             MarkedArgumentBuffer args;
-            NakedPtr<Exception> exception;
-            JSValue result = JSC::call(globalObject, function, callData, jsUndefined(), args, exception);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            JSValue result = JSC::call(globalObject, function, callData, jsUndefined(), args);
             // E: implicit post-fn release (unless cond.asyncWait consumed the hold).
             if (ticket->tryConsume())
                 state->asyncReleaseInternal(ticket.get(), vm);
-            if (exception)
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                // A termination must stay pending so the settling turn aborts
+                // (DeferredWorkTimer::doWork forbids execution and stops the
+                // run loop; the E2A loop takes its close path) instead of
+                // running reaction handlers on the terminated thread; only an
+                // ordinary throw rejects the promise.
+                if (!scope.clearExceptionExceptTermination())
+                    return;
                 promise->reject(vm, exception->value());
-            else
-                promise->resolve(globalObject, vm, result);
+                return;
+            }
+            promise->resolve(globalObject, vm, result);
         });
         return;
     }
@@ -951,19 +895,19 @@ JSC_DEFINE_HOST_FUNCTION(lockProtoFuncHold, (JSGlobalObject* globalObject, CallF
         // so the bounded quantum is only the poll backstop, not the handoff
         // latency.
         bool acquired = false;
-        // Open this parker's park->resumed window (see
-        // jsThreadNoteParkResumptionPending, LockObject.h): a completing
-        // thread must not run its 4.6.1 microtask drain between the
-        // holder's release and this parker's resume
-        // (park-no-microtask-drain.js, contended-hold block).
-        jsThreadNoteParkResumptionPending();
+        // Number of release->resumed windows this parker took from
+        // m_parkResumptionPending (see LockObject.h) and must close once it is
+        // back under the GIL: a completing thread must not run its 4.6.1
+        // microtask drain between the holder's release and this parker's
+        // resume (park-no-microtask-drain.js, contended-hold block).
+        unsigned parkResumptionWindowsTaken = 0;
         // T5 fair handoff: register as a wake-on-release parker BEFORE the
         // first retry (seq_cst — see wakeOneSyncHoldParker's fence pairing),
         // so every release from here on either sees the counter and unparks
         // us, or completed its unlock before our registration — in which
         // case the next tryLock (or the bucket-locked park validation)
         // observes the free lock and never sleeps. Decremented on every loop
-        // exit below, mirroring the jsThreadNoteParkResumptionDone pairing.
+        // exit below.
         state.m_syncHoldParkers.fetch_add(1, std::memory_order_seq_cst);
         {
             GILDroppedSection droppedSection(vm);
@@ -973,8 +917,8 @@ JSC_DEFINE_HOST_FUNCTION(lockProtoFuncHold, (JSGlobalObject* globalObject, CallF
             // watchdog-check bit is split out of "termination": a parked
             // CARRIER observing it runs the full W1 reacquire-service-
             // re-release episode (terminating only on a terminate verdict)
-            // instead of failing the park. GIL-on: byte-equivalent to the
-            // landed jsThreadParkTerminationRequested loop.
+            // instead of failing the park. GIL-on: the check bit stays folded
+            // into termination (landed behavior).
             const bool isSpawnedParker = gilOff && ThreadManager::isJSThreadCurrent();
             VMLite* parkLite = nullptr;
             if (gilOff)
@@ -1028,13 +972,25 @@ JSC_DEFINE_HOST_FUNCTION(lockProtoFuncHold, (JSGlobalObject* globalObject, CallF
                     [] { },
                     MonotonicTime::now() + Seconds::fromMilliseconds(1));
             }
+            // The release that freed m_lock for us opened a window; take it
+            // while still GIL-dropped so it stays open across the GIL
+            // reacquire below. No further release can open one while we hold
+            // the lock.
+            if (acquired && state.takeParkResumptionWindow())
+                ++parkResumptionWindowsTaken;
         }
         // T5: deregister on every exit (acquired or terminated); pairs with
         // the fetch_add above so the releaser-side counter check stays exact.
-        state.m_syncHoldParkers.fetch_sub(1, std::memory_order_seq_cst);
-        // Back under the GIL: close the window on every exit (acquired or
-        // terminated) — the pairing invariant keeps the global count exact.
-        jsThreadNoteParkResumptionDone();
+        // The last parker to leave also takes any window left open for a
+        // parker that is no longer there (wakeOneSyncHoldParker's re-check
+        // covers the other order of this race).
+        if (state.m_syncHoldParkers.fetch_sub(1, std::memory_order_seq_cst) == 1 && state.takeParkResumptionWindow())
+            ++parkResumptionWindowsTaken;
+        // Back under the GIL: close the windows taken above — every one pairs
+        // with exactly one jsThreadNoteParkResumptionPending in
+        // wakeOneSyncHoldParker, so the global count stays exact.
+        for (; parkResumptionWindowsTaken; --parkResumptionWindowsTaken)
+            jsThreadNoteParkResumptionDone();
         if (!acquired) {
             // Termination observed while parked: GIL is reacquired (the
             // dropped section ended), m_lock is NOT held. Same surfacing as
@@ -1151,6 +1107,12 @@ JSC_DEFINE_HOST_FUNCTION(lockProtoFuncAsyncHold, (JSGlobalObject* globalObject, 
     if (hasFunction)
         dependencies.append(asObject(functionValue));
     dependencies.append(lockObject);
+    // An asyncHold registration does not keep its spawned registrant alive
+    // (SPEC-api 4.6.2: tickets outlive their registering thread). A counted
+    // registration would make the thread's completion wait for a grant that
+    // only the current holder can produce, and that holder may be parked in
+    // join() on this very thread while it holds the lock. After the
+    // registrant closes, the grant settles through the main fallback.
     Ref<AsyncTicket> ticket = AsyncTicket::create(globalObject, promise, WTF::move(dependencies));
     ticket->grantWithFunction = hasFunction;
 

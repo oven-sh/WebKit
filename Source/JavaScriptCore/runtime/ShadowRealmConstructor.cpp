@@ -28,6 +28,7 @@
 
 #include "JSCInlines.h"
 #include "ShadowRealmObjectInlines.h"
+#include "ThreadManager.h"
 
 namespace JSC {
 
@@ -52,6 +53,14 @@ void ShadowRealmConstructor::finishCreation(VM& vm, ShadowRealmPrototype* shadow
 JSC_DEFINE_HOST_FUNCTION(constructWithShadowRealmConstructor, (JSGlobalObject* globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
+    // GIL-off, a spawned Thread may not boot a fresh realm: JSGlobalObject::init
+    // writes VM-wide caches and watchpoint sets that are audited only for
+    // access to existing globals, so the deriveShadowRealmGlobalObject hook is
+    // refused before it runs. GIL-on and flag-off are unchanged.
+    if (vm.gilOff() && ThreadManager::isJSThreadCurrent()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "ShadowRealm is not available on a spawned JS Thread under GIL-off"_s);
+    }
     Structure* shadowRealmStructure = ShadowRealmObject::createStructure(vm, globalObject, globalObject->shadowRealmPrototype());
     JSObject* shadowRealmObject = ShadowRealmObject::create(vm, shadowRealmStructure, globalObject);
     return JSValue::encode(shadowRealmObject);

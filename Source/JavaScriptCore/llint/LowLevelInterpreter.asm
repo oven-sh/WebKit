@@ -502,8 +502,7 @@ end
 # stack check, doVMEntry entry check, functionArityCheck); LLInt sites are
 # asm and NOT capturable by the golden-disasm gate (its own header carves
 # LLInt out) -- their flag-off-cost evidence channel is the --useJIT=0 bench
-# gate; see the AB-17 round-4 amendment in VMEntryScope.cpp for the current
-# (host-noise-blocked) measurement record. The byte is written only
+# gate. The byte is written only
 # by the Config-finalization latch (runtime/; derivation-identical to
 # VM::isGILOffProcess()) -- never from a VM ctor, which would race
 # Config::finalize() freezing the page.
@@ -558,15 +557,12 @@ end
 
 # TLS loaders: only ever expanded under GILOFF_TLS (Linux x86-64/arm64, ELF
 # initial-exec; the GOT slot holds the thread-invariant tp-relative offset).
+# The cloop backend reads the same per-thread lite through the C++ accessor
+# that g_jscCurrentVMLite mirrors (VMLite::setCurrent is the sole writer of
+# both).
 macro loadCurrentVMLiteToT6()
     if C_LOOP
-        # cloop backend is C++: read the same per-thread lite through the
-        # frozen L4 accessor (VMLite.cpp t_currentVMLite, which
-        # g_jscCurrentVMLite mirrors via the VM.cpp CS3 contract -- sole
-        # writer VMLite::setCurrent, mirror store immediately after).
-        # NOTE: annotation MUST stay on the same physical line as cloopDo
-        # (see the m_trapBits precedent at the traps poll site).
-        cloopDo // t6 = JSC::VMLite::currentIfExists();
+        cloopLoadCurrentVMLite t6
     elsif X86_64
         emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %rdi"   # t6 == rdi
         emit "movq %fs:(%rdi), %rdi"                          # lite = *(tp + offset)
@@ -580,7 +576,7 @@ end
 
 macro loadCurrentVMLiteToT3()
     if C_LOOP
-        cloopDo // t3 = JSC::VMLite::currentIfExists();
+        cloopLoadCurrentVMLite t3
     elsif X86_64
         emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %rcx"   # t3 == rcx
         emit "movq %fs:(%rcx), %rcx"
@@ -594,7 +590,7 @@ end
 
 macro loadCurrentVMLiteToT5()
     if C_LOOP
-        cloopDo // t5 = JSC::VMLite::currentIfExists();
+        cloopLoadCurrentVMLite t5
     elsif X86_64
         emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %r10"   # t5 == r10
         emit "movq %fs:(%r10), %r10"
@@ -617,7 +613,11 @@ end
 
 # Core discriminator. Touches ONLY `scratch` (and x16 on ARM64). On the
 # fall-through path Group-3 state lives in the VM block; on the taken path
-# `scratch` holds the VMLitePrimitives base (== the VMLite*).
+# `scratch` holds the VMLitePrimitives base (== the VMLite*). Without
+# GILOFF_TLS the macro assembles to nothing: runtime/Options.cpp refuses the
+# GIL-off shape on every configuration that lacks an LLInt-visible TLS read
+# of the current VMLite, so the gilOffProcess byte stays 0 there and the VM
+# block is the only Group-3 storage.
 macro gilOffGroup3Check(loadLiteTLS, scratch, gilOffLabel)
     if GILOFF_TLS
         leap _g_config, scratch
@@ -626,14 +626,6 @@ macro gilOffGroup3Check(loadLiteTLS, scratch, gilOffLabel)
         btpz scratch, .group3VMStorage                    # no lite: plain-VM thread
         bbeq VMLite::gilOff[scratch], 0, .group3VMStorage # level (ii): second-VM GIL-on intact
         jmp gilOffLabel
-    .group3VMStorage:
-    elsif JSVALUE64
-        # AB-1 tripwire: no LLInt-visible TLS on this platform -- a set
-        # gilOffProcess byte must fail-stop (mirrors the JIT tiers' Darwin
-        # RELEASE_ASSERT, AB-2) rather than silently split-brain.
-        leap _g_config, scratch
-        bbeq JSCConfigOffset + JSC::Config::gilOffProcess[scratch], 0, .group3VMStorage
-        break
     .group3VMStorage:
     end
 end
@@ -658,7 +650,7 @@ end
 # the world: the VMTraps.h ACTIVATION CHECKLIST -- STATUS block.
 macro loadCurrentVMLiteToT2()
     if C_LOOP
-        cloopDo // t2 = JSC::VMLite::currentIfExists();
+        cloopLoadCurrentVMLite t2
     elsif X86_64
         emit "movq g_jscCurrentVMLite@GOTTPOFF(%rip), %rdx"   # t2 == rdx
         emit "movq %fs:(%rdx), %rdx"
@@ -3054,12 +3046,7 @@ macro checkTraps(dispatch)
         # data race under TSAN against fireTrap's exchangeOr. Match the C++
         # readers (VMTraps::needHandling/maybeNeedHandling use loadRelaxed)
         # by polling with a relaxed atomic load.
-        # NOTE: the "// ..." annotation below is emitted verbatim into
-        # LLIntAssembly.h by the cloop offlineasm backend (cloopDo) and MUST
-        # stay on the same physical line as cloopDo, or no load is emitted
-        # and t0 silently keeps the pointer value. Do not reformat.
-        leap VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
-        cloopDo // t0 = WTF::atomicLoad(std::bit_cast<uint32_t*>(t0.i8p()), std::memory_order_relaxed);
+        cloopLoadRelaxedi VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
     else
         loadi VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
     end
@@ -3325,17 +3312,21 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
     loadp offsetOfCodeBlock[t5], t0
 if JSVALUE64
-    # ANNEX CBI item 3 (AB17c F4): the (arity-check entrypoint, codeBlock)
-    # pair above is two independent racy loads against a live tier-up
-    # installCode on another thread; a stale entrypoint paired with the new
-    # codeBlock crashes in the callee prologue. The gilOff writer
-    # (ScriptExecutable::installCode) retracts the arity-check mirror FIRST
-    # (fence-ordered), so re-reading it AFTER the codeBlock load and
-    # comparing with the first read (kept in t1) detects any interleaved
-    # install; mismatch restores the slowCase register contract (t0 =
-    # callee, reloaded from the callee frame) and takes the slow path,
-    # which derives a matched pair through one codeBlock snapshot
-    # (virtualForWithFunction). Flag-off: one not-taken branch.
+    # The (arity-check entrypoint, codeBlock) pair above is two independent
+    # loads. A gilOff tier-up on another thread cannot tear it, because a
+    # script executable's arity-check mirror is permanently null in a gilOff
+    # process (ExecutableBase::entrypointFor never refills it there and
+    # installCode/clearCode only store null), so the btpz above already
+    # routes every script callee to the slow path, which derives a matched
+    # pair from one codeBlock snapshot (virtualForWithFunction). Host
+    # executables publish both mirrors once at construction and skip this
+    # block (not FunctionExecutableType). The recompare below is therefore
+    # reached only GIL-on, where no install can interleave; it is
+    # belt-and-braces for a future mirror writer, not the defense, and the
+    # two plain loads carry no acquire ordering. Mirrors the JIT thunk in
+    # jit/ThunkGenerators.cpp. Mismatch restores the slowCase register
+    # contract (t0 = callee, reloaded from the callee frame). Flag-off: one
+    # not-taken branch.
     ifJSThreadsBranch(t3, .threadsRevalidatePair)
 end
 .callCode:

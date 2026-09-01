@@ -237,12 +237,26 @@ static ALWAYS_INLINE void typedArrayViewForEachImpl(JSGlobalObject* globalObject
         const bool hasStableVector = thisObject->hasArrayBuffer() && !thisObject->possiblySharedBuffer()->isWasmMemory();
         auto* array = hasStableVector ? thisObject->typedVector() : nullptr;
 
+        // A view is detached exactly when its base word is null, so the arms that
+        // re-read the base each iteration test that single snapshot instead of
+        // isDetached(): GIL-off, a detach on another thread clears the word with
+        // no stop, and a re-read after a passing check could return null. A base
+        // observed non-null stays mapped through the next stop. The stable arm
+        // keeps the per-iteration isDetached() check because the functor may
+        // detach the buffer under its cached base.
         forEachLoop([&](size_t index) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             JSValue element = jsUndefined();
             auto nativeValue = ViewClass::Adaptor::toNativeFromUndefined();
-            if (!thisObject->isDetached()) [[likely]] {
-                // TSAN-TRIAGE §3.24: relaxed lane load (blessed value race).
-                nativeValue = typedArrayLaneLoadRelaxed((hasStableVector ? array : thisObject->typedVector()) + index);
+            auto* vector = array;
+            bool hasElement;
+            if (hasStableVector)
+                hasElement = !thisObject->isDetached();
+            else {
+                vector = thisObject->typedVector();
+                hasElement = !!vector;
+            }
+            if (hasElement) [[likely]] {
+                nativeValue = typedArrayLaneLoadRelaxed(vector + index);
                 element = ViewClass::Adaptor::toJSValue(globalObject, nativeValue);
                 RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
             }
@@ -256,9 +270,9 @@ static ALWAYS_INLINE void typedArrayViewForEachImpl(JSGlobalObject* globalObject
     forEachLoop([&](size_t index) ALWAYS_INLINE_LAMBDA -> IterationStatus {
         JSValue element = jsUndefined();
         auto nativeValue = ViewClass::Adaptor::toNativeFromUndefined();
-        if (!thisObject->isDetached() && thisObject->inBounds(index)) [[likely]] {
-            // TSAN-TRIAGE §3.24: relaxed lane load (blessed value race).
-            nativeValue = typedArrayLaneLoadRelaxed(thisObject->typedVector() + index);
+        auto* vector = thisObject->typedVector();
+        if (vector && thisObject->inBounds(index)) [[likely]] {
+            nativeValue = typedArrayLaneLoadRelaxed(vector + index);
             element = ViewClass::Adaptor::toJSValue(globalObject, nativeValue);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
         }
@@ -357,11 +371,15 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JS
 
         typename ViewClass::ElementType* array = thisObject->typedVector();
         if (vm.gilOffWithProcessGate()) [[unlikely]] {
-            // TSAN-TRIAGE §3.24: GIL-off, lanes may be raced by other JS
-            // threads; replace the bulk memmove (plain C++ accesses) with
-            // relaxed lane copies, preserving memmove overlap semantics via
-            // the copy direction. Flag-off/GIL-on keeps the byte-identical
-            // memmove (one predicted-false Config-page test).
+            // GIL-off, a detach on another thread clears the view's base word
+            // with no stop, so the base loaded after the length re-check can be
+            // null; dropping the copy is the lost write that race is allowed to
+            // produce. A base observed non-null stays mapped through the next
+            // stop, so its lanes may be raced but never unmapped: relaxed lane
+            // copies in memmove order replace the bulk memmove. Flag-off/GIL-on
+            // keeps the memmove behind one predicted-false Config-page test.
+            if (!array)
+                return JSValue::encode(callFrame->thisValue());
             if (to <= from) {
                 for (size_t i = 0; i < count; ++i)
                     typedArrayLaneStoreRelaxed(array + to + i, typedArrayLaneLoadRelaxed(array + from + i));
@@ -540,7 +558,12 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGl
     }
 
     scope.assertNoExceptionExceptTermination();
-    RELEASE_ASSERT(!thisObject->isDetached());
+    // The base snapshot is null exactly when the view is detached, and it is the
+    // only base the search dereferences. GIL-off, a detach on another thread
+    // clears the base word with no stop, so it can be null despite the length
+    // re-check above; the search then finds nothing, as on a detached view.
+    if (!array) [[unlikely]]
+        return JSValue::encode(jsBoolean(false));
 
     size_t searchLength = std::min<size_t>(length, updatedLength);
     if constexpr (ViewClass::Adaptor::isFloat) {
@@ -603,7 +626,9 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlo
     if (!targetOption)
         return JSValue::encode(jsNumber(-1));
     scope.assertNoExceptionExceptTermination();
-    RELEASE_ASSERT(!thisObject->isDetached());
+    // Null base snapshot means detached; see genericTypedArrayViewProtoFuncIncludes.
+    if (!array) [[unlikely]]
+        return JSValue::encode(jsNumber(-1));
 
     size_t searchLength = std::min<size_t>(length, updatedLength);
     size_t result = typedArrayIndexOfImpl<ViewClass>(array, searchLength, targetOption.value(), index);
@@ -709,14 +734,16 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobal
     typename ViewClass::ElementType* underlyingVector = thisObject->typedVector();
     ASSERT_UNUSED(count, count <= length);
 
-    // TSAN-TRIAGE §3.24 (typedarray-sab; SPEC-objectmodel §4.7 analog): GIL-off,
-    // these lanes may be read/written concurrently by other JS threads (the
-    // value race is blessed: aligned, tear-free per lane), but the bulk
-    // memset/memset_pattern/std::fill paths below are plain C++ accesses — UB
-    // under that race and the reported "fill" arm of the family. Route GIL-off
-    // fills through relaxed lane stores. Flag-off/GIL-on keeps the
-    // byte-identical bulk paths (one predicted-false Config-page test).
+    // GIL-off, a detach on another thread clears the view's base word with no
+    // stop, so the base loaded after the length re-check can be null; dropping
+    // the fill is the lost write that race is allowed to produce. A base observed
+    // non-null stays mapped through the next stop, so its lanes may be raced but
+    // never unmapped: relaxed lane stores replace the bulk memset/std::fill.
+    // Flag-off/GIL-on keeps the bulk paths behind one predicted-false
+    // Config-page test.
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        if (!underlyingVector)
+            return JSValue::encode(thisObject);
         for (size_t index = start; index < end; ++index)
             typedArrayLaneStoreRelaxed(underlyingVector + index, nativeValue);
         return JSValue::encode(thisObject);
@@ -795,7 +822,9 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncLastIndexOf(VM& vm, J
 
     typename ViewClass::ElementType* array = thisObject->typedVector();
     scope.assertNoExceptionExceptTermination();
-    RELEASE_ASSERT(!thisObject->isDetached());
+    // Null base snapshot means detached; see genericTypedArrayViewProtoFuncIncludes.
+    if (!array) [[unlikely]]
+        return JSValue::encode(jsNumber(-1));
 
     size_t searchLength = index + 1;
     size_t result = typedArrayLastIndexOfImpl<ViewClass>(array, searchLength, targetOption.value());
@@ -1700,6 +1729,24 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlo
     RETURN_IF_EXCEPTION(scope, { });
 
     typename ViewClass::ElementType* array = thisObject->typedVector();
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        // A detach on another thread clears the view's base word with no stop, so
+        // the base can be null despite the validation above; dropping the reverse
+        // is the lost write that race is allowed to produce. A base observed
+        // non-null stays mapped through the next stop, so its lanes may be raced
+        // but never unmapped: relaxed lane swaps replace the bulk std::reverse.
+        // Flag-off/GIL-on keeps std::reverse behind one predicted-false
+        // Config-page test.
+        if (!array)
+            return JSValue::encode(thisObject);
+        size_t length = thisObject->length();
+        for (size_t low = 0, high = length; low + 1 < high; ++low, --high) {
+            auto lowValue = typedArrayLaneLoadRelaxed(array + low);
+            typedArrayLaneStoreRelaxed(array + low, typedArrayLaneLoadRelaxed(array + high - 1));
+            typedArrayLaneStoreRelaxed(array + high - 1, lowValue);
+        }
+        return JSValue::encode(thisObject);
+    }
     std::reverse(array, array + thisObject->length());
 
     return JSValue::encode(thisObject);
@@ -1761,6 +1808,16 @@ static ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& v
     if (length < 2)
         return JSValue::encode(thisObject);
 
+    // GIL-off, a detach on another thread clears the view's base word with no
+    // stop, so the span's base can be null despite the validation above; the sort
+    // then fails as detached, like the comparator-less sort(). A base observed
+    // non-null stays mapped through the next stop (the Vector below is malloc'd,
+    // not a GC allocation), so its lanes may be raced but never unmapped: relaxed
+    // lane loads replace the bulk copy-in. Flag-off/GIL-on keeps the bulk copy
+    // behind one predicted-false Config-page test.
+    if (vm.gilOffWithProcessGate() && !originalSpan.data()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
+
     Vector<typename ViewClass::ElementType, 256> vector;
     auto totalSize = CheckedSize { length } * 2U;
     if (totalSize.hasOverflowed() || !vector.tryGrow(totalSize.value())) [[unlikely]] {
@@ -1772,7 +1829,11 @@ static ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& v
     auto workingSet = vector.mutableSpan().subspan(length);
     ASSERT(workingSet.size() == length);
     ASSERT(originalSpan.size() == length);
-    WTF::copyElements(src, spanConstCast<const typename ViewClass::ElementType>(originalSpan));
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        for (size_t i = 0; i < length; ++i)
+            src[i] = typedArrayLaneLoadRelaxed(originalSpan.data() + i);
+    } else
+        WTF::copyElements(src, spanConstCast<const typename ViewClass::ElementType>(originalSpan));
 
     auto result = src;
 
@@ -1824,6 +1885,19 @@ static ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& v
 
     // The comparator may trigger FastTypedArray -> WastefulTypedArray transition via .buffer access,
     // which relocates the backing store. Do not reuse originalSpan here.
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        // A detach on another thread can clear the base word after the check
+        // above, so the base loaded here is the only one written through: null
+        // drops the write-back, which is the lost write that race is allowed to
+        // produce. Relaxed lane stores replace the bulk copy-back.
+        auto* destination = thisObject->typedVector();
+        if (!destination)
+            return JSValue::encode(thisObject);
+        size_t copyLength = std::min<size_t>(thisObject->length(), result.size());
+        for (size_t i = 0; i < copyLength; ++i)
+            typedArrayLaneStoreRelaxed(destination + i, result[i]);
+        return JSValue::encode(thisObject);
+    }
     size_t copyLength = std::min<size_t>(thisObject->length(), result.size());
     WTF::copyElements(thisObject->typedSpan().first(copyLength), spanConstCast<const typename ViewClass::ElementType>(result.first(copyLength)));
 

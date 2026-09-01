@@ -177,16 +177,21 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     char* payloadBegin = std::bit_cast<char*>(block.atoms() + m_startAtom);
     RELEASE_ASSERT(static_cast<size_t>(payloadEnd - payloadBegin) <= payloadSize, payloadBegin, payloadEnd, &block, cellSize, m_startAtom);
 
-    // SharedGC (T9): conductor-context OK / any-sweeper OK — vm is the main
-    // VM (server-owned block); destroyFunc takes the VM as the conventional
-    // destroy argument (cell destructors are VM-global, not calling-thread-
-    // coupled). TSAN-DEEP-02: after T7-mspl-per-directory, mutator sweeps in
-    // different directories run CONCURRENTLY under per-directory stripe locks,
-    // and WeakRandom::getUint64() MUTATES two-word xorshift state — use the
-    // lock-guarded accessor (slow path: once per block sweep).
+    // vm is the main VM (server-owned block); destroyFunc takes the VM as the
+    // conventional destroy argument (cell destructors are VM-global, not
+    // calling-thread-coupled).
     VM& vm = this->vm();
     bool isMarking = space()->isMarking();
-    uint64_t secret = vm.heapRandomUint64Concurrent();
+    // Only GIL-off shared-server mutators sweep different directories
+    // concurrently (per-directory stripes); WeakRandom::getUint64() mutates
+    // its state, so only that shape takes the lock. Flag-off and GIL-on
+    // sweeps are serialized by the JSLock or the stop window.
+    const bool sweepsMayRunConcurrently = m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess;
+    uint64_t secret;
+    if (sweepsMayRunConcurrently) [[unlikely]]
+        secret = vm.heapRandomUint64Concurrent();
+    else
+        secret = vm.heapRandom().getUint64();
 
     auto destroy = [&] (void* cell) {
         JSCell* jsCell = static_cast<JSCell*>(cell);
@@ -232,7 +237,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         // isEmpty directory-bit clear here and permanently shadows a later
         // 2nd-epoch notifyNeedsDestruction → JSString::destroy never runs,
         // StringImpl ref leak).
-        if (m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess) [[unlikely]]
+        if (sweepsMayRunConcurrently) [[unlikely]]
             WTF::atomicStore(&m_isDestructibleHint, m_directory->isDestructible(this), std::memory_order_relaxed);
         m_directory->setIsEmpty(this, false);
         if (sweepMode == SweepToFreeList)
@@ -481,42 +486,30 @@ inline void MarkedBlock::Handle::setIsDestructible(bool value)
         m_directory->releaseAssertAcquiredBitVectorLock();
     }
 #endif
-    // T2-bimodal32-bvl-destructible-fastpath: when the shared server is live
-    // and we are setting the bit TRUE (the only direction
-    // notifyNeedsDestruction ever drives — JSRopeString::convertToNonRope at
-    // DFG throughput across 32 mutators), consult the per-Handle hint first
-    // and return without touching the BVL if a prior caller on this same
-    // block already did the locked flip. The bit is monotone-toward-true
-    // between destructor-running sweeps (see the comment above and the
-    // setBits lambda), so an observed hint==true implies the directory bit is
-    // true for the rest of this mutator phase. WTF::Lock eventual-fairness
-    // otherwise turns one early park on the JSString directory's single BVL
-    // into a self-sustaining handoff convoy (W=32 slow mode: 8.4M lockSlow,
-    // ~20% cycles in futex/yield, wall 21s vs 14s). Gate: isSharedServer()
-    // && gilOffProcess. isSharedServer() is false at flag-off and at W=1
-    // (incl. GIL-off W=1) so those take the original locked path below
-    // unchanged; the gilOffProcess conjunct restricts the hint mechanism to
-    // the regime where ISS is genuinely PROCESS-LIFETIME sticky-true
-    // (Heap::pollIssRevertIfNeeded early-returns under gilOffProcess — under
-    // !gilOffProcess the §10D revert can clear ISS, after which the
-    // isSharedServer()-gated hint-false writers below and in setBits never
-    // fire, so a stale-true hint left from a prior epoch would make the
-    // early return permanent across an isEmpty directory-bit clear:
-    // StringImpl ref leak. Review T2 round: correctness > speed; GIL-on
-    // shared has no N-way BVL convoy anyway since the GIL serializes
-    // mutators). The hint lives on Handle (not a lock-free m_bits read)
-    // because this caller holds neither MSPL nor BVL and so could otherwise
-    // race a same-directory addBlock's m_bits Vector resize.
-    if (value && m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess) [[unlikely]] {
-        if (WTF::atomicLoad(&m_isDestructibleHint, std::memory_order_relaxed))
+    // GIL-off shared server: N mutators resolving ropes into the same block
+    // would otherwise all take the directory's single bitvector lock to
+    // re-set an already-true bit, so consult the per-Handle hint first. The
+    // bit is monotone-toward-true between destructor-running sweeps (setBits
+    // in specializedSweep re-derives bit and hint together under the BVL), so
+    // an observed hint==true means the directory bit is true for the rest of
+    // this mutator phase. The hint is kept in lockstep with the bit for both
+    // values, published only after the locked write. It lives on the Handle
+    // rather than being a lock-free m_bits read because this caller holds
+    // neither MSPL nor BVL and could race a same-directory addBlock resize.
+    // isSharedServer() is false at flag-off and with one client, so those
+    // take the plain locked path; the gilOffProcess conjunct confines the
+    // hint to the regime where the shared server is process-lifetime sticky
+    // (a revert would strand a stale-true hint across the isEmpty directory-
+    // bit clear and a later notifyNeedsDestruction would never run
+    // JSString::destroy).
+    if (m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (value && WTF::atomicLoad(&m_isDestructibleHint, std::memory_order_relaxed))
             return;
         Locker locker { m_directory->bitvectorLock() };
-        m_directory->setIsDestructible(this, true);
-        // Publish the hint only after the directory bit is committed under
-        // the BVL. Relaxed store: the only consumer is the early-return above
-        // whose stale-false outcome is the safe locked fallback; no other
-        // state is published through this flag.
-        WTF::atomicStore(&m_isDestructibleHint, true, std::memory_order_relaxed);
+        m_directory->setIsDestructible(this, value);
+        // Relaxed store: the only consumer is the early return above, whose
+        // stale-false outcome is the safe locked fallback.
+        WTF::atomicStore(&m_isDestructibleHint, value, std::memory_order_relaxed);
         return;
     }
     Locker locker { m_directory->bitvectorLock() };

@@ -1862,7 +1862,8 @@ _pinballHandlerFulfillFunction:
     copyCalleeSavesToBuffer(ws0)
 
     move sp, a2
-    call _pinballHandlerInitContextForFulfill #(globalObject, callFrame, contextPtr)
+    call _pinballHandlerInitContextForFulfill #(globalObject, callFrame, contextPtr) -> nonzero if refused on a spawned thread (context not constructed)
+    btinz r0, .pinballHandlerFulfillFunction_rejected
     # Restore callee saves of the evacuated Wasm code
     loadp PinballHandlerContext::evacuatedCalleeSaves[sp], ws0
     restoreCalleeSavesFromBuffer(ws0)
@@ -1890,6 +1891,8 @@ _pinballHandlerFulfillFunction:
 .pinballHandlerFulfillFunction_stack_overflow:
     move sp, a0
     call _pinballHandlerRejectWithStackOverflow #(context)
+.pinballHandlerFulfillFunction_rejected:
+    # The result promise has been rejected; only the handler's own callee saves are live.
     leap PinballHandlerContext::handlerCalleeSaves[sp], ws0
     restoreCalleeSavesFromBuffer(ws0)
     move 0, r0
@@ -2004,7 +2007,8 @@ _pinballHandlerRejectFunction:
     leap PinballHandlerContext::handlerCalleeSaves[sp], ws0
     copyCalleeSavesToBuffer(ws0)
     move sp, a2 # the context pointer
-    call _pinballHandlerInitContextForReject #(globalObject, callFrame, context)
+    call _pinballHandlerInitContextForReject #(globalObject, callFrame, context) -> nonzero if refused on a spawned thread (context not constructed)
+    btinz r0, .pinballHandlerRejectFunction_rejected
 
     # Restore callee saves of the evacuated Wasm code
     loadp PinballHandlerContext::evacuatedCalleeSaves[sp], ws0
@@ -2029,6 +2033,8 @@ _pinballHandlerRejectFunction:
 .pinballHandlerRejectFunction_stack_overflow:
     move sp, a0
     call _pinballHandlerRejectWithStackOverflow #(context)
+.pinballHandlerRejectFunction_rejected:
+    # The result promise has been rejected; only the handler's own callee saves are live.
     leap PinballHandlerContext::handlerCalleeSaves[sp], ws1
     restoreCalleeSavesFromBuffer(ws1)
     move 0, r0

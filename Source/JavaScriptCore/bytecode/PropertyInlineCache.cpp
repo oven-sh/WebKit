@@ -1161,8 +1161,8 @@ static void publishHandlerChainHead(RefPtr<InlineCacheHandler>& headSlot, Ref<In
     // block writes) on this thread against the reader thread's accesses in
     // ICSlowPathCallFrameTracer / ownerForSlowPath, on memory the audit
     // proved live (every flag-on dealloc path of a published handler routes
-    // through RetiredJITArtifacts::retireHandlerChain, which flag-on never
-    // frees — epochCoversEveryJSThread). AFTER sides:
+    // through RetiredJITArtifacts::retireHandlerChain, which frees only once
+    // every mutator has crossed a safepoint). AFTER sides:
     // ICSlowPathCallFrameTracer (JITOperations.cpp, keyed on the
     // PropertyInlineCache) and CallLinkInfo::ownerForSlowPath (keyed on the
     // embedded CallLinkInfo). Annotating only the NEW node is sufficient:
@@ -1315,11 +1315,14 @@ void PropertyInlineCache::resetStubAsJumpInAccess(VM& vm, CodeBlock* codeBlock)
         // now; only the *memory* outlives the reset, via the epoch.
         Ref<InlineCacheHandler> slowPathHandler = InlineCacheCompiler::generateSlowPathHandler(vm, accessType);
         if (Options::useJSThreads()) [[unlikely]] {
-            // R2-1: COPY, never move out of, m_handler (no null window for
-            // racing JIT'd readers; see publishHandlerChainHead). The callers
-            // of this reset run world-stopped today (watchpoint fires / GC
-            // resets), so this site was latent, but it must not share the
-            // broken move-from-member idiom.
+            // This is a live publish with the world running: besides the
+            // world-stopped callers (GC visitWeak, clearing watchpoints),
+            // fireWatchpointsAndClearStubIfNeeded and the megamorphic->generic
+            // demotions in repatch*BySlowPathCall reach here from JIT slow
+            // paths under codeBlock->m_lock only, while JIT'd readers on other
+            // threads keep dispatching through m_handler. COPY, never move out
+            // of, m_handler so the published slot is never null (see
+            // publishHandlerChainHead).
             RefPtr<InlineCacheHandler> displacedHead = m_handler;
             publishHandlerChainHead(m_handler, WTF::move(slowPathHandler));
             // R4-2: pass the VM; RetiredJITArtifacts resolves the epoch heap.

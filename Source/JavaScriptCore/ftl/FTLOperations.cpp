@@ -70,13 +70,13 @@ namespace JSC { namespace FTL {
 // UNGIL U-T4b: gilOff, N threads can traverse the SAME not-yet-generated lazy
 // slow path's patchable jump concurrently; LazySlowPath::generate must run
 // exactly once (it RELEASE_ASSERTs !m_stub and publishes m_stub). Sibling of
-// ftlOSRExitGenerationLock (FTLOSRExitCompiler.cpp) with the same rank: held
-// across stub generation, so it is OUTER to codeBlock->m_lock,
+// the DFG/FTL OSRExitGenerationLocker (DFGOSRExitCompilerCommon.h) with the
+// same rank: held across stub generation, so it is OUTER to codeBlock->m_lock,
 // LinkBuffer/executable-allocator locks, and (if a generator allocates
 // scratch) the ScratchBufferRegistry -> VMLiteRegistry -> per-lite
 // scratchBufferLock chain. Acquired only from the generation thunk's
-// operation call with no other JSC lock held; never nested with
-// ftlOSRExitGenerationLock; GIL-on never takes it (flag-off identity).
+// operation call with no other JSC lock held; never nested with the exit
+// generation lock; GIL-on never takes it (flag-off identity).
 static Lock ftlLazySlowPathGenerationLock;
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalObject* globalObject, ExitTimeObjectMaterialization* materialization, EncodedJSValue* encodedValue, EncodedJSValue* values))
@@ -970,7 +970,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLLazySlowPath, void*, (CallF
         // generation lock is taken only for the first-compile race; losers
         // re-check under the lock. generate() release-stores the tagged code
         // pointer after the stub (and its executable memory) is fully
-        // constructed, so a non-null acquire-load here is safe to tail-call.
+        // constructed, so a non-null acquire-load here is safe to tail-call
+        // once this PE has synchronized its instruction stream: the
+        // generating thread's cache flush invalidated the i-cache lines but
+        // its ISB covered only that PE, so a consumer that did not generate
+        // the stub issues its own crossModifyingCodeFence before the thunk
+        // far-jumps into it. The thin thunk prefix (FTLThunks.cpp) does the
+        // same in JIT code on arm64.
         //
         // SCALEBENCH §41 defer-hoist-lazyslow: at 46.6M traversals/run the
         // steady state is just the acquire-load below — it cannot allocate
@@ -984,14 +990,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLLazySlowPath, void*, (CallF
         CodeBlock* codeBlock = callFrame->codeBlock();
         JITCode* jitCode = codeBlock->jitCodeRawPtr()->ftl();
         LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
-        if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently())
+        if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently()) {
+            WTF::crossModifyingCodeFence();
             return stubCodePtr;
+        }
         Locker locker { ftlLazySlowPathGenerationLock };
-        if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently())
+        if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently()) {
+            WTF::crossModifyingCodeFence();
             return stubCodePtr;
+        }
         // We cannot GC across generate(). We've got pointers in evil places.
         DeferGCForAWhile deferGC(vm);
         lazySlowPath.generate(codeBlock);
+        // Generated on this thread: the LinkBuffer finalization's cache flush
+        // already synchronized this PE.
         void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently();
         ASSERT(stubCodePtr);
         return stubCodePtr;

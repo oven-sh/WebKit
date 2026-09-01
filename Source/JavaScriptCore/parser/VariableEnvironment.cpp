@@ -276,8 +276,13 @@ bool CompactTDZEnvironment::operator==(const CompactTDZEnvironment& other) const
     return result;
 }
 
+// Called with the interning map's lock held (see Handle::contains); the lock serializes
+// concurrent inflaters, so the re-check below is what makes the second one a no-op.
 TDZEnvironment& CompactTDZEnvironment::toTDZEnvironmentSlow() const
 {
+    if (isInflated())
+        return const_cast<Inflated&>(std::get<Inflated>(m_variables));
+
     Inflated inflated;
     {
         auto& compact = std::get<Compact>(m_variables);
@@ -287,6 +292,7 @@ TDZEnvironment& CompactTDZEnvironment::toTDZEnvironmentSlow() const
         }
     }
     m_variables = Variables(WTF::move(inflated));
+    m_isInflated.store(true, std::memory_order_release);
     return const_cast<Inflated&>(std::get<Inflated>(m_variables));
 }
 
@@ -303,6 +309,7 @@ CompactTDZEnvironmentMap::Handle CompactTDZEnvironmentMap::get(const TDZEnvironm
 CompactTDZEnvironmentMap::Handle CompactTDZEnvironmentMap::get(CompactTDZEnvironment* environment, bool& isNewEntry)
 {
     CompactTDZEnvironmentKey key { *environment };
+    Locker locker { m_lock };
     auto addResult = m_map.add(key, 1);
     isNewEntry = addResult.isNewEntry;
     if (addResult.isNewEntry)
@@ -321,14 +328,20 @@ CompactTDZEnvironmentMap::Handle::~Handle()
     }
 
     RELEASE_ASSERT(m_environment);
-    auto iter = m_map->m_map.find(CompactTDZEnvironmentKey { *m_environment });
-    RELEASE_ASSERT(iter != m_map->m_map.end());
-    --iter->value;
-    if (!iter->value) {
-        ASSERT(m_environment == &iter->key.environment());
-        m_map->m_map.remove(iter);
-        delete m_environment;
+    bool isLastReference;
+    {
+        Locker locker { m_map->m_lock };
+        auto iter = m_map->m_map.find(CompactTDZEnvironmentKey { *m_environment });
+        RELEASE_ASSERT(iter != m_map->m_map.end());
+        --iter->value;
+        isLastReference = !iter->value;
+        if (isLastReference) {
+            ASSERT(m_environment == &iter->key.environment());
+            m_map->m_map.remove(iter);
+        }
     }
+    if (isLastReference)
+        delete m_environment;
 }
 
 CompactTDZEnvironmentMap::Handle::Handle(const CompactTDZEnvironmentMap::Handle& other)
@@ -336,10 +349,19 @@ CompactTDZEnvironmentMap::Handle::Handle(const CompactTDZEnvironmentMap::Handle&
     , m_map(other.m_map)
 {
     if (m_map) {
+        Locker locker { m_map->m_lock };
         auto iter = m_map->m_map.find(CompactTDZEnvironmentKey { *m_environment });
         RELEASE_ASSERT(iter != m_map->m_map.end());
         ++iter->value;
     }
+}
+
+bool CompactTDZEnvironmentMap::Handle::contains(UniquedStringImpl* impl) const
+{
+    if (m_environment->isInflated())
+        return m_environment->toTDZEnvironment().contains(impl);
+    Locker locker { m_map->m_lock };
+    return m_environment->toTDZEnvironment().contains(impl);
 }
 
 CompactTDZEnvironmentMap::Handle::Handle(CompactTDZEnvironment& environment, CompactTDZEnvironmentMap& map)

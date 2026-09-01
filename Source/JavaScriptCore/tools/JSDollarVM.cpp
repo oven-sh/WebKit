@@ -2656,16 +2656,14 @@ JSC_DEFINE_HOST_FUNCTION(functionGCSweepAsynchronously, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
-// THREADS-INTEGRATE(heap) manifest 8: JS entry point for the shared-heap
-// test harness (SPEC-heap.md §12.1; the JSTests/threads/heap-*.js corpus).
-// Per-scenario option gating lives inside SharedHeapTestHarness::run()
-// (heap/SharedHeapTestHarness.h contract) — do NOT add any
-// Options::useSharedGCHeap() gating here. Returns a Boolean (never
-// undefined): heap-option-off.js asserts `=== true`. Argument coercion:
-// name via toWTFString, counts via toUInt32 (missing/NaN -> 0; run()
-// treats unknown names and degenerate counts per its own contract).
-// Caller contract (run()): main VM mutator thread, API lock held —
-// exactly what a $vm call site guarantees.
+// JS entry point for the shared-heap test harness (JSTests/threads/heap-*.js).
+// Option gating is per scenario inside SharedHeapTestHarness::run(), which
+// returns false (never throws) for an unknown scenario or one whose options
+// are off, so no Options::useSharedGCHeap() check belongs here. run() spawns
+// raw threads and RELEASE_ASSERTs its invariants and its caller contract (the
+// main VM's mutator holding the API lock and heap access; a spawned Thread
+// under gilOff violates it), so it is registered allowIfNotFuzz like the
+// other crash-on-misuse entries.
 // Usage: $vm.sharedHeapTest(name, threads, iters)
 JSC_DEFINE_HOST_FUNCTION(functionSharedHeapTest, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -4518,7 +4516,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);
     addFunction(vm, alwaysAllow, "gcSweepAsynchronously"_s, functionGCSweepAsynchronously, 0);
-    addFunction(vm, alwaysAllow, "sharedHeapTest"_s, functionSharedHeapTest, 3);
+    addFunction(vm, allowIfNotFuzz, "sharedHeapTest"_s, functionSharedHeapTest, 3);
     addFunction(vm, alwaysAllow, "edenGC"_s, functionEdenGC, 0);
     addFunction(vm, alwaysAllow, "dumpSubspaceHashes"_s, functionDumpSubspaceHashes, 0);
 

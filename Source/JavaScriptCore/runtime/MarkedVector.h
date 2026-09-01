@@ -160,13 +160,12 @@ protected:
 
     JS_EXPORT_PRIVATE void addMarkSet(JSValue);
 
-    // DW-2: shared-GC-heap-mode registration — picks the address-hashed
-    // shard (Heap::markListSetShard), records its lock in m_markSetLock, and
-    // adds under that lock. Every later mutation of the set through
-    // m_markSet (remove in removeFromMarkSetAndDeallocateBuffer, the
-    // remove/add pair in adopt) must take m_markSetLock; flag-off
-    // registrations leave m_markSetLock null and keep the historical
-    // lock-free path.
+    // Shared-GC-heap registration: under Options::useSharedGCHeap() m_markSet
+    // always points at a Heap::MarkListSetShard's set, and every mutation of
+    // that set (add here, remove in removeFromMarkSetAndDeallocateBuffer, the
+    // remove/add pair in adopt) holds the shard's lock, recovered from
+    // m_markSet via Heap::MarkListSetShard::fromSet. Flag-off registrations
+    // point at Heap::markListSet() and stay lock-free.
     JS_EXPORT_PRIVATE void addToSharedMarkSet(JSC::Heap&);
 
     JS_EXPORT_PRIVATE Status slowAppend(JSValue);
@@ -211,12 +210,11 @@ protected:
     void removeFromMarkSetAndDeallocateBuffer()
     {
         if (m_markSet) {
-            if (m_markSetLock) [[unlikely]] {
-                // DW-2: shared-GC-heap registration — unregister under the
-                // owning shard's lock, and free the spill buffer only after
-                // (Heap.cpp's Msr constraint walks the shard under the same
-                // lock, so it can never see a freed buffer).
-                Locker locker { *m_markSetLock };
+            if (Options::useSharedGCHeap()) [[unlikely]] {
+                // The GC walks each shard under its lock, so unregistering
+                // under it before freeing the spill buffer keeps the buffer
+                // alive for as long as marking can reach it.
+                Locker locker { Heap::MarkListSetShard::fromSet(*m_markSet).lock };
                 m_markSet->remove(this);
             } else
                 m_markSet->remove(this);
@@ -229,7 +227,6 @@ protected:
     {
         removeFromMarkSetAndDeallocateBuffer();
         m_markSet = nullptr;
-        m_markSetLock = nullptr;
 
 #if CPU(ADDRESS32)
         ASSERT(m_storageType == other.m_storageType);
@@ -239,15 +236,12 @@ protected:
         if (other.mallocBase()) {
             m_buffer = std::exchange(other.m_buffer, other.inlineBuffer());
             if (other.m_markSet) {
+                // The moved-to vector stays in the shard the moved-from vector
+                // registered with; marking walks every shard, so shard choice
+                // only affects lock distribution.
                 m_markSet = other.m_markSet;
-                if (other.m_markSetLock) [[unlikely]] {
-                    // DW-2: keep the moved-to vector registered in the SAME
-                    // shard the moved-from vector was hashed into (shard
-                    // choice only affects distribution, not correctness —
-                    // marking walks every shard), so the recorded lock stays
-                    // the one guarding the set it lives in.
-                    m_markSetLock = other.m_markSetLock;
-                    Locker locker { *m_markSetLock };
+                if (Options::useSharedGCHeap()) [[unlikely]] {
+                    Locker locker { Heap::MarkListSetShard::fromSet(*m_markSet).lock };
                     m_markSet->remove(&other);
                     m_markSet->add(this);
                 } else {
@@ -255,7 +249,6 @@ protected:
                     m_markSet->add(this);
                 }
                 other.m_markSet = nullptr;
-                other.m_markSetLock = nullptr;
             }
         } else {
             m_buffer = inlineBuffer();
@@ -294,14 +287,6 @@ protected:
     unsigned m_capacity;
     void* m_buffer;
     ListSet* m_markSet;
-    // DW-2: non-null iff m_markSet points at a shared-GC-heap shard's set
-    // (Heap::MarkListSetShard::lock). Null in flag-off registrations, whose
-    // set mutations stay lock-free exactly as before. Flag-off footprint of
-    // this member: +8 bytes per stack-resident vector and one nullptr store
-    // per construction — flag-off is mode-split-identical, not byte-
-    // identical; the flags-off bench gate (delta 0) is the binding proof
-    // (see Heap.h's shard comment).
-    Lock* m_markSetLock { nullptr };
 #if CPU(ADDRESS32)
     StorageType m_storageType;
 #endif
@@ -487,8 +472,8 @@ public:
         }
         if (!isUsingInlineBuffer()) {
             if (!m_markSet) [[likely]] {
-                // DW-2: with a shared GC heap this set is mutated by every
-                // Thread's spill path — route through the locked shard.
+                // With a shared GC heap this set is mutated by every thread's
+                // spill path, so registration goes through the locked shard.
                 if (Options::useSharedGCHeap()) [[unlikely]]
                     addToSharedMarkSet(vm.heap);
                 else {
@@ -522,7 +507,6 @@ public:
         m_size = 0;
         if (!isUsingInlineBuffer()) {
             if (!m_markSet) [[likely]] {
-                // DW-2: see fill() above.
                 if (Options::useSharedGCHeap()) [[unlikely]]
                     addToSharedMarkSet(vm.heap);
                 else {

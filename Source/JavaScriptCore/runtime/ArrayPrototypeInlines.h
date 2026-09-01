@@ -297,6 +297,32 @@ inline bool canUseFastArrayJoin(const JSObject* thisObject)
     return false;
 }
 
+// Flag-on, once a structure's thread-local watchpoint sets are fired a foreign
+// flat-to-segmented conversion needs only the cell lock, so it can land between
+// a mayBeSegmentedButterfly() check and a later butterfly() load, whose flat
+// decode would then read the ButterflySpine as element storage. Flat fast paths
+// therefore load the tagged word once and derive every dereference from it.
+// Returns false for a segmented or empty word; the caller takes its generic
+// route. The snapshot's storage stays valid afterwards (a conversion aliases
+// it and the local pointer pins it for the conservative scan), but the
+// publicLength slot is shared with the spine, so a later grow can move it past
+// the snapshot's storage: readers bound their loops by the snapshot's own
+// vectorLength. Flag-off the tag bits are zero and this is exactly butterfly().
+ALWAYS_INLINE bool flatButterflySnapshot(JSObject* object, Butterfly*& butterfly)
+{
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        uint64_t word = object->taggedButterflyWord();
+        if (isSegmentedButterfly(word) || !(word & butterflyPointerMask)) [[unlikely]]
+            return false;
+        butterfly = untaggedButterfly(word);
+        return true;
+    }
+#endif
+    butterfly = object->butterfly();
+    return true;
+}
+
 // This is intentionally supporting non-JSArray as well.
 ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* thisObject, StringView separator, unsigned length, bool& sawHoles, bool& genericCase)
 {
@@ -306,16 +332,18 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     JSStringJoiner joiner(separator);
 
     unsigned i = 0;
-    // THREADS-INTEGRATE(objectmodel) §10.7 (entry 7, site 2): tagged/segmented
-    // word — every arm of the switch below derefs butterfly() as flat. Skip
-    // straight to the generic join slow path.
-    if (thisObject->mayBeSegmentedButterfly()) [[unlikely]]
+    Butterfly* snapshotButterfly = nullptr;
+    if (!flatButterflySnapshot(thisObject, snapshotButterfly)) [[unlikely]]
         goto generalCase;
     switch (thisObject->indexingType()) {
     case ALL_INT32_INDEXING_TYPES: {
-        auto& butterfly = *thisObject->butterfly();
+        auto& butterfly = *snapshotButterfly;
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
+#if USE(JSVALUE64)
+        if (Options::useJSThreads() && length > butterfly.vectorLength()) [[unlikely]]
+            break;
+#endif
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });
         auto data = butterfly.contiguous().data();
@@ -337,10 +365,14 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         RELEASE_AND_RETURN(scope, joiner.join(globalObject));
     }
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
-        auto& butterfly = *thisObject->butterfly();
+        auto& butterfly = *snapshotButterfly;
         unsigned originalLength = butterfly.publicLength();
         if (length > originalLength) [[unlikely]]
             break;
+#if USE(JSVALUE64)
+        if (Options::useJSThreads() && length > butterfly.vectorLength()) [[unlikely]]
+            break;
+#endif
         auto data = butterfly.contiguous().data();
         bool holesKnownToBeOK = false;
 
@@ -356,7 +388,12 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
                 if (!withoutSideEffect) {
                     genericCase = true;
                     holesKnownToBeOK = false;
-                    if (thisObject->butterfly() == &butterfly && originalLength == butterfly.publicLength()) [[likely]]
+                    // The user code in append() may have resized the array or, flag-on,
+                    // converted its word to segmented; the flat-only butterfly() accessor
+                    // must not be reached on such a word.
+                    Butterfly* currentButterfly = nullptr;
+                    bool stillFlat = flatButterflySnapshot(thisObject, currentButterfly);
+                    if (stillFlat && currentButterfly == &butterfly && originalLength == butterfly.publicLength()) [[likely]]
                         continue;
                     ++i;
                     goto generalCase;
@@ -374,9 +411,13 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         RELEASE_AND_RETURN(scope, joiner.join(globalObject));
     }
     case ALL_DOUBLE_INDEXING_TYPES: {
-        auto& butterfly = *thisObject->butterfly();
+        auto& butterfly = *snapshotButterfly;
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
+#if USE(JSVALUE64)
+        if (Options::useJSThreads() && length > butterfly.vectorLength()) [[unlikely]]
+            break;
+#endif
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });
         auto data = butterfly.contiguousDouble().data();

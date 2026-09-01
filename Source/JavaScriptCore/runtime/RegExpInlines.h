@@ -168,11 +168,15 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
     auto throwError = [&] {
         if (matchFrom == Yarr::MatchFrom::CompilerThread)
             return -1;
-        if (nullOrGlobalObject) {
+        // One snapshot drives both the thrown error and the hard-error test; GIL-off
+        // another thread may already have reset() the code to NoError, which is
+        // nothing to throw.
+        Yarr::ErrorCode errorCode = constructionErrorCode();
+        if (nullOrGlobalObject && hasError(errorCode)) {
             auto throwScope = DECLARE_THROW_SCOPE(vm);
-            throwScope.throwException(nullOrGlobalObject, errorToThrow(nullOrGlobalObject));
+            throwScope.throwException(nullOrGlobalObject, Yarr::errorToThrow(nullOrGlobalObject, errorCode));
         }
-        if (!hasHardError(m_constructionErrorCode))
+        if (!hasHardError(errorCode))
             reset();
         return -1;
     };
@@ -239,8 +243,14 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
     } else
 #endif
     {
+        // GIL-off, a compile on another thread can move m_state to ByteCode,
+        // ParseError or NotCompiled after this thread's locked check in
+        // compileIfNecessary; the interpreter is never handed a null pattern.
+        Yarr::BytecodePattern* bytecode = m_regExpBytecode.get();
+        if (vm.gilOffWithProcessGate() && !bytecode) [[unlikely]]
+            return -1;
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+        result = Yarr::interpret(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
 
     ASSERT(result >= -1);
@@ -316,11 +326,13 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
     auto throwError = [&] {
         if (matchFrom == Yarr::MatchFrom::CompilerThread)
             return MatchResult::failed();
-        if (nullOrGlobalObject) {
+        // Same snapshot discipline as the span overload above.
+        Yarr::ErrorCode errorCode = constructionErrorCode();
+        if (nullOrGlobalObject && hasError(errorCode)) {
             auto throwScope = DECLARE_THROW_SCOPE(vm);
-            throwScope.throwException(nullOrGlobalObject, errorToThrow(nullOrGlobalObject));
+            throwScope.throwException(nullOrGlobalObject, Yarr::errorToThrow(nullOrGlobalObject, errorCode));
         }
-        if (!hasHardError(m_constructionErrorCode))
+        if (!hasHardError(errorCode))
             reset();
         return MatchResult::failed();
     };
@@ -370,6 +382,11 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
     }
 #endif
 
+    // Same GIL-off window as the span overload: never hand the interpreter a null pattern.
+    Yarr::BytecodePattern* bytecode = m_regExpBytecode.get();
+    if (vm.gilOffWithProcessGate() && !bytecode) [[unlikely]]
+        return MatchResult::failed();
+
     int* offsetVector;
     int result;
     Vector<int, 32> nonReturnedOvector;
@@ -377,7 +394,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
     offsetVector = nonReturnedOvector.mutableSpan().data();
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+        result = Yarr::interpret(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->outputOneTest(this, s, startOffset, offsetVector, result);

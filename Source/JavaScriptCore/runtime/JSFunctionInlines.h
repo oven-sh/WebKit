@@ -264,8 +264,18 @@ inline FunctionRareData* JSFunction::ensureRareDataAndObjectAllocationProfile(JS
 {
     ASSERT(canUseAllocationProfiles());
     FunctionRareData* rareData = this->rareData();
-    if (!rareData)
+    if (!rareData) {
+        VM& vm = globalObject->vm();
+        if (vm.gilOff()) [[unlikely]] {
+            // The rare data must be reachable before the profile is initialized, so a .prototype
+            // store on another thread finds it and clearAfterPrototypeStore() retracts a pair the
+            // initializer keyed to the superseded prototype; see
+            // FunctionRareData::initializeObjectAllocationProfile.
+            allocateRareData(vm);
+            return initializeRareData(globalObject, inlineCapacity);
+        }
         return allocateAndInitializeRareData(globalObject, inlineCapacity);
+    }
     if (!rareData->isObjectAllocationProfileInitialized()) [[unlikely]]
         return initializeRareData(globalObject, inlineCapacity);
     return rareData;

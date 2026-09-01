@@ -42,9 +42,7 @@
 #include "CPUInlines.h"
 #include "CallFrameShuffler.h"
 #include "ClonedArguments.h"
-#if __has_include("ConcurrentButterfly.h")
-#include "ConcurrentButterfly.h" // SPEC-jit section 5.5 / Task 10 (R3, adopted by name)
-#endif
+#include "ConcurrentButterfly.h"
 #include "DFGAbstractInterpreterInlines.h"
 #include "DFGCFAPhase.h"
 #include "DFGCapabilities.h"
@@ -137,30 +135,6 @@ namespace JSC { namespace FTL {
 using namespace B3;
 using namespace DFG;
 
-// ===========================================================================
-// SPEC-jit section 5.5 / Task 10: TID/SW butterfly predicates + TTL elision
-// (E1/E2/E3, D9-corrected) for the FTL tier (mirrors Task 9's DFG twins in
-// DFGSpeculativeJIT.cpp and the Task-8 CCallHelpers choke points).
-//
-// Frozen tag encoding (SPEC-objectmodel section 2, runtime/ConcurrentButterfly.h):
-// bit 63 = SW, bits 62..48 = TID, low 48 = payload; top16 == 0xffff <=>
-// segmented (unsigned-compare trick: tagged >= 0xffff << 48).
-// ===========================================================================
-namespace FTLConcurrentButterflyInternal {
-#if __has_include("ConcurrentButterfly.h")
-static constexpr uint64_t pointerMask = JSC::butterflyPointerMask;
-static constexpr uint64_t segmentedFloor = JSC::butterflyTagMask; // == 0xffff << 48
-#else
-// THREADS-INTEGRATE(jit): frozen fallback while the object-model header lands
-// concurrently (mirrors jit/CCallHelpers.cpp + dfg/DFGSpeculativeJIT.cpp).
-static constexpr uint64_t pointerMask = 0x0000ffffffffffffULL;
-static constexpr uint64_t segmentedFloor = 0xffff000000000000ULL;
-#endif
-static constexpr uint64_t tidTagSpan = 1ULL << 48; // (tagged ^ tidTag) < 2^48 <=> tag bits match
-static_assert(pointerMask == 0x0000ffffffffffffULL);
-static_assert(segmentedFloor == 0xffff000000000000ULL);
-} // namespace FTLConcurrentButterflyInternal
-
 namespace {
 
 std::atomic<int> compileCounter;
@@ -176,17 +150,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION_WITH_ATTRIBUTES(ftlUnreachable, NO_RETURN_DUE_
     CRASH();
 }
 #endif // ASSERT_ENABLED
-
-// UNGIL A16 EXTENSION (AUD1.K4 / K4.VIII.10, U-T4b): operationRandom in
-// dfg/DFGOperations.h is now USE(JSVALUE32_64)-only (64-bit tiers inline via
-// emitRandomThunk), so the FTL gilOff slow path needs its own operation. It
-// routes through the host-side WeakRandom advance, mirroring what
-// operationRandom did: JSGlobalObject::weakRandomNumber().
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ftlOperationRandomGilOff, double, (JSGlobalObject*));
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ftlOperationRandomGilOff, double, (JSGlobalObject* globalObject))
-{
-    return globalObject->weakRandomNumber();
-}
 
 // Using this instead of typeCheck() helps to reduce the load on B3, by creating
 // significantly less dead code.
@@ -304,7 +267,7 @@ public:
                     jit.jitAssertCodeBlockOnCallFrameWithType(scratch, JITType::FTLJIT);
 
                     jit.addPtr(CCallHelpers::TrustedImm32(-maxFrameSize), GPRInfo::callFrameRegister, scratch);
-                    auto stackOverflow = jit.branchPtrAgainstSoftStackLimit(*vm, CCallHelpers::Above, scratch); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+                    auto stackOverflow = jit.branchPtrAgainstSoftStackLimit(*vm, CCallHelpers::GreaterThan, scratch);
                     stackOverflow.linkThunk(CodeLocationLabel(vm->getCTIStub(CommonJITThunkID::ThrowStackOverflowAtPrologue).retaggedCode<NoPtrTag>()), &jit);
 
                     if (ftlFrameSize)
@@ -2687,11 +2650,11 @@ private:
     // a value the existing allocateHeapCell consumes EXACTLY like the legacy
     // server m_allocatorForSizeStep load: non-constant LValue =>
     // JITAllocator::variable() => null-checked branch to slowPath. Bound miss
-    // (table not yet grown to slot on this thread) yields intPtrZero so the
-    // same null check covers it. Same-thread reads (I11 + I2) of fields the
-    // owner mutates only in C++ (growTable / setCurrentThreadClient stamps);
-    // m_heaps.root keeps the loads from being CSE'd across calls (the table
-    // pointer is freed-and-replaced by growTable). gilOff compilations only.
+    // (no client stamped on this thread) yields intPtrZero so the same null
+    // check covers it. Same-thread reads (I11 + I2) of fields the owner
+    // mutates only in C++ (setCurrentThreadClient stamps); m_heaps.root keeps
+    // the loads from being CSE'd across calls (a carrier swap re-stamps the
+    // table pointer). gilOff compilations only.
     LValue tlcAllocatorForSlot(unsigned tlcSlot)
     {
         ASSERT(vm().gilOff());
@@ -3957,24 +3920,10 @@ private:
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
-        if (vm().gilOff()) [[unlikely]] {
-            // UNGIL A16 EXTENSION (AUD1.K4 / K4.VIII.10, U-T4b): the inline
-            // fast path below bakes the SHARED JSGlobalObject m_weakRandom
-            // low/high addresses — N threads would tear the 128-bit stream
-            // state. The mandated per-lite stream (lite-relative emission)
-            // needs the lite-resident slot, which is not yet landed (U-T1 L2
-            // appends carry no weakRandom slot; no K.3 publish exists). Until
-            // it lands, gilOff compilations take the operation call — this
-            // removes the JIT-side torn read-modify-write; the host-side
-            // advance still touches the shared stream and is covered by the
-            // K4.VIII.10 runtime row (OPEN, recorded in INTEGRATE-ungil.md).
-            // operationRandom is USE(JSVALUE32_64)-only now; FTL (64-bit only)
-            // uses the file-local ftlOperationRandomGilOff equivalent.
-            setDouble(vmCall(Double, ftlOperationRandomGilOff, weakPointer(globalObject)));
-            return;
-        }
-
-        // Inlined WeakRandom::advance().
+        // Inlined WeakRandom::advance(). GIL-off threads race on the global
+        // object's shared stream exactly as the DFG and thunk tiers (and
+        // WeakRandom::advance itself) do; a torn update only changes the
+        // random sequence, never the state's validity.
         // uint64_t x = m_low;
         void* lowAddress = reinterpret_cast<uint8_t*>(globalObject) + JSGlobalObject::weakRandomOffset() + WeakRandom::lowOffset();
         LValue low = m_out.load64(m_out.absolute(lowAddress));
@@ -6168,7 +6117,9 @@ private:
         LValue slowCondition; // Int32 boolean; nullptr if every check was elided
     };
 
-    ThreadedButterflyPlan planThreadedButterflyAccessForStructures(const Vector<Structure*, 8>& structures)
+    enum class ThreadedButterflyAccessKind { Read, Write };
+
+    ThreadedButterflyPlan planThreadedButterflyAccessForStructures(const Vector<Structure*, 8>& structures, ThreadedButterflyAccessKind kind)
     {
         ASSERT(Options::useJSThreads());
         ThreadedButterflyPlan plan;
@@ -6203,7 +6154,13 @@ private:
                 registered &= m_graph.watchpoints().considerButterflyTransitionThreadLocal(structure);
             plan.elideSegmentedCheck = registered;
         }
-        if (allWriteThreadLocal) {
+        // E2 only ever elides the write SW branch and the ArrayStorage SW test
+        // (threadedButterflyLoadForRead never consults it when ArrayStorage
+        // is statically excluded), so a KnownNonArrayStorage read has nothing
+        // to elide and registering the set would only tie this code's life
+        // to the structure's first foreign write.
+        bool sharedWriteCheckMatters = kind == ThreadedButterflyAccessKind::Write || plan.shape != CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage;
+        if (allWriteThreadLocal && sharedWriteCheckMatters) {
             bool registered = true;
             for (Structure* structure : structures)
                 registered &= m_graph.watchpoints().considerButterflyWriteThreadLocal(structure);
@@ -6212,7 +6169,7 @@ private:
         return plan;
     }
 
-    ThreadedButterflyPlan planThreadedButterflyAccess(Edge base)
+    ThreadedButterflyPlan planThreadedButterflyAccess(Edge base, ThreadedButterflyAccessKind kind)
     {
         ASSERT(Options::useJSThreads());
         const StructureAbstractValue& structures = m_interpreter.forNode(base).m_structure;
@@ -6221,23 +6178,23 @@ private:
         Vector<Structure*, 8> list;
         for (unsigned i = 0; i < structures.size(); ++i)
             list.append(structures[i].get());
-        return planThreadedButterflyAccessForStructures(list);
+        return planThreadedButterflyAccessForStructures(list, kind);
     }
 
-    ThreadedButterflyPlan planThreadedButterflyAccessForStructureSet(const RegisteredStructureSet& set)
+    ThreadedButterflyPlan planThreadedButterflyAccessForStructureSet(const RegisteredStructureSet& set, ThreadedButterflyAccessKind kind)
     {
         Vector<Structure*, 8> list;
         for (unsigned i = 0; i < set.size(); ++i)
             list.append(set[i].get());
-        return planThreadedButterflyAccessForStructures(list);
+        return planThreadedButterflyAccessForStructures(list, kind);
     }
 
-    ThreadedButterflyPlan planThreadedButterflyAccessForStructureSet(const StructureSet& set)
+    ThreadedButterflyPlan planThreadedButterflyAccessForStructureSet(const StructureSet& set, ThreadedButterflyAccessKind kind)
     {
         Vector<Structure*, 8> list;
         for (unsigned i = 0; i < set.size(); ++i)
             list.append(set[i]);
-        return planThreadedButterflyAccessForStructures(list);
+        return planThreadedButterflyAccessForStructures(list, kind);
     }
 
     // R5: per-thread tag constant (uint64_t(currentButterflyTID()) << 48,
@@ -6348,8 +6305,14 @@ private:
 
     LValue maskedButterfly(LValue taggedButterfly)
     {
-        using namespace FTLConcurrentButterflyInternal;
-        return m_out.bitAnd(taggedButterfly, m_out.constInt64(static_cast<int64_t>(pointerMask)));
+        return m_out.bitAnd(taggedButterfly, m_out.constInt64(static_cast<int64_t>(butterflyPointerMask)));
+    }
+
+    // A segmented word has TID == notTTLTID and SW = 1, so its top 16 bits are
+    // all ones: tagged >= butterflyTagMask (unsigned) <=> segmented.
+    LValue isSegmentedButterfly(LValue taggedButterfly)
+    {
+        return m_out.aboveOrEqual(taggedButterfly, m_out.constInt64(static_cast<int64_t>(butterflyTagMask)));
     }
 
     // Frozen READ predicate (section 5.5): segmented => slow; SW=1 AND AS =>
@@ -6359,7 +6322,6 @@ private:
     // dispatches it (OSR exit or branch to an existing slow block).
     ThreadedButterflyAccess threadedButterflyLoadForRead(LValue base, const ThreadedButterflyPlan& plan)
     {
-        using namespace FTLConcurrentButterflyInternal;
         ASSERT(Options::useJSThreads());
 
         LValue tagged = loadTaggedButterflyWithStructureDependency(base);
@@ -6369,7 +6331,7 @@ private:
         };
 
         if (!plan.elideSegmentedCheck) // E1
-            fold(m_out.aboveOrEqual(tagged, m_out.constInt64(static_cast<int64_t>(segmentedFloor))));
+            fold(isSegmentedButterfly(tagged));
 
         if (!plan.elideSharedWriteCheck) { // E2 elides the AS SW test
             switch (plan.shape) {
@@ -6393,12 +6355,14 @@ private:
     // TID compare is NEVER elided (D9), it is the sole F1/shared-write
     // detection point even under E1+E2; (3) foreign + SW=1, not AS => mask +
     // store; (4) everything else => slow. Mask ALWAYS (I14(a)).
-    // Note on (1)/E1: a segmented tagged word can never equal the per-thread
-    // tag (its TID field is the notTTLTID sentinel), so under E1 the
-    // never-elided owner compare still routes segmented words slow.
+    // Note on (1)/E1: eliding the segmented compare is sound only because a
+    // valid transitionThreadLocal watchpoint implies no instance of the
+    // structure was ever segmented, and every segmenting transition fires it
+    // under stop-the-world and jettisons this code. The owner compare is not
+    // a backstop: in the arms below that test notOwner AND notSharedWritten, a
+    // segmented word (SW = 1) passes and would be stored through as flat.
     ThreadedButterflyAccess threadedButterflyLoadForWrite(LValue base, const ThreadedButterflyPlan& plan)
     {
-        using namespace FTLConcurrentButterflyInternal;
         ASSERT(Options::useJSThreads());
 
         // I16 (review round 1): every WRITE predicate evaluates a PINNED
@@ -6411,12 +6375,13 @@ private:
         };
 
         if (!plan.elideSegmentedCheck) // (1)
-            fold(m_out.aboveOrEqual(tagged, m_out.constInt64(static_cast<int64_t>(segmentedFloor))));
+            fold(isSegmentedButterfly(tagged));
 
-        // (2): never elided (D9).
+        // (2): never elided (D9). (tagged ^ tidTag) < 2^butterflyTIDShift <=>
+        // the tag bits equal the current thread's tag.
         LValue notOwner = m_out.aboveOrEqual(
             m_out.bitXor(tagged, loadButterflyTIDTag()),
-            m_out.constInt64(static_cast<int64_t>(tidTagSpan)));
+            m_out.constInt64(static_cast<int64_t>(1ULL << butterflyTIDShift)));
 
         if (plan.elideSharedWriteCheck) {
             // E2: SW branch (3) + AS SW test omitted; the case-(4) fallback is
@@ -6453,10 +6418,11 @@ private:
         LValue base = lowCell(m_node->child1());
 
         if (Options::useJSThreads()) [[unlikely]] {
-            // SPEC-jit section 5.5 / Task 10. THREADS-INTEGRATE(jit): AND with
-            // Options::useThreadedFTL() once the M1 kill switch lands
-            // (INTEGRATE-jit.md).
-            ThreadedButterflyPlan plan = planThreadedButterflyAccess(m_node->child1());
+            // Flag-on there is no unthreaded arm: the raw load below cannot
+            // read a TID-tagged word. The useThreadedFTL kill switch therefore
+            // disables the whole tier (Options::notifyOptionsChanged) rather
+            // than this predicate.
+            ThreadedButterflyPlan plan = planThreadedButterflyAccess(m_node->child1(), ThreadedButterflyAccessKind::Read);
             ThreadedButterflyAccess access = threadedButterflyLoadForRead(base, plan);
 
             // "OSR-exit on segmented dispatch where profitable else slow
@@ -8724,8 +8690,12 @@ IGNORE_CLANG_WARNINGS_END
 
                 auto base = JSValueRegs(params[1].gpr());
                 auto returnGPR = params[0].gpr();
+                ASSERT(base.gpr() != returnGPR);
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
+                    // The handler protocol's baseJSR is argumentGPR0, which is
+                    // returnValueGPR on ARM64: base and result alias from here
+                    // on, as they do in the Baseline and DFG handler-IC paths.
                     if constexpr (kind == DelByKind::ByIdStrict || kind == DelByKind::ByIdSloppy) {
                         ASSERT(returnGPR == BaselineJITRegisters::DelById::resultJSR.payloadGPR());
                         jit.shuffleRegisters<GPRReg, 1>(
@@ -8742,7 +8712,6 @@ IGNORE_CLANG_WARNINGS_END
                         propertyCacheGPR = BaselineJITRegisters::DelByVal::propertyCacheGPR;
                     }
                 }
-                ASSERT(base.gpr() != returnGPR);
 
                 if (child1UseKind)
                     slowCases.append(jit.branchIfNotCell(base));
@@ -13552,7 +13521,7 @@ IGNORE_CLANG_WARNINGS_END
                         // this node's existing exit style).
                         ThreadedButterflyPlan plan;
                         if (method.kind() == GetByOffsetMethod::Load)
-                            plan = planThreadedButterflyAccessForStructureSet(getCase.set());
+                            plan = planThreadedButterflyAccessForStructureSet(getCase.set(), ThreadedButterflyAccessKind::Read);
                         ThreadedButterflyAccess access = threadedButterflyLoadForRead(propertyBase, plan);
                         if (access.slowCondition)
                             speculate(BadCache, noValue(), nullptr, access.slowCondition);
@@ -13614,10 +13583,8 @@ IGNORE_CLANG_WARNINGS_END
             // (R3); the case-(4) first-foreign-write exit is one-time (the
             // generic path sets SW, F1). Inline offsets keep today's path
             // (cell-internal: never checked/masked).
-            // THREADS-INTEGRATE(jit): AND with Options::useThreadedFTL() once
-            // the M1 kill switch lands.
             LValue base = lowCell(m_node->child2());
-            ThreadedButterflyPlan plan = planThreadedButterflyAccess(m_node->child2());
+            ThreadedButterflyPlan plan = planThreadedButterflyAccess(m_node->child2(), ThreadedButterflyAccessKind::Write);
 
             LValue value = nullptr;
             bool isDouble = m_node->child3().useKind() == DoubleRepUse;
@@ -13705,7 +13672,7 @@ IGNORE_CLANG_WARNINGS_END
                     // store has not happened; the generic path performs it
                     // through the OM's regime-aware C++ access (R3) and sets
                     // SW on the first foreign write (F1).
-                    ThreadedButterflyPlan plan = planThreadedButterflyAccessForStructureSet(variant.oldStructure());
+                    ThreadedButterflyPlan plan = planThreadedButterflyAccessForStructureSet(variant.oldStructure(), ThreadedButterflyAccessKind::Write);
                     ThreadedButterflyAccess access = threadedButterflyLoadForWrite(base, plan);
                     if (access.slowCondition)
                         speculate(BadCache, noValue(), nullptr, access.slowCondition);
@@ -13756,6 +13723,13 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileMultiDeleteByOffset()
     {
+        // The inline hit path below clears the slot and stores the new
+        // structureID without the OM's locked delete/quarantine protocol.
+        // Flag-on it is unreachable: tryCacheDeleteBy never creates delete
+        // ICs under useJSThreads, so DeleteByStatus is never Simple and the
+        // parser always emits the generic DeleteById.
+        RELEASE_ASSERT(!Options::useJSThreads());
+
         LValue base = lowCell(m_node->child1());
         MultiDeleteByOffsetData& data = m_node->multiDeleteByOffsetData();
 
@@ -13814,22 +13788,8 @@ IGNORE_CLANG_WARNINGS_END
             LValue storage;
 
             if (isInlineOffset(variant.offset()))
-                storage = base; // cell-internal: never checked/masked
-            else if (Options::useJSThreads()) [[unlikely]] {
-                // SPEC-jit section 5.5 / Task 10 (I14 choke): WRITE predicate
-                // for the slot-clearing store, planned against the variant's
-                // old structure. NOTE (recorded in INTEGRATE-jit.md known
-                // gaps): the inline delete fast path (slot zero + structureID
-                // store below) does not implement the OM's locked
-                // delete/quarantine protocol; flag-on it is GIL-SOUND ONLY
-                // and must be routed generic (or E4-equivalent gated) before
-                // GIL removal.
-                ThreadedButterflyPlan plan = planThreadedButterflyAccessForStructureSet(StructureSet(variant.oldStructure()));
-                ThreadedButterflyAccess access = threadedButterflyLoadForWrite(base, plan);
-                if (access.slowCondition)
-                    speculate(BadCache, noValue(), nullptr, access.slowCondition);
-                storage = access.storage;
-            } else
+                storage = base;
+            else
                 storage = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
 
             storeProperty(m_out.int64Zero, storage, data.identifierNumber, variant.offset());
@@ -15455,7 +15415,7 @@ IGNORE_CLANG_WARNINGS_END
 
                     // We are leaving this underflow check just because we are not 100% confident that the difference can be within 32bit range.
                     slowCase.append(jit.branchPtr(CCallHelpers::Above, scratchGPR1, GPRInfo::callFrameRegister));
-                    slowCase.append(jit.branchPtrAgainstSoftStackLimit(*vm, CCallHelpers::Above, scratchGPR1)); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+                    slowCase.append(jit.branchPtrAgainstSoftStackLimit(*vm, CCallHelpers::GreaterThan, scratchGPR1));
 
                     // Before touching stack values, we should update the stack pointer to protect them from signal stack.
                     jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), scratchGPR1, CCallHelpers::stackPointerRegister);
@@ -20095,12 +20055,14 @@ IGNORE_CLANG_WARNINGS_END
                         m_vmValue, butterflyValue);
                 }
                 ValueFromBlock slowObject = m_out.anchor(slowObjectValue);
-                // SPEC-jit section 5.5 / Task 10: FRESH-FROM-OPERATION load -
-                // the object was just allocated by the operation on this
-                // thread (current-thread owner, SW=0, never segmented), so no
-                // predicate is needed; the mask is still ALWAYS emitted
-                // flag-on (E3/D6/I14(a); a no-op while the install is raw,
-                // correct once OM allocation tagging lands).
+                // FRESH-FROM-OPERATION load: the object was just allocated by
+                // the operation on this thread (current-thread owner, SW=0,
+                // never segmented), so no predicate is needed. The mask is
+                // required: the operation installs the butterfly through the
+                // JSObjectWithButterfly constructor, which tags the word with
+                // the allocating thread's TID, nonzero on every spawned
+                // thread, and the publicLength store and element fills below
+                // address the result directly.
                 LValue slowButterflyValue = m_out.loadPtr(slowObjectValue, m_heaps.JSObject_butterfly);
                 if (Options::useJSThreads()) [[unlikely]]
                     slowButterflyValue = maskedButterfly(slowButterflyValue);
@@ -21475,9 +21437,11 @@ IGNORE_CLANG_WARNINGS_END
                 CallSiteIndex callSiteIndex =
                     state->jitCode->common.codeOrigins->addUniqueCallSiteIndex(semanticNodeOrigin);
 
-                // This is the direct exit target for operation calls.
-                Box<CCallHelpers::JumpList> exceptions =
-                    exceptionHandle->scheduleExitCreation(params)->jumps(jit);
+                // This is the direct exit target for operation calls. A handler-IC site makes
+                // none: its misses unwind through the callsite index below.
+                Box<CCallHelpers::JumpList> exceptions;
+                if (!Options::useHandlerICInFTL())
+                    exceptions = exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
                 // This is the exit for call IC's created by the getById for getters. We don't have
                 // to do anything weird other than call this, since it will associate the exit with
@@ -21515,26 +21479,24 @@ IGNORE_CLANG_WARNINGS_END
 
                         auto optimizationFunction = appropriateGetByIdOptimizeFunction(type);
 
-                        if (!Options::useHandlerICInFTL())
-                            generator->slowPathJump().link(&jit);
-                        CCallHelpers::Label slowPathBegin = jit.label();
-                        CCallHelpers::Call slowPathCall;
                         if (Options::useHandlerICInFTL()) {
-                            jit.move(CCallHelpers::TrustedImmPtr(generator->propertyCache()), propertyCacheGPR);
+                            // The base is a known cell and the data-IC fast path has no miss
+                            // jump: every miss ends in the chain's slow-path handler, which calls
+                            // m_slowOperation and returns to `done`. Nothing reaches this late
+                            // path; finalize only records its label.
                             downcast<HandlerPropertyInlineCache>(*generator->propertyCache()).m_slowOperation = optimizationFunction;
-                            slowPathCall = callOperation(
-                                *state, params.unavailableRegisters(), jit, semanticNodeOrigin,
-                                exceptions.get(), CCallHelpers::Address(propertyCacheGPR, HandlerPropertyInlineCache::offsetOfSlowOperation()), resultGPR,
-                                baseGPR, propertyCacheGPR).call();
+                            generator->reportBaselineDataICSlowPathBegin(jit.label());
                         } else {
-                            slowPathCall = callOperation(
+                            generator->slowPathJump().link(&jit);
+                            CCallHelpers::Label slowPathBegin = jit.label();
+                            CCallHelpers::Call slowPathCall = callOperation(
                                 *state, params.unavailableRegisters(), jit, semanticNodeOrigin,
                                 exceptions.get(), optimizationFunction, resultGPR,
                                 baseGPR, CCallHelpers::TrustedImmPtr(generator->propertyCache())).call();
-                        }
-                        jit.jump().linkTo(done, &jit);
+                            jit.jump().linkTo(done, &jit);
 
-                        generator->reportSlowPathCall(slowPathBegin, slowPathCall);
+                            generator->reportSlowPathCall(slowPathBegin, slowPathCall);
+                        }
 
                         jit.addLinkTask(
                             [=] (LinkBuffer& linkBuffer) {
@@ -21572,9 +21534,11 @@ IGNORE_CLANG_WARNINGS_END
                 CallSiteIndex callSiteIndex =
                     state->jitCode->common.codeOrigins->addUniqueCallSiteIndex(semanticNodeOrigin);
 
-                // This is the direct exit target for operation calls.
-                Box<CCallHelpers::JumpList> exceptions =
-                    exceptionHandle->scheduleExitCreation(params)->jumps(jit);
+                // This is the direct exit target for operation calls. A handler-IC site makes
+                // none: its misses unwind through the callsite index below.
+                Box<CCallHelpers::JumpList> exceptions;
+                if (!Options::useHandlerICInFTL())
+                    exceptions = exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
                 // This is the exit for call IC's created by the getById for getters. We don't have
                 // to do anything weird other than call this, since it will associate the exit with
@@ -21614,26 +21578,23 @@ IGNORE_CLANG_WARNINGS_END
 
                         auto optimizationFunction = operationGetByIdWithThisOptimize;
 
-                        if (!Options::useHandlerICInFTL())
-                            generator->slowPathJump().link(&jit);
-                        CCallHelpers::Label slowPathBegin = jit.label();
-                        CCallHelpers::Call slowPathCall;
                         if (Options::useHandlerICInFTL()) {
-                            jit.move(CCallHelpers::TrustedImmPtr(generator->propertyCache()), propertyCacheGPR);
+                            // Same shape as getById: both operands are known cells and the
+                            // data-IC fast path has no miss jump, so nothing reaches this late
+                            // path; finalize only records its label.
                             downcast<HandlerPropertyInlineCache>(*generator->propertyCache()).m_slowOperation = optimizationFunction;
-                            slowPathCall = callOperation(
-                                *state, params.unavailableRegisters(), jit, semanticNodeOrigin,
-                                exceptions.get(), CCallHelpers::Address(propertyCacheGPR, HandlerPropertyInlineCache::offsetOfSlowOperation()), resultGPR,
-                                baseGPR, thisGPR, propertyCacheGPR).call();
+                            generator->reportBaselineDataICSlowPathBegin(jit.label());
                         } else {
-                            slowPathCall = callOperation(
+                            generator->slowPathJump().link(&jit);
+                            CCallHelpers::Label slowPathBegin = jit.label();
+                            CCallHelpers::Call slowPathCall = callOperation(
                                 *state, params.unavailableRegisters(), jit, semanticNodeOrigin,
                                 exceptions.get(), optimizationFunction, resultGPR,
                                 baseGPR, thisGPR, CCallHelpers::TrustedImmPtr(generator->propertyCache())).call();
-                        }
-                        jit.jump().linkTo(done, &jit);
+                            jit.jump().linkTo(done, &jit);
 
-                        generator->reportSlowPathCall(slowPathBegin, slowPathCall);
+                            generator->reportSlowPathCall(slowPathBegin, slowPathCall);
+                        }
 
                         jit.addLinkTask(
                             [=] (LinkBuffer& linkBuffer) {
@@ -23145,6 +23106,15 @@ IGNORE_CLANG_WARNINGS_END
         LValue handler = lowCell(m_node->child2());
         LValue resultPromise = lowCell(m_node->child3());
 
+        if (vm().gilOff()) [[unlikely]] {
+            // GIL-off, every writer of a promise's m_packed/m_slot runs under
+            // the promise's cell lock (JSPromise::performPromiseThen); the
+            // unlocked inline install below would race a locked settle on
+            // another thread.
+            vmCall(Void, operationPerformPromiseThenOneHandler, weakPointer(globalObject), inputPromise, handler, resultPromise, m_out.constInt32(static_cast<int32_t>(kind)));
+            return;
+        }
+
         constexpr unsigned pointerBits = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
         constexpr uint64_t pointerMask = (1ULL << pointerBits) - 1;
         constexpr uint64_t flagMask = static_cast<uint64_t>(JSPromise::stateMask | JSPromise::inlineReactionKindMask) << pointerBits;
@@ -23868,29 +23838,18 @@ IGNORE_CLANG_WARNINGS_END
                 m_heaps.properties.atAnyNumber());
         }
 
-        // Task-8 (SPEC-objectmodel §2.1, SCALEBENCH §43 residual #2): TID-tag
-        // the inline-installed butterfly so the stored m_butterfly word
-        // matches JSObjectWithButterfly's ctor encoding (encodeButterfly(ptr,
-        // currentButterflyTID(), false), JSObject.h:1730), so a fresh
-        // inline-allocated JSArray reads as OWNER (not foreign) at the §4.2
-        // ensureLength dispatch. A const-zero butterfly (every no-butterfly
-        // ClassType: JSPromise / JSMap / JSFunction / JSLexicalEnvironment /
-        // JS*Function / StringObject / JS*TypedArray / RegExpObject /
-        // CreateThis et al.) skips the tag — matches the ctor's
-        // `if (butterfly)` guard. Every non-const-zero caller (allocateJSArray
-        // both forms, ClonedArguments, the MaterializeNewObject indexed-header
-        // arm, the CoW JSArray buffer installs at compileNewArrayBuffer /
-        // compileNewArrayWithSpread / compileOwnPropertyKeys) passes a
-        // freshly-allocated or known-non-null butterfly on the fall-through
-        // path. The bitOr produces a fresh LValue: the original untagged
-        // `butterfly` stays available for post-install header / element
-        // writes (allocateJSArray's ArrayValues butterfly return,
-        // compileMaterializeNewObject's fill loop, ClonedArguments' length /
-        // varargs copy). loadButterflyTIDTag() is Effects::none() so B3 hoists
-        // the per-thread-constant TLS load. Pre-escape, plain store (E4/N3).
-        // gilOff emission only — flag-off byte-identity.
+        // TID-tag the inline-installed butterfly word so it matches the
+        // JSObjectWithButterfly constructor's encoding (encodeButterfly(ptr,
+        // currentButterflyTID(), false)) and the allocating thread reads as
+        // OWNER at its first write or growth. Emitted whenever useJSThreads is
+        // on, GIL-on included: spawned threads have nonzero TIDs there too, and
+        // the write predicate compares against the same per-thread tag. A
+        // const-null butterfly (every no-butterfly ClassType) skips the tag,
+        // matching the constructor's `if (butterfly)` guard. The untagged
+        // `butterfly` stays available to callers for post-install header and
+        // element writes. Pre-escape, so a plain store is the install form.
         LValue installedButterfly = butterfly;
-        if (vm().gilOff()) [[unlikely]] {
+        if (Options::useJSThreads()) [[unlikely]] {
             if (!(butterfly->hasIntPtr() && !butterfly->asIntPtr()))
                 installedButterfly = m_out.bitOr(butterfly, loadButterflyTIDTag());
         }
@@ -27874,10 +27833,11 @@ IGNORE_CLANG_WARNINGS_END
         jit.move(CCallHelpers::TrustedImmPtr(state->jitCode->handlerICJITData()), GPRInfo::jitDataRegister);
         jit.move(CCallHelpers::TrustedImmPtr(propertyCache), propertyCacheGPR);
         // The shared by-val slow-path handler thunks pass profileGPR to the
-        // optimize operations; point it at the FTL's dummy profile (the DFG
-        // does the same with DFG::JITData::offsetOfDummyArrayProfile()).
+        // optimize operations; point it at the dummy profile inside the JITData
+        // just materialized in jitDataRegister (the DFG does the same with
+        // DFG::JITData::offsetOfDummyArrayProfile()).
         if (profileGPR != InvalidGPRReg)
-            jit.move(CCallHelpers::TrustedImmPtr(state->jitCode->handlerICDummyArrayProfile()), profileGPR);
+            jit.addPtr(CCallHelpers::TrustedImm32(FTL::JITData::offsetOfDummyArrayProfile()), GPRInfo::jitDataRegister, profileGPR);
     }
 
     RefPtr<PatchpointExceptionHandle> preparePatchpointForExceptions(PatchpointValue* value)

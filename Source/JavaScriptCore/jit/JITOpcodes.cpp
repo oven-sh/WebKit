@@ -28,7 +28,6 @@
 #if ENABLE(JIT)
 #include "JIT.h"
 
-#include "AssemblyHelpersSpoolers.h"
 #include "BaselineJITRegisters.h"
 #include "BasicBlockLocation.h"
 #include "BinarySwitch.h"
@@ -2259,72 +2258,6 @@ void JIT::emit_op_get_prototype_of(const JSInstruction* currentInstruction)
 
     emitValueProfilingSite(bytecode, jsRegT32);
     emitPutVirtualRegister(bytecode.m_dst, jsRegT32);
-}
-
-// UNGIL §A.1.3 (U-T4a): VM&-keyed twin of the EntryFrame*& overload in
-// AssemblyHelpers.cpp. The only delta is the buffer-base materialization:
-// loadTopEntryFrame(vm, destBufferGPR) (per-lite GIL-off, VM-block word
-// GIL-on) instead of baking loadPtr(&topEntryFrame). Defined here beside its
-// only callers (op_enter handler thunk, emitSlow_op_loop_hint); FIXME: fold
-// into AssemblyHelpers.cpp alongside the EntryFrame*& overload.
-void AssemblyHelpers::copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(VM& vm, const RegisterSet& usedRegisters)
-{
-#if NUMBER_OF_CALLEE_SAVES_REGISTERS > 0
-    // Copy saved calleeSaves on stack or unsaved calleeSaves in register to vm calleeSave buffer
-    ScratchRegisterAllocator allocator(usedRegisters);
-    GPRReg destBufferGPR = allocator.allocateScratchGPR();
-    GPRReg temp1 = allocator.allocateScratchGPR();
-    FPRReg fpTemp1 = allocator.allocateScratchFPR();
-    GPRReg temp2 = allocator.allocateScratchGPR();
-    FPRReg fpTemp2 = allocator.allocateScratchFPR();
-    RELEASE_ASSERT(!allocator.didReuseRegisters());
-
-    loadTopEntryFrame(vm, destBufferGPR);
-    addPtr(TrustedImm32(EntryFrame::calleeSaveRegistersBufferOffset()), destBufferGPR);
-
-    CopySpooler spooler(*this, framePointerRegister, destBufferGPR, temp1, temp2, fpTemp1, fpTemp2);
-
-    RegisterAtOffsetList* allCalleeSaves = RegisterSet::vmCalleeSaveRegisterOffsets();
-    const RegisterAtOffsetList* currentCalleeSaves = &RegisterAtOffsetList::llintBaselineCalleeSaveRegisters();
-    auto dontCopyRegisters = RegisterSet::stackRegisters();
-    unsigned registerCount = allCalleeSaves->registerCount();
-
-    unsigned i = 0;
-    for (; i < registerCount; i++) {
-        RegisterAtOffset entry = allCalleeSaves->at(i);
-        if (dontCopyRegisters.contains(entry.reg(), IgnoreVectors))
-            continue;
-        RegisterAtOffset* currentFrameEntry = currentCalleeSaves->find(entry.reg());
-
-        if (!entry.reg().isGPR())
-            break;
-        if (currentFrameEntry)
-            spooler.loadGPR(currentFrameEntry->offset());
-        else
-            spooler.copyGPR(entry.reg().gpr());
-        spooler.storeGPR(entry.offset());
-    }
-    spooler.finalizeGPR();
-
-    for (; i < registerCount; i++) {
-        RegisterAtOffset entry = allCalleeSaves->at(i);
-        if (dontCopyRegisters.contains(entry.reg(), IgnoreVectors))
-            continue;
-        RegisterAtOffset* currentFrameEntry = currentCalleeSaves->find(entry.reg());
-
-        RELEASE_ASSERT(entry.reg().isFPR());
-        if (currentFrameEntry)
-            spooler.loadFPR(currentFrameEntry->offset());
-        else
-            spooler.copyFPR(entry.reg().fpr());
-        spooler.storeFPR(entry.offset());
-    }
-    spooler.finalizeFPR();
-
-#else
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(usedRegisters);
-#endif
 }
 
 } // namespace JSC

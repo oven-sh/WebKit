@@ -35,7 +35,6 @@
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
-#include <wtf/MonotonicTime.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Threading.h>
@@ -56,18 +55,9 @@ class Heap;
 
 // Master gate for the phase-1 GIL'd shared-memory Thread API
 // (docs/threads/SPEC-api.md). The GIL is the shared VM's JSLock and is
-// always on in phase 1.
-//
-// SPEC-api 9.2-1 paired edit (a), landed: this gate reads ONLY the canonical
-// Options::useJSThreads(), the same predicate every other workstream
-// (objectmodel JSObject.h hooks, jit TID-tag paths, vmstate flag
-// implications and its planned GIL-off backstop assert) gates on. The
-// prep-stub --useThreads alias must NOT be honored here: it would let a
-// --useThreads=1 run spawn real OS threads into the shared heap with all
-// flag-gated concurrent-mode machinery (keyed on useJSThreads) switched
-// off. The alias OptionsList.h entry itself is now a dead option with zero
-// code consumers; its one-line deletion is the only remaining 9.2-1 INT
-// action (OptionsList.h is a shared hot file, not api-editable).
+// always on in phase 1. Reads only Options::useJSThreads(), the predicate
+// every other threads gate (object model hooks, jit TID-tag paths, vmstate
+// flag implications) keys on.
 ALWAYS_INLINE bool useJSThreadsEnabled()
 {
     return Options::useJSThreads();
@@ -85,14 +75,13 @@ public:
     // Must be called while holding the shared VM's JSLock. Captures the
     // calling thread's ThreadState as the registrant.
     //
-    // countsKeepalive (§E.3, U-T9): pass true at the COUNTED registration
-    // sites — asyncHold, cond.asyncWait, property Atomics.waitAsync; never
-    // asyncJoin — and create arms the keepalive INTERNALLY (the full §E.3
-    // protocol: armed-before-visible, inboxLock'd increment, spawned+OPEN
-    // assert) iff the VM is gilOff and the registrant is a spawned TS.
-    // Main/embedder registrants and GIL-on/flag-off ignore the bit (§E.7:
-    // they never touch keepalive). Defaulted false so the unowned call-site
-    // TUs compile unchanged; see gate U-T9-INT1 at armKeepalive() below.
+    // countsKeepalive (§E.3): a COUNTED registration keeps a spawned
+    // registrant's drain loop open until it settles. create arms the
+    // keepalive internally (armed before the ticket is visible, inboxLock'd
+    // increment, spawned+OPEN assert) iff the VM is gilOff and the
+    // registrant is a spawned TS; main/embedder registrants and
+    // GIL-on/flag-off ignore the bit (§E.7). See the keepalive banner at
+    // armKeepalive() below for which sites count today.
     JS_EXPORT_PRIVATE static Ref<AsyncTicket> create(JSGlobalObject*, JSPromise*, Vector<JSCell*>&& dependencies = { }, bool countsKeepalive = false);
     JS_EXPORT_PRIVATE ~AsyncTicket();
 
@@ -159,48 +148,38 @@ public:
     // ========================================================================
     // UNGIL §E.3 keepalive accounting (ANNEX E3, BINDING; U-T9).
     //
-    // m_keepaliveReleased is CONSTRUCTED true (= released; r6 F1 — the safe
-    // default mirrors the landed m_settled CAS): a never-armed ticket
-    // (asyncJoin, TA waitAsync, main/embedder registrations, any future
-    // non-counted registration) loses every claim CAS and never decrements,
-    // so the uint64 keepalive counter can never wrap below zero.
+    // m_keepaliveReleased is CONSTRUCTED true (= released; the safe default
+    // mirrors the landed m_settled CAS): a never-armed ticket loses every
+    // claim CAS and never decrements, so the uint64 keepalive counter can
+    // never wrap below zero.
     //
     // armKeepalive() is the SOLE site that stores false (= armed): called
     // once at registration (I20 addPendingWork time), on the REGISTERING
     // (spawned, inbox-OPEN) thread, BEFORE the ticket is visible to any
-    // settler — every spawned-TS AsyncTicket EXCEPT asyncJoin (asyncHold,
-    // cond.asyncWait, property Atomics.waitAsync; §E.3 INCREMENT rule).
-    // Increments the registrant's keepaliveCount under its inboxLock and
-    // asserts spawned+OPEN (U25).
+    // settler. Increments the registrant's keepaliveCount under its
+    // inboxLock and asserts spawned+OPEN (U25).
     //
     // claimKeepaliveRelease() is the exactly-once gate every DECREMENT site
-    // must win first (false->true CAS); losers do nothing. Decrement sites
-    // (§E.3): (1) settle-enqueue, in the SAME inboxLock section as the
-    // ThreadTask append, iff inboxOpen; (2) VM-shutdown cancelPendingWork.
+    // must win first (false->true CAS); losers do nothing. Decrement sites:
+    // (1) settle-enqueue, in the SAME inboxLock section as the ThreadTask
+    // append, iff inboxOpen; (2) retireUnsettled (a registration revoked
+    // before any settler could observe it), under inboxLock iff inboxOpen.
     // Inbox-close performs NO claim step: a post-close settle wins its CAS,
     // observes inboxOpen == false, SKIPS the decrement (the counter is dead)
     // and takes the main fallback.
     //
-    // ==== NAMED INTEGRATION GATE U-T9-INT1 (blocks the §E ladder arms) ====
-    // The arming PROTOCOL is fully in-set: AsyncTicket::create takes
-    // `bool countsKeepalive` and arms internally (gilOff + spawned
-    // registrant). The RESIDUAL obligation is exactly four one-token edits
-    // in TUs outside U-T9's owned set, to be landed TOGETHER with the
-    // threadMain E2A wiring (openThreadInbox / runSpawnedThreadDrainLoop-
-    // AndClose, see the integration-point banner below):
-    //   LockObject.cpp:492      asyncHold            -> countsKeepalive=true
-    //   ConditionObject.cpp:287 cond.asyncWait       -> countsKeepalive=true
-    //   ThreadAtomics.cpp:639   property waitAsync   -> countsKeepalive=true
-    //   ThreadObject.cpp:414    asyncJoin            -> stays false (§E.3)
-    // plus the §C.3 finite-timeout addThreadWaitDeadline call (SD16). Until
-    // U-T9-INT1 lands, every ticket stays never-armed: keepalive reads 0, a
-    // spawned thread's E2A loop exits at fn-return + queue-empty, and late
-    // settles take the declared main fallback (the api 4.6.2 class) — safe
-    // (no hang, no wrap) but the §E.3 liveness semantics (never-notified
-    // asyncHold/waitAsync keeps the loop alive) and the SD16 timing arms are
-    // NOT in force; the §E.2/§E.3/SD16/SD17 ladder arms cannot be claimed
-    // green before this gate closes. GIL-on/flag-off: armKeepalive is never
-    // called and nothing here runs.
+    // Counted site today: cond.asyncWait (ConditionObject.cpp). Two sites
+    // register UNCOUNTED. lock.asyncHold (LockObject.cpp): its grant depends
+    // on the current holder, which may be parked in join() on the registrant
+    // while it holds the lock, so a counted registration would deadlock the
+    // registrant's completion (SPEC-api 4.6.2 lets a finished thread's ticket
+    // settle later). Property Atomics.waitAsync (ThreadAtomics.cpp): its
+    // finite-timeout timer runs on the VM run loop, so a counted registration
+    // would make the close wait on a run-loop turn that a main thread parked
+    // in join() never makes. After the registrant closes, both settle through
+    // the main fallback. asyncJoin never counts (counting deadlocks mutual and
+    // self asyncJoin).
+    // GIL-on/flag-off: armKeepalive is never called and nothing here runs.
     // ========================================================================
     JS_EXPORT_PRIVATE void armKeepalive();
     bool claimKeepaliveRelease()
@@ -208,6 +187,11 @@ public:
         bool expected = false;
         return m_keepaliveReleased.compare_exchange_strong(expected, true);
     }
+    // True while a counted registration is still holding its spawned
+    // registrant's drain loop open: the registrant is alive and waits for
+    // this ticket to settle into its own inbox, so a grant must not depend
+    // on the main thread's run loop.
+    bool keepaliveArmed() const { return !m_keepaliveReleased.load(std::memory_order_acquire); }
 
     // §E.4 "DWT retirement on the task-queue path": runs a queued ThreadTask
     // body on the registrant under its §F token — (a) the settle task,
@@ -268,27 +252,6 @@ struct ThreadTask {
     Ref<AsyncTicket> ticket;
 };
 
-// One §C.3/§E.7.5 finite-timeout deadline parked on a spawned registrant TS
-// (SD16: the 5.6 run-loop timer becomes a registrant-local deadline; the
-// §E.2 wait sleeps min(quantum, earliest deadline) and expires it locally).
-// Guarded by the registrant's inboxLock.
-//
-// tryDequeue: dequeues the waiter under ITS list lock (api rank 3) and
-// returns whether this expirer won — an already-notified/dequeued waiter
-// returns false (the in-flight settle wins; §E.5 harvest rule). Called with
-// NO lock held; takes and DROPS the list lock internally (rank-3 locks are
-// never held together, §LK).
-// settleTimedOut: the §E.4 settle "timed-out" (rule-1 decrement applies).
-// Called strictly AFTER tryDequeue returned true, with NO api rank-1..3
-// lock held (r17 F2).
-struct ThreadWaitDeadline {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ThreadWaitDeadline);
-
-    MonotonicTime deadline;
-    Function<bool()> tryDequeue;
-    Function<void()> settleTimedOut;
-};
-
 // Native state of one JS thread (SPEC-api 5.1). Main/embedder threads get a
 // lazily created ThreadState (tid 0, isSpawned = false) on first use.
 class ThreadState final : public ThreadSafeRefCounted<ThreadState> {
@@ -310,14 +273,13 @@ public:
         RELEASE_ASSERT(threadLocals.isEmpty());
         RELEASE_ASSERT(!jsThread);
         // UNGIL §E.2/§E.5 (U-T9): the E2A close block routed every residue
-        // ThreadTask to main and harvested every waitDeadline before the
-        // last ref can drop; a lazy main/embedder TS never opens its inbox
-        // (§E.1), so both stay empty there.
+        // ThreadTask to main before the last ref can drop; a lazy
+        // main/embedder TS never opens its inbox (§E.1), so the queue stays
+        // empty there.
         {
             Locker inboxLocker { inboxLock };
             RELEASE_ASSERT(!inboxOpen);
             RELEASE_ASSERT(taskQueue.isEmpty());
-            RELEASE_ASSERT(waitDeadlines.isEmpty());
         }
         // asyncJoiners must have been drained too: by the completion
         // sequence (spawned threads) or by the 5.10 finalizer hook
@@ -383,10 +345,10 @@ public:
     //    inboxOpen flips false (close): later claims skip the decrement.
     //  - runLoopCondition: the E2A wait/wake edge (wakeups: task append,
     //    stop, termination, quantum — §E.2).
-    //  - waitDeadlines: §C.3/§E.7.5 deadline-ordered-by-scan list of
-    //    finite-timeout PROPERTY waitAsync deadlines registered while this
-    //    spawned TS was open (SD16); expired by the owner's E2A EXPIRE step
-    //    or the §E.5 close harvest (r16 F5).
+    //
+    // Finite-timeout property Atomics.waitAsync deadlines are NOT parked
+    // here: every registrant's timeout is the VM run-loop timer armed in
+    // ThreadAtomics.cpp, whose settle routes by registrant like any other.
     //
     // GIL-on/flag-off: nothing reads or writes any of these (the E2A loop
     // only runs gilOff; §E.4 routing is gilOff-gated) — flag-off identity.
@@ -396,7 +358,6 @@ public:
     Deque<ThreadTask> taskQueue WTF_GUARDED_BY_LOCK(inboxLock);
     uint64_t keepaliveCount WTF_GUARDED_BY_LOCK(inboxLock) { 0 };
     Condition runLoopCondition;
-    Vector<ThreadWaitDeadline> waitDeadlines WTF_GUARDED_BY_LOCK(inboxLock);
 
 private:
     ThreadState(uint16_t tid, bool isSpawned)
@@ -447,11 +408,16 @@ public:
     // carrier-collection walk — which runs under VMLiteRegistry::lock and
     // therefore may acquire NO other lock (§LK.6/I7) — can discriminate
     // carrier lites from spawned lites with a pure range check on the
-    // immutable lite tid instead of probing m_threads under m_lock. Both
-    // halves still exhaust against the one 2^15 space (the spawn cap is
-    // Options::maxJSThreads, far below either half); the §D.1 TID-rebias
-    // protocol (U-T12, below) PRESERVES the partition — retired TIDs are
-    // recycled into per-range free lists, never across the split.
+    // immutable lite tid instead of probing m_threads under m_lock. Each
+    // half holds 16383 ids. Options::maxJSThreads caps LIVE spawned threads
+    // and defaults to the spawned half's size; a larger value changes
+    // nothing, because live threads hold distinct TIDs and the range check
+    // in allocateSpawnedThreadState fires first. GIL-on/flag-off never
+    // reissues a retired TID (Deviation 10), so the spawned half is also the
+    // process-lifetime spawn budget: the 16384th spawn throws RangeError no
+    // matter how many threads are live. GIL-off, the §D.1 TID-rebias
+    // protocol (U-T12, below) recycles retired TIDs into per-range free
+    // lists, never across the split.
     static constexpr uint16_t carrierTIDBase = 0x4000;
     static bool isCarrierTID(uint16_t tid) { return tid >= carrierTIDBase && tid < notTTLTID; }
 
@@ -468,29 +434,15 @@ public:
     // where there is no throw context (I17).
     uint16_t allocateCarrierTIDInternal();
 
-    static uint16_t currentTID();
     JS_EXPORT_PRIVATE static bool isJSThreadCurrent(); // true iff spawned Thread
 
-    // Allocates a TID and registers a new spawned ThreadState. Returns null
-    // on TID exhaustion or when the live-thread cap is exceeded (the caller
-    // throws RangeError). UNGIL U0b BACKSTOP (U-T6): under gilOffProcess
-    // this VM-blind form ALWAYS returns null — it cannot prove the spawning
-    // VM is the m_gilOff winner, and a loser-VM spawn must be refused
-    // (U0b), not silently run GIL'd phase-1 semantics. Callers under
-    // gilOffProcess must use the VM-aware overload; the spawn host call
-    // (ThreadObject.cpp, outside U-T6's owned set) migrating to it is a
-    // recorded integration obligation — until then gilOffProcess
-    // OVER-refuses (winner spawns throw RangeError too), which is
-    // fail-safe and changes nothing GIL-on/flag-off.
-    RefPtr<ThreadState> allocateSpawnedThreadState();
-    // UNGIL U0b (U-T6): the VM-aware overload — under gilOffProcess only
-    // the m_gilOff VM may spawn; any other (loser) VM returns null so the
-    // caller throws its RangeError (api 5.1 shape; the loser keeps the
-    // GIL-on single-migrating-client + real m_lock protocol for
-    // multi-embedder entry). Flag-off: identical to the unparameterized
-    // form. The U0b refusal is enforced today even at the unmigrated
-    // ThreadObject.cpp call site via the VM-blind overload's gilOffProcess
-    // backstop above.
+    // Allocates a TID and registers a new spawned ThreadState for a spawn
+    // from the given VM. Returns null on TID exhaustion or when the
+    // live-thread cap is exceeded (the caller throws RangeError). UNGIL U0b
+    // (U-T6): under gilOffProcess only the m_gilOff winner VM may spawn;
+    // any other (loser) VM returns null so the caller throws its RangeError
+    // (api 5.1 shape; the loser keeps the GIL-on single-migrating-client +
+    // real m_lock protocol for multi-embedder entry).
     RefPtr<ThreadState> allocateSpawnedThreadState(VM&);
     void unregisterThread(ThreadState&);
 
@@ -578,10 +530,7 @@ public:
     // rebias stop) — land with the thread-ungil verification-ladder phase
     // against the RaceAmplifier::perturb hooks already planted here and in
     // Heap.cpp. They are still U-T12 deliverables (gate ledger), not
-    // dropped. Arm (2) is ADDITIONALLY blocked on the JSThreadsSafepoint
-    // R2-4 tripwire obligation recorded in Heap.cpp's rebias banner: until
-    // that lands, the D1R fire path RELEASE_ASSERTs in any multi-VM
-    // gilOffProcess process. Arms (1) and (3) are single-VM and unblocked.
+    // dropped.
     // ========================================================================
 
     enum class RebiasState : uint8_t { Idle, Sealed, Restamped };
@@ -648,11 +597,6 @@ public:
     ThreadManager() = default; // for LazyNeverDestroyed only; use singleton()
 
 private:
-    // The shared allocation body behind both allocateSpawnedThreadState
-    // overloads (cap check, TID allocation, m_threads registration). The
-    // U0b gilOffProcess gating lives in the public overloads only.
-    RefPtr<ThreadState> allocateSpawnedThreadStateInternal();
-
     // §D.1 phase-1 arming + seal. Requires m_lock; gilOffProcess-only
     // callers (no-ops otherwise are enforced at the call sites).
     void maybeArmAndSealRebiasLocked() WTF_REQUIRES_LOCK(m_lock);
@@ -786,13 +730,6 @@ JS_EXPORT_PRIVATE void tearDownSpawnedThreadForExit(VM&, VMLite&);
 // owning spawned thread, after §B.1 attach, before fn. Asserts spawned and
 // not-yet-open.
 JS_EXPORT_PRIVATE void openThreadInbox(ThreadState&);
-
-// §C.3/§E.7.5 registration helper: appends a finite-timeout deadline to the
-// CURRENT spawned TS's waitDeadlines under inboxLock (asserts spawned+OPEN;
-// the §C.3 site calls this only when the registrant TS is spawned and the
-// timeout is finite — r12 F3). Signals runLoopCondition so an idle E2A loop
-// re-computes its sleep bound.
-JS_EXPORT_PRIVATE void addThreadWaitDeadline(ThreadState&, MonotonicTime deadline, Function<bool()>&& tryDequeue, Function<void()>&& settleTimedOut);
 
 // ============================================================================
 // UNGIL §E.7 (ANNEX E7 + r17 F3 + r18 F2; U-T9) — cross-thread DWT work under

@@ -141,12 +141,6 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSString);
 
-template<typename CharacterType>
-void JSRopeString::resolveRopeInternalNoSubstring(std::span<CharacterType> buffer, uint8_t* stackLimit) const
-{
-    resolveToBuffer(fiber0(), fiber1(), fiber2(), buffer, stackLimit);
-}
-
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
@@ -464,40 +458,51 @@ JSString* jsStringWithCacheSlowCase(VM& vm, StringImpl& stringImpl)
 
 #if USE(BUN_JSC_ADDITIONS)
 
-void JSRopeString::iterRopeInternalNoSubstring(jsstring_iterator* iter) const
+// Every decision about a node (rope, substring, fiber0, resolved impl) comes
+// from one m_fiber snapshot of that node: a concurrent resolver can publish a
+// StringImpl* into any reachable fiber at any time, and a second read would
+// misread it as rope flags and a JSString*. fiber1/fiber2 and the substring
+// base/offset live in m_compactFibers, which resolution never clears, so they
+// stay valid under the snapshot decision.
+
+static ALWAYS_INLINE void iterStringImplCharacters(jsstring_iterator* iter, size_t position, const StringImpl& string, unsigned offset, unsigned length)
 {
-    for (size_t i = 0; i < s_maxInternalRopeLength && fiber(i) && !iter->stop; ++i) {
-        if (fiber(i)->isRope()) {
-            iterRopeSlowCase(iter);
+    if (string.is8Bit())
+        StringImpl::iterCharacters(iter, position, string.span8().data() + offset, length);
+    else
+        StringImpl::iterCharacters(iter, position, string.span16().data() + offset, length);
+}
+
+void JSRopeString::iterRopeInternalNoSubstring(JSString* fiber0, jsstring_iterator* iter) const
+{
+    JSString* fibers[s_maxInternalRopeLength] = { fiber0, fiber1(), fiber2() };
+    uintptr_t fiberBits[s_maxInternalRopeLength] = { };
+    for (size_t i = 0; i < s_maxInternalRopeLength && fibers[i] && !iter->stop; ++i) {
+        fiberBits[i] = fibers[i]->fiberConcurrently();
+        if (fiberBits[i] & isRopeInPointer) {
+            iterRopeSlowCase(fiber0, iter);
             return;
         }
     }
 
     size_t position = 0;
 
-    for (size_t i = 0; i < s_maxInternalRopeLength && fiber(i) && !iter->stop; ++i) {
-        // TSAN family rope-stringimpl: annotated relaxed read of the fiber's
-        // published impl (plain String reads race swapToAtomString).
-        const StringImpl& fiberString = *fiber(i)->getValueImpl();
+    for (size_t i = 0; i < s_maxInternalRopeLength && fibers[i] && !iter->stop; ++i) {
+        const StringImpl& fiberString = *std::bit_cast<StringImpl*>(fiberBits[i]);
         unsigned length = fiberString.length();
-        if (fiberString.is8Bit())
-            StringImpl::iterCharacters(iter, position, fiberString.span8().data(), length);
-        else
-            StringImpl::iterCharacters(iter, position, fiberString.span16().data(), length);
+        iterStringImplCharacters(iter, position, fiberString, 0, length);
         position += length;
     }
 
     ASSERT(iter->stop || length() == position);
 }
 
-void JSRopeString::iterRope(jsstring_iterator *iter) const
+void JSRopeString::iterRope(uintptr_t fiberBits, jsstring_iterator* iter) const
 {
-     ASSERT(isRope());
+    ASSERT(fiberBits & isRopeInPointer);
 
-    if (isSubstring()) {
+    if (fiberBits & isSubstringInPointer) {
         ASSERT(!substringBase()->isRope());
-        // TSAN family rope-stringimpl: annotated relaxed read of the base's
-        // published impl.
         StringImpl* impl = substringBase()->getValueImpl();
 
         if (impl->is8Bit()) {
@@ -513,48 +518,50 @@ void JSRopeString::iterRope(jsstring_iterator *iter) const
         return;
     }
 
-
-    iterRopeInternalNoSubstring(iter);
+    iterRopeInternalNoSubstring(std::bit_cast<JSString*>(fiberBits & stringMask), iter);
 }
 
-void JSRopeString::iterRopeSlowCase(jsstring_iterator* iter) const
+void JSRopeString::iterRopeSlowCase(JSString* fiber0, jsstring_iterator* iter) const
 {
     size_t position = length(); // We will be working backwards over the rope.
     Vector<JSString*, 32, UnsafeVectorOverflow> workQueue; // These strings are kept alive by the parent rope, so using a Vector is OK.
 
-    for (size_t i = 0; i < s_maxInternalRopeLength && fiber(i); ++i)
-        workQueue.append(fiber(i));
+    workQueue.append(fiber0);
+    if (JSString* rootFiber1 = fiber1()) {
+        workQueue.append(rootFiber1);
+        if (JSString* rootFiber2 = fiber2())
+            workQueue.append(rootFiber2);
+    }
 
     while (!workQueue.isEmpty() && !iter->stop) {
         JSString* currentFiber = workQueue.last();
         workQueue.removeLast();
 
-        if (currentFiber->isRope()) {
+        uintptr_t currentBits = currentFiber->fiberConcurrently();
+        if (currentBits & isRopeInPointer) {
             JSRopeString* currentFiberAsRope = static_cast<JSRopeString*>(currentFiber);
-            if (currentFiberAsRope->isSubstring()) {
+            if (currentBits & isSubstringInPointer) {
                 ASSERT(!currentFiberAsRope->substringBase()->isRope());
                 StringImpl* string = currentFiberAsRope->substringBase()->getValueImpl();
                 unsigned offset = currentFiberAsRope->substringOffset();
                 unsigned length = currentFiberAsRope->length();
                 position -= length;
-                if (string->is8Bit())
-                    StringImpl::iterCharacters(iter, position, string->span8().data() + offset, length);
-                else
-                    StringImpl::iterCharacters(iter, position, string->span16().data() + offset, length);
+                iterStringImplCharacters(iter, position, *string, offset, length);
                 continue;
             }
-            for (size_t i = 0; i < s_maxInternalRopeLength && currentFiberAsRope->fiber(i) && !iter->stop; ++i)
-                workQueue.append(currentFiberAsRope->fiber(i));
+            workQueue.append(std::bit_cast<JSString*>(currentBits & stringMask));
+            if (JSString* nestedFiber1 = currentFiberAsRope->fiber1()) {
+                workQueue.append(nestedFiber1);
+                if (JSString* nestedFiber2 = currentFiberAsRope->fiber2())
+                    workQueue.append(nestedFiber2);
+            }
             continue;
         }
 
-        StringImpl* string = currentFiber->getValueImpl();
+        StringImpl* string = std::bit_cast<StringImpl*>(currentBits);
         unsigned length = string->length();
         position -= length;
-        if (string->is8Bit())
-            StringImpl::iterCharacters(iter, position, string->span8().data(), length);
-        else
-            StringImpl::iterCharacters(iter, position, string->span16().data(), length);
+        iterStringImplCharacters(iter, position, *string, 0, length);
     }
 
     ASSERT(position == 0 || iter->stop);

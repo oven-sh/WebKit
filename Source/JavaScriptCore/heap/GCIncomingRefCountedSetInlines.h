@@ -37,22 +37,25 @@ GCIncomingRefCountedSet<T>::GCIncomingRefCountedSet()
 }
 
 template<typename T>
-void GCIncomingRefCountedSet<T>::lastChanceToFinalize()
+void GCIncomingRefCountedSet<T>::lastChanceToFinalize() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    Locker locker { m_lock };
+    // Heap teardown: no mutator is left, so the set is walked unlocked.
+    // filterIncomingReferences deletes the object once its incoming references
+    // are gone, and that destructor takes locks of its own (see m_lock).
     for (size_t i = m_vector.size(); i--;)
         m_vector[i]->filterIncomingReferences([] (JSCell*) { return false; });
 }
 
 template<typename T>
-bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
+bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    // Serializes both the set's vector append and the object's own
-    // incoming-reference storage mutation (addIncomingReference). Readers of
-    // that per-object storage outside this set's API (ArrayBuffer detach /
-    // wasm-grow walks) snapshot under this same lock via
-    // Heap::arrayBufferIncomingReferencesLock() (see GCIncomingRefCounted.h).
-    Locker locker { m_lock };
+    // Only GIL-off has mutators appending here concurrently with each other
+    // and with the detach / wasm-grow snapshot readers (see
+    // Heap::arrayBufferIncomingReferencesLock()). With the GIL, and flag-off,
+    // exactly one mutator runs at a time and the upstream lock-free shape is kept.
+    std::optional<Locker<Lock>> locker;
+    if (g_jscConfig.gilOffProcess) [[unlikely]]
+        locker.emplace(m_lock);
     if (!object->addIncomingReference(cell)) {
         ASSERT(object->isDeferred());
         ASSERT(object->numberOfIncomingReferences());
@@ -66,12 +69,14 @@ bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
 }
 
 template<typename T>
-void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
+void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    // GC end-phase runs stopped-world today, but take the lock anyway: it is
-    // uncontended there, and it keeps the invariant "all access to m_vector
-    // and per-object incoming-reference storage is under m_lock" auditable.
-    Locker locker { m_lock };
+    // GC end phase: every mutator is stopped, so none is inside addReference
+    // or a snapshot and the set is walked unlocked. m_lock must not be held
+    // here anyway: filterIncomingReferences deletes an object whose last
+    // incoming reference died, and ~ArrayBuffer takes other locks and runs
+    // embedder destructors.
+    ASSERT(vm.heap.worldIsStopped());
     size_t preciseBytes = 0;
     m_vector.removeAllMatching([&](T* object) {
         size_t size = object->gcSizeEstimateInBytes();

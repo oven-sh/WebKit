@@ -40,10 +40,7 @@
 #include "SourceProfiler.h"
 #include "Structure.h"
 #include "UnlinkedFunctionCodeBlock.h"
-#include "VMTraps.h"
-#include <wtf/RecursiveLockAdapter.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/Threading.h>
 
 namespace JSC {
 
@@ -54,87 +51,25 @@ static_assert(sizeof(UnlinkedFunctionExecutable) <= 128, "UnlinkedFunctionExecut
 
 const ClassInfo UnlinkedFunctionExecutable::s_info = { "UnlinkedFunctionExecutable"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(UnlinkedFunctionExecutable) };
 
-// UNGIL AB18-R1-C (concurrent unlinked codegen): GIL-off, N mutators of the
-// shared VM can race unlinkedCodeBlockFor() for the SAME executable:
-//  - recordParse() is a non-atomic read-modify-write of this cell's densely
-//    packed bitfield words (m_features / m_hasCapturedVariables share machine
-//    words with neighbors like m_parameterCount and m_sourceParseMode), so a
-//    concurrent RMW or header read can observe clobbered adjacent bits — a
-//    garbage parameter/parse-mode cluster then overflows the checked
-//    bookkeeping in BytecodeGenerator::initializeNextParameter (rc=134
-//    CrashOnOverflow). Even "same value" concurrent recordParse is UB: C++
-//    bitfield writes are word-granularity RMW.
+// Concurrent unlinked codegen: GIL-off, N mutators of the shared VM can race
+// unlinkedCodeBlockFor() for the SAME executable:
 //  - m_unlinkedCodeBlockForCall is a union with RefPtr<Decoder> m_decoder;
 //    decodeCachedCodeBlocks() moves the decoder OUT of the slot and decodes
 //    INTO it, so a concurrent reader of the slot can dereference a Decoder*
-//    or half-written pointer as UnlinkedFunctionCodeBlock* (rc=139 SEGV).
+//    or half-written pointer as UnlinkedFunctionCodeBlock*.
 //  - plain double-generate / lost-install on the WriteBarrier slots.
+// (recordParse() itself is race-free: its fields are dedicated relaxed-atomic
+// bytes, see UnlinkedFunctionExecutable.h.)
 //
-// Serialization: REUSE the IT-8 process-wide recursive compilation lock
-// (defined in runtime/ScriptExecutable.cpp) rather than introducing a second
+// Serialization: the process-wide recursive compilation lock
+// (GILOffCompilationLocker, bytecode/JSThreadsSafepoint.h) rather than a second
 // lock. The dominant path already holds it here (prepareForExecutionImpl ->
-// newCodeBlockFor -> unlinkedCodeBlockFor), and BytecodeGenerator/DFGPlan take
-// it under codegen — any second lock taken across the generate sequence would
-// be ABBA-prone against it (the CodeCache eager-generation path enters WITHOUT
-// the IT-8 lock held). One recursive lock has no ordering to violate; the
-// already-held path is a cheap re-acquire. Per-executable striping is a
-// post-acceptance optimization, same as the IT-8 note. Zero per-cell footprint
-// (the cell must stay <= 128 bytes, see static_assert above) and no header
-// change. GIL-on/flag-off never reaches the lock (one predicted-untaken
-// branch), so flag-off identity (V5a) is preserved.
-//
-// (Resolved residual, AB18-R1-C amendment A: setSingletonHasBeenInvalidated()
-// used to set a bit in the same contiguous bitfield run as the recordParse()
-// fields from any thread without this lock. The bit has since been hoisted
-// out of the bitfield into its own std::atomic<bool>, accessed relaxed via
-// the singletonHasBeenInvalidated() accessors — see the member comment in
-// UnlinkedFunctionExecutable.h.)
-//
-// Declared locally (not in a header) — keep in sync with the definition in
-// runtime/ScriptExecutable.cpp and the declarations in
-// bytecompiler/BytecodeGenerator.cpp, dfg/DFGPlan.cpp and runtime/CodeCache.cpp.
-RecursiveLock& gilOffCompilationLock();
-
-namespace {
-
-// Stop-protocol-safe acquisition — same shape as the locker in
-// runtime/ScriptExecutable.cpp (see the rationale there): contended
-// acquisition spins on tryLock() servicing only NeedStopTheWorld, so a
-// waiting lite stays visible to the GIL-off stop fan, never parks raw while
-// holding heap access (no watchdogAssertStopProgress regression), and never
-// throws. The FIX-2 park poll first — deferral-immune §A.3 parking (callers
-// may spin here inside their own DeferTraps scope, under which handleTraps
-// correctly no-ops); see the ScriptExecutable.cpp locker comment.
-class GILOffCompilationLocker {
-    WTF_MAKE_NONCOPYABLE(GILOffCompilationLocker);
-public:
-    GILOffCompilationLocker(VM& vm, bool shouldLock)
-        : m_shouldLock(shouldLock)
-    {
-        if (!m_shouldLock) [[likely]]
-            return;
-        RecursiveLock& lock = gilOffCompilationLock();
-        if (lock.tryLock()) [[likely]]
-            return;
-        while (!lock.tryLock()) {
-            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-                continue; // Parked across a §A.3 window: re-validate (retry tryLock).
-            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
-            Thread::yield();
-        }
-    }
-
-    ~GILOffCompilationLocker()
-    {
-        if (m_shouldLock) [[unlikely]]
-            gilOffCompilationLock().unlock();
-    }
-
-private:
-    bool m_shouldLock;
-};
-
-} // anonymous namespace
+// newCodeBlockFor -> unlinkedCodeBlockFor), and DFG::Plan::finalize takes it
+// around installCode, so any second lock taken across the generate sequence would
+// be ABBA-prone against it (the CodeCache eager-generation path enters without
+// the compilation lock held). One recursive lock has no ordering to violate; the
+// already-held path is a cheap re-acquire. GIL-on/flag-off never reaches the
+// lock (one predicted-untaken branch).
 
 static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& source,
@@ -176,7 +111,6 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_firstLineOffset(node->firstLine() - parentSource.firstLine().oneBasedInt())
     , m_isGeneratedFromCache(false)
     , m_lineCount(node->lastLine() - node->firstLine())
-    , m_hasCapturedVariables(false)
     , m_unlinkedFunctionStart(node->functionStart())
     , m_isBuiltinFunction(kind == UnlinkedBuiltinFunction)
     , m_unlinkedBodyStartColumn(node->startColumn())
@@ -193,15 +127,16 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_needsClassFieldInitializer(static_cast<unsigned>(needsClassFieldInitializer))
     , m_parameterCount(node->parameterCount())
     , m_privateBrandRequirement(static_cast<unsigned>(privateBrandRequirement))
-    , m_features(0)
     , m_constructorKind(static_cast<unsigned>(node->constructorKind()))
-    , m_sourceParseMode(node->parseMode())
     , m_implementationVisibility(static_cast<unsigned>(node->implementationVisibility()))
-    , m_lexicallyScopedFeatures(node->lexicallyScopedFeatures())
     , m_functionMode(static_cast<unsigned>(node->functionMode()))
     , m_derivedContextType(static_cast<unsigned>(derivedContextType))
     , m_inlineAttribute(static_cast<unsigned>(inlineAttribute))
     , m_evalContextType(static_cast<unsigned>(evalContextType))
+    , m_features(0)
+    , m_sourceParseMode(node->parseMode())
+    , m_lexicallyScopedFeatures(node->lexicallyScopedFeatures())
+    , m_hasCapturedVariables(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
     , m_name(node->ident())
@@ -324,17 +259,16 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode)
 {
-    // UNGIL AB18-R1-C mode split: GIL-off, hold the compilation lock across the
-    // ENTIRE decode/check/generate/install sequence — not just the install. The
-    // crash is inside generation (recordParse bitfield RMW on this cell; the
-    // m_decoder/m_unlinkedCodeBlockForCall union flip in decodeCachedCodeBlocks),
-    // so a CAS-install alone cannot fix it. The existing cache re-check below
-    // doubles as the double-checked load: a losing thread acquires after the
-    // winner's unlock, observes the winner's installed block in the switch, and
-    // returns it — loser-discard falls out for free. Recursive lock: the
-    // prepareForExecutionImpl -> newCodeBlockFor path already holds it; the
-    // CodeCache eager-generation recursion re-enters it cheaply. See the
-    // rationale block above generateUnlinkedFunctionCodeBlock.
+    // GIL-off, hold the compilation lock across the ENTIRE
+    // decode/check/generate/install sequence, not just the install: the
+    // m_decoder/m_unlinkedCodeBlockForCall union flip in decodeCachedCodeBlocks
+    // happens inside it, so a CAS-install alone would not be enough. The cache
+    // re-check below doubles as the double-checked load: a losing thread acquires
+    // after the winner's unlock, observes the winner's installed block in the
+    // switch, and returns it. Recursive lock: the prepareForExecutionImpl ->
+    // newCodeBlockFor path already holds it; the CodeCache eager-generation
+    // recursion re-enters it cheaply. See the rationale block above
+    // generateUnlinkedFunctionCodeBlock.
     GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
 
     if (m_isCached)

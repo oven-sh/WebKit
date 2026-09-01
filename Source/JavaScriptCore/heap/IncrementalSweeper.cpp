@@ -43,9 +43,9 @@ void IncrementalSweeper::scheduleTimer()
     setTimeUntilFire(sweepTimeSlice * sweepTimeMultiplier);
 }
 
-// SharedGC (T9): main-VM-only — the sweeper is a timer on the main VM's run
-// loop. T4(d): once ISS the sweeper keeps running on that run loop (main
-// client's thread) in the restricted shared mode — see doWorkUntil().
+// The sweeper is a timer on the main VM's run loop. Once the server is shared
+// it keeps running there, mutator-concurrently, and every step takes the
+// shared path (sweepNextBlockShared).
 IncrementalSweeper::IncrementalSweeper(JSC::Heap* heap)
     : Base(heap->vm())
     , m_currentDirectory(nullptr)
@@ -54,25 +54,6 @@ IncrementalSweeper::IncrementalSweeper(JSC::Heap* heap)
 
 void IncrementalSweeper::doWorkUntil(VM& vm, MonotonicTime deadline)
 {
-    // T4(d): RE-ENABLED when shared (was the T8/I5b deviation-4 stand-down,
-    // which — with the weak-bearing carve-out leaving only in-lock and
-    // conductor-side sweeps — made committed capacity monotone once ISS).
-    // The original objections are answered structurally, not by disabling:
-    //  - "block->sweep()'s lock-free BlockDirectoryBits reads race another
-    //    client's addBlock m_bits resize": the shared path holds the server
-    //    MSPL across each per-block operation (sweepNextBlockShared) — the
-    //    same §5.2 in-lock license every allocation slow path's sweep uses;
-    //    addBlock runs under MSPL, so the resize is serialized out.
-    //  - "freeBlock() mutates the precise/block registries": the shared path
-    //    NEVER frees or shrinks a block (MC-SAFE S4: physical reclamation is
-    //    world-stopped-only — Heap::reclaimSharedGCMemoryAtCycleEnd). Empty
-    //    sweep results stay on the directories' empty lists, reusable by
-    //    every client's allocator; the OS-return happens at the next
-    //    conducted cycle's world-stopped shrink.
-    //  - weak-bearing blocks are skipped, mirroring BlockDirectory::sweep's
-    //    mutator-concurrent carve-out (WeakSet::head() is stable under MSPL).
-    // Option off / pre-sticky: byte-for-byte today's behavior (I10) — the
-    // shared branch in sweepNextBlock is reached only once ISS.
     if (!m_currentDirectory) {
         m_currentDirectory = vm.heap.objectSpace().firstDirectory();
         m_sharedUnsweptCursor = 0;
@@ -84,7 +65,6 @@ void IncrementalSweeper::doWorkUntil(VM& vm, MonotonicTime deadline)
 
 void IncrementalSweeper::doWork(VM& vm)
 {
-    // T4(d): shared mode no longer stands down — see doWorkUntil().
     if (m_lastOpportunisticTaskDidFinishSweeping) {
         m_lastOpportunisticTaskDidFinishSweeping = false;
         scheduleTimer();
@@ -119,11 +99,9 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 {
     vm.heap.stopIfNecessary();
 
-    // T4(d): the shared server takes the restricted path. Checked per block
-    // (after the stop poll, before any directory state is touched) so a
-    // mid-doSweep ISS flip — the §10B.4 sticky switch can land while this
-    // run-loop callback is between blocks — moves us onto the MSPL'd path
-    // before the next directory read.
+    // Checked per block, after the stop poll and before any directory state
+    // is read: the server can become shared between two blocks of one
+    // doSweep, and the next step must then already run under MSPL.
     if (vm.heap.isSharedServer()) [[unlikely]]
         return sweepNextBlockShared(vm);
 
@@ -159,21 +137,21 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 
 bool IncrementalSweeper::sweepNextBlockShared(VM& vm)
 {
-    // T4(d) shared-server sweep step. Invariants (see doWorkUntil's banner):
-    //  - MSPL held for the whole step: serializes the directory-bit reads
-    //    and the block sweep against every other client's allocation slow
-    //    path (addBlock resize, in-lock sweeps) — the §5.2 license. MSPL
-    //    sections run with heap access held and never park, so the §10.4
-    //    barrier excludes a stop window from opening mid-step (the caller's
-    //    stopIfNecessary() poll above the dispatch is the park point).
-    //  - NO freeBlock, NO block->shrink(): physical reclamation is
-    //    world-stopped-only when shared (MC-SAFE S4); empty results stay on
-    //    the empty lists for Heap::reclaimSharedGCMemoryAtCycleEnd.
-    //  - Weak-bearing blocks are skipped (same predicate as
-    //    BlockDirectory::sweep's carve-out: head() is stable under MSPL);
-    //    the sweeper-owned cursor advances past them so the scan cannot
-    //    livelock on a skipped block. They stay unswept for the next
-    //    world-stopped sweep — unchanged from the pre-T4 steady state.
+    // Shared-server sweep step, run mutator-concurrently on the main VM's run
+    // loop while other clients allocate. Invariants:
+    //  - The exclusive MSPL is held for the whole step, which serializes the
+    //    directory-bit reads and the block sweep against every client's
+    //    allocation slow path (addBlock's m_bits resize, in-lock sweeps). The
+    //    step holds heap access and never parks, so no stop window opens
+    //    mid-step; the caller's stopIfNecessary() poll is the park point.
+    //  - No freeBlock and no block->shrink(): physical reclamation is
+    //    world-stopped-only when shared (Heap::reclaimSharedGCMemoryAtCycleEnd).
+    //    Blocks swept empty stay on the directories' empty lists, reusable by
+    //    every client's allocator.
+    //  - Weak-bearing blocks are skipped, like the carve-out at the other
+    //    MSPL sweep sites (WeakSet::head() is stable under MSPL); the
+    //    sweeper-owned cursor steps past them so the scan cannot livelock,
+    //    and they wait for the next world-stopped sweep.
     MutatorSlowPathLocker mutatorSlowPathLocker(vm.heap);
 
     while (m_currentDirectory) {
@@ -198,19 +176,17 @@ bool IncrementalSweeper::sweepNextBlockShared(VM& vm)
         return true;
     }
 
-    // MSPL is held, satisfying the shared-mode precondition asserted in
-    // Heap::sweepNextLogicallyEmptyWeakBlock (logically-empty WeakBlock
-    // destruction under MSPL is the already-licensed drain path —
-    // sweepAllLogicallyEmptyWeakBlocks does exactly this).
+    // MSPL is still held, which is the shared-mode precondition of
+    // Heap::sweepNextLogicallyEmptyWeakBlock.
     return vm.heap.sweepNextLogicallyEmptyWeakBlock();
 }
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
-    // T4(d): also called by the shared conductor inside the stop window
-    // (Heap::notifyIncrementalSweeper) — the owning run-loop thread is
-    // parked there, so these plain writes are ordered by the stop protocol's
-    // resume edge; setTimeUntilFire locks internally.
+    // Also called by the shared conductor inside the stop window
+    // (Heap::notifyIncrementalSweeper) while the owning run-loop thread is
+    // parked, so these plain writes are published by the resume edge;
+    // setTimeUntilFire locks internally.
     scheduleTimer();
     m_currentDirectory = heap.objectSpace().firstDirectory();
     m_sharedUnsweptCursor = 0;

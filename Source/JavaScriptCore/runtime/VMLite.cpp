@@ -26,10 +26,9 @@
 #include "config.h"
 #include "VMLite.h"
 
-#include "Allocator.h"           // sizeof/triviality asserts on the §B.4 TLC table element (U-T7).
-#include "GCThreadLocalCache.h"  // offsetOfTable/offsetOfTableBound — the §B.4 chain's last hop (U-T7).
-#include "Heap.h"                // GCClient::Heap::offsetOfThreadLocalCache/currentThreadClient (§B.4, U-T7).
-#include "JSCConfig.h"      // g_jscConfig.vmLiteTLSKey (Darwin mirror arm, UNGIL §A.1.1 / jit App. R5).
+#include "Allocator.h"           // sizeof/triviality asserts on the TLC table element the emitters index.
+#include "GCThreadLocalCache.h"  // table()/tableBound(): the source of the lite's tlcTable mirror.
+#include "Heap.h"                // GCClient::Heap::currentThreadClient / threadLocalCache.
 #include "MicrotaskQueue.h" // Complete type for ~RefPtr<MicrotaskQueue> in ~VMLite + create() (§6.5).
 #include "VM.h"             // ScratchBuffer/VMMalloc (§6.6); currentThreadIsHoldingAPILock (I14).
 #include "VMLiteInlines.h"  // isInstalledOnCurrentThread (I11 asserts below).
@@ -38,17 +37,10 @@
 #include <bit>
 #include <mutex>
 #include <wtf/Atomics.h> // crossModifyingCodeFence (ANNEX ISB1, U-T5).
-#include <wtf/Condition.h> // §K.3 foreign-waiter wakeups (ANNEX LZ1, U-T8b).
 #include <wtf/FastMalloc.h>
-#include <wtf/HashMap.h> // §K.3/LZ1 owner side table (U-T8b).
 #include <wtf/HashSet.h> // K4 §VIII cross-thread-entry set (U-T8b).
 #include <wtf/NeverDestroyed.h>
-#include <wtf/Seconds.h>
 #include <wtf/TZoneMallocInlines.h>
-
-#if OS(DARWIN)
-#include <pthread.h>
-#endif
 
 namespace JSC {
 
@@ -57,9 +49,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(VMLite);
 // U-T8b forward declarations (definitions later in this TU / in
 // JSGlobalObject.cpp; see the §K.3/LZ1 and K4 §VIII banners below).
 void purgePerLiteRealmStateForLite(VMLite&); // Defined in JSGlobalObject.cpp (per-lite §K.1 realm duplicates).
-void assertVMLiteOwnsNoInFlightLazyInit(VMLite*);
 void jsThreadsNoteCrossThreadEntry(VM&);
-void jsThreadsForgetCrossThreadEntry(VM&);
 
 // L4 (frozen, SPEC-vmstate §6.3): plain C++ thread_local, NOT
 // pthread_getspecific. The accessor signatures in VMLite.h are frozen; the
@@ -70,52 +60,18 @@ void jsThreadsForgetCrossThreadEntry(VM&);
 // COLLAPSED onto g_jscCurrentVMLite (which had been its JIT-visible mirror).
 // VMLite::setCurrent below remains the SOLE writer; currentIfExists()/
 // current() are now ALWAYS_INLINE header reads of the same word, so C++ and
-// generated code observe the identical slot by construction (no mirror-
-// coherence contract to discharge for the ELF arm anymore).
+// generated code observe the identical slot by construction.
 //
-// COHERENCE CONTRACT, Darwin arm (VM.cpp:230-246, IU obligation row, owner
-// "the VMLite.cpp slice", discharged HERE): on Darwin, setCurrent additionally
-// pthread_setspecific's the value into the g_jscConfig.vmLiteTLSKey slot
-// immediately after the g_jscCurrentVMLite store and BEFORE the TID-tag hook
-// fires, INCLUDING null/uninstall writes (carrier teardown, thread exit): an
-// unmirrored clear would leave a reused thread's generated code reading a
-// stale/freed lite.
+// Generated code reads g_jscCurrentVMLite only through its ELF initial-exec
+// TPOFF (Linux x86-64/arm64), so the store below is the whole install
+// protocol; GIL-off is refused at option validation on every other platform
+// (Options.cpp), where the loadVMLite emitters fail-stop.
 //
 // Flag-off / GIL-on identity: the store is a plain TLS write on a path (lite
 // install/uninstall) that flag-off code reaches only at JSLock acquire/
 // release; no generated code reads the symbol except gilOff-mode compilations
 // (§A.1.3 COMPILED-FOR-VM-mode rule), and the C++ hot readers are all behind
 // gilOffWithProcessGate().
-
-static ALWAYS_INLINE void mirrorCurrentVMLiteForGeneratedCode(VMLite* lite)
-{
-    UNUSED_PARAM(lite);
-#if OS(DARWIN)
-    // Darwin arm (jit App. R5 mechanics): Mach-O TLV has no constant offset,
-    // so generated code reads a pthread TSD slot instead; the key is created
-    // at the P5-init point (jit slice) and published through the M4a-style
-    // JSCConfig slot. JSC_CONFIG_HAS_VMLITE_TLS_KEY is defined in
-    // JSCConfig.h BESIDE the vmLiteTLSKey member (the
-    // JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE inversion pattern, see
-    // jit/AssemblyHelpers.cpp) — until that slot lands (outside this task's
-    // writable set; OPEN obligation escalated at the U-T3 amendment), this
-    // arm compiles away and the Darwin loadVMLite emitter keeps its
-    // RELEASE_ASSERT_NOT_REACHED fail-stop, so no torn contract is possible.
-#if defined(JSC_CONFIG_HAS_VMLITE_TLS_KEY)
-    // FAIL-STOP, not skip-if-absent: once this arm compiles in, the Darwin
-    // loadVMLite emitter emits unconditional TSD loads on the premise that
-    // EVERY install/uninstall reached this slot. A lite install racing ahead
-    // of pthread_key_create (P5-init ordering bug) must crash here, loudly —
-    // a silent skip would leave this thread's generated code reading a null
-    // or (on thread reuse after a skipped uninstall) stale/freed lite. This
-    // also ENFORCES the install-after-key-creation ordering the activation
-    // checklist otherwise only asserts in comments.
-    RELEASE_ASSERT(g_jscConfig.vmLiteTLSKey);
-    int result = pthread_setspecific(static_cast<pthread_key_t>(g_jscConfig.vmLiteTLSKey), lite);
-    RELEASE_ASSERT(!result);
-#endif
-#endif
-}
 
 // §6.7 TID-tag hook (jit CS3/I19 provider). Null default — Phase-A standalone
 // builds and flag-off runs never register one. Registration happens once at
@@ -142,15 +98,10 @@ VMLite::~VMLite()
     // never-entered/flag-off lites (empty-table scan).
     purgePerLiteRealmStateForLite(*this);
 
-    // LZ1.3 exit/~VM assert: a dying lite owns no in-flight §K.3 init and
-    // parks on none (abandonment must have run on every unwind path).
-    assertVMLiteOwnsNoInFlightLazyInit(this);
-
-    // K4 §VIII bookkeeping: the main carrier dies exactly at ~VM (after the
-    // EXIT1.9 fence) — retire the VM's cross-thread-entry note so a later VM
-    // at a recycled address cannot inherit a stale positive.
-    if (vm && vm->mainVMLite() == this)
-        jsThreadsForgetCrossThreadEntry(*vm);
+    // `vm` is never dereferenced here: a DETACHED carrier (and a live carrier
+    // between its unregistration and this free) can be destroyed after ~VM
+    // has returned, so the pointer may already dangle. VM-keyed bookkeeping
+    // (the K4 §VIII cross-thread-entry note) is retired by ~VM itself.
 
     // §6.6: scratch buffers are VMMalloc'd raw blocks (mirrors ~VM,
     // VM.cpp:655-656). No lock: the lifetime contract (§6.5.1 — unregistered,
@@ -209,16 +160,10 @@ VMLite* VMLite::setCurrent(VMLite* lite)
 #endif
     }
 
+    // This store IS the slot the loadVMLite emitters read (ELF TPOFF), so
+    // every install and uninstall (including null) goes through here.
     VMLite* previous = g_jscCurrentVMLite;
     g_jscCurrentVMLite = lite;
-
-    // UNGIL §A.1.1 (U-T4a): publish the write for generated code — after the
-    // g_jscCurrentVMLite store (which IS the slot the ELF loadVMLite emitter
-    // reads), before the TID-tag hook, including null (uninstall) writes. The
-    // helper is now a no-op on ELF and the Darwin pthread-TSD mirror only;
-    // gilOff-mode Baseline/DFG emission (loadVMLite) is sound only because
-    // every writer path funnels through here.
-    mirrorCurrentVMLiteForGeneratedCode(lite);
 
     // §6.7: invoke the TID-tag hook AFTER the TLS write, with the new tid (0
     // for uninstall) — §6.4.4 install/restore and multi-VM switches keep
@@ -250,16 +195,10 @@ VMLite* VMLite::setCurrent(VMLite* lite)
     return previous;
 }
 
-// ---- §6.5 Group 6: per-thread default microtask queue. ACTIVATED by UNGIL
-// §E.1/I11 (U-T9): VM::queueMicrotask / VM::drainMicrotasks and
-// JSGlobalObject::queueMicrotask[Slow] re-route here for gilOff
-// spawned/foreign-carrier lites (the Phase-A "inert — nothing routes here"
-// caveat is superseded for gilOff; flag-off/GIL-on nothing routes here,
-// byte-identically). The VMLite.h HARD-GATE note (task-7 C++ test
-// obligations before any Phase-B routing) is U-T9's recorded debt: the
-// owner-only/lazy-idempotence asserts below are the in-code half; the test
-// lands with the thread-ungil verification ladder (header is outside U-T9's
-// owned set, so the note itself is amended there by its owner). -----
+// ---- §6.5 Group 6: per-thread default microtask queue. GIL-off,
+// VM::queueMicrotask / VM::drainMicrotasks and
+// JSGlobalObject::queueMicrotask[Slow] route a spawned or non-main carrier's
+// microtasks here; flag-off/GIL-on nothing routes here, byte-identically. -----
 
 MicrotaskQueue& VMLite::ensureDefaultMicrotaskQueue()
 {
@@ -279,144 +218,40 @@ MicrotaskQueue& VMLite::ensureDefaultMicrotaskQueue()
     return *defaultMicrotaskQueue;
 }
 
-// ---- §6.6 Group 5: per-thread scratch buffers (Phase A inert; frozen
-// Phase-B signature). ------------------------------------------------------
+// ---- §6.6 Group 5: per-thread scratch buffers. GIL-off,
+// VM::scratchBufferForSize dispatches here for the non-baked (C++ slow path)
+// requests of the installed thread. ----------------------------------------
 //
-// ANNEX A16 NON-BAKED ARM (NORMATIVE, F9 re-freeze vs vmstate:534-539): the
-// reserved VMLite::scratchBufferForSize(size_t) is implemented "over the
-// segmented table by size-class index" — NOT by transplanting
-// VM::scratchBufferForSize's `scratchBuffers.last()` geometric series.
-// That transplant is memory-UNSAFE here: A16 repurposed `scratchBuffers` as
+// ANNEX A16 NON-BAKED ARM: VMLite::scratchBufferForSize(size_t) is implemented
+// over the segmented table by size-class index — NOT by transplanting
+// VM::scratchBufferForSize's `scratchBuffers.last()` geometric series with a
+// high-water size. That transplant is memory-UNSAFE here: `scratchBuffers` is
 // the lite's buffer-OWNERSHIP list, and ensureScratchBufferAtIndex appends
 // baked-index buffers to it too — including from OTHER threads via
 // VM::allocateBakedScratchBufferIndex's install fan and the registration
 // backfill — so `.last()` can be an arbitrarily small baked buffer that a
-// stale `size <= sizeOfLastScratchBuffer` check never re-validates
-// (undersized return => caller heap overflow). The ownership list must
-// never be a lookup structure.
+// high-water check never re-validates (undersized return => caller heap
+// overflow). The ownership list must never be a lookup structure.
 //
 // Size classes are powers of two (class c serves sizes in (2^(c-1), 2^c],
 // buffer size 2^c): at most one buffer per class per lite, total per-lite
 // non-baked footprint <= 2x the largest request — the same geometric-series
-// memory bound VM's policy targets. Each class lazily claims ONE
-// process-wide ScratchBufferRegistry index (monotonic, never freed), so the
-// per-lite storage is the ordinary A16 segmented table: registration
-// backfill pre-installs the classes other lites already use, and the
-// two-load read below serves repeats lock-free.
-//
-// s_scratchSizeClassLock rank: taken with NO other lock held (it is the
-// outermost acquisition on this path) and only ScratchBufferRegistry::m_lock
-// (via allocateIndex) is acquired under it — consistent with SBR sitting
-// outside VMLiteRegistry::lock (§LK.6); scratchBufferLock (inside
-// ensureScratchBufferAtIndex) is taken only after it is released.
+// memory bound VM's policy targets. Each class is ONE process-wide
+// ScratchBufferRegistry index (ScratchBufferRegistry::indexForSizeClass, the
+// same index the baked arm bakes), so the per-lite storage is the ordinary
+// A16 segmented table: registration backfill pre-installs the classes other
+// lites already use, and the two-load read below serves repeats lock-free.
 
-static constexpr unsigned numScratchSizeClasses = sizeof(size_t) * 8;
-static Lock s_scratchSizeClassLock;
-static uint64_t s_scratchSizeClassAllocated WTF_GUARDED_BY_LOCK(s_scratchSizeClassLock) { 0 };
-static unsigned s_scratchSizeClassIndices[numScratchSizeClasses] WTF_GUARDED_BY_LOCK(s_scratchSizeClassLock);
-
-// ===========================================================================
-// UNGIL §B.4-6 (U-T7) — TLC lite-relative inline-allocation addressing:
-// the RUNTIME half (this TU is U-T7's sole writable file; everything not in
-// VMLite.cpp is recorded OPEN below for the owning slices/orchestrator).
-//
-// §B.4 FROZEN ADDRESSING CHAIN (supersedes the heap §5.3 "Status" PROVISIONAL
-// vm-relative chain FOR GIL-OFF COMPILATIONS ONLY — heap Dev 6: the
-// `vmGPR + OBJECT_OFFSETOF(VM, clientHeap) + offsetOfThreadLocalCache()`
-// chain stays the GIL-on/flag-off contract, byte-for-byte; SUPERSESSION
-// recorded for INTEGRATE-heap/INTEGRATE-ungil, both sides):
-//
-//   loadVMLite (the U-T3 emitter / LLInt offlineasm macro — §A.1.1 mirror)
-//     -> client = [lite + OBJECT_OFFSETOF(VMLite, clientHeap)]   (pointer load)
-//     -> tlc    = client + GCClient::Heap::offsetOfThreadLocalCache()
-//                                            (interior pointer, NO load —
-//                                             m_threadLocalCache is by-value)
-//     -> table  = [tlc + GCThreadLocalCache::offsetOfTable()]    (pointer load)
-//        bound  = [tlc + GCThreadLocalCache::offsetOfTableBound()] (32-bit load)
-//     -> slot = subspace tlcIndexBase + sizeClassIndex (baked constants);
-//        slot >= bound || !table[slot * sizeof(Allocator)] => SLOW PATH
-//        (CompleteSubspace::allocateForClient via the §10A.1 client slot);
-//        else table[slot] is the LocalAllocator the existing per-tier
-//        emitAllocate body consumes.
-//
-// Soundness of the lock-free loads: every word on the chain is written ONLY
-// by the lite's owner thread (clientHeap stamped at §B.1 spawn / §F.1 first
-// carrier entry BEFORE any allocation on that thread; m_table/m_tableBound
-// grow-only, owner-thread growTable, heap §5.3/I2), and generated code runs
-// only on the owning thread (I11), so plain loads observe program order. The
-// bound+null guard means there is NO install-fan/backfill analog to A16: a
-// missing slot is a branch to the slow path, never a wild load. Iso
-// subspaces NEVER appear in m_table (m_perDirectory lookup-only, §5.3) —
-// iso inline paths keep their per-client GCClient::IsoSubspace addressing.
-//
-// What LANDS here (runtime half):
-//   - the layout/stride static_asserts below (emission bakes them);
-//   - verifyVMLiteTLCAddressingChain(): an EXECUTABLE equivalence check of
-//     the baked byte-arithmetic chain against the C++ object graph (the M6
-//     equivalence-assert pattern, applied to the §B.4 chain). §B.1/§F.1
-//     entry sites (ThreadObject.cpp / JSLock.cpp — outside this file) MUST
-//     self-declare and call it right after EVERY stamp of lite->clientHeap
-//     (the loadVMLite self-declaration precedent,
-//     jit/AssemblyHelpers.cpp:195) — a HARD gate on the stamping slices, not
-//     a nicety: the layout half is process-wide, but the per-STATE half
-//     (client stamped, §10A.1 coherence) is a per-stamp property. Until they
-//     do, the in-file one-shot trigger in scratchBufferForSize (the first
-//     gilOff mutator slow path through this TU) keeps the check live, not
-//     dead code;
-//   - assertVMLiteClientCoherence(): the §10A.1 client-coherence debug
-//     assert (lite->clientHeap == GCClient::Heap::currentThreadClient()),
-//     run on EVERY pass through this TU's gilOff slow path — deliberately
-//     NOT folded into the one-shot. Generated code allocates into the LITE's
-//     client while C++ slow paths resolve the §10A.1 TLS slot; A36C's
-//     install/LIFO-restore re-stamp is what keeps them equal, and a re-stamp
-//     bug on a LATER carrier install would be invisible to a one-shot
-//     witness. Per-call here is still only a sampling witness on one slow
-//     path — the per-stamp entry-site calls above remain the real coverage.
-//
-// OPEN (outside VMLite.cpp — owners per the IM rows; orchestrator-tracked).
-// COMPLETION STATUS (the U-T4a precedent below applies verbatim): this TU is
-// the RUNTIME HALF ONLY. The handout's defining U-T7 clause — "TLC
-// lite-relative inline allocation, all tiers" — is item (1) below, and NO
-// tier emits the chain yet (the only loadVMLite machinery in the tree is the
-// U-T3 emitter). U-T7 MUST NOT be marked complete in the task ledger until
-// items (1), (2) and (4) land against this runtime half; until then a
-// gilOff mutator still inline-allocates via the GIL-on vm-relative §5.3
-// chain, §B.4 is NOT in effect, and the §B.5 budgets are unmeasurable.
-//   (1) Per-tier emission (IM row "llint/jit/dfg/ftl (+OSR-entry) = ... §B.4"):
-//       mode-keyed per §A.1.3 — DFG/FTL on the COMPILED-FOR VM's
-//       codeBlock->vm->m_gilOff at codegen time; LLInt/Baseline on the
-//       level-1 JSCConfig gilOffProcess byte + the level-2 lite->gilOff byte
-//       (offsetOfGilOff) — emitting the chain above; flag-off/GIL-on keeps
-//       today's vm-relative §5.3 chain so the golden-disasm gates stay
-//       byte-identical. An offsetOfClientHeap() accessor in VMLite.h is an
-//       L2-adjacent nicety for that slice (OBJECT_OFFSETOF(VMLite,
-//       clientHeap) is usable directly — the member is public).
-//   (2) §B.5 U21 bench (BENCH.md + Tools/threads/bench-gate.sh +
-//       JSTests/threads/bench): the {useJSThreads=1, sharedGC=1, GIL-off,
-//       1 thread} composite gated <=10% geomean vs the {1,0} flag-on
-//       baseline; the {1,0} <=5% gate STAYS; the 4-thread alloc microbench
-//       >=2.5x is RECORDED, not gated; the r9 async/generator microbench
-//       joins the flag-off suite GATED at 1% (its gilOff configuration is
-//       recorded under the composite, not separately gated).
-//   (3) §B.6 Dev-7 deferral gate: the heap:26 GC-throughput items
-//       (per-directory handout + out-of-lock sweep, concurrent marking /
-//       incremental sweep) stay DEFERRED post-ungil; a §B.5 composite miss
-//       PULLS THEM FORWARD pre-ship, and a {1,0} miss REQUIRES the jit §4.3
-//       LLInt-cache revival pre-ship. Nothing to code until a measured miss.
-//   (4) §F.3 sweep-storm amplifier (dead-lock-object-with-pending-asyncHold):
-//       JS scenario (JSTests/threads) — N JSLockObjects each given a
-//       never-notified asyncHold (pending AsyncTicket holding a still-set
-//       Strong<JSPromise>), references dropped, GC/sweep storms forced on
-//       one thread while siblings allocate — driving the §F.3 carve-out (a)
-//       chain JSLockObject::destroy -> ~NativeLockState -> ~AsyncTicket ->
-//       in-lock-sweep Strong free under m_strongLock's destructor-leaf
-//       classification; plus a RaceAmplifier::perturb() arm beside the
-//       ~AsyncTicket API-lock assert (ThreadManager.cpp:64 today — the
-//       handout's ":57" anchor has drifted), whose GIL-off reading is the
-//       §F.2 TOKEN meaning ("assert (token)" class). Both edits live in
-//       files owned by other tasks (ThreadManager.cpp = U-T8 wave;
-//       JSTests/** unowned here).
-// ===========================================================================
+// ---- GIL-off inline-allocation addressing (SPEC-heap §5.3 / UNGIL §B.4).
+// The inline-allocate emitters (AssemblyHelpers::emitLoadTLCAllocatorForSlot,
+// FTL tlcAllocatorForSlot) read `lite->tlcTable[slot]` guarded by
+// `slot < lite->tlcTableBound`; that pair is the {table, bound} of the
+// GCThreadLocalCache of the client this thread allocates through, stamped on
+// the installed lite by GCClient::Heap::setCurrentThreadClient (the same
+// site that publishes the §10A.1 TLS client slot). Both words are written
+// only by the owner thread and read only by code running on it, so plain
+// loads observe program order; a slot past the bound or a null word is a
+// branch to the slow path, never a wild load. ----
 
 // Emission stride contract: table[slot] is one pointer-sized, trivially
 // copyable word (Allocator wraps exactly one LocalAllocator*; a null word is
@@ -425,81 +260,20 @@ static_assert(sizeof(Allocator) == sizeof(LocalAllocator*));
 static_assert(sizeof(Allocator) == sizeof(void*));
 static_assert(std::is_trivially_copyable_v<Allocator>);
 
-void verifyVMLiteTLCAddressingChain(VMLite&); // Self-declaration (no header owns this form yet — VMLite.h is outside U-T7's writable set; lift the declaration there when its owner next touches it).
-void verifyVMLiteTLCAddressingChain(VMLite& lite)
-{
-    // Only meaningful for a gilOff lite with a stamped client (§B.1 step 1 /
-    // §F.1 first entry both complete). Callers run on the owning thread.
-    ASSERT(lite.isInstalledOnCurrentThread()); // I11.
-    RELEASE_ASSERT(lite.gilOff);
-    GCClient::Heap* client = lite.clientHeap;
-    RELEASE_ASSERT(client);
-
-    // Hop 1: client = [lite + OBJECT_OFFSETOF(VMLite, clientHeap)]. VMLite is
-    // not standard-layout, so this doubles as the §0 __builtin_offsetof
-    // validity check for this member (the M6 pattern).
-    auto* chainClient = *std::bit_cast<GCClient::Heap* const*>(
-        std::bit_cast<uintptr_t>(&lite) + static_cast<uintptr_t>(OBJECT_OFFSETOF(VMLite, clientHeap)));
-    RELEASE_ASSERT(chainClient == client);
-
-    // Hop 2: tlc = client + offsetOfThreadLocalCache() — interior pointer,
-    // no load (m_threadLocalCache is a by-value member of GCClient::Heap).
-    auto* chainTLC = std::bit_cast<GCClient::GCThreadLocalCache*>(
-        std::bit_cast<uintptr_t>(client) + static_cast<uintptr_t>(GCClient::Heap::offsetOfThreadLocalCache()));
-    RELEASE_ASSERT(chainTLC == &client->threadLocalCache());
-
-    // Hop 3: the table/bound pair generated code loads. The pair's only
-    // cross-check available outside the class is its internal consistency
-    // (bound != 0 => table mapped and aligned for indexed Allocator loads);
-    // the slot CONTENTS are covered by the bound+null slow-path guard, never
-    // dereferenced blind. m_tableBound is the 32-bit unsigned the emitted
-    // 32-bit bound compare assumes (GCThreadLocalCache.h frozen layout §5.3).
-    auto* chainTable = *std::bit_cast<Allocator* const*>(
-        std::bit_cast<uintptr_t>(chainTLC) + static_cast<uintptr_t>(GCClient::GCThreadLocalCache::offsetOfTable()));
-    unsigned chainBound = *std::bit_cast<const unsigned*>(
-        std::bit_cast<uintptr_t>(chainTLC) + static_cast<uintptr_t>(GCClient::GCThreadLocalCache::offsetOfTableBound()));
-    RELEASE_ASSERT(!chainBound || chainTable);
-    if (chainTable)
-        RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(chainTable) & (alignof(Allocator) - 1)));
-
-    // §10A.1 client coherence (A36C re-stamp witness): the lite-relative
-    // client generated code allocates into MUST be the client the C++ slow
-    // paths resolve via the TLS slot, or allocator state diverges per-call.
-    ASSERT(GCClient::Heap::currentThreadClient() == client);
-}
-
-// The chain equivalence is a process-wide LAYOUT property (every hop is a
-// compile-time offset); one successful pass proves it for all lites, so the
-// in-file trigger below is one-shot FOR THE LAYOUT HALF ONLY. The per-STATE
-// checks (client stamped, §10A.1 coherence) are per-stamp properties and are
-// NOT covered by the one-shot: they run per-call via
-// assertVMLiteClientCoherence below, and per-stamp via the §B.1/§F.1 entry
-// sites' MANDATORY verifyVMLiteTLCAddressingChain calls (a hard gate on the
-// stamping slices — see the block above).
-static std::atomic<bool> s_tlcAddressingChainVerified { false };
-
-static ALWAYS_INLINE void verifyTLCAddressingChainOnceIfNeeded(VMLite& lite)
-{
-    if (s_tlcAddressingChainVerified.load(std::memory_order_relaxed)) [[likely]]
-        return;
-    if (!lite.gilOff || !lite.clientHeap)
-        return; // Pre-stamp probe or GIL-on lite: nothing to verify yet.
-    verifyVMLiteTLCAddressingChain(lite);
-    s_tlcAddressingChainVerified.store(true, std::memory_order_relaxed);
-}
-
-// §10A.1 per-call coherence witness (A36C re-stamp): runs on EVERY pass
-// through this TU's gilOff slow path, not just the first — a re-stamp bug on
-// a later carrier install (the exact divergence this exists to catch) must
-// not be masked by the layout one-shot. Debug-only: the divergence it
-// witnesses is a correctness bug in the A36C swap/re-stamp protocol, and the
-// release-grade enforcement is the per-stamp entry-site verification, not a
-// hot-path release assert.
+// Per-call witness on this TU's gilOff slow path: the client generated code
+// allocates into (lite->clientHeap, via the tlcTable/tlcTableBound mirror)
+// must be the client the C++ slow paths resolve through the §10A.1 TLS slot,
+// and the mirror must be that client's own {table, bound}. Every carrier
+// install and A36C restore re-stamps both; a divergence is a bug in that
+// protocol, so this is debug-only rather than a release assert.
 static ALWAYS_INLINE void assertVMLiteClientCoherence(VMLite& lite)
 {
 #if ASSERT_ENABLED
-    if (lite.gilOff && lite.clientHeap)
+    if (lite.gilOff && lite.clientHeap) {
         ASSERT(GCClient::Heap::currentThreadClient() == lite.clientHeap);
+        ASSERT(lite.tlcTable == lite.clientHeap->threadLocalCache().table());
+        ASSERT(lite.tlcTableBound == lite.clientHeap->threadLocalCache().tableBound());
+    }
 #else
     UNUSED_PARAM(lite);
 #endif
@@ -512,35 +286,19 @@ ScratchBuffer* VMLite::scratchBufferForSize(size_t size)
 
     ASSERT(isInstalledOnCurrentThread()); // I11.
 
-    // U-T7 §B.4 in-file verification trigger: this is the first gilOff
-    // mutator slow path through this TU (VM::scratchBufferForSize dispatches
-    // here only when m_gilOff with a same-VM installed lite, VM.cpp:2350-2353),
-    // so the one-shot layout check cannot rot as dead code even before the
-    // §B.1/§F.1 entry sites wire their own calls. Cost when already verified:
-    // one relaxed load + predicted branch, on a non-baked SLOW path only.
-    // Flag-off identity: gilOff == 0 short-circuits inside (and flag-off
-    // never reaches VMLite::scratchBufferForSize at all).
-    verifyTLCAddressingChainOnceIfNeeded(*this);
+    // This buffer is owned by the installed thread and freed with its lite,
+    // so it can be handed out only to a mutator that consumes it on this
+    // thread; code generation (including a synchronous compile on the mutator)
+    // must bake a registry index instead (VM::allocateBakedScratchBufferIndex).
+    RELEASE_ASSERT(!isCompilationThread());
 
-    // §10A.1 coherence: per-CALL, never one-shot (debug-only; gilOff-gated
-    // inside — flag-off/GIL-on identity preserved).
+    // Debug-only and gilOff-gated inside; flag-off never reaches this
+    // function (VM::scratchBufferForSize dispatches here only under m_gilOff
+    // with a same-VM installed lite).
     assertVMLiteClientCoherence(*this);
 
-    // bit_ceil of a size above 2^63 is unrepresentable (UB); no plausible
-    // scratch request approaches it, so fail-stop first.
-    RELEASE_ASSERT(size <= (static_cast<size_t>(1) << (numScratchSizeClasses - 1)));
-    size_t classSize = std::bit_ceil(size); // Smallest power of two >= size.
-    unsigned sizeClass = std::countr_zero(classSize);
-
-    unsigned index;
-    {
-        Locker locker { s_scratchSizeClassLock };
-        if (!(s_scratchSizeClassAllocated & (1ull << sizeClass))) {
-            s_scratchSizeClassIndices[sizeClass] = ScratchBufferRegistry::singleton().allocateIndex(classSize);
-            s_scratchSizeClassAllocated |= 1ull << sizeClass;
-        }
-        index = s_scratchSizeClassIndices[sizeClass];
-    }
+    size_t classSize;
+    unsigned index = ScratchBufferRegistry::singleton().indexForSizeClass(size, classSize);
 
     // Fast path: the two-load lock-free read (repeat requests in this class,
     // or a class another lite already claimed that our registration backfill
@@ -557,13 +315,6 @@ ScratchBuffer* VMLite::scratchBufferForSize(size_t size)
     return buffer;
 }
 
-// NOTE: VMLite::sizeOfLastScratchBuffer (VMLite.h L2 append, task 7) is
-// RETIRED by the size-class dispatch above: it stays 0 forever and no code
-// may consult it (a stale high-water check against the shared ownership
-// list is exactly the undersized-buffer hazard documented above). The field
-// itself is outside this task's writable set (VMLite.h); removing it is an
-// orchestrator-tracked cleanup, harmless meanwhile.
-
 void VMLite::clearScratchBuffers()
 {
     ASSERT(isInstalledOnCurrentThread()); // I11.
@@ -572,10 +323,7 @@ void VMLite::clearScratchBuffers()
         scratchBuffer->setActiveLength(0);
 }
 
-// §6.7: SOLE defining TU for currentButterflyTID() (INTEGRATE-vmstate verifies
-// ODR; the __has_include("VMLite.h") shims in runtime/ConcurrentButterfly.h
-// and jit/ConcurrentButterflyOperations.cpp compile away now that VMLite.h
-// exists).
+// §6.7: the sole definition of currentButterflyTID().
 ButterflyTID currentButterflyTID()
 {
     auto* lite = VMLite::currentIfExists();
@@ -587,49 +335,20 @@ void setVMLiteTIDTagHook(void (*hook)(uint16_t))
     s_vmLiteTIDTagHook.store(hook, std::memory_order_release);
 }
 
-// ---- ANNEX A16 (UNGIL §A.1.6, U-T1): process-wide baked-index registry +
-// per-lite segmented table. Dark until U-T4 emission allocates indices. ----
-//
-// U-T4a STATUS (codegen-side contract, recorded here because this TU is the
-// runtime half the emission consumes). This TU is the RUNTIME HALF ONLY —
-// nothing below certifies U-T4a complete:
-//
-//   LANDED (runtime side, this TU + VM.cpp/JSLock.cpp): the registry
-//   (allocateIndex/sizeForIndex/indexCount), the per-lite segmented table
-//   (scratchBufferAtIndex two-load read / ensureScratchBufferAtIndex /
-//   backfillBakedScratchBuffers), VM::allocateBakedScratchBufferIndex's
-//   install fan (VM.cpp), the JSLock.cpp registration backfill, the §A.1.1
-//   g_jscCurrentVMLite mirror in setCurrent above, and the annex-A16
-//   non-baked arm (VMLite::scratchBufferForSize over the segmented table by
-//   size-class index — see the block above it).
-//
-//   NOT LANDED BY THIS SLICE (the U-T4a codegen half; jit/ + dfg/ are
-//   OUTSIDE this slice's writable file set — VMLite.cpp only): the
-//   Baseline/DFG mode-keyed (codeBlock->vm->m_gilOff, §A.1.3
-//   COMPILED-FOR-VM rule) Group-3 + scratch emission, the per-row A16-ext
-//   emission, and the golden-disasm re-baseline (shared with U-T4b). The
-//   only loadVMLite machinery in the tree is the U-T3 emitter in
-//   jit/AssemblyHelpers.cpp; U-T4a MUST NOT be marked complete until the
-//   emission slice lands against this runtime half.
-//
-//   NOT YET LANDABLE — A16 EXTENSION (AUD1.K4): the lite-resident copies of
-//   VM::m_megamorphicCache, VM::m_hasOwnPropertyCache,
-//   JSGlobalObject::m_regExpGlobalData (SD19) and JSGlobalObject::
-//   m_weakRandom (K4.VIII.10) require L2 member appends + offsetOf*
-//   accessors in VMLite.h, which is OUTSIDE this task slice's writable file
-//   set (VMLite.cpp only). Until those slots exist, gilOff-mode compilation
-//   MUST NOT emit lite-relative inline fast paths for those four rows — the
-//   emission slice keeps them dark (no gilOff VM is constructible before
-//   the activation tasks, so this is a sequencing constraint, not a live
-//   hole). Activation checklist (each item outside this file): (1) VMLite.h
-//   slot appends + offsets; (2) registration-time slot fill (lazy §K.3
-//   publish for ensure* contents) at the JSLock.cpp/spawn registration
-//   sites; (3) registry-walk root scan + ~VM walk for the cell-holding
-//   RegExpGlobalData copies (AUD1.K2); (4) the K4.VI.2 epoch-bump fan-out
-//   inside the firing stop; (5) the per-row Baseline/DFG emission keyed on
-//   the COMPILED-FOR VM's mode (codeBlock->vm->m_gilOff, §A.1.3).
-//   Flag-off/GIL-on keeps today's baked VM/global addresses (golden gates
-//   intact) regardless.
+// ---- ANNEX A16 (UNGIL §A.1.6): process-wide baked-index registry + per-lite
+// segmented table. GIL-off compilations (DFG/FTL node spills, OSR exit and
+// entry buffers, the exit thunks) bake a registry index and load the buffer
+// through the installed lite (loadVMLite -> scratchSegments -> [index]).
+// VM::allocateBakedScratchBufferIndex fans the new index's buffer to the
+// VM's registered lites, and every GIL-off registration backfills (the
+// JSLock.cpp carrier registration and the ThreadObject.cpp spawn), so a
+// buffer exists at (lite, index) before code baking that index can run on
+// the thread. Flag-off and GIL-on compilations keep baking the addresses
+// VM::scratchBufferForSize hands out. The VM-singular caches this annex once
+// planned to duplicate per lite are handled elsewhere: MegamorphicCache is
+// inert under useJSThreads, the HasOwnPropertyCache is bypassed GIL-off
+// (ObjectPrototype.cpp) and RegExpGlobalData has a per-lite side table in
+// JSGlobalObject.cpp. ----
 
 ScratchBufferRegistry& ScratchBufferRegistry::singleton()
 {
@@ -641,16 +360,22 @@ ScratchBufferRegistry& ScratchBufferRegistry::singleton()
     return registry;
 }
 
-unsigned ScratchBufferRegistry::allocateIndex(size_t size)
+unsigned ScratchBufferRegistry::indexForSizeClass(size_t size, size_t& classSize)
 {
+    // bit_ceil of a size above 2^63 is unrepresentable (UB); no plausible
+    // scratch request approaches it, so fail-stop first.
+    RELEASE_ASSERT(size && size <= (static_cast<size_t>(1) << (numSizeClasses - 1)));
+    classSize = std::bit_ceil(size); // Smallest power of two >= size.
+    unsigned sizeClass = std::countr_zero(classSize);
+    static_assert(numSizeClasses <= VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
+
     Locker locker { m_lock };
-    unsigned index = m_sizes.size();
-    // The per-lite segmented table is fixed-capacity (L2 append; VMLite.h).
-    // Exceeding it would need a spec revision of the segment geometry, not a
-    // silent overflow.
-    RELEASE_ASSERT(index < VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
-    m_sizes.append(size);
-    return index;
+    if (!(m_sizeClassAllocated & (1ull << sizeClass))) {
+        m_sizeClassIndices[sizeClass] = m_sizes.size();
+        m_sizes.append(classSize);
+        m_sizeClassAllocated |= 1ull << sizeClass;
+    }
+    return m_sizeClassIndices[sizeClass];
 }
 
 size_t ScratchBufferRegistry::sizeForIndex(unsigned index) const
@@ -716,18 +441,12 @@ void VMLite::backfillBakedScratchBuffers()
 //   - per-lite readers (D9 park-lite polls, the W1 captured-lite poll) now
 //     observe their own per-thread word.
 //
-// N-ENTRY ACTIVATED (AB-17 §A.2.2 reroute change): the once-blocking legs are
-// ALL landed in the AB-17 diff — generated-code soft-stack-limit reads
-// rerouted per-lite (LLInt chained offsets + branchPtrAgainstSoftStackLimit
-// at every JIT-tier site), the §F.1 lite-REGISTRATION VM-word backfill
-// (VMLiteRegistry::registerLite), the VMTraps::vm() reroute via
-// m_liteOwnerVM, the park-site W1/D9 split, and the C++ VM::softStackLimit()
-// reader reroute. The VMEntryScope::setUpSlow gate flipped
-// (perLiteSoftStackLimitRerouteLanded = true) and the N-entered refusal walk
-// self-retired: a second concurrent entry is no longer refused. The
-// activation checklist (with its post-flip STATUS block, including the
-// known-failing GIL-off acceptance rungs) lives with the seam declaration in
-// VMTraps.h.
+// Every lite of a gilOff VM has its gilOff byte set at registration (VM ctor,
+// JSLock carrier registration, ThreadObject spawn), so for such a VM this
+// never returns the VM word: generated-code soft-stack-limit reads, the C++
+// softStackLimitForCurrentThread readers, the registration backfill and the
+// park-site polls all go through the lite's own word, and nothing refuses a
+// second concurrent entry.
 
 VMTraps* perThreadTrapsIfExists(VMLite& lite)
 {
@@ -826,249 +545,6 @@ void jsThreadsNVSExitInstructionSync()
 }
 
 // ===========================================================================
-// UNGIL §K.3 + ANNEXES LZ1/LZ2 (U-T8b) — lazy-publication owner side table.
-//
-// r16 F2: the initializing CAS RECORDS the owner; this is the spec-named
-// "per-VM side table {property address -> carrier TID} under a leaf lock"
-// (implemented process-wide keyed by property address — sound because
-// property addresses are VM-unique and U0b admits one gilOff VM; the owner
-// is recorded as the VMLite*, which IS the carrier identity). LZ1.1 adds the
-// per-in-flight waiter edges; LZ1.2 the cycle escape; LZ1.3 abandonment.
-//
-// CONSUMPTION CONTRACT (the LazyProperty/LazyClassStructure/ensure* slow
-// paths — LazyPropertyInlines.h and peers, OUTSIDE this task's owned set —
-// call these in this order; the declarations lift into a header with that
-// slice):
-//
-//   WINNER (won the initializingTag CAS):
-//     lazyInitRecordOwnerForCurrentThread(P);
-//     <unwind scope — LZ1.3: ANY non-normal exit (JS/C++ exception,
-//      termination poll, §E.5 thread termination) must, BEFORE propagating:
-//      (1) lazyInitReleaseOwnerForCurrentThread(P) — erase the entry and
-//      wake waiters FIRST, then
-//      (2) CAS lazyTag initializing->empty (caller's word).
-//      ORDER IS LOAD-BEARING (release-FIRST). The reverse order opens a
-//      window where the property word is publicly `empty` while the stale
-//      in-flight record persists: a fresh toucher wins a new initializingTag
-//      CAS, calls lazyInitRecordOwnerForCurrentThread, and trips its
-//      isNewEntry RELEASE_ASSERT on a legal interleaving — and the LZ1.1/
-//      LZ1.2 graph meanwhile carries stale edges (wrong cycle answers,
-//      waiterCount bumps on a dead window). Release-first is benign on the
-//      waiter side: a waiter that observes entry-gone while the tag still
-//      reads `initializing` simply loops (waitQuantum returns true
-//      immediately, the load-acquire re-test sees initializing, it
-//      re-registers) — a bounded busy-loop for exactly the abandoning
-//      owner's one-CAS window. Foreign waiters then observe empty and a
-//      later toucher re-runs the initializer (sound: publication only on
-//      success). The COMMIT arm needs no such care: the result is
-//      release-stored (word != empty/initializing) BEFORE the release call,
-//      so no new winner can start while the entry is still present.
-//      A conductor MUST NOT abandonment-CAS a parked owner's init (LZ2.3 —
-//      owner-unwind-only).>
-//       run initializer (lock-free); release-store result;
-//     lazyInitReleaseOwnerForCurrentThread(P);   // commit arm — same call
-//
-//   FOREIGN TOUCHER (lost the CAS / observed initializing):
-//     loop {
-//       if (lazyInitWaiterWouldSelfDeadlock(P)) return nullptr; // LZ1.2
-//       lazyInitRegisterWaiter(P);                              // LZ1.1
-//       <release heap access — §E.2 order, NO lock held>
-//       lazyInitWaitQuantum(P, quantum);  // bounded; spurious wakes benign
-//       <poll BOTH stop families (lite §A.3 bit + heap §10 stopIfNecessary);
-//        re-acquire access via the §A.3.2b-gated path>
-//       lazyInitUnregisterWaiter(P);
-//       re-test the load-acquire; break when published or empty;
-//     }
-//
-//   OWNER RE-ENTRY on the same property returns null — the LANDED contract
-//   (LazyProperty.h:75-76); the table is not consulted for it.
-//
-// LZ2 PRECONDITIONS (normative; enforcement = the U20 LZ2.5 lint, U-T14):
-// no first-touch site may run holding api rank-1..3, heap 10a/10b, a §N cell
-// lock, or a §LK.8 destructor-leaf hold; no first-touch from a CONDUCTOR
-// inside its own stop window (LZ2.1).
-//
-// LZ2.2 CONDUCTOR-CLOSURE-REACHABLE COLUMN (U-T8b deliverable; dispositions
-// (a) proven pre-initialized / (b) conductor pre-resolves before arbitration
-// / (c) re-ruled class 1/2 — per K4 §IV rows):
-//   K4.IV.1-3 (LazyClassStructure / LazyProperty / linkTimeConstants): (a)
-//     for the haveABadTime conductor — the HBT conversion walk allocates
-//     ArrayStorage butterflies and transitions EXISTING structures
-//     (nonPropertyTransition; originalArrayStructures are ctor-initialized
-//     VM.h roots, K4.VIII.1) and touches no LazyProperty; (a) for
-//     deleteAllCode/watchpoint-fire conductors — jettison walks executable/
-//     watchpoint state only. Any NEW conductor closure must re-derive this
-//     row (LZ2.2 is per-call-site).
-//   K4.IV.4 (VM ensure* containers): (a) — no conductor closure calls
-//     ensureWatchdog/ensureHeapProfiler/ensureShadowChicken/ensure*Cache;
-//     profiler/debugger attach is main-only (K4 §V) and never a conductor.
-//   K4.IV.5-7 (bound/remote executables, emptyPropertyNameEnumerator): (a)
-//     — reachable only from JS-visible host paths (bind/remote-function/
-//     for-in), never from a stop-window closure.
-//   K4.IV.8 (m_exceptionFuzzBuffer): fuzz-option only; conductors never
-//     touch it. (a).
-//   K4.IV.9 (JSGlobalObject::m_rareData): (a) — the HBT body touches
-//     m_structureCache (clear rides the VI.2 stop) and watchpoint sets, not
-//     the rareData lazy pointer.
-//
-// EXIT/~VM ASSERTS (LZ1.3 tail): thread exit (§E.2 T5 — JSLock/ThreadObject
-// slices, recorded for those owners) and EVERY lite teardown (~VMLite above
-// in this TU) assert the thread/lite owns no in-flight init and waits on
-// nothing.
-// ===========================================================================
-
-namespace {
-
-struct LazyInitOwnerTable {
-    Lock lock; // §LK.7 leaf: nothing is acquired while it is held.
-    Condition condition; // waiters re-test under the lock; notifyAll on every erase.
-    struct InFlight {
-        VMLite* owner { nullptr };
-        unsigned waiterCount { 0 };
-    };
-    HashMap<const void*, InFlight> inFlight WTF_GUARDED_BY_LOCK(lock); // property -> in-flight record
-    // LZ1.1 wait-for edges. A thread parks on AT MOST one property at a time
-    // => this map is a function, which is what makes the LZ1.2 walk bounded
-    // and sound. (A thread MAY own several nested in-flight inits — P's
-    // initializer first-touching Q — so ownership is scanned, not mapped.)
-    HashMap<VMLite*, const void*> waiterToProperty WTF_GUARDED_BY_LOCK(lock);
-};
-
-LazyInitOwnerTable& lazyInitOwnerTable()
-{
-    static NeverDestroyed<LazyInitOwnerTable> table;
-    return table;
-}
-
-} // anonymous namespace
-
-// Self-declarations (header lift travels with the LazyPropertyInlines.h
-// consuming slice; see the consumption contract above).
-void lazyInitRecordOwnerForCurrentThread(const void* property);
-void lazyInitReleaseOwnerForCurrentThread(const void* property);
-bool lazyInitWaiterWouldSelfDeadlock(const void* property);
-void lazyInitRegisterWaiter(const void* property);
-void lazyInitUnregisterWaiter(const void* property);
-bool lazyInitWaitQuantum(const void* property, Seconds quantum);
-void assertVMLiteOwnsNoInFlightLazyInit(VMLite*);
-
-void lazyInitRecordOwnerForCurrentThread(const void* property)
-{
-    VMLite* self = &VMLite::current(); // §K.3 touches run entered, lite installed (I11).
-    auto& table = lazyInitOwnerTable();
-    Locker locker { table.lock };
-    auto result = table.inFlight.add(property, LazyInitOwnerTable::InFlight { self, 0 });
-    // The initializingTag CAS already arbitrated: exactly one winner per
-    // in-flight window may record. Sound ONLY because abandonment releases
-    // the entry BEFORE re-emptying the tag (release-FIRST, contract above):
-    // a new winner can exist only after the old entry is gone.
-    RELEASE_ASSERT(result.isNewEntry);
-}
-
-void lazyInitReleaseOwnerForCurrentThread(const void* property)
-{
-    VMLite* self = &VMLite::current();
-    auto& table = lazyInitOwnerTable();
-    {
-        Locker locker { table.lock };
-        auto it = table.inFlight.find(property);
-        RELEASE_ASSERT(it != table.inFlight.end());
-        RELEASE_ASSERT(it->value.owner == self); // LZ2.3: owner-unwind-only; foreign resets are PROHIBITED.
-        table.inFlight.remove(it);
-        // Commit AND abandonment wake; waiters re-test the load-acquire.
-        // On ABANDONMENT this call runs BEFORE the caller's tag CAS back to
-        // empty (release-FIRST — see the contract block above): the entry
-        // must be gone before the property word can re-arbitrate, or a new
-        // winner's record call collides with the stale entry.
-        table.condition.notifyAll();
-    }
-}
-
-bool lazyInitWaiterWouldSelfDeadlock(const void* property)
-{
-    VMLite* self = VMLite::currentIfExists();
-    if (!self)
-        return false; // Un-installed probes never park (callers gate on entry anyway).
-    auto& table = lazyInitOwnerTable();
-    Locker locker { table.lock };
-    // LZ1.2: follow owner-of -> waits-on edges from P. waiterToProperty is a
-    // function (one park per thread), so the chain is a path; bounded by the
-    // in-flight population. Cycle membership is stable while all
-    // participants wait, so a positive answer cannot go stale before the
-    // caller acts on it (returns null instead of parking).
-    const void* cursor = property;
-    unsigned bound = table.inFlight.size() + 1;
-    while (bound--) {
-        auto it = table.inFlight.find(cursor);
-        if (it == table.inFlight.end())
-            return false; // Published or abandoned: caller re-tests; no park needed.
-        VMLite* owner = it->value.owner;
-        if (owner == self)
-            return true; // Cycle reaches us (possible only if we OWN some in-flight Q): the landed owner-null contract, extended cross-thread.
-        auto edge = table.waiterToProperty.find(owner);
-        if (edge == table.waiterToProperty.end())
-            return false; // Owner is RUNNING its initializer: progress guaranteed.
-        cursor = edge->value;
-    }
-    ASSERT_NOT_REACHED(); // The walk is bounded by construction; fail open to a bounded park.
-    return false;
-}
-
-void lazyInitRegisterWaiter(const void* property)
-{
-    VMLite* self = &VMLite::current();
-    auto& table = lazyInitOwnerTable();
-    Locker locker { table.lock };
-    auto it = table.inFlight.find(property);
-    if (it != table.inFlight.end())
-        it->value.waiterCount++;
-    // LZ1.1: publish (self -> ownerOf(P)) BEFORE the first park quantum.
-    auto result = table.waiterToProperty.add(self, property);
-    RELEASE_ASSERT(result.isNewEntry); // One park per thread at a time.
-}
-
-void lazyInitUnregisterWaiter(const void* property)
-{
-    VMLite* self = &VMLite::current();
-    auto& table = lazyInitOwnerTable();
-    Locker locker { table.lock };
-    auto it = table.inFlight.find(property);
-    if (it != table.inFlight.end() && it->value.waiterCount)
-        it->value.waiterCount--;
-    bool removed = table.waiterToProperty.remove(self);
-    RELEASE_ASSERT(removed);
-}
-
-// One bounded park quantum. Returns true when the in-flight window is GONE
-// (published or abandoned — the caller's load-acquire re-test
-// disambiguates). The caller brackets this with §E.2-ordered heap-access
-// release and BOTH stop-family polls (§K.3's three-way-deadlock rule, r6
-// F2); this function itself holds ONLY the leaf lock and parks in the
-// parking lot (Condition::waitFor drops it).
-bool lazyInitWaitQuantum(const void* property, Seconds quantum)
-{
-    auto& table = lazyInitOwnerTable();
-    Locker locker { table.lock };
-    if (!table.inFlight.contains(property))
-        return true;
-    table.condition.waitFor(table.lock, quantum); // Spurious/cross wakes benign: predicate re-checked.
-    return !table.inFlight.contains(property);
-}
-
-void assertVMLiteOwnsNoInFlightLazyInit(VMLite* lite)
-{
-#if ASSERT_ENABLED
-    auto& table = lazyInitOwnerTable();
-    Locker locker { table.lock };
-    ASSERT(!table.waiterToProperty.contains(lite));
-    for (auto& entry : table.inFlight)
-        ASSERT(entry.value.owner != lite);
-#else
-    UNUSED_PARAM(lite);
-#endif
-}
-
-// ===========================================================================
 // UNGIL annex K4 §VIII (U-T8b) — the shared
 // no-write-after-first-cross-thread-entry assert machinery.
 //
@@ -1150,8 +626,9 @@ bool jsThreadsHasSeenCrossThreadEntry(VM& vm)
 }
 
 // Bookkeeping at VM death (address reuse must not leave a stale positive);
-// called from the main carrier's ~VMLite (the one lite that dies exactly at
-// ~VM, after the EXIT1.9 fence).
+// called from ~VM once every foreign lite of the VM has been unregistered.
+// Lites never call this: a carrier can outlive its VM's destruction, so
+// ~VMLite must not dereference its `vm`.
 void jsThreadsForgetCrossThreadEntry(VM& vm)
 {
     Locker locker { s_crossThreadEntryLock };
@@ -1208,7 +685,9 @@ void jsThreadsAssertNoPostInitWriteAfterFirstCrossThreadEntry(VM* vm, bool isPer
 //     JSGlobalObject.h:1249-1255) and the VIII.8 embedder-hook setters
 //     (VM.h:1091-1094) live in unowned headers — recorded for their owning
 //     slices).
-//   - §K.3/LZ1/LZ2: the owner side table above.
+//   - §K.3/LZ1/LZ2: the owner/waiter tables, cycle walk, bounded park and
+//     scope-exit abandonment live in LazyPropertyInlines.h (keyed by
+//     WTF::Thread*); this TU keeps no lazy-init state.
 // Rows ruled by K4/N7 but whose code sites are OUTSIDE this task's owned
 // files keep their owners (K4 §II per-lite VM caches = VM.h/VM.cpp rows;
 // K4 §III leaf locks = their cache TUs; K4 §V main-only gating = option
@@ -1220,13 +699,8 @@ void jsThreadsAssertNoPostInitWriteAfterFirstCrossThreadEntry(VM* vm, bool isPer
 // landable-now alternative exists inside it; U-T9 MUST NOT start until the
 // orchestrator charters each slice):
 //   GATE-1 — N7 RESOLVED-1/AUD1.N1: AbstractModuleRecord::m_resolutionCache
-//     cell lock (AbstractModuleRecord.cpp/.h). PRIORITY, memory-unsafe
-//     TODAY (two threads reading ns.x race a HashMap rehash against a
-//     bucket walk = UAF). Mechanical fix: take the record's cellLock() in
-//     cacheResolution()/tryGetCachedResolution(), the same lock the sibling
-//     maps already use; §E.1b alloc-outside shape. No mitigation exists in
-//     tree until that slice lands; N mutators MUST NOT touch shared module
-//     namespaces before it.
+//     cell lock: LANDED. cacheResolution()/tryGetCachedResolution() take the
+//     record's cellLock(), the lock the sibling maps on the cell already use.
 //   GATE-2 — N7 RESOLVED-2/AUD1.N2 routing half: LANDED. RegExp.h
 //     ovectorSpan(VM&) gilOff-reroutes to the per-thread buffer (inline
 //     definition RegExpInlines.h; consumers RegExpGlobalDataInlines.h /
@@ -1235,15 +709,10 @@ void jsThreadsAssertNoPostInitWriteAfterFirstCrossThreadEntry(VM* vm, bool isPer
 //     RegExp.h comment). The RELEASE_ASSERTs in RegExp::match /
 //     matchConcurrently are KEPT as routing invariants per the RegExp.cpp
 //     banner; the SD19 regexp corpus arms can now run.
-//   GATE-3 — §K.3/LZ1/LZ2 consuming slice: LazyPropertyInlines.h + peers
-//     must call the lazyInit* machinery below (and host the LZ1.3 winner
-//     unwind scope — an RAII type is NOT definable usefully in this TU:
-//     consumers in other TUs need the complete class type, which must live
-//     in the lifted header; its required semantics, including the
-//     release-FIRST abandonment order, are normative in the contract block
-//     below). Until that slice lands, GIL-off LazyProperty first-touch
-//     remains the un-arbitrated landed slow path; LZ1.4/LZ2.4 corpus arms
-//     cannot pass.
+//   GATE-3 — §K.3/LZ1/LZ2 consuming slice: LANDED in LazyPropertyInlines.h
+//     (LazyPropertyInternal::InitTables + callFunc: the initializing CAS
+//     records the owner, foreign touchers park in bounded quanta, the
+//     cycle walk returns null, abandonment runs at scope exit).
 //
 // WS1.4 HANDLE-CREATION LOCK-CONTEXT COLUMN (Weak/Strong construction sites
 // in THIS task's owned files — the audit column; WS(i): no Weak construction
@@ -1255,16 +724,15 @@ void jsThreadsAssertNoPostInitWriteAfterFirstCrossThreadEntry(VM* vm, bool isPer
 //     constructions; the per-lite side table holds WriteBarriers (no
 //     handles) and allocates cells OUTSIDE its leaf lock (WS1(i)-conforming
 //     by construction).
-// WS1.2 RE-SHAPES — OPEN, files unowned here (verified still in violation):
-//   - ThreadManager::restrictObject (ThreadManager.cpp:621-642) still
-//     constructs the affinity entry's Weak via makeAffinityEntry UNDER
-//     m_affinityLock (api rank 2) on both the ensure and stale-replace arms
-//     => WS1.1 violation; re-shape per WS1.2 (build entry before the lock,
-//     move/replace under it, destroy stale entries after release).
-//   - RegExpCache::lookupOrCreate (RegExpCache.cpp:62-65) still constructs
-//     Weak<RegExp> inside the second Locker { m_lock } => same; hoist
-//     construction before the Locker, weakAdd under it, discard a racing
-//     duplicate after release.
+// WS1.2 RE-SHAPES:
+//   - RegExpCache::lookupOrCreate: DONE — the Weak<RegExp> is constructed
+//     before Locker { m_lock } and weakAdd'd under it.
+//   - ThreadManager::restrictObject: OPEN — makeAffinityEntry constructs the
+//     entry's Weak<JSObject> under m_affinityLock (api rank 2) on both the
+//     ensure and stale-replace arms; under the shared heap that construction
+//     takes MutatorSlowPathLocker (WeakSetInlines.h), the nesting WS(i)
+//     forbids. Re-shape: build the entry before the lock, move/replace
+//     under it, destroy a stale entry after release.
 // WS1.5 churn corpus (restrict/collect + regexp-cache churn, TSAN): JSTests
 // is outside this file set — recorded for the orchestrator with the WS1.2
 // re-shapes (they gate together).
