@@ -456,7 +456,6 @@ static String moduleReferrer(const Identifier& referrerKey)
     return referrerKey.string();
 }
 
-<<<<<<< ours
 #if USE(BUN_JSC_ADDITIONS)
 JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObject, const Identifier& key, RefPtr<ScriptFetchParameters>&& parameters, ModuleGraphInstance* instance)
 {
@@ -469,8 +468,9 @@ JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObje
     // afresh. Evaluation failures stay (instances evaluate separately anyway).
     {
         JSModuleLoader* loader = globalObject->moduleLoader();
+        auto type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
         Locker locker { loader->cellLock() };
-        if (ModuleRegistryEntry* entry = loader->registryEntry(key)) {
+        if (ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, type)) {
             if (entry->hasSettledFailure())
                 loader->removeEntry(key);
         }
@@ -622,10 +622,7 @@ AbstractModuleRecord* JSModuleLoader::linkWithoutEvaluating(JSGlobalObject* glob
     return record;
 }
 
-JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred)
-=======
 JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder)
->>>>>>> theirs
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

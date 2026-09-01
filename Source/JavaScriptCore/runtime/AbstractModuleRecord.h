@@ -296,11 +296,7 @@ public:
 
     void evaluateModuleSync(JSGlobalObject*);
 #if USE(BUN_JSC_ADDITIONS)
-<<<<<<< ours
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, JSPromise* dynamicImportPromise, ModuleGraphInstance*);
-=======
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
->>>>>>> theirs
+    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise, ModuleGraphInstance*);
 #else
     unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance*);
 #endif
