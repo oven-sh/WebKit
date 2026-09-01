@@ -68,32 +68,42 @@ StructureChain* StructureChain::create(VM& vm, JSObject* head)
     } else
         memset(vector, 0, bytes);
     StructureChain* chain = new (NotNull, allocateCell<StructureChain>(vm)) StructureChain(vm, vm.structureChainStructure.get(), static_cast<StructureID*>(vector));
-    chain->finishCreation(vm, head);
+    chain->finishCreation(vm, head, size);
     return chain;
 }
 
-void StructureChain::finishCreation(VM& vm, JSObject* head)
+void StructureChain::finishCreation(VM& vm, JSObject* head, size_t size)
 {
     Base::finishCreation(vm);
     size_t i = 0;
     static_assert(sizeof(StructureID) == sizeof(uint32_t));
+    if (Options::useJSThreads()) [[unlikely]] {
+        // The vector holds size - 1 lanes plus the zero sentinel, sized by
+        // create()'s walk. Nothing serializes that walk against a foreign
+        // Object.setPrototypeOf on an object in the chain, which can lengthen
+        // it, so this walk stops at the last lane: a truncated chain fails
+        // Structure::isValid and is rebuilt, while an unbounded walk would
+        // overwrite the sentinel and run past the allocation. Lanes are
+        // written with relaxed atomic stores because foreign mutators and
+        // concurrent marking read them on recycled auxiliary memory; the
+        // fence orders the lanes (and create()'s zeroed sentinel) before the
+        // caller's lock-free publish of the chain pointer.
+        for (JSObject* current = head; current && i < size - 1; current = current->structure()->storedPrototypeObject(current)) {
+            WTF::atomicStore(reinterpret_cast<uint32_t*>(m_vector.get() + i), current->structure()->id().bits(), std::memory_order_relaxed);
+            ++i;
+            vm.writeBarrier(this);
+        }
+        WTF::storeStoreFence();
+        return;
+    }
     for (JSObject* current = head; current; current = current->structure()->storedPrototypeObject(current)) {
         Structure* structure = current->structure();
-        // TSAN family structure-fields: once the caller publishes this chain
-        // (Structure::m_cachedPrototypeChain, written lock-free by
-        // prototypeChain in StructureInlines.h), the StructureID lanes are
-        // read by foreign mutators and concurrent marking; relaxed atomic
-        // 32-bit stores (identical str/mov codegen) keep the word accesses
-        // C++-defined against those readers on recycled auxiliary memory.
+        // Relaxed atomic 32-bit store: identical str/mov codegen to the plain
+        // store, shared with the flag-on arm's readers.
         WTF::atomicStore(reinterpret_cast<uint32_t*>(m_vector.get() + i), structure->id().bits(), std::memory_order_relaxed);
         ++i;
         vm.writeBarrier(this);
     }
-    // UG §K publication: order the vector lanes (and the memset sentinel tail
-    // written in create()) before the caller's lock-free publish store of the
-    // chain pointer. Gated so flag-off codegen is unchanged (no arm64 dmb).
-    if (Options::useJSThreads()) [[unlikely]]
-        WTF::storeStoreFence();
 }
 
 template<typename Visitor>

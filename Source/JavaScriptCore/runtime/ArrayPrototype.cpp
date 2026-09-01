@@ -448,11 +448,13 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, Call
         if (isJSArray(thisValue) && separatorValue.isString()) [[likely]] {
             JSArray* array = asArray(thisValue);
             JSString* separatorString = asString(separatorValue);
-            // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word —
-            // this fast path derefs butterfly() as flat; fall to generic join.
-            if (!array->mayBeSegmentedButterfly() && !separatorString->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
-                auto* butterfly = array->butterfly();
+            Butterfly* butterfly = nullptr;
+            if (!separatorString->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32) && flatButterflySnapshot(array, butterfly)) {
                 unsigned length = butterfly->publicLength();
+#if USE(JSVALUE64)
+                if (Options::useJSThreads()) [[unlikely]]
+                    length = std::min(length, butterfly->vectorLength());
+#endif
                 JSOnlyStringsAndInt32sJoiner joiner(StringView { });
                 auto* joined = joiner.tryJoin(globalObject, butterfly->contiguous().data(), length);
                 RETURN_IF_EXCEPTION(scope, { });
@@ -625,16 +627,50 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
 
     thisObject->ensureWritable(vm);
 
-    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — every arm
-    // below derefs butterfly() as flat; skip to the generic reverse loop.
-    if (thisObject->mayBeSegmentedButterfly()) [[unlikely]] { /* generic */ } else
-    switch (thisObject->indexingType()) {
+    // The arms below store into element storage in place. Flag-on that is only
+    // sound for the word's owner or once the shared-write bit is set: a foreign
+    // caller on an SW=0 flat word first fires the write watchpoint and flips SW
+    // (ensureSharedWriteBit), otherwise its stores land while the structure's
+    // write-thread-local set is still valid and an owner's copying resize can
+    // drop them. Every flat dereference comes from one loaded word; a segmented
+    // or empty word, and any ArrayStorage word (cell-locked flag-on), takes the
+    // generic loop. Stores through the snapshot stay sound after a racing
+    // conversion because the spine aliases the flat storage.
+    IndexingType indexingType;
+    Butterfly* butterfly;
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        uint64_t word = thisObject->taggedButterflyWord();
+        if ((word & butterflyPointerMask) && !isSegmentedButterfly(word)
+            && !butterflySharedWrite(word) && butterflyWriterIsForeign(word)) {
+            ensureSharedWriteBit(vm, static_cast<JSObjectWithButterfly*>(thisObject));
+            word = thisObject->taggedButterflyWord();
+        }
+        indexingType = thisObject->indexingType();
+        if (isSegmentedButterfly(word) || !(word & butterflyPointerMask) || hasAnyArrayStorage(indexingType)) {
+            indexingType = NonArray;
+            butterfly = nullptr;
+        } else
+            butterfly = untaggedButterfly(word);
+    } else {
+        indexingType = thisObject->indexingType();
+        butterfly = thisObject->butterfly();
+    }
+#else
+    indexingType = thisObject->indexingType();
+    butterfly = thisObject->butterfly();
+#endif
+
+    switch (indexingType) {
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_INT32_INDEXING_TYPES: {
-        auto& butterfly = *thisObject->butterfly();
-        if (length > butterfly.publicLength())
+        if (length > butterfly->publicLength())
             break;
-        auto data = butterfly.contiguous().data();
+#if USE(JSVALUE64)
+        if (Options::useJSThreads() && length > butterfly->vectorLength()) [[unlikely]]
+            break;
+#endif
+        auto data = butterfly->contiguous().data();
         if (containsHole(data, static_cast<uint32_t>(length)) && holesMustForwardToPrototype(thisObject))
             break;
         std::reverse(data, data + length);
@@ -643,17 +679,20 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
         return JSValue::encode(thisObject);
     }
     case ALL_DOUBLE_INDEXING_TYPES: {
-        auto& butterfly = *thisObject->butterfly();
-        if (length > butterfly.publicLength())
+        if (length > butterfly->publicLength())
             break;
-        auto data = butterfly.contiguousDouble().data();
+#if USE(JSVALUE64)
+        if (Options::useJSThreads() && length > butterfly->vectorLength()) [[unlikely]]
+            break;
+#endif
+        auto data = butterfly->contiguousDouble().data();
         if (containsHole(data, static_cast<uint32_t>(length)) && holesMustForwardToPrototype(thisObject))
             break;
         std::reverse(data, data + length);
         return JSValue::encode(thisObject);
     }
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
-        auto& storage = *thisObject->butterfly()->arrayStorage();
+        auto& storage = *butterfly->arrayStorage();
         if (length > storage.vectorLength())
             break;
         if (storage.hasHoles() && holesMustForwardToPrototype(thisObject))
@@ -1283,11 +1322,7 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
 
     bool canDoFastPath = array->canDoFastIndexedAccess()
         && array->getArrayLength() == length64 // The effects in getting `index` could have changed the length of this array.
-        && static_cast<uint32_t>(index64) == index64
-        // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — the
-        // shape switch below derefs butterfly() as flat; return the "not
-        // fast" sentinel so callers run generic indexOf.
-        && !array->mayBeSegmentedButterfly();
+        && static_cast<uint32_t>(index64) == index64;
     if (!canDoFastPath)
         return JSValue();
 
@@ -1299,9 +1334,17 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
             return jsNumber(-1);
     }
 
+    Butterfly* snapshotButterfly = nullptr;
+    if (!flatButterflySnapshot(array, snapshotButterfly)) [[unlikely]]
+        return JSValue();
+#if USE(JSVALUE64)
+    if (Options::useJSThreads() && length > snapshotButterfly->vectorLength()) [[unlikely]]
+        return JSValue();
+#endif
+
     switch (array->indexingType()) {
     case ALL_INT32_INDEXING_TYPES: {
-        auto& butterfly = *array->butterfly();
+        auto& butterfly = *snapshotButterfly;
         auto data = butterfly.contiguous().data();
 
         int32_t int32Value = 0;
@@ -1325,7 +1368,7 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
         return jsNumber(-1);
     }
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
-        auto& butterfly = *array->butterfly();
+        auto& butterfly = *snapshotButterfly;
         auto data = butterfly.contiguous().data();
 
         if constexpr (direction == IndexOfDirection::Forward) {
@@ -1370,7 +1413,7 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
         if (!searchElement.isNumber())
             return jsNumber(-1);
         double searchNumber = searchElement.asNumber();
-        auto& butterfly = *array->butterfly();
+        auto& butterfly = *snapshotButterfly;
         auto data = butterfly.contiguousDouble().data();
         if constexpr (direction == IndexOfDirection::Forward) {
             for (; index < length; ++index) {
@@ -1412,11 +1455,8 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncIndexOf, (JSGlobalObject* globalObject, C
 
     if (isJSArray(thisObject)) [[likely]] {
         JSArray* array = asArray(thisObject);
-        // THREADS-INTEGRATE(objectmodel) §10.7: guard the direct length/
-        // butterfly peek (CoW words are flat-decodable — I35 — but the load
-        // must not be reached on a tagged word).
-        Butterfly* butterfly = array->mayBeSegmentedButterfly() ? nullptr : array->butterfly();
-        if (butterfly && isCopyOnWrite(array->indexingMode()) && JSCellButterfly::isOnlyAtomStringsStructure(vm, butterfly) && searchElement.isString()) {
+        Butterfly* butterfly = nullptr;
+        if (flatButterflySnapshot(array, butterfly) && isCopyOnWrite(array->indexingMode()) && JSCellButterfly::isOnlyAtomStringsStructure(vm, butterfly) && searchElement.isString()) {
             auto search = asString(searchElement)->toAtomString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
 
@@ -1539,11 +1579,9 @@ static JSArray* tryConcatAppendOneNonArray(JSGlobalObject* globalObject, VM& vm,
 
     ASSERT(!isJSArray(second));
     ASSERT(!first->mayInterceptIndexedAccesses());
-    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — this fast
-    // path derefs butterfly() as flat (source AND result). Bail to generic.
-    if (first->mayBeSegmentedButterfly()) [[unlikely]]
+    Butterfly* firstButterfly = nullptr;
+    if (!flatButterflySnapshot(first, firstButterfly)) [[unlikely]]
         return nullptr;
-    Butterfly* firstButterfly = first->butterfly();
     unsigned firstArraySize = firstButterfly->publicLength();
 
     CheckedUint32 checkedResultSize = firstArraySize;
@@ -1598,15 +1636,19 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     ASSERT(!globalObject->isHavingABadTime());
     ASSERT(firstArray->canFastCopy(secondArray));
 
-    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word on either
-    // side — this fast path derefs both butterflies as flat. Bail to generic.
-    if (firstArray->mayBeSegmentedButterfly() || secondArray->mayBeSegmentedButterfly()) [[unlikely]]
+    Butterfly* firstButterfly = nullptr;
+    Butterfly* secondButterfly = nullptr;
+    if (!flatButterflySnapshot(firstArray, firstButterfly) || !flatButterflySnapshot(secondArray, secondButterfly)) [[unlikely]]
         return nullptr;
-    Butterfly* firstButterfly = firstArray->butterfly();
-    Butterfly* secondButterfly = secondArray->butterfly();
 
     unsigned firstArraySize = firstButterfly->publicLength();
     unsigned secondArraySize = secondButterfly->publicLength();
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        firstArraySize = std::min(firstArraySize, firstButterfly->vectorLength());
+        secondArraySize = std::min(secondArraySize, secondButterfly->vectorLength());
+    }
+#endif
 
     CheckedUint32 checkedResultSize = firstArraySize;
     checkedResultSize += secondArraySize;
@@ -1644,6 +1686,15 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     auto* butterfly = Butterfly::fromBase(memory, 0, 0);
     butterfly->setVectorLength(vectorLength);
     butterfly->setPublicLength(resultSize);
+
+#if USE(JSVALUE64)
+    // The lane decoders below are chosen from firstType and secondType. Flag-on
+    // the allocation above is a park point during which a stop-the-world
+    // relabel of either array rewrites its flat lanes in place without
+    // touching the word, so re-read both shapes before copying.
+    if (Options::useJSThreads() && (firstArray->indexingType() != firstType || secondArray->indexingType() != secondType)) [[unlikely]]
+        return nullptr;
+#endif
 
     // We can use memcpy / memset since butterfly is not connected to cells yet.
     if (type == ArrayWithDouble) {

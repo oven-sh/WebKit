@@ -86,6 +86,23 @@ Structure* SparseArrayValueMap::createStructure(VM& vm, JSGlobalObject* globalOb
     return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
 }
 
+ALWAYS_INLINE SparseArrayValueMap::AddResult SparseArrayValueMap::addLocked(unsigned i, size_t& increasedCapacity)
+{
+    AddResult result = m_map.add(i, SparseArrayEntry());
+    size_t capacity = m_map.capacity();
+    if (capacity > m_reportedCapacity) {
+        increasedCapacity = capacity - m_reportedCapacity;
+        m_reportedCapacity = capacity;
+    }
+    return result;
+}
+
+ALWAYS_INLINE void SparseArrayValueMap::reportIncreasedCapacity(JSObject* array, size_t increasedCapacity)
+{
+    if (increasedCapacity)
+        Heap::heap(array)->reportExtraMemoryAllocated(array, increasedCapacity * sizeof(Map::KeyValuePairType));
+}
+
 SparseArrayValueMap::AddResult SparseArrayValueMap::add(JSObject* array, unsigned i)
 {
     AddResult result;
@@ -93,16 +110,39 @@ SparseArrayValueMap::AddResult SparseArrayValueMap::add(JSObject* array, unsigne
     {
         Locker locker { cellLock() };
         tsanAcquireCtorPublication();
-        result = m_map.add(i, SparseArrayEntry());
-        size_t capacity = m_map.capacity();
-        if (capacity > m_reportedCapacity) {
-            increasedCapacity = capacity - m_reportedCapacity;
-            m_reportedCapacity = capacity;
-        }
+        result = addLocked(i, increasedCapacity);
     }
-    if (increasedCapacity)
-        Heap::heap(array)->reportExtraMemoryAllocated(array, increasedCapacity * sizeof(Map::KeyValuePairType));
+    reportIncreasedCapacity(array, increasedCapacity);
     return result;
+}
+
+bool SparseArrayValueMap::addIfAbsent(VM& vm, JSObject* array, unsigned i, JSValue value, unsigned attributes)
+{
+    bool isNewEntry;
+    size_t increasedCapacity = 0;
+    {
+        Locker locker { cellLock() };
+        tsanAcquireCtorPublication();
+        AddResult result = addLocked(i, increasedCapacity);
+        isNewEntry = result.isNewEntry;
+        if (isNewEntry)
+            result.iterator->value.forceSet(vm, this, value, attributes);
+    }
+    reportIncreasedCapacity(array, increasedCapacity);
+    return isNewEntry;
+}
+
+void SparseArrayValueMap::setEntry(VM& vm, unsigned i, JSValue value, unsigned attributes)
+{
+    Locker locker { cellLock() };
+    tsanAcquireCtorPublication();
+    auto it = m_map.find(i);
+    if (it == m_map.end())
+        return;
+    if (value)
+        it->value.forceSet(vm, this, value, attributes);
+    else
+        it->value.forceSet(this, attributes);
 }
 
 void SparseArrayValueMap::remove(iterator it)
@@ -124,57 +164,68 @@ bool SparseArrayValueMap::putEntry(JSGlobalObject* globalObject, JSObject* array
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(value);
-    
+
+    if (Options::useJSThreads()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, putEntryConcurrent(globalObject, array, i, value, shouldThrow));
+
     AddResult result = add(array, i);
+    SparseArrayEntry& entry = result.iterator->value;
 
     // To save a separate find & add, we first always add to the sparse map.
     // In the uncommon case that this is a new property, and the array is not
     // extensible, this is not the right thing to have done - so remove again.
     if (result.isNewEntry && !array->isStructureExtensible()) {
-        if (Options::useJSThreads()) [[unlikely]] {
-            // AB18-G: result.iterator was minted inside add()'s critical
-            // section; a racing add() can rehash m_map after add() drops the
-            // cell lock, leaving it pointing into a freed table. Remove by
-            // key, which re-probes under the lock.
-            remove(i);
-        } else
-            remove(result.iterator);
+        remove(result.iterator);
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     }
-
-    if (Options::useJSThreads()) [[unlikely]] {
-        // objectmodel round 4 (§61): `entry` dangles if a racing add()
-        // rehashes m_map after add()'s internal lock released. Re-find under
-        // the map's cell lock; do the plain-data store under it (no JS, no GC
-        // allocation); extract the GetterSetter under it and call the setter
-        // OUTSIDE it (it runs JS).
-        JSValue getterSetter;
-        {
-            Locker locker { cellLock() };
-            tsanAcquireCtorPublication();
-            auto it = m_map.find(i);
-            if (it == m_map.end())
-                return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError); // racing remove
-            SparseArrayEntry& lockedEntry = it->value;
-            if (!(lockedEntry.attributes() & PropertyAttribute::Accessor)) {
-                if (lockedEntry.attributes() & PropertyAttribute::ReadOnly)
-                    return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
-                // Plain-data store under the lock (no JS, no GC allocation);
-                // forceSet with the unchanged attribute word is the
-                // access-control-clean spelling of Base::set (the §61 note's
-                // sanctioned alternative — WriteBarrier's set is a private base).
-                lockedEntry.forceSet(vm, this, value, lockedEntry.attributes());
-                return true;
-            }
-            getterSetter = lockedEntry.get();
-        }
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(getterSetter)->callSetter(globalObject, array, value, shouldThrow));
-    }
-    // AB18-G: GIL-on only — the iterator deref is hoisted below the mode
-    // split so no stale-able iterator use precedes it; safe with a single
-    // mutator.
-    SparseArrayEntry& entry = result.iterator->value;
+    
     RELEASE_AND_RETURN(scope, entry.put(globalObject, array, this, value, shouldThrow));
+}
+
+// Flag-on: the lookup, the insert and the data store share one window under
+// the map's cell lock, so the entry is inserted only when the write is
+// allowed (a concurrent reader never sees a placeholder) and no iterator
+// outlives the lock. Nothing under the lock runs JS, allocates GC memory or
+// throws: the verdict is carried out after the lock drops, where the setter
+// call and the TypeError allocation happen. The accessor test is on the value
+// word itself, as the readers do, so a stale attribute word can never turn a
+// data value into a GetterSetter.
+bool SparseArrayValueMap::putEntryConcurrent(JSGlobalObject* globalObject, JSObject* array, unsigned i, JSValue value, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool isExtensible = array->isStructureExtensible();
+    bool isReadOnly = false;
+    JSValue getterSetter;
+    size_t increasedCapacity = 0;
+    {
+        Locker locker { cellLock() };
+        tsanAcquireCtorPublication();
+        auto it = m_map.find(i);
+        if (it == m_map.end()) {
+            if (isExtensible)
+                addLocked(i, increasedCapacity).iterator->value.forceSet(vm, this, value, 0);
+            else
+                isReadOnly = true;
+        } else {
+            SparseArrayEntry& entry = it->value;
+            JSValue current = entry.get();
+            if (current.isGetterSetter())
+                getterSetter = current;
+            else if (entry.attributes() & PropertyAttribute::ReadOnly)
+                isReadOnly = true;
+            else
+                entry.forceSet(vm, this, value, entry.attributes());
+        }
+    }
+    reportIncreasedCapacity(array, increasedCapacity);
+
+    if (isReadOnly)
+        return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+    if (getterSetter)
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(getterSetter)->callSetter(globalObject, array, value, shouldThrow));
+    return true;
 }
 
 bool SparseArrayValueMap::putDirect(JSGlobalObject* globalObject, JSObject* array, unsigned i, JSValue value, unsigned attributes, PutDirectIndexMode mode)
@@ -183,41 +234,58 @@ bool SparseArrayValueMap::putDirect(JSGlobalObject* globalObject, JSObject* arra
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(value);
     
+    if (Options::useJSThreads()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, putDirectConcurrent(globalObject, array, i, value, attributes, mode));
+
     bool shouldThrow = (mode == PutDirectIndexShouldThrow);
 
     AddResult result = add(array, i);
+    SparseArrayEntry& entry = result.iterator->value;
 
     // To save a separate find & add, we first always add to the sparse map.
     // In the uncommon case that this is a new property, and the array is not
     // extensible, this is not the right thing to have done - so remove again.
     if (mode != PutDirectIndexLikePutDirect && result.isNewEntry && !array->isStructureExtensible()) {
-        if (Options::useJSThreads()) [[unlikely]] {
-            // AB18-G: see putEntry — result.iterator may dangle after a
-            // racing rehash; remove by key under the lock.
-            remove(i);
-        } else
-            remove(result.iterator);
+        remove(result.iterator);
         return typeError(globalObject, scope, shouldThrow, NonExtensibleObjectPropertyDefineError);
     }
 
-    if (Options::useJSThreads()) [[unlikely]] {
-        Locker locker { cellLock() }; // objectmodel round 4 (§61): re-find; `entry` may dangle (racing rehash).
-        tsanAcquireCtorPublication();
-        auto it = m_map.find(i);
-        if (it == m_map.end())
-            return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError); // racing remove
-        SparseArrayEntry& lockedEntry = it->value;
-        if (lockedEntry.attributes() & PropertyAttribute::ReadOnly)
-            return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
-        lockedEntry.forceSet(vm, this, value, attributes); // no JS, no GC allocation - lockable
-        return true;
-    }
-    // AB18-G: GIL-on only — iterator deref hoisted below the mode split (see putEntry).
-    SparseArrayEntry& entry = result.iterator->value;
     if (entry.attributes() & PropertyAttribute::ReadOnly)
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
     entry.forceSet(vm, this, value, attributes);
+    return true;
+}
+
+// Flag-on: same single locked window as putEntryConcurrent; the TypeError is
+// thrown after the lock drops.
+bool SparseArrayValueMap::putDirectConcurrent(JSGlobalObject* globalObject, JSObject* array, unsigned i, JSValue value, unsigned attributes, PutDirectIndexMode mode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool shouldThrow = (mode == PutDirectIndexShouldThrow);
+    bool mayInsert = mode == PutDirectIndexLikePutDirect || array->isStructureExtensible();
+    ASCIILiteral error;
+    size_t increasedCapacity = 0;
+    {
+        Locker locker { cellLock() };
+        tsanAcquireCtorPublication();
+        auto it = m_map.find(i);
+        if (it == m_map.end()) {
+            if (mayInsert)
+                addLocked(i, increasedCapacity).iterator->value.forceSet(vm, this, value, attributes);
+            else
+                error = NonExtensibleObjectPropertyDefineError;
+        } else if (it->value.attributes() & PropertyAttribute::ReadOnly)
+            error = ReadonlyPropertyWriteError;
+        else
+            it->value.forceSet(vm, this, value, attributes);
+    }
+    reportIncreasedCapacity(array, increasedCapacity);
+
+    if (!error.isNull())
+        return typeError(globalObject, scope, shouldThrow, error);
     return true;
 }
 
@@ -307,10 +375,9 @@ bool SparseArrayEntry::put(JSGlobalObject* globalObject, JSValue thisValue, Spar
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // TSAN wave 4 (triage §3.10): read the attribute word once, relaxed, via
-    // attributes(). This path is GIL-on only (flag-on putEntry takes its
-    // locked branch instead), but the accessor keeps every read of the shared
-    // word atomic and codegen-identical.
+    // Flag-off only: flag-on putEntry stores under the map's cell lock in
+    // putEntryConcurrent. attributes() loads relaxed and is codegen-identical
+    // to a plain load.
     unsigned attributes = this->attributes();
     if (!(attributes & PropertyAttribute::Accessor)) {
         if (attributes & PropertyAttribute::ReadOnly)

@@ -28,6 +28,8 @@
 
 #include "CodeBlock.h"
 #include "GenericArgumentsImplInlines.h"
+#include <wtf/Lock.h>
+#include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -42,7 +44,7 @@ uint32_t DirectArguments::length(JSGlobalObject* globalObject) const
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // overrodeThings() (not a raw m_mappedArguments test) so a foreign reader
-    // acquires before reading the materialized length property (RESOLVED-3).
+    // acquires before reading the materialized length property.
     if (overrodeThings()) [[unlikely]] {
         JSValue value = get(globalObject, vm.propertyNames->length);
         RETURN_IF_EXCEPTION(scope, { });
@@ -130,32 +132,61 @@ Structure* DirectArguments::createStructure(VM& vm, JSGlobalObject* globalObject
     return Structure::create(vm, globalObject, prototype, TypeInfo(DirectArgumentsType, StructureFlags), info());
 }
 
+// GIL-off, the puts below and the m_mappedArguments publication form one
+// critical section. Without it a thread that passed the overrodeThings()
+// check before a faster one published would re-put length/callee/@@iterator
+// after the user deleted or overwrote them. Every mutation of those keys
+// enters through overrideThings/overrideThingsIfNecessary, so a thread that
+// finds the bitmap unpublished blocks here until the in-flight override is
+// complete, and only the holder ever runs the puts. The holder allocates and
+// can request or park at a stop-the-world inside the section, so waiters poll
+// instead of blocking in lock(). Process-global: only one VM per process runs
+// GIL-off.
+static Lock s_gilOffOverrideThingsLock;
+
+class GILOffOverrideThingsLocker {
+    WTF_MAKE_NONCOPYABLE(GILOffOverrideThingsLocker);
+public:
+    GILOffOverrideThingsLocker(VM& vm, bool shouldLock)
+        : m_shouldLock(shouldLock)
+    {
+        if (!m_shouldLock) [[likely]]
+            return;
+        while (!s_gilOffOverrideThingsLock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+                continue;
+            Thread::yield();
+        }
+    }
+
+    ~GILOffOverrideThingsLocker()
+    {
+        if (m_shouldLock) [[unlikely]]
+            s_gilOffOverrideThingsLock.unlock();
+    }
+
+private:
+    bool m_shouldLock;
+};
+
 void DirectArguments::overrideThings(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // THREADS (AUD1.N3 RESOLVED-3): GIL-off, a foreign overrideThings() can
-    // win between the caller's unfenced overrideThingsIfNecessary() check and
-    // here — race-tolerate it instead of RELEASE_ASSERTing (losing a
-    // COMPLETED race is fine: the winner's puts plus its release-published
-    // bitmap are exactly what we needed; overrodeThings() supplied the
-    // acquire). GIL-on (including useJSThreads=0) no other mutator can run in
-    // that window, so the old invariant stays enforced verbatim.
+    GILOffOverrideThingsLocker locker(vm, vm.gilOffWithProcessGate());
+
+    // GIL-off, a foreign holder can have finished between the caller's
+    // unfenced overrodeThings() check and the lock acquisition above, in which
+    // case its puts and bitmap are already published and there is nothing
+    // left to do (overrodeThings() supplies the acquire). GIL-on no other
+    // mutator runs between that check and here, so a published bitmap is a
+    // caller bug.
     if (!vm.gilOff())
         RELEASE_ASSERT(!m_mappedArguments);
     else if (overrodeThings())
         return;
 
-    // GIL-off, two threads can both reach here and run these puts
-    // concurrently before the CAS below picks the bitmap winner. That is
-    // deliberate, per the RESOLVED-3 ruling: "the materialize-properties half
-    // follows OM property rules" — same-key concurrent adds are serialized by
-    // the SPEC-objectmodel transition/put protocol (no lost properties), and
-    // every racer computes IDENTICAL values (internalLength() and m_callee
-    // are creation-frozen here; arrayProtoValuesFunction is a per-realm
-    // singleton eagerly initialized under useJSThreads(), see
-    // JSGlobalObject.cpp), so the racing stores are idempotent.
     putDirect(vm, vm.propertyNames->length, jsNumber(internalLength()), static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirect(vm, vm.propertyNames->callee, m_callee.get(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirect(vm, vm.propertyNames->iteratorSymbol, globalObject->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -166,28 +197,15 @@ void DirectArguments::overrideThings(JSGlobalObject* globalObject)
         return;
     }
     bool* overrides = static_cast<bool*>(backingStore);
-    // THREADS (RESOLVED-3 companion): fill the bitmap COMPLETELY before
-    // publishing the pointer word — concurrent readers (isMappedArgument on a
-    // shared arguments object) take the pointer's address dependency to the
-    // bits; relaxed atomic per-bit stores keep the recycled-address races
-    // defined. The fence orders fill before the publication store.
+    // Fill the bitmap completely before publishing the pointer word:
+    // concurrent readers (isMappedArgument on a shared arguments object) take
+    // the pointer's address dependency to the bits, and the relaxed atomic
+    // per-bit stores keep a stale reader's race defined. The fence orders the
+    // puts and the fill before the publication store, which is itself a
+    // relaxed atomic (CagedPtr assignment); only the lock holder publishes.
     for (unsigned i = internalLength(); i--;)
         WTF::atomicStore(&overrides[i], false, std::memory_order_relaxed);
     WTF::storeStoreFence();
-    if (vm.gilOff()) [[unlikely]] {
-        // RESOLVED-3 CAS-PUBLISH: allocate + fill complete (above), CAS the
-        // pointer in, losers discard. A losing racer's bitmap is unreferenced
-        // gigacage auxiliary memory — the GC reclaims it. The winner runs the
-        // write barrier the plain set() would have run; the loser's
-        // subsequent at(index) accesses re-load the pointer and land in the
-        // winner's bitmap (null -> non-null happens exactly once).
-        static_assert(sizeof(MappedArguments) == sizeof(bool*));
-        bool* prior = WTF::atomicCompareExchangeStrong(std::bit_cast<bool**>(&m_mappedArguments), static_cast<bool*>(nullptr), overrides);
-        if (prior)
-            return;
-        vm.writeBarrier(this);
-        return;
-    }
     m_mappedArguments.set(vm, this, overrides);
 }
 
@@ -195,7 +213,7 @@ void DirectArguments::overrideThingsIfNecessary(JSGlobalObject* globalObject)
 {
     // overrodeThings() (not a raw m_mappedArguments test) so the
     // already-overridden path acquires before callers touch the materialized
-    // properties (RESOLVED-3 reader-acquire half).
+    // properties.
     if (!overrodeThings())
         overrideThings(globalObject);
 }
@@ -215,7 +233,7 @@ void DirectArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
 {
     // overrodeThings() (not a raw m_mappedArguments test): the overridden
     // path reads materialized properties via GenericArgumentsImpl, which are
-    // not address-dependent on the bitmap pointer (RESOLVED-3 acquire).
+    // not address-dependent on the bitmap pointer and so need the acquire.
     if (!overrodeThings()) {
         unsigned limit = std::min(length + offset, internalLength());
         unsigned i;

@@ -145,17 +145,17 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
 template<typename Functor>
 void Structure::forEachProperty(VM& vm, const Functor& functor)
 {
-    // SPEC-objectmodel L6(iii) (Task 3c): flag-on, this mutator uncached table
-    // WALK holds m_lock across the iteration, so locked mutations/rehashes of
-    // a published table (and steals via takePropertyTableOrCloneIfPinned)
-    // cannot tear it (I37). Table order is preserved (callers, e.g. the JSON
-    // fast stringifier, rely on insertion order — forEachPropertyConcurrently
-    // would not provide it). GCSafe locker = m_lock + DeferGC: the functor may
-    // GC-allocate under the lock, O1's sanctioned pre-lock-DeferGC form. The
-    // retry loop re-materializes if the table was stolen between
-    // materialization and lock acquisition. Flag-off: today's lock-free walk
-    // (I22). Callers must not hold this structure's m_lock.
+    // Flag-on, the table is snapshotted in insertion order under m_lock so a
+    // locked mutation, rehash or steal (takePropertyTableOrCloneIfPinned) of
+    // the published table cannot tear the walk; the retry loop re-materializes
+    // if the table was stolen between materialization and lock acquisition.
+    // The functor runs only after the lock is released: m_lock is not
+    // recursive and the functor may re-enter forEachProperty on this very
+    // structure (the JSON fast stringifier descends into nested objects that
+    // share the shape of their parent) or take another structure's m_lock.
+    // Flag-off: the lock-free walk below.
     if (Options::useJSThreads()) [[unlikely]] {
+        Vector<PropertyTableEntry, 16> entries;
         while (true) {
             PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
             if (!table)
@@ -163,14 +163,19 @@ void Structure::forEachProperty(VM& vm, const Functor& functor)
             GCSafeConcurrentJSLocker locker(m_lock, vm);
             if (propertyTableOrNull() != table)
                 continue; // Stolen by a racing transition: rebuild and retry.
+            entries.reserveCapacity(table->size());
             table->forEachProperty([&](const auto& entry) {
-                if (!functor(entry))
-                    return IterationStatus::Done;
+                entries.append(PropertyTableEntry(entry));
                 return IterationStatus::Continue;
             });
             ensureStillAliveHere(table);
-            return;
+            break;
         }
+        for (const PropertyTableEntry& entry : entries) {
+            if (!functor(entry))
+                return;
+        }
+        return;
     }
 
     if (PropertyTable* table = ensurePropertyTableIfNotEmpty(vm)) {
@@ -238,19 +243,10 @@ inline StructureChain* Structure::prototypeChain(VM& vm, JSGlobalObject* globalO
     if (!isValid(globalObject, m_cachedPrototypeChain.get(), base)) {
         JSValue prototype = prototypeForLookup(globalObject, base);
         const_cast<Structure*>(this)->clearCachedPrototypeChain();
-        // TSAN family structure-fields (§10.9 prototypeChain key, 8 reports):
-        // this is the LOCK-FREE writer of the chain slot; the readers
-        // (cachedPrototypeChainConcurrently, canCachePropertyNameEnumerator,
-        // the GC null store in visitChildrenImpl) are relaxed-atomic, but
-        // .set()'s setEarlyValue is a RawPtrTraits::exchange PLAIN store.
-        // Relaxed-atomic store + explicit barrier — identical codegen. The
-        // chain's lanes were release-published by StructureChain::
-        // finishCreation's constructor-tail fence before this publish store.
-        StructureChain* chain = StructureChain::create(vm, prototype.isNull() ? nullptr : asObject(prototype));
-        ASSERT(!Options::useConcurrentJIT() || !isCompilationThread()); // Same assert .set() performed.
-        validateCell(chain);
-        m_cachedPrototypeChain.setWithoutWriteBarrier(chain);
-        vm.writeBarrier(this, chain);
+        // Lock-free readers (cachedPrototypeChainConcurrently, concurrent
+        // marking) may observe this store; StructureChain::finishCreation
+        // fences the lanes before it under useJSThreads.
+        m_cachedPrototypeChain.set(vm, this, StructureChain::create(vm, prototype.isNull() ? nullptr : asObject(prototype)));
     }
     return m_cachedPrototypeChain.get();
 }
@@ -317,6 +313,87 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
 
+    // Flag-on arm. ensurePropertyTable materialized and published `table`
+    // outside m_lock; for ShouldPin::Yes on a not-yet-pinned structure a
+    // racing transition can steal it (takePropertyTableOrCloneIfPinned) in
+    // that window, after which the table is private to the thief and pin()
+    // would make two structures mutate one table. The loop re-checks under
+    // m_lock that `table` is still this structure's published table and
+    // re-materializes otherwise (same loop as
+    // addOrReplacePropertyWithoutTransition). ShouldPin::No targets are
+    // unpublished transitions, which nothing can steal from.
+    //
+    // The body below mirrors the flag-off body after it, except that func()
+    // runs BEFORE table->add(): the pinned table is probed lock-free by
+    // Structure::getConcurrently's seqlock fast path, and the entry must not
+    // resolve to newOffset before func() has grown the butterfly and stored
+    // the value (PropertyTable::add's closing edit-count bump is the release
+    // that orders those stores before a reader's getDirect(newOffset)). Any
+    // change to one body must be mirrored in the other.
+    if (Options::useJSThreads()) [[unlikely]] {
+        return ([&]() NEVER_INLINE -> PropertyOffset {
+        std::optional<GCSafeConcurrentJSLocker> l6Locker;
+        if constexpr (shouldPin == ShouldPin::Yes) {
+            while (true) {
+                l6Locker.emplace(m_lock, vm);
+                if (propertyTableOrNull() == table)
+                    break;
+                l6Locker.reset();
+                table = ensurePropertyTable(vm);
+            }
+        } else
+            l6Locker.emplace(m_lock, vm);
+        const GCSafeConcurrentJSLocker& locker = *l6Locker;
+
+        switch (shouldPin) {
+        case ShouldPin::Yes:
+            pin(locker, vm, table);
+            break;
+        case ShouldPin::No:
+            setPropertyTable(vm, table);
+            break;
+        }
+
+        // Query the table directly: m_lock is held, and flag-on
+        // Structure::get() takes m_lock itself.
+        ASSERT(!JSC::isValidOffset(std::get<0>(table->get(propertyName.uid()))));
+
+        checkConsistency();
+        if (attributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
+            setIsQuickPropertyAccessAllowedForEnumeration(false);
+        if (attributes & PropertyAttribute::ReadOnly)
+            setContainsReadOnlyProperties();
+        if (attributes & PropertyAttribute::DontEnum)
+            setHasNonEnumerableProperties(true);
+        if (attributes & PropertyAttribute::DontDelete) {
+            setHasNonConfigurableProperties(true);
+            if (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+                setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
+        }
+        if (propertyName == vm.propertyNames->underscoreProto)
+            setHasUnderscoreProtoPropertyExcludingOriginalProto(true);
+        else if (propertyName == vm.propertyNames->then)
+            setHasSpecialProperties(true);
+
+        auto rep = propertyName.uid();
+
+        PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
+
+        m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
+        m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
+
+        auto newMaxOffset = std::max(newOffset, maxOffset());
+        func(locker, newOffset, newMaxOffset);
+        ASSERT(maxOffset() == newMaxOffset);
+        auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
+        ASSERT_UNUSED(result, result);
+        ASSERT_UNUSED(offset, offset == newOffset);
+        UNUSED_VARIABLE(attribute);
+        checkConsistency();
+        return newOffset;
+        })();
+    }
+
     GCSafeConcurrentJSLocker locker(m_lock, vm);
 
     switch (shouldPin) {
@@ -328,9 +405,6 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
         break;
     }
 
-    // SPEC-objectmodel L6 (Task 3c): query the table directly — m_lock is held
-    // here, and flag-on Structure::get() itself acquires m_lock (getConcurrently
-    // routing), so calling it from under the lock would self-deadlock.
     ASSERT(!JSC::isValidOffset(std::get<0>(table->get(propertyName.uid()))));
 
     checkConsistency();
@@ -356,67 +430,6 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
-
-    // CVE A5 (MC-DF S4; mc-df-delete-reuse.CRASH.log — SPEC-objectmodel
-    // I9/I34/L6): flag-on, the ShouldPin::Yes form mutates a PINNED table that
-    // lock-free readers (Structure::getConcurrently's seqlock fast path AND the
-    // m_lock chain walk's table->get under the SAME m_lock) probe between
-    // edits. The flag-off order below — table->add() FIRST, func() SECOND —
-    // publishes the entry@newOffset with an even editCount BEFORE func() has
-    // grown the butterfly (the JSObject "without transition" callers'
-    // growOutOfLineStorageForConcurrentLockedAdd) and BEFORE the value is
-    // stored. A lock-free dictionary reader then resolves uid@newOffset and
-    // does getDirect(newOffset) on the OLD butterfly — one word past its
-    // out-of-line allocation, i.e. an adjacent free auxiliary cell whose
-    // SCRIBBLE_WORD bits decode as a JSCell* and SEGV inside the M7(c) probe's
-    // value.asCell()->type() (rdi=0xbadbeef5). The dictionary structureID is
-    // never re-tagged, so M7(c)'s structureID().decode()==structure recheck
-    // cannot detect the in-flight add (decode() decontaminates the nuke bit).
-    //
-    // Fix flag-on: invert to func() FIRST, table->add() SECOND. func() grows
-    // the butterfly (zeroing the fresh slack — Butterfly::createOrGrowProperty-
-    // Storage), sets maxOffset, and on the putDirectWithoutTransitionConcurrent
-    // path stores the VALUE itself, all under m_lock. The table entry then
-    // publishes via PropertyTable::addAfterFind whose closing
-    // bumpConcurrentEditCount is a RELEASE store: the seqlock fast path's
-    // ACQUIRE editCount read (Structure.cpp T3 fast path step 2) orders every
-    // store func() made BEFORE the reader's getDirect(newOffset). The slot is
-    // therefore observed as either the value (I9) or, on the
-    // putDirectInternal-dictionary path that stores the value just AFTER this
-    // function returns under the still-held cell lock, encoded EMPTY — which
-    // M7(c)'s `!!value` clause already treats as inconsistent and re-spins;
-    // the writer's poll-free DeferGC'd cell-locked window is bounded so the
-    // spin terminates. Locked-walk readers serialize on m_lock (held here) and
-    // see only the post-add table; the same release/EMPTY argument applies.
-    //
-    // ShouldPin::No callers (addNewPropertyTransition, the NoTransition-type
-    // overload above) operate on a PRIVATE not-yet-published transition: no
-    // racing reader exists for its table, but the same order is harmless and
-    // keeps a single flag-on body.
-    //
-    // Flag-off: today's table->add → func order, byte-identical (I22).
-    //
-    // F1 residual (AB17g / V5b): outlined into a NEVER_INLINE IIFE — same
-    // convention and rationale as addOrReplacePropertyWithoutTransition's
-    // flag-on arm below — so flag-off instantiations of this inline template
-    // (notably the bench-transition-regress (V5B-1) hot site at
-    // JSObject::putDirectWithoutTransition) carry only the predicted-false
-    // option byte test + a never-taken call, not a second copy of the
-    // table->add machinery inlined into every put site. Pure code placement;
-    // identical instruction sequence executes flag-on.
-    if (Options::useJSThreads()) [[unlikely]] {
-        return ([&]() NEVER_INLINE -> PropertyOffset {
-        auto newMaxOffset = std::max(newOffset, maxOffset());
-        func(locker, newOffset, newMaxOffset);
-        ASSERT(maxOffset() == newMaxOffset);
-        auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
-        ASSERT_UNUSED(result, result);
-        ASSERT_UNUSED(offset, offset == newOffset);
-        UNUSED_VARIABLE(attribute);
-        checkConsistency();
-        return newOffset;
-        })();
-    }
 
     auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
     ASSERT_UNUSED(result, result);
@@ -727,59 +740,27 @@ ALWAYS_INLINE void Structure::setPrototypeWithoutTransition(VM& vm, JSValue prot
 
 ALWAYS_INLINE void Structure::setRealm(VM& vm, JSGlobalObject* globalObject)
 {
-    // TSAN family structure-fields: realm()/globalObject() readers are
-    // relaxed-atomic (WriteBarrierBase::get) and may probe recycled /
-    // just-published Structures; .set()'s setEarlyValue is a plain exchange.
-    // Relaxed store + explicit barrier, identical codegen.
-    ASSERT(globalObject);
-    ASSERT(!Options::useConcurrentJIT() || !isCompilationThread()); // Same assert .set() performed.
-    validateCell(globalObject);
-    m_realm.setWithoutWriteBarrier(globalObject);
-    vm.writeBarrier(this, globalObject);
+    m_realm.set(vm, this, globalObject);
 }
 
 ALWAYS_INLINE void Structure::setPropertyTable(VM& vm, PropertyTable* table)
 {
-    // TSAN families structure-fields/property-table (§10.9 fixShape (3)):
-    // readers of this slot (propertyTableOrNull / ensurePropertyTable* via
-    // WriteBarrierBase::get, and the GC clear in visitChildrenImpl) are
-    // relaxed-atomic, but setMayBeNull stores through setEarlyValue ->
-    // RawPtrTraits::exchange, a PLAIN store — the 26+36-report writer key.
-    // Route the store through the relaxed-atomic storeCell
-    // (setWithoutWriteBarrier) + an explicit barrier — same validation, same
-    // barrier, identical single-mov codegen flag-off.
-    if (table)
-        validateCell(table);
-    // T3 (flag-on): publication fence. Structure::getConcurrently's lock-free
-    // fast path reads this slot WITHOUT m_lock and then probes the table's
-    // index vector through address-dependent loads; order the table's
-    // construction/fill stores (constructor relaxed stores, index-vector
-    // header + contents) before the slot store so a racing probe never sees
-    // the pointer ahead of the memory it points at. Locked readers were
-    // already ordered by m_lock; flag-off readers are same-thread (I22).
+    // Structure::getConcurrently reads this slot without m_lock and then
+    // probes the table's index vector through address-dependent loads, so
+    // under useJSThreads the table's fill stores must be ordered before the
+    // slot store. Locked readers are ordered by m_lock; flag-off readers are
+    // same-thread.
     if (Options::useJSThreads()) [[unlikely]]
         WTF::storeStoreFence();
-    m_propertyTableUnsafe.setWithoutWriteBarrier(table);
-    vm.writeBarrier(this, table);
+    m_propertyTableUnsafe.setMayBeNull(vm, this, table);
 }
 
 ALWAYS_INLINE void Structure::setPreviousID(VM& vm, Structure* structure)
 {
     if (hasRareData())
         rareData()->setPreviousID(vm, structure);
-    else {
-        // TSAN family structure-fields (§10.9 setPreviousID key, 5 reports):
-        // previousID() readers load this slot lock-free with relaxed/acquire
-        // atomics (previousOrRareDataConcurrently, Structure.h) and the
-        // flag-on clearPreviousID/allocateRareData writers CAS it; .set()'s
-        // setEarlyValue plain exchange was the last unpaired writer. Same
-        // shape as setPropertyTable above: validate + relaxed store + barrier.
-        ASSERT(structure);
-        ASSERT(!Options::useConcurrentJIT() || !isCompilationThread()); // Same assert .set() performed.
-        validateCell(static_cast<JSCell*>(structure));
-        m_previousOrRareData.setWithoutWriteBarrier(structure);
-        vm.writeBarrier(this, structure);
-    }
+    else
+        m_previousOrRareData.set(vm, this, structure);
 }
 
 inline void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)
