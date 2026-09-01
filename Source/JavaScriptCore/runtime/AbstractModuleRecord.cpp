@@ -39,6 +39,7 @@
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "InternalFieldTuple.h"
+#include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #endif
@@ -1390,22 +1391,32 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         }
     };
 
+    // A promise, or the async function or module body that an await or for-await resumes.
+    auto followPromiseOrDriver = [&](JSCell* cell) {
+        if (!cell)
+            return;
+        if (auto* promise = dynamicDowncast<JSPromise>(cell))
+            work.append(promise);
+        else if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(cell))
+            follow(generator->context());
+        else if (AbstractModuleRecord* module = moduleForDriver(cell))
+            found = resumesDependency(module);
+    };
+
     auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
         switch (task) {
         case InternalMicrotask::AsyncFunctionResume:
-        case InternalMicrotask::AsyncGeneratorDriverResume: {
-            JSCell* driver = unwrapContext(context);
-            if (!driver)
-                break;
-            if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(driver))
-                follow(generator->context());
-            else if (AbstractModuleRecord* module = moduleForDriver(driver))
-                found = resumesDependency(module);
+        case InternalMicrotask::AsyncModuleExecutionResume:
+        case InternalMicrotask::AsyncGeneratorDriverResume:
+            followPromiseOrDriver(unwrapContext(context));
             break;
-        }
-        case InternalMicrotask::AsyncModuleExecutionResume: {
-            if (AbstractModuleRecord* module = moduleForDriver(unwrapContext(context)))
-                found = resumesDependency(module);
+        case InternalMicrotask::AsyncFromSyncIteratorContinue:
+        case InternalMicrotask::AsyncFromSyncIteratorDone: {
+            // for-await over sync values that are promises: the pending step settles the
+            // iterator's result promise, or resumes its driver, with this promise's value.
+            JSCell* iteratorCell = unwrapContext(context);
+            if (auto* iterator = iteratorCell ? dynamicDowncast<JSAsyncFromSyncIterator>(iteratorCell) : nullptr)
+                followPromiseOrDriver(iterator->target());
             break;
         }
         case InternalMicrotask::PromiseAllResolveJob:

@@ -906,7 +906,7 @@ CodeBlock::~CodeBlock()
 
 #if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     if (jitType() == JITType::BaselineJIT)
-        static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = ApproximateTime::now();
+        static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = vm.heap.lastGCBoundaryTime();
 #endif
 
     if (JITCode::isBaselineCode(jitType())) {

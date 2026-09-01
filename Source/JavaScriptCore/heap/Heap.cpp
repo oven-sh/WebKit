@@ -1245,7 +1245,7 @@ void Heap::releaseUnusedSharedBaselineCode()
 #if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     if (!Options::useBaselineJITCodeSharing() || !Options::useExecutionCountForCodeBlockAging())
         return;
-    ApproximateTime cutoff = ApproximateTime::now() - CodeBlock::timeToLive(JITType::BaselineJIT) * Options::codeBlockAgingLeaseMultiplier();
+    MonotonicTime cutoff = m_currentGCStartTime - CodeBlock::timeToLive(JITType::BaselineJIT) * Options::codeBlockAgingLeaseMultiplier();
     // End phase: the world is stopped and allocation already is, so no HeapIterationScope.
     auto visit = [&] (HeapCell* cell, HeapCell::Kind) {
         auto& code = static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode;
