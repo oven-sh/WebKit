@@ -107,9 +107,11 @@ public:
     JITCodeMap m_jitCodeMap;
     JITConstantPool m_constantPool;
     std::unique_ptr<PCToCodeOriginMap> m_pcToCodeOriginMap;
-    // The collection in which a CodeBlock running this code last died (Heap::lastGCBoundaryTime); UnlinkedCodeBlock's cached copy is
-    // released once no CodeBlock has used it for a while (Heap::releaseUnusedSharedBaselineCode).
+#if USE(BUN_JSC_ADDITIONS)
+    // The collection in which a CodeBlock running this code last died (Heap::lastGCBoundaryTime); UnlinkedCodeBlock's
+    // cached copy is released once no CodeBlock has used it for a while (Heap::releaseUnusedSharedBaselineCode).
     MonotonicTime m_ownerWentAwayAt;
+#endif
 private:
     // The percentage of ValueProfiles that had some profiling data in them.
     double m_livenessRate { 0 };
