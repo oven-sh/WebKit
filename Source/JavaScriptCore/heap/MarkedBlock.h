@@ -248,7 +248,7 @@ public:
             
         CellAttributes m_attributes;
         bool m_isFreeListed { false };
-        uint8_t m_decommittedPages { 0 }; // bit i set: OS page i of the block is decommitted
+        uint16_t m_decommittedPages { 0 }; // bit i set: OS page i of the block is decommitted
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };

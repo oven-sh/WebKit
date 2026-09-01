@@ -1536,10 +1536,12 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
     if (!JSC::JITCode::isOptimizingJIT(jitType()))
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
     // Past its TTL with no execution observed: let it (and the baseline alternative it pins) go even though the
     // structures it references are still alive.
     if (m_agedOut)
         return;
+#endif
     
     DFG::CommonData* dfgCommon = m_jitCode->dfgCommon();
     // Now check all of our weak references. If all of them are live, then we
@@ -2384,7 +2386,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
     m_isJettisoned = true;
 
-#if ENABLE(JIT)
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     // Baseline code is cached on the UnlinkedCodeBlock so a re-created CodeBlock can reuse it; when this block dies of
     // old age that cache would keep the machine code alive for as long as the unlinked code lives. Drop it: another
     // CodeBlock still using the same code holds its own reference, and the next baseline compile repopulates it.

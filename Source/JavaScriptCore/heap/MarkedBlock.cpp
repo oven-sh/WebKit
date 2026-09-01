@@ -27,8 +27,6 @@
 #include "MarkedBlock.h"
 
 #include "AlignedMemoryAllocator.h"
-#include <wtf/OSAllocator.h>
-#include <wtf/PageBlock.h>
 #include "FreeListInlines.h"
 #include "JSCJSValueInlines.h"
 #include "MarkedBlockInlines.h"
@@ -36,6 +34,8 @@
 #include "VMManager.h"
 #include "WeakSetInlines.h"
 #include <wtf/CommaPrinter.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/CrashReporter.h>
@@ -500,21 +500,29 @@ void MarkedBlock::Handle::decommitUnusedPages()
         return;
     // A cell's destructor may read its Structure even when that Structure died in the same cycle and its block was
     // swept first, so dead Structures must stay readable; and at shutdown everything is swept as dead in arbitrary order.
-    if (subspace() == &heap()->structureSpace || heap()->isShuttingDown())
+    bool isStructureSpace = false;
+#define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == &heap()->name;
+    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+#undef CHECK_STRUCTURE_SPACE
+    if (isStructureSpace || heap()->isShuttingDown())
         return;
     size_t pageSize = WTF::pageSize();
-    if (pageSize >= blockSize || blockSize / pageSize > 8)
+    if (pageSize >= blockSize || blockSize / pageSize > 16)
         return;
     // Only after a full collection (the blocks an eden collection sweeps are the young ones, refilled straight away, so
     // decommitting there mostly buys page faults) and only for blocks that are not mostly full anyway.
-    if ((heap()->lastCollectionScope() != CollectionScope::Full && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections()) || m_directory->isMarkingRetired(this))
+    if (heap()->lastCollectionScope() != CollectionScope::Full && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections())
         return;
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    if (m_directory->isMarkingRetired(this))
+        return;
+    m_directory->releaseAssertAcquiredBitVectorLock();
     unsigned pageCount = blockSize / pageSize;
     size_t atomsPerPage = pageSize / atomSize;
     RELEASE_ASSERT(!m_isFreeListed && !isAllocated());
 
-    uint8_t all = (1u << pageCount) - 1;
-    uint8_t keep = 0;
+    uint16_t all = (1u << pageCount) - 1;
+    uint16_t keep = 0;
     for (size_t offset = 0; offset < headerSize; offset += pageSize)
         keep |= 1u << (offset / pageSize);
     {
@@ -547,7 +555,7 @@ void MarkedBlock::Handle::decommitUnusedPages()
         }
     }
 
-    uint8_t toDecommit = all & ~keep & ~m_decommittedPages;
+    uint16_t toDecommit = all & ~keep & ~m_decommittedPages;
     if (!toDecommit)
         return;
     char* base = reinterpret_cast<char*>(&block());
@@ -601,7 +609,8 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     m_directory->releaseAssertAcquiredBitVectorLock();
 
     if (sweepMode == SweepOnly && !needsDestruction) {
-        decommitUnusedPages();
+        if (!isEmpty())
+            decommitUnusedPages();
         Locker locker(m_directory->bitvectorLock());
         m_directory->setIsUnswept(this, false);
         return;

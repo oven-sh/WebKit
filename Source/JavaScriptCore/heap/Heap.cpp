@@ -1241,20 +1241,18 @@ void Heap::deleteUnmarkedCompiledCode()
 // consecutive full collections; a later warm-up simply compiles baseline again.
 void Heap::releaseUnusedSharedBaselineCode()
 {
-#if ENABLE(JIT)
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     if (!Options::useBaselineJITCodeSharing() || !Options::useExecutionCountForCodeBlockAging())
         return;
-    HeapIterationScope heapIterationScope(*this);
+    // End phase: the world is stopped and allocation already is, so no HeapIterationScope.
     auto visit = [] (HeapCell* cell, HeapCell::Kind) {
         auto* unlinked = static_cast<UnlinkedCodeBlock*>(cell);
         auto& code = unlinked->m_unlinkedBaselineCode;
-        if (code && code->hasOneRef()) {
-            if (unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC)
-                code = nullptr;
-            else
-                unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = true;
-        } else
+        if (code && code->hasOneRef() && unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC) {
+            code = nullptr;
             unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = false;
+        } else
+            unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = code && code->hasOneRef();
     };
     for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
         if (space)
