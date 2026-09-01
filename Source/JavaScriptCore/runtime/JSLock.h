@@ -128,8 +128,13 @@ public:
     // held, so it never escapes into the DropAllLocks strict-LIFO unwind
     // protocol — N threads can park and wake in any order (the
     // GILDroppedSection livelock fix is preserved). Returns the number of
-    // lock counts released; the caller reacquires with that many lock()
-    // calls. Sole caller: GILDroppedSection (runtime/LockObject.cpp).
+    // lock counts released. The caller must hold m_lock (RELEASE_ASSERTed):
+    // GILDroppedSection's main/embedder arm stores the count and reacquires
+    // with that many lock() calls in its destructor; a nested re-release
+    // inside that bracket (reacquireParkedCarrierAndServiceWatchdogCheck,
+    // which took exactly one lock()) discards the count because the outer
+    // bracket owns the real one. A spawned thread GIL-off never holds m_lock
+    // and never calls this.
     JS_EXPORT_PRIVATE unsigned unlockAllForThreadParking();
 
     class DropAllLocks {
@@ -203,9 +208,33 @@ private:
     // slot}. The lite/tag halves ride m_entryVMLite + VMLite::setCurrent's
     // tag hook; this is the saved client-slot half, restored LIFO at the
     // depth-0 unlock. m_didInstallCarrierVMLite keys the GIL-off carrier
-    // path, disjoint from the GIL-on m_didInstallVMLite main-carrier path.
+    // path, disjoint from the GIL-on m_didInstallVMLite main-carrier path;
+    // the latter also saves the slot here when it displaces a foreign gilOff
+    // carrier (the slot is cleared for the nested GIL-on entry).
     GCClient::Heap* m_entryThreadClient { nullptr };
     bool m_didInstallCarrierVMLite { false };
+    // Set by dropAllLocks()/unlockAllForThreadParking() and consumed by the
+    // willReleaseLock() they trigger, all on the thread holding m_lock, so
+    // it is never observed cross-thread. It marks a full release made to
+    // enter a blocking native section or park: an outer gilOff carrier's
+    // heap access then stays released until the real depth-0 unlock.
+    // m_lockDropDepth cannot serve: it counts every thread's open
+    // DropAllLocks on this lock.
+    bool m_releasingForBlockingSection { false };
 };
+
+// The carrier lite captured by this thread's innermost live
+// unlockAllForThreadParking release of `vm`, or null when the thread is not
+// parked on `vm` (GIL-on callers always get null). While parked,
+// VMLite::current() is the prior lite, so park sites poll this lite's trap
+// bits instead.
+VMLite* capturedParkLiteOfCurrentThreadIfAny(VM&);
+
+// For a gilOff main/embedder carrier parked with no api lock held that
+// observed the watchdog-check bit: reacquires the lock, services
+// Watchdog::shouldTerminate under the token, then releases again for the
+// park. Returns true when the verdict was terminate (VM-wide termination has
+// been raised).
+bool reacquireParkedCarrierAndServiceWatchdogCheck(VM&);
 
 } // namespace

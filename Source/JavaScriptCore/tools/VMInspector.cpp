@@ -55,12 +55,14 @@ namespace JSC {
 //     scanned across ALL VMs. GIL-off those words are per-lite (§A.1.4), so
 //     scanning other VMs'/threads' copies observes another thread's storage.
 //     Disposition: (iii) — GIL-off the match is restricted to the CURRENT
-//     thread's installed carrier lite (an on-thread read of its own
-//     primitives); any other case is REFUSED with a defined error (ii).
+//     thread's installed carrier lite's VM, read through that VM's
+//     group3Primitives() (this lite for a gilOff VM, the VM block for a
+//     GIL-on VM in the same process); any other case is REFUSED with a
+//     defined error (ii).
 //
 //   - dumpRegisters (below): VM::topCallFrame / VM::topEntryFrame.
-//     Disposition: (iii) — GIL-off these resolve through the CURRENT
-//     thread's installed lite primitives; unreachable otherwise because
+//     Disposition: (iii) — GIL-off these resolve through the same selector
+//     on the CURRENT thread's lite's VM; unreachable otherwise because
 //     vmForCallFrame above already refused.
 //
 // Everything else is (iii) by construction: codeBlockForMachinePC skips any
@@ -115,17 +117,22 @@ VM* VMInspector::vmForCallFrame(CallFrame* callFrame)
         // §A.1.7 disposition (iii)/(ii): GIL-off, m_stackPointerAtVMEntry /
         // m_stackLimit live in VMLitePrimitives (§A.1.4) — the cross-VM scan
         // below would read other threads' rerouted words. Resolve via the
-        // CURRENT thread's installed carrier only (an on-thread read of its
-        // own lite); refuse with a defined error otherwise.
+        // CURRENT thread's installed carrier only; refuse with a defined
+        // error otherwise. The lite's VM selects the storage: a gilOff VM's
+        // accessors read this lite's primitives, while a GIL-on VM in the same
+        // process (a designation loser, entered through its main carrier)
+        // keeps writing its VM block and its main carrier's primitives stay
+        // zero, so reading the lite directly would refuse every frame of it.
         VMLite* lite = VMLite::currentIfExists();
         if (!lite || !lite->vm) {
             dataLogLn("ERROR: GIL-off vmForCallFrame requires a VMLite installed on the current thread; cross-thread resolution is refused (SPEC-ungil §A.1.7 (ii)).");
             return nullptr;
         }
-        void* stackBottom = lite->primitives.m_stackPointerAtVMEntry; // high memory
-        void* stackTop = lite->primitives.m_stackLimit; // low memory
+        VM& vm = *lite->vm;
+        void* stackBottom = vm.stackPointerAtVMEntry(); // high memory
+        void* stackTop = vm.stackLimit(); // low memory
         if (stackBottom > callFrame && callFrame > stackTop)
-            return lite->vm;
+            return &vm;
         return nullptr;
     }
 
@@ -417,18 +424,20 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     };
 
     // §A.1.7 disposition (iii): GIL-off, topCallFrame/topEntryFrame are
-    // rerouted to VMLitePrimitives (§A.1.3 Group 1); read the CURRENT
-    // thread's installed lite. vmForCallFrame above already proved (GIL-off)
-    // that `vm` is the current lite's VM and refused every other case, so a
-    // null lite is impossible here. GIL-on/flag-off: the pre-existing VM
-    // member reads, unchanged.
+    // rerouted to VMLitePrimitives (§A.1.3 Group 1) for a gilOff VM; read
+    // them through the VM's storage selector, which resolves to the CURRENT
+    // thread's installed lite for a gilOff VM and to the VM block for a
+    // GIL-on VM sharing the process. vmForCallFrame above already proved
+    // (GIL-off) that `vm` is the current lite's VM and refused every other
+    // case, so a null lite is impossible here. GIL-on/flag-off: the
+    // pre-existing VM member reads, unchanged.
     CallFrame* topCallFrame;
     EntryFrame* topEntryFrameForDump;
     if (isGILOffProcessForInspection()) [[unlikely]] {
         VMLite& lite = VMLite::current();
         RELEASE_ASSERT(lite.vm == &vm);
-        topCallFrame = lite.primitives.topCallFrame;
-        topEntryFrameForDump = lite.primitives.topEntryFrame;
+        topCallFrame = vm.group3Primitives().topCallFrame;
+        topEntryFrameForDump = vm.group3Primitives().topEntryFrame;
     } else {
         topCallFrame = vm.topCallFrame;
         topEntryFrameForDump = vm.topEntryFrame;

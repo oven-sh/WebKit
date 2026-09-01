@@ -48,10 +48,16 @@ SharedVMState& SharedVMState::singleton()
     return shared;
 }
 
+// Set while this thread holds m_structureAllocationLock. WTF::Lock tracks no
+// owner, so a nested StructureAllocationLocker on the same thread would park
+// forever inside lock(); the ctor tests this flag first and fails stop there.
+static thread_local bool t_holdsStructureAllocationLock { false };
+
 SharedVMState::StructureAllocationLocker::StructureAllocationLocker(VM& vm)
 {
-    // I10: with the flag off (latched at Options::finalize; M_opts/M_opts2),
-    // the locker is one predictable branch and deferralContext() stays null.
+    // Acquisition sites construct the locker only with the option on (see the
+    // header); a direct construction with it off stays a no-op whose
+    // deferralContext() is null.
     if (!Options::useStructureAllocationLock()) [[likely]]
         return;
 
@@ -59,9 +65,11 @@ SharedVMState::StructureAllocationLocker::StructureAllocationLocker(VM& vm)
 
     // Rank 7a (§7): may be taken below JSLock/GC locks (1-6) and is held
     // across the heap allocation locks (7-10). Recursive acquisition is
-    // forbidden (§5.2) — a nested locker on the same thread self-deadlocks,
-    // which is exactly the fail-stop we want for an M7 audit miss (§5.3).
+    // forbidden (§5.2): the lock itself cannot detect it (it would hang), so
+    // the same-thread flag above is checked before locking.
+    RELEASE_ASSERT(!t_holdsStructureAllocationLock);
     shared.m_structureAllocationLock.lock();
+    t_holdsStructureAllocationLock = true;
     m_vm = &vm;
 
     // I8: never two threads simultaneously inside a Structure-cell-allocating
@@ -70,13 +78,10 @@ SharedVMState::StructureAllocationLocker::StructureAllocationLocker(VM& vm)
     uint32_t previous = shared.m_inStructureAllocationRegion.fetch_add(1, std::memory_order_relaxed);
     RELEASE_ASSERT(!previous);
 
-    // N7 shim (§5.2): SPEC-heap §9's STW-forbidden hooks (S1(a)/SPEC-heap
-    // I14). Heap.h defines JSC_HEAP_HAS_STW_FORBIDDEN_SCOPE once the heap WS
-    // provides them; without it this compiles to nothing.
-    // THREADS-INTEGRATE(vmstate): N7 — verify the macro is defined once heap lands.
-#if defined(JSC_HEAP_HAS_STW_FORBIDDEN_SCOPE)
+    // SPEC-heap I14: a holder of this lock must never initiate, join or wait
+    // for a stop-the-world; Heap::collectIfNecessaryOrDefer defers a stop
+    // poll reached inside the scope instead.
     vm.heap.incrementSTWForbiddenScope();
-#endif
 
     // N4: GC deferral is SPEC-heap L5/I14 verbatim — this stack-local
     // GCDeferralContext is threaded into the cell allocation by the M7 sites
@@ -103,14 +108,13 @@ SharedVMState::StructureAllocationLocker::~StructureAllocationLocker()
     // comment in VMLiteShared.h for the site-by-site evidence.
     WTF::storeStoreFence();
 
-#if defined(JSC_HEAP_HAS_STW_FORBIDDEN_SCOPE)
     m_vm->heap.decrementSTWForbiddenScope();
-#endif
 
     auto& shared = singleton();
     uint32_t previous = shared.m_inStructureAllocationRegion.fetch_sub(1, std::memory_order_relaxed);
     RELEASE_ASSERT(previous == 1); // I8
 
+    t_holdsStructureAllocationLock = false;
     shared.m_structureAllocationLock.unlock();
 
     // m_deferralContext is the FIRST declared member (frozen, §5.2), so its
@@ -138,26 +142,6 @@ void VMLiteRegistry::registerLite(VMLite& lite, VM& vm)
     Locker locker { lock };
     ASSERT(!lites.contains(&lite));
     ASSERT(!lite.vm); // Sole writer (§6.5.1); was null, immutable after.
-    // cl-single-mutator-sticky-skip (GILOFF-TAX #4): if this VM already has a
-    // registered MUTATOR lite, this is the second-or-later mutator for `vm`;
-    // latch the sticky bit BEFORE publishing the fresh lite (and hence before
-    // its first heap access). The registry is process-global, so scan for
-    // same-VM entries rather than testing lites.size(). m_mainVMLite is
-    // EXCLUDED: A36 — GIL-off entry never installs it (every thread, the main
-    // one included, uses a per-(thread,VM) JSLock carrier), so it is not a
-    // mutator and counting it would latch the bit at W=1 on the very first
-    // carrier registration. Monotone → never cleared in unregisterLite. The
-    // spawner-side companion store (ThreadObject.cpp, before Thread::create)
-    // is NOT YET LANDED — see VM.h everHadSecondMutator(); this store covers
-    // the JSLock carrier-entry path and is the spawnee-side fence.
-    if (!vm.everHadSecondMutator()) {
-        for (VMLite* existing : lites) {
-            if (existing->vm == &vm && existing != vm.mainVMLite()) {
-                vm.noteSecondMutatorRegistered();
-                break;
-            }
-        }
-    }
     lite.vm = &vm;
     lites.append(&lite);
 
@@ -173,6 +157,9 @@ void VMLiteRegistry::registerLite(VMLite& lite, VM& vm)
     if (vm.gilOff() && lite.gilOff) [[unlikely]] {
         lite.threadContext.traps().setLiteOwnerVM(&vm, ThreadManager::isJSThreadCurrent());
         vm.traps().backfillVMWideTrapBitsAtLiteRegistration(lite, locker);
+        // The per-thread soft reserved zone size starts at the VM's resting
+        // value: no ErrorHandlingScope is open on a thread that is registering.
+        lite.softReservedZoneSize = vm.softReservedZoneSize();
     }
 }
 

@@ -58,8 +58,11 @@ static Lock stackStatisticsMutex;
 thread_local CLoopStack::CurrentThreadStateCache CLoopStack::s_currentThreadStateCache;
 std::atomic<uint64_t> CLoopStack::s_stackEpoch { 0 };
 
-// Process-wide registry of live CLoopStacks so the thread-exit hook below can
-// retire a dying thread's segments without dangling into a destroyed VM.
+// Process-wide registry of the CLoopStacks that own at least one segment, so
+// the thread-exit hook below can retire a dying thread's segments without
+// dangling into a destroyed VM. A stack enters it together with its first
+// segment and leaves it in its destructor; stacks that never ran the
+// interpreter (the per-VMLite instances) never appear here.
 // Lock order: s_liveStacksLock -> CLoopStack::m_lock.
 static Lock s_liveStacksLock;
 static Vector<CLoopStack*>& liveStacks() WTF_REQUIRES_LOCK(s_liveStacksLock)
@@ -86,48 +89,26 @@ struct CLoopStackThreadExitRetirer {
 };
 static thread_local CLoopStackThreadExitRetirer t_threadExitRetirer;
 
-CLoopStack::CLoopStack()
-    : m_softReservedZoneSizeInRegisters(0)
-{
-    {
-        Locker locker { s_liveStacksLock };
-        liveStacks().append(this);
-    }
-
-    // Eagerly create the constructing thread's segment. This also publishes
-    // the initial StackManager::m_cloopStackLimit so the asm vm-entry check
-    // never compares against a null limit before the first lazy lookup.
-    // Note: this relies on StackManager's m_mirrors being initialized before
-    // its m_cloopStack member (see the comment in StackManager.h).
-    //
-    // Pre-registration window: for a per-lite embedded instance (VMTraps
-    // inside VMLite::threadContext), this constructor runs before
-    // VMLiteRegistry::registerLite/setCurrent, so the ctor-time publish
-    // routed through publishTargetStackManager() sees the constructing
-    // thread's PREVIOUS current lite (or none). If that previous lite is
-    // gilOff, its published limit briefly points into this new instance's
-    // reservation. This is benign and self-corrects on the previous lite's
-    // next publish hook: CLoop::execute entry calls
-    // cloopStack.currentStackPointer() -> publishStackLimit(), and every
-    // native/slow-path call republishes via setCurrentStackPointer().
-    //
-    // Do NOT touch vm() here: for a per-lite embedded instance,
-    // VMTraps::vm() in this window falls back to `this - VM::offsetOfTraps()`
-    // (see VMTrapsInlines.h), which is valid only for the VM-embedded
-    // instance — any store through it would be a wild write. The historical
-    // `vm().topCallFrame = nullptr;` that lived here was redundant anyway:
-    // VM::topCallFrame is brace-initialized in-class (VM.h, via
-    // FOR_EACH_VMLITE_PRIMITIVE_FIELD).
-    threadState();
-}
+// Segments are created lazily: CLoop::execute publishes the entering thread's
+// limit (currentStackPointer) before the first asm stack check can read it,
+// so the constructor has nothing to reserve or publish. That keeps the
+// per-VMLite instances, which never run the interpreter, free of segments.
+CLoopStack::CLoopStack() = default;
 
 CLoopStack::~CLoopStack()
 {
+    bool hadSegments;
     {
-        Locker locker { s_liveStacksLock };
-        auto& stacks = liveStacks();
-        stacks.removeFirst(this);
+        Locker liveStacksLocker { s_liveStacksLock };
+        Locker locker { m_lock };
+        hadSegments = !m_threadStates.isEmpty();
+        if (hadSegments)
+            liveStacks().removeFirst(this);
     }
+    // A thread's cache entry is only ever written after a segment exists, so
+    // a stack that never had one is referenced by no cache.
+    if (!hadSegments)
+        return;
 
     {
         Locker locker { m_lock };
@@ -150,6 +131,15 @@ CLoopStack::~CLoopStack()
         cache = { };
 }
 
+CLoopStack::ThreadState* CLoopStack::findThreadState(uint32_t threadUid) const
+{
+    for (auto& state : m_threadStates) {
+        if (!state->retired && state->threadUid == threadUid)
+            return state.get();
+    }
+    return nullptr;
+}
+
 CLoopStack::ThreadState& CLoopStack::threadStateSlow() const
 {
     uint32_t threadUid = Thread::currentSingleton().uid();
@@ -157,49 +147,55 @@ CLoopStack::ThreadState& CLoopStack::threadStateSlow() const
     ThreadState* result = nullptr;
     {
         Locker locker { m_lock };
+        result = findThreadState(threadUid);
+    }
 
-        ThreadState* reusable = nullptr;
+    if (!result) {
+        // Only the owning thread creates its segment, so the miss above is
+        // final. The registry lock is taken first (lock order:
+        // s_liveStacksLock -> m_lock) so a stack appears in liveStacks
+        // together with its first segment and the thread-exit retirer of any
+        // thread that later uses it finds it there.
+        Locker liveStacksLocker { s_liveStacksLock };
+        Locker locker { m_lock };
         for (auto& state : m_threadStates) {
-            if (!state->retired && state->threadUid == threadUid) {
-                result = state.get();
-                break;
-            }
-            if (!reusable && state->retired)
-                reusable = state.get();
+            if (!state->retired)
+                continue;
+            // Reuse a retired (dead) thread's segment; it was reset to
+            // pristine (empty, fully decommitted) at retirement.
+            state->retired = false;
+            state->threadUid = threadUid;
+            result = state.get();
+            break;
         }
 
         if (!result) {
-            if (reusable) {
-                // Reuse a retired (dead) thread's segment; it was reset to
-                // pristine (empty, fully decommitted above the reserved zone)
-                // at retirement.
-                reusable->retired = false;
-                reusable->threadUid = threadUid;
-                result = reusable;
-            } else {
-                size_t capacity = Options::maxPerThreadStackUsage();
-                capacity = WTF::roundUpToMultipleOf(pageSize(), capacity);
-                ASSERT(capacity && isPageAligned(capacity));
+            if (m_threadStates.isEmpty())
+                liveStacks().append(const_cast<CLoopStack*>(this));
 
-                auto state = makeUnique<ThreadState>();
-                state->threadUid = threadUid;
-                state->reservation = PageReservation::reserve(WTF::roundUpToMultipleOf(commitSize(), capacity), OSAllocator::UnknownUsage);
+            size_t capacity = Options::maxPerThreadStackUsage();
+            capacity = WTF::roundUpToMultipleOf(pageSize(), capacity);
+            ASSERT(capacity && isPageAligned(capacity));
 
-                Register* bottomOfStack = highAddress(*state);
-                state->end = bottomOfStack;
-                state->commitTop = bottomOfStack;
-                state->lastStackPointer = bottomOfStack;
-                state->currentStackPointer = bottomOfStack;
+            auto state = makeUnique<ThreadState>();
+            state->threadUid = threadUid;
+            state->reservation = PageReservation::reserve(WTF::roundUpToMultipleOf(commitSize(), capacity), OSAllocator::UnknownUsage);
 
-                result = state.get();
-                m_threadStates.append(WTF::move(state));
-            }
+            Register* bottomOfStack = highAddress(*state);
+            state->end = bottomOfStack;
+            state->commitTop = bottomOfStack;
+            state->lastStackPointer = bottomOfStack;
+            state->currentStackPointer = bottomOfStack;
 
-            // Match setSoftReservedZoneSize() for segments created after the
-            // zone was configured: commit the reserved zone right away.
-            if (m_softReservedZoneSizeInRegisters && result->commitTop > result->end - m_softReservedZoneSizeInRegisters)
-                grow(*result, result->end);
+            result = state.get();
+            m_threadStates.append(WTF::move(state));
         }
+
+        // Match setSoftReservedZoneSize() for segments created after the
+        // zone was configured: commit the reserved zone right away.
+        ptrdiff_t softReservedZoneSizeInRegisters = m_softReservedZoneSizeInRegisters.loadRelaxed();
+        if (softReservedZoneSizeInRegisters && result->commitTop > result->end - softReservedZoneSizeInRegisters)
+            grow(*result, result->end);
     }
 
     // Arm segment retirement for this thread (idempotent).
@@ -224,13 +220,14 @@ CLoopStack::ThreadState* CLoopStack::threadStateIfExists() const
     if (cache.stack == this && cache.epoch == s_stackEpoch.load(std::memory_order_relaxed))
         return cache.state;
 
-    uint32_t threadUid = Thread::currentSingleton().uid();
     Locker locker { m_lock };
-    for (auto& state : m_threadStates) {
-        if (!state->retired && state->threadUid == threadUid)
-            return state.get();
-    }
-    return nullptr;
+    return findThreadState(Thread::currentSingleton().uid());
+}
+
+void CLoopStack::publishCurrentThreadStackLimit()
+{
+    if (ThreadState* state = threadStateIfExists())
+        publishStackLimit(*state);
 }
 
 void CLoopStack::retireSegmentsForThread(uint32_t threadUid)
@@ -291,7 +288,8 @@ bool CLoopStack::containsAddress(Register* address)
 
 bool CLoopStack::grow(ThreadState& state, Register* newTopOfStack) const
 {
-    Register* newTopOfStackWithReservedZone = newTopOfStack - m_softReservedZoneSizeInRegisters;
+    ptrdiff_t softReservedZoneSizeInRegisters = m_softReservedZoneSizeInRegisters.loadRelaxed();
+    Register* newTopOfStackWithReservedZone = newTopOfStack - softReservedZoneSizeInRegisters;
 
     // If we have already committed enough memory to satisfy this request,
     // just update the end pointer and return. (The caller republishes the
@@ -314,7 +312,7 @@ bool CLoopStack::grow(ThreadState& state, Register* newTopOfStack) const
     state.reservation.commit(newCommitTop, delta);
     addToCommittedByteCount(delta);
     state.commitTop = newCommitTop;
-    state.end = state.commitTop + m_softReservedZoneSizeInRegisters;
+    state.end = state.commitTop + softReservedZoneSizeInRegisters;
     return true;
 }
 
@@ -388,38 +386,37 @@ void CLoopStack::addToCommittedByteCount(long byteCount)
 
 void CLoopStack::setSoftReservedZoneSize(size_t reservedZoneSize)
 {
-    m_softReservedZoneSizeInRegisters = reservedZoneSize / sizeof(Register);
-    {
-        Locker locker { m_lock };
-        for (auto& state : m_threadStates) {
-            if (state->retired)
-                continue;
-            if (state->commitTop > state->end - m_softReservedZoneSizeInRegisters)
-                grow(*state, state->end);
-        }
-    }
-    // Only the calling thread's segment limit may be republished: publishing a
-    // parked thread's limit would break the running thread's asm stack checks.
-    if (ThreadState* state = threadStateIfExists())
-        publishStackLimit(*state);
+    ptrdiff_t softReservedZoneSizeInRegisters = reservedZoneSize / sizeof(Register);
+    m_softReservedZoneSizeInRegisters.storeRelaxed(softReservedZoneSizeInRegisters);
+
+    // Only the calling thread's segment is grown and republished: a segment's
+    // end, commitTop and published limit are owner-exclusive while the owner
+    // runs, and other threads' segments pick up the new zone on their next
+    // grow(). Segments created later commit the zone in threadStateSlow().
+    ThreadState* state = threadStateIfExists();
+    if (!state)
+        return;
+    if (state->commitTop > state->end - softReservedZoneSizeInRegisters)
+        grow(*state, state->end);
+    publishStackLimit(*state);
 }
 
 bool CLoopStack::isSafeToRecurse() const
 {
     ThreadState& state = threadState();
-    void* reservationLimit = reinterpret_cast<int8_t*>(reservationTop(state) + m_softReservedZoneSizeInRegisters);
+    void* reservationLimit = reinterpret_cast<int8_t*>(reservationTop(state) + m_softReservedZoneSizeInRegisters.loadRelaxed());
 
-    // Under the phase-1 GIL, vm().topCallFrame can be a frame in another
-    // thread's segment (it migrates with the GIL); a cross-segment pointer
-    // comparison is meaningless, so fall back to this thread's own saved SP.
-    void* position = nullptr;
-    if (CallFrame* topCallFrame = vm().topCallFrame) {
-        void* topOfFrame = topCallFrame->topOfFrame();
-        if (topOfFrame >= static_cast<void*>(reservationTop(state)) && topOfFrame < static_cast<void*>(highAddress(state)))
-            position = topOfFrame;
+    // Under the GIL the top call frame can be a frame in another thread's
+    // segment (it migrates with the lock), so it is dereferenced only once it
+    // is known to lie in this thread's segment; otherwise this thread's own
+    // saved SP, which is at or below its top frame, is the conservative
+    // position.
+    void* position = state.currentStackPointer;
+    if (CallFrame* topCallFrame = vm().group3Primitives().topCallFrame) {
+        void* frame = topCallFrame;
+        if (frame >= static_cast<void*>(reservationTop(state)) && frame < static_cast<void*>(highAddress(state)))
+            position = topCallFrame->topOfFrame();
     }
-    if (!position)
-        position = state.currentStackPointer;
     return position > reservationLimit;
 }
 

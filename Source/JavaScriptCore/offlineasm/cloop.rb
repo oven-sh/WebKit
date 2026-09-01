@@ -1206,6 +1206,16 @@ class Instruction
         when "cloopCallSlowPath4"
             cloopEmitCallSlowPath4(operands)
 
+        # The cloop backend is C++, so the per-thread VMLite is read through
+        # the same thread_local accessor the C++ runtime uses.
+        when "cloopLoadCurrentVMLite"
+            $asm.putc "#{operands[0].clLValue(:intptr)} = JSC::VMLite::currentIfExists();"
+
+        # A relaxed atomic 32-bit load, for words other threads update with
+        # atomic RMWs (a plain load of those is a data race under TSAN).
+        when "cloopLoadRelaxedi"
+            $asm.putc "#{operands[1].clLValue(:uint32)} = WTF::atomicLoad(CAST<uint32_t*>(#{operands[0].pointerExpr}), std::memory_order_relaxed);"
+
         # For debugging only. This is used to insert instrumentation into the
         # generated LLIntAssembly.h during llint development only. Do not use
         # for production code.

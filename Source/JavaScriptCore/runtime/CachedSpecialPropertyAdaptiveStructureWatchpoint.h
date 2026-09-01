@@ -38,7 +38,9 @@ class CachedSpecialPropertyAdaptiveStructureWatchpoint final : public Watchpoint
 public:
     CachedSpecialPropertyAdaptiveStructureWatchpoint(const ObjectPropertyCondition&, StructureRareData*);
 
-    void install(VM&);
+    // False (flag-on only) when the structure's transition set fired between
+    // the caller's watchability check and the link; nothing is linked then.
+    bool install(VM&);
 
     const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 

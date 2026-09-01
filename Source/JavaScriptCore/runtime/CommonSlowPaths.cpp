@@ -172,7 +172,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_this)
             cachedCallee.setWithoutWriteBarrier(JSCell::seenMultipleCalleeObjects());
 
         size_t inlineCapacity = bytecode.m_inlineCapacity;
-        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacity)->objectAllocationProfile();
+        FunctionRareData* rareData = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacity);
+        ObjectAllocationProfileWithPrototype* allocationProfile = rareData->objectAllocationProfile();
         CHECK_EXCEPTION();
         if (!vm.gilOff()) [[likely]] {
             Structure* structure = allocationProfile->structure();
@@ -185,47 +186,20 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_this)
                 ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
             }
         } else {
-            // UNGIL AB18-R1-F mode split. GIL-off, the profile's
-            // (structure, prototype) pair is published by another thread as
-            // two independent stores (ObjectAllocationProfileInlines.h:
-            // m_structure.set then setPrototype, after a storeStoreFence) and
-            // FunctionRareData::clear() may null it concurrently on a lost
-            // tryLock, so this consumer can observe: a coherent pair, a
-            // mid-publish pair (structure set, prototype still null), a
-            // mid-clear pair, or a pair keyed to a stale .prototype whose
-            // clearing fire raced the publish. Snapshot both fields ONCE
-            // (the accessors consume-fence after the load, pairing with the
-            // writer's storeStoreFence, so a non-null snapshot is internally
-            // initialized), validate the snapshot against the LIVE
-            // .prototype, and on any incoherence fall back to the
-            // spec-faithful uncached path below. The GIL-on ASSERT above is
-            // guaranteed here by construction. Mono-proto staleness is the
-            // silent twin of the polyProto assert (wrong [[Prototype]], no
-            // crash), so the mono-proto arm validates the snapshot
-            // structure's stored prototype, not just the polyProto field.
-            Structure* structure = allocationProfile->structure();
-            JSObject* prototype = allocationProfile->prototype();
+            // GIL-off, a racing FunctionRareData::clear() can null the profile between the ensure
+            // above and these reads, and an initializer can be mid-publish, so only a pair keyed
+            // to the live .prototype is used; anything else takes the uncached path below.
+            JSObject* prototype = nullptr;
             JSObject* expectedPrototype = constructor->prototypeForConstruction(vm, globalObject);
-            bool coherent = false;
-            if (structure) {
-                if (structure->hasPolyProto())
-                    coherent = prototype == expectedPrototype;
-                else
-                    coherent = structure->storedPrototypeObject() == expectedPrototype;
-            }
-            if (coherent) {
+            if (Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
                 result = constructEmptyObject(vm, structure);
                 if (structure->hasPolyProto()) {
                     result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
                     prototype->didBecomePrototype(vm);
                     ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
                 }
-            } else {
-                // Null structure (mid-clear), mid-publish pair, or stale
-                // pair: take the uncached prototype lookup. Correct, just
-                // slower; the next initialize re-keys the profile.
+            } else
                 useGenericPath = true;
-            }
         }
     }
     if (useGenericPath) {
@@ -1393,7 +1367,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     CHECK_EXCEPTION();
 
-    ResolveType resolveType = metadata.m_resolveType;
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     // ModuleVar does not keep the scope register value alive in DFG.
     ASSERT(resolveType != ModuleVar);
@@ -1403,6 +1377,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     case GlobalPropertyWithVarInjectionChecks:
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
+        // Flag-on, op_resolve_scope metadata is frozen after CodeBlock linking:
+        // the LLInt fast path reads m_resolveType and then the scope word it
+        // keys without a lock, so a post-link rewrite could hand it the null
+        // scope an UnresolvedProperty op was linked with. Late-defined globals
+        // stay on this slow path.
+        if (Options::useJSThreads()) [[unlikely]]
+            break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
             bool hasProperty = globalObject->hasProperty(globalObject, ident);

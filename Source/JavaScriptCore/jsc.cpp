@@ -4457,6 +4457,7 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 
         success = true;
         GlobalObject* globalObject = nullptr;
+        bool hasPendingTerminationException = false;
         {
             JSLockHolder locker(vm);
 
@@ -4471,8 +4472,12 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 
             func(vm, globalObject, success);
             vm.drainMicrotasks();
+            // Read while this thread still holds the lock: the exception word
+            // is per-thread GIL-off and resolves to this thread's lite only
+            // while the lock keeps it installed.
+            hasPendingTerminationException = vm.hasPendingTerminationException();
         }
-        if (vm.hasPendingTerminationException()) {
+        if (hasPendingTerminationException) {
             vm.setExecutionForbidden();
             if (!options.m_treatWatchdogExceptionAsSuccess)
                 success = false;

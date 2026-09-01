@@ -86,24 +86,21 @@ public:
 
     void unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)
     {
-        // THREADS (TSAN wave 2, cachedcall-protoframe-crossthread; SPEC-jit
-        // §4.x/§5.8 NOT blessed): a CachedCall is a STACK-resident object on
-        // its constructing thread. The locked install drain
-        // (CodeBlock::unlinkOrUpgradeIncomingCalls ← ScriptExecutable::
-        // installCode) walks the incoming-call list on whatever thread tiers
-        // the function up; reaching here on a FOREIGN thread and writing
-        // m_protoCallFrame / m_addressForCall is a cross-thread write into
-        // another thread's stack while that thread struct-copies the proto
-        // frame in executeCachedCall (TSAN: setCodeBlock vs __tsan_memcpy).
-        // Foreign drains therefore touch ONLY two things: the sentinel-list
-        // links (under s_callLinkSerializationLock, which the gilOff drain
-        // holds across the whole loop) and the dedicated m_staleGeneration
-        // signalling word. The owning thread's next call() acquires the bumped
-        // generation, nulls its own m_addressForCall, and lazily relink()s —
-        // upgrade happens on the OWNING thread, never here. m_ownerThread was
-        // member-initialized strictly before the locked linkIncomingCall push
-        // that made this node reachable, so the lock orders that read.
-        if (g_jscConfig.gilOffProcess && m_ownerThread != &Thread::currentSingleton()) [[unlikely]] {
+        // THREADS: a CachedCall lives on its constructing thread's stack.
+        // GIL-off, the locked install drain (CodeBlock::
+        // unlinkOrUpgradeIncomingCalls) runs on whichever thread tiers the
+        // function up, concurrently with the owner copying the proto frame in
+        // executeCachedCall, so a FOREIGN drain touches only the list links
+        // (under s_callLinkSerializationLock, held across the whole drain) and
+        // m_staleGeneration; the owner's next call() absorbs the bump, nulls
+        // its own m_addressForCall and relink()s on its own thread. The gate
+        // is the per-VM mode, the same predicate that guards the owner-side
+        // absorb and the drain's lock hold: a GIL-on VM in a GIL-off process
+        // has m_ownerThread == nullptr and keeps the in-place rewrite below,
+        // whose drains never run concurrently with the owner. m_ownerThread
+        // was written before the locked linkIncomingCall push that made this
+        // node reachable, so the lock orders the read.
+        if (m_vm.gilOffWithProcessGate() && m_ownerThread != &Thread::currentSingleton()) [[unlikely]] {
             if (isOnList())
                 removeOnDestruction();
             WTF::atomicStore(&m_staleGeneration, WTF::atomicLoad(&m_staleGeneration, std::memory_order_relaxed) + 1, std::memory_order_release);
@@ -163,11 +160,12 @@ private:
     JSScope* m_scope;
     void* m_addressForCall { nullptr };
     unsigned m_numParameters { 0 };
-    // THREADS: identity of the constructing (= stack-owning) thread. Written
-    // once during member-init (gated on the read-only Config-page byte so
-    // flag-off pays only a predicted-not-taken test, no TLS read), read by
-    // foreign-thread drains under the link lock that ordered the push.
-    Thread* m_ownerThread { g_jscConfig.gilOffProcess ? &Thread::currentSingleton() : nullptr };
+    // THREADS: identity of the constructing (= stack-owning) thread, set only
+    // for the GIL-off VM (m_vm is initialized first; flag-off the predicate
+    // is a single predicted-not-taken test on the read-only Config page, no
+    // TLS read). Written once during member-init, read by foreign-thread
+    // drains under the link lock that ordered the push.
+    Thread* m_ownerThread { m_vm.gilOffWithProcessGate() ? &Thread::currentSingleton() : nullptr };
     // THREADS: dedicated cross-thread signalling word; the ONLY non-list word
     // a foreign-thread drain writes on this stack object. Release-stored under
     // the link lock, acquire-loaded by absorbForeignStaleGeneration().

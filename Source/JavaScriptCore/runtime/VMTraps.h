@@ -378,11 +378,13 @@ public:
     // JSThreadsSafepoint::stopTheWorldAndRun (section 5.3 choke point), and
     // conducting a stop while holding that process-shared lock would
     // deadlock against any sibling whose own path to its park needs the same
-    // lock (e.g. handleTraps' breakpoint-sweep walk). Callers:
-    // VMTraps::handleTraps' epoch scope exit, and
+    // lock (e.g. handleTraps' breakpoint-sweep walk). Walks the CURRENT
+    // thread's frames, resolved from vm.group3Primitives() (the per-lite
+    // words GIL-off), so it must run on the thread whose stack is walked.
+    // Callers: VMTraps::handleTraps' epoch scope exit, and
     // JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld's post-resume
     // epoch check (public for the latter).
-    void jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite(CallFrame* topCallFrame);
+    void jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite();
 
 private:
     ALWAYS_INLINE BitField clearTrapWithoutCancellingThreadStop(Event event)
@@ -471,25 +473,13 @@ public:
     ALWAYS_INLINE VM& liteAwareVM() const { return m_liteOwnerVM ? *m_liteOwnerVM : vm(); }
 private:
 
-    // UNGIL §A.2.1 interim (single shared trap word — see
-    // perThreadTrapsIfExists below): these three are PER-THREAD-BY-DESIGN
-    // scalars (DeferTermination / DeferTraps scopes are properties of one
-    // thread's stack), but until the per-lite VMTraps split lands, N GIL-off
-    // mutators reach this ONE instance through vm.traps()/the alias, and the
-    // DeferTermination/DeferTraps scopes run on spawned-reachable hot paths
-    // (LLIntSlowPaths, JITOperations, DFGOperations, JSObject, ...).
-    // std::atomic makes the counter ++/-- lost-update-free (no underflow /
-    // stuck-nonzero) and every access TSAN-clean (std::atomic, not
-    // WTF::Atomic, so the untouched VMTrapsInlines.h ++/-- forms keep
-    // compiling). The remaining SEMANTIC cross-talk — one thread's defer
-    // scope masking another thread's NeedTermination service, or two
-    // interleaved DeferTraps scopes restoring each other's saved
-    // m_trapsDeferred — is a bounded DELAY or one early/late poll, never a
-    // lost trap (the bits stay set and are serviced at the next unmasked
-    // poll site), and disappears with the §A.2.1 per-lite split.
-    std::atomic<unsigned> m_deferTerminationCount { 0 };
-    std::atomic<bool> m_suspendedTerminationException { false };
-    std::atomic<bool> m_trapsDeferred { false };
+    // Deferral state is a property of one thread's stack: DeferTermination and
+    // DeferTraps scopes resolve vm.trapsForCurrentThread() (the per-lite
+    // instance GIL-off), and handleTraps reads the same instance, so these
+    // are only ever touched by the owning thread.
+    unsigned m_deferTerminationCount { 0 };
+    bool m_suspendedTerminationException { false };
+    bool m_trapsDeferred { false };
 
     // UNGIL TERM1.2 interim (single shared trap word): set when a GIL-off
     // CARRIER consumed a VM-wide NeedTermination but left the bit set in the
@@ -498,8 +488,10 @@ private:
     // NeedTermination on carrier threads; once no OTHER lite of this VM is
     // entered, the consumed raise is retired (bit + flag cleared, under the
     // registry lock). A FRESH fireTrapVMWide(NeedTermination) clears the flag
-    // (also under the registry lock), so a new raise is never swallowed.
-    // Dead weight once the §A.2.1 per-lite words land.
+    // (also under the registry lock), so a new raise is never swallowed;
+    // every VM-wide termination source (VM::notifyNeedTermination, the
+    // watchdog, the parked-carrier W1 verdict) raises through that form.
+    // Load-bearing as long as generated-code trap polls read the VM word.
     std::atomic<bool> m_carrierTookSharedTermination { false };
 
     bool m_needToInvalidateCodeBlocks { false };
@@ -535,183 +527,38 @@ private:
     bool m_previousTrapsDeferred;
 };
 
-// UNGIL §A.2.1 seam (U-T2; defined in VMLite.cpp): the per-thread VMTraps the
-// rule-3 fan-out and the token-acquisition OR write for `lite`. The §A.2.1
-// contract is a VMLite L2 append `VMThreadContext threadContext` (after
-// Group 6) whose traps generated code reaches via the chained offset
-// lite->threadContext.traps().m_trapBits — that append is LANDED (AB-17
-// item 1), and this seam now returns &lite.threadContext.traps() for gilOff
-// lites (GIL-on lites keep the VM-word alias; U0b intact). Fan-outs and the
-// token-acquisition OR are pointer-identity-keyed and de-alias automatically.
-// Returns null for an unregistered lite.
+// The per-thread VMTraps that the rule-3 fan-out (fireTrapVMWide), the
+// token-acquisition OR (orVMWideTrapBitsIntoLite) and the registration
+// backfill write for `lite`; defined in VMLite.cpp. A gilOff lite carries its
+// own instance (lite.threadContext.traps(): trap word + StackManager limits,
+// reached by generated code through the chained lite offset); a GIL-on lite
+// aliases the VM-level word. Returns null for an unregistered lite.
 //
-// ACTIVATION CHECKLIST — STATUS (AB-17 §A.2.2 reroute change): ALL items
-// below are LANDED in the single AB-17 §A.2.2 diff (recorded with the
-// orchestrator / INTEGRATE-ungil.md): (2) registration backfill in
-// VMLiteRegistry::registerLite (setLiteOwnerVM + OR + per-lite stop-request
-// derivation, under the registry lock); (3) every generated-code and C++
-// soft-limit read rerouted (LLInt chained offsets now referenced;
-// AssemblyHelpers::branchPtrAgainstSoftStackLimit at all JIT-tier sites,
-// INCLUDING the LOL tier's prologue check — LOL is additionally forced off
-// under GIL-off at option canonicalization pending its §A.1.3 audit;
-// softStackLimitForCurrentThread[Slow] for C++); (3c) the single-controller
-// stop fan (VM-level updateThreadStopRequestIfNeeded fans each lite's OWN
-// update; per-lite shouldStop = lite word | VM word with the carrier-only
-// trim; cancel restores the per-lite saved value), with the (h) lock
-// re-rank (registry -> per-lite signaling -> per-lite mirror) asserted via
-// assertNoPerLiteTrapSignalingLockHeldOnCurrentThread; (3b) VMTraps::vm()
-// consults m_liteOwnerVM, and every poll site dispatches through
-// handleTrapsForCurrentThreadIfNeeded (lite first, then the VM-level
-// instance); (4) the W1/D9 park-site split in LockObject/ConditionObject/
-// ThreadObject. The VMEntryScope::setUpSlow gate flipped
-// (perLiteSoftStackLimitRerouteLanded = true); VM::updateStackLimits'
-// N-entered refusal walk is deleted and the VM word is carrier-published
-// only.
-//
-// ACCEPTANCE AMENDMENT (review round; the items are LANDED but AB-17 is
-// NOT verification-complete): the pinned GIL-off acceptance command
-// (smoke.js under the six GIL-off flags) still fails intermittently on
-// downstream N-entry legs — (i) Debug/ASAN deterministic
-// stack-use-after-return in ThrowScope::~ThrowScope on a spawned thread
-// (VM-level exception-scope chain shared across lites; per-lite
-// exception-state split leg) and (ii) Release intermittent SIGSEGV in
-// Baseline-JIT'd code / tier-up "CompilationInvalidated" RELEASE_ASSERT
-// (concurrent compilation legs). The W1 parked-carrier watchdog livelock
-// (item 4's verdict keyed the parked carrier to its non-advancing CPU
-// budget; condition-wait/property-wait termination hung GIL-off) is FIXED
-// via Watchdog CallerState::ParkedCarrier. See the AB-17 ACCEPTANCE
-// STATUS block in VMEntryScope.cpp for the full failing-rung record. The
-// original checklist text is preserved below as the contract of record:
-//   (1) LANDED (AB-17): VMLite.h `VMThreadContext threadContext` L2 append +
-//       the perThreadTrapsIfExists flip (VMLite.cpp, keyed on lite.gilOff).
-//   (2) JSLock.cpp / VMLiteShared (§F.1): the GIL-off token-acquisition edges
-//       DO call vm.traps().orVMWideTrapBitsIntoLite(lite)
-//       (spawnedThreadEntryTokenLock and the carrier arm — landed at
-//       U-T8/U-T11; now real work post-flip), but lite REGISTRATION must
-//       additionally backfill the VM word into the fresh per-lite word (and
-//       call setLiteOwnerVM on it), or VM-wide bits raised before a
-//       late-joining lite registers would be silently lost until its first
-//       token acquisition.
-//   (3) PARTIAL (AB-17 item 3): VM::updateStackLimits now DUAL-PUBLISHES
-//       GIL-off — the entering thread's lite StackManager (its own
-//       StackBounds; what the future per-lite generated-code checks read)
-//       AND the VM-level word (what all tiers' generated-code stack checks
-//       STILL read today). The LLInt per-lite chained offsets
-//       (VMLiteTrapAwareSoftStackLimitOffset / VMLiteSoftStackLimitOffset)
-//       and the T2 loader/discriminator wrapper are STAGED in
-//       LowLevelInterpreter.asm but referenced by no check site. The
-//       VM-level publish + its no-other-entered RELEASE_ASSERT tripwire can
-//       be deleted ONLY in the same change that reroutes every
-//       generated-code soft-limit read (LLInt shared prologue and the
-//       64/32_64 doVMEntry/CLoop sites, the Baseline/DFG/FTL emission
-//       sites — JIT.cpp, AssemblyHelpers.cpp, ThunkGenerators.cpp,
-//       SetupVarargsFrame.cpp, DFGSpeculativeJIT.cpp, FTLLowerDFGToB3.cpp,
-//       YarrJIT.cpp — under the §A.1.3 COMPILED-FOR-VM-mode rule) and every
-//       C++ VM::softStackLimit() reader (VMInlines.h isSafeToRecurse /
-//       ensureStackCapacityFor, LLIntSlowPaths stack_check slow-path
-//       re-confirm, JSString rope resolution, JSONObject, LiteralParser,
-//       Yarr) through the per-thread lite chain, AND lands item (3c).
-//       LANDED SUBSET (I1-AB17 R3): the C++-reader leg only —
-//       softStackLimitForCurrentThread() (VMInlines.h) reroutes
-//       isSafeToRecurseSoft / ensureJSStackCapacityFor and the
-//       LLIntSlowPaths re-confirm through the per-lite PLAIN limit (null
-//       per-lite limit falls back to the VM word). This subset is inert
-//       w.r.t. 3c/3b: it never reads the trap-aware word, so trap
-//       observability is unchanged. The remaining C++ readers (JSString
-//       rope, JSONObject, LiteralParser, Yarr interpreter) should adopt
-//       the same helper in their own files. Everything else in (3) —
-//       LLInt asm reroute included — remains UNLANDED; see (3d).
-//   (3c) STOP FAN (REQUIRED BEFORE any (3) read-site reroute lands;
-//       memory-safety/liveness grade): once any check site reads the
-//       per-lite trap-aware word, VMTraps::requestThreadStopIfNeeded() /
-//       cancelThreadStopIfNeeded() on the VM-level instance must fan the
-//       m_trapAwareSoftStackLimit poke to EVERY entered lite of that VM —
-//       today they poke only the VM word, which a rerouted site no longer
-//       reads, so termination / GC-safepoint delivery would be lost or
-//       late even single-entered GIL-off. Contract the fan must satisfy:
-//       (a) the requester atomically swaps each entered lite's
-//       m_trapAwareSoftStackLimit under a lock order stated against the
-//       entry-scope publication in VM::updateStackLimits (the
-//       fan-vs-concurrent-updateStackLimits write ordering — CAS/exchange
-//       discipline on the Atomic word — must be explicit, not implied);
-//       (b) a delivery argument: the target mutator is guaranteed to
-//       re-execute a rerouted check site within bounded work after the
-//       swap; (c) cancel restores the PER-LITE saved value (never the VM
-//       word). Pin with a GIL-off test requesting a VMTraps stop while a
-//       lite is mid-LLInt.
-//       REVIEW FINDINGS (I1-AB17 R2, proposal rejected 0/3 — a naive fan
-//       that calls liteTraps->m_stack.requestStop()/cancelStop() directly
-//       from the VM-level instance fails all three of the following; the
-//       fan contract above is NECESSARY but NOT SUFFICIENT):
-//       (d) SINGLE CONTROLLER: each lite's m_trapAwareSoftStackLimit marker
-//       must have exactly ONE controlling traps instance. The VM-level
-//       request/cancel must drive each lite via that lite's OWN traps
-//       bookkeeping (per-lite updateThreadStopRequestIfNeeded recomputing
-//       liteTraps->needHandling, with an explicit VM-instance-lock-before-
-//       lite-instance-lock rank for m_trapSignalingLock). Otherwise: the
-//       VM-level cancel fan erases a lite's marker while that lite's OWN
-//       m_trapBits are still pending (StackManager::cancelStop overwrites
-//       unconditionally; the hasStopRequest() guard protects only against
-//       limit publishes) — lost delivery, the lite spins forever; and the
-//       request fan leaves the per-lite m_threadStopRequested stale
-//       (false), so the lite's own updateThreadStopRequestIfNeeded sees
-//       shouldStop==false==m_threadStopRequested and never cancels — a
-//       permanently stuck marker forcing every JS call onto the slow path.
-//       (e) LATE-JOINER LEG: a fan that snapshots the registry at request
-//       time misses lites registering afterwards. Registration (item 2's
-//       backfill) must ALSO derive the fresh lite's own stop request from
-//       the backfilled VM-wide bits, under the registry lock, with a
-//       stated delivery bound — else the new lite's first
-//       updateStackLimits publishes a plain limit and its rerouted sites
-//       pass forever.
-//       (f) Additional pin test: VM-level cancel while a sibling lite's
-//       per-lite trap bits are still pending must NOT clear that lite's
-//       marker (interleaving (d) above), alongside the mid-LLInt stop
-//       test.
-//       REVIEW FINDINGS (I1-AB17 R3, proposal rejected 1/3 — a
-//       single-controller fan driving each lite's OWN
-//       updateThreadStopRequestIfNeeded fixes (d)-(f), but is STILL not
-//       landable ahead of (3b)):
-//       (g) UNCANCELLABLE MARKER: with the LLInt read rerouted and the fan
-//       arming per-lite markers, but trap SERVICING still running through
-//       the VM-level instance (LLIntSlowPaths `vm.traps()
-//       .handleTrapsIfNeeded()`), servicing clears only the VM-level bits;
-//       the lite's own m_trapBits stay set and its marker stays armed
-//       forever — failure mode (d) reproduced one layer up, livelock-grade
-//       for recurring async events (GC safepoints). Therefore the LLInt
-//       read reroute and the stop fan are NOT inert (a lone spawned lite
-//       passes the no-other-entered tripwire) and may land ONLY atomically
-//       with the (3b) servicing reroute (VMTrapsInlines.h liteAwareVM-based
-//       vm() for instance paths, plus every handleTrapsIfNeeded poll site
-//       dispatching on the CURRENT lite's traps instance GIL-off).
-//       (h) ATOMIC LANDING UNIT: LLInt asm reroute + all generated-code
-//       emission sites listed in (3) + stop fan (3c, single-controller
-//       form) + servicing reroute (3b) + tripwire deletion + VM-level
-//       dual-publish removal are ONE indivisible diff. The fan's lock
-//       re-rank (VMLiteRegistry.lock -> per-lite m_trapSignalingLock ->
-//       per-lite StackManager m_mirrorLock) demotes the registry lock from
-//       leaf rank and MUST land with a runtime lock-rank assertion plus a
-//       grep-audit that no path takes the registry lock while holding any
-//       per-lite m_trapSignalingLock.
-//       (i) Third pin test, alongside (f) and the mid-LLInt stop test:
-//       GIL-off spawned lite receives a fanned async event, services it,
-//       then assert the lite's marker is cancelled (trap-aware word !=
-//       stop-request marker) and subsequent calls take the fast path —
-//       regression test for (g).
-//   (3b) VMTrapsInlines.h: VMTraps::vm() must consult m_liteOwnerVM before
-//       the `this - VM::offsetOfTraps()` arithmetic — that arithmetic is
-//       valid ONLY for the VM-embedded instance and is garbage on a
-//       per-lite instance.
-//   (4) The §J.3/D9 park sites (LockObject.cpp/ThreadObject.cpp/
-//       ConditionObject.cpp): split NeedWatchdogCheck out of
-//       jsThreadParkTerminationRequested GIL-off and drive annex W W1 via
-//       Watchdog::serviceCheckFromReacquiredParkedCarrier (Watchdog.h),
-//       including the r15 F2 old-node disposition; and re-point the D9
-//       predicate at the polling thread's PARK lite (TERM1.4/U31). Under the
-//       alias the re-point is a semantic no-op (park lite word == VM word),
-//       but the W1 split is NOT: today a parked thread treats the watchdog
-//       CHECK bit as termination (see Watchdog.h).
+// Delivery contract GIL-off: a VM-wide raise sets every same-VM lite's word
+// plus the VM word under the registry lock and drives each lite's OWN
+// updateThreadStopRequestIfNeeded, the single controller of that lite's
+// trap-aware soft-stack-limit marker (shouldStop = lite word | VM word, with
+// the carrier-only trim on spawned lites; cancel restores the per-lite saved
+// limit). Lites registering after a raise are backfilled at registration
+// (backfillVMWideTrapBitsAtLiteRegistration) and at every token acquisition.
+// Servicing dispatches lite-first through handleTrapsForCurrentThreadIfNeeded,
+// so bits fanned into a lite are cleared on the instance whose marker they
+// armed. Lock order: VM-level m_trapSignalingLock (released before any fan)
+// -> VMLiteRegistry::lock -> per-lite m_trapSignalingLock -> per-lite
+// StackManager mirror lock, asserted by
+// assertNoPerLiteTrapSignalingLockHeldOnCurrentThread.
 JS_EXPORT_PRIVATE VMTraps* perThreadTrapsIfExists(VMLite&);
+
+// Park-site poll predicates, evaluated between condition-wait quanta with the
+// park site's list lock held: both read only atomic trap words and the VM's
+// termination-request flag. GIL-on parkLite is null and the watchdog-check
+// bit folds into the termination predicate; GIL-off the termination poll
+// reads the parked thread's lite (spawned: the current lite; carrier: the
+// lite captured at its release, capturedParkLiteOfCurrentThreadIfAny in
+// JSLock.h) and a carrier services the watchdog-check bit separately through
+// reacquireParkedCarrierAndServiceWatchdogCheck.
+bool parkLitePollTerminationRequested(VM&, VMLite* parkLite);
+bool parkLitePollWatchdogCheckRequested(VM&, VMLite* parkLite);
 
 // UNGIL §A.2.2 item 3b servicing dispatch (AB-17; review finding (g)): the
 // GIL-off poll-site form. Services the CURRENT thread's per-lite traps
@@ -735,76 +582,5 @@ JS_EXPORT_PRIVATE void assertNoPerLiteTrapSignalingLockHeldOnCurrentThread();
 #else
 inline void assertNoPerLiteTrapSignalingLockHeldOnCurrentThread() { }
 #endif
-
-// ===== checktraps-dejank-invalidation-point: conductor heap-fact rewrite epoch =====
-//
-// GIL-off, DFG/FTL CheckTraps no longer clobbers the abstract heap
-// (DFGClobberize.h); it is modeled and compiled as an InvalidationPoint at the
-// poll's rejoin. The park-site semantics (UNGIL §K.5 / SPEC-jit I21: the
-// conductor may rewrite ANY heap fact during a §A.3 window — haveABadTime
-// butterfly conversion, Class-A structure retags, debugger JS) are enforced at
-// RUNTIME instead: every conductor-side heap-fact rewrite bumps this
-// process-global epoch IN-WINDOW, after the window's work and BEFORE the
-// stopped world resumes, and a mutator whose park (VMTraps::handleTraps, or a
-// class-(2) parkSitePollAndParkForStopTheWorld quantum) overlapped a bump
-// jettisons its own on-stack optimizing-JIT code on resume — which fires the
-// CheckTraps invalidation points, so the mutator OSR-exits at the poll before
-// reusing any hoisted fact. Visibility: the bump is sequenced before the
-// window's resume publication on the conductor thread; the parked mutator's
-// read is sequenced after its wake on that same resume edge (park
-// mutex/condvar + the F5 ISB), giving happens-before without extra fencing
-// beyond the atomics in the impl. EDGE LAW (review blocker, amend round): a
-// publication-time-only bump is UNSOUND — mutators parked BY a window sample
-// the epoch after the publication bump and would compare equal on resume; the
-// load-bearing bump must land while the world is still stopped (see the
-// BUMP-EDGE LAW comment in bytecode/JSThreadsSafepoint.cpp).
-//
-// PLACEMENT NOTE: these belong with the rest of namespace JSThreadsSafepoint
-// in bytecode/JSThreadsSafepoint.h; they are declared here (and DEFINED in
-// bytecode/JSThreadsSafepoint.cpp, which sees these declarations via VM.h ->
-// VMTraps.h) because this change's ownership boundary includes VMTraps.h but
-// not JSThreadsSafepoint.h. Fold them into JSThreadsSafepoint.h in a
-// follow-up that owns that header.
-//
-// Bump sites (coverage table: docs/threads/AUDIT-checktraps.md):
-//  - LOAD-BEARING (gilOff): the wrapped-work closure tail in
-//    JSThreadsSafepoint::stopTheWorldAndRun's thread-granular reroute —
-//    in-window, pre-resume, for EVERY conducted §A.3 window not under
-//    PureCodeLifecycleStopWindowScope; plus the R1.h already-stopped inline
-//    branch's post-work bump (pre-resume w.r.t. the OUTER stop);
-//  - ClassAStopWatchdogContext's constructor (entry edge: covers mutators
-//    already inside handleTraps at publication; GIL-on belt-and-braces) and
-//    destructor (exit edge: covers inline fires under an outer stop), both
-//    EXCEPT while a PureCodeLifecycleStopWindowScope is open;
-//  - JSGlobalObject::haveABadTimeImpl (explicit — covers the GIL-on flag-on
-//    leg, where no stop window/context is published);
-//  - VMTraps::handleTraps' NeedDebuggerBreak service (explicit — same GIL-on
-//    reason).
-// A pure CodeBlock-jettison window rewrites CODE, not heap facts, so
-// CodeBlock::jettison opens PureCodeLifecycleStopWindowScope around its
-// context to avoid cascading every reoptimization into a process-wide
-// on-stack jettison of all parked mutators. False-positive bumps are sound
-// (they only cost a jettison); a MISSED bump at a new heap-fact-rewriting
-// window is a correctness bug — new stop-window requesters must either
-// publish a context without the scope or bump explicitly.
-namespace JSThreadsSafepoint {
-
-JS_EXPORT_PRIVATE uint64_t conductorHeapFactRewriteEpoch();
-JS_EXPORT_PRIVATE void noteConductorHeapFactRewrite();
-
-// RAII, thread-local, nests: while open, ClassAStopWatchdogContext
-// publications on this thread do NOT bump the heap-fact rewrite epoch. Only
-// for stop windows that provably rewrite no heap fact (today: the
-// CodeBlock::jettison choke point — including the Class-A fire's nested
-// step-5 jettisons, whose OUTER fire context has already bumped by then).
-class PureCodeLifecycleStopWindowScope {
-public:
-    PureCodeLifecycleStopWindowScope(const PureCodeLifecycleStopWindowScope&) = delete;
-    PureCodeLifecycleStopWindowScope& operator=(const PureCodeLifecycleStopWindowScope&) = delete;
-    JS_EXPORT_PRIVATE PureCodeLifecycleStopWindowScope();
-    JS_EXPORT_PRIVATE ~PureCodeLifecycleStopWindowScope();
-};
-
-} // namespace JSThreadsSafepoint
 
 } // namespace JSC

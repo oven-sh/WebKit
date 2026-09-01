@@ -115,9 +115,10 @@ function asyncGeneratorEnqueueAndDrive(generator, value, mode, promise)
 
     // SPEC-ungil §N.5 async resume-head claim (annex N7 row R7; MC-TEAR S6b /
     // MC-PRIM P5-async — CVE-AUDIT-RESULTS.md A4). GIL-off ONLY (every caller
-    // is behind the @gilOffProcess constant branch, so flag-off bytecode is
-    // the landed inline path verbatim — next/return/throw keep their inline
-    // @asyncGeneratorQueueEnqueue + @asyncGeneratorResumeNext sequence).
+    // is behind an `if (@gilOffProcess)` whose dead arm the bytecode generator
+    // drops, so flag-off bytecode is the landed inline path verbatim —
+    // next/return/throw keep their inline @asyncGeneratorQueueEnqueue +
+    // @asyncGeneratorResumeNext sequence).
     //
     // AMENDED SHAPE (see the JSMicrotask.cpp block comment for the full
     // ruling): the previous landing held the rank-10a cellLock across the
