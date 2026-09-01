@@ -26,6 +26,7 @@
 #include "IncrementalSweeper.h"
 #include "MarkedBlockInlines.h"
 #include "MarkedSpaceInlines.h"
+#include "VMManager.h"
 #include "WeakSetInlines.h"
 #include <wtf/ListDump.h>
 #include <wtf/SimpleStats.h>
@@ -33,12 +34,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
-
-// UNGIL §A.3 (AB-10) cross-TU seams — defined in runtime/VMManager.cpp;
-// declaration pattern matches heap/Heap.cpp:151, heap/LocalAllocator.cpp:45
-// and heap/BlockDirectory.cpp:45. Signatures must stay byte-identical.
-bool jsThreadsThreadGranularWorldIsStopped(); // §A.3.2 post-quiescence depth.
-bool jsThreadsCurrentThreadIsStopConductor(); // §A.3.3 tenure check.
 
 std::array<unsigned, MarkedSpace::numSizeClasses> MarkedSpace::s_sizeClassForSizeStep;
 
@@ -447,9 +442,10 @@ void MarkedSpace::resumeAllocating()
 
 bool MarkedSpace::isPagedOut()
 {
-    // SharedGC (T8 audit): iterates m_blocks lock-free. Reached from the
-    // full-GC activity callback (never fired once shared, §5.4) and from
-    // collection bookkeeping on the conductor.
+    // Walks every directory's m_blocks lock-free, so a sibling client's addBlock
+    // (under the mutator slow-path lock) could reallocate the vector spine
+    // underneath it. The only caller, FullGCActivityCallback::doCollection, skips
+    // this walk once the heap is shared; a shared-mode caller must stop the world.
     ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
     SimpleStats pagedOutPagesStats;
 
@@ -759,11 +755,16 @@ void MarkedSpace::dumpBits(PrintStream& out)
 
 unsigned MarkedSpace::reserveThreadLocalCacheIndices(const AbstractLocker&)
 {
-    // SharedGC (§5.3; T4): monotonic, never reused; caller holds
-    // m_directoryLock (the locker token).
+    // Monotonic, never reused; the caller holds m_directoryLock (the locker
+    // token). Every client's GCThreadLocalCache table has exactly
+    // Heap::numCompleteSubspaces * numSizeClasses non-iso slots, immediately
+    // followed by the static IsoSubspace slots that JIT inline allocation bakes
+    // in, so a reservation past that bound would alias the new subspace's
+    // slots onto the iso slots. Adding a CompleteSubspace requires bumping
+    // Heap::numCompleteSubspaces.
     unsigned base = m_nextTlcIndexBase;
     unsigned next = base + static_cast<unsigned>(numSizeClasses);
-    RELEASE_ASSERT(next > base); // Overflow would alias TLC slots across subspaces.
+    RELEASE_ASSERT_WITH_MESSAGE(next <= Heap::numCompleteSubspaces * static_cast<unsigned>(numSizeClasses), "GCThreadLocalCache fixed-capacity table overflow; bump JSC::Heap::numCompleteSubspaces");
     m_nextTlcIndexBase = next;
     return base;
 }

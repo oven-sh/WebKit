@@ -38,7 +38,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MarkStackMergingConstraint);
 // (Heap::sharedGCBarrierStateIsPerClient()) this constraint covers the
 // SERVER m_mutatorMarkStack — whose remaining producers under C1R are the
 // F31/CGD4.5 conductor-context barrier appends (null-client, in-window,
-// WSAC single-writer; the stack KEEPS multi-producer mode, F44) — plus
+// WSAC single-writer; the server-arm append stays serialized by
+// Heap::m_serverMutatorMarkStackLock, which the transfer below also holds) — plus
 // m_raceMarkStack, exactly as written below. The per-client CMSes
 // (GCClient::Heap::m_mutatorMarkStack) are deliberately NOT read here: CMS
 // work is accounted exclusively via the §5.2(i) WND-open drain into
@@ -82,7 +83,11 @@ void MarkStackMergingConstraint::executeImplImpl(Visitor& visitor)
     if (m_heap.m_isMarkingForGCVerifier)
         return;
 
-    m_heap.m_mutatorMarkStack->transferTo(visitor.mutatorMarkStack());
+    if (Options::useSharedGCHeap()) [[unlikely]] {
+        Locker locker { m_heap.m_serverMutatorMarkStackLock };
+        m_heap.m_mutatorMarkStack->transferTo(visitor.mutatorMarkStack());
+    } else
+        m_heap.m_mutatorMarkStack->transferTo(visitor.mutatorMarkStack());
     m_heap.m_raceMarkStack->transferTo(visitor.mutatorMarkStack());
 }
 

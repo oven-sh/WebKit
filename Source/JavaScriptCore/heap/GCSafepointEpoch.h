@@ -114,6 +114,13 @@ private:
     // perturbing Heap's giant init list).
     void setServer(JSC::Heap&);
 
+    // Destroys every retired item immediately, looping until destroy thunks
+    // stop retiring. Heap::lastChanceToFinalize calls this while the object
+    // space is still intact, since destroy thunks may write into heap memory
+    // (a retired Weak<> clears its WeakImpl inside a WeakBlock); the
+    // destructor calls it as a backstop for anything retired later.
+    void drainForTeardown();
+
     // I11(c) bracket. Opened by the reclaimer (the conducted-cycle mutator at
     // the legacy runEndPhase site, or the §10 conductor at step 7) strictly
     // AFTER it owns a compiler-thread suspension: a fresh

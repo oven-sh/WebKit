@@ -553,16 +553,16 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
 // sound because the pause runs only between stop windows (the conductor is
 // blocked at its WND-open GCL acquire, so no resumeThePeriphery() loop can
 // be spinning on this visitor's rightToRun) and a §A.3 window needs no
-// helper rightToRun (CG-I16). Flag-off
-// (!useConcurrentSharedGCMarking): never entered —
-// m_isDrainingFromSharedHelper is only set when the C1 option byte is on
-// (option-byte-first at the drainFromShared drain entry, FIX-V5B-F1
-// pattern), so flag-off helpers pay only the per-batch test of their own
-// visitor line in drain() and never load the shared Heap line here.
+// helper rightToRun (CG-I16). Flag-off: never entered —
+// m_isDrainingFromSharedHelper is only set when a GCL-free Concurrent phase
+// is possible (the C1 option byte or the gilOff single-handoff arm, tested
+// at the drainFromShared drain entry), so flag-off helpers pay only the
+// per-batch test of their own visitor line in drain() and never load the
+// shared Heap line here.
 void SlotVisitor::helperDrainPauseCheckpointIfRequested()
 {
     ASSERT(m_isDrainingFromSharedHelper);
-    ASSERT(Options::useConcurrentSharedGCMarking());
+    ASSERT(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess);
     if (!WTF::atomicLoad(&m_heap.m_parallelMarkersShouldPause, std::memory_order_relaxed)) [[likely]]
         return;
 
@@ -685,28 +685,26 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             Locker locker { m_heap.m_markingMutex };
             if (isActive)
                 m_heap.m_numberOfActiveParallelMarkers--;
+            else
+                m_heap.m_numberOfParallelMarkersInDrainFromShared++; // isActive is false only on the first iteration.
             m_heap.m_numberOfWaitingParallelMarkers++;
-            
-            // F17 (CG-3a; ANNEX CGD2.1 BINDING — cited in
-            // docs/threads/INTEGRATE-congc.md): every return path below
-            // leaves the waiting counter it entered above. The landed code
-            // leaked the increment on all four exits; with the §9.1(2) pause
-            // predicate (active == 0 && waiting == 0) that leak is a
-            // guaranteed wedge from the first cycle end onward. Flag-off
-            // delta = the stealSomeCellsFrom denominator and one diagnostic
-            // dataLog only — ruled BENIGN-DELTA under CG-I0 by CGD2.1 (the
-            // mode-split alternative was rejected there: divergent counter
-            // semantics per mode is the F17 trap class itself).
+
+            // m_numberOfWaitingParallelMarkers is only the stealSomeCellsFrom
+            // partitioning hint; it is never decremented on return, which
+            // keeps the pre-threads steal sizes. The marker-pause protocol and
+            // the end-of-marking asserts use
+            // m_numberOfParallelMarkersInDrainFromShared instead, which every
+            // return below decrements.
             if (sharedDrainMode == MainDrain) {
                 while (true) {
                     if (hasElapsed(timeout)) {
-                        m_heap.m_numberOfWaitingParallelMarkers--; // F17.
+                        m_heap.m_numberOfParallelMarkersInDrainFromShared--;
                         return SharedDrainResult::TimedOut;
                     }
 
                     if (didReachTermination(locker)) {
                         m_heap.m_markingConditionVariable.notifyAll();
-                        m_heap.m_numberOfWaitingParallelMarkers--; // F17.
+                        m_heap.m_numberOfParallelMarkersInDrainFromShared--;
                         return SharedDrainResult::Done;
                     }
 
@@ -719,7 +717,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 ASSERT(sharedDrainMode == HelperDrain);
 
                 if (hasElapsed(timeout)) {
-                    m_heap.m_numberOfWaitingParallelMarkers--; // F17.
+                    m_heap.m_numberOfParallelMarkersInDrainFromShared--;
                     return SharedDrainResult::TimedOut;
                 }
 
@@ -751,19 +749,19 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout, isReady);
 
                 // SPEC-congc §9.1(2) checkpoint (a) (CG-3a; ANNEX CGP1): a
-                // woken waiting helper leaves its counter for the paused one
-                // — waiting--, paused++, notifyAll (the pausing conductor
-                // waits on this same condvar for active == 0 && waiting ==
-                // 0), park until !ShouldPause, then waiting++ and
-                // re-evaluate the work wait. All transitions share
-                // m_markingMutex, so the §9.1(2) predicate never observes a
-                // transient and no wakeup is lost. ShouldPause also gates a
-                // fresh helper's FIRST waiting++ here: the increment at loop
-                // top is moved to paused under the same critical section, so
-                // the predicate is stable once reached. The outer while
-                // re-checks after the re-armed wait (a back-to-back foreign
-                // stop can re-set the flag before this helper finds work).
-                // Flag-off: dead (nothing sets ShouldPause).
+                // woken waiting helper becomes paused — waiting--, paused++,
+                // notifyAll (the pausing conductor waits on this same condvar
+                // until m_numberOfParallelMarkersInDrainFromShared ==
+                // m_pausedParallelMarkers), parks until !ShouldPause, then
+                // waiting++ and re-evaluates the work wait. All transitions
+                // share m_markingMutex, so the predicate never observes a
+                // transient and no wakeup is lost. A fresh helper that enters
+                // while ShouldPause is set reaches this loop in the same
+                // critical section as its entry increment, so the predicate
+                // is stable once reached. The outer while re-checks after the
+                // re-armed wait (a back-to-back foreign stop can re-set the
+                // flag before this helper finds work). Flag-off: dead
+                // (nothing sets ShouldPause).
                 while (m_heap.m_parallelMarkersShouldPause) {
                     m_heap.m_numberOfWaitingParallelMarkers--;
                     m_heap.m_pausedParallelMarkers++;
@@ -796,7 +794,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                     bonusTask = m_heap.m_bonusVisitorTask;
 
                 if (m_heap.m_parallelMarkersShouldExit) {
-                    m_heap.m_numberOfWaitingParallelMarkers--; // F17 — taken by EVERY helper at EVERY cycle end.
+                    m_heap.m_numberOfParallelMarkersInDrainFromShared--;
                     return SharedDrainResult::Done;
                 }
             }
@@ -832,16 +830,17 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             // ANNEX CGP1 participant-set marker (F14): only HelperDrain
             // visitors take the per-batch §9.1(2) checkpoint (b) inside
             // drain(); MainDrain slices (in-window conductor fixpoint
-            // drains) and C4 assist visitors take none. Option-byte-first
-            // (FIX-V5B-F1 pattern, same as Heap.h
-            // sharedGCBarrierStateIsPerClient): the C1 stage flag is tested
-            // ONCE per drainFromShared drain entry, so with
-            // useConcurrentSharedGCMarking off the field stays false, the
-            // per-batch test in drain() reads only this visitor's own line,
-            // and the shared Heap line (m_parallelMarkersShouldPause sits
-            // next to the m_markingMutex-protected marker counters) is
+            // drains) and C4 assist visitors take none. The gate is the
+            // same predicate finishChangingPhase uses for a GCL-free
+            // Concurrent phase: the C1 stage flag, or the gilOff
+            // single-handoff arm (g_jscConfig.gilOffProcess, latched before
+            // any marker runs). Both are Config-page byte tests made ONCE per
+            // drainFromShared drain entry, so flag-off the field stays false,
+            // the per-batch test in drain() reads only this visitor's own
+            // line, and the shared Heap line (m_parallelMarkersShouldPause
+            // sits next to the m_markingMutex-protected marker counters) is
             // never touched by the checkpoint path.
-            m_isDrainingFromSharedHelper = (sharedDrainMode == HelperDrain) && Options::useConcurrentSharedGCMarking();
+            m_isDrainingFromSharedHelper = (sharedDrainMode == HelperDrain) && (Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess);
             drain(timeout);
             m_isDrainingFromSharedHelper = false;
         }
