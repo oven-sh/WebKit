@@ -1460,6 +1460,12 @@ Lock& ExecutableAllocator::getLock() const
     return allocator->getLock();
 }
 
+size_t ExecutableAllocator::allocatedByteCount()
+{
+    FixedVMPoolExecutableAllocator* allocator = g_jscConfig.fixedVMPoolExecutableAllocator;
+    return allocator ? allocator->bytesAllocated() : 0;
+}
+
 size_t ExecutableAllocator::committedByteCount()
 {
 #if ENABLE(LIBPAS_JIT_HEAP)

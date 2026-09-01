@@ -34,6 +34,8 @@
 #include "VMManager.h"
 #include "WeakSetInlines.h"
 #include <wtf/CommaPrinter.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/CrashReporter.h>
@@ -85,6 +87,7 @@ MarkedBlock::Handle::~Handle()
             dataLog("MarkedBlock Balance: ", balance, "\n");
     }
     m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
+    recommitPages();
     m_block->~MarkedBlock();
     m_alignedMemoryAllocator->freeAlignedMemory(m_block);
     heap.didFreeBlock(blockSize);
@@ -487,6 +490,110 @@ Subspace* MarkedBlock::Handle::subspace() const
     return directory()->subspace();
 }
 
+void MarkedBlock::Handle::decommitUnusedPages()
+{
+#if OS(WINDOWS)
+    // OSAllocator::decommit makes the pages inaccessible there; this scheme relies on decommitted pages reading as zero.
+    return;
+#else
+    if (!Options::decommitUnusedMarkedBlockPages())
+        return;
+    // A cell's destructor may read its Structure even when that Structure died in the same cycle and its block was
+    // swept first, so dead Structures must stay readable; and at shutdown everything is swept as dead in arbitrary order.
+    bool isStructureSpace = false;
+#define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == &heap()->name;
+    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+#undef CHECK_STRUCTURE_SPACE
+    if (isStructureSpace || heap()->isShuttingDown())
+        return;
+    size_t pageSize = WTF::pageSize();
+    if (pageSize >= blockSize || blockSize / pageSize > 16)
+        return;
+    // Only after a full collection (the blocks an eden collection sweeps are the young ones, refilled straight away, so
+    // decommitting there mostly buys page faults) and only for blocks that are not mostly full anyway.
+    if (heap()->lastCollectionScope() != CollectionScope::Full && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections())
+        return;
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    if (m_directory->isMarkingRetired(this))
+        return;
+    m_directory->releaseAssertAcquiredBitVectorLock();
+    unsigned pageCount = blockSize / pageSize;
+    size_t atomsPerPage = pageSize / atomSize;
+    RELEASE_ASSERT(!m_isFreeListed && !isAllocated());
+
+    uint16_t all = (1u << pageCount) - 1;
+    uint16_t keep = 0;
+    for (size_t offset = 0; offset < headerSize; offset += pageSize)
+        keep |= 1u << (offset / pageSize);
+    {
+        // The same liveness rules as isLive(), resolved once for the whole block: which bit set (if any) says a cell is
+        // live right now.
+        MarkedSpace& space = *this->space();
+        Header& header = block().header();
+        Locker locker { header.m_lock };
+        const WTF::BitSet<atomsPerBlock>* live = nullptr;
+        if (header.m_newlyAllocatedVersion == space.newlyAllocatedVersion())
+            live = &header.m_newlyAllocated;
+        else if (!block().areMarksStale(space.markingVersion()) || (space.isMarking() && block().marksConveyLivenessDuringMarking(space.markingVersion())))
+            live = &header.m_marks;
+        if (live) {
+            for (unsigned page = 0; page < pageCount; ++page) {
+                if (keep & (1u << page))
+                    continue;
+                size_t firstAtom = page * atomsPerPage;
+                // A live cell starting in this page, or the cell straddling in from the previous page being live, keeps it.
+                if (live->findBit(firstAtom, true) < firstAtom + atomsPerPage) {
+                    keep |= 1u << page;
+                    continue;
+                }
+                if (firstAtom > m_startAtom) {
+                    size_t straddler = m_startAtom + (firstAtom - 1 - m_startAtom) / m_atomsPerCell * m_atomsPerCell;
+                    if (straddler + m_atomsPerCell > firstAtom && live->get(straddler))
+                        keep |= 1u << page;
+                }
+            }
+        }
+    }
+
+    uint16_t toDecommit = all & ~keep & ~m_decommittedPages;
+    if (!toDecommit)
+        return;
+    char* base = reinterpret_cast<char*>(&block());
+    for (unsigned page = 0; page < pageCount;) {
+        if (!(toDecommit & (1u << page))) {
+            ++page;
+            continue;
+        }
+        unsigned runEnd = page;
+        while (runEnd < pageCount && (toDecommit & (1u << runEnd)))
+            ++runEnd;
+        // Dead cells in these pages read back as zero afterwards, i.e. zapped: destructors already ran in the
+        // sweep that preceded this call, and building a free list later writes before it reads.
+        OSAllocator::decommit(base + page * pageSize, (runEnd - page) * pageSize);
+        page = runEnd;
+    }
+    m_decommittedPages |= toDecommit;
+#endif
+}
+
+void MarkedBlock::Handle::recommitPages()
+{
+    if (!m_decommittedPages) [[likely]]
+        return;
+#if OS(DARWIN)
+    // OSAllocator::decommit is MADV_FREE_REUSABLE there and wants a matching MADV_FREE_REUSE for the kernel's
+    // accounting; elsewhere decommitted anonymous pages simply fault back in as zero pages.
+    size_t pageSize = WTF::pageSize();
+    unsigned pageCount = blockSize / pageSize;
+    char* base = reinterpret_cast<char*>(&block());
+    for (unsigned page = 0; page < pageCount; ++page) {
+        if (m_decommittedPages & (1u << page))
+            OSAllocator::commit(base + page * pageSize, pageSize, true, false);
+    }
+#endif
+    m_decommittedPages = 0;
+}
+
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
     SweepingScope sweepingScope(*heap());
@@ -502,10 +609,15 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     m_directory->releaseAssertAcquiredBitVectorLock();
 
     if (sweepMode == SweepOnly && !needsDestruction) {
+        if (!isEmpty())
+            decommitUnusedPages();
         Locker locker(m_directory->bitvectorLock());
         m_directory->setIsUnswept(this, false);
         return;
     }
+
+    if (sweepMode == SweepToFreeList)
+        recommitPages();
 
     if (m_isFreeListed) [[unlikely]] {
         dataLog("FATAL: ", RawPointer(this), "->sweep: block is free-listed.\n");
@@ -524,6 +636,8 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     
     if (needsDestruction) {
         subspace()->finishSweep(*this, freeList);
+        if (sweepMode == SweepOnly && !isEmpty())
+            decommitUnusedPages();
         return;
     }
     

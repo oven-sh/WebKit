@@ -360,6 +360,8 @@ public:
 
     RefPtr<JSC::JITCode> jitCode() { return m_jitCode; }
     static constexpr ptrdiff_t jitCodeOffset() { return OBJECT_OFFSETOF(CodeBlock, m_jitCode); }
+    // The last marking visit found this block past its TTL with no observed execution.
+    bool agedOut() const { return m_visitChildrenSkippedDueToOldAge; }
     JITType jitType() const
     {
         auto* jitCode = m_jitCode.get();

@@ -1274,16 +1274,13 @@ bool CodeBlock::shouldVisitStrongly(const ConcurrentJSLocker& locker, Visitor& v
     if (Options::forceCodeBlockLiveness())
         return true;
 
-    if (shouldJettisonDueToOldAge(locker, visitor)) {
-        if (Options::verifyGC())
-            m_visitChildrenSkippedDueToOldAge = true;
+    // Under verifyGC the verifier's second visit must give the same answer as the real one.
+    if (m_visitChildrenSkippedDueToOldAge && Options::verifyGC()) [[unlikely]]
         return false;
-    }
 
-    if (m_visitChildrenSkippedDueToOldAge) [[unlikely]] {
-        RELEASE_ASSERT(Options::verifyGC());
+    m_visitChildrenSkippedDueToOldAge = shouldJettisonDueToOldAge(locker, visitor);
+    if (m_visitChildrenSkippedDueToOldAge)
         return false;
-    }
 
     // Interpreter and Baseline JIT CodeBlocks don't need to be jettisoned when
     // their weak references go stale. So if a basline JIT CodeBlock gets
@@ -1352,14 +1349,23 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
     if (timeSinceCreation() < ttl)
         return false;
 
+    // Optimizing tiers: an FTL block is small and very expensive to rebuild, so it never ages out (it stays alive for as
+    // long as the structures it speculated on do, see determineLiveness()). A DFG block ages like a baseline one, using
+    // the tier-up counter its code already decrements at returns and loop back-edges as the sign of life; a DFG block
+    // compiled without tier-up checks has no such signal and is kept.
+    if (type == JITType::FTLJIT)
+        return false;
+#if ENABLE(DFG_JIT)
+    if (type == JITType::DFGJIT && (!Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation))
+        return false;
+#endif
+
     if (Options::useExecutionCountForCodeBlockAging()) {
         // LLInt and Baseline CodeBlocks already tick an execution counter on
         // function entry and loop back-edges. If that counter has moved since we
         // last sampled it, the block is demonstrably still running regardless of
         // wall-clock age, so renew its lease instead of throwing away a warm block
         // that the next iteration will immediately relink, re-profile and re-JIT.
-        // Optimizing-tier blocks have no cheap per-entry counter and keep the
-        // existing pure-TTL policy.
         //
         // The snapshot lives in m_previousCounter, which updateActivity() in
         // reconcileWeakReferencesAtGCEnd also writes for UnlinkedCodeBlock aging when
@@ -1379,6 +1385,12 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
                 currentCount = jitData->executeCounter().count();
                 hasCounter = true;
             }
+            break;
+#endif
+#if ENABLE(DFG_JIT)
+        case JITType::DFGJIT:
+            currentCount = dfgJITData()->tierUpCounter().count();
+            hasCounter = true;
             break;
 #endif
         default:
@@ -1546,6 +1558,13 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
     // isMarked check doesn't protect us.
     if (!JSC::JITCode::isOptimizingJIT(jitType()))
         return;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Past its TTL with no execution observed: let it (and the baseline alternative it pins) go even though the
+    // structures it references are still alive.
+    if (m_visitChildrenSkippedDueToOldAge)
+        return;
+#endif
     
     DFG::CommonData* dfgCommon = m_jitCode->dfgCommon();
     // Now check all of our weak references. If all of them are live, then we
@@ -2389,6 +2408,14 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     VM& vm = *m_vm;
 
     m_isJettisoned = true;
+
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
+    // Baseline code is cached on the UnlinkedCodeBlock so a re-created CodeBlock can reuse it; when this block dies of
+    // old age that cache would keep the machine code alive for as long as the unlinked code lives. Drop it: another
+    // CodeBlock still using the same code holds its own reference, and the next baseline compile repopulates it.
+    if (reason == Profiler::JettisonDueToOldAge && jitType() == JITType::BaselineJIT && Options::useBaselineJITCodeSharing() && unlinkedCodeBlock()->m_unlinkedBaselineCode == m_jitCode)
+        unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
+#endif
 
 #if ENABLE(DFG_JIT)
     if (jitType() == JITType::DFGJIT)

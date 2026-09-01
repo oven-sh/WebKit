@@ -85,7 +85,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
-    v(Bool, useExecutionCountForCodeBlockAging, false, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
+    v(Bool, useExecutionCountForCodeBlockAging, true, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \
@@ -275,6 +275,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, warmUpMarkedBlockCount, 32, Normal, "how many MarkedBlocks the helper thread keeps ready with their pages already resident; 0 turns it off"_s) \
     v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases what it is holding and shuts down"_s) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
+    v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
+    v(Bool, decommitUnusedMarkedBlockPagesAfterEdenCollections, false, Normal, "also do it for blocks swept after an eden collection (mostly young blocks that are refilled straight away)") \
     v(Double, sizeClassProgression, 1.4, Normal, nullptr) \
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \
     v(Bool, dumpSizeClasses, false, Normal, nullptr) \
