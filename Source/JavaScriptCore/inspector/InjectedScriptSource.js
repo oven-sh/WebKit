@@ -806,7 +806,7 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
             }
 
             if (nativeGettersAsValues) {
-                if (@String(descriptor.get).@endsWith("[native code]\n}") || (!descriptor.get && @Object.@hasOwn(descriptor, "get") && !descriptor.set && @Object.@hasOwn(descriptor, "set"))) {
+                if (@String(descriptor.get).@endsWith("[native code] }") || (!descriptor.get && @Object.@hasOwn(descriptor, "get") && !descriptor.set && @Object.@hasOwn(descriptor, "set"))) {
                     // Developers may create such a descriptor, so we should be resilient:
                     // let x = {}; Object.defineProperty(x, "p", {get:undefined}); Object.getOwnPropertyDescriptor(x, "p")
                     let fakeDescriptor = createFakeValueDescriptor(name, symbol, descriptor, isOwnProperty, true);

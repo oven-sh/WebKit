@@ -1042,7 +1042,7 @@ static void testObjectiveCAPIMain()
         JSContext *context = [[JSContext alloc] init];
         context[@"TestObject"] = [TestObject class];
         JSValue *result = [context evaluateScript:@"String(TestObject)"];
-        checkResult(@"String(TestObject)", [result isEqualToObject:@"function TestObject() {\n    [native code]\n}"]);
+        checkResult(@"String(TestObject)", [result isEqualToObject:@"function TestObject() { [native code] }"]);
     }
 
     @autoreleasepool {
