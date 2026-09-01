@@ -1313,6 +1313,20 @@ void Heap::addToRememberedSet(const JSCell* constCell)
     m_mutatorMarkStack->append(cell);
 }
 
+// A compiler thread may have loaded a JSString's StringImpl right before the mutator swapped that string to its
+// atom, and it may still read the old StringImpl from m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.
+// A compilation that starts after this check loads the atom instead: the swap is sequenced before the check on the
+// mutator, and JITWorklist's lock orders the check before the start of the compilation.
+static bool compilerThreadsMayReadRetainedStrings()
+{
+#if ENABLE(JIT)
+    auto* worklist = JITWorklist::existingGlobalWorklistOrNull();
+    return worklist && worklist->totalOngoingCompilations();
+#else
+    return false;
+#endif
+}
+
 void Heap::clearConcurrentRetainedDataIfPossible()
 {
 
@@ -1331,17 +1345,11 @@ void Heap::clearConcurrentRetainedDataIfPossible()
     // The mutator needs to be fenced while marking and marker threads can access StringImpl::costDuringGC so we have to keep the Impls alive.
     if (mutatorShouldBeFenced())
         return;
-#if ENABLE(JIT)
-    auto* worklist = JITWorklist::existingGlobalWorklistOrNull();
-    // We need to make sure no JIT thread could be looking at one of our old strings. Any thread that starts after
-    // this check will load the new StringImpl rather than the one in this list so we're safe to delete these as
-    // long as none were running at the time of this check.
-    if (!worklist || !worklist->totalOngoingCompilations()) {
-#else
-    {
-#endif
-        m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.clear();
-    }
+
+    if (compilerThreadsMayReadRetainedStrings())
+        return;
+
+    m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.clear();
 }
 
 void Heap::sweepSynchronously()
@@ -2428,9 +2436,15 @@ void Heap::runCollectionEpilogue()
         cache->clear();
     vm().jsonAtomStringCache.clearJSStrings();
 
-    m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.removeAllMatching([&](const auto& iter) {
-        return !m_discoveredAccessedStringsFromGCOwnedDataScope.contains(iter.first);
-    });
+    // The conservative scan found the owners of the entries the mutator can still reach through a GCOwnedDataScope.
+    // The other entries are dead to the mutator, but a baseline compilation runs inside a Safepoint, so it runs
+    // through this collection and may still read one of them. Keep the list for a later epilogue, or for
+    // clearConcurrentRetainedDataIfPossible, while a compilation is in flight.
+    if (!m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.isEmpty() && !compilerThreadsMayReadRetainedStrings()) {
+        m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.removeAllMatching([&](const auto& iter) {
+            return !m_discoveredAccessedStringsFromGCOwnedDataScope.contains(iter.first);
+        });
+    }
     m_discoveredAccessedStringsFromGCOwnedDataScope.clear();
 
     immutableButterflyToStringCache.clear();
