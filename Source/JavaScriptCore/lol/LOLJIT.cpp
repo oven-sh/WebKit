@@ -966,16 +966,18 @@ ALWAYS_INLINE void LOLJIT::emitCompareImpl(VirtualRegister op1, JSValueRegs op1R
             return false;
         // This may run on a compiler thread, so read the StringImpl directly rather than through
         // tryGetValue(), whose GCOwnedDataScope is only meant to be constructed on the mutator.
-        // A single character constant is never a rope.
+        // Read the character at once: the mutator may atomize the constant at any time, and a GC
+        // during this compile then drops the old StringImpl. A single character constant is never a rope.
         const StringImpl* impl = asString(getConstantOperand(left))->tryGetValueImpl();
         RELEASE_ASSERT(impl);
+        char16_t character = impl->at(0);
 
         addSlowCase(branchIfNotCell(rightRegs));
         JumpList failures;
         // FIXME: We could deduplicate the String's data load in emitLoadCharacterString if we had an extra scratch but we'd have to teach the register allocator about constants to do that unless we wanted to have the scratch in all cases, which doesn't seem worth it.
         emitLoadCharacterString(rightRegs.payloadGPR(), s_scratch, failures);
         addSlowCase(failures);
-        emitCompare(commute(cond), JSValueRegs { s_scratch }, Imm32(impl->at(0)));
+        emitCompare(commute(cond), JSValueRegs { s_scratch }, Imm32(character));
         return true;
     };
 

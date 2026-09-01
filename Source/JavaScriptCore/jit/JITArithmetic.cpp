@@ -239,16 +239,18 @@ ALWAYS_INLINE void JIT::emit_compareImpl(VirtualRegister op1, VirtualRegister op
             return false;
         // This may run on a compiler thread, so read the StringImpl directly rather than through
         // tryGetValue(), whose GCOwnedDataScope is only meant to be constructed on the mutator.
-        // A single character constant is never a rope.
+        // Read the character at once: the mutator may atomize the constant at any time, and a GC
+        // during this compile then drops the old StringImpl. A single character constant is never a rope.
         const StringImpl* impl = asString(getConstantOperand(left))->tryGetValueImpl();
         RELEASE_ASSERT(impl);
+        char16_t character = impl->at(0);
 
         emitGetVirtualRegister(right, jsRegT10);
         addSlowCase(branchIfNotCell(jsRegT10));
         JumpList failures;
         emitLoadCharacterString(jsRegT10.payloadGPR(), jsRegT10.payloadGPR(), failures);
         addSlowCase(failures);
-        emitCompare(commute(cond), jsRegT10, Imm32(impl->at(0)));
+        emitCompare(commute(cond), jsRegT10, Imm32(character));
         return true;
     };
 
