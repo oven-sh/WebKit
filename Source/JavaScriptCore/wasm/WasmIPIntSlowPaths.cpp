@@ -1428,13 +1428,9 @@ WASM_IPINT_EXTERN_CPP_DECL(check_stack_and_vm_traps, void* candidateNewStackPoin
     }
 
     // Redo stack check because we may really have gotten here due to an imminent StackOverflow.
-    // UNGIL §I/SD7 (carrier-only contract): the VM-level soft-limit word read
-    // below is CARRIER-published only post-AB-17, so this re-check is correct
-    // only because wasm never executes on a spawned Thread in v1 — enforced
-    // by the SD7 ctor/compile gates plus the AB-15 interim call-path gates
-    // (jsCallICEntrypoint nullptr under useJSThreads + the cold
-    // callWebAssemblyFunction refusal). This assert documents (and trips on
-    // any future breach of) that contract rather than rerouting the read.
+    // The soft-limit word read below is the VM-level one, not a per-thread limit. Reading it here is
+    // correct because wasm never executes on a spawned Thread: every JS->wasm entry (ctor/compile
+    // surface, export calls, JSPI resumption) refuses there.
     ASSERT(!ThreadManager::isJSThreadCurrent());
     if (vm.softStackLimit() <= candidateNewStackPointer)
         IPINT_RETURN(encodedJSValue()); // No stack overflow. Carry on.

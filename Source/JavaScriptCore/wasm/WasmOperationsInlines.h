@@ -827,7 +827,7 @@ inline int32_t memoryAtomicNotify(JSWebAssemblyInstance* instance, uint64_t base
     if (countValue >= 0)
         count = static_cast<unsigned>(countValue);
 
-    return static_cast<int32_t>(WaiterListManager::singleton().notifyWaiter(pointer, count));
+    return static_cast<int32_t>(WaiterListManager::singleton().notifyWaiter(instance->vm(), pointer, count));
 }
 
 inline void* throwWasmToJSException(CallFrame* callFrame, Wasm::ExceptionType type, JSWebAssemblyInstance* instance)
