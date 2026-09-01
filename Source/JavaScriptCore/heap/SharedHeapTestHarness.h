@@ -36,8 +36,9 @@ class Heap;
 // server on its own stack (markStandalone() + attachCurrentThread()), running
 // C-level allocation/steal/detach/epoch loops with no JS/VM entry. Exposed to
 // JS via $vm.sharedHeapTest(name, threads, iters) (INTEGRATE-heap.md item 8).
-// The $vm function is registered UNCONDITIONALLY (normal useDollarVM gating
-// only — never gated on Options::useSharedGCHeap()); option gating is
+// The $vm function is registered under the usual $vm gates only (useDollarVM,
+// and withheld under useFuzzerMode like every crash-on-misuse entry — never
+// gated on Options::useSharedGCHeap()); option gating is
 // PER-SCENARIO, inside run(): shared-mode scenarios refuse (return false)
 // when the option is off, while epochReclaim deliberately runs the legacy
 // (!ISS, incl. option-off) reclamation path (T7/I10 exemption) and so MUST
@@ -84,9 +85,9 @@ private:
     // stopThePeriphery) does NOT satisfy I11 — the reclaimer bracket alone
     // licenses bumpAndReclaim().
     static bool runEpochReclaimScenario(JSC::Heap& server, unsigned threadCount, unsigned iterations);
-    // Installed once via Heap::addStopTheWorldSafepointHook; fires once per
-    // collection in both protocols, inside the stop, BEFORE the reclaimer
-    // bracket opens.
+    // Registered on the server heap by every epochReclaim run (a no-op once
+    // that heap has it); fires once per collection in both protocols, inside
+    // the stop, BEFORE the reclaimer bracket opens.
     static void recordEpochHookObservation(JSC::Heap&);
 
     // §12.1 multi-client scenarios (T10).

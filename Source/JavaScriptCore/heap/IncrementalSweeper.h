@@ -47,18 +47,17 @@ public:
 private:
     enum class SweepTrigger : bool { Timer, OpportunisticTask };
     bool sweepNextBlock(VM&, SweepTrigger);
-    bool sweepNextBlockShared(VM&); // T4(d): shared-server mode — MSPL-held, no block frees/shrinks, weak-bearing blocks skipped.
+    bool sweepNextBlockShared(VM&); // Shared server: MSPL held, no block frees or shrinks, weak-bearing blocks skipped.
     void doSweep(VM&, ApproximateTime deadline, SweepTrigger);
     void scheduleTimer();
 
     BlockDirectory* m_currentDirectory;
-    // T4(d): shared-mode unswept cursor. The directory's own m_unsweptCursor
-    // cannot advance past a deliberately-skipped (weak-bearing) block, so the
-    // shared path drives BlockDirectory::findBlockToSweep(unsigned&) with
-    // this sweeper-owned cursor instead and bumps it past skips. Only touched
-    // on the sweeper's run-loop thread (and by startSweeping inside a stop
-    // window, while that thread is parked — publication rides the stop
-    // protocol's seq_cst resume edge).
+    // Shared-mode unswept cursor. The directory's own m_unsweptCursor cannot
+    // advance past a skipped (weak-bearing) block, so the shared path drives
+    // BlockDirectory::findBlockToSweep(unsigned&) with this sweeper-owned
+    // cursor and bumps it past skips. Touched only on the sweeper's run-loop
+    // thread, and by startSweeping inside a stop window while that thread is
+    // parked.
     unsigned m_sharedUnsweptCursor { 0 };
     bool m_lastOpportunisticTaskDidFinishSweeping { false };
 };
