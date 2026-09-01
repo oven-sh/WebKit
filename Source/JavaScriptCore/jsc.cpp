@@ -54,6 +54,7 @@
 #include "JSFunction.h"
 #include "JSFunctionInlines.h"
 #include "JSLock.h"
+#include "JSModuleLoader.h"
 #include "JSNativeStdFunction.h"
 #include "JSONObject.h"
 #include "JSObjectInlines.h"
@@ -1164,7 +1165,12 @@ JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, 
         return promise;
     }
 
-    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), Identifier::fromString(vm, referrer.string()), WTF::move(fetchParams), nullptr, deferred);
+    auto referrerKey = Identifier::fromString(vm, referrer.string());
+#if USE(BUN_JSC_ADDITIONS)
+    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey));
+#else
+    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
+#endif
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();
 

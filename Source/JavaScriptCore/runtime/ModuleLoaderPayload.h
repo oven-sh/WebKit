@@ -49,7 +49,7 @@ public:
     }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static ModuleLoaderPayload* create(VM&, JSPromise*, bool deferred = false);
+    static ModuleLoaderPayload* create(VM&, JSPromise*, bool deferred = false, int64_t referrerAsyncOrder = -1);
 
     JSPromise* promise() const { return m_promise.get(); }
 
@@ -57,6 +57,9 @@ public:
     void setFulfillment(VM& vm, JSValue value) { m_fulfillment.set(vm, this, value); }
 
     bool deferred() const { return m_deferred; }
+#if USE(BUN_JSC_ADDITIONS)
+    int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+#endif
 
     bool decrementRemaining()
     {
@@ -65,12 +68,15 @@ public:
     }
 
 private:
-    ModuleLoaderPayload(VM&, Structure*, JSPromise*, bool deferred);
+    ModuleLoaderPayload(VM&, Structure*, JSPromise*, bool deferred, int64_t referrerAsyncOrder);
 
     void finishCreation(VM&);
 
     WriteBarrier<JSPromise> m_promise;
     WriteBarrier<Unknown> m_fulfillment;
+#if USE(BUN_JSC_ADDITIONS)
+    int64_t m_referrerAsyncOrder { -1 };
+#endif
     uint8_t m_remainingFulfillments { 2 };
     bool m_deferred { false };
 };

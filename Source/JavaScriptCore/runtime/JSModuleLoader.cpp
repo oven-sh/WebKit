@@ -351,7 +351,7 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
         entry->provideFetch(globalObject, jsSourceCode); // can throw
 }
 
-JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, const String& referrer)
+JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, const String& referrer)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -389,7 +389,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #else
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
-    auto* context = ModuleLoadingContext::create(vm, request, WTF::move(scriptFetcher), flags);
+    auto* context = ModuleLoadingContext::create(vm, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();
@@ -456,6 +456,7 @@ static String moduleReferrer(const Identifier& referrerKey)
     return referrerKey.string();
 }
 
+<<<<<<< ours
 #if USE(BUN_JSC_ADDITIONS)
 JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObject, const Identifier& key, RefPtr<ScriptFetchParameters>&& parameters, ModuleGraphInstance* instance)
 {
@@ -622,6 +623,9 @@ AbstractModuleRecord* JSModuleLoader::linkWithoutEvaluating(JSGlobalObject* glob
 }
 
 JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred)
+=======
+JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder)
+>>>>>>> theirs
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -633,7 +637,7 @@ JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, con
     if (deferred)
         flags.add(ModuleLoadFlag::Deferred);
     // Per "fetch an import() module script graph", the referring script's base URL is the fetch's referrer.
-    JSPromise* promise = loadModule(globalObject, resolved, WTF::move(parameters), WTF::move(scriptFetcher), flags, moduleReferrer(referrer));
+    JSPromise* promise = loadModule(globalObject, resolved, WTF::move(parameters), WTF::move(scriptFetcher), flags, referrerAsyncOrder, moduleReferrer(referrer));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1300,6 +1304,22 @@ ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& ke
         return iter->value.get();
     return nullptr;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+int64_t JSModuleLoader::asyncEvaluationOrderForKey(const Identifier& key)
+{
+    if (key.isNull() || key.isEmpty())
+        return -1;
+    auto* entry = getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);
+    if (!entry)
+        return -1;
+    auto* cyclic = dynamicDowncast<CyclicModuleRecord>(entry->record());
+    if (!cyclic)
+        return -1;
+    auto order = cyclic->asyncEvaluationOrder();
+    return order.hasOrder() ? order.order() : -1;
+}
+#endif
 
 void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
 {

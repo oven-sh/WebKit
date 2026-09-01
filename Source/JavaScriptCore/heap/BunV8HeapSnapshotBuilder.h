@@ -3,12 +3,14 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include "HeapAnalyzer.h"
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/OverflowPolicy.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
@@ -40,6 +42,12 @@ public:
     String json();
     Vector<uint8_t> jsonBytes();
 
+    // True when the snapshot was too large to serialize (edge storage or the
+    // JSON output exceeded a container limit). json() returns a null String
+    // and jsonBytes() returns an empty Vector in that case, so callers can
+    // raise a catchable error instead of crashing the process.
+    bool hasOverflowed() const { return m_overflowed.load(std::memory_order_relaxed); }
+
 private:
     static constexpr unsigned kRootNodeIndex = 0;
     static constexpr unsigned kGcRootsNodeIndex = 1;
@@ -52,27 +60,15 @@ private:
     unsigned analyzeNodeInternal(JSCell*);
     void appendSyntheticRootEdges();
 
-    struct TraceLocation {
-    public:
-        unsigned scriptId { 0 };
-        String scriptName;
-        unsigned line { 0 };
-        unsigned column { 0 };
-
-        void sourcemap(VM& vm);
-    };
-
+    // One of these exists per heap cell, so keep it small: a 100M-cell heap
+    // allocates 100M of them.
     struct Node {
         JSCell* cell { nullptr };
-        unsigned id { 0 };
-        unsigned typeIndex { 0 };
         String name {};
         size_t selfSize { 0 };
-        Vector<unsigned> edges;
-        std::optional<BunV8HeapSnapshotBuilder::TraceLocation> traceLocation = std::nullopt;
-        std::optional<unsigned> parentNodeId = std::nullopt;
+        unsigned id { 0 };
+        unsigned typeIndex { 0 };
         unsigned edgesCount { 0 };
-        unsigned childrenVectorIndex { std::numeric_limits<unsigned>::max() };
     };
     struct Edge {
         unsigned fromNodeId { 0 };
@@ -116,9 +112,13 @@ private:
     Lock m_buildingNodeMutex;
     Lock m_buildingEdgeMutex;
 
-    // Node and edge storage
-    Vector<Node> m_nodes;
+    // Node and edge storage. Nodes live in a SegmentedVector: a contiguous
+    // Vector caps a single allocation at ~2GiB and CRASH()es past it, which a
+    // large heap (tens of millions of cells) hits. Segments also keep element
+    // addresses stable for the atomic edge-count updates during marking.
+    SegmentedVector<Node, 1024> m_nodes;
     Vector<Edge> m_edges;
+    std::atomic<bool> m_overflowed { false };
     Lock m_cellToNodeIdMutex;
     HashMap<JSCell*, unsigned> m_cellToNodeId;
     Vector<unsigned> m_globalObjectNodeIndices;
@@ -143,9 +143,9 @@ private:
     unsigned getEdgeTypeIndex(RootMarkReason);
     unsigned getEdgeTypeIndex(const String& type);
     unsigned addString(const String&);
+    void appendEdge(Edge&&);
     void initializeTypeNames();
     String getDetailedNodeType(JSCell*);
-    std::optional<TraceLocation> getTraceLocation(JSCell*);
 };
 
 } // namespace JSC

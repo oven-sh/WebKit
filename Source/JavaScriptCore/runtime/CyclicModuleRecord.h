@@ -63,7 +63,11 @@ public:
     // evaluated (null: the primary instantiation, whose state lives on the
     // record itself). See ModuleGraphInstance.
 #if USE(BUN_JSC_ADDITIONS)
+<<<<<<< ours
     JSPromise* evaluate(JSGlobalObject*, JSPromise* dynamicImportPromise = nullptr, ModuleGraphInstance* = nullptr);
+=======
+    JSPromise* evaluate(JSGlobalObject*, int64_t referrerAsyncOrder = -1, JSPromise* dynamicImportPromise = nullptr);
+>>>>>>> theirs
 #else
     JSPromise* evaluate(JSGlobalObject*, ModuleGraphInstance* = nullptr);
 #endif

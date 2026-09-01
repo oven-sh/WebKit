@@ -1274,7 +1274,7 @@ JS_EXPORT_PRIVATE JSValue AbstractModuleRecord::evaluate(JSGlobalObject* globalO
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, JSPromise* dynamicImportPromise)
+JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
 #else
 JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 #endif
@@ -1293,7 +1293,7 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 
     if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
 #if USE(BUN_JSC_ADDITIONS)
-        return wrap(cyclicRecord->evaluate(globalObject, dynamicImportPromise));
+        return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder, dynamicImportPromise));
 #else
         return wrap(cyclicRecord->evaluate(globalObject));
 #endif
@@ -1467,7 +1467,11 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
+<<<<<<< ours
 unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, JSPromise* dynamicImportPromise, ModuleGraphInstance* instance)
+=======
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
+>>>>>>> theirs
 #else
 unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance* instance)
 #endif
@@ -1547,7 +1551,11 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, invalid);
         // 12.a. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
 #if USE(BUN_JSC_ADDITIONS)
+<<<<<<< ours
         unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, dynamicImportPromise, instance);
+=======
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise);
+>>>>>>> theirs
 #else
         unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, instance);
 #endif
@@ -1595,7 +1603,14 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 12.b.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
             if (cyclic->asyncEvaluationOrder(instance).hasOrder()) {
 #if USE(BUN_JSC_ADDITIONS)
+<<<<<<< ours
                 if (!dynamicImportPromise || !importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic, instance)) {
+=======
+                // referrerAsyncOrder covers an import() whose promise reaches the suspended referrer only through native code (an HTTP round trip, a captured resolver), where the walk cannot follow.
+                bool deadlocks = cyclic->asyncEvaluationOrder().order() == referrerAsyncOrder
+                    || (dynamicImportPromise && importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic));
+                if (!deadlocks) {
+>>>>>>> theirs
 #endif
                 // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
                 module->setPendingAsyncDependencies(instance, module->pendingAsyncDependencies(instance).value() + 1);

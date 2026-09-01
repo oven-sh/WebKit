@@ -296,7 +296,11 @@ public:
 
     void evaluateModuleSync(JSGlobalObject*);
 #if USE(BUN_JSC_ADDITIONS)
+<<<<<<< ours
     unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, JSPromise* dynamicImportPromise, ModuleGraphInstance*);
+=======
+    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
+>>>>>>> theirs
 #else
     unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance*);
 #endif
@@ -305,7 +309,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 #if USE(BUN_JSC_ADDITIONS)
-    JSPromise* evaluate(JSGlobalObject*, JSPromise* dynamicImportPromise = nullptr);
+    JSPromise* evaluate(JSGlobalObject*, int64_t referrerAsyncOrder = -1, JSPromise* dynamicImportPromise = nullptr);
 #else
     JSPromise* evaluate(JSGlobalObject*);
 #endif

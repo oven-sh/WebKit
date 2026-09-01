@@ -862,6 +862,9 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
             }
         }
         setBaselineJITData(WTF::move(baselineJITData));
+#if USE(BUN_JSC_ADDITIONS)
+        m_previousCounter = static_cast<BaselineJITData*>(m_jitData)->executeCounter().count();
+#endif
 
         // Set optimization thresholds only after instructions is initialized and JITData is initialized, since these
         // rely on the instruction count (and are in theory permitted to also inspect the instruction stream to more accurate assess the cost of tier-up).
@@ -900,6 +903,11 @@ CodeBlock::~CodeBlock()
     }
 
     VM& vm = *m_vm;
+
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
+    if (jitType() == JITType::BaselineJIT)
+        static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = ApproximateTime::now();
+#endif
 
     if (JITCode::isBaselineCode(jitType())) {
 #if ENABLE(JIT)
@@ -1275,16 +1283,13 @@ bool CodeBlock::shouldVisitStrongly(const ConcurrentJSLocker& locker, Visitor& v
     if (Options::forceCodeBlockLiveness())
         return true;
 
-    if (shouldJettisonDueToOldAge(locker, visitor)) {
-        if (Options::verifyGC())
-            m_visitChildrenSkippedDueToOldAge = true;
+    // Under verifyGC the verifier's second visit must give the same answer as the real one.
+    if (m_visitChildrenSkippedDueToOldAge && Options::verifyGC()) [[unlikely]]
         return false;
-    }
 
-    if (m_visitChildrenSkippedDueToOldAge) [[unlikely]] {
-        RELEASE_ASSERT(Options::verifyGC());
+    m_visitChildrenSkippedDueToOldAge = shouldJettisonDueToOldAge(locker, visitor);
+    if (m_visitChildrenSkippedDueToOldAge)
         return false;
-    }
 
     // Interpreter and Baseline JIT CodeBlocks don't need to be jettisoned when
     // their weak references go stale. So if a basline JIT CodeBlock gets
@@ -1305,7 +1310,7 @@ bool CodeBlock::shouldJettisonDueToWeakReference(VM& vm)
     return !vm.heap.isMarked(this);
 }
 
-static Seconds NODELETE timeToLive(JITType jitType)
+Seconds CodeBlock::timeToLive(JITType jitType)
 {
     if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]] {
         switch (jitType) {
@@ -1353,14 +1358,23 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
     if (timeSinceCreation() < ttl)
         return false;
 
+    // Optimizing tiers: an FTL block is small and very expensive to rebuild, so it never ages out (it stays alive for as
+    // long as the structures it speculated on do, see determineLiveness()). A DFG block ages like a baseline one, using
+    // the tier-up counter its code already decrements at returns and loop back-edges as the sign of life; a DFG block
+    // compiled without tier-up checks has no such signal and is kept.
+    if (type == JITType::FTLJIT)
+        return false;
+#if ENABLE(DFG_JIT)
+    if (type == JITType::DFGJIT && (!Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation))
+        return false;
+#endif
+
     if (Options::useExecutionCountForCodeBlockAging()) {
         // LLInt and Baseline CodeBlocks already tick an execution counter on
         // function entry and loop back-edges. If that counter has moved since we
         // last sampled it, the block is demonstrably still running regardless of
         // wall-clock age, so renew its lease instead of throwing away a warm block
         // that the next iteration will immediately relink, re-profile and re-JIT.
-        // Optimizing-tier blocks have no cheap per-entry counter and keep the
-        // existing pure-TTL policy.
         //
         // The snapshot lives in m_previousCounter, which updateActivity() in
         // reconcileWeakReferencesAtGCEnd also writes for UnlinkedCodeBlock aging when
@@ -1380,6 +1394,12 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
                 currentCount = jitData->executeCounter().count();
                 hasCounter = true;
             }
+            break;
+#endif
+#if ENABLE(DFG_JIT)
+        case JITType::DFGJIT:
+            currentCount = dfgJITData()->tierUpCounter().count();
+            hasCounter = true;
             break;
 #endif
         default:
@@ -1547,6 +1567,13 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
     // isMarked check doesn't protect us.
     if (!JSC::JITCode::isOptimizingJIT(jitType()))
         return;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Past its TTL with no execution observed: let it (and the baseline alternative it pins) go even though the
+    // structures it references are still alive.
+    if (m_visitChildrenSkippedDueToOldAge)
+        return;
+#endif
     
     DFG::CommonData* dfgCommon = m_jitCode->dfgCommon();
     // Now check all of our weak references. If all of them are live, then we
@@ -2390,6 +2417,19 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     VM& vm = *m_vm;
 
     m_isJettisoned = true;
+
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
+    // Baseline code is cached on the UnlinkedCodeBlock so a re-created CodeBlock can reuse it; when this block dies of
+    // old age that cache would keep the machine code alive for as long as the unlinked code lives. Drop it: another
+    // CodeBlock still using the same code holds its own reference, and the next baseline compile repopulates it.
+    // The same goes for the baseline block an aged-out DFG/FTL block was keeping as its OSR-exit target: it is not
+    // jettisoned itself, it just dies unmarked in this collection.
+    if (reason == Profiler::JettisonDueToOldAge && Options::useBaselineJITCodeSharing()) {
+        CodeBlock* baseline = JSC::JITCode::isOptimizingJIT(jitType()) ? baselineAlternative() : this;
+        if (baseline->jitType() == JITType::BaselineJIT && (baseline == this || !vm.heap.isMarked(baseline)) && baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode == baseline->m_jitCode)
+            baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
+    }
+#endif
 
 #if ENABLE(DFG_JIT)
     if (jitType() == JITType::DFGJIT)

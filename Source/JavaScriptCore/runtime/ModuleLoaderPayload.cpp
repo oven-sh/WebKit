@@ -33,11 +33,17 @@ namespace JSC {
 
 const ClassInfo ModuleLoaderPayload::s_info = { "ModuleLoaderPayload"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleLoaderPayload) };
 
-ModuleLoaderPayload::ModuleLoaderPayload(VM& vm, Structure* structure, JSPromise* promise, bool deferred)
+ModuleLoaderPayload::ModuleLoaderPayload(VM& vm, Structure* structure, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder)
     : Base(vm, structure)
     , m_promise(promise, WriteBarrierEarlyInit)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_referrerAsyncOrder(referrerAsyncOrder)
+#endif
     , m_deferred(deferred)
 {
+#if !USE(BUN_JSC_ADDITIONS)
+    UNUSED_PARAM(referrerAsyncOrder);
+#endif
 }
 
 void ModuleLoaderPayload::finishCreation(VM& vm)
@@ -58,9 +64,9 @@ void ModuleLoaderPayload::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(ModuleLoaderPayload);
 
-ModuleLoaderPayload* ModuleLoaderPayload::create(VM& vm, JSPromise* promise, bool deferred)
+ModuleLoaderPayload* ModuleLoaderPayload::create(VM& vm, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder)
 {
-    ModuleLoaderPayload* instance = new (NotNull, allocateCell<ModuleLoaderPayload>(vm)) ModuleLoaderPayload(vm, vm.moduleLoaderPayloadStructure.get(), promise, deferred);
+    ModuleLoaderPayload* instance = new (NotNull, allocateCell<ModuleLoaderPayload>(vm)) ModuleLoaderPayload(vm, vm.moduleLoaderPayloadStructure.get(), promise, deferred, referrerAsyncOrder);
     instance->finishCreation(vm);
     return instance;
 }
