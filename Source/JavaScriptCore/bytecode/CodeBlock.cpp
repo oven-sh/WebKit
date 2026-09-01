@@ -861,6 +861,9 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
             }
         }
         setBaselineJITData(WTF::move(baselineJITData));
+#if USE(BUN_JSC_ADDITIONS)
+        m_previousCounter = static_cast<BaselineJITData*>(m_jitData)->executeCounter().count();
+#endif
 
         // Set optimization thresholds only after instructions is initialized and JITData is initialized, since these
         // rely on the instruction count (and are in theory permitted to also inspect the instruction stream to more accurate assess the cost of tier-up).
@@ -899,6 +902,11 @@ CodeBlock::~CodeBlock()
     }
 
     VM& vm = *m_vm;
+
+#if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
+    if (jitType() == JITType::BaselineJIT)
+        static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = ApproximateTime::now();
+#endif
 
     if (JITCode::isBaselineCode(jitType())) {
 #if ENABLE(JIT)
@@ -1301,7 +1309,7 @@ bool CodeBlock::shouldJettisonDueToWeakReference(VM& vm)
     return !vm.heap.isMarked(this);
 }
 
-static Seconds NODELETE timeToLive(JITType jitType)
+Seconds CodeBlock::timeToLive(JITType jitType)
 {
     if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]] {
         switch (jitType) {
@@ -2413,8 +2421,13 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // Baseline code is cached on the UnlinkedCodeBlock so a re-created CodeBlock can reuse it; when this block dies of
     // old age that cache would keep the machine code alive for as long as the unlinked code lives. Drop it: another
     // CodeBlock still using the same code holds its own reference, and the next baseline compile repopulates it.
-    if (reason == Profiler::JettisonDueToOldAge && jitType() == JITType::BaselineJIT && Options::useBaselineJITCodeSharing() && unlinkedCodeBlock()->m_unlinkedBaselineCode == m_jitCode)
-        unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
+    // The same goes for the baseline block an aged-out DFG/FTL block was keeping as its OSR-exit target: it is not
+    // jettisoned itself, it just dies unmarked in this collection.
+    if (reason == Profiler::JettisonDueToOldAge && Options::useBaselineJITCodeSharing()) {
+        CodeBlock* baseline = JSC::JITCode::isOptimizingJIT(jitType()) ? baselineAlternative() : this;
+        if (baseline->jitType() == JITType::BaselineJIT && (baseline == this || !vm.heap.isMarked(baseline)) && baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode == baseline->m_jitCode)
+            baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
+    }
 #endif
 
 #if ENABLE(DFG_JIT)

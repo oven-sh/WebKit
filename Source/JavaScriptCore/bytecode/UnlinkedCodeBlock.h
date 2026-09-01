@@ -416,7 +416,6 @@ public:
     ConcurrentJSLock m_lock;
 #if ENABLE(JIT)
     RefPtr<BaselineJITCode> m_unlinkedBaselineCode;
-    bool m_unlinkedBaselineCodeUnusedAtLastFullGC { false };
 #endif
 private:
     SourceParseMode m_parseMode;
