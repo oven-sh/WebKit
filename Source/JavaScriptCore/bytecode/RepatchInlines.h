@@ -94,7 +94,13 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
         if (callData.type == CallData::Type::Native) {
             NativeCallFrameTracer tracer(vm, calleeFrame);
             calleeFrame->setCallee(asObject(callee));
-            vm.encodedHostCallReturnValue = callData.native.function(asObject(callee)->realm(), calleeFrame);
+            // UNGIL §A.1.3 (K4 table I Group-3 row): encodedHostCallReturnValue is
+            // per-lite Group-2 state; the getHostCallReturnValue thunks (the JIT
+            // thunk in LLIntThunks.cpp and the LLInt asm op) read the CURRENT
+            // lite's copy GIL-off. A raw VM-block store here is both invisible to
+            // that read and a cross-thread trample on the shared word. GIL-on /
+            // flag-off: group3Primitives() IS the VM block — byte-identical.
+            vm.group3Primitives().encodedHostCallReturnValue = callData.native.function(asObject(callee)->realm(), calleeFrame);
             AssertNoGC assertNoGC;
             if (scope.exception()) [[unlikely]]
                 return nullptr;
@@ -115,7 +121,9 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
     if (constructData.type == CallData::Type::Native) {
         NativeCallFrameTracer tracer(vm, calleeFrame);
         calleeFrame->setCallee(asObject(callee));
-        vm.encodedHostCallReturnValue = constructData.native.function(asObject(callee)->realm(), calleeFrame);
+        // UNGIL §A.1.3 (K4 table I Group-3 row): per-lite store; see the
+        // CodeForCall arm above.
+        vm.group3Primitives().encodedHostCallReturnValue = constructData.native.function(asObject(callee)->realm(), calleeFrame);
         AssertNoGC assertNoGC;
         if (scope.exception()) [[unlikely]]
             return nullptr;
@@ -201,7 +209,20 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
             arity = ArityCheckMode::MustCheckArity;
         else
             arity = ArityCheckMode::ArityCheckNotRequired;
-        codePtr = functionExecutable->entrypointFor(kind, arity);
+        if (vm.gilOff()) [[unlikely]] {
+            // ANNEX CBI item 3 (AB17c F4): entrypointFor reads the
+            // executable's m_jitCodeFor* mirror — a SECOND racy word beside
+            // the m_codeBlockFor* slot prepareForExecution snapshotted
+            // above. A live tier-up installCode on another thread between
+            // the two reads pairs the OLD entrypoint with the NEW CodeBlock
+            // (observed: baseline prologue argument-profiling against a DFG
+            // CodeBlock => null m_argumentValueProfiles => crash) or vice
+            // versa. Derive the entrypoint THROUGH the one CodeBlock
+            // snapshot (address-dependent, jit F2) — a stale-but-matched
+            // pair is always executable.
+            codePtr = codeBlock->jitCode()->addressForCall(arity);
+        } else
+            codePtr = functionExecutable->entrypointFor(kind, arity);
     }
 
     switch (callLinkInfo->mode()) {
@@ -264,6 +285,14 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
         CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
         functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, scope, kind, *codeBlockSlot);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
+
+        if (vm.gilOff()) [[unlikely]] {
+            // ANNEX CBI item 3 (AB17c F4): same matched-pair rule as
+            // linkFor above — derive the entrypoint through the CodeBlock
+            // snapshot just stored to the callee frame, not through the
+            // executable's independently-republished m_jitCodeFor* mirror.
+            return (*codeBlockSlot)->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr();
+        }
     }
 
     // FIXME: Support wasm IC.

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Wrapper used to run JSTests/threads/scaling through scaling-gate.sh with the
+# pinned GIL-OFF flag set (the gate itself only passes --useJSThreads=1 — it
+# predates ungil). Injects the platform-under-test flags ahead of the gate's
+# own arguments. NOTE: this makes the gate's "flag-off" serial-identity leg
+# compare the pinned config against itself — ignore the identity row from
+# wrapper runs; the genuine identity number comes from the unwrapped run.
+exec /root/WebKit/WebKitBuild/Release/bin/jsc \
+    --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 \
+    --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1 \
+    "$@"

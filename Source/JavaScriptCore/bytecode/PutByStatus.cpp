@@ -81,13 +81,17 @@ PutByStatus PutByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
     const Identifier* identifier = &(profiledBlock->identifier(bytecode.m_property));
     UniquedStringImpl* uid = identifier->impl();
 
-    StructureID structureID = metadata.m_oldStructureID;
+    // THREADS: relaxed loads — the LLInt slow path on a mutator writes these
+    // metadata words atomically while compiler threads read them here
+    // (profiling staleness tolerated, §5.7).
+    static_assert(sizeof(StructureID) == sizeof(uint32_t));
+    StructureID structureID = std::bit_cast<StructureID>(WTF::atomicLoad(std::bit_cast<uint32_t*>(&metadata.m_oldStructureID), std::memory_order_relaxed));
     if (!structureID)
         return PutByStatus(NoInformation);
     
     Structure* structure = structureID.decode();
 
-    StructureID newStructureID = metadata.m_newStructureID;
+    StructureID newStructureID = std::bit_cast<StructureID>(WTF::atomicLoad(std::bit_cast<uint32_t*>(&metadata.m_newStructureID), std::memory_order_relaxed));
     if (!newStructureID) {
         PropertyOffset offset = structure->getConcurrently(uid);
         if (!isValidOffset(offset))

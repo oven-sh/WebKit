@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSObject.h"
+#include <wtf/Atomics.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -63,6 +64,25 @@ public:
     {
         ASSERT(index < numberOfInternalFields);
         return m_internalFields[index];
+    }
+
+    // SPEC-ungil §N.5 (annex N7 row R7): the generic atomic word view onto an
+    // internal field, for the resume-claim CAS / release-publish primitives
+    // (@atomicInternalFieldClaim/Publish in the spec; landed as host hooks —
+    // see SPEC-ungil-history.md "§N.5 LANDED SHAPE"). Layout-only: every
+    // WriteBarrier<Unknown> slot is exactly one EncodedJSValue word and
+    // naturally aligned, so the bit_cast is the same word op_get/put_
+    // internal_field touches in every tier. No write-barrier is implied — the
+    // §N.5 claim word holds int32 jsNumbers only (states + tokens), never a
+    // cell; callers storing a cell through this view would need their own
+    // barrier. Flag-off byte-identical: the accessor is dead code (every
+    // caller is behind the @gilOffProcess constant branch / vm.gilOff()).
+    Atomic<EncodedJSValue>& atomicInternalField(unsigned index)
+    {
+        static_assert(sizeof(WriteBarrier<Unknown>) == sizeof(EncodedJSValue));
+        static_assert(alignof(WriteBarrier<Unknown>) >= alignof(EncodedJSValue));
+        ASSERT(index < numberOfInternalFields);
+        return *std::bit_cast<Atomic<EncodedJSValue>*>(&m_internalFields[index]);
     }
 
     static constexpr ptrdiff_t offsetOfInternalFields() { return OBJECT_OFFSETOF(JSInternalFieldObjectImpl, m_internalFields); }

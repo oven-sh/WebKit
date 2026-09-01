@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSExportMacros.h"
+#include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
 #include <wtf/DebugHeap.h>
 #include <wtf/DoublyLinkedList.h>
@@ -93,7 +94,7 @@ public:
     void clear();
 
     typedef GCSegmentedArrayIterator<T> iterator;
-    iterator begin() const { return GCSegmentedArrayIterator<T>(m_segments.head(), m_top); }
+    iterator begin() const { return GCSegmentedArrayIterator<T>(m_segments.head(), loadTopRelaxed()); }
     iterator end() const { return GCSegmentedArrayIterator<T>(); }
 
 protected:
@@ -108,7 +109,17 @@ protected:
     void setTopForFullSegment();
     void setTopForEmptySegment();
     size_t top();
-    
+
+    // GIL-off (TSAN family gc-marking-residual): m_top is mutated only by the
+    // owner (multi-producer instances serialize through MarkStackArray's
+    // m_appendLock), but it is read concurrently by other threads' lock-free
+    // heuristics (isEmpty()/size() during donation/stealing decisions). The
+    // hand-off of mark-stack contents is fence-ordered elsewhere; these
+    // relaxed atomics only make the previously-plain word accesses
+    // well-defined C++. Codegen is identical to the plain accesses.
+    size_t loadTopRelaxed() const { return WTF::atomicLoad(const_cast<size_t*>(&m_top), std::memory_order_relaxed); }
+    void storeTopRelaxed(size_t value) { WTF::atomicStore(&m_top, value, std::memory_order_relaxed); }
+
     void validatePrevious();
 
     DoublyLinkedList<GCArraySegment<T>> m_segments;

@@ -52,7 +52,7 @@ public:
     void addLazily(JSValue);
     bool contains(JSCell*);
 
-    void reallyAdd(VM&, CommonData*);
+    void reallyAdd(VM&, CodeBlock*, CommonData*);
 
     void finalize();
 

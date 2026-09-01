@@ -27,6 +27,7 @@
 #include "BlockDirectory.h"
 
 #include "BlockDirectoryInlines.h"
+#include "FreeList.h"
 #include "Heap.h"
 #include "HeapInlines.h"
 #include "MarkedSpaceInlines.h"
@@ -39,6 +40,12 @@
 
 namespace JSC {
 
+// UNGIL §A.3 (U-T5) cross-TU seams — defined in runtime/VMManager.cpp;
+// declaration pattern matches heap/Heap.cpp:151 and
+// bytecode/JSThreadsSafepoint.cpp:71/77. Signatures must stay byte-identical.
+bool jsThreadsThreadGranularWorldIsStopped(); // §A.3.2 post-quiescence depth.
+bool jsThreadsCurrentThreadIsStopConductor(); // §A.3.3 tenure check.
+
 namespace BlockDirectoryInternal {
 static constexpr bool verbose = false;
 }
@@ -46,9 +53,14 @@ static constexpr bool verbose = false;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BlockDirectory);
 
 
-BlockDirectory::BlockDirectory(size_t cellSize)
-    : m_cellSize(static_cast<unsigned>(cellSize))
+BlockDirectory::BlockDirectory(Heap& heap, size_t cellSize)
+    : m_heap(heap)
+    , m_cellSize(static_cast<unsigned>(cellSize))
 {
+    // THREADS/TSAN: see the member declarations.
+    WTF::atomicStore(&m_nextDirectory, static_cast<BlockDirectory*>(nullptr), std::memory_order_relaxed);
+    WTF::atomicStore(&m_nextDirectoryInSubspace, static_cast<BlockDirectory*>(nullptr), std::memory_order_relaxed);
+    WTF::atomicStore(&m_nextDirectoryInAlignedMemoryAllocator, static_cast<BlockDirectory*>(nullptr), std::memory_order_relaxed);
 }
 
 BlockDirectory::~BlockDirectory()
@@ -56,6 +68,17 @@ BlockDirectory::~BlockDirectory()
     Locker locker { m_localAllocatorsLock };
     while (!m_localAllocators.isEmpty())
         m_localAllocators.begin()->remove();
+}
+
+void BlockDirectory::detachLocalAllocator(LocalAllocator& allocator)
+{
+    // SharedGC (§5.3 teardown/I9; THREADS T4): called from
+    // GCThreadLocalCache::stopAllocatingForGood() with the server MSPL held
+    // when the server is shared (lock order 7 -> 8).
+    ASSERT(&allocator.directory() == this);
+    Locker locker { m_localAllocatorsLock };
+    if (allocator.isOnList())
+        allocator.remove();
 }
 
 void BlockDirectory::setSubspace(Subspace* subspace)
@@ -108,14 +131,100 @@ MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()
     return m_blocks[m_emptyCursor];
 }
 
+MarkedBlock::Handle* BlockDirectory::findOwnEmptyBlockForRefill()
+{
+    // B2-serial-eden-block-churn (b): bias the T7 stripe refill toward
+    // OWN-directory retained-empty REUSE before tryAllocateBlock mints a
+    // fresh page. The cross-subspace Subspace::findEmptyBlockToSteal walk is
+    // stripe-UNSAFE (it sweeps a foreign directory's block — an I5b
+    // lock-free read on a directory whose m_refillLock we do not hold; see
+    // LocalAllocator::allocateSlowCase's "Skipping the steal-before-fresh-
+    // block reuse" note). Restricting the scan to THIS directory keeps the
+    // I5b read under our own m_refillLock + BVL, exactly the same coverage
+    // as tryAllocateFromOwnDirectory's findBlockForAllocation. emptyBits
+    // catches blocks that canAllocateBits no longer does (a freshly-addBlock'd
+    // block has isEmpty but NOT isCanAllocate — addBlock sets only
+    // isLive/isEmpty/isInUse — so once its allocator's didConsumeFreeList
+    // drops inUse it is invisible to the canAllocate cursor; and the
+    // mutator-concurrent IncrementalSweeper sweeps-to-empty without setting
+    // canAllocate). Clear canAllocate + empty here so the post-state matches
+    // findBlockForAllocation's contract and a later cursor walk (this client
+    // or a sibling under the same stripe) cannot double-pick a block that is
+    // about to be filled. Sole caller is the isSharedServer() stripe leg;
+    // flag-off / !isSharedServer() never reaches here.
+    //
+    // F3-bvl-stripe-elide (bimodal32 root-cause hardening, SCALEBENCH §32):
+    // the SCAN runs lock-free under the stripe's m_refillLock witness (the
+    // assertIsMutatorOrMutatorIsStopped() I5b TSA capability — same idiom as
+    // removeBlock); m_bits cannot resize concurrently because addBlock — the
+    // sole I5b writer — holds this directory's m_refillLock (or the exclusive
+    // facade side, which excludes our shared stripe), and word() const is a
+    // relaxed atomic load (BlockDirectoryBits.h). m_emptyCursor / m_blocks are
+    // likewise refillLock-/exclusive-serialized. The BIT WRITES are NOT elided:
+    // MarkedBlock::Handle::didConsumeFreeList writes the same-segment inUse
+    // word under BVL-only from a sibling client's allocateSlowCase BEFORE that
+    // client takes its stripe (LocalAllocator.cpp:190 -> MarkedBlock.cpp
+    // didConsumeFreeList), so a full elision would lost-update RMW the inUse
+    // word against it (correctness > speed). Taking the BVL only for the O(1)
+    // bit flips shrinks the hold from O(findBit) to O(1), so the W=32 burst
+    // convoy T1 de-triggered cannot reform even if a future workload revives
+    // the trigger (de-LOCK, not de-trigger). Reachable only when
+    // isSharedServer() (sticky clients-ever>=2), so W=1 / flag-off never
+    // executes the elided shape. ropelock W=16 phaseA: 0/704 samples on
+    // m_bitvectorLock — expected ~0 ms there; W=32-only hardening.
+    ASSERT(m_heap.isSharedServer());
+    assertIsMutatorOrMutatorIsStopped();
+    m_emptyCursor = (emptyBitsView() & ~inUseBitsView()).findBit(m_emptyCursor, true);
+    releaseAssertAcquiredBitVectorLock();
+    if (m_emptyCursor >= m_blocks.size())
+        return nullptr;
+    dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", m_emptyCursor, " in use (findOwnEmptyBlockForRefill) for ", *this);
+    MarkedBlock::Handle* result = m_blocks[m_emptyCursor];
+    Locker locker(bitvectorLock());
+    setIsInUse(m_emptyCursor, true);
+    setIsCanAllocate(m_emptyCursor, false);
+    setIsEmpty(m_emptyCursor, false);
+    return result;
+}
+
 MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allocator)
 {
+    // F3-bvl-stripe-elide (bimodal32 root-cause hardening, SCALEBENCH §32 —
+    // "T1 removed trigger, not lock"): when isSharedServer() the caller holds
+    // either this directory's m_refillLock stripe (tryAllocateFromOwnDirectory)
+    // or the exclusive facade side (tryAllocateWithoutCollecting); under
+    // either, addBlock — the sole m_bits resizer (I5b writer) — cannot run on
+    // this directory, so the canAllocate/inUse SCAN is safe lock-free
+    // (BlockDirectoryBits word() const is a relaxed atomic load). The bit
+    // WRITES still take the BVL — see the F3 note at findOwnEmptyBlockForRefill
+    // for why a full elision would lost-update against a sibling's pre-stripe
+    // didConsumeFreeList inUse RMW. The picked index cannot be stolen between
+    // the lock-free scan and the locked flip: only refill paths set inUse=true
+    // and they are refillLock-/exclusive-serialized; only refill / endMarking
+    // clear canAllocate and endMarking is world-stopped. isSharedServer() is
+    // sticky clients-ever>=2 (Heap.h §5.1), so W=1 GIL-off and flag-off keep
+    // the legacy whole-BVL section byte-identical below.
+    if (m_heap.isSharedServer()) [[unlikely]] {
+        assertIsMutatorOrMutatorIsStopped();
+        allocator.m_allocationCursor = (canAllocateBitsView() & ~inUseBitsView()).findBit(allocator.m_allocationCursor, true);
+        releaseAssertAcquiredBitVectorLock();
+        if (allocator.m_allocationCursor >= m_blocks.size())
+            return nullptr;
+        unsigned blockIndex = allocator.m_allocationCursor++;
+        MarkedBlock::Handle* result = m_blocks[blockIndex];
+        Locker locker(bitvectorLock());
+        setIsCanAllocate(blockIndex, false);
+        dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", blockIndex, " in use (findBlockForAllocation) for ", *this);
+        setIsInUse(blockIndex, true);
+        return result;
+    }
+
     Locker locker(bitvectorLock());
     for (;;) {
         allocator.m_allocationCursor = (canAllocateBits() & ~inUseBits()).findBit(allocator.m_allocationCursor, true);
         if (allocator.m_allocationCursor >= m_blocks.size())
             return nullptr;
-        
+
         unsigned blockIndex = allocator.m_allocationCursor++;
         MarkedBlock::Handle* result = m_blocks[blockIndex];
         setIsCanAllocate(blockIndex, false);
@@ -125,19 +234,40 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
     }
 }
 
-MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
+MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(const AbstractLocker& mutatorSlowPathLocker, JSC::Heap& heap)
 {
+    // SharedGC (§5.2(3)): mutatorSlowPathLocker is the caller's MSPL token
+    // (LocalAllocator::allocateSlowCase); when shared, block creation and the
+    // didAddBlock registration are serialized server-side.
+    // T7-mspl-per-directory: the token may now be a per-directory STRIPE
+    // (this directory's m_refillLock + the shared side of the MSPL facade) —
+    // tryCreate touches no shared state and so runs in parallel across
+    // directories; didAddBlock takes Heap::m_markedSpaceRegistryLock
+    // internally for the cross-directory MarkedSpace::m_blocks set.
+    UNUSED_PARAM(mutatorSlowPathLocker);
+    ASSERT(!heap.isSharedServer() || heap.mutatorSlowPathLock().isHeld());
+
     MarkedBlock::Handle* handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator());
     if (!handle)
         return nullptr;
-    
+
     markedSpace().didAddBlock(handle);
-    
+
     return handle;
 }
 
 void BlockDirectory::addBlock(MarkedBlock::Handle* block)
 {
+#if ASSERT_ENABLED
+    {
+        // SharedGC (§5.2(5)/I5b): when shared, callers hold the server MSPL —
+        // the m_blocks/m_bits resize below must not race other mutators'
+        // bitvector readers that only hold this directory's BVL transiently
+        // (m_bits reallocation is the I5b writer).
+        JSC::Heap& heap = markedSpace().heap();
+        ASSERT(!heap.isSharedServer() || heap.mutatorSlowPathLock().isHeld() || heap.worldIsStoppedForAllClients());
+    }
+#endif
     Locker locker { m_bitvectorLock };
     unsigned index;
     if (m_freeBlockIndices.isEmpty()) {
@@ -210,10 +340,32 @@ bool BlockDirectory::isFreeListedCell(const void* cell)
 void BlockDirectory::stopAllocating()
 {
     dataLogLnIf(BlockDirectoryInternal::verbose, RawPointer(this), ": BlockDirectory::stopAllocating!");
-    m_localAllocators.forEach(
-        [&] (LocalAllocator* allocator) {
-            allocator->stopAllocating();
-        });
+    // SharedGC (review round 2): a NOT-YET-REGISTERED client constructs its
+    // LocalAllocators into this shared directory's list from its owning
+    // thread — LocalAllocator's ctor appends under m_localAllocatorsLock
+    // BEFORE GCClient::Heap's ctor reaches clientSet().add(), so neither the
+    // legacy stop protocol nor the §10.4 access barrier excludes that thread
+    // yet. This traversal must therefore hold the lock (rank 8) or it races
+    // the append (torn SentinelLinkedList walk). Lock order stays acyclic:
+    // the per-allocator work below only takes BVL/block-internal locks
+    // (ranks 9/9b), and the appending ctor takes nothing inside rank 8. A
+    // just-appended allocator is necessarily empty (its thread has never
+    // allocated through it), so stopping it is a no-op — the lock is about
+    // list integrity, not allocator contents. Taken unconditionally: this is
+    // a collection-time path and the lock is uncontended single-threaded.
+    // Same reasoning for prepareForAllocation / resumeAllocating /
+    // stopAllocatingForGood below.
+    {
+        Locker locker { m_localAllocatorsLock };
+        if (Options::validateFreeListStructure()) [[unlikely]]
+            FreeList::setStructureValidationContext("dirflush"); // Conductor step-5 flush provenance.
+        m_localAllocators.forEach(
+            [&] (LocalAllocator* allocator) {
+                allocator->stopAllocating();
+            });
+        if (Options::validateFreeListStructure()) [[unlikely]]
+            FreeList::setStructureValidationContext("other");
+    }
 
 #if ASSERT_ENABLED
     assertIsMutatorOrMutatorIsStopped();
@@ -228,11 +380,15 @@ void BlockDirectory::stopAllocating()
 
 void BlockDirectory::prepareForAllocation()
 {
-    m_localAllocators.forEach(
-        [&] (LocalAllocator* allocator) {
-            allocator->prepareForAllocation();
-        });
-    
+    // SharedGC (review round 2): locked traversal — see stopAllocating().
+    {
+        Locker locker { m_localAllocatorsLock };
+        m_localAllocators.forEach(
+            [&] (LocalAllocator* allocator) {
+                allocator->prepareForAllocation();
+            });
+    }
+
     m_unsweptCursor = 0;
     m_emptyCursor = 0;
     
@@ -249,13 +405,19 @@ void BlockDirectory::prepareForAllocation()
 void BlockDirectory::stopAllocatingForGood()
 {
     dataLogLnIf(BlockDirectoryInternal::verbose, RawPointer(this), ": BlockDirectory::stopAllocatingForGood!");
-    
+
+    // SharedGC (review round 2): locked traversal — see stopAllocating().
+    // One critical section covers the per-allocator stop AND the unlink.
+    Locker locker { m_localAllocatorsLock };
+    if (Options::validateFreeListStructure()) [[unlikely]]
+        FreeList::setStructureValidationContext("dirSAFG");
     m_localAllocators.forEach(
         [&] (LocalAllocator* allocator) {
             allocator->stopAllocatingForGood();
         });
+    if (Options::validateFreeListStructure()) [[unlikely]]
+        FreeList::setStructureValidationContext("other");
 
-    Locker locker { m_localAllocatorsLock };
     while (!m_localAllocators.isEmpty())
         m_localAllocators.begin()->remove();
 }
@@ -271,6 +433,8 @@ void BlockDirectory::lastChanceToFinalize()
 void BlockDirectory::resumeAllocating()
 {
     dataLogLnIf(BlockDirectoryInternal::verbose, RawPointer(this), ": BlockDirectory::resumeAllocating!");
+    // SharedGC (review round 2): locked traversal — see stopAllocating().
+    Locker locker { m_localAllocatorsLock };
     m_localAllocators.forEach(
         [&] (LocalAllocator* allocator) {
             allocator->resumeAllocating();
@@ -364,6 +528,13 @@ MarkedBlock::Handle* BlockDirectory::findBlockToSweep(unsigned& unsweptCursor)
 
 void BlockDirectory::sweep()
 {
+    // SharedGC (T8 audit): reached via MarkedSpace::sweepBlocks() (asserts
+    // WSAC v MSPL v !ISS; Heap::sweepSynchronously holds MSPL) and via
+    // Subspace::sweepBlocks() from IsoSubspace::sweep /
+    // Heap::sweepInFinalize — conductor-side inside the stop window once
+    // shared. The in-loop bitvector scans below hold the BVL (safe against
+    // addBlock's resize) and the dropped-lock block->sweep calls satisfy I5b
+    // through the caller's context (asserted in MarkedBlock::Handle::sweep).
     // We need to be careful of a weird race where while we are sweeping a block
     // the concurrent sweeper comes along and takes the inUse bit for a block
     // in the same bit vector word as we're currently scanning. If we did't
@@ -378,6 +549,19 @@ void BlockDirectory::sweep()
 
         MarkedBlock::Handle* block = m_blocks[index];
         ASSERT(!isInUse(index));
+
+        // SharedGC (review round 4) — weak-bearing carve-out (rationale at
+        // WeakSet::sweep / LocalAllocator::tryAllocateIn): when this full
+        // sweep runs mutator-concurrently (Heap::sweepSynchronously under
+        // MSPL, world running), skip blocks whose WeakSet has WeakBlocks —
+        // sweeping them would race the owning client's lock-free Weak<>
+        // deallocation and run weak finalizers under another client's feet.
+        // The block stays unswept (lazy-sweep semantics) until the next
+        // world-stopped sweep. The head() read is stable: WeakSet::allocate
+        // mutates it only under MSPL, which our caller holds in this mode.
+        if (heap().isSharedServer() && !heap().worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]]
+            continue;
+
         dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", index, " in use (sweep) for ", *this);
         setIsInUse(index, true);
         {
@@ -391,6 +575,14 @@ void BlockDirectory::sweep()
 
 void BlockDirectory::shrink()
 {
+    // SharedGC (T8 audit, MC-SAFE S4): reached via MarkedSpace::shrink() —
+    // world-stopped only once shared (Heap::sweepSynchronously gates its
+    // shrink leg on worldIsStoppedForAllClients(); MarkedSpace::shrink
+    // asserts it). Block frees here unlink WeakSets from the active lists
+    // (§5.2(2)), mutate MarkedSpace::m_blocks, and physically free the
+    // block — the last is only safe with no concurrently-running sibling
+    // mutators (SPEC-heap §11 world-stopped reclamation; I5/I16
+    // deviation-4 precedent). The scans below hold the BVL.
     // We need to be careful of a weird race where while we are sweeping a block
     // the concurrent sweeper comes along and takes the inUse bit for a block
     // in the same bit vector word as we're currently scanning. If we did't
@@ -429,6 +621,29 @@ void BlockDirectory::assertNoUnswept()
 {
     if (!ASSERT_ENABLED)
         return;
+
+    // SharedGC (T8/I5b, FIX-3): cross-client unswept state is never
+    // assertable from a non-conductor thread, and neither of the old
+    // un-skip conditions identified the conductor:
+    //  - mutatorSlowPathLock().isHeld() is WTF::Lock's "held by ANYONE" —
+    //    another mutator's allocation slow path holding MSPL would un-skip
+    //    us while we read bits we do not own;
+    //  - worldIsStoppedForAllClients() means SOME conductor is mid-cycle,
+    //    and that cycle's snapshotUnswept() legitimately set unswept bits.
+    // Moreover, non-empty unswept is the designed shared-mode steady state:
+    // BlockDirectory::sweep's weak-bearing carve-out skips blocks with
+    // WeakBlocks when sweeping mutator-concurrently (world running, under
+    // MSPL), so even collectNow(Sync)'s own sweep deterministically leaves
+    // unswept bits; they are swept lazily in-lock (the IncrementalSweeper
+    // is disabled when isSharedServer()). Skip whenever shared. A future
+    // re-enable for a conductor inside its own stop window needs both
+    // conductor-identity tracking on Heap and an exclusion for the
+    // weak-carve-out leftovers.
+    {
+        auto& heap = markedSpace().heap();
+        if (heap.isSharedServer())
+            return;
+    }
 
     assertIsMutatorOrMutatorIsStopped();
 
@@ -472,6 +687,9 @@ RefPtr<SharedTask<MarkedBlock::Handle*()>> BlockDirectory::parallelNotEmptyBlock
             if (m_done)
                 return nullptr;
             Locker locker { m_lock };
+            // SharedGC (T8 audit, I5b): parallel marking helpers run only
+            // inside the stop window once shared (deviation 4), so this
+            // lock-free markingNotEmpty scan sees a stable m_bits.
             m_directory.assertIsMutatorOrMutatorIsStopped();
             m_index = m_directory.m_bits.markingNotEmpty().findBit(m_index, true);
             if (m_index >= m_directory.m_blocks.size()) {
@@ -528,7 +746,44 @@ MarkedSpace& BlockDirectory::markedSpace() const
 void BlockDirectory::assertIsMutatorOrMutatorIsStopped() const
 {
     auto& heap = markedSpace().heap();
+
+    // SharedGC (I5b, T8 audit): every lock-free BlockDirectoryBits read/write
+    // funnels through this assertion. Once the server is shared, "I am the
+    // mutator" is no longer a single-thread statement — another client's slow
+    // path may be reallocating m_bits in addBlock (the sole I5b writer,
+    // §5.2(5)) — so a lock-free access is sound only when:
+    //   (a) the world is stopped for all clients (the conductor and its
+    //       parallel marking/sweeping helpers, I5), or
+    //   (b) the current critical section holds the server's mutator-slow-path
+    //       lock (MSPL, §5.2/§5.3/§5.6), which excludes every other mutator's
+    //       slow path including addBlock's resize.
+    // Accesses that hold this directory's bitvector lock do not come through
+    // here; they are safe against the resize because addBlock also holds it.
+    if (heap.isSharedServer()) {
+        // AB18-D (V3, jit/int-gate-epoch-reclaim): also accept the §A.3
+        // thread-granular stop conductor — its window parks every entered
+        // mutator outside MSPL/BVL holds and holds the GCL bracket, so the
+        // conductor is the sole possible directory mutator, but the window
+        // sets neither WSAC nor MSPL (the heap witnesses this assert knows).
+        // Conductor-thread-only AND post-quiescence only
+        // (s_jsThreadsWorldStoppedDepth bumps after the §A.3.2 predicate is
+        // satisfied) — the Heap.cpp:5781 / notifyVMStop conductor-exemption
+        // shape: a pre-quiescence touch or a third thread escaping the park
+        // must still trip.
+        ASSERT(heap.worldIsStoppedForAllClients() || heap.mutatorSlowPathLock().isHeld() || (jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor()));
+        return;
+    }
+
     if (!heap.worldIsStopped()) {
+        if (Options::useSharedGCHeap()) [[unlikely]] {
+            // SharedGC (T8/T9): option on, pre-sticky — a single registered
+            // client, possibly standalone (§12.1), where vm() is asserted.
+            // The single mutator thread is the one that attached the client
+            // (its §10A.1 TLS slot is stamped) or, for the VM-coupled client,
+            // the legacy access holder.
+            ASSERT(GCClient::Heap::currentThreadClient() || heap.hasAccess());
+            return;
+        }
         if (auto owner = heap.vm().apiLock().ownerThread())
             ASSERT(owner->get() == &Thread::currentSingleton());
         else {
@@ -540,6 +795,11 @@ void BlockDirectory::assertIsMutatorOrMutatorIsStopped() const
 
 void BlockDirectory::assertSweeperIsSuspended() const
 {
+    // SharedGC (T8): once the server is shared the IncrementalSweeper is
+    // disabled entirely (deviation 4: no mutator-concurrent sweeping; see
+    // IncrementalSweeper::doWork/doWorkUntil and
+    // Heap::notifyIncrementalSweeper), so the I5b rule asserted by
+    // assertIsMutatorOrMutatorIsStopped() is exactly the suspension predicate.
     assertIsMutatorOrMutatorIsStopped();
 }
 #endif

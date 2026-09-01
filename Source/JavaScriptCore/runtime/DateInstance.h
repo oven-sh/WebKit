@@ -22,6 +22,7 @@
 
 #include "JSObject.h"
 #include "PlainGregorianDateTime.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -49,30 +50,58 @@ public:
         return instance;
     }
 
-    double internalNumber() const { return m_internalNumber; }
+    // With useJSThreads, m_internalNumber can be written by one thread (e.g. Date.prototype.setTime)
+    // while another thread reads it (e.g. a breakdown computed from it). The spec (SPEC-ungil.md)
+    // does not bless torn doubles here, so route all accesses through relaxed 64-bit atomic
+    // loads/stores of the same storage word. The field itself stays a plain double: layout,
+    // offsetOfInternalNumber() JIT users, and flag-off codegen are unchanged (relaxed 64-bit
+    // load/store compiles to the same plain move on all supported targets).
+    double internalNumber() const
+    {
+        return std::bit_cast<double>(std::bit_cast<const WTF::Atomic<uint64_t>*>(&m_internalNumber)->loadRelaxed());
+    }
     void setInternalNumber(double value)
     {
         // Marked stale rather than cleared: a cleared payload means this instance has never
         // decomposed anything, which is what tells DateCache its shared memo is worth probing.
-        m_internalNumber = value;
+        // (GIL-off the payloads are never made valid - DateInstance.cpp - so these two word
+        // stores only ever move them between the two invalid encodings.)
+        std::bit_cast<WTF::Atomic<uint64_t>*>(&m_internalNumber)->storeRelaxed(std::bit_cast<uint64_t>(value));
         m_cachedGregorianDateTime = PlainGregorianDateTime::staleMarker();
         m_cachedGregorianDateTimeUTC = PlainGregorianDateTime::staleMarker();
     }
 
     DECLARE_EXPORT_INFO;
 
-    PlainGregorianDateTime gregorianDateTime(DateCache& cache) const
+    // Snapshot-taking overloads (SPEC-ungil §N.3 residue): an operation that pairs the
+    // breakdown with anything else derived from the internal time value (e.g. toISOString's
+    // ms-of-second) must load internalNumber() exactly ONCE and pass the snapshot here, so
+    // the conversion cannot re-fetch a concurrently-updated value. GIL-on the cached payload
+    // is always the breakdown of the current time value (setInternalNumber marks it stale), so
+    // returning it for any `milli` the caller just loaded is the same answer; GIL-off it is
+    // never valid and the calculation runs on the snapshot.
+    PlainGregorianDateTime gregorianDateTime(DateCache& cache, double milli) const
     {
         if (m_cachedGregorianDateTime)
             return m_cachedGregorianDateTime;
-        return calculateGregorianDateTime(cache);
+        return calculateGregorianDateTime(cache, milli);
+    }
+
+    PlainGregorianDateTime gregorianDateTime(DateCache& cache) const
+    {
+        return gregorianDateTime(cache, internalNumber());
+    }
+
+    PlainGregorianDateTime gregorianDateTimeUTC(DateCache& cache, double milli) const
+    {
+        if (m_cachedGregorianDateTimeUTC)
+            return m_cachedGregorianDateTimeUTC;
+        return calculateGregorianDateTimeUTC(cache, milli);
     }
 
     PlainGregorianDateTime gregorianDateTimeUTC(DateCache& cache) const
     {
-        if (m_cachedGregorianDateTimeUTC)
-            return m_cachedGregorianDateTimeUTC;
-        return calculateGregorianDateTimeUTC(cache);
+        return gregorianDateTimeUTC(cache, internalNumber());
     }
 
     // A cached local-time breakdown is only valid for the time zone it was computed in, and
@@ -92,8 +121,8 @@ private:
 
     DECLARE_DEFAULT_FINISH_CREATION;
     JS_EXPORT_PRIVATE void finishCreation(VM&, double);
-    JS_EXPORT_PRIVATE PlainGregorianDateTime calculateGregorianDateTime(DateCache&) const;
-    JS_EXPORT_PRIVATE PlainGregorianDateTime calculateGregorianDateTimeUTC(DateCache&) const;
+    JS_EXPORT_PRIVATE PlainGregorianDateTime calculateGregorianDateTime(DateCache&, double milli) const;
+    JS_EXPORT_PRIVATE PlainGregorianDateTime calculateGregorianDateTimeUTC(DateCache&, double milli) const;
 
     double m_internalNumber { PNaN };
     mutable PlainGregorianDateTime m_cachedGregorianDateTime;

@@ -36,6 +36,8 @@
 #include <wtf/IterationStatus.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/ThreadSanitizerSupport.h>
+#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -249,6 +251,32 @@ public:
         CellAttributes m_attributes;
         bool m_isFreeListed { false };
         uint16_t m_decommittedPages { 0 }; // bit i set: OS page i of the block is decommitted
+        // T2-bimodal32-bvl-destructible-fastpath: per-Handle shadow of this
+        // block's directory destructible bit. Monotone-toward-true between
+        // destructor-running sweeps (specializedSweep's setBits re-derives the
+        // directory bit and this hint together under the BVL). Read lock-free
+        // (relaxed) by Handle::setIsDestructible's already-true fast path so N
+        // mutators resolving ropes into the same JSString-size block stop
+        // convoying on the single BlockDirectory::m_bitvectorLock once any one
+        // of them has done the locked flip — the W=32 bimodal slow mode was
+        // 6.4M lockSlow on that one address re-setting an already-true bit. A
+        // per-Handle bool sidesteps the m_bits Vector-resize hazard a
+        // lock-free m_bits.isDestructible() read would have against a
+        // concurrent same-directory addBlock (the rope-resolve caller holds
+        // neither MSPL nor BVL — see the setIsDestructible comment). Stale
+        // false -> fall through to the locked set; stale true is impossible
+        // mid-mutator-phase because the only false-writers (setBits, block
+        // removal) run under BVL with MSPL/world-stopped excluding the
+        // lock-free reader. Every touch is behind an isSharedServer() &&
+        // g_jscConfig.gilOffProcess gate: flag-off / W=1 never read or
+        // write it (byte-identical), and the gilOffProcess conjunct
+        // restricts the hint to the regime where ISS is process-lifetime
+        // sticky (Heap::pollIssRevertIfNeeded early-returns under
+        // gilOffProcess) — under !gilOffProcess a §10D ISS revert would
+        // otherwise strand a stale-true hint across an isEmpty
+        // directory-bit clear and permanently shadow a 2nd-epoch
+        // notifyNeedsDestruction (StringImpl ref leak).
+        bool m_isDestructibleHint { false };
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
@@ -352,6 +380,7 @@ public:
     const Handle& handle() const;
         
     VM& vm() const;
+    VM& vmConcurrentProbe() const; // TSAN-annotated stale-probe variant; see the inline definition below.
     inline JSC::Heap* heap() const;
     inline MarkedSpace* space() const;
 
@@ -398,7 +427,18 @@ public:
 
     JS_EXPORT_PRIVATE bool areMarksStale();
     bool areMarksStale(HeapVersion markingVersion);
-    
+
+    // SharedGC "Wlr" core marking constraint (Heap.cpp): consistent
+    // header-locked snapshot of this block's window-witnessed unmarked cells.
+    // Appends candidates to the vector; the caller must append them to the
+    // visitor only AFTER this returns (appendJSCellOrAuxiliary can re-enter
+    // this block's header lock via aboutToMark). See the read-protocol and
+    // soundness-lemma comment at the definition (MarkedBlock.cpp).
+    // markingVersionJustBumped: true iff this cycle is a FULL collection
+    // (MarkedSpace::beginMarking bumped the version inside this stop) —
+    // licenses the §13 last-era stale-marked-survivor skip (T4).
+    void sharedGCWindowWitnessSnapshot(HeapVersion markingVersion, bool markingVersionJustBumped, Vector<HeapCell*>& candidates);
+
     Dependency aboutToMark(HeapVersion markingVersion, HeapCell*);
         
 #if ASSERT_ENABLED
@@ -520,6 +560,10 @@ inline JSC::Heap* MarkedBlock::Handle::heap() const
     return m_weakSet.heap();
 }
 
+// SharedGC (T9): conductor-context OK — blocks are SERVER-owned; both vm()s
+// below return the main VM captured at block construction (heap.vm(),
+// deviation 3) regardless of which client's LocalAllocator currently holds
+// the block. Thread-agnostic; see the Heap::vm() legend (HeapInlines.h).
 inline VM& MarkedBlock::Handle::vm() const
 {
     return m_weakSet.vm();
@@ -527,6 +571,22 @@ inline VM& MarkedBlock::Handle::vm() const
 
 inline VM& MarkedBlock::vm() const
 {
+    return *header().m_vm;
+}
+
+inline VM& MarkedBlock::vmConcurrentProbe() const
+{
+    // TSAN r12 (report 3), NARROWED at the thread-closeout final review:
+    // pairs with the HAPPENS_BEFORE at the end of the Header constructor —
+    // see the comment there. The annotation deliberately lives on this
+    // dedicated probe accessor and not on plain vm(): HeapCell::vm() routes
+    // through vm() on virtually every C++ slow path on every thread, and an
+    // AFTER there would continuously re-synchronize every mutator with every
+    // block-allocating thread, hiding unrelated genuine races from TSAN
+    // engine-wide. Use ONLY at blessed stale-probe sites (currently the
+    // ownerForSlowPath consumers via HeapCell::vmConcurrentProbe). No-op
+    // outside TSAN.
+    TSAN_ANNOTATE_HAPPENS_AFTER(&header());
     return *header().m_vm;
 }
 
@@ -611,7 +671,12 @@ inline void MarkedBlock::Handle::assertMarksNotStale()
 
 inline bool MarkedBlock::isMarkedRaw(const void* p)
 {
-    return header().m_marks.get(atomNumber(p));
+    // TSAN (JSC GIL-off, family marks-bitset-plain-readers): the only
+    // remaining caller (sharedGCWindowWitnessSnapshot) reads this lock-free
+    // and tolerates stale, while a SlotVisitor on another thread CASes the
+    // same word via concurrentTestAndSet. Relaxed-atomic read; same shape as
+    // the §18.2 Handle::isLive precedent. Identical codegen to BitSet::get().
+    return header().m_marks.concurrentGet(atomNumber(p));
 }
 
 inline bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
@@ -642,7 +707,10 @@ inline const WTF::BitSet<MarkedBlock::atomsPerBlock>& MarkedBlock::marks() const
 
 inline bool MarkedBlock::isNewlyAllocated(const void* p)
 {
-    return header().m_newlyAllocated.get(atomNumber(p));
+    // TSAN r12 (sibling of the isLive m_marks fix, MarkedBlock.cpp): this is
+    // read on the same CountingLock-validated optimistic path while another
+    // thread sets bits concurrently; relaxed atomic read, codegen identical.
+    return header().m_newlyAllocated.concurrentGet(atomNumber(p));
 }
 
 inline void MarkedBlock::setNewlyAllocated(const void* p)

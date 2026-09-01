@@ -23,10 +23,28 @@
 
 #include "APICast.h"
 #include "JSCJSValueInlines.h"
+#include "Options.h"
 
 namespace JSC {
 
 EncodedJSValue MarkedVectorBase::m_storageForOutOfBoundsAccess;
+
+void MarkedVectorBase::addToSharedMarkSet(JSC::Heap& heap)
+{
+    // DW-2 (deepwater LEDGER row 2): under Options::useSharedGCHeap() the
+    // mark-list registration set is shared by every Thread's spill path, so
+    // it lives in address-hashed shards, each guarded by its own lock. The
+    // shard is picked by `this`, so distinct concurrent vectors mostly take
+    // distinct locks; record the lock so unregistration (and adopt) lock the
+    // same shard.
+    ASSERT(Options::useSharedGCHeap());
+    ASSERT(!m_markSet);
+    auto& shard = heap.markListSetShard(this);
+    m_markSetLock = &shard.lock;
+    Locker locker { shard.lock };
+    m_markSet = &shard.set;
+    m_markSet->add(this);
+}
 
 void MarkedVectorBase::addMarkSet(JSValue v)
 {
@@ -36,6 +54,12 @@ void MarkedVectorBase::addMarkSet(JSValue v)
     Heap* heap = Heap::heap(v);
     if (!heap)
         return;
+
+    if (Options::useSharedGCHeap()) [[unlikely]] {
+        // DW-2: locked, sharded registration; flag-off stays lock-free below.
+        addToSharedMarkSet(*heap);
+        return;
+    }
 
     m_markSet = &heap->markListSet();
     m_markSet->add(this);
@@ -98,6 +122,12 @@ void MarkedVectorBase::addMarkSet(const void* pointer)
     Heap* heap = Heap::heap(toCell(pointer, m_storageType));
     if (!heap)
         return;
+
+    if (Options::useSharedGCHeap()) [[unlikely]] {
+        // DW-2: locked, sharded registration; flag-off stays lock-free below.
+        addToSharedMarkSet(*heap);
+        return;
+    }
 
     m_markSet = &heap->markListSet();
     m_markSet->add(this);

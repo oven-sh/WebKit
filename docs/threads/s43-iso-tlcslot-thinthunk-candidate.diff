@@ -1,0 +1,529 @@
+diff --git a/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp b/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp
+index ed14727bc443..5cdbee4dae42 100644
+--- a/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp
++++ b/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp
+@@ -455,10 +455,17 @@ void SpeculativeJIT::emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure
+ 
+     std::optional<unsigned> cellSlot;
+     if (vm.gilOff()) [[unlikely]] {
++        // H-ISO-TLCSLOT: JSFinalObject (cellSpace, CompleteSubspace) resolves
++        // through the §42 tlcIndexBase+sizeClass arm unchanged. JSArray
++        // (arraySpace, iso) is EXCLUDED by tlcSlotForConcurrentlyWithIso —
++        // this fast path stores storageGPR untagged into JSObject_butterfly,
++        // so a fresh inline-allocated JSArray would read as foreign and
++        // segment on first growth (see the resolver's JSArray comment); JSArray
++        // stays on the slow-path arm until Task-8 lands TID-tag emission here.
+         if (structure->typeInfo().type() == JSType::ArrayType)
+-            cellSlot = tlcSlotForConcurrently<JSArray>(vm, JSArray::allocationSize(inlineCapacity));
++            cellSlot = tlcSlotForConcurrentlyWithIso<JSArray>(vm, JSArray::allocationSize(inlineCapacity));
+         else
+-            cellSlot = tlcSlotForConcurrently<JSFinalObject>(vm, JSFinalObject::allocationSize(inlineCapacity));
++            cellSlot = tlcSlotForConcurrentlyWithIso<JSFinalObject>(vm, JSFinalObject::allocationSize(inlineCapacity));
+     }
+     Allocator allocator;
+     if (!cellSlot) {
+@@ -18772,11 +18779,12 @@ void SpeculativeJIT::compileMakeRope(Node* node)
+ 
+     JumpList slowPath;
+     if (vm().gilOff()) [[unlikely]] {
+-        // H-VMLITE-TLCPTR: stringSpace is iso (per-client GCClient::IsoSubspace)
+-        // so tlcSlotForConcurrently is nullopt today; the lite-relative arm is
+-        // a no-op fallthrough to the null-constant bake. Kept so a future
+-        // table-addressable iso scheme need only extend tlcSlotForConcurrently.
+-        if (auto slot = tlcSlotForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString))) {
++        // H-VMLITE-TLCPTR + H-ISO-TLCSLOT: ropeStringSpace is iso; the §42
++        // follow-on stamps every static iso with a fixed TLC slot, so the
++        // lite-relative arm now fires (slot is the per-type constant
++        // server.ropeStringSpace.tlcSlot()) — closing the 36.4M MakeRope thunk
++        // traversals on intcs W=1.
++        if (auto slot = tlcSlotForConcurrentlyWithIso<JSRopeString>(vm(), sizeof(JSRopeString))) {
+             emitLoadTLCAllocatorForSlot(allocatorGPR, *slot, slowPath);
+             emitAllocateJSCell(resultGPR, JITAllocator::variable(), allocatorGPR, TrustedImmPtr(m_graph.registerStructure(vm().stringStructure.get())), scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);
+         } else
+diff --git a/Source/JavaScriptCore/ftl/FTLLazySlowPath.h b/Source/JavaScriptCore/ftl/FTLLazySlowPath.h
+index b599d551b83f..5dbba8bbc9dc 100644
+--- a/Source/JavaScriptCore/ftl/FTLLazySlowPath.h
++++ b/Source/JavaScriptCore/ftl/FTLLazySlowPath.h
+@@ -94,6 +94,10 @@ public:
+     // lock. Null until generate() completes; never transitions back to null.
+     // GIL-on never reads or writes this field (flag-off identity).
+     void* stubCodePtrConcurrently() const { return m_stubCodePtr.load(std::memory_order_acquire); }
++    // SCALEBENCH §42 thin-thunk: the gilOff thin prefix of the lazy-slow-path
++    // generation thunk does the same acquire-load IN JIT code (no register
++    // dump, no operation call) — see FTLThunks.cpp.
++    static constexpr ptrdiff_t offsetOfStubCodePtr() { return OBJECT_OFFSETOF(LazySlowPath, m_stubCodePtr); }
+ 
+ private:
+     CodeLocationJump<JSInternalPtrTag> m_patchableJump;
+diff --git a/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp b/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp
+index ddd3415fe9b9..a6798597b2a8 100644
+--- a/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp
++++ b/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp
+@@ -2697,15 +2697,22 @@ private:
+         return m_out.phi(pointerType(), fast, slow);
+     }
+ 
+-    // H-VMLITE-TLCPTR convenience: tlcSlotForConcurrently<ClassType> at
+-    // codegen time, falling back to the legacy null-constant bake (which
+-    // allocateHeapCell turns into an unconditional slow-path jump) when the
+-    // slot is not table-addressable (iso, base unreserved, precise size).
++    // H-VMLITE-TLCPTR + H-ISO-TLCSLOT convenience:
++    // tlcSlotForConcurrentlyWithIso<ClassType> at codegen time, falling back
++    // to the legacy null-constant bake (which allocateHeapCell turns into an
++    // unconditional slow-path jump) when the slot is not table-addressable
++    // (unreserved CompleteSubspace base, precise size, unstamped iso). The
++    // iso arm is the §42 follow-on: JSRopeString/JSString/JSFunction et al.
++    // resolve their server JSC::IsoSubspace::tlcSlot — a per-type
++    // process-wide constant — so MakeRope / NewFunction inline-allocate emit
++    // the same lite-relative `tlcTable[slot]` load instead of the IT-9
++    // null-bake → operationCompileFTLLazySlowPath on EVERY allocation
++    // (36.4M intcs W=1).
+     template<typename ClassType>
+     LValue tlcAllocatorOrLegacy(size_t allocationSize)
+     {
+         ASSERT(vm().gilOff());
+-        if (auto slot = tlcSlotForConcurrently<ClassType>(vm(), allocationSize))
++        if (auto slot = AssemblyHelpers::tlcSlotForConcurrentlyWithIso<ClassType>(vm(), allocationSize))
+             return tlcAllocatorForSlot(*slot);
+         return m_out.constIntPtr(allocatorForConcurrently<ClassType>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists).localAllocator());
+     }
+@@ -12498,10 +12505,11 @@ IGNORE_CLANG_WARNINGS_END
+         LBasicBlock slowPath = m_out.newBlock();
+         LBasicBlock continuation = m_out.newBlock();
+ 
+-        // H-VMLITE-TLCPTR: stringSpace is iso (per-client GCClient::IsoSubspace
+-        // — never table-addressable), so tlcAllocatorOrLegacy degrades to the
+-        // legacy null bake GIL-off; left in place so a future iso-TLC scheme
+-        // need only extend tlcSlotForConcurrently.
++        // H-VMLITE-TLCPTR + H-ISO-TLCSLOT: ropeStringSpace is iso; the §42
++        // follow-on stamps every static iso with a fixed TLC slot, so
++        // tlcAllocatorOrLegacy<JSRopeString> emits the lite-relative
++        // `tlcTable[slot]` load GIL-off (closing the 36.4M MakeRope thunk
++        // traversals on intcs W=1).
+         LValue allocatorValue;
+         if (vm().gilOff()) [[unlikely]]
+             allocatorValue = tlcAllocatorOrLegacy<JSRopeString>(sizeof(JSRopeString));
+diff --git a/Source/JavaScriptCore/ftl/FTLThunks.cpp b/Source/JavaScriptCore/ftl/FTLThunks.cpp
+index 95f9ea624d1e..6f257fc80065 100644
+--- a/Source/JavaScriptCore/ftl/FTLThunks.cpp
++++ b/Source/JavaScriptCore/ftl/FTLThunks.cpp
+@@ -30,6 +30,8 @@
+ 
+ #include "AssemblyHelpersSpoolers.h"
+ #include "DFGOSRExitCompilerCommon.h"
++#include "FTLJITCode.h"
++#include "FTLLazySlowPath.h"
+ #include "FTLOSRExitCompiler.h"
+ #include "FTLOperations.h"
+ #include "FTLSaveRestore.h"
+@@ -49,10 +51,21 @@ enum class FrameAndStackAdjustmentRequirement {
+ };
+ 
+ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
+-    VM& vm, CodePtr<CFunctionPtrTag> generationFunction, PtrTag resultTag, const char* name, unsigned extraPopsToRestore, FrameAndStackAdjustmentRequirement frameAndStackAdjustmentRequirement)
++    VM& vm, CodePtr<CFunctionPtrTag> generationFunction, PtrTag resultTag, const char* name, unsigned extraPopsToRestore, FrameAndStackAdjustmentRequirement frameAndStackAdjustmentRequirement,
++    void (*thinPrefix)(AssemblyHelpers&) = nullptr)
+ {
+     AssemblyHelpers jit(nullptr);
+ 
++    // SCALEBENCH §42 thin-thunk: gilOff-only fast prefix that bypasses the
++    // saveAllRegisters / operation-call / restoreAllRegisters body when the
++    // steady-state answer is already published (lazy slow path's
++    // m_stubCodePtr). nullptr for OSR-exit and for GIL-on, so flag-off /
++    // GIL-on emit the IDENTICAL byte sequence below (no prefix → first
++    // emitted instruction is the pushToSave(framePointerRegister) that
++    // upstream emits today).
++    if (thinPrefix) [[unlikely]]
++        thinPrefix(jit);
++
+     if (frameAndStackAdjustmentRequirement == FrameAndStackAdjustmentRequirement::Needed) {
+         // This needs to happen before we use the scratch buffer because this function also uses the scratch buffer.
+         adjustFrameAndStackInOSRExitCompilerThunk<FTL::JITCode>(jit, vm, JITType::FTLJIT);
+@@ -157,11 +170,116 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
+         vm, operationCompileFTLOSRExit, OSRExitPtrTag, "FTL OSR exit generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::Needed);
+ }
+ 
++// SCALEBENCH §42 thin-thunk (GILOFF-TAX-EVIDENCE.md §#1, residual #2):
++// gilOff-dedicated thin prefix for the FTL lazy-slow-path steady state.
++//
++// Rationale: gilOff (UNGIL U-T4b, FTLLazySlowPath.cpp:73-87) leaves the
++// patchable jump UNPATCHED, so EVERY traversal — 36.4 M of them on intcs W=1
++// after the §42 TLC-slot fix took CompleteSubspace allocations off this path
++// — runs the full genericGenerationThunkGenerator body: saveAllRegisters
++// (full scalar dump to a per-lite scratch buffer), a real C call into
++// operationCompileFTLLazySlowPath, restoreAllRegisters, ret. perf attributes
++// ~910 ms of intcs W=1 self time (~25 ns/traversal) to that one ~1.5 KB JIT
++// range; the operation body's only steady-state work is the T8
++// stubCodePtrConcurrently() acquire-load (FTLOperations.cpp:987).
++//
++// This prefix replays JUST that acquire-load in JIT code: callFrame →
++// codeBlock → m_jitCode (ConcurrentJITCodePtr; one raw word, JITCode.h:428)
++// → FTL::JITCode::lazySlowPaths[index] → m_stubCodePtr. Non-null (steady
++// state after first compile) → restore the two spilled scratches, pop the
++// late-path's index push (the same push the full body's extraPopsToRestore=1
++// removes), tail-jump to the stub. Null → restore both scratches and FALL
++// THROUGH to today's full body with sp at exactly its on-entry layout, so
++// first-compile / race-loser semantics are byte-for-byte the existing
++// double-checked-publication path under ftlLazySlowPathGenerationLock.
++//
++// Register discipline: at thunk entry every FTL-live register is live EXCEPT
++// macroClobberedGPRs, which the lazySlowPath() patchpoint explicitly clobbers
++// (FTLLowerDFGToB3.cpp:25544 result->clobber(RegisterSet::macroClobberedGPRs())).
++// We spill exactly two ordinary GPRs for the load chain and use
++// GPRInfo::patchpointScratchRegister (= the one register the patchpoint
++// contract guarantees is dead: r11 / ip0 / x30) only as the final jump
++// target, after both spills are restored — the only instructions between its
++// load and the farJump are popToRestore (raw post-index ldr / pop) which
++// touch no macro temp.
++//
++// Orthogonal to the §42 iso-TLC-slot fix: that removes the dominant MakeRope
++// traversals; this cheapens whatever lazy-slow-path traversals REMAIN
++// (write-barrier slow paths, iso-subspace allocations until iso-TLC lands,
++// every other lazySlowPath() consumer in FTLLowerDFGToB3.cpp). gilOff-gated:
++// GIL-on never reaches this function (lazySlowPathGenerationThunkGenerator
++// passes nullptr) so the GIL-on / flag-off thunk is byte-identical.
++static void emitLazySlowPathThinPrefix(AssemblyHelpers& jit)
++{
++    using MA = AssemblyHelpers;
++    constexpr GPRReg scratch0 = GPRInfo::regT2;
++    constexpr GPRReg scratch1 = GPRInfo::regT3;
++    constexpr GPRReg targetGPR = GPRInfo::patchpointScratchRegister;
++    static_assert(scratch0 != scratch1 && scratch0 != targetGPR && scratch1 != targetGPR);
++    static_assert(scratch0 != GPRInfo::callFrameRegister && scratch1 != GPRInfo::callFrameRegister);
++    constexpr ptrdiff_t pushToSaveByteOffset = MacroAssembler::pushToSaveByteOffset();
++
++    // On entry: [sp + 0] = the late path's pushToSaveImmediateWithoutTouchingRegisters(index)
++    // (FTLLowerDFGToB3.cpp:25572). cfr = the executing FTL frame = callFrame.
++    jit.pushToSave(scratch0);
++    jit.pushToSave(scratch1);
++    // [sp + 0]              = scratch1 saved
++    // [sp + pushToSaveByteOffset]   = scratch0 saved
++    // [sp + 2*pushToSaveByteOffset] = index (low 32 bits)
++
++    // index → scratch0
++    jit.load32(MA::Address(MacroAssembler::stackPointerRegister, 2 * pushToSaveByteOffset), scratch0);
++    // codeBlock → scratch1
++    jit.loadPtr(MA::Address(GPRInfo::callFrameRegister, static_cast<int>(CallFrameSlot::codeBlock) * static_cast<int>(sizeof(Register))), scratch1);
++    // FTL::JITCode* → scratch1 (ConcurrentJITCodePtr is one JITCode* word at
++    // jitCodeOffset(); FTL::JITCode is single-inheritance from JSC::JITCode so
++    // the base pointer is the derived pointer — same identity
++    // operationCompileFTLLazySlowPath relies on via jitCodeRawPtr()->ftl()).
++    static_assert(sizeof(ConcurrentJITCodePtr) == sizeof(JSC::JITCode*));
++    jit.loadPtr(MA::Address(scratch1, CodeBlock::jitCodeOffset()), scratch1);
++    // lazySlowPaths.data() → scratch1
++    static_assert(sizeof(std::unique_ptr<LazySlowPath>) == sizeof(LazySlowPath*));
++    constexpr ptrdiff_t lazySlowPathsBufferOffset = OBJECT_OFFSETOF(JITCode, lazySlowPaths) + Vector<std::unique_ptr<LazySlowPath>>::dataMemoryOffset();
++    jit.loadPtr(MA::Address(scratch1, lazySlowPathsBufferOffset), scratch1);
++    // lazySlowPaths[index] (LazySlowPath*) → scratch1
++    jit.loadPtr(MA::BaseIndex(scratch1, scratch0, MA::ScalePtr), scratch1);
++    // m_stubCodePtr (acquire) → scratch1. x86_64 TSO: plain load IS acquire.
++    // ARM64: ldar pairs with generate()'s release-store so a non-null read
++    // here observes a fully-constructed stub (data side; i-cache coherence is
++    // the existing T8 contract — same as the C++ acquire-load fast path this
++    // mirrors, FTLOperations.cpp:987).
++#if CPU(ARM64)
++    jit.loadAcq64(MA::Address(scratch1, LazySlowPath::offsetOfStubCodePtr()), scratch1);
++#else
++    jit.loadPtr(MA::Address(scratch1, LazySlowPath::offsetOfStubCodePtr()), scratch1);
++#endif
++    auto needGenerate = jit.branchTestPtr(MA::Zero, scratch1);
++
++    // Steady state: tail-call the already-generated stub. Park the target in
++    // the patchpoint-dead scratch, restore both spills and the index push so
++    // sp is exactly what a directly-repatched jump would have seen, then go.
++    jit.move(scratch1, targetGPR);
++    jit.popToRestore(scratch1);
++    jit.popToRestore(scratch0);
++    jit.addPtr(MA::TrustedImm32(pushToSaveByteOffset), MacroAssembler::stackPointerRegister); // drop index push (= extraPopsToRestore=1).
++    jit.farJump(targetGPR, JITStubRoutinePtrTag);
++
++    // First compile (or publication race): restore and fall through to the
++    // full saveAllRegisters / operationCompileFTLLazySlowPath body with sp at
++    // its on-entry [index] layout.
++    needGenerate.link(&jit);
++    jit.popToRestore(scratch1);
++    jit.popToRestore(scratch0);
++}
++
+ MacroAssemblerCodeRef<JITThunkPtrTag> lazySlowPathGenerationThunkGenerator(VM& vm)
+ {
+     unsigned extraPopsToRestore = 1;
++    // SCALEBENCH §42 thin-thunk: gilOff-only thin prefix; GIL-on / flag-off
++    // pass no prefix and emit the byte-identical upstream thunk.
+     return genericGenerationThunkGenerator(
+-        vm, operationCompileFTLLazySlowPath, JITStubRoutinePtrTag, "FTL lazy slow path generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::NotNeeded);
++        vm, operationCompileFTLLazySlowPath, JITStubRoutinePtrTag, "FTL lazy slow path generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::NotNeeded,
++        vm.gilOff() ? emitLazySlowPathThinPrefix : nullptr);
+ }
+ 
+ static void registerClobberCheck(AssemblyHelpers& jit, RegisterSet dontClobber)
+diff --git a/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp b/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp
+index bfb382330ef0..493c8faed59e 100644
+--- a/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp
++++ b/Source/JavaScriptCore/heap/GCThreadLocalCache.cpp
+@@ -30,6 +30,7 @@
+ #include "CompleteSubspace.h"
+ #include "FreeList.h"
+ #include "Heap.h"
++#include "IsoSubspace.h"
+ #include "LocalAllocator.h"
+ #include "Options.h"
+ #include "VMLite.h"
+@@ -171,7 +172,36 @@ GCThreadLocalCache::GCThreadLocalCache(JSC::Heap& server)
+         server.immutableButterflyAuxiliarySpace.ensureTlcIndexBaseReserved();
+         server.cellSpace.ensureTlcIndexBaseReserved();
+         server.destructibleObjectSpace.ensureTlcIndexBaseReserved();
+-        constexpr unsigned fixedCapacity = JSC::Heap::numCompleteSubspaces * static_cast<unsigned>(MarkedSpace::numSizeClasses);
++        constexpr unsigned nonIsoCapacity = JSC::Heap::numCompleteSubspaces * static_cast<unsigned>(MarkedSpace::numSizeClasses);
++        // H-ISO-TLCSLOT (GILOFF-TAX §42 follow-on): one fixed slot per static
++        // server iso subspace, contiguous after the non-iso region. The slot is
++        // a per-type compile-time constant (nonIsoCapacity + macro ordinal) so
++        // JIT inline-allocate emitters bake it exactly as they bake a
++        // CompleteSubspace tlcIndexBase — closing the IT-9 hole for iso types
++        // (MakeRope: 36.4M lazy-slow-path traversals on intcs W=1). Stamping is
++        // idempotent: the first client (vm.clientHeap, constructed serially
++        // during the VM ctor after every server subspace is complete) writes
++        // each slot once; later per-thread clients re-observe the same value
++        // (asserted in stampTlcSlot). The 4 SpaceAndSet-backed statics and all
++        // dynamic iso subspaces are NOT enumerated — they keep
++        // invalidTlcIndex and stay m_perDirectory lookup-only (none is on a JIT
++        // inline-allocate path). The BlockDirectory's own m_tlcIndex stays
++        // invalidTlcIndex so allocatorFor / materializeAllocator's "iso =
++        // lookup-only" predicates are unchanged.
++        constexpr unsigned numStaticIsoSlots = 0
++#define THREADS_COUNT_STATIC_ISO(name, heapCellType, type) + 1
++            FOR_EACH_JSC_ISO_SUBSPACE(THREADS_COUNT_STATIC_ISO)
++#undef THREADS_COUNT_STATIC_ISO
++            ;
++        {
++            unsigned slot = nonIsoCapacity;
++#define THREADS_STAMP_ISO_TLC_SLOT(name, heapCellType, type) \
++            server.name.stampTlcSlot(slot++);
++            FOR_EACH_JSC_ISO_SUBSPACE(THREADS_STAMP_ISO_TLC_SLOT)
++#undef THREADS_STAMP_ISO_TLC_SLOT
++            ASSERT_UNUSED(slot, slot == nonIsoCapacity + numStaticIsoSlots);
++        }
++        constexpr unsigned fixedCapacity = nonIsoCapacity + numStaticIsoSlots;
+         // Direct allocate (NOT growTable): growTable would restamp the
+         // s_currentThreadTLCTable/Bound TLS pair and the lite mirror, but at
+         // ctor time this thread's stamped client (if any) is a DIFFERENT
+@@ -336,9 +366,29 @@ void GCThreadLocalCache::registerExternalAllocator(LocalAllocator* allocator)
+ {
+     ASSERT(allocator);
+     // Lookup-only (§5.3): NOT appended to m_ownedAllocators — the
+-    // GCClient::IsoSubspace owns it by value; never entered in m_table.
++    // GCClient::IsoSubspace owns it by value. m_perDirectory stays the
++    // I3-authoritative owner set (forEachLocalAllocator / ownsLocalAllocator /
++    // teardown).
+     auto addResult = m_perDirectory.add(&allocator->directory(), allocator);
+     ASSERT_UNUSED(addResult, addResult.isNewEntry);
++    // H-ISO-TLCSLOT: ALSO publish into the flat table when the server iso
++    // subspace carries a stamped slot (FOR_EACH_JSC_ISO_SUBSPACE statics). The
++    // ctor stamped every such slot and pre-grew m_table to cover them BEFORE
++    // this runs (GCClient::Heap declares m_threadLocalCache after the iso
++    // members; registerIsoSubspaceLocalAllocators is called from the ctor
++    // BODY). Owner thread only (I2). Iso subspaces with no stamped slot
++    // (SpaceAndSet statics, dynamic iso) and non-iso external allocators (none
++    // exist today) skip the table write — m_perDirectory remains the
++    // §10A.1/§5.3 source of truth either way.
++    Subspace* subspace = allocator->directory().subspace();
++    if (subspace && subspace->isIsoSubspace()) {
++        unsigned slot = static_cast<JSC::IsoSubspace*>(subspace)->tlcSlot();
++        if (slot != BlockDirectory::invalidTlcIndex) {
++            ASSERT(slot < m_tableBound);
++            ASSERT(!m_table[slot]);
++            m_table[slot] = Allocator(allocator);
++        }
++    }
+ }
+ 
+ bool GCThreadLocalCache::ownsLocalAllocator(const LocalAllocator* allocator) const
+diff --git a/Source/JavaScriptCore/heap/IsoSubspace.cpp b/Source/JavaScriptCore/heap/IsoSubspace.cpp
+index 257d1c54663e..1b5402a73c21 100644
+--- a/Source/JavaScriptCore/heap/IsoSubspace.cpp
++++ b/Source/JavaScriptCore/heap/IsoSubspace.cpp
+@@ -168,6 +168,23 @@ IsoSubspace::IsoSubspace(JSC::IsoSubspace& server)
+ {
+ }
+ 
++unsigned IsoSubspace::tlcSlot() const
++{
++    // H-ISO-TLCSLOT: server reach-through. m_localAllocator.directory() is the
++    // server's single BlockDirectory (bound at ctor above); its subspace() is
++    // the server JSC::IsoSubspace. The slot is write-once (stamped by the
++    // first GCThreadLocalCache ctor, serially during VM construction) and read
++    // here only at JIT compile time behind a vm.gilOff() codegen gate, so a
++    // plain load suffices — the first client's stamp happens-before any
++    // concurrent compile (compilation requires an entered VM; entry implies
++    // the stamping client exists). Subspaces never enumerated by
++    // FOR_EACH_JSC_ISO_SUBSPACE return invalidTlcIndex and the caller
++    // degrades to the legacy null-bake.
++    Subspace* server = m_localAllocator.directory().subspace();
++    ASSERT(server && server->isIsoSubspace());
++    return static_cast<const JSC::IsoSubspace*>(server)->tlcSlot();
++}
++
+ } // namespace GCClient
+ 
+ } // namespace JSC
+diff --git a/Source/JavaScriptCore/heap/IsoSubspace.h b/Source/JavaScriptCore/heap/IsoSubspace.h
+index fa57017b65c3..12ed184ec138 100644
+--- a/Source/JavaScriptCore/heap/IsoSubspace.h
++++ b/Source/JavaScriptCore/heap/IsoSubspace.h
+@@ -56,6 +56,36 @@ public:
+     void* tryAllocateLowerTierPrecise(size_t cellSize);
+     void destroyLowerTierPreciseFreeList();
+ 
++    // H-ISO-TLCSLOT (GILOFF-TAX §42 follow-on; iso analogue of
++    // CompleteSubspace::tlcIndexBase): one fixed slot in every client's
++    // GCThreadLocalCache flat table holding that client's LocalAllocator* for
++    // this iso subspace. Stamped write-once by the first GCThreadLocalCache
++    // ctor (under Options::useSharedGCHeap(); the first client is constructed
++    // serially during VM ctor so the stamp is race-free); subsequent clients
++    // observe the same value (asserted). The slot value is
++    //   JSC::Heap::numCompleteSubspaces × MarkedSpace::numSizeClasses + ordinal
++    // where `ordinal` is this subspace's FOR_EACH_JSC_ISO_SUBSPACE position —
++    // a per-type process-wide constant, so JIT inline-allocate emitters bake it
++    // and resolve `lite->tlcTable[slot]` exactly as the §42 CompleteSubspace
++    // arm does (the IT-9 "iso → null Allocator → unconditional thunk" hole:
++    // 36.4M MakeRope lazy-slow-path traversals on intcs W=1, ~910ms). Iso
++    // subspaces NOT enumerated by FOR_EACH_JSC_ISO_SUBSPACE (the 4 SpaceAndSet
++    // statics, every dynamic iso) keep invalidTlcIndex and stay lookup-only via
++    // m_perDirectory — they are never on a JIT inline-allocate path. The
++    // BlockDirectory's own m_tlcIndex is deliberately left invalidTlcIndex
++    // (the §5.3 "iso = lookup-only" predicate in GCThreadLocalCache::
++    // allocatorFor / materializeAllocator remains intact). Flag-off /
++    // !useSharedGCHeap: never stamped, never read (every reader is behind a
++    // vm.gilOff() codegen gate); the field is one trailing unsigned with no
++    // JIT-consumed-offset effect.
++    unsigned tlcSlot() const { return m_tlcSlot; }
++    void stampTlcSlot(unsigned slot)
++    {
++        ASSERT(slot != BlockDirectory::invalidTlcIndex);
++        ASSERT(m_tlcSlot == BlockDirectory::invalidTlcIndex || m_tlcSlot == slot);
++        m_tlcSlot = slot;
++    }
++
+ private:
+     void* tryAllocateLowerTierPreciseImpl(size_t); // T7-mspl-per-directory: factored body; caller takes the registry lock when shared.
+ public:
+@@ -76,6 +106,7 @@ private:
+     std::unique_ptr<AlignedMemoryAllocator> m_allocator;
+     SentinelLinkedList<PreciseAllocation, BasicRawSentinelNode<PreciseAllocation>> m_lowerTierPreciseFreeList;
+     SentinelLinkedList<IsoCellSet, BasicRawSentinelNode<IsoCellSet>> m_cellSets;
++    unsigned m_tlcSlot { BlockDirectory::invalidTlcIndex }; // H-ISO-TLCSLOT (see tlcSlot()).
+ };
+ 
+ 
+@@ -103,6 +134,17 @@ public:
+     // the §10A.1 ownership predicate and §5.3 teardown).
+     LocalAllocator& localAllocator() LIFETIME_BOUND { return m_localAllocator; }
+ 
++    // H-ISO-TLCSLOT: server's stamped table slot, reached via the shared
++    // BlockDirectory (m_localAllocator.directory().subspace() is the server
++    // JSC::IsoSubspace; LocalAllocator binds it at ctor, IsoSubspace.cpp). Read
++    // by tlcSlotForConcurrentlyWithIso<T> on JIT compilation threads — the
++    // value is process-wide constant once stamped (first-client TLC ctor) and
++    // identical across every client of the same server, so the IT-9 carve-out
++    // (compile thread → vm.clientHeap's view) is harmless: any client's view
++    // returns the same slot. Out-of-line (IsoSubspace.cpp) so this header need
++    // not pull LocalAllocator.h.
++    JS_EXPORT_PRIVATE unsigned tlcSlot() const;
++
+ private:
+     LocalAllocator m_localAllocator;
+ };
+diff --git a/Source/JavaScriptCore/jit/AssemblyHelpers.h b/Source/JavaScriptCore/jit/AssemblyHelpers.h
+index 7633a555365e..b290def79439 100644
+--- a/Source/JavaScriptCore/jit/AssemblyHelpers.h
++++ b/Source/JavaScriptCore/jit/AssemblyHelpers.h
+@@ -2278,6 +2278,66 @@ public:
+ 
+     void emitAllocate(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
+ 
++    // H-ISO-TLCSLOT (GILOFF-TAX §42 follow-on): tlcSlotForConcurrently<Type>
++    // extended to per-type IsoSubspaces. tlcSlotForConcurrently
++    // (JSCellInlines.h) returns nullopt for any Type whose
++    // subspaceForConcurrently<Type> yields a GCClient::IsoSubspace* (the IT-9
++    // "iso → never table-addressable" comment) — that is JSRopeString /
++    // JSString / JSFunction / every static iso, which is exactly the 36.4M
++    // residual MakeRope thunk traversals at intcs W=1. The else-if arm reads
++    // the server JSC::IsoSubspace's stamped one-slot index (write-once at
++    // first-client TLC ctor; process-wide constant), so the per-tier
++    // emitLoadTLCAllocatorForSlot / FTL tlcAllocatorForSlot lite-relative
++    // sequence applies unchanged. Any GCClient::IsoSubspace* observed here is
++    // SOME client's view — the slot is server-stamped and identical across all
++    // clients, so the IT-9 carve-out (compilation thread → vm.clientHeap's
++    // view) is harmless. nullopt remains for: subspace not yet constructed
++    // (Concurrently access on a dynamic iso), an unstamped iso (SpaceAndSet
++    // statics, dynamic iso — none on a JIT inline-allocate path today), and
++    // every existing tlcSlotForConcurrently nullopt case. Called only behind a
++    // vm.gilOff() codegen gate (flag-off byte-identity: never evaluated).
++    template<typename Type>
++    static std::optional<unsigned> tlcSlotForConcurrentlyWithIso(VM& vm, size_t allocationSize)
++    {
++        if (auto slot = tlcSlotForConcurrently<Type>(vm, allocationSize))
++            return slot;
++        // H-ISO-TLCSLOT exclusion: JSArray's JIT inline-allocate fast path
++        // stores the butterfly word UNTAGGED (storePtr(butterfly, …,
++        // JSObject::butterflyOffset()) — no TID-tag emission), so a fresh
++        // inline-allocated JSArray reads as foreign (butterflyTID(word) !=
++        // currentButterflyTID()) and the FIRST ensureLength growth segments it
++        // (ConcurrentButterfly.cpp ensureLength T1/T2 dispatch) — measured at
++        // 182,339 convertToSegmentedButterfly + 19,073,867 operationArrayPush
++        // on intcs W=1 (vs 0 / ~692 K with JSArray excluded). Under §42 the
++        // JSArray cell allocator was always null GIL-off (iso → IT-9 nullopt)
++        // so the path went to operationNewArrayWithSize / operationNewRawObject,
++        // which TID-tags in C++; the iso arm here would be the FIRST time the
++        // JSArray inline path fires GIL-off. The proper fix is Task-8
++        // (loadButterflyTIDTag-tag the butterfly word at every JIT inline
++        // allocateObject / emitAllocateJSObject store site) — out of scope for
++        // §43; until that lands JSArray stays on the §42 lazy-slow-path arm
++        // where the §43 thin-thunk reduces the per-traversal cost. Every other
++        // iso ClassType reaching this resolver either has no butterfly
++        // (JSRopeString / JSString) or stores a null butterfly on its inline
++        // path (JSPromise / JSMap / JSSet / JSBoundFunction / JSFunction et
++        // al.), so the TID-tag question never arises.
++        if constexpr (std::is_same_v<Type, JSArray>)
++            return std::nullopt;
++        auto* subspace = subspaceForConcurrently<Type>(vm);
++        if constexpr (std::is_same_v<std::remove_cv_t<decltype(subspace)>, GCClient::IsoSubspace*>) {
++            UNUSED_PARAM(allocationSize); // Iso has exactly one size class; the LocalAllocator cellSize() RELEASE_ASSERT (allocatorFor) covers a mismatched size at run time.
++            if (!subspace)
++                return std::nullopt;
++            unsigned slot = subspace->tlcSlot();
++            if (slot == BlockDirectory::invalidTlcIndex)
++                return std::nullopt;
++            return slot;
++        } else {
++            UNUSED_PARAM(subspace);
++            return std::nullopt;
++        }
++    }
++
+     // H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4): GIL-off lite-relative resolution
+     // of the per-thread TLC LocalAllocator for a baked TLC slot
+     // (tlcIndexBase_const + sizeClassIndex_const). Emits
+@@ -2310,12 +2370,16 @@ public:
+         GPRReg scratchGPR2, JumpList& slowPath, size_t size, SlowAllocationResult slowAllocationResult = SlowAllocationResult::ClearToNull)
+     {
+         if (vm.gilOff()) [[unlikely]] {
+-            // H-VMLITE-TLCPTR: allocatorForConcurrently returns {} GIL-off
+-            // (IT-9), which would emit an unconditional slow-path jump. Bake
+-            // the TLC slot instead and resolve the per-thread LocalAllocator
+-            // lite-relative at run time. nullopt (iso subspace, base not yet
+-            // reserved, precise size) falls through to the legacy null-bake.
+-            if (auto slot = tlcSlotForConcurrently<ClassType>(vm, size)) {
++            // H-VMLITE-TLCPTR + H-ISO-TLCSLOT: allocatorForConcurrently
++            // returns {} GIL-off (IT-9), which would emit an unconditional
++            // slow-path jump. Bake the TLC slot instead and resolve the
++            // per-thread LocalAllocator lite-relative at run time.
++            // tlcSlotForConcurrentlyWithIso covers BOTH CompleteSubspace
++            // (tlcIndexBase + sizeClassIndex) and per-type iso (server
++            // JSC::IsoSubspace::tlcSlot — JSRopeString/JSString/JSFunction et
++            // al.); nullopt (unreserved base, precise size, unstamped iso)
++            // falls through to the legacy null-bake.
++            if (auto slot = tlcSlotForConcurrentlyWithIso<ClassType>(vm, size)) {
+                 emitLoadTLCAllocatorForSlot(scratchGPR1, *slot, slowPath);
+                 emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
+                 return;

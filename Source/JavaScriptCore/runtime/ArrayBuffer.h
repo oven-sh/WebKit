@@ -35,12 +35,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "Watchpoint.h"
 #include "Weak.h"
 #include "WeakImpl.h"
+#include <wtf/Atomics.h>
 #include <wtf/CagedPtr.h>
+#include <wtf/Lock.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/SharedTask.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
 namespace JSC {
@@ -172,7 +175,9 @@ public:
             if (m_shared)
                 return m_shared->sizeInBytes(order);
         }
-        return m_sizeInBytes;
+        // THREADS/TSAN: relaxed — a resize/detach on another thread updates this
+        // word atomically; callers' bounds checks tolerate staleness (SAB-style).
+        return WTF::atomicLoad(const_cast<size_t*>(&m_sizeInBytes), std::memory_order_relaxed);
     }
     std::optional<size_t> maxByteLength() const
     {
@@ -198,7 +203,11 @@ public:
         swap(m_destructor, other.m_destructor);
         swap(m_shared, other.m_shared);
         swap(m_memoryHandle, other.m_memoryHandle);
-        swap(m_sizeInBytes, other.m_sizeInBytes);
+        {
+            size_t mine = WTF::atomicLoad(&m_sizeInBytes, std::memory_order_relaxed);
+            WTF::atomicStore(&m_sizeInBytes, WTF::atomicLoad(&other.m_sizeInBytes, std::memory_order_relaxed), std::memory_order_relaxed);
+            WTF::atomicStore(&other.m_sizeInBytes, mine, std::memory_order_relaxed);
+        }
         swap(m_maxByteLength, other.m_maxByteLength);
         swap(m_hasMaxByteLength, other.m_hasMaxByteLength);
     }
@@ -219,7 +228,7 @@ private:
         m_destructor = nullptr;
         m_shared = nullptr;
         m_memoryHandle = nullptr;
-        m_sizeInBytes = 0;
+        WTF::atomicStore(&m_sizeInBytes, static_cast<size_t>(0), std::memory_order_relaxed);
         m_maxByteLength = 0;
         m_hasMaxByteLength = false;
     }
@@ -298,7 +307,9 @@ public:
     void NODELETE makeWasmMemory();
     inline bool isWasmMemory();
     // When a resizable buffer is associated with a non-shared Wasm memory, this function is called by the memory's growthSuccessCallback.
-    void refreshAfterWasmMemoryGrow(Wasm::Memory*);
+    // Takes VM& to reach the heap's incoming-reference set lock: the view walk
+    // must snapshot under it (see ArrayBuffer.cpp / GCIncomingRefCounted.h).
+    void refreshAfterWasmMemoryGrow(VM&, Wasm::Memory*);
 
     JS_EXPORT_PRIVATE bool transferTo(VM&, ArrayBufferContents&);
     JS_EXPORT_PRIVATE bool shareWith(ArrayBufferContents&);
@@ -331,15 +342,95 @@ private:
     static inline size_t NODELETE clampValue(double x, size_t left, size_t right);
 
     void notifyDetaching(VM&);
+    Vector<JSCell*, 8> snapshotIncomingReferences(VM&);
 
     ArrayBufferContents m_contents;
     InlineWatchpointSet m_detachingWatchpointSet { IsWatched };
 public:
+    // GIL-off wrapper publication protocol (TSAN-TRIAGE §6.35, SPEC-ungil §K
+    // analog): when a shared ArrayBuffer is wrapped in two globals on two
+    // threads, the wrapper slot is read and published lock-free. All
+    // cross-thread traffic goes through m_wrapperImpl:
+    //   - readers take a relaxed snapshot via wrapperImplConcurrently() and
+    //     then inspect the WeakImpl (the cell-pointer payload is
+    //     dependency-ordered behind the pointer load, and the CAS publishes
+    //     with release, so a reader that sees the impl sees it fully
+    //     initialized);
+    //   - writers publish first-wins via tryPublishWrapperImpl(); exactly one
+    //     CAS succeeds, and only that winner may store the owning Weak into
+    //     m_wrapper. Losers whose published rival is still Live drop their
+    //     Weak (their JSArrayBuffer stays a valid, merely uncached, wrapper).
+    //   - if the published WeakImpl is no longer Live (the cached wrapper was
+    //     GC'd while the native buffer survived — C API / native-held
+    //     RefPtr<ArrayBuffer> re-wrap), the slot is RECOVERABLE: a loser
+    //     republishes over the dead impl under m_wrapperRepublishLock via
+    //     publishReplacementWrapperImpl(). This restores the pre-GIL-off
+    //     (flag-off) behavior of unconditional re-registration, so wrapper
+    //     identity caching keeps working after the first wrapper dies. The
+    //     displaced dead Weak's deallocation is deferred past the next
+    //     all-client safepoint (GCSafepointEpoch) because a concurrent
+    //     reader's snapshot may still point at it; readers never span a
+    //     safepoint between the snapshot and the state() check.
+    // m_wrapper itself is therefore never raced: it is written by the unique
+    // first-publication CAS winner, by republishers serialized under
+    // m_wrapperRepublishLock (which can never overlap the CAS winner: the
+    // winner's impl is Live for the duration of registerWrapper, and
+    // republication requires a non-Live current impl), and otherwise only
+    // touched by ~ArrayBuffer.
+
+    // Relaxed snapshot of the published wrapper handle; may be null, or
+    // non-null but no longer Live (caller must check WeakImpl::state(), as
+    // Weak<>::get() does).
+    WeakImpl* wrapperImplConcurrently() { return m_wrapperImpl.loadRelaxed(); }
+
+    // First-wins publication. Returns true if `impl` was installed (caller
+    // must then move the owning Weak into m_wrapper); returns false if
+    // another thread already published a wrapper (caller drops its Weak).
+    bool tryPublishWrapperImpl(WeakImpl* impl)
+    {
+        ASSERT(impl);
+        return !m_wrapperImpl.compareExchangeStrong(nullptr, impl, std::memory_order_release, std::memory_order_relaxed);
+    }
+
+    // Republication over a dead impl (registerWrapper slow path). Caller must
+    // hold m_wrapperRepublishLock and have verified the current impl is not
+    // Live. The nullptr-expecting CAS in tryPublishWrapperImpl cannot fire
+    // while the slot is non-null and republishers are serialized by the lock,
+    // so a release store suffices (readers still dependency-order the impl
+    // payload behind the pointer load, and the impl was fully constructed
+    // before this call).
+    void publishReplacementWrapperImpl(WeakImpl* impl)
+    {
+        ASSERT(impl);
+        m_wrapperImpl.store(impl, std::memory_order_release);
+    }
+
     Weak<JSArrayBuffer> m_wrapper;
+    Lock m_wrapperRepublishLock;
 private:
-    static constexpr unsigned s_lockedFlag = INT32_MIN;
-    Checked<unsigned> m_pinCount { 0 };
+    Atomic<WeakImpl*> m_wrapperImpl { nullptr };
+    // CVE-AUDIT Tier-B B10 / docs/threads/cve/map-MC-LIFE.md S4: m_pinCount and
+    // m_locked are atomic so concurrent embedder threads pin()/unpin()'ing
+    // wrappers of one buffer (ArrayBufferView::setDetachable, the C-API
+    // JSObjectGetTypedArrayBytesPtr family) cannot lose an update and let
+    // isDetachable() report true while a native bytesPtr is outstanding —
+    // post-GIL the annex-N6 quarantine would then free the mapping under that
+    // pointer. Relaxed ordering is sufficient: the field is a counter/sticky
+    // flag, not a publication fence (detach ordering is the N6 quarantine's
+    // job). Same precedent as DeferrableRefCounted's unconditional atomic
+    // count (ArrayBuffer.cpp:260). Flag-off: behaviorally identical, layout
+    // unchanged (4B/1B). Relaxed .load()/.store() compile to plain mov/ldr on
+    // x86-64/arm64; pin()/unpin()'s fetch_add/fetch_sub DO emit an atomic RMW
+    // (lock xadd / ldadd) — an accepted byte-identity deviation per the
+    // DeferrableRefCounted precedent, on a cold embedder-only path
+    // (ArrayBufferView::setDetachable / JSObjectGetTypedArrayBytesPtr), never
+    // a JS bench path.
+    std::atomic<unsigned> m_pinCount { 0 };
     bool m_isWasmMemory { false };
+    WeakPtr<Wasm::Memory> m_associatedWasmMemory;
+    // m_locked == true means that some API user fetched m_contents directly from a TypedArray object,
+    // the buffer is backed by a WebAssembly.Memory, or is a SharedArrayBuffer.
+    std::atomic<bool> m_locked { false };
 };
 
 void* ArrayBuffer::data() LIFETIME_BOUND
@@ -385,24 +476,34 @@ size_t ArrayBuffer::gcSizeEstimateInBytes() const
 
 void ArrayBuffer::pin()
 {
-    m_pinCount++;
+    unsigned old = m_pinCount.fetch_add(1, std::memory_order_relaxed);
+    // Preserve the Checked<unsigned> overflow crash this field used to carry
+    // (never-weaken-asserts rule; 2^32 live pins is unreachable in practice).
+    RELEASE_ASSERT(old != std::numeric_limits<unsigned>::max());
 }
 
 void ArrayBuffer::unpin()
 {
-    unsigned old = m_pinCount;
-    m_pinCount--;
-    m_pinCount |= (old & s_lockedFlag);
+    unsigned old = m_pinCount.fetch_sub(1, std::memory_order_relaxed);
+    // Preserve the Checked<unsigned> underflow crash (an unbalanced unpin()
+    // is an embedder bug; trapping here is the MC-LIFE S4 fail-stop).
+    RELEASE_ASSERT(old);
 }
 
 bool ArrayBuffer::isDetachable() const
 {
-    return !m_pinCount && !isShared();
+    return !m_pinCount.load(std::memory_order_relaxed) && !m_locked.load(std::memory_order_relaxed) && !isShared();
 }
 
 void ArrayBuffer::pinAndLock()
 {
-    m_pinCount |= s_lockedFlag;
+    // Sticky-true, idempotent (map-MC-LIFE.md S4): a relaxed store suffices.
+    m_locked.store(true, std::memory_order_relaxed);
+}
+
+bool ArrayBuffer::isLocked()
+{
+    return m_locked.load(std::memory_order_relaxed);
 }
 
 bool ArrayBuffer::isWasmMemory()

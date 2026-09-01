@@ -1,0 +1,34 @@
+--- Source/JavaScriptCore/heap/Heap.cpp	2026-06-10 10:18:23.194490267 +0000
++++ /tmp/Heap-instrumented.cpp	2026-06-10 10:18:15.444489150 +0000
+@@ -141,6 +141,14 @@
+ 
+ namespace JSC {
+ 
++// BUGHUNT round-3 victim-provenance recorder — defined in heap/MarkedBlock.cpp.
++// REVERT AFTER ROUND 3.
++namespace BughuntProv {
++extern bool enabledFlag;
++void beginCycle();
++void recordSnap(MarkedBlock::Handle*, HeapVersion markingVersion);
++}
++
+ // ===== UNGIL §A.3 (U-T5) cross-TU seams =====
+ // Defined in runtime/VMManager.cpp (window state + ticket park) and
+ // runtime/VMLite.cpp (ANNEX ISB1 stop-generation sync). Their headers
+@@ -1259,6 +1267,16 @@
+         snapshot.shrink(0);
+     }
+ 
++    // BUGHUNT round-3 victim-provenance recorder (env: BUGHUNT_PROV=1) —
++    // snapshot every block's version-current mark/NA bitmaps at the end of
++    // marking, BEFORE the NA-version retire below. REVERT AFTER ROUND 3.
++    if (BughuntProv::enabledFlag) [[unlikely]] {
++        BughuntProv::beginCycle();
++        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
++            BughuntProv::recordSnap(handle, m_objectSpace.markingVersion());
++        });
++    }
++
+     m_objectSpace.endMarking();
+     setMutatorShouldBeFenced(Options::forceFencedBarrier());
+ }

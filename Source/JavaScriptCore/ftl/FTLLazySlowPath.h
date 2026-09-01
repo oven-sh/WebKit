@@ -34,6 +34,7 @@
 #include "MacroAssemblerCodeRef.h"
 #include "RegisterSet.h"
 #include "ScratchRegisterAllocator.h"
+#include <atomic>
 #include <wtf/SharedTask.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -84,6 +85,20 @@ public:
 
     MacroAssemblerCodeRef<JITStubRoutinePtrTag> stub() const { return m_stub; }
 
+    // T8 (gilOff lock-free steady state): write-once tagged code pointer of
+    // m_stub, release-published from generate() once the stub is fully
+    // constructed. operationCompileFTLLazySlowPath acquire-loads this BEFORE
+    // touching ftlLazySlowPathGenerationLock so that, after the first
+    // compilation, every subsequent traversal of the deliberately-unpatched
+    // jump (see FTLLazySlowPath.cpp) is one atomic load + tail call, no global
+    // lock. Null until generate() completes; never transitions back to null.
+    // GIL-on never reads or writes this field (flag-off identity).
+    void* stubCodePtrConcurrently() const { return m_stubCodePtr.load(std::memory_order_acquire); }
+    // SCALEBENCH §42 thin-thunk: the gilOff thin prefix of the lazy-slow-path
+    // generation thunk does the same acquire-load IN JIT code (no register
+    // dump, no operation call) — see FTLThunks.cpp.
+    static constexpr ptrdiff_t offsetOfStubCodePtr() { return OBJECT_OFFSETOF(LazySlowPath, m_stubCodePtr); }
+
 private:
     CodeLocationJump<JSInternalPtrTag> m_patchableJump;
     CodeLocationLabel<JSInternalPtrTag> m_done;
@@ -91,6 +106,7 @@ private:
     ScalarRegisterSet m_usedRegisters;
     CallSiteIndex m_callSiteIndex;
     MacroAssemblerCodeRef<JITStubRoutinePtrTag> m_stub;
+    std::atomic<void*> m_stubCodePtr { nullptr }; // T8: see stubCodePtrConcurrently().
     RefPtr<Generator> m_generator;
 };
 

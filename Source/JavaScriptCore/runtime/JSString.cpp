@@ -157,40 +157,88 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobal
         return { this, static_cast<AtomStringImpl*>(string.impl()) };
     };
 
+    // GIL-off: snapshot the fiber word once (see resolveRopeWithFunction).
+    uintptr_t fiberBits = fiberConcurrently();
+    if (vm.gilOff() && !(fiberBits & isRopeInPointer)) [[unlikely]] {
+        // Another mutator already resolved this rope between our caller's
+        // isRope() check and here. Recover through the non-rope toAtomString
+        // path: it atomizes the published impl through the shared atom table
+        // and publishes the atom into the cell (swapToAtomString), so the
+        // returned pointer is owned by the returned scope's owner cell.
+        scope.release();
+        return toAtomString(globalObject);
+    }
+
     if (length() > maxLengthForOnStackResolve) {
         scope.release();
         constexpr bool reportAllocation = true;
-        return convertToAtomString(resolveRopeWithFunction<reportAllocation>(globalObject, [&](Ref<StringImpl>&& newImpl) {
+        const String& result = resolveRopeWithFunction<reportAllocation>(globalObject, [&](Ref<StringImpl>&& newImpl) {
             return AtomStringImpl::add(newImpl.ptr());
-        }));
+        });
+        if (result.impl() && !result.impl()->isAtom()) [[unlikely]] {
+            // GIL-off: lost the publish race to a non-atom resolver (or
+            // early-outed on an already-published non-atom impl). Never cast
+            // the published impl blindly; recover through the non-rope
+            // toAtomString path (atomize + swapToAtomString).
+            ASSERT(vm.gilOff());
+            return toAtomString(globalObject);
+        }
+        return convertToAtomString(result);
     }
 
     AtomString atomString;
-    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
-    if (!isSubstring()) {
-        if (is8Bit()) {
+    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
+    if (!(fiberBits & isSubstringInPointer)) {
+        if (fiberBits & is8BitInPointer) {
             std::array<Latin1Character, maxLengthForOnStackResolve> buffer;
-            resolveRopeInternalNoSubstring(std::span { buffer }.first(length()), stackLimit);
+            resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), std::span { buffer }.first(length()), stackLimit);
             atomString = std::span<const Latin1Character> { buffer }.first(length());
         } else {
             std::array<char16_t, maxLengthForOnStackResolve> buffer;
-            resolveRopeInternalNoSubstring(std::span { buffer }.first(length()), stackLimit);
+            resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), std::span { buffer }.first(length()), stackLimit);
             atomString = std::span<const char16_t> { buffer }.first(length());
         }
-    } else
-        atomString = StringView { substringBase()->valueInternal() }.substring(substringOffset(), length()).toAtomString();
+    } else {
+        // TSAN family rope-stringimpl: read the base's published impl through
+        // the annotated relaxed load (getValueImpl); a plain String read of
+        // the base's m_fiber races a concurrent swapToAtomString republish.
+        atomString = StringView { *substringBase()->getValueImpl() }.substring(substringOffset(), length()).toAtomString();
+    }
 
     size_t sizeToReport = atomString.impl()->hasOneRef() ? atomString.impl()->cost() : 0;
+    StringImpl* expectedImpl = atomString.impl();
     convertToNonRope(String { atomString.releaseImpl() });
+    // TSAN family rope-stringimpl: post-publish read of our own cell goes
+    // through the annotated relaxed load too (the cell can be republished by
+    // a racing resolver/atomizer), snapshotted once so the check and the
+    // return see the same impl. Same single load flag-off.
+    StringImpl* publishedImpl = getValueImpl();
+    if (publishedImpl != expectedImpl) [[unlikely]] {
+        // GIL-off: lost the publish race; the winner may have published a
+        // non-atom impl with identical contents, and the cell does not own
+        // our atom. Recover through the non-rope toAtomString path so the
+        // returned pointer is cell-owned. GIL-on: never taken.
+        ASSERT(vm.gilOff());
+        return toAtomString(globalObject);
+    }
     // If we resolved a string that didn't previously exist, notify the heap that we've grown.
     vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
-    return { this, static_cast<AtomStringImpl*>(valueInternal().impl()) };
+    return { this, static_cast<AtomStringImpl*>(publishedImpl) };
 }
 
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToExistingAtomString(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // GIL-off: snapshot the fiber word once (see resolveRopeWithFunction).
+    uintptr_t fiberBits = fiberConcurrently();
+    if (vm.gilOff() && !(fiberBits & isRopeInPointer)) [[unlikely]] {
+        // Another mutator already resolved this rope; route through the
+        // non-rope path so a returned atom is owned by the cell.
+        scope.release();
+        return toExistingAtomString(globalObject);
+    }
 
     if (length() > maxLengthForOnStackResolve) {
         RefPtr<AtomStringImpl> existingAtomString;
@@ -202,46 +250,85 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToExistingAtomString(
             return WTF::move(newImpl);
         });
         RETURN_IF_EXCEPTION(scope, { });
+        if (vm.gilOff()) [[unlikely]] {
+            // The rope is resolved now whether or not we won the publish race
+            // (and our lookup lambda may not have run at all on a lost race).
+            // Route through the non-rope path: it returns the cell's impl when
+            // that impl is the atom, or looks up and publishes the existing
+            // atom into the cell (swapToAtomString), so the returned pointer
+            // is owned by the returned scope's owner cell -- never a
+            // locally-ref'd atom the cell does not own.
+            return toExistingAtomString(globalObject);
+        }
         return { this, existingAtomString.get() };
     }
 
     RefPtr<AtomStringImpl> existingAtomString;
-    if (!isSubstring()) {
-        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
-        if (is8Bit()) {
+    if (!(fiberBits & isSubstringInPointer)) {
+        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
+        if (fiberBits & is8BitInPointer) {
             std::array<Latin1Character, maxLengthForOnStackResolve> buffer;
-            resolveRopeInternalNoSubstring(std::span { buffer }.first(length()), stackLimit);
+            resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), std::span { buffer }.first(length()), stackLimit);
             existingAtomString = AtomStringImpl::lookUp(std::span { buffer }.first(length()));
         } else {
             std::array<char16_t, maxLengthForOnStackResolve> buffer;
-            resolveRopeInternalNoSubstring(std::span { buffer }.first(length()), stackLimit);
+            resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), std::span { buffer }.first(length()), stackLimit);
             existingAtomString = AtomStringImpl::lookUp(std::span { buffer }.first(length()));
         }
-    } else
-        existingAtomString = StringView { substringBase()->valueInternal() }.substring(substringOffset(), length()).toExistingAtomString().releaseImpl();
+    } else {
+        // TSAN family rope-stringimpl: annotated relaxed read of the base's
+        // published impl (see resolveRopeToAtomString above).
+        existingAtomString = StringView { *substringBase()->getValueImpl() }.substring(substringOffset(), length()).toExistingAtomString().releaseImpl();
+    }
 
     if (existingAtomString)
         convertToNonRope(*existingAtomString);
+    if (vm.gilOff() && !(fiberConcurrently() & isRopeInPointer)) [[unlikely]] {
+        // Resolved -- by us, or by a winner we lost the publish race to (in
+        // which case the cell may hold a non-atom impl that does not own
+        // existingAtomString). Route through the non-rope path (see above).
+        return toExistingAtomString(globalObject);
+    }
     return { this, existingAtomString.get() };
 }
 
 template<bool reportAllocation, typename Function>
 const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobalObjectForOOM, Function&& function) const
 {
-    ASSERT(isRope());
-
     VM& vm = this->vm();
+
+    // GIL-off: snapshot the fiber word once. Multiple mutators can race to
+    // resolve the same rope: after another mutator publishes a resolved impl
+    // into m_fiber, re-reading fiber0()/isSubstring()/is8Bit() would misread
+    // the published StringImpl* as a JSString* and flag bits. All rope-shape
+    // decisions below use this snapshot; the publish itself is serialized and
+    // made idempotent in convertToNonRope. GIL-on / flag-off: the snapshot is
+    // byte-identical to the direct reads it replaces.
+    uintptr_t fiberBits = fiberConcurrently();
+    if (vm.gilOff() && !(fiberBits & isRopeInPointer)) [[unlikely]] {
+        // Another mutator resolved this rope between our caller's isRope()
+        // check and here. Already-resolved is success.
+        return valueInternal();
+    }
+    ASSERT(fiberBits & isRopeInPointer);
+
     if constexpr (validateDFGDoesGC)
         vm.verifyCanGC();
 
-    if (isSubstring()) {
+    if (fiberBits & isSubstringInPointer) {
         ASSERT(!substringBase()->isRope());
-        auto newImpl = substringBase()->valueInternal().substringSharingImpl(substringOffset(), length());
+        // TSAN family rope-stringimpl: snapshot the base's published impl via
+        // the annotated relaxed load; a plain String read of the base's
+        // m_fiber races a concurrent swapToAtomString republish. The local
+        // String costs one extra ref/deref pair on this (cold) resolution
+        // path only; semantics are identical in both flag states.
+        String base { substringBase()->getValueImpl() };
+        auto newImpl = base.substringSharingImpl(substringOffset(), length());
         convertToNonRope(function(newImpl.releaseImpl().releaseNonNull()));
         return valueInternal();
     }
 
-    if (is8Bit()) {
+    if (fiberBits & is8BitInPointer) {
         std::span<Latin1Character> buffer;
         auto newImpl = StringImpl::tryCreateUninitialized(length(), buffer);
         if (!newImpl) {
@@ -250,14 +337,22 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
         }
 
         size_t sizeToReport = newImpl->cost();
-        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
-        resolveRopeInternalNoSubstring(buffer, stackLimit);
-        convertToNonRope(function(newImpl.releaseNonNull()));
-        if constexpr (reportAllocation)
-            vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
+        resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), buffer, stackLimit);
+        String resolvedString = function(newImpl.releaseNonNull());
+        StringImpl* resolvedImpl = resolvedString.impl();
+        convertToNonRope(WTF::move(resolvedString));
+        if constexpr (reportAllocation) {
+            // GIL-off: a lost publish race drops our impl; do not report
+            // memory the cell does not hold. GIL-on: always true. The check
+            // reads the cell through the annotated relaxed load (TSAN family
+            // rope-stringimpl): a racing resolver can republish concurrently.
+            if (getValueImpl() == resolvedImpl)
+                vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+        }
         return valueInternal();
     }
-    
+
     std::span<char16_t> buffer;
     auto newImpl = StringImpl::tryCreateUninitialized(length(), buffer);
     if (!newImpl) {
@@ -266,11 +361,18 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
     }
 
     size_t sizeToReport = newImpl->cost();
-    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
-    resolveRopeInternalNoSubstring(buffer, stackLimit);
-    convertToNonRope(function(newImpl.releaseNonNull()));
-    if constexpr (reportAllocation)
-        vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
+    resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), buffer, stackLimit);
+    String resolvedString = function(newImpl.releaseNonNull());
+    StringImpl* resolvedImpl = resolvedString.impl();
+    convertToNonRope(WTF::move(resolvedString));
+    if constexpr (reportAllocation) {
+        // GIL-off: a lost publish race drops our impl; do not report memory
+        // the cell does not hold. GIL-on: always true. Annotated relaxed read
+        // of the cell (TSAN family rope-stringimpl); see above.
+        if (getValueImpl() == resolvedImpl)
+            vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+    }
     return valueInternal();
 }
 
@@ -374,7 +476,9 @@ void JSRopeString::iterRopeInternalNoSubstring(jsstring_iterator* iter) const
     size_t position = 0;
 
     for (size_t i = 0; i < s_maxInternalRopeLength && fiber(i) && !iter->stop; ++i) {
-        const StringImpl& fiberString = *fiber(i)->valueInternal().impl();
+        // TSAN family rope-stringimpl: annotated relaxed read of the fiber's
+        // published impl (plain String reads race swapToAtomString).
+        const StringImpl& fiberString = *fiber(i)->getValueImpl();
         unsigned length = fiberString.length();
         if (fiberString.is8Bit())
             StringImpl::iterCharacters(iter, position, fiberString.span8().data(), length);
@@ -392,7 +496,9 @@ void JSRopeString::iterRope(jsstring_iterator *iter) const
 
     if (isSubstring()) {
         ASSERT(!substringBase()->isRope());
-        StringImpl *impl = substringBase()->valueInternal().impl();
+        // TSAN family rope-stringimpl: annotated relaxed read of the base's
+        // published impl.
+        StringImpl* impl = substringBase()->getValueImpl();
 
         if (impl->is8Bit()) {
             auto ptr = impl->span8().data() + substringOffset();
@@ -427,8 +533,7 @@ void JSRopeString::iterRopeSlowCase(jsstring_iterator* iter) const
             JSRopeString* currentFiberAsRope = static_cast<JSRopeString*>(currentFiber);
             if (currentFiberAsRope->isSubstring()) {
                 ASSERT(!currentFiberAsRope->substringBase()->isRope());
-                StringImpl* string = static_cast<StringImpl*>(
-                    currentFiberAsRope->substringBase()->valueInternal().impl());
+                StringImpl* string = currentFiberAsRope->substringBase()->getValueImpl();
                 unsigned offset = currentFiberAsRope->substringOffset();
                 unsigned length = currentFiberAsRope->length();
                 position -= length;
@@ -443,7 +548,7 @@ void JSRopeString::iterRopeSlowCase(jsstring_iterator* iter) const
             continue;
         }
 
-        StringImpl* string = static_cast<StringImpl*>(currentFiber->valueInternal().impl());
+        StringImpl* string = currentFiber->getValueImpl();
         unsigned length = string->length();
         position -= length;
         if (string->is8Bit())

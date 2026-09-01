@@ -211,7 +211,7 @@ ALWAYS_INLINE bool JSStringJoiner::append(JSGlobalObject* globalObject, JSValue 
 
 ALWAYS_INLINE void JSStringJoiner::appendNumber(VM& vm, int32_t value)
 {
-    append8Bit(vm.numericStrings.add(value));
+    append8Bit(vm.liveNumericStrings().add(value));
 }
 
 ALWAYS_INLINE void JSStringJoiner::appendNumber(VM& vm, double value)
@@ -219,7 +219,7 @@ ALWAYS_INLINE void JSStringJoiner::appendNumber(VM& vm, double value)
     if (auto int32Value = tryConvertToStrictInt32(value))
         appendNumber(vm, int32Value.value());
     else
-        append8Bit(vm.numericStrings.add(value));
+        append8Bit(vm.liveNumericStrings().add(value));
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

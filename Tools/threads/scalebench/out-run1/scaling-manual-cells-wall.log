@@ -1,0 +1,38 @@
+richards-like N=1 r1: wall=7886ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=1 r2: wall=7827ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=1 r3: wall=7804ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=2 r1: wall=63741ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=2 r2: wall=59481ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=2 r3: wall=54611ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=4 r1: wall=82778ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=4 r2: wall=78347ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=4 r3: wall=77065ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+/bin/bash: line 1: 3209045 Aborted                 timeout 1200 Tools/threads/scalebench/out/jsc-giloff --useJSThreads=1 -e "globalThis.SCALING_THREADS=${n}; globalThis.SCALING_WORK_SCALE=1;" JSTests/threads/scaling/${wl}.js > /tmp/cell.out 2>&1
+richards-like N=8 r1: FAILED rc=134 JSThreads stop-the-world failed to reach a stopped world within 30.000000s. Pending Class-
+richards-like N=8 r2: wall=129224ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+richards-like N=8 r3: wall=126002ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=1 r1: wall=9208ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=1 r2: wall=9266ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=1 r3: wall=9249ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=2 r1: wall=10696ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=2 r2: wall=10878ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=2 r3: wall=11264ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=4 r1: wall=16589ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=4 r2: wall=15780ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=4 r3: wall=17348ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+/bin/bash: line 1: 3253699 Aborted                 timeout 1200 Tools/threads/scalebench/out/jsc-giloff --useJSThreads=1 -e "globalThis.SCALING_THREADS=${n}; globalThis.SCALING_WORK_SCALE=1;" JSTests/threads/scaling/${wl}.js > /tmp/cell.out 2>&1
+string-heavy N=8 r1: FAILED rc=134 
+string-heavy N=8 r2: wall=32072ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+string-heavy N=8 r3: wall=26973ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=1 r1: wall=10702ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=1 r2: wall=10680ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=1 r3: wall=10551ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=2 r1: wall=12884ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=2 r2: wall=13052ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=2 r3: wall=13078ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=4 r1: wall=16466ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=4 r2: wall=16613ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=4 r3: wall=16546ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=8 r1: wall=24880ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=8 r2: wall=26279ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc
+splay-like N=8 r3: wall=26335ms harness:JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exc

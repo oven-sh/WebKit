@@ -1,0 +1,23 @@
+[a5amend-w1] W=8 N=400 nojit #1 PASS
+[a5amend-w1] W=32 N=400 nojit #1 PASS
+[a5amend-w1] W=16 N=400 nojit #2 PASS
+[a5amend-w1] W=16 N=400 nojit #3 PASS
+[a5amend-w1] W=16 N=400 nojit #1 PASS
+[a5amend-w1] round complete; failures: 0
+[a5amend-w2] W=32 N=400 nojit #1 PASS
+[a5amend-w2] W=8 N=400 nojit #1 PASS
+[a5amend-w2] W=16 N=400 nojit #1 PASS
+[a5amend-w2] W=16 N=400 nojit #3 PASS
+[a5amend-w2] W=16 N=400 nojit #2 PASS
+[a5amend-w2] round complete; failures: 0
+[hammer] jiton-giloff-1 PASS checksum=d0639460
+[hammer] jiton-giloff-2 PASS checksum=d0639460
+[hammer] jiton-giloff-3 PASS checksum=d0639460
+[hammer] nojit-giloff-1 PASS checksum=d0639460
+[hammer] nojit-giloff-2 PASS checksum=d0639460
+[hammer] flagoff-1 PASS checksum=d0639460
+[rel] flagoff rc=0 checksum=d0639460 0 mismatches
+[rel] gilon rc=0 checksum=d0639460 0 mismatches
+[rel] giloff-jit rc=0 checksum=d0639460 0 mismatches
+[rel] giloff-nojit rc=0 checksum=d0639460 0 mismatches
+ALLDONE

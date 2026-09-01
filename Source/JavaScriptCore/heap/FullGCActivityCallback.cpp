@@ -40,15 +40,39 @@ FullGCActivityCallback::~FullGCActivityCallback() = default;
 
 void FullGCActivityCallback::doCollection(VM& vm)
 {
+    // T4(c): once the server heap is shared this timer fires again (the
+    // §5.4/I15 blanket dispatch disable was lifted): it runs on the main
+    // client's run-loop thread with the API lock and heap access held.
+    // heap.collect() below routes through collectAsync/collectSync, whose
+    // ISS arms reroute to §10B.1 ticketing / the §10.2 election — no
+    // fire-and-forget collection can result.
     JSC::Heap& heap = vm.heap;
     setDidGCRecently(false);
 
 #if !PLATFORM(IOS_FAMILY) || PLATFORM(MACCATALYST)
-    MonotonicTime startTime = MonotonicTime::now();
-    if (MemoryPressureHandler::singleton().isUnderMemoryPressure() && heap.isPagedOut()) {
-        cancel();
-        heap.increaseLastFullGCLength(MonotonicTime::now() - startTime);
-        return;
+    // T4(c) amendment (audit blocker): the isPagedOut() pressure bail must
+    // NOT run mutator-side once shared. MarkedSpace::isPagedOut() carries
+    // ASSERT(!isSharedServer() || worldIsStoppedForAllClients()) — written
+    // under the pre-T4(c) "never fired once shared" assumption — so a debug
+    // build asserts on the first pressure-gated fire. And the walk is
+    // genuinely racy: BlockDirectory::updatePercentageOfPagedOutPages
+    // iterates the m_blocks Vector lock-free while a sibling client's
+    // addBlock (under MSPL, which this timer thread does not hold) can
+    // append and reallocate the vector spine. Holding heap access only
+    // excludes stop WINDOWS (block frees); it does not exclude MSPL appends
+    // — the earlier comment's frees-are-world-stopped argument did not
+    // cover the resize race the original T8 audit cited when disabling
+    // this path. When shared, skip the bail and collect unconditionally:
+    // worst case is a redundant full GC under memory pressure (and on this
+    // branch's ~13.9GB-RSS profile a full GC under pressure is the desired
+    // outcome anyway). Flag-off this branch is byte-identical.
+    if (!heap.isSharedServer()) [[likely]] {
+        MonotonicTime startTime = MonotonicTime::now();
+        if (MemoryPressureHandler::singleton().isUnderMemoryPressure() && heap.isPagedOut()) {
+            cancel();
+            heap.increaseLastFullGCLength(MonotonicTime::now() - startTime);
+            return;
+        }
     }
 #endif
 

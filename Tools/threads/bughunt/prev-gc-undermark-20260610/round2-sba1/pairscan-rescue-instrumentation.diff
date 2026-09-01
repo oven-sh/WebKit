@@ -1,0 +1,133 @@
+--- /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp	2026-06-10 08:58:03.073403869 +0000
++++ /tmp/Heap.cpp.instrumented	2026-06-10 08:57:59.253403517 +0000
+@@ -1256,6 +1256,130 @@
+                 RELEASE_ASSERT_NOT_REACHED();
+             }
+         }
++        // FIXME(fix-shared-heap-corruption): TEMPORARY round-2 experiment
++        // (SBA-1, "untraced cell / dead butterfly") — strip with the rest of
++        // the instrumentation. Walk every JSCell block, find cells that are
++        // sweep-live WITHOUT a version-current mark bit (leg NA: version-
++        // current newlyAllocated; leg ALLOC: directory allocated bit), and
++        // for each such JSObject with a non-null butterfly check whether the
++        // butterfly auxiliary cell carries ANY liveness bit. A
++        // (cell sweep-live, butterfly dead) pair is the predicted under-
++        // marking shape. JSC_BUGHUNT_PAIRSCAN=1 enables logging;
++        // JSC_BUGHUNT_RESCUE=1 additionally sets the mark bit on each dead
++        // butterfly (causal probe: if the corruption vanishes under rescue,
++        // the pair mechanism is the bug). Conductor-only, world stopped.
++        static const bool pairScanEnabled = !!getenv("JSC_BUGHUNT_PAIRSCAN");
++        static const bool pairRescueEnabled = !!getenv("JSC_BUGHUNT_RESCUE");
++        if (pairScanEnabled || pairRescueEnabled) [[unlikely]] {
++            static unsigned cycleCounter = 0;
++            unsigned cycle = ++cycleCounter;
++            HeapVersion markingVersion = m_objectSpace.markingVersion();
++            const auto& blockSet = m_objectSpace.blocks().set();
++            unsigned pairsNA = 0, pairsAlloc = 0, pairsMarkedOwner = 0, sweepLiveUnmarked = 0, rescued = 0;
++            m_objectSpace.forEachBlock(
++                [&] (MarkedBlock::Handle* handle) {
++                    if (handle->cellKind() != HeapCell::JSCell)
++                        return;
++                    MarkedBlock& block = handle->block();
++                    bool naCurrent = !block.isNewlyAllocatedStale();
++                    bool allocBit = handle->isAllocated();
++                    if (!naCurrent && !allocBit)
++                        return;
++                    bool marksStale = block.areMarksStale(markingVersion);
++                    handle->forEachCell(
++                        [&] (size_t, HeapCell* cell, HeapCell::Kind) -> IterationStatus {
++                            bool ownerMarked = !marksStale && block.isMarkedRaw(cell);
++                            const char* leg = "MARKED";
++                            if (!ownerMarked) {
++                                if (naCurrent && block.isNewlyAllocated(cell))
++                                    leg = "NA";
++                                else if (allocBit)
++                                    leg = "ALLOC";
++                                else
++                                    return IterationStatus::Continue; // genuinely dead, not enumerable as live
++                                sweepLiveUnmarked++;
++                            }
++                            JSCell* jsCell = static_cast<JSCell*>(cell);
++                            bool isObject = jsCell->isObject();
++                            if (!ownerMarked && pairRescueEnabled) {
++                                // Causal probe: force-mark every cell that is
++                                // enumerable as recently-allocated at end of
++                                // marking, so the post-cycle sweep cannot free
++                                // it. PossiblyBlack so later mutator writes
++                                // take the barrier slow path like any old
++                                // object.
++                                Heap::testAndSetMarked(markingVersion, cell);
++                                jsCell->setCellState(CellState::PossiblyBlack);
++                                cell->cellContainer().noteMarked();
++                                rescued++;
++                            }
++                            if (!isObject)
++                                return IterationStatus::Continue;
++                            Butterfly* butterfly = static_cast<JSObject*>(jsCell)->butterfly();
++                            if (!butterfly)
++                                return IterationStatus::Continue;
++                            MarkedBlock* bBlock = MarkedBlock::blockFor(butterfly);
++                            if (!blockSet.contains(bBlock))
++                                return IterationStatus::Continue; // precise/foreign — skip
++                            MarkedBlock::Handle& bHandle = bBlock->handle();
++                            HeapCell* bCell = static_cast<HeapCell*>(bHandle.cellAlign(butterfly));
++                            // Sweep-time semantics: after MarkedSpace::endMarking()
++                            // retires the newlyAllocated version and
++                            // BlockDirectory::endMarking() clears the allocated
++                            // bits, the ONLY thing that keeps a cell alive at the
++                            // next sweep is a version-current mark bit.
++                            bool bMarked = !bBlock->areMarksStale(markingVersion) && bBlock->isMarkedRaw(bCell);
++                            bool bNA = !bBlock->isNewlyAllocatedStale() && bBlock->isNewlyAllocated(bCell);
++                            bool bAlloc = bHandle.isAllocated();
++                            if (bMarked)
++                                return IterationStatus::Continue; // butterfly survives the sweep — fine
++                            if (ownerMarked) {
++                                // SBA-1 refuteIf channel: a TRACED owner whose
++                                // butterfly will still be swept.
++                                pairsMarkedOwner++;
++                                if (pairScanEnabled && pairsMarkedOwner <= 40) {
++                                    dataLogLn(
++                                        "BUGHUNT-MB-PAIR cycle=", cycle,
++                                        " cell=", RawPointer(cell),
++                                        " sid=", jsCell->structureID().bits(),
++                                        " type=", static_cast<unsigned>(jsCell->type()),
++                                        " butterfly=", RawPointer(butterfly),
++                                        " bCell=", RawPointer(bCell),
++                                        " bCellSize=", bHandle.directory()->cellSize(),
++                                        " bNA=", bNA, " bAlloc=", bAlloc);
++                                }
++                            } else {
++                                unsigned pairs = ++(*leg == 'N' ? pairsNA : pairsAlloc);
++                                UNUSED_PARAM(pairs);
++                                if (pairScanEnabled && (pairsNA + pairsAlloc) <= 40) {
++                                    bool inSnapshot = snapshot.contains(cell);
++                                    dataLogLn(
++                                        "BUGHUNT-PAIR cycle=", cycle, " leg=", leg,
++                                        " cell=", RawPointer(cell),
++                                        " sid=", jsCell->structureID().bits(),
++                                        " type=", static_cast<unsigned>(jsCell->type()),
++                                        " butterfly=", RawPointer(butterfly),
++                                        " bCell=", RawPointer(bCell),
++                                        " bCellSize=", bHandle.directory()->cellSize(),
++                                        " bNA=", bNA, " bAlloc=", bAlloc,
++                                        " inSnapshot=", inSnapshot);
++                                }
++                            }
++                            if (pairRescueEnabled) {
++                                Heap::testAndSetMarked(markingVersion, bCell);
++                                bCell->cellContainer().noteMarked();
++                                rescued++;
++                            }
++                            return IterationStatus::Continue;
++                        });
++                });
++            dataLogLn(
++                "BUGHUNT-CYCLE cycle=", cycle, " scope=", *m_collectionScope,
++                " sweepLiveUnmarked=", sweepLiveUnmarked,
++                " pairsNA=", pairsNA, " pairsALLOC=", pairsAlloc,
++                " pairsMARKEDOWNER=", pairsMarkedOwner,
++                " rescued=", rescued, " snapshotRoots=", snapshot.size());
++        }
+         snapshot.shrink(0);
+     }
+ 

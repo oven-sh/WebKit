@@ -28,8 +28,12 @@
 #include "Identifier.h"
 #include "JSString.h"
 #include "KeyAtomStringCache.h"
+#include "Options.h"
 #include "SmallStrings.h"
 #include "VM.h"
+#include <atomic>
+#include <stdlib.h>
+#include <wtf/DataLog.h>
 
 namespace JSC {
 
@@ -47,15 +51,22 @@ ALWAYS_INLINE JSString* KeyAtomStringCache::make(VM& vm, Buffer& buffer, const F
 
     ASSERT(buffer.characters.size() <= maxStringLengthForCache);
     auto& slot = m_cache[buffer.hash % capacity];
-    if (slot) {
-        auto* impl = slot->tryGetValueImpl();
-        if (impl->hash() == buffer.hash && equal(impl, buffer.characters))
-            return slot;
+    // SNAPSHOT the slot once. The slot is shared by all lites under GIL-off
+    // and ping-pongs between same-bucket atoms (e.g. "p8"/"p17" both hash to
+    // bucket 357 of 512). We verify the snapshot and return the SAME
+    // snapshot; re-reading the slot after verification can return a
+    // different, also-valid atom and silently resolve the wrong property key
+    // (UNGIL Race C; see KeyAtomStringCache.h).
+    if (JSString* cached = slot.load(std::memory_order_acquire)) {
+        if (auto* impl = cached->tryGetValueImpl()) {
+            if (impl->hash() == buffer.hash && equal(impl, buffer.characters))
+                return cached;
+        }
     }
 
     JSString* result = func(vm, buffer);
     if (result) [[likely]]
-        slot = result;
+        slot.store(result, std::memory_order_release);
     return result;
 }
 

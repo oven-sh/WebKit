@@ -1,0 +1,14 @@
+scalebench: === preflight ===
+scalebench: pinned N_BASE from SPEC.md: 28000
+scalebench: building Bench.java -> /root/WebKit/Tools/threads/scalebench/out
+scalebench: building go/main.go -> /root/WebKit/Tools/threads/scalebench/out/bench-go
+scalebench: go:   go version go1.24.13 linux/amd64
+scalebench: java: openjdk version "21.0.10" 2026-01-20 LTS
+scalebench: jsc:  /root/WebKit/WebKitBuild/Release/bin/jsc [mtime+size: 1781062449 378634952] flags: --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 --useSharedAtomStringTable=1 --useSharedGCHeap=1 --useThreadGILOffUnsafe=1
+scalebench: smoke: W in {1 4} SCALEBENCH_SMOKE=1 across all three languages
+scalebench: smoke java W=1: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke go W=1: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke js W=1: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke java W=4: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: smoke go W=4: f9f349a1fc92a0d0|296555|206f01740e982aff|cd61e4f189156f96|c2b5b09ff17a90c1
+scalebench: FATAL: smoke run failed for js W=4 (see /root/WebKit/Tools/threads/scalebench/out/smoke-js-w4.err)

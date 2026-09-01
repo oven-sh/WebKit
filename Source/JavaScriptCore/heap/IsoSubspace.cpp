@@ -38,7 +38,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(IsoSubspace);
 
 IsoSubspace::IsoSubspace(CString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierPreciseCells, std::unique_ptr<AlignedMemoryAllocator>&& allocator)
     : Subspace(SubspaceKind::IsoSubspace, name, heap)
-    , m_directory(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
+    , m_directory(heap, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
     , m_allocator(allocator ? WTF::move(allocator) : makeUnique<FastMallocAlignedMemoryAllocator>())
 {
     m_remainingLowerTierPreciseCount = numberOfLowerTierPreciseCells;
@@ -82,6 +82,39 @@ void IsoSubspace::didBeginSweepingToFreeList(MarkedBlock::Handle* block)
 
 void* IsoSubspace::tryAllocateLowerTierPrecise(size_t size)
 {
+    // SharedGC (§5.2/§5.6/I16): mutates the precise registry and the
+    // lower-tier free list; when the server is shared this runs inside
+    // LocalAllocator::allocateSlowCase's MSPL section (the sole mutator-path
+    // caller) — assert rather than re-lock (MSPL is not recursive).
+    // T7-mspl-per-directory: the caller's MSPL token may now be a
+    // per-directory STRIPE. The per-iso-subspace state below
+    // (m_lowerTierPreciseFreeList, m_remainingLowerTierPreciseCount,
+    // Subspace::m_preciseAllocations) is single-directory — two clients
+    // refilling the SAME iso directory serialize on m_directory.m_refillLock,
+    // and refills of OTHER directories never reach this subspace's state. The
+    // CROSS-directory MarkedSpace precise registry
+    // (registerPreciseAllocation: m_preciseAllocations vector +
+    // m_preciseAllocationSet + indexInSpace stamps) IS shared, so leaf-lock
+    // it under Heap::m_markedSpaceRegistryLock (rank 7r). The other precise
+    // registrars (CompleteSubspace::tryAllocateSlow*, PreciseSubspace,
+    // reallocatePreciseAllocationNonVirtual, enablePreciseAllocationTracking)
+    // all hold the EXCLUSIVE facade side, which excludes every stripe and so
+    // excludes us — the registry lock here only contends with sibling
+    // stripes' lower-tier-precise (rare: bounded by
+    // numberOfLowerTierPreciseCells per subspace, then never again) and with
+    // didAddBlock / didAllocateInBlock. Flag-off / !isSharedServer(): not
+    // taken.
+    ASSERT(!m_space.heap().isSharedServer() || m_space.heap().mutatorSlowPathLock().isHeld() || m_space.heap().worldIsStoppedForAllClients());
+
+    if (m_space.heap().isSharedServer()) [[unlikely]] {
+        Locker locker { m_space.heap().markedSpaceRegistryLock() };
+        return tryAllocateLowerTierPreciseImpl(size);
+    }
+    return tryAllocateLowerTierPreciseImpl(size);
+}
+
+void* IsoSubspace::tryAllocateLowerTierPreciseImpl(size_t size)
+{
     auto revive = [&] (PreciseAllocation* allocation) {
         // Lower-tier cells never report capacity. This is intentional since it will not be freed until VM dies.
         // Whether we will do GC or not does not affect on the used memory by lower-tier cells. So we should not
@@ -121,9 +154,35 @@ void IsoSubspace::destroyLowerTierPreciseFreeList()
 
 namespace GCClient {
 
+// SharedGC (T9) audit vs the GCClient::Heap::vm() standalone assert
+// (HeapInlines.h): GCClient::IsoSubspace never touches its owning client's
+// vm() — this ctor binds only the server-side BlockDirectory, allocate(VM&)
+// is the VM-coupled entry (a VM exists by definition there), and
+// allocateForClient() (§12.1 seam, IsoSubspaceInlines.h) reaches the server
+// via client.server(). Standalone (markStandalone()) clients can therefore
+// materialize and use iso LocalAllocators without tripping the vm()
+// RELEASE_ASSERT; the §10A.1 m_perDirectory registration (T4) is likewise
+// vm()-free.
 IsoSubspace::IsoSubspace(JSC::IsoSubspace& server)
     : m_localAllocator(&server.m_directory)
 {
+}
+
+unsigned IsoSubspace::tlcSlot() const
+{
+    // H-ISO-TLCSLOT: server reach-through. m_localAllocator.directory() is the
+    // server's single BlockDirectory (bound at ctor above); its subspace() is
+    // the server JSC::IsoSubspace. The slot is write-once (stamped by the
+    // first GCThreadLocalCache ctor, serially during VM construction) and read
+    // here only at JIT compile time behind a vm.gilOff() codegen gate, so a
+    // plain load suffices — the first client's stamp happens-before any
+    // concurrent compile (compilation requires an entered VM; entry implies
+    // the stamping client exists). Subspaces never enumerated by
+    // FOR_EACH_JSC_ISO_SUBSPACE return invalidTlcIndex and the caller
+    // degrades to the legacy null-bake.
+    Subspace* server = m_localAllocator.directory().subspace();
+    ASSERT(server && server->isIsoSubspace());
+    return static_cast<const JSC::IsoSubspace*>(server)->tlcSlot();
 }
 
 } // namespace GCClient

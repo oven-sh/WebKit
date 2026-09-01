@@ -1,0 +1,44 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==993732==ERROR: AddressSanitizer: SEGV on unknown address (pc 0x55e2c1588c8c bp 0x7f68951b26f0 sp 0x7f68951b26a0 T2)
+==993732==The signal is caused by a READ memory access.
+==993732==Hint: this fault was caused by a dereference of a high value address (see register values below).  Disassemble the provided pc to learn which register was used.
+    #0 0x55e2c1588c8c in std::__atomic_base<unsigned int>::fetch_add(unsigned int, std::memory_order) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/atomic_base.h:631:16
+    #1 0x55e2c1588c8c in WTF::DeferrableRefCountedBase::ref() const /root/WebKit/WebKitBuild/Fuzz/WTF/Headers/wtf/DeferrableRefCounted.h:57:20
+    #2 0x55e2c1588c8c in WTF::DefaultRefDerefTraits<JSC::ArrayBuffer>::refIfNotNull(JSC::ArrayBuffer*) /root/WebKit/WebKitBuild/Fuzz/WTF/Headers/wtf/Ref.h:54:18
+    #3 0x55e2c1588c8c in WTF::RefPtr<JSC::ArrayBuffer, WTF::RawPtrTraits<JSC::ArrayBuffer>, WTF::DefaultRefDerefTraits<JSC::ArrayBuffer>>::RefPtr(JSC::ArrayBuffer*) /root/WebKit/WebKitBuild/Fuzz/WTF/Headers/wtf/RefPtr.h:96:42
+    #4 0x55e2c1588c8c in bool JSC::isArrayBufferViewOutOfBounds<JSC::IdempotentArrayBufferByteLengthGetter<(std::memory_order)5>>(JSC::JSArrayBufferView*, JSC::IdempotentArrayBufferByteLengthGetter<(std::memory_order)5>&) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlines.h:72:34
+    #5 0x55e2c428e81a in bool JSC::isIntegerIndexedObjectOutOfBounds<JSC::IdempotentArrayBufferByteLengthGetter<(std::memory_order)5>>(JSC::JSArrayBufferView*, JSC::IdempotentArrayBufferByteLengthGetter<(std::memory_order)5>&) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlines.h:90:12
+    #6 0x55e2c428e81a in JSC::validateTypedArray(JSC::JSGlobalObject*, JSC::JSArrayBufferView*) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlines.h:139:9
+    #7 0x55e2c428e81a in JSC::validateTypedArray(JSC::JSGlobalObject*, JSC::JSValue) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlines.h:162:5
+    #8 0x55e2c428ddcb in JSC::JSArrayBufferView* JSC::(anonymous namespace)::validateIntegerTypedArray<(JSC::(anonymous namespace)::TypedArrayOperationMode)0>(JSC::JSGlobalObject*, JSC::JSValue) /root/WebKit/Source/JavaScriptCore/runtime/AtomicsObject.cpp:201:37
+    #9 0x55e2c42424d3 in long JSC::(anonymous namespace)::atomicReadModifyWrite<JSC::(anonymous namespace)::AndFunc>(JSC::JSGlobalObject*, JSC::VM&, JSC::JSValue const*, JSC::(anonymous namespace)::AndFunc const&) /root/WebKit/Source/JavaScriptCore/runtime/AtomicsObject.cpp:251:41
+    #10 0x55e2c422f079 in long JSC::(anonymous namespace)::atomicReadModifyWrite<JSC::(anonymous namespace)::AndFunc>(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::(anonymous namespace)::AndFunc const&) /root/WebKit/Source/JavaScriptCore/runtime/AtomicsObject.cpp:287:12
+    #11 0x55e2c422f079 in JSC::atomicsFuncAnd(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/AtomicsObject.cpp:484:12
+    #12 0x7b684ba0c037  (<unknown module>)
+
+==993732==Register values:
+rax = 0x17d7d7d7d7d7d7d7  rbx = 0x00007c6894be26c8  rcx = 0x0000000000000000  rdx = 0x0000000000000001  
+rdi = 0x000055e2ca654f74  rsi = 0x00007f68951b2790  rbp = 0x00007f68951b26f0  rsp = 0x00007f68951b26a0  
+ r8 = 0x0000000000000000   r9 = 0x0000000000000000  r10 = 0xffffffffffffffff  r11 = 0x0000000000000000  
+r12 = 0x00007c6894be26f0  r13 = 0xbebebebebebebebe  r14 = 0x00000f8d1297c4de  r15 = 0x00007f68951b2790  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /root/WebKit/WebKitBuild/Fuzz/WTF/Headers/wtf/DeferrableRefCounted.h:57:20 in WTF::DeferrableRefCountedBase::ref() const
+Thread T2 (JS Thread) created by T0 here:
+    #0 0x55e2c14d90d1 in pthread_create /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:250:3
+    #1 0x55e2c78dc789 in WTF::Thread::establishHandle(WTF::Thread::NewThreadContext&, WTF::StackAllocationSpecification, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy) /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:354:17
+    #2 0x55e2c778d003 in WTF::Thread::create(WTF::ASCIILiteral, WTF::Function<void ()>&&, WTF::ThreadType, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy, WTF::StackAllocationSpecification) /root/WebKit/Source/WTF/wtf/Threading.cpp:330:32
+    #3 0x55e2c568bd67 in JSC::constructThread(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:475:5
+    #4 0x7b684ba0c0f7  (<unknown module>)
+    #5 0x55e2c61c8aa6 in llint_op_construct LowLevelInterpreter.cpp
+    #6 0x55e2c61a519a in llint_call_javascript LowLevelInterpreter.cpp
+    #7 0x55e2c363d0ba in JSC::Interpreter::executeProgram(JSC::SourceCode const&, JSC::JSGlobalObject*, JSC::JSObject*) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:1258:28
+    #8 0x55e2c43a3e83 in JSC::evaluate(JSC::JSGlobalObject*, JSC::SourceCode const&, JSC::JSValue, WTF::NakedPtr<JSC::Exception>&) /root/WebKit/Source/JavaScriptCore/runtime/Completion.cpp:145:37
+    #9 0x55e2c1543bb1 in runWithOptions(GlobalObject*, CommandLine&, bool&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:3957:35
+    #10 0x55e2c1543bb1 in jscmain(int, char**)::$_0::operator()(JSC::VM&, GlobalObject*, bool&) const /root/WebKit/Source/JavaScriptCore/jsc.cpp:4686:13
+    #11 0x55e2c1543bb1 in int runJSC<jscmain(int, char**)::$_0>(CommandLine const&, bool, jscmain(int, char**)::$_0 const&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4472:13
+    #12 0x55e2c1543bb1 in jscmain(int, char**) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4679:18
+    #13 0x55e2c154173c in main /root/WebKit/Source/JavaScriptCore/jsc.cpp:3715:15
+    #14 0x7f689582a60f in __libc_start_call_main (/lib64/libc.so.6+0x2a60f) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+
+==993732==ABORTING

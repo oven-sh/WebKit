@@ -109,7 +109,14 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
         return { };
     }
     ExecutableBase* executable = targetFunction->executable();
-    if (executable->hasJITCodeForCall()) {
+    // AB17d (ANNEX CBI item 3, amended): gilOff-process this priming is a
+    // pure no-op (entrypointFor never writes the lazy arity mirror under the
+    // process gate — see ExecutableBase.h), and the unlocked
+    // hasJITCodeForCall() gate is a check-then-act against a concurrent
+    // installCode retraction. Skip it; the call below derives a matched pair
+    // through the CodeBlock snapshot in the call slow path. Flag-off: one
+    // predicted-false byte test, behavior unchanged.
+    if (!g_jscConfig.gilOffProcess && executable->hasJITCodeForCall()) [[likely]] {
         // Force the executable to cache its arity entrypoint.
         executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
     }

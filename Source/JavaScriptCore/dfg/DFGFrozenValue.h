@@ -61,7 +61,27 @@ public:
         ASSERT(!value || !value.isCell() || value.asCell()->classInfo() == structure->classInfoForCells());
         ASSERT(!!structure || (strength == WeakValue));
     }
-    
+
+    // SPEC-objectmodel M5/M7 (threads): for callers that already validated a
+    // {cell, Structure} snapshot via structureID().decontaminate() on a
+    // compiler thread (DFG::AbstractValue::mergeOSREntryValue). The plain
+    // ctor's classInfo ASSERT re-decodes the racy cell header — a mutator
+    // transition (M8 transiently-nuked StructureID) or a cell recycle landing
+    // between the caller's validation and that re-decode reproduces exactly
+    // the decontaminate-assert / garbage-Structure failure the validation
+    // exists to prevent. This ctor performs NO second header decode: every
+    // Structure-derived fact comes from the caller's snapshot.
+    enum ValidatedStructureTag { ValidatedStructure };
+    FrozenValue(JSValue value, Structure* structure, ValueStrength strength, ValidatedStructureTag)
+        : m_value(value)
+        , m_structure(structure)
+        , m_strength(strength)
+    {
+        ASSERT((!!value && value.isCell()) == !!structure);
+        ASSERT(!!structure || (strength == WeakValue));
+    }
+
+
     static FrozenValue* NODELETE emptySingleton();
     
     bool operator!() const { return !m_value; }

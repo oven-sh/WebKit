@@ -55,8 +55,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 inline JSCell::JSCell(CreatingEarlyCellTag)
-    : m_cellState(CellState::DefinitelyWhite)
 {
+    // V7 (TSAN, cell-header family): ctor header init can race with foreign
+    // cellHeaderConcurrentLoad readers on a recycled cell (the cell address
+    // was previously published; stale-header readers re-dispatch per OM
+    // §3.0/GT#2). Store relaxed so the pair is atomic/atomic under TSAN;
+    // non-TSAN this is the identical plain store the init-list produced.
+    cellHeaderConcurrentStore(m_cellState, CellState::DefinitelyWhite);
     ASSERT(!isCompilationThread());
 }
 
@@ -82,11 +87,36 @@ inline JSCell::JSCell(VM&, Structure* structure)
 
 // This constructor should not be used directly. Exceptions are for quite few well-defined builtin objects, e.g. JSString, empty JSFinalObject etc.
 // Structure must be kept alive somehow (e.g. by JSGlobalObject, or ensureStillAliveHere).
+#if TSAN_ENABLED && USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+ALWAYS_INLINE JSCell::JSCell(CreatingWellDefinedBuiltinCellTag, StructureID structureID, uint32_t blob)
+{
+    // V7 (TSAN, cell-header family): on a recycled cell this init races with
+    // foreign cellHeaderConcurrentLoad readers holding a stale reference
+    // (blessed reader side, OM §3.0/GT#2 — stale headers re-dispatch). Make
+    // the writer side atomic too: assemble the full 8-byte header
+    // {m_structureID, m_blob} and publish it with a single 64-bit relaxed
+    // store. TSAN-build-only path; the non-TSAN ctor below is the original
+    // member-init-list (zero codegen delta flag-off).
+    //
+    // Recorded residual: m_structureID is omitted from the mem-init-list, so
+    // its NSDMI default-init still emits a plain 4-byte zero store before
+    // this atomic store. It is dead (unconditionally overwritten by the
+    // covering atomic store) and DSE runs before the TSan instrumentation
+    // pass, so it is expected to vanish; if ctor frames persist in the next
+    // snapshot, that store is the cause and StructureID needs a no-init tag
+    // constructor (next wave).
+    static_assert(OBJECT_OFFSETOF(JSCell, m_structureID) + sizeof(StructureID) == OBJECT_OFFSETOF(JSCell, m_blob));
+    static_assert(sizeof(StructureID) == sizeof(uint32_t));
+    uint64_t header = static_cast<uint64_t>(structureID.bits()) | (static_cast<uint64_t>(blob) << 32);
+    __atomic_store_n(reinterpret_cast<uint64_t*>(&m_structureID), header, __ATOMIC_RELAXED);
+}
+#else
 ALWAYS_INLINE JSCell::JSCell(CreatingWellDefinedBuiltinCellTag, StructureID structureID, uint32_t blob)
     : m_structureID(structureID)
     , m_blob(blob)
 {
 }
+#endif
 
 // finishCreation() marks the end of the cell's construction: after this the cell pointer may escape.
 // Between allocateCell() and here there must be no safepoint (whose conservative stack scan would
@@ -114,10 +144,12 @@ inline void JSCell::finishCreation(VM& vm, Structure* structure, CreatingEarlyCe
     vm.setInitializingObjectClass(0);
     if (structure) {
 #endif
-        m_structureID = structure->id();
-        m_indexingTypeAndMisc = structure->indexingModeIncludingHistory();
-        m_type = structure->typeInfo().type();
-        m_flags = structure->typeInfo().inlineTypeFlags();
+        // V7 (TSAN, cell-header family): relaxed header stores pairing with
+        // cellHeaderConcurrentLoad readers; plain stores non-TSAN.
+        cellHeaderConcurrentStore(m_structureID, structure->id());
+        cellHeaderConcurrentStore(m_indexingTypeAndMisc, structure->indexingModeIncludingHistory());
+        cellHeaderConcurrentStore(m_type, structure->typeInfo().type());
+        cellHeaderConcurrentStore(m_flags, structure->typeInfo().inlineTypeFlags());
 #if ENABLE(GC_VALIDATION)
     }
 #else
@@ -145,9 +177,71 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS_WITH_MODIFIER(inline, JSCell);
 template<typename Type>
 inline Allocator allocatorForConcurrently(VM& vm, size_t allocationSize, AllocatorForMode mode)
 {
+    // IT-9 consumer (SPEC-ungil §B / I4, JIT-codegen leg; see
+    // Heap::allocationClientForJITCodegen's declaration comment, Heap.h):
+    // this is the single funnel every JIT emitter bakes a
+    // JITAllocator::constant from (DFG createOSREntries/NewObject/MakeRope,
+    // FTL allocateObject/MakeRope, AssemblyHelpers emitAllocateJSObject
+    // templates). GIL-off there is NO client whose LocalAllocator may be
+    // baked into an artifact: the artifact is executed by EVERY lite of the
+    // VM, and a baked per-client iso LocalAllocator makes N threads pop ONE
+    // FreeList unlocked (observed: JIT inline-allocation segfault under
+    // races/counter-lock.js — scrambled-head pop returned null past the
+    // empty check). CompleteSubspace already returns an empty Allocator
+    // under useSharedGCHeap (§5.5 server arrays never populated); this gate
+    // extends the same rule to the per-client ISO subspaces. Baking an
+    // empty Allocator makes every inline allocation take the slow path,
+    // which re-dispatches per-thread through allocationClientForCurrentThread
+    // at run time. Interim until U-T7 §B.4 item (1) (lite-relative TLC/iso
+    // emission) lands. GIL-on/flag-off: one predicted-false compiler-side
+    // branch; baked artifacts are byte-identical.
+    if (vm.gilOff()) [[unlikely]]
+        return { };
     if (auto* subspace = subspaceForConcurrently<Type>(vm))
         return subspace->allocatorFor(allocationSize, mode);
     return { };
+}
+
+// H-VMLITE-TLCPTR (SPEC-heap §5.3/§B.4; GILOFF-TAX #1/#2): resolve the
+// per-thread TLC flat-table SLOT a JIT inline-allocate emitter bakes for
+// `allocationSize` in `subspace`. tlcIndexBase is per-subspace WRITE-ONCE
+// (under directoryLock), so the slot is a process-wide constant once
+// non-nullopt; the per-thread part is the lite-relative
+// `tlcTable[slot * sizeof(Allocator)]` load the emitter generates against the
+// VMLite mirror (offsetOfTlcTable / offsetOfTlcTableBound). Returns nullopt
+// for: iso subspaces (never enter m_table — m_perDirectory lookup-only,
+// §5.3); a subspace whose tlcIndexBase has not been reserved yet (first
+// directory not created — the runtime slow path will reserve it, and a later
+// recompile will see it); sizes past largeCutoff (precise path). GIL-off
+// callers only (the call is reached through a vm.gilOff() codegen gate, so
+// flag-off emission never evaluates it — flag-off byte-identity).
+inline std::optional<unsigned> tlcSlotForSubspace(Subspace* subspace, size_t allocationSize)
+{
+    if (!subspace || subspace->isIsoSubspace())
+        return std::nullopt;
+    if (allocationSize > MarkedSpace::largeCutoff)
+        return std::nullopt;
+    unsigned base = static_cast<CompleteSubspace*>(subspace)->tlcIndexBase();
+    if (base == BlockDirectory::invalidTlcIndex)
+        return std::nullopt;
+    return base + static_cast<unsigned>(MarkedSpace::sizeClassToIndex(allocationSize));
+}
+
+template<typename Type>
+inline std::optional<unsigned> tlcSlotForConcurrently(VM& vm, size_t allocationSize)
+{
+    auto* subspace = subspaceForConcurrently<Type>(vm);
+    // subspaceForConcurrently<Type> may yield CompleteSubspace*, IsoSubspace*,
+    // or GCClient::IsoSubspace* (NOT a JSC::Subspace) — the latter is the
+    // per-client iso allocator the IT-9 comment above forbids baking; it is
+    // never table-addressable.
+    if constexpr (std::is_convertible_v<decltype(subspace), Subspace*>)
+        return tlcSlotForSubspace(subspace, allocationSize);
+    else {
+        UNUSED_PARAM(subspace);
+        UNUSED_PARAM(allocationSize);
+        return std::nullopt;
+    }
 }
 
 template<typename T, AllocationFailureMode failureMode>
@@ -195,6 +289,39 @@ void* tryAllocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)
 {
     return tryAllocateCellHelper<T, AllocationFailureMode::ReturnNull>(vm, size, deferralContext);
 }
+
+// H-CALLSITE-LASTSIZE-LA: WITHDRAWN (amender, post-refute). The mechanism is
+// strictly dominated by H-TLS-TABLE already in this tree
+// (CompleteSubspaceInlines.h): that change collapses the identical 3-hop
+// (allocationClientForCurrentThread -> allocatorForSizeStep -> allocate) to
+// two IE-TLS loads + one indexed load for EVERY CompleteSubspace::allocate
+// call — a strict superset of the call sites this routed (JSCellButterfly,
+// JSLexicalEnvironment, 5 Butterfly aux funnels all reach
+// CompleteSubspace::allocate via tryAllocateCellHelper /
+// vm.auxiliarySpace().allocate). The "subspace disambiguation" premise was
+// wrong: H-TLS-TABLE keys on per-subspace tlcIndexBase(), so cellSpace sz=64
+// and auxiliarySpace sz=64 resolve to distinct table slots. Against the
+// combined tree the marginal hit-path win was {sizeStep TLS + compare} vs
+// {tlcIndexBase load + bound IE-TLS + table[slot]}: a few cycles/cell, not
+// the ~250ms attributed. Correctness defects that would survive amendment:
+// (a) per-callsite static thread_local has NO invalidation hook at
+// setCurrentThreadClient (A36C carrier swap / attach-detach,
+// GCThreadLocalCache.cpp) — a same-OS-thread client swap leaves a stale
+// LocalAllocator* → wrong-client pop / UAF after the prior client's
+// GCThreadLocalCache teardown; adding a client-generation guard makes the hit
+// path 3 TLS loads + 2 compares, worse than H-TLS-TABLE's IE-TLS path;
+// (b) function-local static thread_local in an ALWAYS_INLINE template gets
+// COMDAT/weak linkage with no tls_model attribute — risk of general-dynamic
+// __tls_get_addr per allocation (the M2-alloc-tax-residual failure mode
+// Heap.h documents), i.e. SLOWER than the path it replaces; (c) the hit path
+// dropped the I2 hasHeapAccess() tripwire that H-TLS-TABLE was already
+// required to restore (no-weakened-asserts gate). IsoSubspace types
+// (JSRopeString 1.37%, JSArray/JSString/JSFunction 0.53% of the §41 T1
+// bucket) were structurally unreachable regardless. No amendment yields a
+// mechanism that independently removes T1 tax not already removed by
+// H-TLS-TABLE; the routed call sites are reverted to their unmodified
+// allocateCell / vm.auxiliarySpace().allocate forms so flag-off is
+// byte-identical and GIL-off takes the H-TLS-TABLE fast path.
 
 // FIXME: Consider making getCallData concurrency-safe once NPAPI support is removed.
 // https://bugs.webkit.org/show_bug.cgi?id=215801
@@ -249,14 +376,19 @@ ALWAYS_INLINE void JSCell::setStructure(VM& vm, Structure* structure)
     ASSERT(!this->structure()
         || this->structure()->transitionWatchpointSetHasBeenInvalidated()
         || structure->id().decode() == structure);
-    m_structureID = structure->id();
-    m_flags = TypeInfo::mergeInlineTypeFlags(structure->typeInfo().inlineTypeFlags(), m_flags);
-    m_type = structure->typeInfo().type();
+    // V7 (TSAN, cell-header family): header-byte writers store relaxed so
+    // they pair with the (blessed, OM §3.0/GT#2) cellHeaderConcurrentLoad
+    // readers; identical plain stores non-TSAN. The m_indexingTypeAndMisc
+    // reads feeding the CAS loop below load relaxed for the same reason —
+    // the CAS itself was already atomic.
+    cellHeaderConcurrentStore(m_structureID, structure->id());
+    cellHeaderConcurrentStore(m_flags, TypeInfo::mergeInlineTypeFlags(structure->typeInfo().inlineTypeFlags(), cellHeaderConcurrentLoad(m_flags)));
+    cellHeaderConcurrentStore(m_type, structure->typeInfo().type());
     IndexingType newIndexingType = structure->indexingModeIncludingHistory();
-    if (m_indexingTypeAndMisc != newIndexingType) {
+    if (cellHeaderConcurrentLoad(m_indexingTypeAndMisc) != newIndexingType) {
         ASSERT(!(newIndexingType & ~AllArrayTypesAndHistory));
         for (;;) {
-            IndexingType oldValue = m_indexingTypeAndMisc;
+            IndexingType oldValue = cellHeaderConcurrentLoad(m_indexingTypeAndMisc);
             IndexingType newValue = (oldValue & ~AllArrayTypesAndHistory) | structure->indexingModeIncludingHistory();
             if (WTF::atomicCompareExchangeWeakRelaxed(&m_indexingTypeAndMisc, oldValue, newValue))
                 break;
@@ -275,6 +407,13 @@ inline const MethodTable* JSCell::methodTable() const
     return &structure->classInfoForCells()->methodTable;
 }
 
+// SPEC-objectmodel Task 2 audit note (M5/M7): JSCell::structure() masks the
+// StructureID nuke bit before decoding (see JSCell.h — StructureID::decode()
+// decontaminates, and the contract is now explicit there), while structureID()
+// stays RAW for GC didRace/isNuked tests. Offset-bearing reads like
+// fastGetOwnProperty below are M7/I24-conforming because the out-of-line leg of
+// JSObject::locationForOffset() performs the §Q dispatch internally
+// (M7(d) loadLoadFence + I33 bound) when Options::useJSThreads() is on.
 ALWAYS_INLINE JSValue JSCell::fastGetOwnProperty(VM& vm, Structure& structure, PropertyName name)
 {
     ASSERT(canUseFastGetOwnProperty(structure));
@@ -345,6 +484,30 @@ inline void JSCell::setPerCellBit(bool value)
 {
     if (value == perCellBit())
         return;
+
+#if USE(JSVALUE64)
+    // SPEC-objectmodel §3.0 (review round 4): flag-on, m_flags' per-cell-bit
+    // lane is one of the header's VOLATILE lanes (cellHeaderVolatileMask,
+    // ConcurrentButterfly.h) - it can be mutated with no cell lock while a
+    // transition's header CAS/DCAS is in flight, and a plain |=/&= RMW here
+    // could both (a) write back a stale flags byte that undoes a concurrent
+    // publication's mergeInlineTypeFlags store, and (b) lose this flip to a
+    // racing header CAS. Byte-sized CAS closes both directions: the transition
+    // side CAS-merges this lane from the freshest read (taxonomy (a)), and our
+    // CAS retries across any concurrent flags-byte movement. Flag-off the
+    // plain RMW below is byte-identical to today (I22).
+    if (Options::useJSThreads()) [[unlikely]] {
+        auto* flagsByte = std::bit_cast<Atomic<TypeInfo::InlineTypeFlags>*>(&m_flags);
+        while (true) {
+            TypeInfo::InlineTypeFlags oldFlags = flagsByte->load(std::memory_order_relaxed);
+            TypeInfo::InlineTypeFlags newFlags = value
+                ? static_cast<TypeInfo::InlineTypeFlags>(oldFlags | TypeInfoPerCellBit)
+                : static_cast<TypeInfo::InlineTypeFlags>(oldFlags & ~TypeInfoPerCellBit);
+            if (oldFlags == newFlags || flagsByte->compareExchangeWeak(oldFlags, newFlags, std::memory_order_seq_cst))
+                return;
+        }
+    }
+#endif
 
     if (value)
         m_flags |= static_cast<TypeInfo::InlineTypeFlags>(TypeInfoPerCellBit);

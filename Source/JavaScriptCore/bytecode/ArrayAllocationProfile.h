@@ -30,6 +30,14 @@
 
 namespace JSC {
 
+// With shared CodeBlocks (useJSThreads), this profile word is read and
+// written concurrently by multiple mutators and compiler threads. That is
+// intentionally racy advisory state (SPEC-ungil §5.7 racy-profiling
+// tolerance): a stale or lost update only mis-sizes/mis-types a future array
+// allocation, it never affects correctness. All accesses therefore go through
+// CompactPointerTuple's relaxed atomic word accessors — plain accesses to the
+// shared word would be UB. Relaxed atomics compile to plain loads/stores on
+// supported targets, so flag-off codegen and semantics are unchanged.
 class ArrayAllocationProfile {
 public:
     ArrayAllocationProfile()
@@ -50,7 +58,7 @@ public:
     IndexingType selectIndexingType()
     {
         ASSERT(!isCompilationThread());
-        if (JSArray* lastArray = m_storage.pointer()) {
+        if (JSArray* lastArray = m_storage.pointerRelaxed()) {
             if (lastArray->indexingType() != current().indexingType()) [[unlikely]]
                 updateProfile();
         }
@@ -66,7 +74,7 @@ public:
     unsigned vectorLengthHint()
     {
         ASSERT(!isCompilationThread());
-        JSArray* lastArray = m_storage.pointer();
+        JSArray* lastArray = m_storage.pointerRelaxed();
         unsigned largestSeenVectorLength = current().vectorLength();
         if (lastArray && (largestSeenVectorLength != BASE_CONTIGUOUS_VECTOR_LEN_MAX)) {
             if (lastArray->getVectorLength() > largestSeenVectorLength) [[unlikely]]
@@ -78,7 +86,10 @@ public:
     JSArray* updateLastAllocation(JSArray* lastArray)
     {
         ASSERT(!isCompilationThread());
-        m_storage.setPointer(lastArray);
+        // Non-atomic RMW (relaxed load of type + relaxed store of the word):
+        // a racing update can be lost, which only "forgets" an array. See
+        // the class comment — advisory data, sound per SPEC-ungil §5.7.
+        m_storage.setPointerRelaxed(lastArray);
         return lastArray;
     }
 
@@ -101,7 +112,7 @@ public:
 
     void initializeIndexingMode(IndexingType recommendedIndexingMode)
     {
-        m_storage.setType(current().withIndexingType(recommendedIndexingMode));
+        m_storage.setTypeRelaxed(current().withIndexingType(recommendedIndexingMode));
     }
 
 private:
@@ -144,7 +155,7 @@ private:
         uint16_t m_bits;
     };
     
-    IndexingTypeAndVectorLength current() const { return m_storage.type(); }
+    IndexingTypeAndVectorLength current() const { return m_storage.typeRelaxed(); }
 
     using Storage = CompactPointerTuple<JSArray*, uint16_t>;
     Storage m_storage;
