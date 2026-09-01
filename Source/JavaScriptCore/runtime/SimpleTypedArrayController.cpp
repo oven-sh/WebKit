@@ -97,14 +97,18 @@ void SimpleTypedArrayController::registerWrapper(JSGlobalObject*, ArrayBuffer& n
         native.m_wrapper = WTF::move(weak);
         native.publishReplacementWrapperImpl(native.m_wrapper.unsafeImpl());
     }
-    // A concurrent toJS() may still hold the displaced WeakImpl* from a
-    // pre-replacement wrapperImplConcurrently() snapshot and inspect its
-    // state(), so the impl's memory must outlive any such reader. Readers
-    // cannot span a safepoint between the snapshot and the state() check, so
-    // deferring the Weak's deallocation past the next all-client safepoint
-    // (GCSafepointEpoch) suffices. Flag-off this only delays reclamation of a
-    // dead impl slot to the legacy runEndPhase reclaim site — not observable.
-    if (displaced) {
+    // `displaced` holds a dead impl, so Weak::operator bool is false for it;
+    // test the impl pointer. Under GIL-off a concurrent toJS() may still hold
+    // that WeakImpl* from a pre-replacement wrapperImplConcurrently() snapshot
+    // and inspect its state(), so the impl's memory must outlive any such
+    // reader: clearing it now would let its WeakBlock turn logically empty and
+    // be freed under MSPL alone, with no stop in between. Readers cannot span
+    // a safepoint between the snapshot and the state() check, so deferring the
+    // Weak's deallocation past the next all-client safepoint (GCSafepointEpoch)
+    // suffices. Under the GIL (and flag-off) toJS() and registerWrapper() are
+    // serialized by the API lock, so `displaced` is cleared on return as the
+    // pre-threads unconditional re-registration did.
+    if (displaced.unsafeImpl() && VM::isGILOffProcess()) {
         auto* deferred = new Weak<JSArrayBuffer>(WTF::move(displaced));
         Heap::heap(&wrapper)->safepointEpoch().retire(deferred, [](void* pointer) {
             delete static_cast<Weak<JSArrayBuffer>*>(pointer);

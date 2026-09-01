@@ -1,12 +1,15 @@
-//@ requireOptions("--useJSThreads=1")
-// API-I21 (GPO; deleted by the post-GIL re-freeze, Dev 12): the 4.5-1a
-// carve-out — sync Atomics.wait on a typed-array view from a spawned Thread
-// throws TypeError ("Atomics.wait cannot be called from the current
-// thread.") BEFORE today's body runs: no park, no side effects, even for a
-// value mismatch or zero timeout. Main-thread TA waits, TA waitAsync and TA
-// notify from any thread are unchanged (I1). Property waits from spawned
-// threads are NOT gated (only G11 gates their block).
+//@ requireOptions("--useJSThreads=1", "--useDollarVM=1")
+// API-I21: under the GIL, the 4.5-1a carve-out makes sync Atomics.wait on a
+// typed-array view from a spawned Thread throw TypeError ("Atomics.wait
+// cannot be called from the current thread.") BEFORE the body runs: no park,
+// no side effects, even for a value mismatch or zero timeout. Main-thread TA
+// waits, TA waitAsync and TA notify from any thread are unchanged (I1).
+// Property waits from spawned threads are NOT gated (only G11 gates their
+// block). GIL-off the gate is lifted (ta-sync-wait-spawned-gil-off.js covers
+// that shape), so this test only checks the gate when the GIL is on.
 load("../harness.js", "caller relative");
+
+const gilOn = typeof $vm === "undefined" || $vm.useThreadGIL();
 
 asyncTestStart(1);
 
@@ -23,10 +26,12 @@ const t = new Thread(() => {
     // The gate fires before the body: even calls that would never block
     // (mismatch, zero timeout) throw, and even invalid-argument calls that
     // today's body would reject differently are pre-empted by the gate.
-    shouldThrow(TypeError, () => Atomics.wait(i32, 0, 1), gateMessage);
-    shouldThrow(TypeError, () => Atomics.wait(i32, 0, 0, 0), gateMessage);
-    shouldThrow(TypeError, () => Atomics.wait(i32, 0, 0), gateMessage);
-    shouldBe(i32[0], 0, "no side effects");
+    if (gilOn) {
+        shouldThrow(TypeError, () => Atomics.wait(i32, 0, 1), gateMessage);
+        shouldThrow(TypeError, () => Atomics.wait(i32, 0, 0, 0), gateMessage);
+        shouldThrow(TypeError, () => Atomics.wait(i32, 0, 0), gateMessage);
+        shouldBe(i32[0], 0, "no side effects");
+    }
 
     // TA waitAsync from a spawned thread: unchanged.
     const ne = Atomics.waitAsync(i32, 0, 1);
