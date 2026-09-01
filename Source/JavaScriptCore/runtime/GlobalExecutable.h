@@ -84,9 +84,6 @@ protected:
         return m_unlinkedCodeBlock.get();
     }
 
-    CodeBlock* replaceCodeBlockWith(VM&, CodeBlock*);
-
-
     WriteBarrier<CodeBlock> m_codeBlock;
     WriteBarrier<UnlinkedCodeBlock> m_unlinkedCodeBlock;
 };

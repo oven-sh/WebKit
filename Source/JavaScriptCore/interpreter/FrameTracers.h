@@ -173,19 +173,6 @@ public:
         assertStackPointerIsAligned();
         primitives.topCallFrame = callFrame;
     }
-
-    // M2-alloc-tax-residual (b): pre-resolved overload — caller already
-    // computed vm.group3Primitives() (the operation*HeapBigInt prologue
-    // caches it once). vm is debug-only (storage-identity assert).
-    ALWAYS_INLINE NativeCallFrameTracer(VM& vm, CallFrame* callFrame, VMLitePrimitives& primitives)
-    {
-        UNUSED_PARAM(vm);
-        ASSERT(callFrame);
-        ASSERT(&primitives == &vm.group3Primitives());
-        ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(primitives.topEntryFrame));
-        assertStackPointerIsAligned();
-        primitives.topCallFrame = callFrame;
-    }
 };
 
 class WasmOperationPrologueCallFrameTracer {
@@ -218,44 +205,10 @@ public:
         // If ASSERT_ENABLED, prepareCallOperation() will put the frame pointer into vm.topCallFrame.
         // We can ensure here that a call to prepareCallOperation() (or its equivalent) is not missing by comparing vm.topCallFrame to
         // the result of __builtin_frame_address which is passed in as callFrame.
-        // UNGIL §A.1.3: compare against the mode-selected storage. NOTE: this
-        // assert will (correctly) fire under gilOff JIT until the emission side
-        // of prepareCallOperation (AssemblyHelpers.h:82, raw &vm.topCallFrame
-        // store) is converted per U-T4 — that is the next unconverted publisher,
-        // and masking it by reading the VM block here would re-create the
-        // split-brain this change removes.
+        // Compare against the mode-selected storage: GIL-off, prepareCallOperation stores the frame
+        // pointer through the current thread's VMLitePrimitives, the word group3Primitives() selects.
         ASSERT(vm.group3Primitives().topCallFrame == callFrame);
         vm.group3Primitives().topCallFrame = callFrame;
-    }
-
-    // M2-alloc-tax-residual (b): pre-resolved overload. The hot
-    // operation*HeapBigInt bodies (jit/ + dfg/ slices — OUTSIDE this task's
-    // owned set; OPEN wiring obligation, see VM::group3Primitives(preResolved)
-    // in VM.h) cache `VMLitePrimitives& p = vm.group3Primitives()` once at the
-    // top and pass it here so the prologue, throw-scope and OPERATION_RETURN
-    // paths share one resolution instead of 2-3 (alloctax2 #2: +1.97G self-cyc
-    // across operationXor/Mul/AddHeapBigInt). The legacy (vm, callFrame) form
-    // above is left BYTE-IDENTICAL for the flag-off-identity law and for every
-    // unconverted call site; after (a) made currentIfExists() a single IE-TLS
-    // load, its remaining redundant resolutions are cheap enough that
-    // converting only the named operation*HeapBigInt sites captures the
-    // attributed win. Flag-off: gilOffProcess==0 → group3Primitives() ==
-    // mainVMLitePrimitives() unconditionally, so a converted call site
-    // resolves the same storage either way.
-    ALWAYS_INLINE JITOperationPrologueCallFrameTracer(VM& vm, CallFrame* callFrame, VMLitePrimitives& primitives)
-#if ASSERT_ENABLED
-        : m_vm(vm)
-#endif
-    {
-        UNUSED_PARAM(vm);
-        UNUSED_PARAM(callFrame);
-        UNUSED_PARAM(primitives);
-        ASSERT(callFrame);
-        ASSERT(&primitives == &vm.group3Primitives()); // §F.5 storage-identity (FrameTracers SuspendExceptionScope precedent).
-        ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(primitives.topEntryFrame));
-        assertStackPointerIsAligned();
-        ASSERT(primitives.topCallFrame == callFrame);
-        primitives.topCallFrame = callFrame;
     }
 
 #if ASSERT_ENABLED

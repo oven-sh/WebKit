@@ -271,6 +271,15 @@ public:
     JS_EXPORT_PRIVATE static Info info();
     static unsigned numberOfVMs() { return singleton().m_numberOfVMs; }
 
+    // GIL-off only (the Mode-machine leg of GCClient::Heap::acquireHeapAccess,
+    // via jsThreadsModeStopGatesCurrentThread): true iff a Mode-machine stop
+    // holds `vm` stopped AND notifyVMStop has already elected this VM's
+    // representative. A fresh acquirer is parked only then; while no
+    // representative exists it must be let through, because the election
+    // is reached only from a poll site or a VMEntryScope entry, and the
+    // acquirer may be the only thread of the VM that can get there.
+    static bool gilOffModeStopGatesFreshAccess(VM&);
+
     JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnStop(StopTheWorldCallback);
     JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnResume(PostResumeCallback);
     JS_EXPORT_PRIVATE static void NODELETE setMemoryDebuggerCallback(StopTheWorldCallback);
@@ -441,11 +450,41 @@ private:
     VM& m_vm;
     std::optional<StopTheWorldEvent> m_event;
 };
-// Cheap seq_cst probe of the STW stop word (UNGIL §U20 SB1): true when a
-// stop-the-world has been requested against this VM and mutators must reach a
-// safepoint promptly. Exposed for bounded-spin sites that hold heap access and
-// must bail to their parking slow path (which honours the stop) instead of
-// spinning through a pending stop.
+
+// Seq_cst probe of the thread-granular stop word: true only while a GIL-off
+// thread-granular stop window (jsThreadsThreadGranularStopTheWorldAndRun) has
+// been requested against this VM and has not yet resumed. It does not observe
+// any other stop: a pending shared-GC stop (Heap::gcStopPendingForAllClients)
+// or a Mode-machine stop (jsThreadsModeStopGatesCurrentThread) must be checked
+// separately. Bounded-spin sites that hold heap access bail to their parking
+// slow path when this is true instead of spinning through the window.
 JS_EXPORT_PRIVATE bool jsThreadsStopPendingFor(VM&);
+
+// State of the GIL-off thread-granular stop window (VMManager.cpp). The
+// conductor is the thread that requested the window; it holds tenure from the
+// request until the resume publication. The world is "stopped" only between the
+// moment every other mutator of the target VM has quiesced and the conductor's
+// resume, which is exactly the interval in which the conductor's `work` runs.
+// Together they license the conductor to patch and install inline; a
+// non-conductor that observes the window open must still queue.
+JS_EXPORT_PRIVATE bool jsThreadsCurrentThreadIsStopConductor();
+JS_EXPORT_PRIVATE bool jsThreadsThreadGranularWorldIsStopped();
+
+// Runs `work` as the conductor of a GIL-off thread-granular stop window of
+// `vm`: every other entered mutator of the VM is parked at a safepoint while
+// `work` executes.
+JS_EXPORT_PRIVATE void jsThreadsThreadGranularStopTheWorldAndRun(VM&, const ScopedLambda<void()>&);
+
+// Mutator side of the thread-granular stop protocol (VMManager.cpp). Both park
+// entry points require the caller to hold NO heap access:
+// jsThreadsParkForStopWindow parks on the window's ticket until the conductor
+// resumes the world; jsThreadsNotifyMutatorQuiesced wakes the conductor's
+// quiescence wait. jsThreadsModeStopGatesCurrentThread is true when the Mode
+// machine holds `vm` stopped, in which case fresh heap access must park in
+// jsThreadsParkForModeStop until it resumes.
+JS_EXPORT_PRIVATE void jsThreadsParkForStopWindow(VM&);
+JS_EXPORT_PRIVATE void jsThreadsNotifyMutatorQuiesced();
+JS_EXPORT_PRIVATE bool jsThreadsModeStopGatesCurrentThread(VM&);
+JS_EXPORT_PRIVATE void jsThreadsParkForModeStop(VM&);
 
 } // namespace JSC

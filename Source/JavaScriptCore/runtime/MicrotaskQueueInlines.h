@@ -115,6 +115,10 @@ inline void JSGlobalObject::queueMicrotask(VM& vm, QueuedTask&& task)
         queueMicrotaskSlow(vm, WTF::move(task));
         return;
     }
+    if (vm.gilOff()) [[unlikely]] {
+        queueMicrotaskGILOff(vm, WTF::move(task));
+        return;
+    }
     SUPPRESS_UNCOUNTED_ARG m_microtaskQueue->enqueue(WTF::move(task));
 }
 

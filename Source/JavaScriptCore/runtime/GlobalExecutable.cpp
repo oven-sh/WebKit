@@ -75,31 +75,6 @@ void GlobalExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(GlobalExecutable);
 
-CodeBlock* GlobalExecutable::replaceCodeBlockWith(VM& vm, CodeBlock* newCodeBlock)
-{
-    CodeBlock* oldCodeBlock = codeBlock();
-    m_codeBlock.setMayBeNull(vm, this, newCodeBlock);
-    return oldCodeBlock;
-}
-
-bool GlobalExecutable::canReleaseLinkedCodeNow(VM& vm)
-{
-    CodeBlock* codeBlock = this->codeBlock();
-    if (!codeBlock)
-        return true;
-    if (codeBlock->jitType() != JITType::InterpreterThunk)
-        return false;
-#if ENABLE(JIT)
-    if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull()) {
-        if (worklist->compilationState(vm, JITCompilationKey(codeBlock->unlinkedCodeBlock(), JITCompilationMode::Baseline)) != JITWorklist::NotKnown)
-            return false;
-    }
-#else
-    UNUSED_PARAM(vm);
-#endif
-    return true;
-}
-
 void GlobalExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlock);

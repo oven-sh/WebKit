@@ -31,24 +31,19 @@
 
 namespace JSC {
 
-// UNGIL §A.1.5 re-key (review fix; closes the VMEntryScope.cpp
-// "OPEN-BLOCKER — HARD ACTIVATION BLOCKER"): GIL-off, the per-entry record
-// lives ONLY on the CURRENT lite (the VM-member shadow is never written —
-// with N concurrently-entered threads it would be a last-writer-wins race),
-// so the ctor/dtor fast-path gates must consult the lite record, not the raw
-// vm.entryScope shadow. Without this, every gilOff entry reached setUpSlow
-// (tripping its RELEASE_ASSERT on any nested entry — host callbacks,
-// VM::drainMicrotasks' spawned arm, dispatchStopHandler), and the dtor gate
-// was always false, so tearDownSlow never ran and lite.entryScope dangled
-// (isAnyThreadEntered() stuck true; W3 watchdog misfires; UAF risk).
-// GIL-on/flag-off: m_gilOff is false — the landed single-shadow gates,
-// one predicted-false byte test added.
+// GIL-off, the per-entry record lives only on the current lite (the VM-member
+// shadow is never written: with N concurrently-entered threads it would be a
+// last-writer-wins race), so the ctor/dtor gates consult the lite record and
+// setUpSlow/tearDownSlow run exactly once per outermost per-thread entry.
+// GIL-on and flag-off keep the single VM-member shadow; the mode test is the
+// Config-page gate (one predicted-false byte test that never touches the VM
+// member line), the same one every hot C++ Group-3 accessor uses.
 
 ALWAYS_INLINE VMEntryScope::VMEntryScope(VM& vm, JSGlobalObject* globalObject)
     : m_vm(vm)
     , m_globalObject(globalObject)
 {
-    if (vm.gilOff()) [[unlikely]] {
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
         // Relaxed: own-thread record (the only writer is this thread).
         if (!VMLite::current().entryScope.load(std::memory_order_relaxed))
             setUpSlow();
@@ -59,7 +54,7 @@ ALWAYS_INLINE VMEntryScope::VMEntryScope(VM& vm, JSGlobalObject* globalObject)
 
 ALWAYS_INLINE VMEntryScope::~VMEntryScope()
 {
-    if (m_vm.gilOff()) [[unlikely]] {
+    if (m_vm.gilOffWithProcessGate()) [[unlikely]] {
         if (VMLite::current().entryScope.load(std::memory_order_relaxed) != this)
             return;
         tearDownSlow();

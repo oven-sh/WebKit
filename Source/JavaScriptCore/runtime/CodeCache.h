@@ -249,15 +249,7 @@ public:
 
     void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*);
 
-    // The module's evaluation finished, so nothing links against this block again unless the same source is loaded
-    // into another global object of this VM, which then decodes or generates its own.
-    void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
-
-    void clear()
-    {
-        write();
-        m_sourceCode.clear();
-    }
+    void clear(VM&);
     JS_EXPORT_PRIVATE void write();
     // Entries a lookup can decode again instead of parsing.
     void clearCodeDecodedFromPersistentPayloads() { m_sourceCode.removeCodeDecodedFromPersistentPayloads(); }

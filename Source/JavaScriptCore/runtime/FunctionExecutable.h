@@ -78,17 +78,13 @@ public:
         return !!codeBlockForCall();
     }
 
-    // TSAN code-lifecycle (TSAN-TRIAGE.md section 3.5): m_codeBlockForCall /
-    // m_codeBlockForConstruct are published by a concurrent installCode
-    // (replaceCodeBlockWith) and retracted by clearCode while read lock-free
-    // here (prepareForExecution fast gate, CodeBlock::replacement). Read the
-    // WriteBarrier slot with a consume-ordered atomic load (relaxed in
-    // production — identical codegen to the plain load; acquire under TSAN
-    // only, see jit/JITCode.h). The writer side lives in
-    // ScriptExecutable.cpp: installCode publishes with an atomic release
-    // store and clearCode retracts with one (both via the slot, preserving
-    // the GC write barrier); the legacy replaceCodeBlockWith plain-store
-    // path is no longer called — see the note at its declaration below.
+    // m_codeBlockForCall / m_codeBlockForConstruct are published by a
+    // concurrent installCode and retracted by clearCode (both in
+    // ScriptExecutable.cpp, atomic release stores through the slot) while read
+    // lock-free here (prepareForExecution fast gate, CodeBlock::replacement).
+    // Read the WriteBarrier slot with a consume-ordered atomic load (relaxed in
+    // production, identical codegen to the plain load; acquire under TSAN only,
+    // see jit/JITCode.h). Any new writer must publish the same way.
     FunctionCodeBlock* codeBlockForCall() const
     {
         CodeBlock* codeBlock = WTF::atomicLoad(const_cast<WriteBarrier<CodeBlock>&>(m_codeBlockForCall).slot(), JITCodePointerConsumeOrder);
@@ -123,44 +119,12 @@ public:
         return codeBlockForConstruct();
     }
 
-    // UNGIL FIX-2 (publish/observe pairing — ANNEX CBI item 3, generalized):
-    // gilOff, dispatch publication must derive the entrypoint from the SAME
-    // CodeBlock object it transfers into CallFrameSlot::codeBlock. Pairing a
-    // separately (re-)read m_jitCodeForCall/m_jitCodeForConstruct mirror with
-    // codeBlockFor(kind) tears across a concurrent installCode (IT-8 store
-    // sequence: retract gate -> fence -> publish CodeBlock -> fence -> publish
-    // mirror) and enters one tier's machine code with another tier's CodeBlock
-    // in the frame slot — AHInvalidCodeBlock at the callee-prologue asserts
-    // with useJITAsserts, wrong JITData / null argument-profile storage in
-    // release.
-    //
-    // Returns the snapshot CodeBlock (nullptr if none is installed).
-    // entrypointOut is null iff no dispatchable code exists, in which case the
-    // caller must take its slow path. jitCodeKeeperOut receives the owning
-    // JITCode ref for the returned entrypoint: the CALLER must hold it until
-    // the call/install that consumes entrypointOut has completed — the
-    // entrypoint is a raw CodePtr with no other keeper, and a concurrent
-    // jettison + sweep may otherwise free the machine code between return and
-    // use. Defined in bytecode/CodeBlock.cpp.
-    FunctionCodeBlock* codeBlockWithEntrypointFor(CodeSpecializationKind, ArityCheckMode, CodePtr<JSEntryPtrTag>& entrypointOut, RefPtr<JSC::JITCode>& jitCodeKeeperOut);
-
     FunctionCodeBlock* baselineCodeBlockFor(CodeSpecializationKind);
         
     FunctionCodeBlock* profiledCodeBlockFor(CodeSpecializationKind kind)
     {
         return baselineCodeBlockFor(kind);
     }
-
-    // TSAN code-lifecycle (section 3.5, writer side): DO NOT add callers.
-    // This is the legacy plain-store writer (WriteBarrierBase::setMayBeNull
-    // -> setEarlyValue -> RawPtrTraits std::exchange, defined inline in
-    // FunctionExecutableInlines.h) and it races the consume-ordered atomic
-    // readers above. Its only historical caller, ScriptExecutable::
-    // installCode, now publishes the m_codeBlockFor* slot with an atomic
-    // release store directly (ScriptExecutable.cpp, FunctionCode case). Any
-    // new writer must use the same atomic publication. The declaration is
-    // kept only so the inline definition still compiles.
-    FunctionCodeBlock* replaceCodeBlockWith(VM&, CodeSpecializationKind, CodeBlock*);
 
     RefPtr<TypeSet> returnStatementTypeSet() 
     {
