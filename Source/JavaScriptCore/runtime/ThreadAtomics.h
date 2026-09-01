@@ -50,20 +50,15 @@ JS_EXPORT_PRIVATE JSValue atomicsWaitOnProperty(JSGlobalObject*, JSObject*, Prop
 JS_EXPORT_PRIVATE JSValue atomicsWaitAsyncOnProperty(JSGlobalObject*, JSObject*, PropertyName, JSValue expected, JSValue timeout);
 JS_EXPORT_PRIVATE JSValue atomicsNotifyOnProperty(JSGlobalObject*, JSObject*, PropertyName, JSValue count);
 
-// S2-parallel-cpu-waste instrumentation (Options::logJSLockContention()):
-// process-wide property-Atomics RMW retry counters. Bumped only when the
-// option is set; relaxed adds. g_threadAtomicsRMWRestarts counts OUTER probe
-// restarts (AtomicSlotStatus::Restart escaping the §9.5 accessor — structure
-// moved, third-arm revalidate, etc.). The CAS-retry burn the bench is
-// suspected of (W writers on one inline slot) lives INSIDE
-// atomicSlotLockFreeLoop (ConcurrentButterfly.cpp) and never escapes as
-// Restart; g_threadAtomicsSlotCASRetries is the hook for that loop's
-// fall-through-and-retry arm — defined here, INCREMENTED THERE (one-liner,
-// owned by the ConcurrentButterfly implementer slot). Reads 0 until that
-// hunk lands.
+// Contention instrumentation (Options::logJSLockContention()): process-wide
+// property-Atomics RMW counters, bumped only when the option is set; relaxed
+// adds. g_threadAtomicsRMWRestarts counts OUTER probe restarts
+// (AtomicSlotStatus::Restart escaping the §9.5 accessor — structure moved,
+// third-arm revalidate, etc.); the per-slot CAS retries inside
+// atomicSlotLockFreeLoop (ConcurrentButterfly.cpp) never escape as Restart
+// and are not counted.
 extern std::atomic<uint64_t> g_threadAtomicsRMWCalls;
 extern std::atomic<uint64_t> g_threadAtomicsRMWRestarts;
-extern std::atomic<uint64_t> g_threadAtomicsSlotCASRetries;
 
 JS_EXPORT_PRIVATE void dumpThreadAtomicsRMWStats();
 

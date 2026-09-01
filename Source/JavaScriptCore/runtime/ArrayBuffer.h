@@ -48,6 +48,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class Heap;
 class VM;
 class ArrayBuffer;
 class ArrayBufferView;
@@ -194,7 +195,7 @@ public:
     bool isGrowableShared() const { return isResizableOrGrowableShared() && isShared(); }
     bool isResizableNonShared() const { return isResizableOrGrowableShared() && !isShared(); }
     
-    void refreshAfterWasmMemoryGrow(Wasm::Memory*);
+    void refreshAfterWasmMemoryGrow(VM&, Wasm::Memory*);
 
     void swap(ArrayBufferContents& other)
     {
@@ -315,8 +316,15 @@ public:
     JS_EXPORT_PRIVATE bool transferTo(VM&, ArrayBufferContents&);
     JS_EXPORT_PRIVATE bool shareWith(ArrayBufferContents&);
 
-    void detach(VM&);
-    bool isDetached() { return !m_contents.m_data; }
+    // Returns whether this call detached the buffer. False only GIL-off, when
+    // a racing detach()/transferTo() already won the detached flag and alone
+    // quarantined the mapping.
+    bool detach(VM&);
+    // GIL-off, detach() leaves m_data in place until a stop-the-world retires
+    // the quarantined mapping (ArrayBuffer.cpp), so during that window the
+    // sticky flag is the detached predicate. Flag-off and GIL-on the flag is
+    // never set and !m_data alone decides, as before.
+    bool isDetached() { return !m_contents.m_data || m_detachedGILOff.load(std::memory_order_relaxed); }
     InlineWatchpointSet& detachingWatchpointSet() LIFETIME_BOUND { return m_detachingWatchpointSet; }
 
     static constexpr ptrdiff_t offsetOfSizeInBytes() { return OBJECT_OFFSETOF(ArrayBuffer, m_contents) + OBJECT_OFFSETOF(ArrayBufferContents, m_sizeInBytes); }
@@ -410,28 +418,22 @@ public:
     Lock m_wrapperRepublishLock;
 private:
     Atomic<WeakImpl*> m_wrapperImpl { nullptr };
-    // CVE-AUDIT Tier-B B10 / docs/threads/cve/map-MC-LIFE.md S4: m_pinCount and
-    // m_locked are atomic so concurrent embedder threads pin()/unpin()'ing
-    // wrappers of one buffer (ArrayBufferView::setDetachable, the C-API
-    // JSObjectGetTypedArrayBytesPtr family) cannot lose an update and let
-    // isDetachable() report true while a native bytesPtr is outstanding —
-    // post-GIL the annex-N6 quarantine would then free the mapping under that
-    // pointer. Relaxed ordering is sufficient: the field is a counter/sticky
-    // flag, not a publication fence (detach ordering is the N6 quarantine's
-    // job). Same precedent as DeferrableRefCounted's unconditional atomic
-    // count (ArrayBuffer.cpp:260). Flag-off: behaviorally identical, layout
-    // unchanged (4B/1B). Relaxed .load()/.store() compile to plain mov/ldr on
-    // x86-64/arm64; pin()/unpin()'s fetch_add/fetch_sub DO emit an atomic RMW
-    // (lock xadd / ldadd) — an accepted byte-identity deviation per the
-    // DeferrableRefCounted precedent, on a cold embedder-only path
-    // (ArrayBufferView::setDetachable / JSObjectGetTypedArrayBytesPtr), never
-    // a JS bench path.
+    // m_pinCount and m_locked are atomic so GIL-off embedder threads
+    // pin()/unpin()'ing wrappers of one buffer (ArrayBufferView::setDetachable,
+    // the C-API JSObjectGetTypedArrayBytesPtr family) cannot lose an update and
+    // let isDetachable() report true while a native bytesPtr is outstanding.
+    // Relaxed ordering suffices: the field is a counter / sticky flag, not a
+    // publication fence. The unconditional RMW in pin()/unpin() is on a cold
+    // embedder-only path, never a JS bench path.
     std::atomic<unsigned> m_pinCount { 0 };
     bool m_isWasmMemory { false };
     WeakPtr<Wasm::Memory> m_associatedWasmMemory;
     // m_locked == true means that some API user fetched m_contents directly from a TypedArray object,
     // the buffer is backed by a WebAssembly.Memory, or is a SharedArrayBuffer.
     std::atomic<bool> m_locked { false };
+    // Set once, by the GIL-off detach() arm, before it publishes the zero
+    // length; never cleared. See isDetached().
+    std::atomic<bool> m_detachedGILOff { false };
 };
 
 void* ArrayBuffer::data() LIFETIME_BOUND
@@ -513,6 +515,12 @@ bool ArrayBuffer::isWasmMemory()
 }
 
 JS_EXPORT_PRIVATE ASCIILiteral errorMessageForTransfer(ArrayBuffer*);
+
+// Registers the stop-the-world hook that retires the heap's GIL-off ArrayBuffer
+// mapping quarantine (detached/transferred mappings, deferred shrink tails,
+// relocated wasm mappings). Called once per Heap from the VM constructor; a
+// no-op unless the process runs GIL-off.
+JS_EXPORT_PRIVATE void registerArrayBufferQuarantineSafepointHook(JSC::Heap&);
 
 // https://tc39.es/proposal-resizablearraybuffer/#sec-makeidempotentarraybufferbytelengthgetter
 template<std::memory_order order>

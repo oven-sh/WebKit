@@ -50,7 +50,7 @@ class RegExpCache final : private WeakHandleOwner {
 
 public:
     RegExpCache() = default;
-    void deleteAllCode();
+    void deleteAllCode(VM&);
 
     RegExp* ensureEmptyRegExp(VM& vm)
     {
