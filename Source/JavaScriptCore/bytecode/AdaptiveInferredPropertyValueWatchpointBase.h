@@ -45,7 +45,10 @@ public:
     const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 
     void NODELETE initialize(const ObjectPropertyCondition&);
-    void install(VM&);
+    // False (flag-on only) when one of the two sets fired between the caller's
+    // watchability check and the link; nothing is linked then, and the caller
+    // must treat the condition as not watchable.
+    bool install(VM&);
 
     virtual ~AdaptiveInferredPropertyValueWatchpointBase() = default;
 

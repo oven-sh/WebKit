@@ -50,8 +50,7 @@ bool ArrayBufferViewWatchpointAdaptor::add(CodeBlock* codeBlock, JSArrayBufferVi
 
         // FIXME: We don't need to set this watchpoint at all for shared buffers.
         // https://bugs.webkit.org/show_bug.cgi?id=164108
-        arrayBuffer->detachingWatchpointSet().add(&watchpoint);
-        return true;
+        return arrayBuffer->detachingWatchpointSet().add(&watchpoint);
     });
 }
 
@@ -63,8 +62,7 @@ bool SymbolTableAdaptor::add(CodeBlock* codeBlock, SymbolTable* symbolTable, Wat
 
         // symbolTable is already frozen strongly.
         watchpoint.initialize(codeBlock);
-        symbolTable->singleton().add(&watchpoint);
-        return true;
+        return symbolTable->singleton().add(&watchpoint);
     });
 }
 
@@ -74,11 +72,12 @@ bool FunctionExecutableAdaptor::add(CodeBlock* codeBlock, FunctionExecutable* ex
         if (hasBeenInvalidated(executable, collector.concurrency()))
             return false;
 
-        // executable is already frozen strongly.
+        // executable is already frozen strongly. Flag-on, add() refuses a
+        // singleton that a second closure of this executable invalidated
+        // after the check above; failing here invalidates the compilation
+        // instead of installing code folded to the stale singleton.
         watchpoint.initialize(codeBlock);
-        executable->singleton().add(&watchpoint);
-
-        return true;
+        return executable->singleton().add(&watchpoint);
     });
 }
 
@@ -92,8 +91,7 @@ bool AdaptiveStructureWatchpointAdaptor::add(CodeBlock* codeBlock, const ObjectP
                 return false;
 
             watchpoint.initialize(key, codeBlock);
-            watchpoint.install(vm);
-            return true;
+            return watchpoint.install(vm);
         });
     }
     default: {
@@ -102,8 +100,7 @@ bool AdaptiveStructureWatchpointAdaptor::add(CodeBlock* codeBlock, const ObjectP
                 return false;
 
             watchpoint.initialize(key, codeBlock);
-            watchpoint.install(vm);
-            return true;
+            return watchpoint.install(vm);
         });
     }
     }

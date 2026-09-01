@@ -86,8 +86,8 @@ bool JITFinalizer::finalize()
         // install points (DFGJITFinalizer.cpp / CodeBlock.cpp) — pairs with
         // the TSAN_ANNOTATE_HAPPENS_AFTER in ICSlowPathCallFrameTracer. The
         // FTL handler ICs are reached by sibling lites via pointers baked
-        // into the installed code; lifetime is the leaked-flag-on JITCode
-        // (retireOptimizedJITCode) per SPEC-jit §5.3/I7. No-op outside TSAN.
+        // into the installed code; they live as long as the JITCode that
+        // owns them. No-op outside TSAN.
         for (auto* propertyCache : m_jitCode->common.m_handlerPropertyInlineCaches)
             TSAN_ANNOTATE_HAPPENS_BEFORE(propertyCache);
 #endif

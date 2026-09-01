@@ -1087,8 +1087,8 @@ static void publishHandlerChainHead(RefPtr<InlineCacheHandler>& headSlot, Ref<In
     // block writes) on this thread against the reader thread's accesses in
     // ICSlowPathCallFrameTracer / ownerForSlowPath, on memory the audit
     // proved live (every flag-on dealloc path of a published handler routes
-    // through RetiredJITArtifacts::retireHandlerChain, which flag-on never
-    // frees — epochCoversEveryJSThread). AFTER sides:
+    // through RetiredJITArtifacts::retireHandlerChain, which frees only once
+    // every mutator has crossed a safepoint). AFTER sides:
     // ICSlowPathCallFrameTracer (JITOperations.cpp, keyed on the
     // PropertyInlineCache) and CallLinkInfo::ownerForSlowPath (keyed on the
     // embedded CallLinkInfo). Annotating only the NEW node is sufficient:

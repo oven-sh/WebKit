@@ -134,12 +134,19 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         break;
 
     case GetButterfly:
-    case PutByOffset:
-        // SPEC-jit section 5.5 / Task 9: under Options::useJSThreads() these
-        // emit the frozen TID/SW butterfly predicates and OSR-exit on
-        // predicate failure (segmented dispatch, SW=1 ArrayStorage, write
-        // case-(4) fallback). Flag-off they do not exit, exactly as before.
+        // Under Options::useJSThreads() the butterfly load runs the TID/SW
+        // predicate and OSR-exits when it fails. Flag-off it does not exit.
         if (Options::useJSThreads()) [[unlikely]]
+            result = Exits;
+        break;
+
+    case PutByOffset:
+        // Under Options::useJSThreads() only out-of-line stores re-load the
+        // butterfly and run the write predicate, OSR-exiting on failure.
+        // Inline stores are cell-internal and never checked; they must not
+        // report Exits because ConstantFolding and ObjectAllocationSinking
+        // place inline PutByOffset nodes at ExitInvalid positions.
+        if (Options::useJSThreads() && isOutOfLineOffset(node->storageAccessData().offset)) [[unlikely]]
             result = Exits;
         break;
 

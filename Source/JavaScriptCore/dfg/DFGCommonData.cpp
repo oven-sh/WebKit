@@ -103,13 +103,12 @@ CommonData::~CommonData()
 
 void CommonData::installVMTrapBreakpoints(CodeBlock* owner)
 {
-    // SPEC-jit I2 / M2b (review round 4, R4-3): runs on the VMTraps
-    // signal-sender thread and asynchronously patches reachable invalidation
-    // points (JumpReplacement::installVMTrapBreakpoint) — forbidden by I2
-    // while any other mutator may execute the code. M2b's deferred hunk forces
-    // usePollingTraps under useJSThreads (async breakpoint patching = I2
-    // violation); until it is applied, fail fast here. Listed in the Task-11
-    // audit / M2b notes in docs/threads/INTEGRATE-jit.md.
+    // Runs on the VMTraps SignalSender thread and asynchronously patches
+    // reachable invalidation points, which is only safe with a single mutator.
+    // With useJSThreads on, Options::notifyOptionsChanged() forces
+    // usePollingTraps, so no SignalSender is ever started and this path is
+    // unreachable; the assert guards against option storage written directly
+    // after finalization.
     RELEASE_ASSERT(!Options::useJSThreads() || Options::usePollingTraps());
     ASSERT(!m_isUnlinked);
     Locker locker { pcCodeBlockMapLock };

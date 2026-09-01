@@ -65,7 +65,10 @@ void CompressedLazyValueProfileHolder::initializeData()
 
 LazyOperandValueProfile* CompressedLazyValueProfileHolder::addOperandValueProfile(const LazyOperandValueProfileKey& key)
 {
-    // This addition happens from mutator thread. Thus, we do not need to consider about concurrent additions from multiple threads.
+    // The only appenders are the DFG and FTL OSR exit compilers, which run on
+    // the single mutator thread GIL-on and under the shared
+    // OSRExitGenerationLocker gilOff, so appendConcurrently's single-writer
+    // contract holds without a lock here.
     ASSERT(!isCompilationThread());
 
     if (!m_data)
@@ -82,7 +85,7 @@ LazyOperandValueProfile* CompressedLazyValueProfileHolder::addOperandValueProfil
 
 JSValue* CompressedLazyValueProfileHolder::addSpeculationFailureValueProfile(BytecodeIndex index)
 {
-    // This addition happens from mutator thread. Thus, we do not need to consider about concurrent additions from multiple threads.
+    // Single-writer for the same reason as addOperandValueProfile.
     ASSERT(!isCompilationThread());
 
     if (!m_data)

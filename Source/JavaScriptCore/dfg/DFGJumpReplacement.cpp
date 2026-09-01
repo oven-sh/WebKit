@@ -46,14 +46,11 @@ void JumpReplacement::fire()
 
 void JumpReplacement::installVMTrapBreakpoint()
 {
-    // SPEC-jit I2 / M2b (review round 4, R4-3): this rewrites a REACHABLE
-    // invalidation point with a VM-halt instruction from the VMTraps
-    // signal-sender thread — asynchronous cross-thread code patching while
-    // mutators may be executing the patched code, which I2 forbids outside a
-    // stop-the-world window. The design defense is M2b forcing
-    // Options::usePollingTraps() under useJSThreads (deferred to the Task-14
-    // handoff; docs/threads/INTEGRATE-jit.md M2b). Until M2b lands, fail fast
-    // here instead of silently violating I2. Same guard at the caller,
+    // Rewrites a reachable invalidation point with a VM-halt instruction from
+    // the VMTraps SignalSender thread, which is only safe with a single
+    // mutator. With useJSThreads on, Options::notifyOptionsChanged() forces
+    // usePollingTraps, so no SignalSender is ever started and this path is
+    // unreachable; the same guard sits at the caller,
     // DFG::CommonData::installVMTrapBreakpoints.
     RELEASE_ASSERT(!Options::useJSThreads() || Options::usePollingTraps());
     dataLogLnIf(Options::dumpDisassembly(),

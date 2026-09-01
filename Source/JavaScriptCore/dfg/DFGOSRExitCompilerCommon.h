@@ -36,46 +36,29 @@
 #include "VMLite.h"
 #include <limits>
 
-namespace JSC {
-
-// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
-// mirroring that TU's own pattern — no header owns this form yet (the
-// AssemblyHelpers.h member surface is macro-gated on
-// JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE, which the header-owning task defines).
-void loadVMLite(AssemblyHelpers&, GPRReg);
-
-namespace DFG {
+namespace JSC { namespace DFG {
 
 void handleExitCounts(VM&, CCallHelpers&, const OSRExitBase&);
 void reifyInlinedCallFrames(CCallHelpers&, const OSRExitBase&);
 void adjustAndJumpToTarget(VM&, CCallHelpers&, const OSRExitBase&);
 CCallHelpers::Address calleeSaveSlot(InlineCallFrame*, CodeBlock* baselineCodeBlock, GPRReg calleeSave);
 
-// DW-1 instrumentation (deepwater LEDGER row 1): both-sides recording for the
-// sort-comparator OSR-exit pc-recovery contract. The stash side is
-// reifyInlinedCallFrames, which (for an inlined ArraySortComparatorCall)
-// writes CallSiteIndex(op_call bc) into the recovery frame's
-// argumentCountIncludingThis tag and the caller's baseline CodeBlock into its
-// codeBlock slot; the recovery side is
-// llint_slow_path_array_sort_comparator_return, which reads both back and
-// asserts the pc is the sort's op_call. GIL-off, the DFG exit path traverses
-// operationCompileOSRExit on EVERY exit (the rel32 repatch is suppressed —
-// U-T4b), so the exiting thread records the expected tuple here in C++ at
-// every traversal, and the trampoline slow path cross-checks it. This is
-// thread-local state: per-thread == per-lite for a spawned Thread, and the
-// stash/recovery pair always executes on one thread between exit and
-// comparator return. GIL-on/flag-off: never written, never read (all uses
-// are vm.gilOff()-gated); no codegen change in any mode.
-struct SortComparatorOSRExitStashRecord {
-    uint32_t threadUid { 0 };
-    CodeBlock* dfgCodeBlock { nullptr };
-    CodeBlock* expectedCallerBaselineCodeBlock { nullptr };
-    uint32_t expectedCallSiteBits { 0 };
-    uint32_t exitIndex { 0 };
-    bool armed { false };
+// Serializes OSR exit ramp compilation across the DFG and FTL tiers when
+// gilOff: N threads can fire the same not-yet-compiled exit at once, and a
+// DFG ramp and an FTL stub whose code origins share a baseline CodeBlock both
+// append to that block's lazy value profiles, whose ConcurrentVectors admit a
+// single writer. Construct it with no other JSC lock held; it is outer to
+// every lock ramp compilation takes (codeBlock->m_lock, ScratchBufferRegistry,
+// VMLiteRegistry, the per-lite scratchBufferLock, LinkBuffer and executable
+// allocator locks). Contended acquisition spins on tryLock and parks for
+// stop-the-world, so the waiting mutator, which holds heap access, stays
+// visible to the stop fan. GIL-on never constructs one.
+class OSRExitGenerationLocker {
+    WTF_MAKE_NONCOPYABLE(OSRExitGenerationLocker);
+public:
+    explicit OSRExitGenerationLocker(VM&);
+    ~OSRExitGenerationLocker();
 };
-SortComparatorOSRExitStashRecord& sortComparatorOSRExitStashRecord();
-void recordSortComparatorOSRExitStashIfApplicable(VM&, CodeBlock* dfgCodeBlock, const OSRExitBase&, uint32_t exitIndex);
 
 template <typename JITCodeType>
 void adjustFrameAndStackInOSRExitCompilerThunk(AssemblyHelpers& jit, VM& vm, JITType jitType)
@@ -113,7 +96,7 @@ void adjustFrameAndStackInOSRExitCompilerThunk(AssemblyHelpers& jit, VM& vm, JIT
         buffer = static_cast<char*>(scratchBuffer->dataBuffer());
     }
     auto materializeBufferBase = [&] (GPRReg dest) {
-        loadVMLite(jit, dest);
+        jit.loadVMLite(dest);
         jit.loadPtr(
             MacroAssembler::Address(
                 dest,
@@ -152,7 +135,7 @@ void adjustFrameAndStackInOSRExitCompilerThunk(AssemblyHelpers& jit, VM& vm, JIT
     if (bakedIndexMode) [[unlikely]] {
         // UNGIL §A.1.3: callFrameForCatch is per-lite Group-3 state gilOff —
         // resolve the CURRENT thread's lite instead of baking &vm's slot.
-        loadVMLite(jit, GPRInfo::regT0);
+        jit.loadVMLite(GPRInfo::regT0);
         jit.loadPtr(
             MacroAssembler::Address(
                 GPRInfo::regT0,

@@ -1379,7 +1379,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     
     jit.negPtr(GPRInfo::regT2);
     jit.addPtr(CCallHelpers::stackPointerRegister, GPRInfo::regT2);
-    CCallHelpers::Jump haveStackSpace = jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::BelowOrEqual, GPRInfo::regT2); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+    CCallHelpers::Jump haveStackSpace = jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::LessThanOrEqual, GPRInfo::regT2);
 
     // Throw Stack Overflow exception
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::regT3);
@@ -1557,7 +1557,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
 
     jit.negPtr(GPRInfo::regT2);
     jit.addPtr(CCallHelpers::stackPointerRegister, GPRInfo::regT2);
-    CCallHelpers::Jump haveStackSpace = jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::BelowOrEqual, GPRInfo::regT2); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+    CCallHelpers::Jump haveStackSpace = jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::LessThanOrEqual, GPRInfo::regT2);
 
     // Throw Stack Overflow exception
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm, GPRInfo::regT3);

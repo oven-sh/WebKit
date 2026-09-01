@@ -115,6 +115,19 @@ public:
         m_refCount.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Takes a reference only while the count is non-zero, so a weak pointer
+    // (SharedJITStubSet::m_stubs) can be made strong without resurrecting a
+    // routine whose last deref() is already running observeZeroRefCount().
+    bool tryRef()
+    {
+        unsigned count = m_refCount.load(std::memory_order_relaxed);
+        while (count) {
+            if (m_refCount.compare_exchange_weak(count, count + 1, std::memory_order_relaxed))
+                return true;
+        }
+        return false;
+    }
+
     void deref()
     {
         if (m_refCount.fetch_sub(1, std::memory_order_release) != 1)

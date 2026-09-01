@@ -32,9 +32,9 @@
 
 namespace JSC {
 
+class CodeBlock;
 class Heap;
 class InlineCacheHandler;
-class JITCode;
 class VM;
 struct CallLinkRecord;
 
@@ -66,10 +66,7 @@ struct CallLinkRecord;
 // executable memory itself is released only on the GC sweep after the
 // conservative scan of all mutator stacks (R2, I7).
 //
-// Callable from any mutator thread; not from compilation threads when a
-// retired chain carries a not-yet-GC-aware routine, since lazy promotion in
-// retireHandlerChain goes through JITStubRoutineSet::add, which RELEASE_ASSERTs
-// !isCompilationThread(). May be called while holding a cell/Structure
+// Callable from any mutator thread. May be called while holding a cell/Structure
 // 2-bit lock (lock-order rank 10); MUST NOT be called from heap-internal
 // contexts of heap ranks 7-9 (SPEC-heap section 13.10f). Not async-signal-safe.
 class RetiredCallback {
@@ -78,8 +75,7 @@ class RetiredCallback {
 public:
     RetiredCallback() = default;
 
-    // Destruction IS the deferred action: the destructor runs at epoch expiry
-    // (or never, under the pre-integration leak stub - see the .cpp).
+    // Destruction IS the deferred action: the destructor runs at epoch expiry.
     virtual ~RetiredCallback() = default;
 };
 
@@ -103,32 +99,12 @@ enum class DisarmClearingWatchpoints : bool { No, Yes };
 class RetiredJITArtifacts {
 public:
     // Retire a (detached) handler-IC chain head. Every node's stub routine
-    // must be GC-aware by the time the chain is parked (RELEASE_ASSERTed);
-    // non-GC-aware pre-compiled unit handlers (data-only handlers over shared
-    // immutable thunk code, createPreCompiledICJITStubRoutine) are promoted
-    // via makeGCAware() on entry. Node data is freed at epoch expiry, but the
-    // machine code rides the jettisoned-stub-routine path and waits for R2's
-    // conservative scan (I7).
+    // must already be GC-aware (RELEASE_ASSERTed): flag-on, every IC stub
+    // routine is made GC-aware at creation, and this never promotes one. Node
+    // data is freed at epoch expiry, but the machine code rides the
+    // jettisoned-stub-routine path and waits for R2's conservative scan (I7).
 #if ENABLE(JIT)
     static void retireHandlerChain(VM&, RefPtr<InlineCacheHandler>&& head, DisarmClearingWatchpoints);
-
-    // Retire a dying optimized (DFG/FTL) CodeBlock's JITCode (called from
-    // ~CodeBlock during the GC sweep). Drops the ref inline in BOTH flag
-    // arms (B14 / MC-DOS S7: the chartered flag-on leak is closed). Per the
-    // hard rule above and I7, machine code may be released only after R2's
-    // conservative scan of ALL mutator stacks proves it unreachable — and
-    // that scan now exists (Heap::gatherStackRoots, §10.6/T6: one
-    // MachineThreads scan covers all N mutators, with *m_codeBlocks keeping
-    // any block whose code is on any stack). The very GC whose sweep is
-    // calling this ran R2; CallLinkInfo::visitWeak unlinked dead callees;
-    // §5.8 publish-time pins kept any record-named block alive (and those
-    // pins now expire via the epoch path above, so they no longer accumulate).
-    // Deliberately NOT routed through the epoch facility: epoch expiry must
-    // never free machine code (I7). The CommonData / CallLinkInfos this owns
-    // are released with it; ~CallLinkInfo unlinks each from the callee's
-    // m_incomingCalls list (the prior leak-arm "stays on the list forever"
-    // residual is gone).
-    static void retireOptimizedJITCode(VM&, RefPtr<JITCode>&&);
 #endif
 
     // Retire an arbitrary non-executable artifact: the callback is destroyed
@@ -161,17 +137,19 @@ public:
     //      same cycle, so the validation arm skipped the pin forever
     //      ("retention, never resurrection") and the slot was recycled.
     // Pinning at publish closes both: the pin spans the record's whole
-    // reachable lifetime (live, then retired until epoch expiry — or forever
-    // under the flag-on leak arm, matching the record leak it makes sound).
-    // No-op for null codeBlockToTransfer (virtual/host records).
-    static void pinPublishedCallLinkRecordCodeBlock(VM&, CodeBlock*);
+    // reachable lifetime (live, then retired until epoch expiry).
+    // Returns the heap holding the pin; the caller stamps it into the record
+    // (CallLinkRecord::pinHeap) so whoever frees the record — the epoch holder
+    // or the owning CallLinkInfo's destructor — unpins on that same heap.
+    // No-op (returns null) for null codeBlockToTransfer (virtual/host records).
+    static JSC::Heap* pinPublishedCallLinkRecordCodeBlock(VM&, CodeBlock*);
 
     // Retire a replaced/unlinked §5.8 call-link record (the sole owner of the
     // record pointer after the m_record exchange). Takes over the record's
     // publish-time pin (see pinPublishedCallLinkRecordCodeBlock above): the
-    // callback's destructor unpins at epoch expiry — never, under the flag-on
-    // leak arm. See Heap::pinRetiredCallLinkRecordCodeBlock for the
-    // marking/validation contract. No-op for null records.
+    // callback's destructor unpins at epoch expiry. See
+    // Heap::pinRetiredCallLinkRecordCodeBlock for the marking/validation
+    // contract. No-op for null records.
     static void retireCallLinkRecord(VM&, CallLinkRecord*);
 };
 

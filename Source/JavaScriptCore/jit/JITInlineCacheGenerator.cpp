@@ -87,12 +87,12 @@ void JITInlineCacheGenerator::finalize(
     ASSERT(m_propertyCache);
     if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*m_propertyCache)) {
         // FTL handler-IC site (useHandlerICInFTL): there is no inline slab and no
-        // patchable slow-path call; record where the IC continues and where its
-        // out-of-line slow path (the late path emitted by the FTL lowering)
-        // begins. The slow-path handler thunk dispatches to slowPathStartLocation
-        // only when re-entering the IC's miss path is required; the initial
-        // handler itself is installed on the main thread at plan finalization
-        // (HandlerPropertyInlineCache::initializeHandlerForOptimizingJIT).
+        // patchable slow-path call. doneLocation is where the IC continues;
+        // slowPathStartLocation is the label of the FTL late path, recorded as
+        // the Baseline/DFG data ICs do but read by nothing for a handler IC: a
+        // miss ends in the chain's slow-path handler, which calls m_slowOperation
+        // and returns. The initial handler is installed on the main thread at plan
+        // finalization (HandlerPropertyInlineCache::initializeHandlerForOptimizingJIT).
         UNUSED_PARAM(start);
         handlerIC->doneLocation = fastPath.locationOf<JSInternalPtrTag>(m_done);
         handlerIC->slowPathStartLocation = slowPath.locationOf<JITStubRoutinePtrTag>(m_slowPathBegin);

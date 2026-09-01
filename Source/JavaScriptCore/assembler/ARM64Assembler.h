@@ -2641,6 +2641,11 @@ public:
     {
         insn(0xd5033abf);
     }
+
+    ALWAYS_INLINE void isb()
+    {
+        insn(0xd5033fdf);
+    }
     
     template<int datasize>
     void ldar(RegisterID dst, RegisterID src)

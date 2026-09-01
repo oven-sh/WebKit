@@ -131,15 +131,13 @@ public:
         }
     };
 
-    // Review round 2 (R2-2): every accessor takes the set's own m_lock. The
-    // set is per-VM, but its routines are shared across CodeBlocks and its
-    // mutators are NOT all serialized by one CodeBlock lock: IC-miss slow
-    // paths of different CodeBlocks (phase-B: different mutator threads in
-    // one VM), GC-End removeDeadOwners, and observeZeroRefCountImpl (runs on
-    // whatever thread drops the last ref — handler-chain retirement included)
-    // all reach here. An unsynchronized HashSet/HashMap rehash race is heap
-    // corruption. All paths are slow paths; an uncontended WTF::Lock is one
-    // CAS.
+    // Every accessor takes m_lock: the set is per-VM but is reached from the
+    // IC-miss slow paths of different CodeBlocks (different mutator threads
+    // under useJSThreads), from removeDeadOwners at GC End, and from whichever
+    // thread drops a routine's last reference. m_stubs holds weak pointers: a
+    // routine leaves it in observeZeroRefCountImpl(), after its count has
+    // already reached zero, so find() takes its reference with tryRef() and
+    // treats a zero-count entry as absent.
     void add(Hash::Key&& key)
     {
         Locker locker { m_lock };
@@ -158,9 +156,11 @@ public:
     {
         Locker locker { m_lock };
         auto entry = m_stubs.find<SharedJITStubSet::Searcher::Translator>(searcher);
-        if (entry != m_stubs.end())
-            return entry->m_wrapped;
-        return nullptr;
+        if (entry == m_stubs.end())
+            return nullptr;
+        if (!entry->m_wrapped->tryRef())
+            return nullptr;
+        return adoptRef(entry->m_wrapped);
     }
 
     RefPtr<PolymorphicAccessJITStubRoutine> getStatelessStub(StatelessCacheKey) const;
@@ -173,7 +173,7 @@ public:
     void setSlowPathHandler(AccessType, Ref<InlineCacheHandler>);
 
 private:
-    mutable Lock m_lock; // R2-2: guards every container below.
+    mutable Lock m_lock; // Guards every container below.
     UncheckedKeyHashSet<Hash::Key, Hash, Hash::KeyTraits> m_stubs;
     UncheckedKeyHashMap<StatelessCacheKey, Ref<PolymorphicAccessJITStubRoutine>> m_statelessStubs;
     UncheckedKeyHashMap<DOMJITCacheKey, MacroAssemblerCodeRef<JITStubRoutinePtrTag>> m_domJITCodes;

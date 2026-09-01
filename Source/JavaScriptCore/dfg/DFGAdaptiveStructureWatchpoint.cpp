@@ -56,11 +56,11 @@ void AdaptiveStructureWatchpoint::initialize(const ObjectPropertyCondition& key,
     RELEASE_ASSERT(!key.watchingRequiresReplacementWatchpoint());
 }
 
-void AdaptiveStructureWatchpoint::install(VM&)
+bool AdaptiveStructureWatchpoint::install(VM&)
 {
     RELEASE_ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges));
     
-    m_key.object()->structure()->addTransitionWatchpoint(this);
+    return m_key.object()->structure()->addTransitionWatchpoint(this);
 }
 
 void AdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail& detail)
@@ -69,10 +69,10 @@ void AdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail& detail)
     if (m_codeBlock->isPendingDestruction())
         return;
 
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
-        install(vm);
+    // A refused install (flag-on: the new structure's set fired under us) is
+    // a failed adaptation.
+    if (m_key.isWatchable(PropertyCondition::EnsureWatchability) && install(vm))
         return;
-    }
     
     dataLogLnIf(DFG::shouldDumpDisassembly(), "Firing watchpoint ", RawPointer(this), " (", m_key, ") on ", *m_codeBlock);
 

@@ -1867,14 +1867,19 @@ end
 # declaration is exactly what keeps the IE GOT entry valid here). ARM64 uses
 # x16 as scratch -- offlineasm's own transient temp (arm64.rb
 # ARM64_EXTRA_GPRS); nothing is live in it between pseudo-instructions.
-# ELF/Linux only: on Darwin the M4a JSCConfig key slot for the register-form
-# tls_loadp has not landed, and Windows/C_LOOP have no JIT-visible TLS
-# mechanism (D8) - those configurations jump to the slow path instead (reads
-# are unaffected; only write/transition fast paths need the tag). t6 is
-# clobbered. The tag MUST NOT live in t4: t4 is the LLInt PC register on all
-# JSVALUE64 platforms (LowLevelInterpreter.asm `const PC = t4`), so using it
-# here corrupts the bytecode PC for every subsequent slow-path call. t6
-# (rdi / x6) is dead at all four call sites below.
+# ELF/Linux only. Every other configuration jumps to slowLabel, so with
+# useJSThreads=1 the LLInt write fast paths that expand this macro (out-of-line
+# put_by_id, put_by_val, put_to_scope GlobalProperty, enumerator_put_by_val)
+# take the C++ slow path until tier-up, while the read fast paths stay fast.
+# Darwin has a TSD copy of the tag whose pthread key is published in
+# g_jscConfig.butterflyTIDTagTLSKey (jit/ConcurrentButterflyOperations.cpp),
+# but no arm reads it here: offlineasm's register-form tls_loadp on arm64
+# emits the key register with no extend or scaling. Windows and C_LOOP have
+# no JIT-visible TLS mechanism (D8). t6 is clobbered. The tag MUST NOT live
+# in t4: t4 is the LLInt PC register on all JSVALUE64 platforms
+# (LowLevelInterpreter.asm `const PC = t4`), so using it here corrupts the
+# bytecode PC for every subsequent slow-path call. t6 (rdi / x6) is dead at
+# all four call sites below.
 macro loadButterflyTIDTagToT6(slowLabel)
     if LINUX and X86_64
         emit "movq g_jscButterflyTIDTag@GOTTPOFF(%rip), %rdi"  # t6 == rdi: tp-relative offset from the GOT (IE)
@@ -1898,6 +1903,21 @@ macro butterflyLoadDependsOnStructureID(structureID, object, scratch)
         move structureID, scratch
         xorq structureID, scratch    # 0, data-dependent on structureID
         addp scratch, object
+    end
+end
+
+# ARM64 only: make the CallLinkInfo* handed to an always-call target (the
+# virtual/polymorphic thunks, which reload CallLinkInfo::m_stub through it)
+# address-dependent on the CallLinkRecord it was dispatched through (zero
+# computed from the record, folded into the pointer), so the thunk's m_stub
+# load cannot pair a new record with an older (or null) m_stub; setStub stores
+# m_stub before publishing the record. No-op on x86-64 (TSO). Clobbers scratch
+# only.
+macro callLinkInfoDependsOnRecord(record, callLinkInfo, scratch)
+    if ARM64 or ARM64E
+        move record, scratch
+        xorq record, scratch    # 0, data-dependent on the record
+        addp scratch, callLinkInfo
     end
 end
 
@@ -3033,14 +3053,16 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
     # the callee (virtual thunk dereferences it), t2 = CallLinkInfo*
     # (virtual/poly-stub targets; mono entrypoints ignore it), t5 = target.
     # The record must survive prepareCall (clobbers t1-t4): carry it in t6 --
-    # caller-clobbered scratch on both x86_64 (rdi) and ARM64 (x7); dead
-    # before invokeCall's ARM64E a7 use.
+    # caller-clobbered scratch on both x86_64 (rdi) and ARM64 (x6 == a6). Its
+    # last read is the target load below, before invokeForTailCall's ARM64E
+    # `move maybeOldCFR, a6` overwrites it.
     move t1, t6
     prepareCall(t2, t3, t4, t1, macro(address)
         loadp CallLinkRecord::codeBlockToTransfer[t6], t2
         storep t2, address
     end)
     addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2; reads t5 (metadata) BEFORE the target overwrites it.
+    callLinkInfoDependsOnRecord(t6, t2, t3) # t3 is dead after prepareCall.
     loadp CallLinkRecord::target[t6], t5
     jmp .dispatch
 
@@ -3138,6 +3160,7 @@ macro doCallVarargs(opcodeName, size, get, opcodeStruct, valueProfileName, dstVi
                 storep t2, address
             end)
             addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2; reads t5 (metadata) before the target overwrites it.
+            callLinkInfoDependsOnRecord(t6, t2, t3) # t3 is dead after prepareCall.
             loadp CallLinkRecord::target[t6], t5
             jmp .dispatch
 
@@ -3701,26 +3724,29 @@ end)
 
 llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, return)
     macro putProperty()
-        # SPEC-jit sec.5.4/sec.5.5 (Task 8): gate + WRITE choke point (global-object
-        # butterfly; foreign/shared cases take the generic locked path). On
-        # entry t1 still holds the structureID just compared by
-        # loadScopeWithStructureCheck (R7/F7 dependency source).
-        # Review round 1: scope metadata is frozen post-link flag-on and the
-        # GlobalProperty structure cache is never armed; see getProperty() in
-        # op_get_from_scope above. Kept as defense in depth.
+        # Flag-on the store goes through the WRITE choke point (the global
+        # object's butterfly is shared-writable; foreign/shared cases take the
+        # generic locked path); flag-off differs from the pre-threads engine
+        # by this one not-taken branch. On entry t1 still holds the structureID
+        # just compared by loadScopeWithStructureCheck, the dependency source
+        # for the threaded butterfly load. Flag-on the GlobalProperty structure
+        # cache is never armed, so the threaded arm is defense in depth; see
+        # getProperty() in op_get_from_scope above.
         ifJSThreadsBranch(t3, .putPropertyThreaded)
         get(m_value, t1)
         loadConstantOrVariable(size, t1, t2)
         loadp OpPutToScope::Metadata::m_operand[t5], t1
         storePropertyAtVariableOffset(t1, t0, t2)
-        jmp .putPropertyDone
+        writeBarrierOnOperands(size, get, m_scope, m_value)
+        dispatch()
     .putPropertyThreaded:
-        butterflyLoadDependsOnStructureID(t1, t0, t2) # R7/F7 (Task 8)
+        butterflyLoadDependsOnStructureID(t1, t0, t2)
         get(m_value, t1)
         loadConstantOrVariable(size, t1, t2)
         loadp OpPutToScope::Metadata::m_operand[t5], t1
         storePropertyAtVariableOffsetThreaded(t1, t0, t2, t3, t7, .pDynamic)
-    .putPropertyDone:
+        writeBarrierOnOperands(size, get, m_scope, m_value)
+        dispatch()
     end
 
     macro putGlobalVariable()
@@ -3778,8 +3804,6 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
     bineq t0, GlobalProperty, .pGlobalVar
     loadScopeWithStructureCheck(OpPutToScope, get, t5, t0, t1, .pDynamic) # This structure check includes lexical binding epoch check since when the epoch is changed, scope will be changed too.
     putProperty()
-    writeBarrierOnOperands(size, get, m_scope, m_value)
-    dispatch()
 
 .pGlobalVar:
     bineq t0, GlobalVar, .pGlobalLexicalVar
@@ -3806,8 +3830,6 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
     bineq t0, GlobalPropertyWithVarInjectionChecks, .pGlobalVarWithVarInjectionChecks
     loadScopeWithStructureCheck(OpPutToScope, get, t5, t0, t1, .pDynamic) # This structure check includes lexical binding epoch check since when the epoch is changed, scope will be changed too.
     putProperty()
-    writeBarrierOnOperands(size, get, m_scope, m_value)
-    dispatch()
 
 .pGlobalVarWithVarInjectionChecks:
     bineq t0, GlobalVarWithVarInjectionChecks, .pGlobalLexicalVarWithVarInjectionChecks
@@ -4282,16 +4304,7 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
 
     loadVariable(get, m_enumerator, t1)
     loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
-    # R7/F7 (review round 3, R3-7): load the cell's structureID into a REGISTER
-    # (t3) and compare register-register, so the threaded out-of-line path
-    # below can make the butterfly load address-dependent on the cell's
-    # structureID LOAD. The old memory-operand form
-    # (bineq t2, JSCell::m_structureID[t0]) leaves no register holding the
-    # cell's structureID -- and a control dependency from the compare does not
-    # order load->load on ARM64 -- the same bug class as the R1-1 op_put_by_id
-    # fix. t3 must stay live until .outOfLineThreaded.
-    loadi JSCell::m_structureID[t0], t3
-    bineq t2, t3, .getSlowPath
+    bineq t2, JSCell::m_structureID[t0], .getSlowPath
 
     loadVariable(get, m_index, t2)
     loadi JSPropertyNameEnumerator::m_cachedInlineCapacity[t1], t1
@@ -4302,9 +4315,8 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
     jmp .done
 
 .outOfLine:
-    # SPEC-jit sec.5.4/sec.5.5 (Task 8): gate + READ choke point on the threaded
-    # branch; flag-off keeps today's raw load. (Scratch is t7, not t3: t3
-    # carries the cell structureID into the threaded block, R3-7.)
+    # Flag-on the out-of-line load goes through the READ choke point; flag-off
+    # differs from the pre-threads engine by this one not-taken branch.
     ifJSThreadsBranch(t7, .outOfLineThreaded)
     loadp JSObjectWithButterfly::m_butterfly[t0], t0
 .outOfLineContinue:
@@ -4318,13 +4330,18 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
     return(t2)
 
 .outOfLineThreaded:
-    # R3-7: this access is STRUCTURE-bounded (the index is validated against
-    # the enumerator's cached structure), not butterfly-self-bounded, so the
-    # butterfly load must be ordered after the cell structureID load that
-    # passed the compare above -- otherwise a stale (pre-transition, smaller)
-    # flat butterfly can be paired with a structure that promises more
-    # out-of-line slots => OOB read (ARM64).
-    butterflyLoadDependsOnStructureID(t3, t0, t7) # R7/F7; t3 = cell sid
+    # The out-of-line index is bounded by the enumerator's cached structure,
+    # not by the butterfly itself, so the butterfly load must be ordered after
+    # a cell structureID load that matched the cache: a control dependency
+    # from the compare above does not order load->load on ARM64, and a stale
+    # (smaller) flat butterfly paired with the newer structure is an OOB read.
+    # Reload both ids into registers, re-compare, and hang the butterfly
+    # load's address off the cell's structureID register.
+    loadVariable(get, m_enumerator, t3)
+    loadi JSPropertyNameEnumerator::m_cachedStructureID[t3], t7
+    loadi JSCell::m_structureID[t0], t3
+    bineq t3, t7, .getSlowPath
+    butterflyLoadDependsOnStructureID(t3, t0, t7)
     loadp JSObjectWithButterfly::m_butterfly[t0], t3
     threadedButterflyReadPredicate(t0, t3, t7, .getSlowPath)
     move t3, t0
@@ -4357,20 +4374,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
 
     loadVariable(get, m_enumerator, t1)
     loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
-    # R7/F7 (review round 3, R3-7): cell structureID into a REGISTER (t6) so
-    # the threaded out-of-line path can hang the butterfly load's address
-    # dependency off the cell's structureID LOAD (same rationale as the
-    # op_enumerator_get_by_val comment above and the R1-1 op_put_by_id fix;
-    # the old memory-operand compare provided only a control dependency,
-    # which does not order load->load on ARM64). t6 must stay live until
-    # .outOfLineThreaded (nothing below clobbers it: t2 becomes the structure
-    # then the index, t3 the scratch then the value, t1 the inline capacity).
-    # t6 is consumed by butterflyLoadDependsOnStructureID at the top of
-    # .outOfLineThreaded and is then clobbered by loadButterflyTIDTagToT6 --
-    # the tag load must never be hoisted above the structureID dependency
-    # fold.
-    loadi JSCell::m_structureID[t0], t6
-    bineq t2, t6, .putSlowPath
+    bineq t2, JSCell::m_structureID[t0], .putSlowPath
 
     structureIDToStructureWithScratch(t2, t3)
     btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits)), .putSlowPath
@@ -4386,8 +4390,9 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     jmp .done
 
 .outOfLine:
-    # SPEC-jit sec.5.4/sec.5.5 (Task 8): gate + WRITE choke point on the threaded
-    # branch; flag-off keeps today's raw load.
+    # Flag-on the out-of-line store goes through the WRITE choke point;
+    # flag-off differs from the pre-threads engine by this one not-taken
+    # branch.
     subi t1, t2
     ifJSThreadsBranch(t1, .outOfLineThreaded)
     loadp JSObjectWithButterfly::m_butterfly[t0], t1
@@ -4401,13 +4406,20 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     dispatch()
 
 .outOfLineThreaded:
-    # R3-7: STRUCTURE-bounded write -- the out-of-line index is validated
-    # against the enumerator's cached structure, so the butterfly load must be
-    # ordered after the cell structureID load (t6) that passed the compare
-    # above; a stale flat butterfly paired with a fresher structure is an OOB
-    # WRITE on ARM64. (The write predicate's TID/SW checks do not catch this:
-    # the stale butterfly carries the owner tag.)
-    butterflyLoadDependsOnStructureID(t6, t0, t7) # R7/F7; t6 = cell sid
+    # The out-of-line index is bounded by the enumerator's cached structure,
+    # not by the butterfly itself, so the butterfly load must be ordered after
+    # a cell structureID load that matched the cache (a control dependency
+    # from the compare above does not order load->load on ARM64); a stale
+    # flat butterfly paired with the newer structure is an OOB write that the
+    # write predicate cannot catch, since the stale butterfly carries the
+    # owner tag. Reload both ids into registers, re-compare, and hang the
+    # butterfly load's address off the cell's structureID register (t6, which
+    # loadButterflyTIDTagToT6 only clobbers after the dependency fold).
+    loadVariable(get, m_enumerator, t1)
+    loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t7
+    loadi JSCell::m_structureID[t0], t6
+    bineq t6, t7, .putSlowPath
+    butterflyLoadDependsOnStructureID(t6, t0, t7)
     loadp JSObjectWithButterfly::m_butterfly[t0], t1
     loadButterflyTIDTagToT6(.putSlowPath)
     threadedButterflyWritePredicate(t0, t1, t7, .putSlowPath)
@@ -4487,14 +4499,15 @@ llintOp(op_put_internal_field, OpPutInternalField, macro (size, get, dispatch)
     get(m_value, t1)
     loadConstantOrVariable(size, t1, t2)
     getu(size, OpPutInternalField, m_index, t1)
-    # SPEC-ungil N.5 (r15 F1): gilOffProcess, internal-field stores are
-    # store-RELEASE -- the generator/iterator-helper suspend-state store is
-    # the resume-claim UNCLAIM and must publish the preceding frame saves to
-    # a rival claimant's acquire CAS (claimGeneratorResume). One byte test on
-    # the JSCConfig gilOffProcess byte (the accepted delta-(a) shape); the
-    # fence arm is unreachable flag-off/GIL-on. Platforms without GILOFF_TLS
+    # gilOffProcess, the generator/iterator-helper suspend-state store is the
+    # resume-claim unclaim and must be a store-release: the frame saves before
+    # it have to be visible to a rival claimant's acquire CAS
+    # (claimGeneratorResume). x86-64 TSO already orders a plain store after
+    # every earlier store (the JIT tiers' storeFence is empty there too);
+    # weak-memory targets test the gilOffProcess byte and fence. The fence arm
+    # is unreachable flag-off/GIL-on, and platforms without GILOFF_TLS
     # fail-stop on a set gilOffProcess byte before reaching any bytecode.
-    if GILOFF_TLS
+    if GILOFF_TLS and not X86_64
         leap _g_config, t3
         bbeq JSCConfigOffset + JSC::Config::gilOffProcess[t3], 0, .putInternalFieldNoFence
         memfence

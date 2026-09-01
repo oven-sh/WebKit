@@ -87,6 +87,19 @@ void retireCallLinkRecord(VM& vm, CallLinkRecord* record)
 
 } // anonymous namespace
 
+void destroyUnreachableCallLinkRecordSlow(CallLinkRecord* record)
+{
+    ASSERT(record);
+    // The pin is the record's only liveness anchor for the named CodeBlock;
+    // a record that dies with its owner must release it, or the callee (and
+    // transitively everything its own records name) is marked forever. The
+    // pin lock is a leaf, so this is legal in the sweep contexts destructors
+    // run in.
+    if (record->pinHeap && record->codeBlockToTransfer)
+        record->pinHeap->unpinRetiredCallLinkRecordCodeBlock(record->codeBlockToTransfer);
+    delete record;
+}
+
 // AB18-D: see the declaration in CallLinkInfo.h. Defined here so the
 // transition writers in this file and in bytecode/Repatch.cpp share one lock.
 RecursiveLock CallLinkInfo::s_callLinkSerializationLock;
@@ -137,8 +150,8 @@ void CallLinkInfo::publishRecord(VM& vm, uintptr_t comparand, CodePtr<JSEntryPtr
     // mutator still provably holds the cell live. The pin spans the record's
     // whole reachable lifetime (live + retired) — see
     // RetiredJITArtifacts::pinPublishedCallLinkRecordCodeBlock.
-    RetiredJITArtifacts::pinPublishedCallLinkRecordCodeBlock(vm, codeBlockToTransfer);
-    auto* record = new CallLinkRecord { comparand, target, codeBlockToTransfer };
+    JSC::Heap* pinHeap = RetiredJITArtifacts::pinPublishedCallLinkRecordCodeBlock(vm, codeBlockToTransfer);
+    auto* record = new CallLinkRecord { comparand, target, codeBlockToTransfer, pinHeap };
     WTF::storeStoreFence();
     auto* oldRecord = m_record.exchange(record);
     retireCallLinkRecord(vm, oldRecord);
@@ -213,7 +226,7 @@ CallLinkInfo::~CallLinkInfo()
     // required mutual exclusion: this destructor either delists the node
     // before the drain takes the list, or blocks here until the drain loop
     // ends (the drain holds the lock across its entire traversal). The lock
-    // is recursive — sweep can run from allocation inside a locked linker.
+    // is recursive for the same-thread nesting described at its declaration.
     // clearStub's PolymorphicCallStubRoutine::unlinkForcefully per-node
     // remove()s still need the lock regardless (they mutate incoming-calls
     // sentinel lists the locked linkers also mutate). The mode gate is the
@@ -229,7 +242,7 @@ CallLinkInfo::~CallLinkInfo()
         // m_record; inline delete is sound (destruction can run in
         // heap-internal contexts where RetiredJITArtifacts::retire is not
         // allowed, heap ranks 7-9).
-        delete m_record.exchange(nullptr);
+        destroyUnreachableCallLinkRecord(m_record.exchange(nullptr));
         return;
     }
     clearStub();
@@ -238,7 +251,7 @@ CallLinkInfo::~CallLinkInfo()
     // JIT'd frame can still hold the record pointer (I16); inline delete is
     // sound here - and destruction can run in heap-internal contexts where
     // RetiredJITArtifacts::retire is not allowed (heap ranks 7-9).
-    delete m_record.exchange(nullptr);
+    destroyUnreachableCallLinkRecord(m_record.exchange(nullptr));
 }
 
 void CallLinkInfo::clearStub()
@@ -354,7 +367,7 @@ void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee,
     // SPEC-jit section 5.8: monomorphic link publishes the record the flag-on
     // fast path dispatches on; the fields above remain the GC mirror.
     publishRecord(vm, std::bit_cast<uintptr_t>(callee), codePtr, codeBlock);
-    m_mode.store(static_cast<uint8_t>(Mode::Monomorphic));
+    storeMode(Mode::Monomorphic);
 }
 
 void CallLinkInfo::clearCallee()
@@ -532,11 +545,12 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
     // packed callType+type byte now goes through the relaxed-atomic
     // write-once pair (single store; see CallLinkInfo.h), the same shape as
     // the m_owner fix above. Write-once still holds: this runs in
-    // CodeBlock::finishCreation before the CodeBlock is published.
+    // CodeBlock::finishCreation before the CodeBlock is published. The same
+    // store initializes the packed mode to Init.
     storeCallTypeAndType(callType, Type::DataOnly);
     ASSERT(Type::DataOnly == type());
+    ASSERT(Mode::Init == mode());
     m_codeOrigin = codeOrigin;
-    m_mode.store(static_cast<uint8_t>(Mode::Init));
     if (!Options::useLLIntICs()) [[unlikely]]
         setVirtualCall(vm);
 }
@@ -565,7 +579,7 @@ void CallLinkInfo::reset(VM& vm)
     clearStub();
     if (isOnList())
         remove();
-    m_mode.store(static_cast<uint8_t>(Mode::Init));
+    storeMode(Mode::Init);
 }
 
 void CallLinkInfo::revertCall(VM& vm)
@@ -620,7 +634,7 @@ void CallLinkInfo::setVirtualCall(VM& vm)
     publishRecord(vm, polymorphicCalleeMask, m_monomorphicCallDestination, nullptr);
 
     setClearedByVirtual();
-    m_mode.store(static_cast<uint8_t>(Mode::Virtual));
+    storeMode(Mode::Virtual);
 }
 
 JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
@@ -644,11 +658,16 @@ void CallLinkInfo::setStub(VM& vm, Ref<PolymorphicCallStubRoutine>&& newStub)
         // SPEC-jit section 5.8 (Task 7): the shared polymorphic-call thunk
         // reloads m_stub through this CallLinkInfo, so replacement must be ONE
         // raw pointer store with no null window - a racing reader observes the
-        // old or the new routine, both alive. clearStub() above kept the old
-        // ref (flag-on); we adopt and release it here. The displaced routine
-        // is GC-aware with an atomic refcount (section 4.5): even at refcount
-        // zero its memory is reclaimed only after a GC conservative scan of
-        // all mutator stacks (R2/I7), so a reader mid-dispatch is safe.
+        // old or the new routine, both alive. This store precedes the record
+        // publication below, and the fast paths make the CallLinkInfo pointer
+        // they hand the thunk address-dependent on the record they dispatched
+        // through, so a reader that took the new record sees this store (or a
+        // later one), never the displaced routine or a null first stub.
+        // clearStub() above kept the old ref (flag-on); we adopt and release
+        // it here. The displaced routine is GC-aware with an atomic refcount
+        // (section 4.5): even at refcount zero its memory is reclaimed only
+        // after a GC conservative scan of all mutator stacks (R2/I7), so a
+        // reader mid-dispatch is safe.
         PolymorphicCallStubRoutine** stubSlot = std::bit_cast<PolymorphicCallStubRoutine**>(&m_stub);
         PolymorphicCallStubRoutine* oldStub = *stubSlot; // Plain read is writer-writer safe: writers serialize on s_callLinkSerializationLock.
         PolymorphicCallStubRoutine* incoming = &newStub.leakRef();
@@ -689,7 +708,7 @@ void CallLinkInfo::setStub(VM& vm, Ref<PolymorphicCallStubRoutine>&& newStub)
     if (isOnList())
         remove();
 
-    m_mode.store(static_cast<uint8_t>(Mode::Polymorphic));
+    storeMode(Mode::Polymorphic);
 }
 
 #if ENABLE(JIT)
@@ -748,6 +767,20 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
         found.link(&jit);
         // callTargetGPR holds r here (real record or the empty record). It
         // survives prepareForTailCall, exactly as today's preloaded target.
+#if CPU(ARM64)
+        {
+            // The always-call targets (virtual and polymorphic thunks) reload
+            // m_stub through callLinkInfoGPR. Fold a zero computed from r into
+            // it so that load is address-dependent on the m_record load and
+            // can never pair a new record with an older (or null) m_stub;
+            // setStub stores m_stub before publishing the record. No-op on
+            // x86-64 (TSO).
+            GPRReg scratchGPR = jit.scratchRegister();
+            DisallowMacroScratchRegisterUsage disallowScratch(jit);
+            jit.xor64(BaselineJITRegisters::Call::callTargetGPR, BaselineJITRegisters::Call::callTargetGPR, scratchGPR);
+            jit.addPtr(scratchGPR, BaselineJITRegisters::Call::callLinkInfoGPR);
+        }
+#endif
         if (isTailCall) {
             prepareForTailCall();
             jit.transferPtr(CCallHelpers::Address(BaselineJITRegisters::Call::callTargetGPR, CallLinkRecord::offsetOfCodeBlockToTransfer()), CCallHelpers::calleeFrameCodeBlockBeforeTailCall());
@@ -857,8 +890,8 @@ void DirectCallLinkInfo::publishRecord(VM& vm, CodePtr<JSEntryPtrTag> target, Co
     // w16 amend: pin before publication — same contract as
     // CallLinkInfo::publishRecord above (direct records carry no comparand at
     // all, so the named cell's only liveness anchor IS this pin).
-    RetiredJITArtifacts::pinPublishedCallLinkRecordCodeBlock(vm, codeBlockToTransfer);
-    auto* record = new CallLinkRecord { 0, target, codeBlockToTransfer };
+    JSC::Heap* pinHeap = RetiredJITArtifacts::pinPublishedCallLinkRecordCodeBlock(vm, codeBlockToTransfer);
+    auto* record = new CallLinkRecord { 0, target, codeBlockToTransfer, pinHeap };
     WTF::storeStoreFence();
     // AB18-D: atomic swap — same no-double-retire rule as
     // CallLinkInfo::publishRecord (precondition 11).
@@ -880,15 +913,12 @@ void DirectCallLinkInfo::retireRecord(VM& vm, CallLinkRecord* record)
 {
     if (!record)
         return;
-    // AB18-E (UAF fix): the VM comes from the caller — the retiring mutator's
-    // VM (section 4.4; R4-2 — RetiredJITArtifacts resolves the epoch heap, the
-    // client's SERVER under useSharedGCHeap, from the VM internally). It must
-    // NOT be derived as m_owner->vm(): the retireOptimizedJITCode leak keeps
-    // this node alive (and validly on callees' m_incomingCalls lists) past its
-    // owner CodeBlock's death, so a drain (unlinkOrUpgradeIncomingCalls under
-    // a jettison stop) can reach here with m_owner a swept cell whose
-    // MarkedBlock is already freed — m_owner->vm() was a use-after-free
-    // (JSTests/threads/jit/ic-publish-reset-loops.js).
+    // The VM comes from the caller, the retiring mutator's VM (RetiredJITArtifacts
+    // resolves the epoch heap, the client's server under useSharedGCHeap, from
+    // it). It must NOT be derived as m_owner->vm(): a drain of a callee's
+    // m_incomingCalls list (unlinkOrUpgradeIncomingCalls) can reach this node
+    // while its owner CodeBlock is unmarked and waiting to be swept, and
+    // m_owner->vm() reads that cell's MarkedBlock header.
     retireCallLinkRecord(vm, record);
 }
 

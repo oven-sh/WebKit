@@ -2835,10 +2835,14 @@ void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const Scope
     if (!m_compileOkay)
         return;
 
-    GPRReg resultGPR;
+    // The GetByVal prefix hands back no registers for DataFormatDouble, so
+    // the requested format must follow the node's result type exactly as the
+    // non-segmented Double lowering does: InBounds and a SaneChain read with
+    // no UsesAsOther consumer are double results, everything else is boxed.
+    JSValueRegs resultRegs;
     DataFormat format;
     constexpr bool needsFlush = false;
-    std::tie(resultGPR, format) = prefix(DataFormatDouble, needsFlush);
+    std::tie(resultRegs, format) = prefix(node->hasDoubleResult() ? DataFormatDouble : DataFormatJS, needsFlush);
 
     emitButterflyLoadWithStructureDependency(baseReg, storageReg, scratchReg);
     Jump segmented = branch64(AboveOrEqual, storageReg, TrustedImm64(static_cast<int64_t>(JSC::butterflyTagMask)));
@@ -2866,37 +2870,51 @@ void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const Scope
         if (!arrayMode.isInBoundsSaneChain())
             speculationCheck(LoadFromHole, JSValueSource(), nullptr, branchIfNaN(resultReg));
         if (format == DataFormatJS) {
-            boxDouble(resultReg, resultGPR);
-            jsValueResult(resultGPR, node);
+            boxDouble(resultReg, resultRegs);
+            jsValueResult(resultRegs, node);
         } else {
-            ASSERT(format == DataFormatDouble && resultGPR == InvalidGPRReg);
+            ASSERT(format == DataFormatDouble && !resultRegs);
             doubleResult(resultReg, node);
         }
         return;
     }
 
-    // OutOfBounds / OutOfBoundsSaneChain: route past-length, segOOB, and NaN
-    // (hole) to a no-exit boxed-result operation call. The boxed result is
-    // forced to JS format (the prefix may have requested Double but a
-    // past-length read can produce undefined; today's non-segmented Double
-    // OutOfBounds path takes the same boxed JS-result shape).
     JumpList slowCases;
     slowCases.append(pastLength);
     slowCases.append(segOOB);
-    slowCases.append(branchIfNaN(resultReg));
-    if (resultGPR == InvalidGPRReg) {
-        // Prefix returned no JS register (DataFormatDouble); fall back to boxing
-        // through slotReg into a boxed JS result. The OutOfBounds Double mode
-        // is already DataFormatJS at the FixupPhase result-format level, so
-        // resultGPR is set in practice; defend anyway.
-        boxDouble(resultReg, slotReg);
-        addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, slotReg, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
-        jsValueResult(slotReg, node);
+
+    if (arrayMode.isOutOfBoundsSaneChain()) {
+        // Pure in Clobberize, like the non-segmented lowering: a past-length
+        // or stale-spine read yields PNaN / undefined inline and a negative
+        // index exits; no operation call.
+        if (format == DataFormatDouble) {
+            Jump done = jump();
+            slowCases.link(this);
+            speculationCheck(NegativeIndex, JSValueRegs(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
+            move64ToDouble(TrustedImm64(std::bit_cast<uint64_t>(PNaN)), resultReg);
+            done.link(this);
+            ASSERT(!resultRegs);
+            doubleResult(resultReg, node);
+        } else {
+            slowCases.append(branchIfNaN(resultReg));
+            boxDouble(resultReg, resultRegs);
+            Jump done = jump();
+            slowCases.link(this);
+            speculationCheck(NegativeIndex, JSValueRegs(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
+            move(TrustedImm64(JSValue::encode(jsUndefined())), resultRegs.gpr());
+            done.link(this);
+            jsValueResult(resultRegs, node);
+        }
         return;
     }
-    boxDouble(resultReg, resultGPR);
-    addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, resultGPR, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
-    jsValueResult(resultGPR, node);
+
+    // OutOfBounds (effectful, clobberTop in Clobberize): past-length, stale
+    // spine and NaN (hole) take the no-exit boxed-result operation call.
+    ASSERT(format == DataFormatJS && resultRegs);
+    slowCases.append(branchIfNaN(resultReg));
+    boxDouble(resultReg, resultRegs);
+    addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, resultRegs, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
+    jsValueResult(resultRegs, node);
 }
 
 void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
@@ -8966,6 +8984,12 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
         SpeculateCellOperand enumerator(this, m_graph.varArgChild(node, 6));
         GPRTemporary scratch(this);
         GPRTemporary storageTemporary(this);
+        std::optional<GPRTemporary> tidScratch;
+        GPRReg tidScratchGPR = InvalidGPRReg;
+        if (Options::useJSThreads()) [[unlikely]] {
+            tidScratch.emplace(this);
+            tidScratchGPR = tidScratch->gpr();
+        }
 
         GPRReg valueGPR = value.gpr();
         GPRReg propertyGPR = property.gpr();
@@ -9009,18 +9033,20 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
 
             // Otherwise it's out of line
             outOfLineAccess.link(this);
+            if (Options::useJSThreads()) [[unlikely]] {
+                // The structure check does not exclude a segmented or foreign-owned
+                // butterfly: a foreign out-of-line add leaves the object on the
+                // ordinary post-add Structure the enumerator caches. Run the write
+                // predicate on the word the store goes through; failures take the
+                // generic put. scratchGPR (the decoded structure) is dead here.
+                genericOrRecoverCase.append(emitThreadedButterflyLoadForWrite(baseRegs.payloadGPR(), storageGPR, tidScratchGPR, scratchGPR, ThreadedButterflyPlan { }));
+            }
             move(indexGPR, scratchGPR);
             sub32(Address(enumeratorGPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratchGPR);
             neg32(scratchGPR);
             signExtend32ToPtr(scratchGPR, scratchGPR);
-            loadPtr(Address(baseGPR, JSObject::butterflyOffset()), storageGPR);
-            // I14: flag-on the butterfly word is TID-tagged; mask before the
-            // out-of-line property store. FIXME: mask-only is sound while the
-            // GIL serializes mutators; the frozen WRITE predicate for this
-            // site (owner-TID compare, never elided per D9) is deferred to
-            // the choke-routing pass (INTEGRATE-jit.md).
-            if (Options::useJSThreads()) [[unlikely]]
-                maskButterflyTag(storageGPR);
+            if (!Options::useJSThreads()) [[likely]]
+                loadPtr(Address(baseGPR, JSObject::butterflyOffset()), storageGPR);
             constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
             storeValue(valueGPR, BaseIndex(storageGPR, scratchGPR, TimesEight, offsetOfFirstProperty));
             doneCases.append(jump());
@@ -9689,10 +9715,9 @@ void SpeculativeJIT::compileArrayUnshift(Node* node)
         }
 
         size_t scratchSize = sizeof(EncodedJSValue) * elementCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
         GPRTemporary buffer(this);
         GPRReg bufferGPR = buffer.gpr();
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
 
         for (unsigned i = 0; i < elementCount; ++i) {
             Edge& element = m_graph.varArgChild(node, i + elementOffset);
@@ -9757,10 +9782,9 @@ void SpeculativeJIT::compileArrayUnshift(Node* node)
         }
 
         size_t scratchSize = sizeof(double) * elementCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
         GPRTemporary buffer(this);
         GPRReg bufferGPR = buffer.gpr();
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
 
         for (unsigned i = 0; i < elementCount; ++i) {
             Edge& element = m_graph.varArgChild(node, i + elementOffset);

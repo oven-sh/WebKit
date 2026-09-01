@@ -35,15 +35,9 @@
 #include "JITWorklistThread.h"
 #include "SlotVisitorInlines.h"
 #include "VMInlines.h"
-#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
-
-// UNGIL AB18-R1-A: the finalize-claim table is now the m_finalizingPlans
-// member (see JITWorklist.h) — promoted from the original file-local key set
-// because the GC must walk the claimed plans' CodeBlocks (AB18-R1-B), and the
-// GC iteration templates live in JITWorklistInlines.h.
 
 // UNGIL §A.3.2 client-scoped park pairing (Heap.cpp; same forward-declaration
 // shape as Lookup.cpp / VMManager.cpp).
@@ -217,7 +211,10 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
             isDuplicate = true;
     }
     if (isDuplicate) [[unlikely]] {
-        dataLogLnIf(Options::verboseCompilationQueue(), *this, ": Cancelling duplicate plan for ", plan->key());
+        if (Options::verboseCompilationQueue()) {
+            dump(locker, WTF::dataFile());
+            dataLogLn(": Cancelling duplicate plan for ", plan->key());
+        }
         plan->cancel(); // cancel() also ends the signpost (SignpostDetail::Canceled).
         return CompilationResult::CompilationDeferred;
     }

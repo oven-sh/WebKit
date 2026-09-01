@@ -93,12 +93,6 @@ protected:
     }
 
 private:
-    // Superseded by nextRandomSeed() below; the out-of-line definition in
-    // AbstractMacroAssembler.cpp is no longer called (its plain static counter increment was a
-    // data race between concurrent compiler threads). Declaration kept so that definition still
-    // compiles until it is removed.
-    JS_EXPORT_PRIVATE void initializeRandom();
-
     // Shared seed counter for per-assembler WeakRandom sources. Initialized once via CAS with a
     // cryptographically random value; subsequent seeds are relaxed atomic increments. No strong
     // cryptographic characteristics are necessary, and no ordering is implied — this only has to

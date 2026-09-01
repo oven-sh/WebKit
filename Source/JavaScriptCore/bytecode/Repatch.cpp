@@ -104,8 +104,12 @@ void linkMonomorphicCall(VM& vm, JSCell* owner, CallLinkInfo& callLinkInfo, Code
         // against every other locked push/remove (the SentinelLinkedList
         // prev/next corruption signature); the isOnList() re-check makes a
         // racing upgrade-relink idempotent rather than a double push.
+        // Only an Init site may be linked here: isLinked() excludes Virtual,
+        // but Virtual is terminal (linkPolymorphicCallImpl relies on that), so
+        // a loser that finds the winner's Monomorphic link already demoted to
+        // Virtual by a later entrant must not re-link it Monomorphic.
         Locker locker { CallLinkInfo::s_callLinkSerializationLock };
-        if (callLinkInfo.isLinked() || callLinkInfo.stub())
+        if (callLinkInfo.mode() != CallLinkInfo::Mode::Init)
             return; // Lost the race; the winner's link stands.
         callLinkInfo.setMonomorphicCallee(vm, owner, callee, calleeCodeBlock, codePtr);
         callLinkInfo.setLastSeenCallee(vm, owner, callee);
@@ -729,20 +733,16 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                 if (!slotBaseObject)
                     return RetryCacheLater;
                 Structure* validationStructure = slot.slotBase() == baseValue ? structure : slotBaseObject->structure();
-                // T4-ic-never-settles-giloff (alloctax2 #4, restore caching):
-                // previously refused ALL dictionaries here, which under GIL-off
-                // (where O2/GT11 forbids flattening from IC paths) made
-                // global-object / cacheable-dictionary self loads return
-                // RetryCacheLater forever — the Optimize operation never
-                // settles and every execution pays the full tryCache walk.
-                // CACHEABLE dictionaries are safe to revalidate and key on:
-                // getConcurrently() is the structure-lock walk, the
-                // uid->offset binding for an existing slot is stable (adds
-                // append, replace keeps the offset, delete transitions to an
-                // UNCACHEABLE dictionary i.e. a different StructureID so the
-                // IC guard fails), and startWatchingPropertyForReplacements
-                // covers in-place value churn. Only UNCACHEABLE dictionaries
-                // mutate their table in a way the IC guard cannot observe.
+                // Cacheable dictionaries (the global object among them) pass
+                // this guard only so that the site settles: flag-on,
+                // PropertyInlineCache::addAccessCase refuses every AccessCase
+                // keyed on a dictionary structure with GaveUp, which repatches
+                // the site to the GaveUp operation on this attempt. Refusing
+                // them here would return RetryCacheLater forever, because
+                // GIL-off never flattens a dictionary from an IC path, so the
+                // retry condition would never clear. Uncacheable dictionaries
+                // mutate their uid->offset table under the same StructureID,
+                // so getConcurrently() cannot validate the slot's offset below.
                 if (validationStructure->isUncacheableDictionary())
                     return RetryCacheLater;
                 unsigned attributes;
@@ -972,27 +972,23 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
         repatchSlowPathCallLocking(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
-        // T4-ic-never-settles-giloff (alloctax2 #4, escalation): GIL-off, the
-        // O2/GT11 "never flatten from an IC path" rule plus the OM-1
+        // GIL-off, the "never flatten from an IC path" rule plus the OM-1
         // uncacheable-dictionary refusal above make several RetryCacheLater
-        // returns permanent — the condition never clears, so this site stays
-        // wired to operationGetBy*Optimize forever and every call pays
-        // considerRepatchingCacheImpl + tryCacheGetBy for nothing (the +1.43G
-        // / 15.5% residual on the pc-loop bench). Count consecutive retries
-        // that left the IC still at Unset; once a small threshold is crossed,
-        // repatch to the GaveUp operation — the same cheap settled state
-        // GIL-on reaches after a single flatten. gilOff-gated so flag-off
-        // codegen and IC behavior are byte-identical (the counter is never
-        // touched and shouldGiveUpPermanently() is never consulted flag-off).
+        // returns permanent — the condition never clears, so this site would
+        // stay wired to operationGetBy*Optimize forever and every call pay
+        // considerRepatchingCacheImpl + tryCacheGetBy for nothing. Count
+        // consecutive retries that left the IC still at Unset (RetryCacheLater
+        // is also the normal result right after a case was installed or
+        // buffered, so a retry that finds a case clears the count); once a
+        // small threshold is crossed, repatch to the GaveUp operation — the
+        // same cheap settled state GIL-on reaches after a single flatten.
+        // gilOff-gated so flag-off codegen and IC behavior are byte-identical.
         if (globalObject->vm().gilOff()) [[unlikely]] {
-            propertyCache.noteRetryWithoutProgress();
-            if (propertyCache.shouldGiveUpPermanently()) {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
-                // Re-check under the lock (m_cacheType is lock-guarded): never
-                // demote an IC that has since installed a case.
-                if (propertyCache.cacheType() == CacheType::Unset)
-                    repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
-            }
+            ConcurrentJSLocker locker(codeBlock->m_lock);
+            if (propertyCache.cacheType() != CacheType::Unset)
+                propertyCache.clearRetryWithoutProgress(locker);
+            else if (propertyCache.noteRetryWithoutProgress(locker))
+                repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
         }
         break;
     case AttemptToCache:
@@ -1457,12 +1453,13 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 ASSERT(!isGlobalProxy);
                 ASSERT(slot.type() == PutPropertySlot::NewProperty);
 
-                // SPEC-jit section 5.5 (Task 8): generated transitions are
-                // illegal under useJSThreads until the structures'
-                // transitionThreadLocal/writeThreadLocal watchpoint sets land
-                // (OM E4: compile-time TTL validity + runtime PA/TID tests).
-                // Until then every transition takes the generic locked OM
-                // path; see docs/threads/INTEGRATE-jit.md, Task 8.
+                // Under useJSThreads a generated oldStructure->newStructure
+                // transition needs the transition predicate (compile-time
+                // transitionThreadLocal validity plus the runtime thread-tag /
+                // shared-write test), and no tier emits it: the IC compiler's
+                // Transition case asserts it is unreachable flag-on. Every
+                // transition takes the generic locked object-model path until
+                // that predicate is emitted.
                 if (Options::useJSThreads()) [[unlikely]]
                     return GiveUpOnCache;
 
