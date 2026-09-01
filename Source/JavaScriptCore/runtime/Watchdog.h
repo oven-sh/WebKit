@@ -46,30 +46,25 @@ class VM;
 //      enforcement point); spawned CPU never advances the CPU budget; the
 //      watchdog-check trap bit is carrier-serviced only (rule-3 exemption,
 //      VMTraps::CarrierOnlyServicedEvents).
-//   W1 (parked-carrier service): a §J.3-parked carrier polls its captured
-//      lite's trap bits each D9 quantum; on the watchdog-check bit it runs
-//      the FULL §J.3 exit reacquisition EARLY, services shouldTerminate()
-//      under its token on its own thread (callback + CPU re-arm identical to
-//      an entered carrier — a parked carrier still counts in
-//      m_carrierEnteredDepth, its entry scope is live), then terminate =>
-//      VM-wide termination (rule 3) + final park exit, else the bit is
-//      cleared + the r15 F2 old-node disposition + re-park (a new
-//      acquisition episode). This class supplies the whole service step as
-//      serviceCheckFromReacquiredParkedCarrier() below; the driving loop
-//      (reacquire -> service -> fail-park / dispose-old-node-and-re-park)
-//      lives at the park sites.
-//      *** WIRING STATUS (activation-blocking; recorded with the
-//      orchestrator): the park sites (LockObject.cpp / ThreadObject.cpp /
-//      ConditionObject.cpp — outside U-T2's owned file set) do NOT yet call
-//      it. Worse, the landed D9 predicate jsThreadParkTerminationRequested
-//      (LockObject.h/.cpp) deliberately treats NeedWatchdogCheck as
-//      TERMINAL at a park (a recorded GIL-on D9 amendment), which GIL-off
-//      INVERTS W1: a parked carrier would self-terminate without the
-//      embedder callback (extension semantics destroyed), the check bit
-//      would never be cleared, and the looping spawned thread would never
-//      be terminated. GIL-off must not ship until the park sites split
-//      NeedWatchdogCheck out of that predicate and drive W1 through the
-//      entry point below. ***
+//   W1 (parked-carrier service): a parked carrier polls its captured lite's
+//      trap bits each park quantum; on the watchdog-check bit it runs the
+//      full exit reacquisition early and services shouldTerminate() under
+//      its token on its own thread (its entry scope is live, so it still
+//      counts in m_carrierEnteredDepth) with CallerState::ParkedCarrier:
+//      stale-timer rejection and the embedder callback are those of an
+//      entered carrier, but the CPU budget is not consulted — a parked
+//      carrier accrues no CPU, so the CPU re-arm could never trip and the
+//      park would be unkillable; the wall-clock deadline is authoritative.
+//      Terminate => VM-wide termination (rule 3) and the park fails; else
+//      the bit is cleared and the carrier disposes of its old wait node and
+//      re-parks as a new acquisition episode. This class supplies the
+//      service step (serviceCheckFromReacquiredParkedCarrier() below); every
+//      park site (LockObject, ConditionObject, ThreadObject, ThreadAtomics,
+//      WaiterListManager) drives it through
+//      reacquireParkedCarrierAndServiceWatchdogCheck (JSLock.cpp), and the
+//      park predicate parkLitePollTerminationRequested (VMTraps.cpp) tests
+//      NeedTermination only GIL-off, with the check bit read separately by
+//      parkLitePollWatchdogCheckRequested.
 //   W2 (exit deferral): GIL-off m_hasEnteredVM splits into
 //      m_carrierEnteredDepth + m_wallClockArmed. exitedVM() on the LAST
 //      carrier clears the (carrier-scoped) CPU budget but PRESERVES
@@ -92,8 +87,21 @@ class VM;
 //      JSLock::currentThreadIsHoldingLock() && !spawned (spawned threads
 //      never reach them — watchdog-unobserved v1, SD14). GIL-on/flag-off
 //      byte-identical.
-// GIL-on (useThreadGIL or flag-off): every path below is byte-identical to
-// the landed single-carrier protocol (m_gilOff is latched false).
+// GIL-on (useJSThreads without gilOff) and flag-off: m_gilOff is latched
+// false and every path below keeps the landed single-carrier behavior. The
+// one difference from the pre-threads code is that the carrier paths also
+// take the uncontended m_lock around deadline-state updates (see m_lock
+// below); the trap-bit protocol and generated code are unchanged.
+//   Known GIL-on limitation: the CPU budget is armed from the clock of the
+//   thread that entered (startTimer), but NeedWatchdogCheck is serviced by
+//   whichever thread holds the JSLock at the poll — with useJSThreads that
+//   can be a spawned Thread, as it can be any other OS thread an embedder
+//   alternates on one JSLock. shouldTerminate() then compares that thread's
+//   own CPU clock against the foreign budget: a servicer with a younger
+//   clock is granted up to the arming thread's accumulated CPU time beyond
+//   the limit (the re-arm then rebases the budget onto the servicer's
+//   clock), one with an older clock is terminated at the wall-clock
+//   deadline. Per-thread CPU budgets are not implemented.
 class Watchdog : public ThreadSafeRefCounted<Watchdog> {
     WTF_MAKE_TZONE_ALLOCATED(Watchdog);
 public:
@@ -118,19 +126,19 @@ public:
 
     bool shouldTerminate(JSGlobalObject*, CallerState = CallerState::Entered);
 
-    // UNGIL annex W W1 (GIL-off only): the parked-carrier service step, to be
-    // called by a §J.3 park site that observed NeedWatchdogCheck and has
-    // ALREADY run the full exit reacquisition (m_lock + token + access) on
-    // its own thread — its entry scope is live, so callback semantics and
-    // CPU re-arm are identical to an entered carrier. Takes (clears) the
-    // check bit, runs shouldTerminate() under the token; terminate => raises
-    // VM-wide termination (rule 3, with the interim-alias host re-entry
-    // shield) and returns true — the caller fails the park per SD8/§E.5;
-    // no-terminate (callback granted more time / stale timer) => returns
-    // false — the caller performs the r15 F2 old-node disposition under the
-    // owning listLock and re-parks as a NEW acquisition episode. Also safe
-    // (and false-returning) when the bit was already taken by a racing
-    // entered service, or when no watchdog is active.
+    // W1 (GIL-off only): the parked-carrier service step, called by a park
+    // site that observed NeedWatchdogCheck and has ALREADY run the full exit
+    // reacquisition (m_lock + token + access) on its own thread, so its entry
+    // scope is live. Takes (clears) the check bit on both the VM word and the
+    // carrier lite's word, then runs shouldTerminate(CallerState::ParkedCarrier)
+    // under the token: the embedder callback is consulted as for an entered
+    // carrier, the CPU budget is not (see CallerState). Terminate => raises
+    // VM-wide termination (rule 3) and returns true — the caller fails the
+    // park; no-terminate (callback granted more time / stale timer) =>
+    // returns false — the caller disposes of its old wait node under the
+    // owning listLock and re-parks as a NEW acquisition episode. Also false
+    // when the bit was already taken by a racing entered service, or when no
+    // watchdog is active.
     JS_EXPORT_PRIVATE static bool serviceCheckFromReacquiredParkedCarrier(VM&);
 
     bool isActive() const; // Out-of-line: GIL-off it reads the W2 split under m_lock.

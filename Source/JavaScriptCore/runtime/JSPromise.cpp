@@ -41,6 +41,7 @@
 #include "Microtask.h"
 #include "MicrotaskQueueInlines.h"
 #include "ObjectConstructor.h"
+#include "ThreadManager.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
@@ -49,41 +50,24 @@
 
 namespace JSC {
 
-// =============================================================================
-// UNGIL §E.1b (ANNEX E1B + r16 F3/SD15 + ANNEX ALS1; U-T9) — same-library
-// seams, self-declared identically to their defining TUs (no header changes;
-// the currentThreadHoldsEntryToken pattern, JSLock.cpp):
-//
-//  - notifyPromiseRejectionTrackerCrossThreadAware (VM.cpp, U-T8e): the SD15
-//    invocation gate. Carrier / GIL-on / flag-off: invokes the methodTable
-//    hook inline, bit-identical to the landed call sites. Spawned GIL-off:
-//    appends a tracker record {promise Strong, operation} to the handoff
-//    queue, flushed + EXECUTED at the §F.1 carrier drain points (a report
-//    may arrive a drain late; never lost while the carrier drains — SD15).
-//    This file's four tracker call sites are re-pointed at it (U-T9 closes
-//    the U-T8e "call-site status" note).
-//  - threadAsyncContextData (JSGlobalObject.cpp, U-T8b storage / U-T9
-//    consumption, ALS1.3): the ALS cursor, rerouted PER-LITE GIL-off
-//    ("current async context" is thread-local by definition); flag-off /
-//    GIL-on / main carrier it returns the in-object m_asyncContextData
-//    BYTE-IDENTICALLY. Capture stays PER-REACTION at registration time; the
-//    captured tuple is an ordinary shared-heap cell carried BY THE JOB, so
-//    SD10 thread-migrating continuations PRESERVE ALS (ALS1.1) — the §E.1b
-//    enqueue edges (I11 own-queue / §E.4 ThreadTask append under inboxLock)
-//    carry release/acquire, so the settling thread reads an initialized
-//    tuple (ALS1.2). RESTORE-side reroute (JSMicrotask.cpp save/write/run/
-//    write-back brackets; JSPromisePrototype.cpp then() fast-path capture)
-//    is RECORDED OPEN — both TUs are outside U-T9's owned file set — so the
-//    accessor's per-lite routing is GATED OFF at its definition
-//    (perLiteAsyncContextCursorEnabled, JSGlobalObject.cpp): a capture-only
-//    reroute would split the regime (spawned brackets writing the SHARED
-//    cursor while captures read a never-bracket-written per-lite copy). The
-//    capture sites in THIS file are re-pointed at the seam now; flipping the
-//    one constant together with the restore-side slice lands ALS1.3 whole.
-// =============================================================================
+// Defined in VM.cpp. Flag-off, GIL-on, and on a GIL-off carrier thread this
+// invokes the methodTable promiseRejectionTracker hook inline; on a GIL-off
+// spawned thread it appends a {promise, operation} record to the handoff queue
+// that the carrier flushes and executes at its microtask drain points.
 void notifyPromiseRejectionTrackerCrossThreadAware(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
+
 #if USE(BUN_JSC_ADDITIONS)
-InternalFieldTuple* threadAsyncContextData(JSGlobalObject*);
+// VM::m_synchronousModuleQueue is owned by the carrier thread that is inside
+// JSModuleLoader::loadModuleSync and points at that thread's stack frame.
+// GIL-off, a spawned thread neither reads nor appends to it: module-loader
+// reactions it settles go to its own microtask queue instead.
+static VM::SynchronousModuleQueue* synchronousModuleQueueGILOff(VM& vm)
+{
+    ASSERT(vm.gilOff());
+    if (ThreadManager::isJSThreadCurrent())
+        return nullptr;
+    return vm.m_synchronousModuleQueue;
+}
 #endif
 
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
@@ -216,20 +200,15 @@ JSPromise* JSPromise::rejectedPromiseWithCaughtException(JSGlobalObject* globalO
     return rejectedPromise(globalObject, exception->value());
 }
 
-// UNGIL ANNEX E1B (U-T9): GIL-off, JSPromise internal-state transitions run
-// under the promise's JSCellLock (10a) — internal fields are NOT §9.5 slots.
-// The first-resolving claim below is the settle-side entry: two concurrent
-// resolvers race the claim under the cell lock; exactly one proceeds. NO GC
-// allocation and no JS runs inside any cell-lock hold in this file (OM I20).
-// GIL-on/flag-off: the landed unlocked claim, byte-identical.
-//
-// Audit note (the §E.1b.2 "every other promise internal-field writer" U-T9
-// audit): PromiseOperations.js / PromiseConstructor.js contain no
-// @putPromiseInternalField sites — the native-restructure paths in this file
-// (claims, performPromiseThen* publish loops, fulfillPromise/rejectPromise
-// extraction) plus the embedder-binding direct twiddles (JSC__JSPromise__*,
-// which construct PRE-SHARING promises) are the complete writer set;
-// non-promise internal-field types are §N (U-T13's twin-intrinsic work).
+// GIL-off, every write to the m_packed/m_slot of a possibly shared promise
+// runs under the promise's cell lock: the first-resolving claims below, the
+// performPromiseThen* publish loops and the fulfillPromise/rejectPromise
+// extraction. The DFG/FTL PerformPromiseThenOneHandler inline install is not
+// emitted for a gilOff VM (it calls the operation, which reaches the locked
+// loop); the unlocked markAsHandled()/flag writers elsewhere act on promises
+// their caller created and has not yet shared. No GC allocation and no JS
+// runs inside a cell-lock hold in this file. GIL-on/flag-off: the unlocked
+// paths, unchanged.
 
 void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value)
 {
@@ -822,8 +801,8 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
                 if (wonHandleClaim)
                     notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
 #if USE(BUN_JSC_ADDITIONS)
-                if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                    vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context });
+                if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                    synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context });
                 } else
 #endif
                 globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context);
@@ -1019,8 +998,8 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
             InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
             JSValue cellValue = payload ? JSValue(payload) : jsUndefined();
 #if USE(BUN_JSC_ADDITIONS)
-            if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue });
+            if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue });
                 return;
             }
 #endif
@@ -1103,8 +1082,8 @@ void JSPromise::fulfillPromise(VM& vm, JSValue argument)
             InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
             JSValue cellValue = payload ? JSValue(payload) : jsUndefined();
 #if USE(BUN_JSC_ADDITIONS)
-            if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue });
+            if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue });
                 return;
             }
 #endif
@@ -1372,6 +1351,9 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
 void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, Status status, JSPromiseReaction* head, JSValue argument)
 {
     bool isResolved = status == JSPromise::Status::Fulfilled;
+#if USE(BUN_JSC_ADDITIONS)
+    VM::SynchronousModuleQueue* synchronousModuleQueue = vm.gilOff() ? synchronousModuleQueueGILOff(vm) : vm.m_synchronousModuleQueue;
+#endif
 
     auto queue = [&](JSPromiseReaction* reaction) ALWAYS_INLINE_LAMBDA {
         JSValue promise = reaction->promise();
@@ -1387,8 +1369,8 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 handler = argument;
                 arg = slimReaction->handlerOrContext();
 #if USE(BUN_JSC_ADDITIONS)
-                if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                    vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(status), promise, handler, arg });
+                if (synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                    synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(status), promise, handler, arg });
                     return;
                 }
 #endif

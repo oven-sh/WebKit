@@ -62,26 +62,30 @@ ALWAYS_INLINE JSValue MicrotaskCall::tryCallWithArguments(VM& vm, JSFunction* fu
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
     static_assert(argumentCountIncludingThis <= 7);
     if (WTF::atomicLoad(&m_numParameters, std::memory_order_relaxed) <= argumentCountIncludingThis) [[likely]] {
-        // THREADS: acquire the entry, then read the codeBlock — pairs with
-        // unlinkOrUpgradeImpl's write order (codeBlock before release entry).
-        auto* entry = WTF::atomicLoad(&m_addressForCall, std::memory_order_acquire);
+        // Relaxed loads: flag-off the only writer of these words is this
+        // thread, and GIL-on a sibling writer is ordered by the JSLock
+        // hand-off. Only GIL-off can another thread's install drain
+        // (MicrotaskCall::unlinkOrUpgradeImpl) rewrite them concurrently, and
+        // that arm below supplies the acquire.
+        auto* entry = WTF::atomicLoad(&m_addressForCall, std::memory_order_relaxed);
         if (!entry) [[unlikely]] {
             DeferTraps deferTraps(vm);
             relink(vm, function);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
-            entry = WTF::atomicLoad(&m_addressForCall, std::memory_order_acquire);
+            entry = WTF::atomicLoad(&m_addressForCall, std::memory_order_relaxed);
         }
         auto* codeBlock = WTF::atomicLoad(&m_codeBlock, std::memory_order_relaxed);
-        if (vm.gilOff()) [[unlikely]] {
-            // ANNEX CBI item 3 (w16 amend, round 2 — see
-            // Interpreter::tryCallWithArguments): the acquire/release pairing
-            // above only rules out NEW-entry+OLD-codeBlock; a reader racing
-            // MicrotaskCall::unlinkOrUpgradeImpl can still pair the OLD
-            // (baseline) entry with the NEW (DFG) codeBlock, which faults in
-            // the baseline prologue's argument profiling. Derive the
-            // entrypoint THROUGH the one codeBlock snapshot — the entry
-            // thunks store exactly this codeBlock into the callee frame, so
-            // the pair is matched by construction.
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
+            // unlinkOrUpgradeImpl stores the codeBlock before it
+            // release-stores the entry; the acquire fence after the entry
+            // load orders this codeBlock re-read behind it, so the codeBlock
+            // is at least as new as the entry. An OLD entry paired with a NEW
+            // codeBlock is still possible, so derive the entrypoint THROUGH
+            // the codeBlock snapshot: the entry thunks store exactly this
+            // codeBlock into the callee frame, so the pair is matched by
+            // construction.
+            WTF::loadLoadFence();
+            codeBlock = WTF::atomicLoad(&m_codeBlock, std::memory_order_relaxed);
             entry = codeBlock->jitCode()->addressForCall();
         }
         if constexpr (!sizeof...(args))
