@@ -33,7 +33,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/Scope.h>
 #include <wtf/Seconds.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
@@ -203,7 +202,7 @@ ElementType* LazyProperty<OwnerType, ElementType>::callFunc(const Initializer& i
                     for (unsigned hops = 0; hops < 256; ++hops) {
                         auto ownerIt = tables.owners.find(probe);
                         if (ownerIt == tables.owners.end())
-                            break; // Abandoned or just-finished: re-test.
+                            break; // Claimed but not yet recorded, or just finished: wait below and re-test.
                         Thread* ownerThread = ownerIt->value;
                         if (ownerThread == self)
                             return nullptr; // Recursion / cross-thread cycle: landed null contract.
@@ -246,30 +245,22 @@ ElementType* LazyProperty<OwnerType, ElementType>::callFunc(const Initializer& i
             Locker locker { tables.lock };
             tables.owners.set(key, self);
         }
-        {
-            // LZ1.3 abandonment + winner cleanup: on ANY exit, erase the
-            // owner record and wake waiters; if the initializer did NOT
-            // publish (non-normal exit — exception, termination), restore
-            // the pre-claim word so a later toucher re-runs it
-            // ("initializers publish only on success; partial work is
-            // garbage").
-            uintptr_t preClaim = current;
-            auto cleanup = WTF::makeScopeExit([&] {
-                Locker locker { tables.lock };
-                uintptr_t now = WTF::atomicLoad(slot, std::memory_order_relaxed);
-                if (now & lazyTag)
-                    WTF::atomicStore(slot, preClaim, std::memory_order_release);
-                tables.owners.remove(key);
-                tables.condition.notifyAll();
-            });
 
-            DeferTerminationForAWhile deferTerminationForAWhile { initializer.vm };
-            callStatelessLambda<void, Func>(initializer);
-            uintptr_t result = WTF::atomicLoad(slot, std::memory_order_relaxed);
-            RELEASE_ASSERT(!(result & lazyTag));
-            RELEASE_ASSERT(!(result & initializingTag));
-            return std::bit_cast<ElementType*>(result);
+        // Initializers always publish before returning (the asserts below
+        // enforce it), so a claim is never rolled back. The owner record is
+        // erased only after publication: a waiter that finds the tag cleared
+        // or the record absent re-tests the slot and adopts the element.
+        DeferTerminationForAWhile deferTerminationForAWhile { initializer.vm };
+        callStatelessLambda<void, Func>(initializer);
+        uintptr_t result = WTF::atomicLoad(slot, std::memory_order_relaxed);
+        RELEASE_ASSERT(!(result & lazyTag));
+        RELEASE_ASSERT(!(result & initializingTag));
+        {
+            Locker locker { tables.lock };
+            tables.owners.remove(key);
+            tables.condition.notifyAll();
         }
+        return std::bit_cast<ElementType*>(result);
     }
 }
 

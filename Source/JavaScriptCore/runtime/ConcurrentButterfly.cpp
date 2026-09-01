@@ -33,20 +33,18 @@
 //   - the §9.3 exported spine/fragment accessors (declared in
 //     ConcurrentButterfly.h since Task 2; the layout landed in Butterfly.h with
 //     Task 4);
-//   - the §10.6 interim stop-the-world veneer + witness flag (integration
-//     manifest entry 6): g_jsThreadsStubWorldStopped,
-//     jsThreadsStopTheWorldAndRun, butterflyWorldIsStopped;
+//   - the §10.6 stop-the-world veneer + witness predicate (integration
+//     manifest entry 6): jsThreadsStopTheWorldAndRun, butterflyWorldIsStopped;
 //   - the §4.2 flat->segmented conversion (convertToSegmentedButterfly):
 //     step-0 TTL firing, RESTART discipline, zero-copy slice aliasing,
 //     aliased-allocation base/size recording, and the nuke + 128-bit DCAS
 //     publication (PA cells: the I36 fenced order instead).
 //
 // Task 6 (landed below): the §4.3 segmented-transition protocol
-// (trySegmentedTransition/segmentedTransition) with the full DCAS-failure
-// taxonomy (a)-(d) and RESTART discipline; the N2 locked structure-only
-// transition (tryStructureOnlyTransition/structureOnlyTransition); and the
-// §9.5 full-§2-dispatch slow paths JSObjectWithButterfly::getDirectConcurrent
-// / putDirectConcurrent (M7-conforming, I34 poll-free).
+// (trySegmentedTransition) with the full DCAS-failure taxonomy (a)-(d) and
+// RESTART discipline, and the N2 locked structure-only transition
+// (tryStructureOnlyTransition). Both are restartable cores driven from the
+// callers' own §2 dispatch loops (JSObjectInlines.h).
 //
 // Task 6b (landed below): the §4.5 GC visit (visitSegmentedButterfly,
 // explicitly instantiated for SlotVisitor/AbstractSlotVisitor; the segmented
@@ -74,8 +72,8 @@
 // butterflyQuarantineEpochSlot / registerButterflyQuarantineEpochHook
 // (declared in runtime/PropertyTable.h, their sole runtime consumer).
 //
-// Flag-off (I22): nothing here is reachable - no spine is ever published, the
-// veneer is only called from flag-on paths, and the witness stays false.
+// Flag-off (I22): nothing here is reachable - no spine is ever published and
+// the veneer is only called from flag-on paths.
 
 #include "ArrayConventions.h"
 #include "ArrayStorage.h"
@@ -87,7 +85,6 @@
 #include <algorithm>
 #include <cstring>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Threading.h>
@@ -97,19 +94,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-// ===== §9.3 spine/fragment accessors (frozen signatures; layout = Butterfly.h) =====
-
-ButterflyFragment* spineOutOfLineFragment(ButterflySpine* spine, unsigned fragmentIndex)
-{
-    spine->tsanConsume(); // V7: import the publisher's clock (see Butterfly.h).
-    return spine->outOfLineFragment(fragmentIndex);
-}
-
-ButterflyFragment* spineIndexedFragment(ButterflySpine* spine, unsigned fragmentIndex)
-{
-    spine->tsanConsume(); // V7
-    return spine->indexedFragment(fragmentIndex);
-}
+// ===== §9.3 spine/fragment accessors (layout = Butterfly.h) =====
 
 WriteBarrierBase<Unknown>* segmentedOutOfLineSlot(ButterflySpine* spine, PropertyOffset offset)
 {
@@ -148,7 +133,10 @@ namespace {
 // locks, GC's visitor locks, and unowned runtime sites are invisible to it
 // (other threads, or manifest-7/7b audits) - which is exactly the O3
 // obligation these protocols carry: each documents "the only cell lock we
-// hold".
+// hold". It is distinct from GCCellLockDepth (heap/GCThreadLocalCache.h):
+// that one counts every JSCellLock hold on the thread, from any TU, but
+// exists only in debug builds, whereas the RELEASE_ASSERTs below must hold
+// in release.
 thread_local unsigned t_cellLocksHeldByConcurrentButterfly = 0;
 
 ALWAYS_INLINE void lockCellChecked(JSCellLock& lock)
@@ -181,39 +169,16 @@ struct CellLockDepthScope {
 
 } // anonymous namespace
 
-// ===== §10.6 interim stop-the-world veneer + witness (manifest entry 6) =====
-
-// Pre-M4 witness. std::atomic<bool> (relaxed accesses) because it is read
-// cross-thread: SPEC-jit section 5.6 disjunct 4 reads it through
-// JSC_OM_PROVIDES_JSTHREADS_STUB_WITNESS (defined next to the declaration in
-// ConcurrentButterfly.h), and compiler/GC threads consult
-// butterflyWorldIsStopped() - matching the jit side's atomic depth-counter
-// discipline (JSThreadsSafepoint.cpp s_stubWorldStoppedDepth). Deleted at M4
-// integration.
-std::atomic<bool> g_jsThreadsStubWorldStopped { false };
+// ===== §10.6 stop-the-world veneer + witness (manifest entry 6) =====
 
 void jsThreadsStopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
 {
-    // INTERIM STUB until integration manifest M4 (then: real VMManager STWR +
-    // CS2 GC-conductor bracket). Per jit CS6's preferred option we DELEGATE to
-    // JSThreadsSafepoint::stopTheWorldAndRun (bytecode/JSThreadsSafepoint.cpp,
-    // landed by jit Task 1), which RELEASE_ASSERTs the §10.6 single-mutator
-    // witness contract - vm.currentThreadIsHoldingAPILock() and at most one
-    // entered VM - and runs `work` inline on this stack, raising its own
-    // worldIsStopped() depth counter.
-    //
-    // ORDERING IS LOAD-BEARING (adversarial-review round 1): the owned witness
-    // is raised INSIDE the delegated closure, NOT around the delegated call.
-    // JSThreadsSafepoint::stopTheWorldAndRun begins with `if (worldIsStopped(vm))
-    // run-inline-and-return`, and its worldIsStopped() consults this witness
-    // (disjunct 4) - raising the witness before delegating would make EVERY
-    // outermost OM stop look "already stopped" and silently skip the delegate's
-    // API-lock + <=1-entered-VM RELEASE_ASSERTs. With the raise inside the
-    // closure, the delegate's entry checks always execute on the outermost
-    // call, while butterflyWorldIsStopped() still holds for everything `work`
-    // does. Genuinely nested veneer calls (R1.h) are still inline: the
-    // delegate's own depth counter is raised around the closure.
-    // // THREADS-INTEGRATE(objectmodel)
+    // Delegates to JSThreadsSafepoint::stopTheWorldAndRun, which runs `work`
+    // inline under the GIL-on stub (raising its per-thread depth witness) or
+    // conducts a thread-granular window under gilOff (raising the window
+    // witness against this VM); either way JSThreadsSafepoint::worldIsStopped(vm)
+    // holds for everything `work` does, so this file keeps no witness of its
+    // own. Nested veneer calls run inline under the delegate's own witness.
     //
     // Caller contract (GT11): entered mutator; no §6-ranked lock (SAL /
     // JSCellLock / Structure::m_lock) held - O2: never block on a safepoint
@@ -224,21 +189,15 @@ void jsThreadsStopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
     // requester under property-write storms (e.g. counter-lock); a wedged
     // stop must name this requester class instead of crashing context-nil.
     JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(&vm, "OM transition stop");
-    JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
-        bool savedWitness = g_jsThreadsStubWorldStopped.load(std::memory_order_relaxed); // Nested veneer calls (R1.h) just nest.
-        g_jsThreadsStubWorldStopped.store(true, std::memory_order_relaxed);
-        work();
-        g_jsThreadsStubWorldStopped.store(savedWitness, std::memory_order_relaxed);
-    }));
+    JSThreadsSafepoint::stopTheWorldAndRun(vm, work);
 }
 
 bool butterflyWorldIsStopped(VM& vm)
 {
-    // §9.4 fire-assert predicate (I13): owned stub witness OR the jit
-    // workstream's disjuncts (VMManager mode Stopped, legacy per-VM GC stop,
-    // shared-server stop once the heap workstream lands). At M4 integration
-    // this becomes the jit predicate alone. // THREADS-INTEGRATE(objectmodel)
-    return g_jsThreadsStubWorldStopped.load(std::memory_order_relaxed) || JSThreadsSafepoint::worldIsStopped(vm);
+    // §9.4 fire-assert predicate (I13): the evidence is scoped to the mutators
+    // that can execute vm's code (this thread's stub closure, a thread-granular
+    // window targeting vm, a Mode stop, or a GC stop of vm's heap).
+    return JSThreadsSafepoint::worldIsStopped(vm);
 }
 
 // ===== Per-event-stop claim table (STW dedup; T1-butterfly-stw-growth) =====
@@ -380,7 +339,6 @@ struct ButterflyQuarantineEpochs {
     // slot, which stays sound: the counter is monotone, and stamps taken from
     // a slot are only ever compared against that same slot's later values.
     UncheckedKeyHashMap<JSC::Heap*, std::unique_ptr<Atomic<uint64_t>>> slots WTF_GUARDED_BY_LOCK(lock);
-    UncheckedKeyHashSet<JSC::Heap*> hookRegistered WTF_GUARDED_BY_LOCK(lock);
 };
 
 ButterflyQuarantineEpochs& butterflyQuarantineEpochs()
@@ -417,16 +375,16 @@ WTF::Atomic<uint64_t>& butterflyQuarantineEpochSlot(JSC::Heap& heap)
 
 void registerButterflyQuarantineEpochHook(JSC::Heap& heap)
 {
-    // Idempotent per heap. Heap::addStopTheWorldSafepointHook takes the heap's
-    // own hook lock, so it is called OUTSIDE the registry lock (which must
-    // remain a leaf). Racing registrants are harmless here in principle, but
-    // the manifest-4c call site runs at VM/Heap init (single-threaded for the
-    // heap), so the add below completes before any quarantine can occur.
+    // Called once per Heap, at VM init (single-threaded for the heap), so the
+    // add below completes before any quarantine can occur. The registration
+    // lives in the Heap's own hook vector, never in this registry: a Heap
+    // that reuses a destroyed Heap's address must get its own hook, while it
+    // may re-adopt that Heap's (monotone) epoch slot. Heap::
+    // addStopTheWorldSafepointHook takes the heap's own hook lock, so it is
+    // called OUTSIDE the registry lock (which must remain a leaf).
     {
         ButterflyQuarantineEpochs& registry = butterflyQuarantineEpochs();
         Locker locker { registry.lock };
-        if (!registry.hookRegistered.add(&heap).isNewEntry)
-            return;
         // Create the slot eagerly so the world-stopped hook never populates
         // the map (allocation-free stop windows, O4-adjacent hygiene).
         registry.slots.ensure(&heap, [] {
@@ -561,7 +519,7 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
 {
     RELEASE_ASSERT(Options::useJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
-    RELEASE_ASSERT(offset == invalidOffset || isOutOfLineOffset(offset)); // Inline adds are N2 (structureOnlyTransition), never §4.2 step 4.
+    RELEASE_ASSERT(offset == invalidOffset || isOutOfLineOffset(offset)); // Inline adds are N2 (tryStructureOnlyTransition), never §4.2 step 4.
     ASSERT(newStructureOrNull || offset == invalidOffset); // A value store needs the transition that exposes it.
     RELEASE_ASSERT(!newStructureOrNull || expectedSourceOrNull); // AB18-S2: a transition trigger must name the source it derived the target from. RELEASE: the stale-parent guard below is load-bearing only when the source is named; a future caller (e.g. JIT-tier E4 emission, SPEC-jit 5.5) passing a transition with a null source would silently reopen the I21 lost-add window in release builds.
 
@@ -638,6 +596,11 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
     RELEASE_ASSERT(newOutOfLineCapacity >= aliasedOutOfLineCapacity);
     RELEASE_ASSERT(!(newOutOfLineCapacity % butterflyFragmentSlots)); // C1 for the grown side too.
     bool hasIndexingHeader = sourceStructure->hasIndexingHeader(object);
+    // A wasteful typed-array view has a header (its ArrayBuffer*) but no
+    // element payload: flatVectorLengthForConversion reads vectorLength only
+    // for indexed shapes, and the T3 tail fill below is skipped for it.
+    const bool hasIndexedPayload = hasIndexedProperties(sourceStructure->indexingType());
+    ASSERT(hasIndexingHeader || !hasIndexedPayload);
 
     uint32_t aliasedOutOfLineFragments = aliasedOutOfLineFragmentCountForConversion(aliasedOutOfLineCapacity); // C1 RELEASE_ASSERT inside.
     uint32_t totalOutOfLineFragments = static_cast<uint32_t>(newOutOfLineCapacity / butterflyFragmentSlots);
@@ -670,8 +633,7 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             ButterflyRegime regime = butterflyRegimeForWord(plannedWord);
             if (regime != ButterflyRegime::Flat && regime != ButterflyRegime::FlatShared)
                 return nullptr; // RESTART: nothing flat to convert (None => N3 install path; Segmented => §4.3).
-            if (hasIndexingHeader)
-                plannedVectorLength = untaggedButterfly(plannedWord)->vectorLength();
+            plannedVectorLength = flatVectorLengthForConversion(sourceStructure, untaggedButterfly(plannedWord));
         }
         uint32_t plannedIndexedFragments = aliasedIndexedFragmentCountForConversion(hasIndexingHeader, plannedVectorLength); // C2
         uint32_t allocatedTotalFragments = totalOutOfLineFragments + plannedIndexedFragments;
@@ -726,7 +688,7 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             // increase publishes fresh storage), and the word re-check above
             // pins the payload, so this read is stable until we unlock
             // (§4.2-3/history §16.1).
-            uint32_t flatVectorLength = hasIndexingHeader ? flat->vectorLength() : 0;
+            uint32_t flatVectorLength = flatVectorLengthForConversion(sourceStructure, flat);
             uint32_t indexedFragments = aliasedIndexedFragmentCountForConversion(hasIndexingHeader, flatVectorLength); // C2
             if (totalOutOfLineFragments + indexedFragments > allocatedTotalFragments) {
                 // Counts no longer fit the step-1 spine: unlock, goto step 1.
@@ -737,14 +699,15 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             // ---- T3-segmented-born-fullcoverage: publish FULL COVERAGE
             // (vectorLength == indexedFragments*4 - 1) so the very first
             // tryGrowSegmentedVectorLength on this spine takes the lock-free
-            // mode-(a) CAS instead of a mode-(b) per-event STW. The flag-on
-            // optimalContiguousVectorLength alignment (ButterflyInlines.h)
-            // sizes every fresh contiguous flat butterfly so (1+flatVL)%4 == 0
-            // and there is NO C2 tail to begin with - that is the path the
-            // scalebench Phase-A arrays take. The branch below additionally
-            // covers butterflies sized by other paths whose size-class
-            // rounding left tail slack: it hole-fills the aliased tail
-            // [flatVectorLength, coveredVectorLength) ONLY when those bytes
+            // mode-(a) CAS instead of a mode-(b) per-event STW. Under
+            // Options::useSharedGCHeap() (NOT useJSThreads: the GIL-on shape
+            // leaves it off) the optimalContiguousVectorLength alignment
+            // (ButterflyInlines.h) sizes every fresh contiguous flat
+            // butterfly so (1+flatVL)%4 == 0 and there is NO C2 tail to begin
+            // with - that is the path the scalebench Phase-A arrays take. The
+            // branch below additionally covers butterflies sized by other
+            // paths whose size-class rounding left tail slack: it hole-fills
+            // the aliased tail [flatVectorLength, coveredVectorLength) ONLY when those bytes
             // provably lie inside the flat butterfly's heap cell
             // (availableContiguousVectorLength re-derives the cell's usable
             // VL from the same MarkedSpace::optimalSizeFor the creator's
@@ -760,10 +723,11 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             // I9b frozen flat-era VL high half + the live publicLength low
             // half) is untouched. When neither the alignment nor the slack
             // check applies the spine publishes flatVectorLength exactly as
-            // before and the first grow falls into mode-(b) once - now a
-            // residual rare path.
+            // before and the first grow falls into mode-(b) once - the
+            // common case GIL-on, a residual rare path under useSharedGCHeap.
             uint32_t publishedVectorLength = flatVectorLength;
-            if (hasIndexingHeader && indexedFragments) {
+            if (hasIndexedPayload) {
+                ASSERT(indexedFragments);
                 uint32_t coveredVectorLength = indexedFragments * static_cast<uint32_t>(butterflyFragmentSlots) - 1;
                 ASSERT(flatVectorLength <= coveredVectorLength);
                 if (flatVectorLength < coveredVectorLength
@@ -802,7 +766,7 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
                 butterflyConcurrentStore(&spine->fragments()[totalOutOfLineFragments + f], aliasedIndexedFragmentForConversion(flat, f));
 
             if (!freshOutOfLineFragments)
-                validateSpineAliasesFlatButterfly(spine, flat, 0, aliasedOutOfLineCapacity, hasIndexingHeader); // Full I8 sweep.
+                validateSpineAliasesFlatButterfly(spine, flat, 0, aliasedOutOfLineCapacity, hasIndexingHeader, flatVectorLength); // Full I8 sweep.
             else
                 validatePartiallyAliasedSpine(spine, flat, aliasedOutOfLineCapacity, hasIndexingHeader);
 
@@ -985,17 +949,6 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
 // ===== Task 6: §4.3 transition protocol, N2, and the §9.5 *Concurrent accessors =====
 
 namespace {
-
-// The object's settled (un-nuked) structure: spin past a mid-publication nuke
-// (M5; the nuke window is bounded, straight-line - O2), then decode.
-Structure* settledStructure(JSCell* cell)
-{
-    while (true) {
-        StructureID id = cell->structureID(); // RAW bits (M5)
-        if (!id.isNuked()) [[likely]]
-            return id.decode();
-    }
-}
 
 ALWAYS_INLINE bool anyTTLSetStillValid(Structure* source, Structure* target)
 {
@@ -1206,8 +1159,7 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
             // Flat owner shape changes ride today's array-conversion paths
             // (§4.4 T4 is for shared objects; Task 8) - not this entry point.
             RELEASE_ASSERT(source->indexingModeIncludingHistory() == newStructure->indexingModeIncludingHistory());
-            if (hasIndexingHeader)
-                plannedVectorLength = untaggedButterfly(planningWord)->vectorLength();
+            plannedVectorLength = flatVectorLengthForConversion(source, untaggedButterfly(planningWord)); // 0 for a typed-array view (its header holds the ArrayBuffer*).
             if (newOutOfLineCapacity > oldOutOfLineCapacity) {
                 newButterfly = Butterfly::createUninitialized(vm, object, 0, newOutOfLineCapacity, hasIndexingHeader,
                     static_cast<size_t>(plannedVectorLength) * sizeof(EncodedJSValue));
@@ -1294,7 +1246,7 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
                     break;
                 }
                 Butterfly* flat = untaggedButterfly(expectedWord);
-                uint32_t flatVectorLength = hasIndexingHeader ? flat->vectorLength() : 0;
+                uint32_t flatVectorLength = flatVectorLengthForConversion(source, flat);
                 if (newButterfly && flatVectorLength != plannedVectorLength) {
                     refit = true; // Indexing payload was resized between planning and the lock.
                     break;
@@ -1583,29 +1535,6 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
     }
 }
 
-// Frozen §9.3 driver (= §4.3); see the header comment for the contract.
-void segmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* newStructure, PropertyOffset offset, JSValue value)
-{
-    Structure* source = settledStructure(object);
-    while (!trySegmentedTransition(vm, object, source, newStructure, offset, value)) {
-        Structure* settled = settledStructure(object);
-        if (settled == newStructure) {
-            // An identical racing transition published the target; the slot
-            // exists - store our value (SAB last-writer-wins; no lost ADD, I21).
-#if USE(JSVALUE64)
-            if (offset != invalidOffset)
-                object->putDirectConcurrent(vm, offset, value);
-#else
-            RELEASE_ASSERT_NOT_REACHED(); // useJSThreads requires 64-bit (I32).
-#endif
-            return;
-        }
-        // Racy callers must use trySegmentedTransition from their own §2
-        // dispatch loop (RESTART recomputes the target from the fresh source).
-        RELEASE_ASSERT(settled == source);
-    }
-}
-
 // N2 (§2.1) restartable locked core; see the header comment for the contract.
 bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value)
 {
@@ -1681,23 +1610,6 @@ bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSou
     if (inlineOffset != invalidOffset)
         vm.writeBarrier(object, value);
     return true;
-}
-
-// Frozen §9.3 driver (N2 locked path); see the header comment for the contract.
-void structureOnlyTransition(VM& vm, JSObject* object, Structure* newStructure, PropertyOffset inlineOffset, JSValue value)
-{
-    Structure* source = settledStructure(object);
-    while (!tryStructureOnlyTransition(vm, object, source, newStructure, inlineOffset, value)) {
-        Structure* settled = settledStructure(object);
-        if (settled == newStructure) {
-            // An identical racing transition published the target: store our
-            // value into the now-live inline slot (SAB last-writer-wins).
-            if (inlineOffset != invalidOffset)
-                object->inlineStorage()[offsetInInlineStorage(inlineOffset)].set(vm, object, value);
-            return;
-        }
-        RELEASE_ASSERT(settled == source); // Racy callers must use the try* form.
-    }
 }
 
 // ===== Task 7: §3 foreign first write - ensureSharedWriteBit =====
@@ -2249,108 +2161,6 @@ bool ensureSegmentedOutOfLineCapacity(VM& vm, JSObjectWithButterfly* object, siz
 
 #if USE(JSVALUE64)
 
-// ===== §9.5 full-§2-dispatch slow paths (Task 6) =====
-//
-// E5: interpreter/runtime slow paths never rely on elision - they dispatch on
-// the loaded tagged word (None first), conform to M7 (the (d) loadLoadFence
-// orders the caller's structureID/offset provenance before the tagged-word
-// load - I24), are M5 nuke-tolerant (they never decode a possibly-nuked
-// StructureID: dispatch keys on the tagged word and the indexing byte only),
-// and are poll-free between slot resolution and access (I34).
-
-JSValue JSObjectWithButterfly::getDirectConcurrent(PropertyOffset offset) const
-{
-    ASSERT(Options::useJSThreads());
-    if (isInlineOffset(offset)) {
-        // Inline slots: the cell never resizes - one atomic EncodedJSValue
-        // load (§3).
-        return inlineStorage()[offsetInInlineStorage(offset)].get();
-    }
-    if (hasAnyArrayStorage(indexingType())) [[unlikely]] {
-        // I31/L5: flag-on, EVERY runtime access to an AS-shape object (reads
-        // included, any SW) is cell-locked; re-load the word under the lock
-        // (AS-COPY may have republished a fresh AS butterfly, §4.6).
-        Locker locker { cellLock() };
-        CellLockDepthScope cellLockDepthScope; // O3/I20 (Task 10)
-        uint64_t word = taggedButterflyWord();
-        RELEASE_ASSERT(!isSegmentedButterfly(word)); // I31: AS never segments.
-        return untaggedButterfly(word)->propertyStorage()[offsetInOutOfLineStorage(offset)].get();
-    }
-    WTF::loadLoadFence(); // M7(d)
-    uint64_t word = taggedButterflyWord();
-    while (true) {
-        if (isSegmentedButterfly(word)) [[unlikely]] {
-            if (const WriteBarrierBase<Unknown>* slot = segmentedOutOfLineSlotIfWithinBounds(butterflySpine(word), offset))
-                return slot->get();
-            // I33: out of the loaded spine's bounds = stale spine =>
-            // acquire-re-load the tagged word, re-dispatch.
-            WTF::loadLoadFence();
-            word = taggedButterflyWord();
-            continue;
-        }
-        RELEASE_ASSERT(word & butterflyPointerMask); // A valid out-of-line offset implies storage (live storage never shrinks - I18).
-        // Flat (any TID, any SW): mask and read as today (§3; flat-branch
-        // soundness proof: history §15.4 via M7(d) above).
-        return untaggedButterfly(word)->propertyStorage()[offsetInOutOfLineStorage(offset)].get();
-    }
-}
-
-void JSObjectWithButterfly::putDirectConcurrent(VM& vm, PropertyOffset offset, JSValue value)
-{
-    ASSERT(Options::useJSThreads());
-    ASSERT(value);
-    if (isInlineOffset(offset)) {
-        // Existing inline slot: one atomic store + barrier (§3).
-        inlineStorage()[offsetInInlineStorage(offset)].set(vm, this, value);
-        return;
-    }
-    if (hasAnyArrayStorage(indexingType())) [[unlikely]] {
-        // §4.6 (Task 8): a foreign write to an SW=0 AS instance first runs the
-        // per-event stop (F1 + (installerTID, 1) flat publication) inside
-        // ensureSharedWriteBit - called with NO lock held (veneer caller
-        // contract, GT11) - before the I31 locked access below.
-        uint64_t probeWord = taggedButterflyWord();
-        if ((probeWord & butterflyPointerMask) && !butterflySharedWrite(probeWord)
-            && butterflyWriterIsForeign(probeWord)) // incl. §9.6 forceButterflySWBit
-            ensureSharedWriteBit(vm, this);
-        Locker locker { cellLock() }; // I31/L5
-        CellLockDepthScope cellLockDepthScope; // O3/I20 (Task 10)
-        uint64_t word = taggedButterflyWord();
-        RELEASE_ASSERT(!isSegmentedButterfly(word)); // I31
-        untaggedButterfly(word)->propertyStorage()[offsetInOutOfLineStorage(offset)].set(vm, this, value);
-        return;
-    }
-    WTF::loadLoadFence(); // M7(d)
-    uint64_t word = taggedButterflyWord();
-    while (true) {
-        if (isSegmentedButterfly(word)) [[unlikely]] {
-            if (WriteBarrierBase<Unknown>* slot = segmentedOutOfLineSlotIfWithinBounds(butterflySpine(word), offset)) {
-                slot->set(vm, this, value); // §4.5: fragment-slot stores = WriteBarrierBase::set on the owner.
-                return;
-            }
-            WTF::loadLoadFence();
-            word = taggedButterflyWord();
-            continue;
-        }
-        RELEASE_ASSERT(word & butterflyPointerMask);
-        bool foreign = butterflyWriterIsForeign(word); // incl. §9.6 forceButterflySWBit
-        if (foreign && !butterflySharedWrite(word)) [[unlikely]] {
-            // §3: first foreign write to a flat instance with SW=0 - fire
-            // writeThreadLocal (F1/I12) and flip SW via the §3.0 DCAS, with
-            // the R-DOUBLE/CoW/PA carve-outs, all inside ensureSharedWriteBit
-            // (defined by Task 7). Then re-dispatch on the fresh tag (the word
-            // may have gone segmented or been replaced meanwhile).
-            ensureSharedWriteBit(vm, this);
-            WTF::loadLoadFence();
-            word = taggedButterflyWord();
-            continue;
-        }
-        // Owner, or SW already set: mask, store, as today (§3).
-        untaggedButterfly(word)->propertyStorage()[offsetInOutOfLineStorage(offset)].set(vm, this, value);
-        return;
-    }
-}
-
 // ===== Task 8: §4.4 array transitions - casButterfly and the resize drivers =====
 
 namespace {
@@ -2516,9 +2326,8 @@ bool tryArrayStoragePropertyTransition(VM& vm, JSObjectWithButterfly* object, St
     }
 
     // Step 4 (M2/I9): release-store the value BEFORE the new StructureID is
-    // visible (no holes). Under the cell lock no AS reader can dereference the
-    // slot meanwhile (every AS out-of-line read is cell-locked,
-    // getDirectConcurrent I31/L5).
+    // visible (no holes). This slot's offset resolves only from newStructure,
+    // which the publication below makes visible after the value.
     unsigned outOfLineIndex = outOfLineButterflyIndex(offset);
     RELEASE_ASSERT(outOfLineIndex < newOutOfLineCapacity);
     reinterpret_cast<Atomic<uint64_t>*>(targetButterfly->propertyStorage() - (outOfLineIndex + 1))->store(JSValue::encode(value), std::memory_order_release);
@@ -2572,15 +2381,20 @@ ALWAYS_INLINE void fillFragmentSlotWithHole(WriteBarrierBase<Unknown>* slot, boo
 //       aliased-tail exposure.
 //
 //   (b) The spine carries a conversion-era C2 tail (vectorLength <
-//       coverage). T3-segmented-born-fullcoverage made this the RARE
-//       residual: flag-on optimalContiguousVectorLength rounds every
-//       freshly-sized contiguous flat VL so (1+VL)%4 == 0 (no tail at
-//       conversion), and §4.2 step 3 additionally hole-fills any
-//       slack-backed tail and publishes full coverage. Mode (b) now fires
-//       only for a flat butterfly that was sized OUTSIDE
-//       optimalContiguousVectorLength AND whose heap-cell size class left
-//       no usable slack past flatVectorLength, or after an explicit
-//       shrink/reshape. When it does fire: those tail slots alias memory
+//       coverage). T3-segmented-born-fullcoverage made this RARE under
+//       useSharedGCHeap only: the optimalContiguousVectorLength rounding
+//       that sizes every freshly-sized contiguous flat VL so (1+VL)%4 == 0
+//       (no tail at conversion) is gated on Options::useSharedGCHeap()
+//       (ButterflyInlines.h), which useJSThreads=1 alone does not imply.
+//       §4.2 step 3 additionally hole-fills any slack-backed tail and
+//       publishes full coverage, but availableContiguousVectorLength fills
+//       the size class exactly, so that rescue rarely applies. Under the
+//       default GIL-on shape, therefore, every array converted from a flat
+//       butterfly with VL % 4 != 3 (an empty literal: VL 5, a two-slot
+//       tail) takes mode (b) ONCE on its first grow; under useSharedGCHeap
+//       it fires only for a flat butterfly sized OUTSIDE
+//       optimalContiguousVectorLength with no usable slack, or after an
+//       explicit shrink/reshape. When it does fire: those tail slots alias memory
 //       PAST the flat allocation's precise end (Butterfly sizing makes
 //       flat vectorLengths odd, so a VL % 4 == 1 conversion leaves a
 //       2-slot tail outside the recorded aliasedAllocationSize) - they may
@@ -2783,8 +2597,14 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
             continue;
         }
 
+        // Every arm below can park in a stop (F2, mode (b), F1), during which
+        // a racing §4.6 conversion may publish an ArrayStorage word under the
+        // AS structure. AS never segments or grows here (I31): report success
+        // and let the caller's shape re-probe route it to its AS path.
+        if (hasAnyArrayStorage(object->indexingType())) [[unlikely]]
+            return true;
         ASSERT(hasContiguous(object->indexingType()) || hasInt32(object->indexingType())
-            || hasDouble(object->indexingType()) || hasUndecided(object->indexingType())); // AS never reaches ensureLength (GT10).
+            || hasDouble(object->indexingType()) || hasUndecided(object->indexingType()));
 
         uint64_t word = butterflyWordAtomic(object)->load(std::memory_order_seq_cst);
         RELEASE_ASSERT(word & butterflyPointerMask); // ensureLength's precondition: indexed storage exists.
@@ -2815,31 +2635,13 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
         IndexingType type = object->indexingType();
         Structure* structure = object->structure(); // Flag-on structure() is nuke-masked (M5); flat owner words keep capacities stable (foreign out-of-line adds go segmented).
         unsigned propertyCapacity = structure->outOfLineCapacity();
-        unsigned availableOldLength = Butterfly::availableContiguousVectorLength(propertyCapacity, oldVectorLength);
-
-        // ---- T5 REMOVED (adversarial-review round 1): the in-place
-        // vectorLength growth (hole-fill [oldVL,newVL), fence, setVectorLength
-        // on the CURRENT payload) was the only growth form that raised a
-        // lock-free foreign reader's flat bound without publishing fresh
-        // storage behind the butterfly-word load. The SW bit gates foreign
-        // WRITES only - foreign READS of a flat word are always legal (§3) -
-        // and a reader's vectorLength load and slot load have only a CONTROL
-        // dependency between them (no address dependency: same base pointer),
-        // which does not order load->load on arm64. Such a reader could pair
-        // the post-growth vectorLength with a pre-hole-fill slot load and
-        // materialize uninitialized tryCreateUninitialized slack as a JSValue.
-        // The writer-side cell lock cannot help: readers are lock-free by
-        // design. So flag-on, EVERY flat owner growth takes the T1 fresh-copy
-        // route below - the new payload is only reachable through the freshly
-        // CASed butterfly word, so slot loads are dependency-ordered behind a
-        // word load that already sees the new vectorLength (same argument as
-        // T2/conversion publications).
-        UNUSED_VARIABLE(availableOldLength);
 
         // ---- T1: owner-only lock-free copying resize, expected tag exactly
-        // (currentButterflyTID(), 0) (I27). Always a FRESH allocation flag-on
-        // (M8 disables in-place butterfly reallocs; we do not rely on the
-        // manifest-4b flag and copy explicitly).
+        // (currentButterflyTID(), 0) (I27). Always a FRESH allocation flag-on:
+        // a published flat vectorLength is immutable (no in-place growth even
+        // when the size class has slack - see the header note on
+        // ensureLengthSlowConcurrent), and M8 disables in-place butterfly
+        // reallocs.
         unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(
             propertyCapacity, std::min<size_t>(nextLength(length), MAX_STORAGE_VECTOR_LENGTH));
         GCDeferralContext deferralContext(vm);
@@ -2905,6 +2707,13 @@ void shrinkButterflyForSetLengthConcurrent(VM& vm, JSObjectWithButterfly* object
     ASSERT(!isCopyOnWrite(object->indexingMode())); // Callers ensureWritable first (as today).
 
     while (true) {
+        // The F1 park below can let a racing §4.6 conversion publish an
+        // ArrayStorage word, whose payload starts with the AS header words,
+        // not elements. AS truncation is the cell-locked setLengthWithArray-
+        // Storage route (I31): return and let the caller re-probe the shape.
+        if (hasAnyArrayStorage(object->indexingType())) [[unlikely]]
+            return;
+
         uint64_t word = butterflyWordAtomic(object)->load(std::memory_order_seq_cst);
         RELEASE_ASSERT(word & butterflyPointerMask);
         bool fillDouble = hasDouble(object->indexingType());
@@ -3079,6 +2888,15 @@ bool JSObjectWithButterfly::putIndexConcurrent(VM& vm, unsigned i, JSValue value
             return false;
         if (i >= MIN_SPARSE_ARRAY_INDEX || i + 1 > MAX_STORAGE_VECTOR_LENGTH)
             return false; // Sparse/overlong: generic path.
+        // Same layout policy as the flag-off beyond-vector path: an index this
+        // far past the vector takes a sparse map, not hole-filled dense growth.
+        // The word is this iteration's (a published flat vectorLength is
+        // immutable); the bound is a layout input only, never a soundness one.
+        unsigned vectorLength = isSegmentedButterfly(word)
+            ? segmentedVectorLength(butterflySpine(word))
+            : untaggedButterfly(word)->vectorLength();
+        if (indexIsSufficientlyBeyondLengthForSparseMap(i, vectorLength))
+            return false; // Sparse map: generic path.
         if (!ensureLengthSlowConcurrent(vm, this, i + 1))
             return false; // OOM.
         // Re-dispatch: the next trySet lands within the grown storage (or the
@@ -3094,8 +2912,8 @@ bool JSObjectWithButterfly::putIndexConcurrent(VM& vm, unsigned i, JSValue value
 // pre-enqueue validation through the Load form. Receivers are restricted by
 // the caller's probe to plain structure/butterfly-backed own data slots (the
 // D3 exotic-receiver TypeErrors stay in ThreadAtomics.cpp), so the dispatch
-// here is exactly the §2 regime split of get/putDirectConcurrent above plus
-// the ANNEX C1 write-side protocols:
+// here is exactly the §2 regime split (inline / flat / segmented / AS and
+// dictionary cell-locked) plus the ANNEX C1 write-side protocols:
 //
 //   - LOCK-FREE ARMS (inline, flat out-of-line, segmented fragment): one
 //     seq_cst 64-bit CAS/RMW loop on the EncodedJSValue slot word. NO cell
@@ -3457,9 +3275,9 @@ JSValue JSObject::atomicSlotReadModifyWrite(JSGlobalObject* globalObject, Unique
     };
     if (isInlineOffset(offset)) {
         // Inline slots: the cell never resizes; there is no butterfly word,
-        // hence no SW bit and no SW protocol (§3 - matching
-        // putDirectConcurrent's inline arm). Attributes are pinned by
-        // expectedStructureID (non-dictionary structures are immutable).
+        // hence no SW bit and no SW protocol (§3, like every flag-on inline
+        // replace). Attributes are pinned by expectedStructureID
+        // (non-dictionary structures are immutable).
         JSValue result = atomicSlotLockFreeLoop(globalObject, vm, this, &inlineStorage()[offsetInInlineStorage(offset)], expectedStructureID, true, request, status);
         if (status == AtomicSlotStatus::LockedRevalidate) [[unlikely]]
             return lockedUndefinedArm();
@@ -3685,8 +3503,9 @@ ASCIILiteral JSObject::putDirectForAtomicsMissingAdd(VM& vm, PropertyName proper
 //      setStructureAndReallocateStorageIfNecessary family never shrinks live
 //      storage either, I18).
 //   5. indexed fragments (none when header-less, C2): mark as in step 4;
-//      value-visit per C4/I33 - bound = min(publicLength, the SAME loaded
-//      spine's vectorLength) - skipping fragment 0 slot 0 (the frozen flat
+//      value-visit up to the SAME loaded spine's vectorLength (the storage
+//      bound, not the min(publicLength, vectorLength) access bound - see the
+//      in-function comment) - skipping fragment 0 slot 0 (the frozen flat
 //      IndexingHeader, I9b) and leaving the C2 tail unvisited. Shape-keyed off
 //      the step-1 structure (re-checked at step 6): only writable Contiguous
 //      value-visits, exactly like the flat visitElements - Int32/empty slots
@@ -3711,10 +3530,11 @@ ASCIILiteral JSObject::putDirectForAtomicsMissingAdd(VM& vm, PropertyName proper
 // bound from the older structure is a subset of the spine's capacity.
 //
 // I25 barrier audit (Task 6b; every owned segmented store/publication site):
-//   - fragment-slot stores on the mutator: putDirectConcurrent's segmented
-//     branch uses WriteBarrierBase::set(vm, owner, value) (above);
-//     structureOnlyTransition's already-published fallback uses
-//     WriteBarrierBase::set on the inline slot.
+//   - fragment-slot stores on the mutator: the flag-on property/indexed
+//     setters store through the WriteBarrierBase<Unknown>* that
+//     locationForOffset / the §Q quickly-family resolve into the fragment
+//     (WriteBarrierBase::set(vm, owner, value)); the atomic slot accessors
+//     below barrier the owner after each applied CAS.
 //   - §4.2-4/§4.3-4 pre-publication value stores are raw release stores into a
 //     PRIVATE spine/butterfly (unreachable by the collector except via
 //     conservative scan, I7); the post-unlock vm.writeBarrier(object, value)
@@ -3778,7 +3598,7 @@ Structure* visitSegmentedButterfly(Visitor& visitor, JSObjectWithButterfly* obje
         return nullptr;
 
     spine->tsanConsume(); // V7: published spine; import the publisher's clock (GC visit races the publish benignly — I6).
-    spine->validateConsistency(); // Debug/verify-only inside.
+    spine->validateConsistency(); // Debug-only ASSERTs inside (count/vectorLength coherence, aliased base/size pairing).
 
     // I6/I7 witnesses (Task 10): published spines are immutable - snapshot the
     // header fields here and re-compare after the visit (any divergence means
@@ -3814,6 +3634,8 @@ Structure* visitSegmentedButterfly(Visitor& visitor, JSObjectWithButterfly* obje
     uint32_t outOfLineFragmentCount = entryOutOfLineFragmentCount;
     for (uint32_t j = 0; j < outOfLineFragmentCount; ++j) {
         ButterflyFragment* fragment = spine->outOfLineFragment(j);
+        if (verifyConcurrentButterflyEnabled()) [[unlikely]]
+            RELEASE_ASSERT(fragment); // I25: a published spine names every fragment it covers.
         if (!fragmentIsInAliasedAllocation(fragment))
             visitor.markAuxiliary(fragment);
     }
@@ -3839,6 +3661,8 @@ Structure* visitSegmentedButterfly(Visitor& visitor, JSObjectWithButterfly* obje
     if (indexedFragmentCount) {
         for (uint32_t f = 0; f < indexedFragmentCount; ++f) {
             ButterflyFragment* fragment = spine->indexedFragment(f);
+            if (verifyConcurrentButterflyEnabled()) [[unlikely]]
+                RELEASE_ASSERT(fragment); // I25
             if (!fragmentIsInAliasedAllocation(fragment))
                 visitor.markAuxiliary(fragment);
         }
@@ -3928,10 +3752,8 @@ template Structure* visitSegmentedButterfly(SlotVisitor&, JSObjectWithButterfly*
 
 // ===== Task 10: §9.6 stress modes + §8 invariant assertion ledger =====
 //
-// The four §9.6 options (OptionsList.h text = integration manifest entry 1,
-// recorded in docs/threads/INTEGRATE-objectmodel.md; probed via the SFINAE
-// accessors in ConcurrentButterfly.h so this TU compiles before the entry
-// lands):
+// The four §9.6 options (OptionsList.h; read through the *Enabled wrappers in
+// ConcurrentButterfly.h):
 //
 //   - useJSThreads: master switch. Every protocol entry point here
 //     RELEASE_ASSERTs it (the I22 witness that nothing reaches these paths
@@ -3940,9 +3762,9 @@ template Structure* visitSegmentedButterfly(SlotVisitor&, JSObjectWithButterfly*
 //     (ConcurrentButterfly.h) - every write classifies as foreign, driving
 //     F1/SW-DCAS (ensureSharedWriteBit), the §4.6 AS per-event stop, the §4.8
 //     CoW materialization and the FlatShared rows on single-threaded
-//     workloads. Consumers: putDirectConcurrent, putIndexConcurrent,
-//     ensureLengthSlowConcurrent (CoW leg), shrinkButterflyForSetLength-
-//     Concurrent, ensureSharedWriteBit's owner check.
+//     workloads. Consumers: putIndexConcurrent, ensureLengthSlowConcurrent
+//     (CoW leg), shrinkButterflyForSetLengthConcurrent, ensureSharedWriteBit's
+//     owner check, and the flag-on setters' foreign-write probes.
 //   - forceSegmentedButterflies: every butterfly allocation/transition ends
 //     segmented. Consumers: trySegmentedTransition (§3 dispatch routes owner
 //     stay-flat to §4.2 with the trigger; StayFlat flavor suppressed; post-
@@ -4022,26 +3844,29 @@ template Structure* visitSegmentedButterfly(SlotVisitor&, JSObjectWithButterfly*
 //        CAS success; PA publications CAS the word even under the lock (CB).
 //   I18  takeDeletedOffset draws only from Reusable post-promotion
 //        (PropertyTable.h, Task 9); releaseQuarantinedSlots epoch compare
-//        (PropertyTable.cpp); getDirectConcurrent RELEASE_ASSERT(payload)
-//        ("live storage never shrinks", CB).
+//        (PropertyTable.cpp); trySegmentedTransition RELEASE_ASSERT(
+//        newOutOfLineCapacity >= oldOutOfLineCapacity) ("live storage never
+//        shrinks", CB).
 //   I19  dictionary-mode cell-lock + m_lock asserts at the owned JSObject.cpp
 //        L3/L4 sites (Task 9).
 //   I20  lock order: lockCellChecked / veneer-entry RELEASE_ASSERT (no cell
 //        lock across a stop) (CB); SAL emission sites assert rank (Task 3b);
 //        O1 = AssertNoGC / pre-lock GCDeferralContext at the locked allocs.
 //   I21  taxonomy (b2) => RESTART (never merge a copied flat payload, CB);
-//        segmentedTransition driver RELEASE_ASSERT(settled == source) (no
-//        silent lost-racer overwrite, CB); T1 CAS-failure => re-dispatch.
+//        the try* cores return false on any source divergence and every
+//        caller recomputes its target from the fresh source (no silent
+//        lost-racer overwrite); T1 CAS-failure => re-dispatch.
 //   I22  RELEASE_ASSERT(Options::useJSThreads()) at every protocol entry
-//        (CB); option probes constant-false when the entry is absent (CB.h).
+//        (CB).
 //   I23  spine chain reads are plain loads + Dependency (owned JSObject.cpp
 //        dispatch); no fence emitted in segmented*Slot accessors (CB).
 //   I24  M7(d) loadLoadFence before every tagged-word load in the
 //        *Concurrent accessors + I33 re-load loops (CB).
 //   I25  visitSegmentedButterfly marks spine + aliased base + every
-//        non-aliased fragment, value-visits every live slot (CB);
-//        validateConsistency RELEASE_ASSERTs non-null fragments
-//        (ButterflyInlines.h).
+//        non-aliased fragment, value-visits every live slot, and under
+//        verifyConcurrentButterfly RELEASE_ASSERTs every fragment non-null
+//        before marking it (CB); validateConsistency (Butterfly.h) ASSERTs
+//        fragment-count/vectorLength coherence.
 //   I26  headerDiffersOnlyInVolatileBits/mergeVolatileHeaderBits + both
 //        self-tests' merge legs (CB.h/CB).
 //   I27  assertCasButterflyShape exhaustive form check (T1/T2/N3/AS-COPY, CB).

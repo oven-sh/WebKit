@@ -340,23 +340,14 @@ public:
             case ALL_WRITABLE_CONTIGUOUS_INDEXING_TYPES:
             case ALL_ARRAY_STORAGE_INDEXING_TYPES:
 #if USE(JSVALUE64)
-                // SPEC-objectmodel §10.7/§Q (review round 1): flag-on, this
-                // bound read needs the regime dispatch - butterfly() is the
-                // FLAT-only accessor, so a segmented word would read the
-                // spine as an IndexingHeader (type-confused bound). Segmented
-                // and AS words report "not quickly": the slow path
-                // (putDirectIndexSlowOrBeyondVectorLength) runs the routed /
-                // I31-locked generic logic, and the segmented setIndexQuickly
-                // shape-conversion hazard never arises from here. Flat words
-                // read the bound from the SAME loaded word.
-                if (Options::useJSThreads()) [[unlikely]] {
-                    uint64_t word = taggedButterflyWord();
-                    if (isSegmentedButterfly(word) || hasAnyArrayStorage(indexingType()))
-                        return false;
-                    if (!(word & butterflyPointerMask)) [[unlikely]]
-                        return false; // E5 None-first (round 4): racing N3 first install => slow path.
-                    return propertyName < untaggedButterfly(word)->vectorLength();
-                }
+                // Flag-on, butterfly() is the flat-only accessor and any bound
+                // read here is a lock-free snapshot the owner may replace before
+                // the store. trySetIndexQuicklyConcurrent below does the regime
+                // dispatch and reads the bound from the word it stores through;
+                // AS, segmented-miss and out-of-bounds words fall to the slow path
+                // from there.
+                if (Options::useJSThreads()) [[unlikely]]
+                    return true;
 #endif
                 return propertyName < butterfly()->vectorLength();
             default:
@@ -368,6 +359,13 @@ public:
         };
         
         if (!attributes && canSetIndexQuicklyForPutDirect()) {
+#if USE(JSVALUE64)
+            if (Options::useJSThreads()) [[unlikely]] {
+                if (trySetIndexQuicklyConcurrent(getVM(globalObject), propertyName, value, nullptr))
+                    return true;
+                return putDirectIndexSlowOrBeyondVectorLength(globalObject, propertyName, value, attributes, mode);
+            }
+#endif
             setIndexQuickly(getVM(globalObject), propertyName, value);
             return true;
         }
@@ -873,11 +871,16 @@ public:
         // SPEC-objectmodel §9.5: with Options::useJSThreads() the butterfly word
         // carries the §2 tag (bit 63 = SW, bits 62..48 = installing thread's TID)
         // in its high 16 bits; butterfly() masks the tag off on load. CONTRACT —
-        // callers must have established flatness via one of: flag off | a
-        // dominating §2/§3/E5 regime dispatch | the class never segments
-        // (ArrayStorage I31, CopyOnWrite I35) | a §10.7 mayBeSegmentedButterfly()
-        // guard. Segmented words (TID == notTTLTID, payload = ButterflySpine*)
-        // must never be dereferenced through this accessor.
+        // the caller already knows the word is flat: flag off, a class that
+        // never segments (ArrayStorage I31, CopyOnWrite I35), or a regime
+        // dispatch on the SAME word it then dereferences (taggedButterflyWord()
+        // + untaggedButterfly()). A separate probe such as
+        // mayBeSegmentedButterfly() followed by this re-load is not a witness:
+        // once a shape's thread-local sets have fired, a foreign
+        // flat->segmented conversion needs only the cell lock and can land
+        // between the two loads. A segmented word (TID == notTTLTID, payload =
+        // ButterflySpine*) must never be decoded through this accessor; with
+        // verifyConcurrentButterfly on, it fails here.
         if (Options::useJSThreads()) [[unlikely]] {
             uint64_t word = taggedButterflyWord();
             ASSERT(!isSegmentedButterfly(word));
@@ -911,22 +914,11 @@ public:
 #endif
     }
 
-    ButterflyRegime butterflyRegime() const { return butterflyRegimeForWord(taggedButterflyWord()); }
-
     ALWAYS_INLINE bool mayBeSegmentedButterfly() const // one load + compare; constant false flag-off (I22)
     {
 #if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]]
             return isSegmentedButterfly(taggedButterflyWord());
-#endif
-        return false;
-    }
-
-    ALWAYS_INLINE bool isSharedArrayStorage() const // SW=1 && AS shape; §4.6 dispatch keys on shape ANY SW
-    {
-#if USE(JSVALUE64)
-        if (Options::useJSThreads()) [[unlikely]]
-            return butterflySharedWrite(taggedButterflyWord()) && hasAnyArrayStorage(indexingType());
 #endif
         return false;
     }
@@ -1137,7 +1129,9 @@ public:
     {
         structure()->flattenDictionaryStructure(vm, this);
     }
-    void shiftButterflyAfterFlattening(const GCSafeConcurrentJSLocker&, VM&, Structure* structure, size_t outOfLineCapacityAfter);
+    // preallocatedButterfly: flag-on, the caller (Structure::flattenDictionaryStructureUnderStop) allocates the
+    // shrunk butterfly before entering the stop window; flag-off it is null and allocated here.
+    void shiftButterflyAfterFlattening(const GCSafeConcurrentJSLocker&, VM&, Structure* structure, size_t outOfLineCapacityAfter, Butterfly* preallocatedButterfly);
 
     JSGlobalObject* realmMayBeNull() const
     {
@@ -1187,10 +1181,6 @@ public:
             // empty sentinel here, NOT fall to tryMakeWritableInt32Slow,
             // whose switch CRASH()es on ALL_INT32_INDEXING_TYPES.
             // Flat => mask + today's code. Flag-off bit-identical (I22).
-            // FIXME(threads): this closes a flat-only-reader conformance hole
-            // but is NOT the fix for the i03-i37 abort in
-            // JSObjectWithButterfly::butterfly(); that caller needs re-triage
-            // outside JSObject.h/Structure.*/ConcurrentButterfly.*.
             if (Options::useJSThreads()) [[unlikely]] {
                 uint64_t word = taggedButterflyWord();
                 if (isSegmentedButterfly(word)) [[unlikely]]
@@ -1415,6 +1405,11 @@ protected:
     void NODELETE deallocateSparseIndexMap();
     bool defineOwnIndexedProperty(JSGlobalObject*, unsigned, const PropertyDescriptor&, bool throwException);
     SparseArrayValueMap* allocateSparseIndexMap(VM&);
+#if USE(JSVALUE64)
+    // Flag-on, with no lock held: installs a fresh map under the cell lock only
+    // if the ArrayStorage still has none, otherwise returns the installed one.
+    SparseArrayValueMap* allocateSparseIndexMapConcurrent(VM&);
+#endif
         
     void notifyPresenceOfIndexedAccessors(VM&);
         
@@ -1478,8 +1473,8 @@ private:
 #if USE(JSVALUE64)
     // SPEC-objectmodel Task 2 regime-dispatching slow paths (flag-on only;
     // defined in JSObject.cpp). These implement the §Q dispatch for the
-    // quickly-family and locationForOffset; the full §2-dispatch *Concurrent
-    // accessors of §9.5 (getDirectConcurrent & friends) land with Task 6.
+    // quickly-family and locationForOffset; the indexed §9.5 accessors
+    // (getIndexConcurrent / putIndexConcurrent) are on JSObjectWithButterfly.
     JS_EXPORT_PRIVATE const WriteBarrierBase<Unknown>* locationForOutOfLineOffsetConcurrent(PropertyOffset) const;
     JS_EXPORT_PRIVATE bool canGetIndexQuicklyConcurrent(unsigned) const;
     JS_EXPORT_PRIVATE JSValue getIndexQuicklyConcurrent(unsigned) const;
@@ -1653,15 +1648,6 @@ public:
     PropertyStorage outOfLineStorage() { return butterfly()->propertyStorage(); }
 
 #if USE(JSVALUE64)
-    // SPEC-objectmodel §9.5 (Task 6; defined in ConcurrentButterfly.cpp):
-    // full-§2-dispatch interpreter/runtime slow paths for existing direct
-    // slots. M7-conforming (the (d) loadLoadFence orders the caller's
-    // structureID/offset provenance before the tagged-word load - I24), M5
-    // nuke-tolerant (they never decode a possibly nuked StructureID - dispatch
-    // keys on the tagged word + indexing byte), poll-free between slot
-    // resolution and access (I34), and AS-shape accesses cell-locked (I31).
-    JS_EXPORT_PRIVATE JSValue getDirectConcurrent(PropertyOffset) const;
-    JS_EXPORT_PRIVATE void putDirectConcurrent(VM&, PropertyOffset, JSValue);
     // §9.5 indexed forms (Task 8, §4.4/§4.6; defined in ConcurrentButterfly.cpp):
     // full §2 dispatch; AS accesses cell-locked (I31/L5); foreign first writes
     // through ensureSharedWriteBit (F1); in-shape dense growth through the
@@ -1750,24 +1736,24 @@ ALWAYS_INLINE bool JSObject::ensureLength(VM& vm, unsigned length)
             ensureSharedWriteBit(vm, static_cast<JSObjectWithButterfly*>(this));
             word = taggedButterflyWord();
         }
-        // Review round 3 (I21; the i03-t5 racing-growers scenario): on SHARED
-        // words the bump must be the monotone CAS-max - a read-then-plain-store
-        // by a loser could REGRESS a racing grower's bump and hide its element
-        // behind the min(publicLength, vectorLength) read bound. Segmented
-        // words are shared by definition (notTTLTID); flat SW=1 words race
-        // other §3 writers. Only the owner-exclusive (currentTID, 0) flat word
-        // keeps the plain store (SW=0 => no foreign write has ever landed on
-        // this instance, I12).
-        if (isSegmentedButterfly(word)) {
-            ButterflySpine* spine = butterflySpine(word);
-            spine->bumpPublicLengthToAtLeast(length);
-        } else {
-            Butterfly* flatButterfly = untaggedButterfly(word);
-            if (butterflySharedWrite(word))
-                flatButterfly->bumpPublicLengthToAtLeast(length);
-            else if (flatButterfly->publicLength() < length)
-                flatButterfly->setPublicLength(length);
-        }
+        // I21 (the i03-t5 racing-growers scenario): the bump is always the
+        // monotone CAS-max - a read-then-plain-store by a loser could REGRESS
+        // a racing grower's bump and hide its element behind the
+        // min(publicLength, vectorLength) read bound. The word's SW bit cannot
+        // exempt the owner: once writeThreadLocal(S) has fired, a foreign
+        // writer flips SW with a lock-free DCAS (no stop), so its flip, store
+        // and CAS-max can land between the owner's length read and a plain
+        // store (see updatePublicLengthAfterDenseStoreConcurrent).
+        // A racing §4.6 conversion may have published an ArrayStorage word
+        // while the slow path or the F1 flip above was parked in a stop; its
+        // header is not a dense publicLength to bump. The caller re-probes
+        // the shape and takes its ArrayStorage route.
+        if (hasAnyArrayStorage(indexingType())) [[unlikely]]
+            return true;
+        if (isSegmentedButterfly(word))
+            butterflySpine(word)->bumpPublicLengthToAtLeast(length);
+        else
+            untaggedButterfly(word)->bumpPublicLengthToAtLeast(length);
         return true;
     }
 #endif

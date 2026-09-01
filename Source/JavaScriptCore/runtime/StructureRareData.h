@@ -33,6 +33,8 @@
 #include "PropertySlot.h"
 #include <wtf/Atomics.h>
 #include <wtf/FixedVector.h>
+#include <wtf/Lock.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -63,6 +65,30 @@ static constexpr unsigned numberOfCachedSpecialPropertyKeys = 5;
 
 class StructureRareData;
 class StructureChainInvalidationWatchpoint;
+
+// Enumerator-cache watchpoint vectors that foreign threads may still reach
+// through watched Structures' transition watchpoint sets. Under useJSThreads a
+// StructureRareData moves a replaced or cleared vector here instead of
+// destroying it in place; the owning Heap destroys the contents with the world
+// stopped (Heap::finalizeUnconditionalFinalizers) and at teardown. Flag-off the
+// Heap never allocates one.
+class RetiredStructureChainInvalidationWatchpoints {
+    WTF_MAKE_TZONE_ALLOCATED(RetiredStructureChainInvalidationWatchpoints);
+    WTF_MAKE_NONCOPYABLE(RetiredStructureChainInvalidationWatchpoints);
+public:
+    RetiredStructureChainInvalidationWatchpoints();
+    ~RetiredStructureChainInvalidationWatchpoints();
+
+    // Callable from any mutator; the caller holds its Structure's m_lock and
+    // this lock is a leaf under it.
+    void add(FixedVector<StructureChainInvalidationWatchpoint>&&);
+    // World stopped: unlinks every retired watchpoint from its set.
+    void destroyAll();
+
+private:
+    Lock m_lock;
+    Vector<FixedVector<StructureChainInvalidationWatchpoint>> m_vectors WTF_GUARDED_BY_LOCK(m_lock);
+};
 
 class StructureRareData final : public JSCell {
 public:
@@ -116,14 +142,12 @@ public:
     void setCachedPropertyNameEnumerator(VM&, Structure*, JSPropertyNameEnumerator*, StructureChain*);
     void clearCachedPropertyNameEnumerator();
 
-    // TSAN family structure-fields (AUD1.N4(3)): flag-on teardown/replacement
-    // of the enumerator cache outside a stop-the-world window. Callers hold
-    // the owning Structure's m_lock. The StructureChainInvalidationWatchpoint
-    // FixedVector is MOVED to m_retiredCachedPropertyNameEnumeratorWatchpoints
-    // instead of freed — the watchpoints stay reachable through watched
-    // structures' transition watchpoint sets until the GC retires them in
-    // finalizeUnconditionally (mutators stopped). Defined in
-    // StructureRareData.cpp.
+    // useJSThreads only; callers hold the owning Structure's m_lock. The
+    // watchpoint FixedVector is moved to the Heap's
+    // RetiredStructureChainInvalidationWatchpoints instead of freed, because
+    // foreign threads can still reach the watchpoints through watched
+    // structures' transition watchpoint sets until the next world-stopped GC
+    // end phase destroys them.
     void retireCachedPropertyNameEnumeratorWatchpoints();
     void clearCachedPropertyNameEnumeratorRetiringWatchpoints();
 
@@ -274,10 +298,6 @@ private:
     // https://bugs.webkit.org/show_bug.cgi?id=192659
     RelaxedAtomicUintPtr m_cachedPropertyNameEnumeratorAndFlag;
     FixedVector<StructureChainInvalidationWatchpoint> m_cachedPropertyNameEnumeratorWatchpoints;
-    // GC-retirement parking lot for replaced/cleared enumerator watchpoint
-    // vectors (flag-on only; always empty flag-off). Drained in
-    // finalizeUnconditionally. See retireCachedPropertyNameEnumeratorWatchpoints().
-    Vector<FixedVector<StructureChainInvalidationWatchpoint>> m_retiredCachedPropertyNameEnumeratorWatchpoints;
     WriteBarrier<JSCellButterfly> m_cachedPropertyNames[numberOfCachedPropertyNames] { };
 
     typedef UncheckedKeyHashMap<PropertyOffset, RefPtr<WatchpointSet>, WTF::IntHash<PropertyOffset>, WTF::UnsignedWithZeroKeyHashTraits<PropertyOffset>> PropertyWatchpointMap;
@@ -296,6 +316,11 @@ private:
     unsigned m_cachedHasDefaultToPrimitiveFastAndNonObservable : 2 { static_cast<unsigned>(TriState::Indeterminate) }; // TriState
 };
 #ifdef NDEBUG
+static_assert(sizeof(StructureRareData) <= 96, "StructureRareData should remain small");
+#endif
+
+#if defined(NDEBUG) && CPU(ADDRESS64)
+// Six 16-byte atoms; useJSThreads-only state belongs in Heap-owned side lists, not in every cell.
 static_assert(sizeof(StructureRareData) <= 96, "StructureRareData should remain small");
 #endif
 

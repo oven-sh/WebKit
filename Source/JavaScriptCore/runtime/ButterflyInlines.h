@@ -88,6 +88,12 @@ ALWAYS_INLINE unsigned Butterfly::optimalContiguousVectorLength(size_t propertyC
         // untouched (the option gate is the only added branch).
         static_assert(hasOneBitSet(butterflyFragmentSlots), "bitwise round-up below");
         unsigned alignedRequest = vectorLength | static_cast<unsigned>(butterflyFragmentSlots - 1);
+        // Callers clamp the request to MAX_STORAGE_VECTOR_LENGTH and every
+        // result reaches IndexingHeader::setVectorLength, which RELEASE_ASSERTs
+        // that cap; a request at the cap cannot round up, so it keeps the
+        // unaligned sizing.
+        if (alignedRequest > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+            return availableContiguousVectorLength(propertyCapacity, vectorLength);
         unsigned result = availableContiguousVectorLength(propertyCapacity, alignedRequest);
         unsigned excess = (result + 1) & static_cast<unsigned>(butterflyFragmentSlots - 1);
         ASSERT(result >= excess);
@@ -382,6 +388,17 @@ ALWAYS_INLINE uint32_t aliasedOutOfLineFragmentCountForConversion(size_t outOfLi
     return static_cast<uint32_t>(outOfLineCapacity / butterflyFragmentSlots);
 }
 
+// Only indexed shapes carry an element payload behind the IndexingHeader. A
+// wasteful typed-array view has a header too, but it holds the ArrayBuffer*
+// (IndexingHeader's union), so its vectorLength lane is half a pointer: its
+// payload is empty and it converts with one header fragment, vectorLength 0.
+ALWAYS_INLINE uint32_t flatVectorLengthForConversion(Structure* structure, Butterfly* flat)
+{
+    if (!hasIndexedProperties(structure->indexingType()))
+        return 0;
+    return flat->vectorLength();
+}
+
 // C2: indexed fragments only if the flat butterfly HAS an IndexingHeader
 // (Butterfly::totalSize); header-less => 0, no header fragment. Else
 // (1 + flatVectorLength + 3) / 4 - the +1 is the header slot. The last
@@ -420,10 +437,11 @@ ALWAYS_INLINE uint64_t aliasedAllocationSizeForConversion(size_t propertyCapacit
 // step-3 re-validation, before step-5 publication) on a freshly built spine
 // whose every fragment aliases `flat`. Verifies slot by slot that the §4.1
 // equations reproduce the flat addresses (out-of-line k at B - 16 - 8k;
-// element i at B + 8i; header at B - 8). C1/C3 are RELEASE_ASSERTed
-// unconditionally; the per-slot sweep runs when asserts are enabled or
-// Options::verifyConcurrentButterfly() is set.
-inline void validateSpineAliasesFlatButterfly(const ButterflySpine* spine, Butterfly* flat, size_t preCapacity, size_t outOfLineCapacity, bool hasIndexingHeader)
+// element i at B + 8i; header at B - 8). flatVectorLength is the caller's
+// flatVectorLengthForConversion value (0 for a typed-array view). C1/C3 are
+// RELEASE_ASSERTed unconditionally; the per-slot sweep runs when asserts are
+// enabled or Options::verifyConcurrentButterfly() is set.
+inline void validateSpineAliasesFlatButterfly(const ButterflySpine* spine, Butterfly* flat, size_t preCapacity, size_t outOfLineCapacity, bool hasIndexingHeader, uint32_t flatVectorLength)
 {
     RELEASE_ASSERT(!(outOfLineCapacity % butterflyFragmentSlots)); // C1
     RELEASE_ASSERT(!preCapacity); // C3
@@ -432,7 +450,7 @@ inline void validateSpineAliasesFlatButterfly(const ButterflySpine* spine, Butte
 
     spine->validateConsistency();
     RELEASE_ASSERT(spine->outOfLineFragmentCount == aliasedOutOfLineFragmentCountForConversion(outOfLineCapacity));
-    uint32_t flatVectorLength = hasIndexingHeader ? flat->vectorLength() : 0;
+    RELEASE_ASSERT(hasIndexingHeader || !flatVectorLength);
     RELEASE_ASSERT(spine->indexedFragmentCount == aliasedIndexedFragmentCountForConversion(hasIndexingHeader, flatVectorLength));
     // Conversion-time live VL: == flat VL when (1+flatVL)%4 == 0 (the
     // T3-segmented-born-fullcoverage common case via the flag-on
@@ -461,7 +479,7 @@ inline void validateSpineAliasesFlatButterfly(const ButterflySpine* spine, Butte
         // is sound: flat vectorLength is immutable flag-on and the grower CAS
         // is a 32-bit low-half-only RMW that cannot tear the high half.
         RELEASE_ASSERT(reinterpret_cast<char*>(&spine->indexedFragment(0)->slots[0]) == base - 8);
-        RELEASE_ASSERT(spine->frozenFlatVectorLength() == flatVectorLength); // I9b: high half frozen.
+        RELEASE_ASSERT(spine->frozenFlatVectorLength() == flat->vectorLength()); // I9b: high half frozen (half the ArrayBuffer* for a typed-array view).
 
         // I8: element i lives at B + 8i.
         for (uint32_t i = 0; i < flatVectorLength; ++i)

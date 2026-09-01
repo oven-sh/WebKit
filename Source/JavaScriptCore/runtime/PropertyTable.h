@@ -30,6 +30,7 @@
 #include <wtf/HashTable.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 
@@ -49,11 +50,11 @@ class Heap;
 // defined in runtime/ConcurrentButterfly.cpp). The epoch of a heap is bumped
 // by a Heap::addStopTheWorldSafepointHook adapter (§10 manifest entry 4c)
 // once per collection of THAT heap, legacy and shared protocols alike, while
-// the world is stopped. A quarantined deleted out-of-line slot stamped with
-// epoch E becomes reusable only once the owning heap's epoch exceeds E: a
-// crossed epoch proves every mutator passed a safepoint after the deletion,
-// so no racing reader still holds a stale offset/slot pointer into the slot
-// (I18, relying on I34's no-poll rule).
+// the world is stopped. A quarantined deleted slot (inline or out-of-line)
+// stamped with epoch E becomes reusable only once the owning heap's epoch
+// exceeds E: a crossed epoch proves every mutator passed a safepoint after the
+// deletion, so no racing reader still holds a stale offset/slot pointer into
+// the slot (I18, relying on I34's no-poll rule).
 //
 // butterflyQuarantineEpochSlot() get-or-creates the heap's counter; the
 // returned Atomic's ADDRESS is stable for the process lifetime (entries are
@@ -174,18 +175,17 @@ public:
 
     // Used to maintain a list of unused entries in the property storage.
     //
-    // SPEC-objectmodel §6 (Task 9, flag-on ONLY - flag-off is today's single
-    // Reusable list, I22): m_deletedOffsets is split into
-    //   - Reusable (m_deletedOffsets, today's member): offsets takeDeletedOffset()
-    //     may hand out. Flag-on it is fed SOLELY by epoch promotion
-    //     (releaseQuarantinedSlots) - plus inline offsets, which are never
-    //     quarantined (manifest entry 7b: inline slots live in the cell, are
-    //     read/written as one atomic EncodedJSValue, and are outside the
-    //     butterfly-offset aliasing hazard I18 guards against).
-    //   - Quarantined (m_quarantinedDeletedOffsets): EVERY deleted out-of-line
-    //     offset, stamped with the owning heap's ButterflyQuarantineEpochs value
-    //     at deletion - dictionary-mode deletes AND non-dictionary
-    //     removePropertyTransition, NO bypass (§6 eligibility is TOTAL).
+    // Flag-off this is today's single Reusable list (DeletedOffsets::reusable,
+    // I22). Flag-on (SPEC-objectmodel §6) it is split in two:
+    //   - Reusable: offsets takeDeletedOffset() may hand out. Fed SOLELY by
+    //     epoch promotion (releaseQuarantinedSlots).
+    //   - Quarantined: EVERY deleted offset, inline AND out-of-line, stamped
+    //     with the owning heap's ButterflyQuarantineEpochs value at deletion -
+    //     dictionary-mode deletes AND non-dictionary removePropertyTransition,
+    //     NO bypass. Inline slots are quarantined too: a dictionary mutates in
+    //     place, so a tardy reader of deleted f would otherwise alias a newly
+    //     added g at the same inline offset (slot atomicity rules out tearing,
+    //     not aliasing).
     // takeDeletedOffset() draws ONLY from Reusable; hasDeletedOffset() lazily
     // promotes stamps < the owning heap's current epoch first (I18).
     //
@@ -270,9 +270,6 @@ public:
         uint64_t epoch; // Owning heap's ButterflyQuarantineEpochs stamp at deletion (§6).
     };
 
-    // TSAN family 25 quarantine counters: relaxed mirror read - lock-free
-    // count readers must not dereference the Vector (see the member comment).
-    unsigned quarantinedDeletedOffsetCount() const { return concurrentRelaxedLoad(m_quarantinedDeletedOffsetCount); }
     bool quarantinedDeletedOffsetsContains(PropertyOffset) const; // debug/assert helper
 
     PropertyOffset nextOffset(PropertyOffset inlineCapacity);
@@ -497,9 +494,10 @@ private:
     ALWAYS_INLINE uintptr_t indexVector() const { return concurrentRelaxedLoad(m_indexVector); }
     ALWAYS_INLINE unsigned keyCount() const { return concurrentRelaxedLoad(m_keyCount); }
     ALWAYS_INLINE unsigned deletedCount() const { return concurrentRelaxedLoad(m_deletedCount); }
-    // Relaxed mirror of m_deletedOffsets->size(): lets lock-free count
-    // readers (propertyStorageSize) avoid dereferencing the unique_ptr /
-    // Vector internals, which a locked mutator may be reallocating.
+    // Relaxed mirror of the number of deleted offsets still occupying property
+    // storage (Reusable + Quarantined): lets lock-free count readers
+    // (propertyStorageSize) avoid dereferencing m_deletedOffsets, which a
+    // locked mutator may be allocating or reallocating.
     ALWAYS_INLINE unsigned deletedOffsetCount() const { return concurrentRelaxedLoad(m_deletedOffsetCount); }
 
     unsigned m_indexSize;
@@ -516,27 +514,39 @@ private:
     // lock before publishing - otherwise every add between clone and
     // publication is silently orphaned (lost adds, I21/I37).
     std::atomic<uint32_t> m_concurrentEditCount { 0 };
-    std::unique_ptr<Vector<PropertyOffset>> m_deletedOffsets; // §6 Reusable list flag-on; the only list flag-off (I22).
-    std::unique_ptr<Vector<QuarantinedDeletedOffset>> m_quarantinedDeletedOffsets; // §6 Quarantined list; flag-on only.
-    // TSAN family 25 quarantine counters (OM §6): relaxed mirrors of the two
-    // deleted-offset Vector sizes, updated (relaxed store) at every list
-    // mutation - which always holds the table's serialization - and read
+    // TSAN family 25 quarantine counters (OM §6): relaxed mirror of
+    // reusable.size() + quarantined.size(), updated (relaxed store) at every
+    // list mutation - which always holds the table's serialization - and read
     // (relaxed load) by lock-free count readers. The Vectors themselves are
     // only ever dereferenced under the serialization.
     unsigned m_deletedOffsetCount { 0 };
-    unsigned m_quarantinedDeletedOffsetCount { 0 };
-    WTF::Atomic<uint64_t>* m_quarantineEpochSlot { nullptr }; // Cached owning-heap slot (stable address); set at first quarantine, read via relaxed load.
 
-    // T3 (flag-on only; null and never touched flag-off): replaced index
-    // vectors awaiting their epoch-crossed free (see rehash /
-    // quarantineIndexVector). Mutated only under the table's serialization;
-    // never read by lock-free probes. NOT copied by the cloning constructors
-    // (each clone allocates fresh vectors; copying would double-free).
+    // T3 (flag-on only): a replaced index vector awaiting its epoch-crossed
+    // free (see rehash / quarantineIndexVector).
     struct QuarantinedIndexVector {
         uintptr_t indexVector;
         uint64_t epoch;
     };
-    std::unique_ptr<Vector<QuarantinedIndexVector>> m_quarantinedIndexVectors;
+
+    // Deleted-slot bookkeeping, allocated on the first delete (flag-on also on
+    // the first rehash) so a table without deletions stays at one pointer;
+    // flag-off only `reusable` is ever touched (I22). Mutated only under the
+    // table's serialization and never dereferenced by lock-free readers
+    // (counts go through m_deletedOffsetCount). The cloning constructors copy
+    // everything except quarantinedIndexVectors: each clone allocates fresh
+    // index vectors, so copying those would double-free.
+    struct DeletedOffsets {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(DeletedOffsets);
+        Vector<PropertyOffset> reusable; // §6 Reusable list flag-on; the only list flag-off.
+        Vector<QuarantinedDeletedOffset> quarantined; // §6 Quarantined list; flag-on only.
+        Vector<QuarantinedIndexVector> quarantinedIndexVectors; // Flag-on only.
+        WTF::Atomic<uint64_t>* epochSlot { nullptr }; // Cached owning-heap slot (stable address); set at first quarantine, read via relaxed load.
+    };
+    std::unique_ptr<DeletedOffsets> m_deletedOffsets;
+    DeletedOffsets& ensureDeletedOffsets();
+    void copyDeletedOffsetsFrom(const PropertyTable&);
+    // Get-or-cache the owning heap's quarantine epoch slot (flag-on only).
+    WTF::Atomic<uint64_t>& ensureQuarantineEpochSlot(DeletedOffsets&);
 
     static constexpr unsigned MinimumTableSize = 16;
     static_assert(MinimumTableSize >= 16, "compact index is uint8_t and we should keep 16 byte aligned entries after this array");
@@ -560,7 +570,7 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
             return FindResult { entryIndex, index, invalidOffset, 0 };
         const auto& entry = table[entryIndex - 1];
         if (key == entry.key()) {
-            ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
+            ASSERT(!m_deletedOffsets || !m_deletedOffsets->reusable.contains(entry.offset()));
             ASSERT(!quarantinedDeletedOffsetsContains(entry.offset())); // §6: quarantined slots are never live entries (I18).
             return FindResult { entryIndex, index, entry.offset(), entry.attributes() };
         }
@@ -672,7 +682,7 @@ inline std::tuple<PropertyOffset, unsigned> PropertyTable::get(const KeyType& ke
 
 [[nodiscard]] inline std::tuple<PropertyOffset, unsigned, bool> PropertyTable::add(VM& vm, const ValueType& entry)
 {
-    ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(entry.offset()));
+    ASSERT(!m_deletedOffsets || !m_deletedOffsets->reusable.contains(entry.offset()));
     ASSERT(!quarantinedDeletedOffsetsContains(entry.offset())); // §6/I18: a quarantined offset must not be re-added before promotion.
 
     // Look for a value with a matching key already in the array.
@@ -818,9 +828,16 @@ inline unsigned PropertyTable::propertyStorageSize() const
     // Quarantined slots still occupy property storage: maxOffset/outOfLineSize
     // never shrink while a slot is quarantined (§6 D1/I30 - the slot stays
     // GC-visited and dereferenceable by tardy readers until released).
-    // TSAN family 25 quarantine counters: both list sizes are read through
-    // their relaxed mirrors - never dereference the Vectors lock-free.
-    return size() + deletedOffsetCount() + quarantinedDeletedOffsetCount();
+    // TSAN family 25 quarantine counters: read through the relaxed mirror -
+    // never dereference m_deletedOffsets lock-free.
+    return size() + deletedOffsetCount();
+}
+
+inline PropertyTable::DeletedOffsets& PropertyTable::ensureDeletedOffsets()
+{
+    if (!m_deletedOffsets)
+        m_deletedOffsets = makeUnique<DeletedOffsets>();
+    return *m_deletedOffsets;
 }
 
 inline void PropertyTable::clearDeletedOffsets()
@@ -830,26 +847,35 @@ inline void PropertyTable::clearDeletedOffsets()
     // layout. Sound flag-on because F3 runs flattening of shared objects under
     // a per-event stop-the-world (every mutator passed a safepoint => no stale
     // reader holds a pre-flatten offset, I18/I34).
-    m_deletedOffsets = nullptr;
-    m_quarantinedDeletedOffsets = nullptr;
+    if (Options::useJSThreads()) [[unlikely]] {
+        // The replaced-index-vector quarantine and the cached epoch slot are
+        // independent of the offsets and stay: a lock-free probe may still be
+        // walking a replaced vector.
+        if (m_deletedOffsets) {
+            m_deletedOffsets->reusable.clear();
+            m_deletedOffsets->quarantined.clear();
+        }
+    } else
+        m_deletedOffsets = nullptr;
     concurrentRelaxedStore(m_deletedOffsetCount, 0u);
-    concurrentRelaxedStore(m_quarantinedDeletedOffsetCount, 0u);
 }
 
 inline bool PropertyTable::hasDeletedOffset()
 {
+    if (!m_deletedOffsets)
+        return false;
     if (Options::useJSThreads()) [[unlikely]] {
         // §6 lazy promotion (I18/I19): Reusable is fed SOLELY by epoch
         // promotion. The cached slot is read lock-free (stable address); the
         // surrounding table mutation already holds the Structure's m_lock or
         // owns the table privately (L6), which serializes the list edits.
-        if (m_quarantinedDeletedOffsets && !m_quarantinedDeletedOffsets->isEmpty()) {
-            WTF::Atomic<uint64_t>* epochSlot = concurrentRelaxedLoad(m_quarantineEpochSlot);
+        if (!m_deletedOffsets->quarantined.isEmpty()) {
+            WTF::Atomic<uint64_t>* epochSlot = concurrentRelaxedLoad(m_deletedOffsets->epochSlot);
             ASSERT(epochSlot);
             releaseQuarantinedSlots(epochSlot->load(std::memory_order_acquire));
         }
     }
-    return m_deletedOffsets && !m_deletedOffsets->isEmpty();
+    return !m_deletedOffsets->reusable.isEmpty();
 }
 
 inline PropertyOffset PropertyTable::takeDeletedOffset()
@@ -857,41 +883,37 @@ inline PropertyOffset PropertyTable::takeDeletedOffset()
     // §6/I18: draws ONLY from the Reusable list. Quarantined entries reach it
     // solely through releaseQuarantinedSlots() (hasDeletedOffset() promotes
     // lazily before this is reached via nextOffset()).
-    PropertyOffset offset = m_deletedOffsets->takeLast();
-    concurrentRelaxedStore(m_deletedOffsetCount, static_cast<unsigned>(m_deletedOffsets->size()));
+    PropertyOffset offset = m_deletedOffsets->reusable.takeLast();
+    concurrentRelaxedStore(m_deletedOffsetCount, deletedOffsetCount() - 1);
     return offset;
 }
 
 inline void PropertyTable::addDeletedOffset(PropertyOffset offset)
 {
-    ASSERT(!m_deletedOffsets || !m_deletedOffsets->contains(offset));
+    ASSERT(!m_deletedOffsets || !m_deletedOffsets->reusable.contains(offset));
     ASSERT(!quarantinedDeletedOffsetsContains(offset));
     if (Options::useJSThreads()) [[unlikely]] {
         // §6 eligibility is TOTAL: EVERY deleted offset - inline AND
         // out-of-line - is quarantined (dictionary-mode deletes AND
-        // non-dictionary removePropertyTransition; NO bypass). Review round 2:
-        // inline slots were previously exempt, but the tardy-access ALIASING
-        // hazard (THREAD.md: a tardy read of deleted f must never alias a
-        // newly added g) applies to inline slots identically - dictionary
-        // structures mutate in place, so a stale reader's structure check
-        // passes across delete(f)+add(g). Inline-slot atomicity only rules
-        // out tearing, not aliasing. The D1 jsUndefined release-store and the
-        // nextOffset() skip-past-quarantined accounting already handle inline
-        // offsets.
+        // non-dictionary removePropertyTransition; NO bypass). Inline slots
+        // are not exempt: dictionary structures mutate in place, so a stale
+        // reader's structure check passes across delete(f)+add(g) and a tardy
+        // read of f would alias the new g at the same offset - inline-slot
+        // atomicity only rules out tearing, not aliasing. The D1 jsUndefined
+        // release-store and the nextOffset() skip-past-quarantined accounting
+        // cover inline offsets too.
         quarantineDeletedOffset(offset);
         return;
     }
-    if (!m_deletedOffsets)
-        m_deletedOffsets = makeUnique<Vector<PropertyOffset>>();
-    m_deletedOffsets->append(offset);
-    concurrentRelaxedStore(m_deletedOffsetCount, static_cast<unsigned>(m_deletedOffsets->size()));
+    ensureDeletedOffsets().reusable.append(offset);
+    concurrentRelaxedStore(m_deletedOffsetCount, deletedOffsetCount() + 1);
 }
 
 inline bool PropertyTable::quarantinedDeletedOffsetsContains(PropertyOffset offset) const
 {
-    if (!m_quarantinedDeletedOffsets)
+    if (!m_deletedOffsets)
         return false;
-    for (const auto& entry : *m_quarantinedDeletedOffsets) {
+    for (const auto& entry : m_deletedOffsets->quarantined) {
         if (entry.offset == offset)
             return true;
     }
@@ -904,12 +926,13 @@ inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity)
         return takeDeletedOffset();
 
     unsigned propertyNumber = size();
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useJSThreads() && m_deletedOffsets) [[unlikely]] {
         // §6: quarantined slots still occupy storage numbers (the prefix
         // invariant is keyCount + deleted == allocated property numbers, and
         // the Reusable list is empty here), so fresh offsets are allocated
         // PAST them - live storage never shrinks while quarantined (I18/I30).
-        propertyNumber += quarantinedDeletedOffsetCount();
+        ASSERT(m_deletedOffsets->reusable.isEmpty());
+        propertyNumber += m_deletedOffsets->quarantined.size();
     }
     return offsetForPropertyNumber(propertyNumber, inlineCapacity);
 }
@@ -929,10 +952,10 @@ inline PropertyTable* PropertyTable::copy(VM& vm, unsigned newCapacity)
 inline size_t PropertyTable::sizeInMemory()
 {
     size_t result = sizeof(PropertyTable) + dataSize(isCompact());
-    if (m_deletedOffsets)
-        result += (m_deletedOffsets->capacity() * sizeof(PropertyOffset));
-    if (m_quarantinedDeletedOffsets)
-        result += (m_quarantinedDeletedOffsets->capacity() * sizeof(QuarantinedDeletedOffset));
+    if (m_deletedOffsets) {
+        result += m_deletedOffsets->reusable.capacity() * sizeof(PropertyOffset);
+        result += m_deletedOffsets->quarantined.capacity() * sizeof(QuarantinedDeletedOffset);
+    }
     return result;
 }
 #endif

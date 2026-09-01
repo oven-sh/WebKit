@@ -224,6 +224,16 @@ public:
     bool putEntry(JSGlobalObject*, JSObject*, unsigned, JSValue, bool shouldThrow);
     bool putDirect(JSGlobalObject*, JSObject*, unsigned, JSValue, unsigned attributes, PutDirectIndexMode);
     AddResult add(JSObject*, unsigned);
+    // Flag-on entry writers. The AddResult iterator add() returns is minted
+    // under the cell lock and can point into a freed table once a racing
+    // add() rehashes, so flag-on callers never store through it: these do the
+    // insert-or-find and the entry store in one locked window (no JS, no GC
+    // allocation inside). addIfAbsent leaves an existing entry untouched and
+    // returns whether it inserted; setEntry keeps the current value when
+    // `value` is empty and is a no-op when the key is gone (a racing delete
+    // that linearizes after the caller's write).
+    bool addIfAbsent(VM&, JSObject* array, unsigned i, JSValue, unsigned attributes);
+    void setEntry(VM&, unsigned i, JSValue, unsigned attributes);
     // AB18-G: GIL-only. An unlocked probe races a locked mutator's rehash
     // (HashTable.h checkValidity assert / freed-table SEGV), and even a
     // locked probe cannot protect the caller's notFound() comparison or
@@ -323,6 +333,15 @@ public:
     const_iterator end() const { return m_set.end(); }
 
 private:
+    // Caller holds the cell lock. Table growth is accumulated into
+    // increasedCapacity (in entries) for the caller to report once the lock
+    // is dropped: reportExtraMemoryAllocated may request a collection.
+    AddResult addLocked(unsigned i, size_t& increasedCapacity);
+    static void reportIncreasedCapacity(JSObject* array, size_t increasedCapacity);
+
+    bool putEntryConcurrent(JSGlobalObject*, JSObject*, unsigned, JSValue, bool shouldThrow);
+    bool putDirectConcurrent(JSGlobalObject*, JSObject*, unsigned, JSValue, unsigned attributes, PutDirectIndexMode);
+
     ALWAYS_INLINE unsigned flagsRelaxed() const
     {
         return WTF::atomicLoad(const_cast<unsigned*>(&m_flags), std::memory_order_relaxed);

@@ -213,23 +213,14 @@ public:
     IndexingType indexingTypeAndMisc() const { return cellHeaderConcurrentLoad(m_indexingTypeAndMisc); }
     IndexingType indexingMode() const { return indexingTypeAndMisc() & AllArrayTypes; }
     IndexingType indexingType() const { return indexingTypeAndMisc() & AllWritableArrayTypes; }
-    // SPEC-objectmodel M5: structureID() returns the RAW bits, NEVER nuke-masked —
-    // GC visitation (visitButterflyImpl) and every isNuked()/didRace test depend
-    // on observing the nuke bit (history §16.2).
+    // structureID() is the raw header word, nuke bit included: anything that must
+    // notice an in-flight transition (GC visitation, didRace, the transition
+    // protocols) tests isNuked() on it before decoding. StructureID::decode() and
+    // tryDecode() always strip the nuke bit, so with shared-memory threads
+    // structure() yields the pre-transition Structure for a transiently nuked ID;
+    // its offsets stay valid because live storage never shrinks mid-transition.
     StructureID structureID() const { return cellHeaderConcurrentLoad(m_structureID); }
-    // SPEC-objectmodel M5: with shared-memory threads (Options::useJSThreads())
-    // foreign readers can observe a transiently nuked StructureID mid-transition.
-    // structure() — and ONLY structure() — clears the nuke bit before decoding;
-    // the resulting pre-transition structure's offsets are always satisfied by
-    // the not-yet-replaced or superset storage, because live storage never
-    // shrinks (deletes quarantine slots — I18/I30; flat->segmented re-pairs old
-    // offsets via the TAG dispatch, not the structure; history §15.4). The
-    // decontaminate() is unconditional: flag-off no nuked ID is ever decoded
-    // through structure() (the nuking thread is the only observer and does not
-    // call it inside the window), so clearing an always-clear bit is
-    // behavior-identical (I22). Exact-decode paths (transition protocols, GC)
-    // use structureID() raw + StructureID::tryDecode/didRace instead.
-    Structure* structure() const { return cellHeaderConcurrentLoad(m_structureID).decontaminate().decode(); }
+    Structure* structure() const { return cellHeaderConcurrentLoad(m_structureID).decode(); }
     void setStructure(VM&, Structure*);
     // V7 (TSAN): header writers store via cellHeaderConcurrentStore so they
     // pair with the cellHeaderConcurrentLoad readers above (plain store

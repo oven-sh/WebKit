@@ -136,38 +136,19 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
     };
 
     if (vm.gilOff()) [[unlikely]] {
-        // UNGIL AB18-R1-F (create-this proto race), mode split. GIL-off,
-        // JSFunction::ensureRareDataAndObjectAllocationProfile()'s
-        // isObjectAllocationProfileInitialized() check is unsynchronized, so
-        // two mutators can both reach here for the same FunctionRareData and
-        // run initializeProfile() concurrently (torn (structure, prototype)
-        // publish). Serialize initialization on this cell's lock.
+        // GIL-off, two mutators can reach here for the same FunctionRareData, so the publish is
+        // serialized on this cell's lock. The claim is a tryLock poll, not lock(): the holder
+        // allocates inside the critical section and can park at a safepoint there, so a waiter
+        // must keep cooperating with stop-the-world requests. A loser leaves once a publish is
+        // visible; consumers still validate the pair (objectAllocationStructureKeyedTo) because
+        // clear() can null it at any moment.
         //
-        // The claim is a tryLock POLL LOOP, not a blocking lock(): the winner
-        // allocates (Structure, watchpoints) inside the critical section and
-        // can park at a safepoint while holding the lock, so a loser blocked
-        // in lock() would neither publish nor acknowledge a stop-the-world
-        // request and would trip the STW watchdog. Instead the loser
-        // alternates parkSitePollAndParkForStopTheWorld() (so it cooperates
-        // with any Class-A/GC stop window that targets this VM) with yield,
-        // and leaves as soon as the winner's publish becomes visible. A loser
-        // therefore NEVER returns with a still-null profile: every caller of
-        // ensureRareDataAndObjectAllocationProfile() (including DFG
-        // operationCreateThis, which dereferences the profile's structure
-        // unconditionally) observes an initialized profile on return, exactly
-        // as GIL-on.
-        //
-        // HB edge for staleness: the prototype passed in was computed by the
-        // caller OUTSIDE this lock (JSFunction::initializeRareData /
-        // allocateAndInitializeRareData), so a racing .prototype write plus
-        // watchpoint fire (FunctionRareData::clear(), which is a no-op on a
-        // still-null profile) could otherwise slip between the caller's read
-        // and our publish, leaving a stale pair re-armed. We close that by
-        // RE-READING prototypeForConstruction() under the lock; clear()
-        // (below) takes the same lock when it can, and when it cannot it
-        // still fires the watchpoint set, and the gilOff consumer
-        // (slow_path_create_this) validates the published pair against the
-        // live .prototype before trusting it.
+        // The prototype is re-read under the lock, after a full fence: the caller publishes the
+        // rare data before arriving here, and a .prototype store on another thread is followed
+        // (after its own fence) by a rare-data load and clearAfterPrototypeStore(), which takes
+        // this lock. So that store is either visible to the read below, or its clear finds the
+        // rare data and nulls the pair published here. No pair keyed to a superseded prototype
+        // stays published.
         while (!cellLock().tryLock()) {
             if (isObjectAllocationProfileInitialized())
                 return;
@@ -177,7 +158,8 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
         {
             auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
             if (isObjectAllocationProfileInitialized())
-                return; // Lost a completed race; the published pair wins.
+                return;
+            WTF::storeLoadFence();
             JSObject* freshPrototype = constructor ? constructor->prototypeForConstruction(vm, globalObject) : prototype;
             doInitialize(freshPrototype, inlineCapacity);
         }
@@ -190,22 +172,11 @@ void FunctionRareData::clear(const char* reason)
 {
     VM& vm = this->vm();
     if (vm.gilOff()) [[unlikely]] {
-        // UNGIL AB18-R1-F: serialize with a concurrent
-        // initializeObjectAllocationProfile() when possible, but NEVER block:
-        // clear() runs from AllocationProfileClearingWatchpoint /
-        // .prototype-write watchpoint fires, which can execute as the
-        // conductor of a Class-A stop while the lock holder is parked at a
-        // safepoint inside its allocation — blocking (or poll-looping) here
-        // would wedge the stop and trip the watchdog. On a lost tryLock we
-        // skip the profile nulling (an initializer is mid-publish; pointer
-        // stores cannot tear, and the gilOff consumer in
-        // slow_path_create_this validates the (structure, prototype)
-        // snapshot against the live .prototype before trusting it, so a
-        // stale or mixed pair degrades to the spec-faithful uncached path)
-        // but STILL fire the watchpoint set below, so no JIT code keeps a
-        // burned-in stale structure. fireAll stays outside the cell lock:
-        // it runs the Class-A stop machinery and must not be nested inside
-        // a cell lock that parked waiters depend on.
+        // Never blocks: clear() runs from watchpoint fires, which can be conducting a
+        // stop-the-world while the lock holder is parked inside its allocation. A lost tryLock
+        // skips the nulling (consumers validate the pair against the live .prototype) but still
+        // fires the set, so no compiled code keeps the stale structure. fireAll runs outside the
+        // cell lock because it drives the stop-the-world machinery that parked waiters depend on.
         if (cellLock().tryLock()) {
             auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
             m_objectAllocationProfile.clear();
@@ -216,6 +187,26 @@ void FunctionRareData::clear(const char* reason)
     }
     m_objectAllocationProfile.clear();
     m_internalFunctionAllocationProfile.clear();
+    m_allocationProfileWatchpointSet.fireAll(vm, reason);
+}
+
+void FunctionRareData::clearAfterPrototypeStore(VM& vm, const char* reason)
+{
+    // Runs on the mutator that just stored .prototype, with no lock held, so it can wait for an
+    // initializer that is mid-publish under the cell lock: a pair keyed to the superseded
+    // prototype must not stay published, because the baseline, DFG and FTL fast paths allocate
+    // from it without validation. The wait is a tryLock poll that keeps cooperating with
+    // stop-the-world requests, for the same reason initializeObjectAllocationProfile's is.
+    ASSERT(vm.gilOff());
+    while (!cellLock().tryLock()) {
+        if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            Thread::yield();
+    }
+    {
+        auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
+        m_objectAllocationProfile.clear();
+        m_internalFunctionAllocationProfile.clear();
+    }
     m_allocationProfileWatchpointSet.fireAll(vm, reason);
 }
 

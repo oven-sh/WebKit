@@ -71,7 +71,7 @@ public:
 private:
     friend class LLIntOffsetsExtractor;
 
-    void finishCreation(VM&, JSObject* head);
+    void finishCreation(VM&, JSObject* head, size_t size);
 
     StructureChain(VM&, Structure*, StructureID*);
     AuxiliaryBarrier<StructureID*> m_vector;

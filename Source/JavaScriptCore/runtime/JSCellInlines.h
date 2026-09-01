@@ -177,12 +177,11 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS_WITH_MODIFIER(inline, JSCell);
 template<typename Type>
 inline Allocator allocatorForConcurrently(VM& vm, size_t allocationSize, AllocatorForMode mode)
 {
-    // IT-9 consumer (SPEC-ungil §B / I4, JIT-codegen leg; see
-    // Heap::allocationClientForJITCodegen's declaration comment, Heap.h):
-    // this is the single funnel every JIT emitter bakes a
-    // JITAllocator::constant from (DFG createOSREntries/NewObject/MakeRope,
-    // FTL allocateObject/MakeRope, AssemblyHelpers emitAllocateJSObject
-    // templates). GIL-off there is NO client whose LocalAllocator may be
+    // SPEC-ungil §B / I4, JIT-codegen leg: this is the single funnel every
+    // JIT emitter bakes a JITAllocator::constant from (DFG
+    // createOSREntries/NewObject/MakeRope, FTL allocateObject/MakeRope,
+    // AssemblyHelpers emitAllocateJSObject templates). GIL-off there is NO
+    // client whose LocalAllocator may be
     // baked into an artifact: the artifact is executed by EVERY lite of the
     // VM, and a baked per-client iso LocalAllocator makes N threads pop ONE
     // FreeList unlocked (observed: JIT inline-allocation segfault under
@@ -209,15 +208,17 @@ inline Allocator allocatorForConcurrently(VM& vm, size_t allocationSize, Allocat
 // non-nullopt; the per-thread part is the lite-relative
 // `tlcTable[slot * sizeof(Allocator)]` load the emitter generates against the
 // VMLite mirror (offsetOfTlcTable / offsetOfTlcTableBound). Returns nullopt
-// for: iso subspaces (never enter m_table — m_perDirectory lookup-only,
-// §5.3); a subspace whose tlcIndexBase has not been reserved yet (first
-// directory not created — the runtime slow path will reserve it, and a later
-// recompile will see it); sizes past largeCutoff (precise path). GIL-off
-// callers only (the call is reached through a vm.gilOff() codegen gate, so
-// flag-off emission never evaluates it — flag-off byte-identity).
+// for: any subspace that is not a CompleteSubspace (iso subspaces never enter
+// m_table — m_perDirectory lookup-only; PreciseSubspace has no LocalAllocators
+// at all, and only CompleteSubspace carries a tlcIndexBase); a subspace whose
+// tlcIndexBase has not been reserved yet (first directory not created — the
+// runtime slow path will reserve it, and a later recompile will see it); sizes
+// past largeCutoff (precise path). GIL-off callers only (the call is reached
+// through a vm.gilOff() codegen gate, so flag-off emission never evaluates it —
+// flag-off byte-identity).
 inline std::optional<unsigned> tlcSlotForSubspace(Subspace* subspace, size_t allocationSize)
 {
-    if (!subspace || subspace->isIsoSubspace())
+    if (!subspace || subspace->kind() != SubspaceKind::CompleteSubspace)
         return std::nullopt;
     if (allocationSize > MarkedSpace::largeCutoff)
         return std::nullopt;
@@ -289,39 +290,6 @@ void* tryAllocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)
 {
     return tryAllocateCellHelper<T, AllocationFailureMode::ReturnNull>(vm, size, deferralContext);
 }
-
-// H-CALLSITE-LASTSIZE-LA: WITHDRAWN (amender, post-refute). The mechanism is
-// strictly dominated by H-TLS-TABLE already in this tree
-// (CompleteSubspaceInlines.h): that change collapses the identical 3-hop
-// (allocationClientForCurrentThread -> allocatorForSizeStep -> allocate) to
-// two IE-TLS loads + one indexed load for EVERY CompleteSubspace::allocate
-// call — a strict superset of the call sites this routed (JSCellButterfly,
-// JSLexicalEnvironment, 5 Butterfly aux funnels all reach
-// CompleteSubspace::allocate via tryAllocateCellHelper /
-// vm.auxiliarySpace().allocate). The "subspace disambiguation" premise was
-// wrong: H-TLS-TABLE keys on per-subspace tlcIndexBase(), so cellSpace sz=64
-// and auxiliarySpace sz=64 resolve to distinct table slots. Against the
-// combined tree the marginal hit-path win was {sizeStep TLS + compare} vs
-// {tlcIndexBase load + bound IE-TLS + table[slot]}: a few cycles/cell, not
-// the ~250ms attributed. Correctness defects that would survive amendment:
-// (a) per-callsite static thread_local has NO invalidation hook at
-// setCurrentThreadClient (A36C carrier swap / attach-detach,
-// GCThreadLocalCache.cpp) — a same-OS-thread client swap leaves a stale
-// LocalAllocator* → wrong-client pop / UAF after the prior client's
-// GCThreadLocalCache teardown; adding a client-generation guard makes the hit
-// path 3 TLS loads + 2 compares, worse than H-TLS-TABLE's IE-TLS path;
-// (b) function-local static thread_local in an ALWAYS_INLINE template gets
-// COMDAT/weak linkage with no tls_model attribute — risk of general-dynamic
-// __tls_get_addr per allocation (the M2-alloc-tax-residual failure mode
-// Heap.h documents), i.e. SLOWER than the path it replaces; (c) the hit path
-// dropped the I2 hasHeapAccess() tripwire that H-TLS-TABLE was already
-// required to restore (no-weakened-asserts gate). IsoSubspace types
-// (JSRopeString 1.37%, JSArray/JSString/JSFunction 0.53% of the §41 T1
-// bucket) were structurally unreachable regardless. No amendment yields a
-// mechanism that independently removes T1 tax not already removed by
-// H-TLS-TABLE; the routed call sites are reverted to their unmodified
-// allocateCell / vm.auxiliarySpace().allocate forms so flag-off is
-// byte-identical and GIL-off takes the H-TLS-TABLE fast path.
 
 // FIXME: Consider making getCallData concurrency-safe once NPAPI support is removed.
 // https://bugs.webkit.org/show_bug.cgi?id=215801
@@ -407,13 +375,11 @@ inline const MethodTable* JSCell::methodTable() const
     return &structure->classInfoForCells()->methodTable;
 }
 
-// SPEC-objectmodel Task 2 audit note (M5/M7): JSCell::structure() masks the
-// StructureID nuke bit before decoding (see JSCell.h — StructureID::decode()
-// decontaminates, and the contract is now explicit there), while structureID()
-// stays RAW for GC didRace/isNuked tests. Offset-bearing reads like
-// fastGetOwnProperty below are M7/I24-conforming because the out-of-line leg of
-// JSObject::locationForOffset() performs the §Q dispatch internally
-// (M7(d) loadLoadFence + I33 bound) when Options::useJSThreads() is on.
+// With shared-memory threads the Structure passed here may be the pre-transition
+// one decoded from a transiently nuked StructureID (see JSCell::structure()).
+// Reading through its offsets is still safe because the out-of-line leg of
+// JSObject::locationForOffset() dispatches on the butterfly regime itself when
+// Options::useJSThreads() is on.
 ALWAYS_INLINE JSValue JSCell::fastGetOwnProperty(VM& vm, Structure& structure, PropertyName name)
 {
     ASSERT(canUseFastGetOwnProperty(structure));
@@ -449,21 +415,36 @@ inline TriState JSCell::pureToBoolean() const
     return TriState::Indeterminate;
 }
 
+// Debug builds keep the per-thread hold depth (GCCellLockDepth) that the
+// cell-lock-no-park asserts in Heap.cpp consult: counted after a successful
+// acquire, uncounted before the release, so the depth is exact between the
+// two. Lock and unlock of one hold always run on the same thread (RAII).
 inline void JSCellLock::lock()
 {
     Atomic<IndexingType>* lock = std::bit_cast<Atomic<IndexingType>*>(&m_indexingTypeAndMisc);
     if (!IndexingTypeLockAlgorithm::lockFast(*lock)) [[unlikely]]
         lockSlow();
+#if ASSERT_ENABLED
+    GCCellLockDepth::increment();
+#endif
 }
 
 inline bool JSCellLock::tryLock()
 {
     Atomic<IndexingType>* lock = std::bit_cast<Atomic<IndexingType>*>(&m_indexingTypeAndMisc);
-    return IndexingTypeLockAlgorithm::tryLock(*lock);
+    bool locked = IndexingTypeLockAlgorithm::tryLock(*lock);
+#if ASSERT_ENABLED
+    if (locked)
+        GCCellLockDepth::increment();
+#endif
+    return locked;
 }
 
 inline void JSCellLock::unlock()
 {
+#if ASSERT_ENABLED
+    GCCellLockDepth::decrement();
+#endif
     Atomic<IndexingType>* lock = std::bit_cast<Atomic<IndexingType>*>(&m_indexingTypeAndMisc);
     if (!IndexingTypeLockAlgorithm::unlockFast(*lock)) [[unlikely]]
         unlockSlow();
