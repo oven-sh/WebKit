@@ -163,17 +163,21 @@ enum class PropertyInlineCacheType : uint8_t { Handler, Repatching };
 // are defined. §5.7.7 blesses the value-level racing: every consumer treats
 // these as advisory profiling hints.
 //
-// ACKNOWLEDGED FOOTPRINT COST (TSAN-TRIAGE §3.4 wave-2 amendment): the nine
-// advisory flags + m_icType previously occupied 10 BITS (2 bytes); as one
-// byte each they occupy 10 bytes, growing sizeof(PropertyInlineCache) by
-// ~8 bytes per IC. These are trailing members: no OBJECT_OFFSETOF/JIT-emitted
-// offset references any of them, and no sizeof-sensitive consumer exists
-// in-tree, so the cost is memory only (tens of KB on IC-heavy workloads).
-// Accepted for clarity; if the footprint ever matters, the nine mutable
-// flags can be re-co-packed into one shared Atomic<uint8_t> accessed with
-// relaxed load/store bit ops (cross-flag lost updates are §5.7.7-blessed —
-// the old bitfield code already lost them); only m_icType must stay out of
-// the racy byte, because it is const and read lock-free by isHandlerIC().
+// FOOTPRINT COST, paid flag-off too: the nine advisory flags + m_icType were
+// 10 bits (2 bytes); as one byte each, plus retryWithoutProgressCount, the
+// tail after bufferingCountdown grows from 3 to 12 bytes, so
+// sizeof(PropertyInlineCache) goes 112 -> 128 on x86-64 and 120 -> 128 on
+// ARM64, and sizeof(HandlerPropertyInlineCache) 128 -> 144 / 136 -> 144.
+// That sizeof is the IC stride of the ButterflyArray behind BaselineJITData
+// and DFG::JITData and is baked into every Baseline/DFG IC site as an
+// immediate (JIT::loadPropertyInlineCache, DFG::JITCompiler::
+// loadPropertyInlineCache), so C++ and JIT'd code agree by construction and
+// the cost is memory only; no OBJECT_OFFSETOF or JIT-emitted offset names a
+// byte after bufferingCountdown. To recover the footprint, the nine mutable
+// flags can be co-packed into one ICRacyCell<uint16_t> accessed with relaxed
+// load/store bit ops (cross-flag lost updates are §5.7.7-blessed — the old
+// bitfield code already lost them); only m_icType must stay out of the racy
+// word, because it is const and read lock-free by isHandlerIC().
 // TSAN ic-stubinfo ctor publication (TSAN-TRIAGE §10.4, campaign convention
 // mirroring Structure.h §9.1 concurrentRelaxedLoad/Store): UNCONDITIONAL
 // relaxed atomics over plain storage. A single-byte/single-word relaxed
@@ -272,21 +276,18 @@ public:
 
     static PropertyInlineCacheSummary summary(const ConcurrentJSLocker&, VM&, const PropertyInlineCache*);
 
-    // TSAN ic-stubinfo ctor publication (TSAN-TRIAGE §10.4 "x identifier"):
     // m_identifier is written once at IC initialization (initializeFrom*
-    // below; the IC lives inside a Baseline/DFG JITData published to racing
-    // mutators via CodeBlock::m_jitData with a storeStoreFence TSAN cannot
-    // see) and read lock-free from IC slow paths on any thread. Same
-    // ICRacyCell discipline as m_globalObject: relaxed atomics over the
-    // trivially-copyable one-word value — identical mov codegen flag-off,
-    // defined under the reported cross-thread pairing. Real publication
-    // ordering remains the owning CodeBlock's install protocol (F1/I5).
-    // KNOWN RESIDUAL WRITER (file owned by another workstream): the plain
-    // assignment in jit/JITInlineCacheGenerator.h (setUpStubInfo) still
-    // pairs plain-vs-atomic; convert it to setIdentifierConcurrently() when
-    // that file is in scope.
-    CacheableIdentifier identifier() const { return icConcurrentRelaxedLoad(m_identifier); }
-    void setIdentifierConcurrently(CacheableIdentifier value) { icConcurrentRelaxedStore(m_identifier, value); }
+    // below and JITInlineCacheGenerator's setUpPropertyInlineCacheImpl; the
+    // IC lives inside a Baseline/DFG JITData published to racing mutators via
+    // CodeBlock::m_jitData with a storeStoreFence TSAN cannot see) and read
+    // lock-free from IC slow paths on any thread. It is an ICRacyCell like
+    // m_globalObject, so every writer (including plain assignment through
+    // operator=) and reader is a relaxed atomic over the trivially-copyable
+    // one-word value: identical mov codegen flag-off, defined under the
+    // cross-thread pairing. Real publication ordering remains the owning
+    // CodeBlock's install protocol (F1/I5).
+    CacheableIdentifier identifier() const { return m_identifier.loadRelaxed(); }
+    void setIdentifierConcurrently(CacheableIdentifier value) { m_identifier.storeRelaxed(value); }
 
     bool NODELETE containsPC(void* pc) const;
 
@@ -332,33 +333,31 @@ public:
         return considerRepatchingCacheImpl(vm, nullptr, nullptr, CacheableIdentifier());
     }
 
-    // T4-ic-never-settles-giloff (alloctax2 #4): GIL-off, several tryCache*
-    // guards return RetryCacheLater on a condition that NEVER clears (we refuse
-    // to flatten dictionaries from IC paths under O2/GT11), so the slow-path
-    // call target stays at the Optimize operation forever and every execution
-    // walks considerRepatchingCacheImpl + tryCache* for nothing. The repatch*
-    // tail bumps this counter on each RetryCacheLater that left the IC still at
-    // CacheType::Unset; once it crosses a small threshold the caller repatches
-    // straight to the GaveUp operation (settled, cheap — same end state GIL-on
-    // reaches after one flatten). Relaxed-atomic, lost updates tolerated, same
-    // TSAN discipline as the cool-down bytes. Flag-off this is dead code (the
-    // repatch* tail only consults it under vm.gilOff()).
-    ALWAYS_INLINE void noteRetryWithoutProgress()
+    // GIL-off, several tryCache* guards return RetryCacheLater on a condition
+    // that NEVER clears (we refuse to flatten dictionaries from IC paths), so
+    // the slow-path call target would stay at the Optimize operation forever
+    // and every execution walk considerRepatchingCacheImpl + tryCache* for
+    // nothing. The repatch* tail counts CONSECUTIVE RetryCacheLater results
+    // that left the IC at CacheType::Unset: a retry that finds a case
+    // installed clears the count (RetryCacheLater is also the normal result
+    // right after a case is installed or buffered), and once the count
+    // crosses a small threshold the caller repatches straight to the GaveUp
+    // operation (settled, cheap — same end state GIL-on reaches after one
+    // flatten). Both are called under codeBlock->m_lock, since cacheType() is
+    // lock-guarded. Relaxed-atomic, lost updates tolerated, same TSAN
+    // discipline as the cool-down bytes. Flag-off this is dead code (the
+    // repatch* tail only touches it under vm.gilOff()).
+    ALWAYS_INLINE bool noteRetryWithoutProgress(const ConcurrentJSLockerBase&)
     {
         uint8_t v = retryWithoutProgressCount.loadRelaxed();
         WTF::incrementWithSaturation(v);
         retryWithoutProgressCount.storeRelaxed(v);
+        return v > static_cast<unsigned>(Options::repatchCountForCoolDown()) * 2;
     }
 
-    ALWAYS_INLINE bool shouldGiveUpPermanently() const
+    ALWAYS_INLINE void clearRetryWithoutProgress(const ConcurrentJSLockerBase&)
     {
-        // Counter-only predicate (relaxed read, lock-free). The caller
-        // re-checks cacheType()==Unset UNDER codeBlock->m_lock before actually
-        // repatching to GaveUp, so an IC that managed at least one inline/stub
-        // case is never demoted; m_cacheType stays a lock-guarded field per
-        // the existing TSAN discipline.
-        unsigned threshold = static_cast<unsigned>(Options::repatchCountForCoolDown()) * 2;
-        return retryWithoutProgressCount.loadRelaxed() > threshold;
+        retryWithoutProgressCount.storeRelaxed(0);
     }
 
     Structure* inlineAccessBaseStructure() const
@@ -387,13 +386,6 @@ protected:
         , accessType(accessType)
         , m_icType(icType)
     {
-        // TSAN ic-stubinfo ctor publication (§10.4): make the LAST
-        // constructor-time write to m_identifier a relaxed atomic store so a
-        // concurrent relaxed reader (identifier()) of a just-published or
-        // recycled IC pairs atomic-vs-atomic, mirroring the ICRacyCell
-        // members' rationale. The preceding implicit zero-init is overwritten
-        // program-order before the IC can escape this thread.
-        icConcurrentRelaxedStore(m_identifier, CacheableIdentifier());
     }
 
     PropertyInlineCache(PropertyInlineCacheType icType)
@@ -516,7 +508,7 @@ public:
         std::atomic<uint64_t> m_packedSelfWord;
     };
     JSCell* m_inlineHolder { nullptr };
-    CacheableIdentifier m_identifier;
+    ICRacyCell<CacheableIdentifier> m_identifier;
     CodeLocationLabel<JSInternalPtrTag> doneLocation;
 
     // TSAN ic-stubinfo (TSAN-TRIAGE §10.4): written by IC initialization
@@ -564,12 +556,13 @@ public:
     ICRacyCell<uint8_t> countdown { 1 };
     ICRacyCell<uint8_t> repatchCount { 0 };
     ICRacyCell<uint8_t> numberOfCoolDowns { 0 };
-    // T4-ic-never-settles-giloff: saturating count of RetryCacheLater results
-    // that left this IC still at CacheType::Unset. Consulted only under
-    // vm.gilOff() by the repatch* tails to escalate to the GaveUp slow path
-    // when a GIL-off-only guard will never clear. Same advisory relaxed-atomic
-    // discipline as the cool-down bytes above; placed after them so
-    // offsetOfCountdown() is unchanged. Zero-initialized → flag-off identical.
+    // Saturating count of consecutive RetryCacheLater results that left this
+    // IC at CacheType::Unset (see noteRetryWithoutProgress). Touched only
+    // under vm.gilOff() by the repatch* tails to escalate to the GaveUp slow
+    // path when a GIL-off-only guard will never clear. Same advisory
+    // relaxed-atomic discipline as the cool-down bytes above; placed after
+    // them so offsetOfCountdown() is unchanged. Zero-initialized → flag-off
+    // identical.
     ICRacyCell<uint8_t> retryWithoutProgressCount { 0 };
     // See ICRacyStateBool above: advisory flags, each its own relaxed atomic
     // byte (previously one shared bitfield byte whose RMW writes raced with

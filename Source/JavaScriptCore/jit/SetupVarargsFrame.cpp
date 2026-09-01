@@ -78,7 +78,7 @@ static void emitSetupVarargsFrameFastCase(VM& vm, CCallHelpers& jit, GPRReg numU
     
     emitSetVarargsFrame(jit, scratchGPR1, true, numUsedSlotsGPR, scratchGPR2);
 
-    slowCase.append(jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::Above, scratchGPR2)); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+    slowCase.append(jit.branchPtrAgainstSoftStackLimit(vm, CCallHelpers::GreaterThan, scratchGPR2));
 
     // Before touching stack values, we should update the stack pointer to protect them from signal stack.
     jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), scratchGPR2, CCallHelpers::stackPointerRegister);

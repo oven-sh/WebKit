@@ -28,26 +28,13 @@
 
 #if ENABLE(JIT)
 
-#include "ConcurrentButterflyOperations.h"
+#include "ConcurrentButterfly.h"
 #include "JITOperations.h"
 #include "JSObject.h"
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "ShadowChicken.h"
 #include <wtf/TZoneMallocInlines.h>
-
-// Object-model workstream tag constants (SPEC-objectmodel section 2, consumed
-// via SPEC-jit R3). THREADS-INTEGRATE(jit): when runtime/ConcurrentButterfly.h
-// is absent in a partial tree, identical local constants below keep this
-// compiling; the static_asserts pin the frozen encoding either way.
-#if __has_include("ConcurrentButterfly.h")
-#include "ConcurrentButterfly.h"
-#define JSC_CCALLHELPERS_HAS_CONCURRENT_BUTTERFLY 1
-#endif
-
-#if OS(DARWIN) && ENABLE(FAST_TLS_JIT)
-#include <wtf/FastTLS.h>
-#endif
 
 namespace JSC {
 
@@ -103,36 +90,10 @@ void CCallHelpers::logShadowChickenTailPacket(GPRReg shadowPacket, JSValueRegs t
 // SPEC-jit section 5.5 (Task 8): TID/SW butterfly choke points.
 // ===========================================================================
 
-namespace CCallHelpersConcurrentButterfly {
-
-#if defined(JSC_CCALLHELPERS_HAS_CONCURRENT_BUTTERFLY)
-[[maybe_unused]] static constexpr uint64_t tagMask = JSC::butterflyTagMask;
-[[maybe_unused]] static constexpr uint64_t pointerMask = JSC::butterflyPointerMask;
-[[maybe_unused]] static constexpr uint64_t swBit = JSC::butterflySWBit;
-#else
-// Frozen encoding (SPEC-objectmodel section 2): bit 63 = SW, bits 62..48 =
-// TID, low 48 = payload; TID == 0x7fff (=> top16 == 0xffff with SW) =
-// segmented.
-[[maybe_unused]] static constexpr uint64_t tagMask = 0xffff000000000000ULL;
-[[maybe_unused]] static constexpr uint64_t pointerMask = 0x0000ffffffffffffULL;
-[[maybe_unused]] static constexpr uint64_t swBit = 1ULL << 63;
-#endif
-// Unsigned compare trick: top16 == 0xffff <=> tagged >= 0xffff << 48.
-[[maybe_unused]] static constexpr uint64_t segmentedFloor = 0xffff000000000000ULL;
-[[maybe_unused]] static constexpr uint64_t tidTagSpan = 1ULL << 48; // (tagged ^ tidTag) < 2^48 <=> tag bits match
-
-static_assert(tagMask == 0xffff000000000000ULL);
-static_assert(pointerMask == 0x0000ffffffffffffULL);
-static_assert(swBit == 0x8000000000000000ULL);
-
-} // namespace CCallHelpersConcurrentButterfly
-
-// loadButterflyTIDTag: hoisted to AssemblyHelpers (Task-8).
-
 void CCallHelpers::maskButterflyTag(GPRReg destGPR)
 {
 #if USE(JSVALUE64)
-    and64(TrustedImm64(static_cast<int64_t>(CCallHelpersConcurrentButterfly::pointerMask)), destGPR);
+    and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), destGPR);
 #else
     UNUSED_PARAM(destGPR);
     RELEASE_ASSERT_NOT_REACHED(); // flag-on requires 64-bit (D8)
@@ -140,6 +101,16 @@ void CCallHelpers::maskButterflyTag(GPRReg destGPR)
 }
 
 #if USE(JSVALUE64)
+
+namespace CCallHelpersConcurrentButterfly {
+
+// Segmented <=> TID == notTTLTID with SW set <=> the top 16 bits are all ones,
+// so an unsigned compare against the tag mask detects it.
+static constexpr uint64_t segmentedFloor = butterflyTagMask;
+// (tagged ^ tidTag) < tidTagSpan <=> the tag bits match.
+static constexpr uint64_t tidTagSpan = 1ULL << butterflyTIDShift;
+
+} // namespace CCallHelpersConcurrentButterfly
 
 // R7/F7: on ARM64, order structure-check -> butterfly load with an address
 // dependency (eor sid,sid -> 0, folded into the load's base). No-op x86-64.

@@ -299,7 +299,9 @@ void JITThunks::finalize(Handle<Unknown> handle, void*)
     auto* nativeExecutable = static_cast<NativeExecutable*>(handle.get().asCell());
     auto hostFunctionKey = std::make_tuple(nativeExecutable->function(), nativeExecutable->constructor(), nativeExecutable->implementationVisibility(), nativeExecutable->length(), nativeExecutable->name());
     {
-        Locker locker { m_lock };
+        std::optional<Locker<RecursiveLock>> threadsLocker;
+        if (Options::useJSThreads()) [[unlikely]]
+            threadsLocker.emplace(m_lock);
         AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
         // Because this finalizer is called, we normally still have our dead Weak<> in
@@ -327,7 +329,9 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
 
     auto hostFunctionKey = std::make_tuple(function, constructor, implementationVisibility, length, name);
     {
-        Locker locker { m_lock };
+        std::optional<Locker<RecursiveLock>> threadsLocker;
+        if (Options::useJSThreads()) [[unlikely]]
+            threadsLocker.emplace(m_lock);
         AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
         if (iterator != m_nativeExecutableSet.end()) {
@@ -351,7 +355,9 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
 
     NativeExecutable* nativeExecutable = NativeExecutable::create(vm, forCall.releaseNonNull(), function, WTF::move(forConstruct), constructor, implementationVisibility, length, name);
     {
-        Locker locker { m_lock };
+        std::optional<Locker<RecursiveLock>> threadsLocker;
+        if (Options::useJSThreads()) [[unlikely]]
+            threadsLocker.emplace(m_lock);
         AssertNoGC assertNoGC;
         auto addResult = m_nativeExecutableSet.add<NativeExecutableTranslator>(nativeExecutable);
         if (!addResult.isNewEntry) {

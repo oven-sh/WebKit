@@ -33,6 +33,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "BinarySwitch.h"
 #include "CPUInlines.h"
 #include "CodeBlockWithJITType.h"
+#include "ConcurrentButterfly.h"
 #include "DFGAbstractInterpreterInlines.h"
 #include "DFGArrayifySlowPathGenerator.h"
 #include "DFGCallArrayAllocatorSlowPathGenerator.h"
@@ -94,13 +95,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
-// SPEC-jit section 5.5 / Task 9: frozen butterfly tag encoding (the
-// object-model workstream's header; lands concurrently - the fallback
-// constants below mirror jit/CCallHelpers.cpp).
-#if __has_include("ConcurrentButterfly.h")
-#include "ConcurrentButterfly.h"
-#endif
-
 namespace JSC { namespace DFG {
 
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(FPRTemporary);
@@ -143,7 +137,7 @@ static void emitStackOverflowCheck(JITCompiler& jit, MacroAssembler::JumpList& s
     int frameTopOffset = virtualRegisterForLocal(jit.graph().requiredRegisterCountForExecutionAndExit() - 1).offset() * sizeof(Register);
 
     jit.addPtr(MacroAssembler::TrustedImm32(frameTopOffset), GPRInfo::callFrameRegister, GPRInfo::regT1);
-    stackOverflow.append(jit.branchPtrAgainstSoftStackLimit(jit.vm(), MacroAssembler::Above, GPRInfo::regT1)); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+    stackOverflow.append(jit.branchPtrAgainstSoftStackLimit(jit.vm(), MacroAssembler::GreaterThan, GPRInfo::regT1));
 }
 
 void SpeculativeJIT::compile()
@@ -488,6 +482,11 @@ void SpeculativeJIT::emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure
         emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
     } else if (allocator) {
         emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR, TrustedImmPtr(structure), storageGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
+        // GIL-on too: a spawned thread has a nonzero TID and the C++ install
+        // (operationNewRawObject) stamps it, so a raw TID-0 word here would
+        // make the creator's own first growth a foreign transition.
+        if (Options::useJSThreads() && size) [[unlikely]]
+            emitTagInstalledButterflyWithTID(resultGPR, storageGPR, scratchGPR);
         emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
     } else
         slowCases.append(jump());
@@ -512,6 +511,36 @@ void SpeculativeJIT::emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure
     emitInitializeOutOfLineStorage(storageGPR, structure->outOfLineCapacity(), scratchGPR);
     
     mutatorFence(vm);
+}
+
+SpeculativeJIT::ScratchBufferAddress SpeculativeJIT::scratchBufferAddress(size_t scratchSize)
+{
+    ASSERT(scratchSize);
+    ScratchBufferAddress result;
+    if (vm().gilOff()) [[unlikely]] {
+        result.bakedIndex = vm().allocateBakedScratchBufferIndex(scratchSize);
+        return result;
+    }
+    result.data = static_cast<EncodedJSValue*>(vm().scratchBufferForSize(scratchSize)->dataBuffer());
+    return result;
+}
+
+void SpeculativeJIT::emitScratchBufferDataPointer(const ScratchBufferAddress& scratch, GPRReg destGPR)
+{
+    if (!scratch.isPerLite()) {
+        move(TrustedImmPtr(scratch.data), destGPR);
+        return;
+    }
+    // loadVMLite -> scratchSegments[index >> shift] -> [index & mask] -> data.
+    // The buffer was installed on every lite of this VM (and is backfilled
+    // at lite registration) before this code can run, so the loads cannot
+    // see a null segment or entry.
+    unsigned bakedIndex = scratch.bakedIndex;
+    ASSERT(bakedIndex < VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
+    loadVMLite(destGPR);
+    loadPtr(Address(destGPR, static_cast<int32_t>(VMLite::offsetOfScratchSegments() + static_cast<ptrdiff_t>(bakedIndex >> VMLite::scratchSegmentShift) * sizeof(void*))), destGPR);
+    loadPtr(Address(destGPR, static_cast<int32_t>(static_cast<ptrdiff_t>(bakedIndex & (VMLite::scratchSegmentSize - 1)) * sizeof(void*))), destGPR);
+    addPtr(TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, m_buffer))), destGPR);
 }
 
 void SpeculativeJIT::emitGetArgumentCount(InlineCallFrame* inlineCallFrame, GPRReg lengthGPR, bool includeThis)
@@ -2215,37 +2244,13 @@ void SpeculativeJIT::compileCurrentBlock()
 
     m_origin = NodeOrigin();
 
-    // SCAN-CLOBBERIZE-SIGTRAP — DOCUMENTED PROTOCOL EXCEPTION (validator
-    // suppressed gilOff). The validateDFGClobberize machinery emits, after
-    // every non-clobberTop node, `int3 if vm.didEnterVM`, and after every
-    // clobberTop node a clear of that byte. `vm.didEnterVM` is a SINGLE
-    // VM-level byte (VM.h DidEnterVMFlag) that every vmEntry path sets
-    // (Interpreter.cpp executeCallImpl/etc., InterpreterInlines.h,
-    // LLIntThunks.h, MicrotaskQueueInlines.h). GIL-off, N mutators run that
-    // same DFG/FTL code concurrently against the SAME byte:
-    //   - any thread's vmEntry sets it, so the next non-clobberTop check on
-    //     ANY OTHER thread traps (false positive — gdb-confirmed on
-    //     JSTests/threads/jit/tid-tag-3-threads.js: int3 fires immediately
-    //     after a pure inline string-compare with no C++ call on the
-    //     trapping thread; a second JS Thread sits at the same int3);
-    //   - any thread's clobberTop clear masks a real miss on another thread
-    //     (false negative).
-    // The validator's invariant is per-mutator; the witness is shared.
-    // PRECEDENT: validateDoesGC had the identical shared-slot problem and
-    // was rerouted per-lite (VMLite::doesGC, AB18-C — see the
-    // loadVMLite/offsetOfDoesGC emission ~130 lines above). The matching
-    // per-lite `didEnterVM` byte + producer reroute is the principled fix
-    // and is recorded as an OPEN OBLIGATION (VMLite.h slot + the ~10
-    // `vm.didEnterVM = true` producer sites across the four producer files
-    // listed above — grep, don't trust this count; outside this slice's
-    // writable file set). Until that lands, the validator under gilOff produces
-    // structurally unsound results in BOTH directions, so it is suppressed
-    // here — a documented protocol exception under the "never weaken
-    // asserts (or document the protocol exception)" rule. GIL-on flag-on
-    // keeps the validator: only one mutator runs at a time, so the shared
-    // byte is per-thread-correct. Flag-off this gate is false:
-    // byte-identical codegen LAW upheld.
-    bool gilOffClobberizeValidatorSuppressed = Options::useJSThreads() && !Options::useThreadGIL();
+    // The validator's witness is vm.didEnterVM, one byte per VM that every VM
+    // entry sets and every clobberTop node clears. It is sound only while one
+    // mutator at a time runs this VM's code: for a gilOff VM the byte is
+    // shared by concurrent mutators, so another thread's entry would trap
+    // here and another thread's clear would hide a real miss. A GIL-on VM,
+    // including a loser VM in a GIL-off process, keeps the validator.
+    bool gilOffClobberizeValidatorSuppressed = vm().gilOff();
 
     if (Options::validateDFGClobberize() && !gilOffClobberizeValidatorSuppressed) {
         bool clobberedWorld = m_block->predecessors.isEmpty() || m_block->isOSRTarget || m_block->isCatchEntrypoint;
@@ -2432,14 +2437,19 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
 
     // The storage edge for the consumers we lint. hasStorageChild() covers
     // the indexed/array consumers; GetByOffset/PutByOffset carry storage in
-    // child1 but are not in that set. ArrayIncludes/ArrayIndexOf/ArrayJoin
-    // have hasStorageChild() but storageChildIndex() is unimplemented; skip
-    // them (they re-derive storage in their slow path, no hoisting hazard).
+    // child1 but are not in that set. For an inline offset child1 is the
+    // base cell itself (no butterfly word, nothing to mask), so only
+    // out-of-line by-offset accesses are linted. ArrayIncludes/ArrayIndexOf/
+    // ArrayJoin have hasStorageChild() but storageChildIndex() is
+    // unimplemented; skip them (they re-derive storage in their slow path,
+    // no hoisting hazard).
     auto storageEdgeForLint = [&](Node* node) -> Node* {
         switch (node->op()) {
         case GetByOffset:
         case GetGetterSetterByOffset:
         case PutByOffset:
+            if (isInlineOffset(node->storageAccessData().offset))
+                return nullptr;
             return node->child1().node();
         default:
             break;
@@ -2678,13 +2688,13 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
 #if USE(JSVALUE64)
     // T3-jit-segmented-arraymode: storage child intentionally UNSET
     // (FixupPhase::checkArray, gated by consumerHasSegmentedAwareCodegen);
-    // self-contained flat-vs-segmented dispatch. PutByValDirectResolved is
-    // excluded — it is only emitted for fresh owner-allocated arrays
-    // (DFGByteCodeParser inlined-construct paths) whose ArrayMode never
-    // carries the segmented bit.
+    // self-contained flat-vs-segmented dispatch. Local CSE (which runs after
+    // Fixup) may have turned an InBounds PutByVal here into
+    // PutByValDirectResolved; it keeps the InBounds ArrayMode, so the
+    // segmented-aware path simply re-checks publicLength and takes the
+    // same InBounds arm.
     if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
         && !m_graph.varArgChild(node, 3)) [[unlikely]] {
-        ASSERT(node->op() != PutByValDirectResolved);
         compileContiguousPutByValSegmentedAware(node);
         return;
     }
@@ -2766,7 +2776,6 @@ void SpeculativeJIT::compileDoublePutByVal(Node* node)
     // T3-jit-segmented-arraymode: see compileContiguousPutByVal.
     if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
         && !m_graph.varArgChild(node, 3)) [[unlikely]] {
-        ASSERT(node->op() != PutByValDirectResolved);
         compileDoublePutByValSegmentedAware(node);
         return;
     }
@@ -6891,8 +6900,7 @@ void SpeculativeJIT::compileArithMinMax(Node* node)
         GPRReg bufferGPR = buffer.gpr();
 
         size_t scratchSize = sizeof(double) * node->numChildren();
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        move(TrustedImmPtr(std::bit_cast<const double*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
 
         for (unsigned index = 0; index < node->numChildren(); ++index) {
             SpeculateDoubleOperand op(this, m_graph.child(node, index));
@@ -9311,6 +9319,17 @@ void SpeculativeJIT::compileSpread(Node* node)
         GPRTemporary scratch2(this);
         GPRTemporary length(this);
         FPRTemporary doubleRegister(this);
+        // Flag-on the copy loops read the butterfly snapshot the length came
+        // from: an owner thread's setLength may install a shorter flat
+        // butterfly without a stop-the-world, so a reload after the allocation
+        // would pair the old length with the new, shorter base. Flag-off keeps
+        // today's register allocation and reloads.
+        std::optional<GPRTemporary> butterfly;
+        GPRReg butterflyGPR = InvalidGPRReg;
+        if (Options::useJSThreads()) [[unlikely]] {
+            butterfly.emplace(this);
+            butterflyGPR = butterfly->gpr();
+        }
 
         GPRReg resultGPR = result.gpr();
         GPRReg scratch1GPR = scratch1.gpr();
@@ -9349,8 +9368,15 @@ void SpeculativeJIT::compileSpread(Node* node)
 
         slowPath.append(branch32(Above, scratch1GPR, TrustedImm32(ContiguousShape - Int32Shape)));
 
-        slowPath.append(loadButterflyForRead(argument, lengthGPR, ConcurrentButterflyShape::KnownNonArrayStorage)); // I14 (Task 9)
-        load32(Address(lengthGPR, Butterfly::offsetOfPublicLength()), lengthGPR);
+        GPRReg sourceGPR = scratch1GPR;
+        if (Options::useJSThreads()) [[unlikely]] {
+            sourceGPR = butterflyGPR;
+            slowPath.append(loadButterflyForRead(argument, butterflyGPR, ConcurrentButterflyShape::KnownNonArrayStorage));
+            load32(Address(butterflyGPR, Butterfly::offsetOfPublicLength()), lengthGPR);
+        } else {
+            loadPtr(Address(argument, JSObject::butterflyOffset()), lengthGPR);
+            load32(Address(lengthGPR, Butterfly::offsetOfPublicLength()), lengthGPR);
+        }
         slowPath.append(branch32(Above, lengthGPR, TrustedImm32(MAX_STORAGE_VECTOR_LENGTH)));
         static_assert(sizeof(JSValue) == 8 && 1 << 3 == 8, "This is strongly assumed in the code below.");
         lshift32(lengthGPR, TrustedImm32(3), scratch1GPR);
@@ -9360,7 +9386,8 @@ void SpeculativeJIT::compileSpread(Node* node)
         static_assert(JSCellButterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == JSCellButterfly::offsetOfVectorLength());
         storePair32(lengthGPR, lengthGPR, resultGPR, TrustedImm32(JSCellButterfly::offsetOfPublicLength()));
 
-        slowPath.append(loadButterflyForRead(argument, scratch1GPR, ConcurrentButterflyShape::KnownNonArrayStorage)); // I14 (Task 9)
+        if (!Options::useJSThreads()) [[likely]]
+            loadPtr(Address(argument, JSObject::butterflyOffset()), scratch1GPR);
 
         load8(Address(argument, JSCell::indexingTypeAndMiscOffset()), scratch2GPR);
         and32(TrustedImm32(IndexingShapeMask), scratch2GPR);
@@ -9370,7 +9397,7 @@ void SpeculativeJIT::compileSpread(Node* node)
             done.append(branchTest32(Zero, lengthGPR));
             auto loopStart = label();
             sub32(TrustedImm32(1), lengthGPR);
-            load64(BaseIndex(scratch1GPR, lengthGPR, TimesEight), scratch2GPR);
+            load64(BaseIndex(sourceGPR, lengthGPR, TimesEight), scratch2GPR);
             auto notEmpty = branchIfNotEmpty(scratch2GPR);
             move(TrustedImm64(JSValue::encode(jsUndefined())), scratch2GPR);
             notEmpty.link(this);
@@ -9384,7 +9411,7 @@ void SpeculativeJIT::compileSpread(Node* node)
             done.append(branchTest32(Zero, lengthGPR));
             auto loopStart = label();
             sub32(TrustedImm32(1), lengthGPR);
-            loadDouble(BaseIndex(scratch1GPR, lengthGPR, TimesEight), doubleFPR);
+            loadDouble(BaseIndex(sourceGPR, lengthGPR, TimesEight), doubleFPR);
             auto notEmpty = branchIfNotNaN(doubleFPR);
             move(TrustedImm64(JSValue::encode(jsUndefined())), scratch2GPR);
             auto doStore = jump();
@@ -9578,8 +9605,15 @@ void SpeculativeJIT::compileNewArray(Node* node)
     }
 
     size_t scratchSize = sizeof(EncodedJSValue) * node->numChildren();
-    ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-    EncodedJSValue* buffer = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
+    ScratchBufferAddress scratchAddress = scratchBufferAddress(scratchSize);
+    EncodedJSValue* buffer = scratchAddress.data;
+    std::optional<GPRTemporary> perLiteBuffer;
+    GPRReg bufferGPR = InvalidGPRReg;
+    if (scratchAddress.isPerLite()) [[unlikely]] {
+        perLiteBuffer.emplace(this);
+        bufferGPR = perLiteBuffer->gpr();
+        emitScratchBufferDataPointer(scratchAddress, bufferGPR);
+    }
     switch (node->indexingType()) {
     // Need to perform the speculations that this node promises to perform. If we're
     // emitting code here and the indexing type is not array storage then there is
@@ -9601,7 +9635,10 @@ void SpeculativeJIT::compileNewArray(Node* node)
             JSValueRegsTemporary scratch(this);
             JSValueRegs scratchRegs = scratch.regs();
             boxDouble(opFPR, scratchRegs);
-            storeValue(scratchRegs, buffer + operandIdx);
+            if (bufferGPR != InvalidGPRReg) [[unlikely]]
+                storeValue(scratchRegs, Address(bufferGPR, sizeof(EncodedJSValue) * operandIdx));
+            else
+                storeValue(scratchRegs, buffer + operandIdx);
             operand.use();
         }
         break;
@@ -9623,7 +9660,10 @@ void SpeculativeJIT::compileNewArray(Node* node)
             Edge use = m_graph.m_varArgChildren[node->firstChild() + operandIdx];
             JSValueOperand operand(this, use, ManualOperandSpeculation);
             JSValueRegs operandRegs = operand.jsValueRegs();
-            storeValue(operandRegs, buffer + operandIdx);
+            if (bufferGPR != InvalidGPRReg) [[unlikely]]
+                storeValue(operandRegs, Address(bufferGPR, sizeof(EncodedJSValue) * operandIdx));
+            else
+                storeValue(operandRegs, buffer + operandIdx);
             operand.use();
         }
         break;
@@ -9638,9 +9678,15 @@ void SpeculativeJIT::compileNewArray(Node* node)
     GPRFlushedCallResult result(this);
     GPRReg resultGPR = result.gpr();
 
-    callOperation(
-        operationNewArray, resultGPR, LinkableConstant::globalObject(*this, node), m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(node->indexingType())),
-        TrustedImmPtr(buffer), size_t(node->numChildren()));
+    if (bufferGPR != InvalidGPRReg) [[unlikely]] {
+        callOperation(
+            operationNewArray, resultGPR, LinkableConstant::globalObject(*this, node), m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(node->indexingType())),
+            bufferGPR, size_t(node->numChildren()));
+    } else {
+        callOperation(
+            operationNewArray, resultGPR, LinkableConstant::globalObject(*this, node), m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(node->indexingType())),
+            TrustedImmPtr(buffer), size_t(node->numChildren()));
+    }
 
     cellResult(resultGPR, node, UseChildrenCalledExplicitly);
 }
@@ -9773,8 +9819,15 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
 
     ASSERT(node->numChildren());
     size_t scratchSize = sizeof(EncodedJSValue) * node->numChildren();
-    ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-    EncodedJSValue* buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+    ScratchBufferAddress scratchAddress = scratchBufferAddress(scratchSize);
+    EncodedJSValue* buffer = scratchAddress.data;
+    std::optional<GPRTemporary> perLiteBuffer;
+    GPRReg bufferGPR = InvalidGPRReg;
+    if (scratchAddress.isPerLite()) [[unlikely]] {
+        perLiteBuffer.emplace(this);
+        bufferGPR = perLiteBuffer->gpr();
+        emitScratchBufferDataPointer(scratchAddress, bufferGPR);
+    }
 
     BitVector* bitVector = node->bitVector();
     for (unsigned i = 0; i < node->numChildren(); ++i) {
@@ -9782,11 +9835,17 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
         if (bitVector->get(i)) {
             SpeculateCellOperand immutableButterfly(this, use);
             GPRReg immutableButterflyGPR = immutableButterfly.gpr();
-            storeCell(immutableButterflyGPR, &buffer[i]);
+            if (bufferGPR != InvalidGPRReg) [[unlikely]]
+                storeCell(immutableButterflyGPR, Address(bufferGPR, sizeof(EncodedJSValue) * i));
+            else
+                storeCell(immutableButterflyGPR, &buffer[i]);
         } else {
             JSValueOperand input(this, use);
             JSValueRegs inputRegs = input.jsValueRegs();
-            storeValue(inputRegs, &buffer[i]);
+            if (bufferGPR != InvalidGPRReg) [[unlikely]]
+                storeValue(inputRegs, Address(bufferGPR, sizeof(EncodedJSValue) * i));
+            else
+                storeValue(inputRegs, &buffer[i]);
         }
     }
 
@@ -9795,7 +9854,10 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
     GPRFlushedCallResult result(this);
     GPRReg resultGPR = result.gpr();
 
-    callOperation(operationNewArrayWithSpreadSlow, resultGPR, LinkableConstant::globalObject(*this, node), TrustedImmPtr(buffer), node->numChildren());
+    if (bufferGPR != InvalidGPRReg) [[unlikely]]
+        callOperation(operationNewArrayWithSpreadSlow, resultGPR, LinkableConstant::globalObject(*this, node), bufferGPR, node->numChildren());
+    else
+        callOperation(operationNewArrayWithSpreadSlow, resultGPR, LinkableConstant::globalObject(*this, node), TrustedImmPtr(buffer), node->numChildren());
 
     cellResult(resultGPR, node);
 }
@@ -10103,10 +10165,7 @@ void SpeculativeJIT::compileArraySplice(Node* node)
     unsigned insertionCount = node->numChildren() - 3;
     if (insertionCount) {
         size_t scratchSize = sizeof(EncodedJSValue) * insertionCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        EncodedJSValue* buffer = std::bit_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
-
-        move(TrustedImmPtr(buffer), bufferGPR);
+        emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
         for (unsigned index = 0; index < insertionCount; ++index) {
             JSValueOperand arg(this, m_graph.child(node, index + 3));
             JSValueRegs argRegs = arg.regs();
@@ -10540,6 +10599,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         GPRTemporary buffer(this);
         GPRReg bufferGPR = buffer.gpr();
 
+        size_t scratchSize = sizeof(EncodedJSValue) * elementCount;
+        ScratchBufferAddress scratchAddress = scratchBufferAddress(scratchSize);
+        std::optional<GPRTemporary> perLiteScratch;
+        if (scratchAddress.isPerLite()) [[unlikely]]
+            perLiteScratch.emplace(this);
+
         load32(Address(storageGPR, Butterfly::offsetOfPublicLength()), storageLengthGPR);
         move(storageLengthGPR, bufferGPR);
         add32(TrustedImm32(elementCount), bufferGPR);
@@ -10553,9 +10618,7 @@ void SpeculativeJIT::compileArrayPush(Node* node)
 
         slowPath.link(this);
 
-        size_t scratchSize = sizeof(EncodedJSValue) * elementCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchAddress, bufferGPR);
 
         storageDone.link(this);
         for (unsigned elementIndex = 0; elementIndex < elementCount; ++elementIndex) {
@@ -10567,7 +10630,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
             value.use();
         }
 
-        Jump fastPath = branchPtr(NotEqual, bufferGPR, TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())));
+        Jump fastPath;
+        if (scratchAddress.isPerLite()) [[unlikely]] {
+            emitScratchBufferDataPointer(scratchAddress, perLiteScratch->gpr());
+            fastPath = branchPtr(NotEqual, bufferGPR, perLiteScratch->gpr());
+        } else
+            fastPath = branchPtr(NotEqual, bufferGPR, TrustedImmPtr(scratchAddress.data));
 
         addSlowPathGenerator(slowPathCall(jump(), this, operationArrayPushMultiple, resultRegs, LinkableConstant::globalObject(*this, node), baseGPR, bufferGPR, TrustedImm32(elementCount)));
 
@@ -10609,6 +10677,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         GPRTemporary buffer(this);
         GPRReg bufferGPR = buffer.gpr();
 
+        size_t scratchSize = sizeof(double) * elementCount;
+        ScratchBufferAddress scratchAddress = scratchBufferAddress(scratchSize);
+        std::optional<GPRTemporary> perLiteScratch;
+        if (scratchAddress.isPerLite()) [[unlikely]]
+            perLiteScratch.emplace(this);
+
         load32(Address(storageGPR, Butterfly::offsetOfPublicLength()), storageLengthGPR);
         move(storageLengthGPR, bufferGPR);
         add32(TrustedImm32(elementCount), bufferGPR);
@@ -10622,9 +10696,7 @@ void SpeculativeJIT::compileArrayPush(Node* node)
 
         slowPath.link(this);
 
-        size_t scratchSize = sizeof(double) * elementCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchAddress, bufferGPR);
 
         storageDone.link(this);
         for (unsigned elementIndex = 0; elementIndex < elementCount; ++elementIndex) {
@@ -10636,7 +10708,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
             value.use();
         }
 
-        Jump fastPath = branchPtr(NotEqual, bufferGPR, TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())));
+        Jump fastPath;
+        if (scratchAddress.isPerLite()) [[unlikely]] {
+            emitScratchBufferDataPointer(scratchAddress, perLiteScratch->gpr());
+            fastPath = branchPtr(NotEqual, bufferGPR, perLiteScratch->gpr());
+        } else
+            fastPath = branchPtr(NotEqual, bufferGPR, TrustedImmPtr(scratchAddress.data));
 
         addSlowPathGenerator(slowPathCall(jump(), this, operationArrayPushDoubleMultiple, resultRegs, LinkableConstant::globalObject(*this, node), baseGPR, bufferGPR, TrustedImm32(elementCount)));
 
@@ -10680,6 +10757,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         GPRTemporary buffer(this);
         GPRReg bufferGPR = buffer.gpr();
 
+        size_t scratchSize = sizeof(EncodedJSValue) * elementCount;
+        ScratchBufferAddress scratchAddress = scratchBufferAddress(scratchSize);
+        std::optional<GPRTemporary> perLiteScratch;
+        if (scratchAddress.isPerLite()) [[unlikely]]
+            perLiteScratch.emplace(this);
+
         load32(Address(storageGPR, ArrayStorage::lengthOffset()), storageLengthGPR);
 
         // Refuse to handle bizarre lengths.
@@ -10698,9 +10781,7 @@ void SpeculativeJIT::compileArrayPush(Node* node)
 
         slowPath.link(this);
 
-        size_t scratchSize = sizeof(EncodedJSValue) * elementCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchAddress, bufferGPR);
 
         storageDone.link(this);
         for (unsigned elementIndex = 0; elementIndex < elementCount; ++elementIndex) {
@@ -10712,7 +10793,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
             value.use();
         }
 
-        Jump fastPath = branchPtr(NotEqual, bufferGPR, TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())));
+        Jump fastPath;
+        if (scratchAddress.isPerLite()) [[unlikely]] {
+            emitScratchBufferDataPointer(scratchAddress, perLiteScratch->gpr());
+            fastPath = branchPtr(NotEqual, bufferGPR, perLiteScratch->gpr());
+        } else
+            fastPath = branchPtr(NotEqual, bufferGPR, TrustedImmPtr(scratchAddress.data));
 
         addSlowPathGenerator(
             slowPathCall(jump(), this, operationArrayPushMultiple, resultRegs, LinkableConstant::globalObject(*this, node), baseGPR, bufferGPR, TrustedImm32(elementCount)));
@@ -10730,8 +10816,7 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         GPRReg bufferGPR = buffer.gpr();
 
         size_t scratchSize = sizeof(EncodedJSValue) * elementCount;
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
 
         for (unsigned elementIndex = 0; elementIndex < elementCount; ++elementIndex) {
             Edge& element = m_graph.varArgChild(node, elementIndex + elementOffset);
@@ -11151,18 +11236,11 @@ void SpeculativeJIT::compileNukeStructureAndSetButterfly(Node* node)
 // ===========================================================================
 
 namespace DFGConcurrentButterflyInternal {
-#if __has_include("ConcurrentButterfly.h")
-static constexpr uint64_t pointerMask = JSC::butterflyPointerMask;
 static constexpr uint64_t segmentedFloor = JSC::butterflyTagMask; // == 0xffff << 48
-#else
-// THREADS-INTEGRATE(jit): frozen fallback while the object-model header lands
-// concurrently (mirrors jit/CCallHelpers.cpp).
-static constexpr uint64_t pointerMask = 0x0000ffffffffffffULL;
-static constexpr uint64_t segmentedFloor = 0xffff000000000000ULL;
-#endif
-static constexpr uint64_t tidTagSpan = 1ULL << 48; // (tagged ^ tidTag) < 2^48 <=> tag bits match
-static_assert(pointerMask == 0x0000ffffffffffffULL);
+static constexpr uint64_t tidTagSpan = 1ULL << JSC::butterflyTIDShift; // (tagged ^ tidTag) < 2^48 <=> tag bits match
+static_assert(JSC::butterflyPointerMask == 0x0000ffffffffffffULL);
 static_assert(segmentedFloor == 0xffff000000000000ULL);
+static_assert(tidTagSpan == 1ULL << 48);
 } // namespace DFGConcurrentButterflyInternal
 
 auto SpeculativeJIT::planThreadedButterflyAccess(Edge base) -> ThreadedButterflyPlan
@@ -11329,26 +11407,15 @@ auto SpeculativeJIT::emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg de
 // T3-jit-segmented-arraymode: spine→fragment→slot inline resolve (§4.1).
 // ===========================================================================
 
-// Frozen offsets — guard with the runtime header when present so a layout
-// drift fails to compile, not at runtime. Falls back to the frozen values
-// (mirrors the DFGConcurrentButterflyInternal pattern above) so this file
-// compiles before the OM header lands.
+// The emitted (i+1)>>2 / &3 slot mapping assumes the ButterflySpine layout
+// below; a layout change fails here at compile time.
 namespace DFGSegmentedSpineInternal {
-#if __has_include("ConcurrentButterfly.h")
 static constexpr ptrdiff_t spineOffsetOfOutOfLineFragmentCount = OBJECT_OFFSETOF(JSC::ButterflySpine, outOfLineFragmentCount);
 static constexpr ptrdiff_t spineOffsetOfVectorLength = OBJECT_OFFSETOF(JSC::ButterflySpine, vectorLength);
 static constexpr ptrdiff_t spineOffsetOfFragments = static_cast<ptrdiff_t>(sizeof(JSC::ButterflySpine));
 static constexpr unsigned fragmentSlots = JSC::butterflyFragmentSlots;
-static_assert(spineOffsetOfOutOfLineFragmentCount == 0, "T3: emitted offsets assume frozen ButterflySpine layout");
-static_assert(spineOffsetOfVectorLength == 8, "T3: emitted offsets assume frozen ButterflySpine layout");
-static_assert(fragmentSlots == 4, "T3: (i+1)>>2 / &3 mapping assumes 4-slot fragments");
-static_assert(JSC::butterflyTagMask == DFGConcurrentButterflyInternal::segmentedFloor, "T3: segmented predicate == tag mask");
-#else
-static constexpr ptrdiff_t spineOffsetOfOutOfLineFragmentCount = 0;
-static constexpr ptrdiff_t spineOffsetOfVectorLength = 8;
-static constexpr ptrdiff_t spineOffsetOfFragments = 32;
-static constexpr unsigned fragmentSlots = 4;
-#endif
+static_assert(spineOffsetOfOutOfLineFragmentCount == 0);
+static_assert(spineOffsetOfVectorLength == 8);
 static_assert(fragmentSlots == 4);
 } // namespace DFGSegmentedSpineInternal
 
@@ -11667,8 +11734,7 @@ void SpeculativeJIT::compileArrayPushSegmentedAware(Node* node)
         GPRTemporary buffer(this);
         GPRReg bufferGPR = buffer.gpr();
         size_t scratchSize = sizeof(EncodedJSValue) * (elementCount ? elementCount : 1);
-        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-        move(TrustedImmPtr(static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer())), bufferGPR);
+        emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
         for (unsigned i = 0; i < elementCount; ++i) {
             Edge& element = m_graph.varArgChild(node, i + elementOffset);
             if (node->arrayMode().type() == Array::Int32) {
@@ -11748,9 +11814,10 @@ void SpeculativeJIT::compileGetButterfly(Node* node)
 {
 #if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
-        // SPEC-jit section 5.5 / Task 9. THREADS-INTEGRATE(jit): AND with
-        // Options::useThreadedDFG() once the M1 kill switch lands
-        // (INTEGRATE-jit.md).
+        // SPEC-jit section 5.5 / Task 9. This is the only flag-on arm: a
+        // TID-tagged word cannot be read by the raw load below, so the
+        // useThreadedDFG kill switch disables the tier in Options rather
+        // than gating this path.
         SpeculateCellOperand base(this, node->child1());
         GPRTemporary result(this);
         GPRTemporary scratch(this);
@@ -15329,10 +15396,7 @@ void SpeculativeJIT::compileObjectDefinePropertyFromFields(Node* node)
     speculateObject(m_graph.varArgChild(node, 0), targetGPR);
 
     constexpr size_t scratchSize = sizeof(EncodedJSValue) * Node::numberOfDescriptorSlots;
-    ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-    EncodedJSValue* scratchData = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
-
-    move(TrustedImmPtr(scratchData), bufferGPR);
+    emitScratchBufferDataPointer(scratchBufferAddress(scratchSize), bufferGPR);
     for (unsigned slot = 0; slot < Node::numberOfDescriptorSlots; ++slot) {
         JSValueOperand operand(this, m_graph.varArgChild(node, slot + 2));
         storeValue(operand.jsValueRegs(), Address(bufferGPR, sizeof(EncodedJSValue) * slot));
@@ -15935,8 +15999,6 @@ void SpeculativeJIT::compilePutByOffset(Node* node)
         // STW write-vs-transition regime (OM section 4.6) the predicate and
         // the store must be on the same freshly loaded word. Inline offsets
         // keep today's path (cell-internal: never checked/masked).
-        // THREADS-INTEGRATE(jit): AND with Options::useThreadedDFG() once the
-        // M1 kill switch lands.
         ThreadedButterflyPlan plan = planThreadedButterflyAccess(node->child2());
 
         if (node->child3().useKind() == DoubleRepUse) {
@@ -19601,6 +19663,16 @@ void SpeculativeJIT::compilePerformPromiseThenOneHandler(Node* node)
     GPRReg inputPromiseGPR = inputPromise.gpr();
     GPRReg handlerGPR = handler.gpr();
     GPRReg resultPromiseGPR = resultPromise.gpr();
+
+    if (vm().gilOff()) [[unlikely]] {
+        // GIL-off, every writer of a promise's m_packed/m_slot runs under the
+        // promise's cell lock (JSPromise::performPromiseThen); the unlocked
+        // inline install below would race a locked settle on another thread.
+        flushRegisters();
+        callOperationWithoutExceptionCheck(operationPerformPromiseThenOneHandler, LinkableConstant::globalObject(*this, node), inputPromiseGPR, handlerGPR, resultPromiseGPR, TrustedImm32(static_cast<int32_t>(kind)));
+        noResult(node);
+        return;
+    }
 
     GPRTemporary packed(this);
     GPRReg packedGPR = packed.gpr();

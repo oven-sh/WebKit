@@ -128,7 +128,6 @@ public:
     // it is an inline member). It is filled in at plan finalization, before the
     // code is installed, by FTL::JITFinalizer::finalize().
     JITData* handlerICJITData() { return &m_handlerICJITData; }
-    ArrayProfile* handlerICDummyArrayProfile() { return &m_handlerICJITData.m_dummyArrayProfile; }
     void initializeHandlerICJITData(JSGlobalObject* globalObject, intptr_t stackOffset)
     {
         m_handlerICJITData.m_globalObject = globalObject;

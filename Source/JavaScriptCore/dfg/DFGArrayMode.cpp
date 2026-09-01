@@ -373,23 +373,15 @@ ArrayMode ArrayMode::refine(
     }
 }
 
-// T3-jit-segmented-arraymode: fold the segmented-butterfly observation into the
-// refined Int32/Double/Contiguous mode. The bit comes from EITHER the
-// ArrayProfile (withProfile in DFGArrayMode.h) OR the BadIndexingType
-// exit-site at this origin: GetButterfly's flat-only predicate (SPEC-jit §5.5
-// / Task 9, DFGSpeculativeJIT::compileGetButterfly) speculation-checks
-// BadIndexingType when the tagged word is segmented, and segmentation does
-// NOT change the IndexingType — so the structure-ID feedback path cannot
-// distinguish a segmented ArrayWithInt32 from a flat one and the recompile
-// would speculate flat-only forever. The exit-site is the closing signal.
-//
-// Only ever set under Options::useJSThreads() (flag-off byte-identical: I22),
-// only for the dense contiguous shapes (others cannot segment, I31/I35), and
-// cleared when conversion() == Convert with an Original* class — Arrayify
-// publishes a fresh FLAT (currentTID, 0) butterfly, so the post-Arrayify
-// access is flat by construction. The Array::Array / PossiblyArray Convert
-// case (CoW seen) keeps the bit: a runtime non-CoW input may already be
-// segmented and Arrayify is a no-op on it.
+// Folds the segmented-butterfly observation into a refined Int32/Double/
+// Contiguous mode. The bit comes from the ArrayProfile or from a prior
+// BadIndexingType exit at this origin; segmentation does not change the
+// IndexingType, so that exit site is the only signal a flat-only GetButterfly
+// speculation leaves behind. Convert modes keep the bit: Arrayify leaves an
+// array that already has the target structure untouched and the flag-on shape
+// relabels keep a segmented spine, so an original-structure array that a
+// foreign thread segmented in place is still segmented after
+// ArrayifyToStructure.
 ArrayMode ArrayMode::withSegmentedFeedback(Graph& graph, Node* node) const
 {
     if (!Options::useJSThreads()) [[likely]]
@@ -404,8 +396,6 @@ ArrayMode ArrayMode::withSegmentedFeedback(Graph& graph, Node* node) const
     }
     bool maySeg = mayBeSegmentedButterfly()
         || graph.hasExitSite(node->origin.semantic, BadIndexingType);
-    if (maySeg && doesConversion() && isJSArrayWithOriginalStructure())
-        maySeg = false; // ArrayifyToStructure -> guaranteed flat (originals never segment until shared).
     return withMayBeSegmentedButterfly(maySeg);
 }
 

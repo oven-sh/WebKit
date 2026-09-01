@@ -66,14 +66,14 @@ inline VariableEnvironment::PrivateDeclarationResult VariableEnvironment::declar
 
 inline TDZEnvironment& CompactTDZEnvironment::toTDZEnvironment() const
 {
-    if (std::holds_alternative<Inflated>(m_variables))
+    if (isInflated())
         return const_cast<TDZEnvironment&>(std::get<Inflated>(m_variables));
     return toTDZEnvironmentSlow();
 }
 
 inline bool TDZEnvironmentLink::contains(UniquedStringImpl* impl) const
 {
-    return m_handle.environment().toTDZEnvironment().contains(impl);
+    return m_handle.contains(impl);
 }
 
 inline TDZEnvironmentLink::TDZEnvironmentLink(CompactTDZEnvironmentMap::Handle handle, RefPtr<TDZEnvironmentLink> parent)

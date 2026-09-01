@@ -75,13 +75,12 @@ public:
     VM& vm() { return m_codeBlock->vm(); }
     AssemblerType_T& assembler() LIFETIME_BOUND { return m_assembler; }
 
-    // UNGIL §A.1.1 (U-T3/U-T4): one-load read of the CURRENT thread's
-    // VMLite*. Defined in AssemblyHelpers.cpp; the macro beside this
-    // declaration enables the member surface there (the
-    // JSC_CONFIG_HAS_BUTTERFLY_TID_TAG_TLS_KEY inversion pattern noted in
-    // that TU). §A.1.2: rematerialize freely — one TLS-relative load, no
-    // side effects. ARM64: destGPR must not be the data temp.
-#define JSC_ASSEMBLYHELPERS_HAS_LOAD_VMLITE 1
+    // Loads the CURRENT thread's VMLite* into destGPR: one load off the
+    // thread pointer at the initial-exec TLS offset of g_jscCurrentVMLite.
+    // The emitted sequence writes no register other than destGPR, so any GPR
+    // (including the macro-assembler temps) may be the destination, and the
+    // load has no side effects, so callers rematerialize it freely. Only
+    // gilOff-mode compilations emit it; flag-off/GIL-on code never reaches it.
     void loadVMLite(GPRReg destGPR);
 
     void prepareCallOperation(VM& vm)
@@ -155,28 +154,23 @@ public:
             storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
     }
 
-    // UNGIL §A.2.2 (AB-17): the one soft-stack-limit comparison emitter for
-    // every Baseline/DFG/FTL/thunk/varargs/Yarr stack-check site. Compares
-    // LIMIT (lhs) <cond> candidateGPR (rhs), exactly like the landed
+    // The one soft-stack-limit comparison emitter for every Baseline/DFG/FTL/
+    // thunk/varargs/Yarr stack-check site. Compares LIMIT (lhs) <cond>
+    // candidateGPR (rhs) exactly like the pre-threads
     // `branchPtr(cond, AbsoluteAddress(vm.addressOfSoftStackLimit()), reg)`
-    // form — which the flag-off/GIL-on arm still emits byte-for-byte.
-    // `cond` must be the SAME UNSIGNED condition the landed form used
-    // (Above for overflow-taken polarity, BelowOrEqual for the
-    // haveStackSpace/stackOk polarity): these are pointer comparisons, and a
-    // signed condition would both change the flag-off emission bytes and
-    // mis-order addresses straddling the sign bit (review round: every call
-    // site audited back to unsigned; siblings in the same functions —
-    // JIT.cpp/DFG !CPU(ADDRESS64) `Above` twins, Yarr's BelowOrEqual
-    // MatchingContextHolder limit check, LLInt's bpa/bpbeq — are unsigned).
-    // GIL-off (COMPILED-FOR-VM mode, §A.1.3: vm.gilOff() is VM-immutable, so
-    // the split is a compile-time property of the code being emitted): the
-    // limit is PER-THREAD state — load the CURRENT thread's VMLite and read
-    // the chained per-lite plain soft limit
-    // (lite->threadContext.traps().m_stack.m_softStackLimit, published by
-    // that thread's own pass through VM::updateStackLimits). Trap delivery
-    // at these sites is unchanged: they compare the PLAIN limit; the
-    // trap-aware word is the LLInt shared-prologue site's job (per-lite
-    // there too, poked by the item-3c stop fan).
+    // form, which the flag-off/GIL-on arm still emits byte-for-byte. `cond`
+    // must therefore be the SAME condition that form used at the call site:
+    // the pre-threads sites are signed (GreaterThan for the overflow-taken
+    // polarity, LessThanOrEqual for the haveStackSpace/stackOk polarity), and
+    // passing an unsigned twin changes the flag-off bytes for no reason. Both
+    // arms compare the plain limit, so the same condition is correct GIL-off.
+    // GIL-off (vm.gilOff() is VM-immutable, so the split is a compile-time
+    // property of the code being emitted): the limit is PER-THREAD state —
+    // load the CURRENT thread's VMLite and read the chained per-lite plain
+    // soft limit (lite->threadContext.traps().m_stack.m_softStackLimit,
+    // published by that thread's own pass through VM::updateStackLimits).
+    // Trap delivery at these sites is unchanged: the trap-aware word is the
+    // LLInt shared-prologue site's job.
     //
     // Scratch discipline (the prepareCallOperation idiom above): only the
     // per-arch macro-assembler reserved temp is used — the same register the
@@ -445,8 +439,7 @@ public:
     // UNGIL §A.1.3 (U-T4): mode-keyed materialization of the CURRENT thread's
     // topEntryFrame. GIL-on it is the VM-block word; GIL-off the VM-block word
     // is inert spare storage (doVMEntry publishes through the lite) and the
-    // live word is per-lite. ARM64: destGPR must not be the data temp (same
-    // contract as loadVMLite).
+    // live word is per-lite.
     void loadTopEntryFrame(VM& vm, GPRReg destGPR)
     {
         if (vm.gilOff()) [[unlikely]] {
@@ -459,8 +452,7 @@ public:
     // UNGIL §A.1.3 (U-T4): mode-keyed load of the CURRENT thread's
     // callFrameForCatch. GIL-on it is the VM-block word; GIL-off genericUnwind
     // publishes through the unwinding thread's lite (JITExceptions.cpp), so
-    // the VM-block word is inert spare storage and always reads null. ARM64:
-    // destGPR must not be the data temp (same contract as loadVMLite).
+    // the VM-block word is inert spare storage and always reads null.
     void loadCallFrameForCatch(VM& vm, GPRReg destGPR)
     {
         if (vm.gilOff()) [[unlikely]] {
@@ -521,7 +513,6 @@ public:
     Address materializeGILOffExceptionSlot();
 
     // Mode-keyed load of the CURRENT thread's exception into destGPR.
-    // ARM64: destGPR must not be the data temp (same contract as loadVMLite).
     void loadException(VM&, GPRReg destGPR);
 
     // Mode-keyed replacement for the EntryFrame*&-baking overload above.
@@ -542,12 +533,8 @@ public:
     void restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(GPRReg vmGPR, GPRReg scratchGPR);
     void restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferImpl(GPRReg entryFrame, const RegisterSet& skipList);
 
-    void copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(EntryFrame*&, const RegisterSet& usedRegisters = RegisterSet::stubUnavailableRegisters());
-    // UNGIL §A.1.3 (U-T4a): VM&-keyed overload; materializes the buffer base
-    // via loadTopEntryFrame(vm, destBufferGPR) instead of baking
-    // loadPtr(&topEntryFrame). Defined in JITOpcodes.cpp beside its only
-    // callers for now (FIXME: fold into AssemblyHelpers.cpp alongside the
-    // EntryFrame*& overload).
+    // The buffer base is the CURRENT thread's topEntryFrame (loadTopEntryFrame):
+    // GIL-on the VM-block word, GIL-off the per-lite word.
     void copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(VM&, const RegisterSet& usedRegisters = RegisterSet::stubUnavailableRegisters());
 
     void emitMaterializeTagCheckRegisters()
@@ -1907,9 +1894,13 @@ public:
         // guard.
         auto* subspace = subspaceForConcurrently<Type>(vm);
         if constexpr (std::is_same_v<std::remove_cv_t<decltype(subspace)>, GCClient::IsoSubspace*>) {
-            UNUSED_PARAM(allocationSize); // Iso has exactly one size class; the LocalAllocator cellSize() RELEASE_ASSERT (allocatorFor) covers a mismatched size at run time.
             if (!subspace)
                 return std::nullopt;
+            // The emitted code resolves the baked slot straight to the iso
+            // LocalAllocator with no size check, so the request must fit the
+            // iso's single size class here, exactly as
+            // GCClient::IsoSubspace::allocatorFor checks for the constant bake.
+            RELEASE_ASSERT(allocationSize <= subspace->cellSize());
             unsigned slot = subspace->tlcSlot();
             if (slot == BlockDirectory::invalidTlcIndex)
                 return std::nullopt;
@@ -1927,8 +1918,7 @@ public:
     // leaving allocatorGPR = LocalAllocator* | null; the bound-miss branch
     // appends to slowPath. Callers feed the result through
     // JITAllocator::variable() so emitAllocate supplies the null-allocator
-    // slow-path branch. ARM64: allocatorGPR must not be the data temp (same
-    // contract as loadVMLite). gilOff-mode emission ONLY — every call site is
+    // slow-path branch. gilOff-mode emission ONLY — every call site is
     // behind a vm.gilOff() codegen gate (flag-off byte-identity).
     void emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned tlcSlot, JumpList& slowPath);
 
@@ -1952,9 +1942,10 @@ public:
     // scratchGPR (loadButterflyTIDTag | storageGPR) and stored over the
     // untagged word emitAllocateJSObject just wrote. Pre-escape (object not
     // yet visible to other threads), so a plain store is the sanctioned
-    // E4-eligible install form (N3). gilOff emission ONLY — every call site
-    // is behind a vm.gilOff() codegen gate (flag-off byte-identity).
-    // scratchGPR must be distinct from resultGPR and storageGPR.
+    // E4-eligible install form (N3). Emitted only when useJSThreads is on
+    // (flag-off byte-identity); GIL-on included, since spawned threads have
+    // nonzero TIDs there too. scratchGPR must be distinct from resultGPR and
+    // storageGPR.
     void emitTagInstalledButterflyWithTID(GPRReg resultGPR, GPRReg storageGPR, GPRReg scratchGPR);
 
     template<typename StructureType>
@@ -1989,29 +1980,32 @@ public:
             if (auto slot = tlcSlotForConcurrentlyWithIso<ClassType>(vm, size)) {
                 emitLoadTLCAllocatorForSlot(scratchGPR1, *slot, slowPath);
                 emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
-                // Task-8: TID-tag the just-installed butterfly word so a
-                // fresh inline-allocated object reads as OWNER (not foreign)
-                // at the §4.2 ensureLength dispatch. A register storage is
-                // provably non-null at every caller (the butterfly is freshly
-                // allocated on the fall-through path; null-initialized GPRs
-                // only reach here after a slow-path branch). An immediate
-                // storage is null for every no-butterfly ClassType (JSPromise
-                // / JSMap / JSFunction / …) and non-null only for the CoW
-                // JSCellButterfly install (compileNewArrayBuffer); the null
-                // skip matches the ctor's `if (butterfly)` guard. storage is
-                // left untagged for post-install writes; scratchGPR1/2 are
-                // both free after emitAllocateJSObject. gilOff arm only.
-                if constexpr (std::is_same_v<std::decay_t<StorageType>, GPRReg>)
-                    emitTagInstalledButterflyWithTID(resultGPR, storage, scratchGPR1);
-                else if (storage.asIntptr()) {
-                    loadPtr(Address(resultGPR, JSObject::butterflyOffset()), scratchGPR2);
-                    emitTagInstalledButterflyWithTID(resultGPR, scratchGPR2, scratchGPR1);
-                }
+                emitTagInstalledButterflyWithTIDIfNonNull(resultGPR, storage, scratchGPR1, scratchGPR2);
                 return;
             }
         }
         Allocator allocator = allocatorForConcurrently<ClassType>(vm, size, AllocatorForMode::AllocatorIfExists);
         emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
+        // GIL-on too: the C++ constructor stamps the allocating thread's TID
+        // whenever useJSThreads is on, and spawned threads have nonzero TIDs.
+        if (Options::useJSThreads()) [[unlikely]]
+            emitTagInstalledButterflyWithTIDIfNonNull(resultGPR, storage, scratchGPR1, scratchGPR2);
+    }
+
+    // TID-tags the butterfly word emitAllocateJSObject just stored. A register
+    // storage is the freshly allocated butterfly on the fall-through path; an
+    // immediate storage is null for every no-butterfly ClassType and the null
+    // skip matches the constructor's `if (butterfly)` guard. storage is left
+    // untagged for post-install writes; both scratches are clobbered.
+    template<typename StorageType>
+    void emitTagInstalledButterflyWithTIDIfNonNull(GPRReg resultGPR, StorageType storage, GPRReg scratchGPR1, GPRReg scratchGPR2)
+    {
+        if constexpr (std::is_same_v<std::decay_t<StorageType>, GPRReg>)
+            emitTagInstalledButterflyWithTID(resultGPR, storage, scratchGPR1);
+        else if (storage.asIntptr()) {
+            loadPtr(Address(resultGPR, JSObject::butterflyOffset()), scratchGPR2);
+            emitTagInstalledButterflyWithTID(resultGPR, scratchGPR2, scratchGPR1);
+        }
     }
     
     template<typename ClassType, typename StructureType, typename StorageType>
@@ -2161,6 +2155,10 @@ protected:
     CodeBlock* const m_codeBlock;
     CodeBlock* const m_baselineCodeBlock;
 };
+
+// Free-function spelling of AssemblyHelpers::loadVMLite for the DFG/FTL OSR
+// exit and thunk emitters that take the assembler by reference.
+void loadVMLite(AssemblyHelpers&, GPRReg destGPR);
 
 } // namespace JSC
 

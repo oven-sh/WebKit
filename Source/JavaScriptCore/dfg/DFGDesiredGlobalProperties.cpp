@@ -66,9 +66,8 @@ bool DesiredGlobalProperties::reallyAdd(CodeBlock* codeBlock, DesiredIdentifiers
                 watchpoint.initialize(codeBlock);
             }
             auto& watchpointSet = globalObject->ensureReferencedPropertyWatchpointSet(uid);
-            ASSERT(watchpointSet.isStillValid());
-            watchpointSet.add(&watchpoint);
-            return true;
+            ASSERT(Options::useJSThreads() || watchpointSet.isStillValid());
+            return watchpointSet.add(&watchpoint);
         });
         if (!result)
             return false;

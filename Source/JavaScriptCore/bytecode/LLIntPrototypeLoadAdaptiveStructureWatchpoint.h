@@ -42,7 +42,9 @@ public:
 
     void initialize(CodeBlock*, const ObjectPropertyCondition&, BytecodeIndex);
 
-    void install(VM&);
+    // False (flag-on only) when the structure's transition set fired between
+    // the caller's watchability check and the link; nothing is linked then.
+    bool install(VM&);
 
     static void NODELETE clearLLIntGetByIdCache(GetByIdModeMetadata&);
 

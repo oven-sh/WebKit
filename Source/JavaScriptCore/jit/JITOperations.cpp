@@ -110,16 +110,11 @@ ALWAYS_INLINE ICSlowPathCallFrameTracer::ICSlowPathCallFrameTracer(VM& vm, CallF
     // The propertyCache pointer arrives here materialized by JIT'd code, so
     // the real ordering edge (payload init -> storeStoreFence -> m_jitData
     // store -> dependent loads in the emitted IC path) is invisible to TSAN.
-    // Lifetime is proven, not assumed: the audit (AS AMENDED at the closeout
-    // final review — TSAN-TRIAGE §17.2, incl. the row-16 MetadataTable
-    // ref-escape in ~CodeBlock that closed the one bypass the original table
-    // missed) showed every flag-on deallocation path of the containing
-    // DFG::JITData / BaselineJITData is either pre-publication
-    // (single-thread: JITData::tryCreate failure) or leaked in ~CodeBlock per
-    // SPEC-jit §5.3/I7, and every displaced handler chain rides
-    // RetiredJITArtifacts, which flag-on never frees
-    // (epochCoversEveryJSThread, RetiredJITArtifacts.cpp) — the block TSAN
-    // pairs the read with is live. No-op outside TSAN builds.
+    // The containing DFG::JITData / BaselineJITData is freed only by
+    // ~CodeBlock, and a thread executing this IC's code keeps that CodeBlock
+    // conservatively marked, so the block TSAN pairs the read with is live.
+    // Displaced handler chains ride RetiredJITArtifacts (epoch-deferred).
+    // No-op outside TSAN builds.
     TSAN_ANNOTATE_HAPPENS_AFTER(propertyCache);
     // UNGIL §A.1.3 mode split (U-T4): GIL-off, doVMEntry publishes topEntryFrame
     // and prepareCallOperation (AssemblyHelpers.h:121, emission side already
@@ -4699,7 +4694,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     auto& metadata = bytecode.metadata(codeBlock);
-    ResolveType resolveType = metadata.m_resolveType;
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     // ModuleVar does not keep the scope register value alive in DFG.
     ASSERT(resolveType != ModuleVar);
@@ -4709,6 +4704,10 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     case GlobalPropertyWithVarInjectionChecks:
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
+        // Flag-on, op_resolve_scope metadata is frozen after CodeBlock linking;
+        // see slow_path_resolve_scope in runtime/CommonSlowPaths.cpp.
+        if (Options::useJSThreads()) [[unlikely]]
+            break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
             bool hasProperty = globalObject->hasProperty(globalObject, ident);
@@ -4886,22 +4885,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
-    // SPEC-jit I15/section 4.4(b): this native slow path holds a handler-
-    // allocation pointer across a possible safepoint (the butterfly
-    // reallocation below can GC/park). Take a Ref BEFORE any safepoint so a
-    // concurrent IC reset retiring this node (section 5.1) cannot lead to an
-    // epoch-expiry free while we are parked. The payload is frozen at publish
-    // (I4) and the refcount is thread-safe (section 4.5), so this is sound
-    // from any mutator.
-    // FLAG-OFF IDENTITY (I1): the refcount is ThreadSafeRefCounted, so the
-    // unconditional Ref added a lock-prefixed ref/deref pair to every
-    // reallocating put-transition — the transition-heavy-constructor hot
-    // path — with threads off. Single-threaded there is no concurrent IC
-    // reset, so skipping the Ref flag-off is exactly today's (pre-round-8)
-    // behavior.
-    RefPtr<const InlineCacheHandler> protectedHandler;
-    if (Options::useJSThreads()) [[unlikely]]
-        protectedHandler = handler;
+    // Under useJSThreads tryCachePutBy never creates a Transition access case,
+    // so no handler reaches this operation. The copy-grow below carries no
+    // TID/SW predicate and must stay unreachable flag-on.
+    RELEASE_ASSERT(!Options::useJSThreads());
 
     size_t newSize = handler->newSize() / sizeof(JSValue);
     size_t oldSize = handler->oldSize() / sizeof(JSValue);

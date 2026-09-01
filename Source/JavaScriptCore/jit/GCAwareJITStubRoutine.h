@@ -94,6 +94,11 @@ protected:
     bool m_isJettisoned : 1 { false };
     bool m_isGCAware : 1 { false };
     bool m_isCodeImmutable : 1 { false };
+    // True while the heap's JITStubRoutineSet holds this routine. The set
+    // clears it when it drops a routine without deleting it (dead owner, set
+    // teardown); from then on the deref that reaches zero must delete the
+    // routine itself, since no sweep will.
+    bool m_isInJITStubRoutineSet : 1 { false };
     // r18 post-closeout review: these two left the bitfield byte.
     // addedToSharedJITStubSet() runs on a JIT worklist thread AFTER the
     // shared routine is published to the SharedJITStubSet, so its bitfield

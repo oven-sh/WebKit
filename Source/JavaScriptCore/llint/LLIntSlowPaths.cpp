@@ -33,9 +33,6 @@
 #include "BytecodeOperandsForCheckpoint.h"
 #include "CallFrame.h"
 #include "CheckpointOSRExitSideState.h"
-#if ENABLE(DFG_JIT)
-#include "DFGOSRExitCompilerCommon.h" // DW-1: sortComparatorOSRExitStashRecord cross-check.
-#endif
 #include "CodeBlockInlines.h"
 #include "CommonSlowPathsInlines.h"
 #include "Error.h"
@@ -132,13 +129,10 @@ static inline JSValue NODELETE getOperand(CallFrame* callFrame, VirtualRegister 
 static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
 {
 #if CPU(ADDRESS64) && CPU(LITTLE_ENDIAN)
-    // THREADS-INTEGRATE(jit): SPEC-jit M1's useThreadedLLIntICs kill switch is
-    // not yet in OptionsList.h; once it lands this becomes
-    // `Options::useJSThreads() && Options::useThreadedLLIntICs()` (with the
-    // kill switch off, flag-on, single-word caches are simply never published —
-    // the asm gate is keyed on useJSThreads alone and the threaded readers then
-    // always miss). See docs/threads/INTEGRATE-jit.md (Task 6).
-    return Options::useJSThreads();
+    // useThreadedLLIntICs is publication-side only: with it off, flag-on
+    // single-word caches are never published, and the asm threaded readers
+    // (gated on useJSThreads alone) always miss.
+    return Options::useJSThreads() && Options::useThreadedLLIntICs();
 #else
     // D8: flag-on is unsupported on these platforms; never publish.
     return false;
@@ -148,6 +142,22 @@ static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
 static ALWAYS_INLINE bool useUnthreadedLLIntPropertyCaches()
 {
     return !Options::useJSThreads();
+}
+
+// GIL-off, `slot` was resolved against whatever structure the cell had during
+// the lookup, but the cache word is keyed on `structure`, re-read afterwards.
+// A foreign transition between the two reads (a delete, a flatten) would pair
+// the new id with an offset that structure does not bind to the property, so
+// only publish when structure's own table vouches for the offset, as the JIT
+// ICs do in tryCacheGetBy.
+static ALWAYS_INLINE bool threadedLLIntSelfCacheOffsetIsValid(VM& vm, Structure* structure, UniquedStringImpl* uid, const PropertySlot& slot)
+{
+    if (!vm.gilOff()) [[likely]]
+        return true;
+    unsigned attributes;
+    if (structure->getConcurrently(uid, attributes) != slot.cachedOffset())
+        return false;
+    return !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue));
 }
 
 #if CPU(ADDRESS64)
@@ -856,7 +866,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_direct)
     if (Options::useLLIntICs() && slot.isCacheable() && !slot.isUnset()) {
         auto& metadata = bytecode.metadata(codeBlock);
         {
-            StructureID oldStructureID = metadata.m_cache.structureID;
+            StructureID oldStructureID = WTF::atomicLoad(&metadata.m_cache.structureID, std::memory_order_relaxed); // See slow_path_try_get_by_id.
             if (oldStructureID) {
                 Structure* a = oldStructureID.decode();
                 Structure* b = baseValue.asCell()->structure();
@@ -882,9 +892,9 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_direct)
                         metadata.m_cache.offset = slot.cachedOffset();
                     }
                     vm.writeBarrier(codeBlock);
-                } else if (useThreadedLLIntPropertyCaches() && !structure->isDictionary()) {
+                } else if (useThreadedLLIntPropertyCaches() && !structure->isDictionary() && threadedLLIntSelfCacheOffsetIsValid(vm, structure, ident.impl(), slot)) {
                     // SPEC-jit §4.3: one-word publish, no lock (last-writer-wins).
-                    // Dictionary exclusion: see slow_path_get_by_id above.
+                    // Dictionary exclusion: see slow_path_try_get_by_id above.
                     metadata.m_cache.setConcurrently(structure->id(), slot.cachedOffset());
                     vm.writeBarrier(codeBlock);
                 }
@@ -951,7 +961,8 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         if (condition.condition().kind() == PropertyCondition::Presence)
             offset = condition.condition().offset();
         watchpoint.initialize(codeBlock, condition, bytecodeIndex);
-        watchpoint.install(vm);
+        if (!watchpoint.install(vm))
+            return; // Flag-on only; the watchpoints already linked unlink with the vector.
     }
 
     ASSERT((offset == invalidOffset) == slot.isUnset());
@@ -1038,8 +1049,8 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
                 metadata.clearToDefaultModeWithoutCache();
                 WTF::atomicStore(&metadata.hitCountForLLIntCaching, static_cast<uint8_t>(0), std::memory_order_relaxed);
 
-                // Dictionary exclusion (review round 1): see slow_path_get_by_id.
-                if (useThreadedLLIntPropertyCaches() && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary()) {
+                // Dictionary exclusion: see slow_path_try_get_by_id.
+                if (useThreadedLLIntPropertyCaches() && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary() && threadedLLIntSelfCacheOffsetIsValid(vm, structure, ident.impl(), slot)) {
                     metadata.setDefaultModeCacheConcurrently(structure->id(), slot.cachedOffset());
                     vm.writeBarrier(codeBlock);
                 }
@@ -2363,42 +2374,14 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
 }
 
-// UNGIL §A.1.3(3) U-T1 pairing invariant, A6 closure (signature
-// A6-stringFromCharCode-alloc-garbage-leng, SIGNATURES.md): a true (non-lite,
-// non-shared) thread-local echo of the {calleeFrame, varargsLength} pair the
-// size_frame slow call stored. The per-lite VMLitePrimitives copy of the pair
-// is shared-memory state a cross-thread wild write (the A1-root collateral
-// class) can trample between the paired slow calls; the geometric echo check
-// in varargsSetup cannot see a varargsLength-only trample that lands in the
-// same stackAlignmentRegisters rounding bucket — the documented residual
-// through which a silently mis-built frame could still reach a host callee
-// (argumentCount read off the frame -> garbage allocation length, the A6
-// face). C++ thread_local storage is not addressable through any lite/VM
-// routing, so a divergence between it and the consumed snapshot is a
-// definitive same-thread pairing violation -> fail-stop with a
-// self-identifying signature instead of a silent wrong-length frame.
-// The sizer's VMLitePrimitives stores of THIS pair stay (frozen ABI words,
-// SPEC-vmstate §6.3 L1; GIL-on/flag-off identity): the echo is a redundant
-// pin BESIDE them, not a reroute OF them. (The encodedHostCallReturnValue
-// writer reroutes elsewhere in this file are a different, separately
-// recorded change — the 2026-06-11b host-call Group-2 row fix — not part
-// of this echo.)
-//
-// FLAG-OFF BEHAVIORAL DELTA — explicit adjudication (A2-amend round 4,
-// F1-convention record): the echo stores, the relaxed-atomic snapshot loads,
-// the three varargsSetup RELEASE_ASSERTs, and the newCallFrame < callFrame
-// RELEASE_ASSERT in setupVarargsFrame run UNCONDITIONALLY — including plain
-// flag-off jsc (the Bun production shape). This is NOT codegen identity (the
-// asm/JIT legs remain byte-identical flag-off); it is a deliberate C++
-// slow-path tripwire kept unconditional under the house no-assert-weakening
-// rule: the pairing/geometry contract it checks must hold in EVERY
-// configuration, the cost is two TLS words on a mandatory slow path
-// (negligible), and a deterministic self-identifying crash on a future
-// contract break beats a silent wrong-length frame in any product. The
-// pairing contract the asserts enforce: every varargsSetup instantiation
-// MUST be paired with slow_path_size_frame_for_varargs (which writes the
-// echo) on the same thread within one bytecode. See the SetArgumentsWith
-// note below before instantiating the CurrentArguments arm.
+// GIL-off only: a thread-local echo of the {calleeFrame, varargsLength} pair
+// the size_frame slow call stored in the per-lite primitives block. The lite
+// block is shared memory a wild write from another thread could trample
+// between the paired slow calls; this storage is not reachable through any
+// lite/VM routing, so varargsSetup fail-stops on a divergence instead of
+// building a frame with a wrong argument count. Every varargsSetup
+// instantiation must be paired with slow_path_size_frame_for_varargs, which
+// writes the echo, on the same thread within one bytecode.
 static thread_local CallFrame* t_llintVarargsCalleeFrameEcho;
 static thread_local unsigned t_llintVarargsLengthEcho;
 
@@ -2447,50 +2430,31 @@ LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
     LLINT_CALL_CHECK_EXCEPTION(globalObject);
     
     CallFrame* calleeFrame = calleeFrameForVarargs(callFrame, numUsedStackSlots, length + 1);
-    // UNGIL §A.1.3 (U-T1): this pair is per-call frame-setup scratch consumed by
-    // the paired varargsSetup slow call on the SAME thread; under GIL-off it must
-    // live in the current thread's lite, not the shared VM block (which aliases the
-    // main thread's physical VMLitePrimitives, VM.h §6.4(3)).
+    // This pair is frame-setup scratch consumed by the paired varargsSetup slow
+    // call on the same thread; under GIL-off it lives in the current thread's
+    // lite rather than the shared VM block.
     auto& primitives = vm.group3Primitives();
     primitives.varargsLength = length;
     primitives.newCallFrameReturnValue = calleeFrame;
-    // A6 closure: redundant unsharable echo of the pair (see the thread_local
-    // declarations above); compared at the varargsSetup reload.
-    t_llintVarargsCalleeFrameEcho = calleeFrame;
-    t_llintVarargsLengthEcho = length;
+    if (vm.gilOff()) [[unlikely]] {
+        t_llintVarargsCalleeFrameEcho = calleeFrame;
+        t_llintVarargsLengthEcho = length;
+    }
 
     LLINT_RETURN_CALLEE_FRAME(calleeFrame);
 }
 
 enum class SetArgumentsWith {
     Object,
-    // PAIRING-CONTRACT GUARD (A2-amend round 4): the CurrentArguments arm is
-    // currently UNINSTANTIATED (all four varargsSetup callers use Object and
-    // pair with slow_path_size_frame_for_varargs, which writes the
-    // thread-local {calleeFrame, varargsLength} echo). If a future change
-    // instantiates this arm against a different sizer (e.g. a
-    // sizeFrameForForwardArguments-style slow path, cf. JITOperations.cpp's
-    // operationSizeFrameForForwardArguments), that sizer MUST store
-    // t_llintVarargsCalleeFrameEcho/t_llintVarargsLengthEcho before
-    // varargsSetup reloads them, or the unconditional pair-echo
-    // RELEASE_ASSERTs in varargsSetup will deterministically fail-stop —
-    // including in flag-off production builds. ENFORCED AT BUILD TIME by the
-    // static_assert in varargsSetup (A4-amend round): mispairing now fails to
-    // compile rather than failing in production.
+    // Uninstantiated. A sizer paired with this arm must also write the
+    // t_llintVarargs*Echo pair that varargsSetup cross-checks under GIL-off.
     CurrentArguments
 };
 
 template<typename Op, SetArgumentsWith set>
 static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)
 {
-    // A4-amend round: the PAIRING-CONTRACT GUARD on SetArgumentsWith (see the
-    // enum) is enforced at COMPILE TIME — instantiating the CurrentArguments
-    // arm without wiring its sizer to the thread-local echo pair would
-    // otherwise be a deterministic production fail-stop at the unconditional
-    // RELEASE_ASSERTs below (a comment-only landmine). Delete this
-    // static_assert ONLY together with making the new sizer store
-    // t_llintVarargsCalleeFrameEcho/t_llintVarargsLengthEcho.
-    static_assert(set == SetArgumentsWith::Object, "CurrentArguments arm is uninstantiated: its sizer must write the t_llintVarargs*Echo pair before varargsSetup reloads it (see SetArgumentsWith pairing-contract guard)");
+    static_assert(set == SetArgumentsWith::Object, "CurrentArguments arm is uninstantiated: its sizer must write the t_llintVarargs*Echo pair before varargsSetup reloads it");
     LLINT_BEGIN_NO_SET_PC();
 
     // This needs to:
@@ -2501,57 +2465,21 @@ static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* p
     auto& metadata = bytecode.metadata(codeBlock);
     JSValue calleeAsValue = getOperand(callFrame, bytecode.m_callee);
 
-    auto& primitives = vm.group3Primitives(); // Same-thread reload of the size_frame slow call's per-lite store (U-T1).
-    // Snapshot the racing per-lite storage ONCE, before the echo check below,
-    // and consume only the snapshot afterwards. The setup calls below must
-    // not re-read primitives.varargsLength: a cross-thread trample landing
-    // between the RELEASE_ASSERT and the setup call would otherwise feed an
-    // unvalidated length into loadVarargs against the validated calleeFrame,
-    // bypassing the fail-stop. A plain load would NOT guarantee this: under
-    // the data-race-free assumption the compiler is licensed to
-    // rematerialize a non-atomic load at the use sites after the
-    // RELEASE_ASSERT (nothing between the snapshot and the setup call is an
-    // opaque barrier). The relaxed atomic loads pin exactly one load each,
-    // so the values consumed below are the values the echo check validated.
+    // Snapshot the per-lite pair once with relaxed atomic loads so the values
+    // the GIL-off cross-check below validates are the values consumed by the
+    // setup call; a plain load could be rematerialized after the check.
+    auto& primitives = vm.group3Primitives();
     CallFrame* calleeFrame = WTF::atomicLoad(&primitives.newCallFrameReturnValue, std::memory_order_relaxed);
     unsigned varargsLength = WTF::atomicLoad(&primitives.varargsLength, std::memory_order_relaxed);
     unsigned argumentCountIncludingThis = varargsLength + 1;
-    // UNGIL §A.1.3(3) / SPEC-vmstate §6.4(3) pairing invariant (U-T1): the
-    // size_frame_for_varargs slow call's per-lite {varargsLength,
-    // newCallFrameReturnValue} store and this reload run on the SAME thread
-    // within ONE bytecode and MUST resolve the same Group-3 storage. By
-    // construction they cannot diverge (group3Primitives() inputs —
-    // gilOffProcess byte, vm.m_gilOff, lite->vm, t_currentVMLite — are all
-    // immutable/unchanged across the paired slow calls; no install/uninstall
-    // point exists between them). The stored value itself also cannot be
-    // null/wild by value flow: calleeFrameForVarargs subtracts at most
-    // ~2^32 registers from a live callFrame (SIGNATURES.md 2026-06-11d). A
-    // mismatching reload therefore means the pair was TRAMPLED in storage
-    // (the W>=16 A2 face: collateral cross-thread wild-write corruption of
-    // the victim lite's primitives block, A1-root family) — fail-stop with
-    // a self-identifying signature instead of wild writes downstream.
-    // Echo check: recompute the callee frame from the (trusted) bytecode
-    // operand and the snapshotted varargsLength; catches null, foreign-pair,
-    // and most partially-trampled faces. The former residual (a
-    // varargsLength-only trample within the same stackAlignmentRegisters
-    // rounding bucket passes this geometric check) is closed by the
-    // thread-local pair echo asserted below (A6 closure).
-    RELEASE_ASSERT(calleeFrame == calleeFrameForVarargs(callFrame, -bytecode.m_firstFree.offset(), argumentCountIncludingThis));
-    // A6 closure (UNGIL §A.1.3(3) U-T1): the geometric echo above has a
-    // documented blind spot — a varargsLength-only trample within the same
-    // stackAlignmentRegisters rounding bucket recomputes the SAME calleeFrame
-    // and passes, silently building a frame whose argumentCount disagrees
-    // with what this thread sized; a host callee then reads that count
-    // unchecked (the A6 face: stringFromCharCode allocating from a garbage
-    // length). Compare the consumed snapshot against the true thread-local
-    // echo stored by the paired size_frame slow call on this thread: the
-    // pair is same-thread within one bytecode by construction, and the
-    // thread_local cannot be resolved through any lite/VM routing, so any
-    // mismatch is shared-storage corruption of the per-lite pair —
-    // fail-stop. Never-firing on a healthy tree (the A1-root is closed);
-    // defense-in-depth in the A2-hardening style, no assert weakened.
-    RELEASE_ASSERT(calleeFrame == t_llintVarargsCalleeFrameEcho);
-    RELEASE_ASSERT(varargsLength == t_llintVarargsLengthEcho);
+    if (vm.gilOff()) [[unlikely]] {
+        // The pair was stored by slow_path_size_frame_for_varargs on this thread
+        // within this bytecode; it can only diverge from the bytecode geometry
+        // or the thread-local echo if another thread trampled the lite block.
+        RELEASE_ASSERT(calleeFrame == calleeFrameForVarargs(callFrame, -bytecode.m_firstFree.offset(), argumentCountIncludingThis));
+        RELEASE_ASSERT(calleeFrame == t_llintVarargsCalleeFrameEcho);
+        RELEASE_ASSERT(varargsLength == t_llintVarargsLengthEcho);
+    }
     if constexpr (set == SetArgumentsWith::Object) {
         setupVarargsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), getOperand(callFrame, bytecode.m_arguments), bytecode.m_firstVarArg, varargsLength);
         LLINT_CALL_CHECK_EXCEPTION(globalObject);
@@ -3240,53 +3168,11 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_array_sort_comparator_return(CallFr
     auto opcodeIsSortCallSite = [](OpcodeID opcodeID) {
         return opcodeID == op_call || opcodeID == op_call_ignore_result || opcodeID == op_tail_call;
     };
-    UNUSED_VARIABLE(opcodeIsSortCallSite); // Release non-DFG builds only use it in the ASSERT below.
-#if ENABLE(DFG_JIT)
-    if (vm.gilOff()) [[unlikely]] {
-        // DW-1 (deepwater LEDGER row 1): GIL-off recovery-side validation of
-        // the sort-comparator OSR-exit pc-recovery contract. The stash side
-        // (operationCompileOSRExit -> recordSortComparatorOSRExitStashIfApplicable,
-        // which runs on every GIL-off DFG exit because the rel32 repatch is
-        // suppressed) recorded the (thread, caller baseline CodeBlock,
-        // CallSiteIndex) tuple reifyInlinedCallFrames stashed into this
-        // frame. Discriminators on violation:
-        //   - recovery codeBlock != stashed CodeBlock with matching bits =>
-        //     cross-thread CodeBlock replacement between stash and recovery;
-        //   - matching CodeBlock, differing bits => CallSiteIndex
-        //     stash/recovery routing fault (per-lite-vs-carrier family);
-        //   - stash thread uid != current uid (or unarmed) => the recovery
-        //     ran on a thread that never stashed (carrier mixup), or the
-        //     exit came from a tier whose stash side is not instrumented
-        //     (FTL exits reify through the same helper but compile through
-        //     operationCompileFTLOSRExit, which does not record).
-        // Release GIL-off today silently dispatches to the wrong pc
-        // (miscompilation-grade corruption); the RELEASE_ASSERT below turns
-        // that into a deterministic stop with the evidence attached. GIL-on
-        // (and flag-off) behavior is byte-identical: this whole block is
-        // mode-gated and the existing debug ASSERT below is unchanged.
-        auto& record = DFG::sortComparatorOSRExitStashRecord();
-        uint32_t recoveredBits = CallSiteIndex(bytecodeIndex).bits(); // Unstripped: a checkpoint bit here is itself a violation worth seeing.
-        bool opcodeIsCall = opcodeIsSortCallSite(pc->opcodeID());
-        bool stashMatches = !record.armed
-            || (record.expectedCallerBaselineCodeBlock == codeBlock && record.expectedCallSiteBits == recoveredBits && record.threadUid == Thread::currentSingleton().uid());
-        if (!opcodeIsCall || !stashMatches) [[unlikely]] {
-            dataLogLn("DW-1: sort-comparator OSR-exit pc-recovery contract violation:",
-                " threadUid=", Thread::currentSingleton().uid(),
-                " recoveryCodeBlock=", RawPointer(codeBlock),
-                " recoveryCallSiteBits=", recoveredBits,
-                " recoveryOpcode=", static_cast<unsigned>(pc->opcodeID()),
-                " stashArmed=", record.armed,
-                " stashThreadUid=", record.threadUid,
-                " stashDFGCodeBlock=", RawPointer(record.dfgCodeBlock),
-                " stashExpectedCallerBaselineCodeBlock=", RawPointer(record.expectedCallerBaselineCodeBlock),
-                " stashExpectedCallSiteBits=", record.expectedCallSiteBits,
-                " stashExitIndex=", record.exitIndex);
-            RELEASE_ASSERT(opcodeIsCall, static_cast<unsigned>(pc->opcodeID()), recoveredBits, std::bit_cast<uintptr_t>(codeBlock));
-        }
-        record.armed = false;
-    }
-#endif
-    ASSERT_UNUSED(pc, opcodeIsSortCallSite(pc->opcodeID()));
+    // GIL-off, a wrong recovery pc would otherwise dispatch silently into the
+    // middle of the caller; stop with the opcode and call site attached.
+    if (vm.gilOff()) [[unlikely]]
+        RELEASE_ASSERT(opcodeIsSortCallSite(pc->opcodeID()), static_cast<unsigned>(pc->opcodeID()), CallSiteIndex(bytecodeIndex).bits(), std::bit_cast<uintptr_t>(codeBlock));
+    ASSERT(opcodeIsSortCallSite(pc->opcodeID()));
     return dispatchToCurrentInstructionDuringExit(throwScope, codeBlock, pc);
 }
 

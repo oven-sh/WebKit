@@ -439,14 +439,33 @@ JSC_DEFINE_JIT_OPERATION(operationCreateThis, JSCell*, (JSGlobalObject* globalOb
             auto rareData = uncheckedDowncast<JSFunction>(constructor)->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacity);
             scope.releaseAssertNoException();
             ObjectAllocationProfileWithPrototype* allocationProfile = rareData->objectAllocationProfile();
-            Structure* structure = allocationProfile->structure();
-            result = constructEmptyObject(vm, structure);
-            if (structure->hasPolyProto()) {
-                JSObject* prototype = allocationProfile->prototype();
-                ASSERT(prototype == uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject));
-                result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
-                prototype->didBecomePrototype(vm);
-                ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
+            if (!vm.gilOff()) [[likely]] {
+                Structure* structure = allocationProfile->structure();
+                result = constructEmptyObject(vm, structure);
+                if (structure->hasPolyProto()) {
+                    JSObject* prototype = allocationProfile->prototype();
+                    ASSERT(prototype == uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject));
+                    result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
+                    prototype->didBecomePrototype(vm);
+                    ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
+                }
+            } else {
+                // GIL-off, a racing FunctionRareData::clear() can null the profile between the
+                // ensure above and these reads, and an initializer can be mid-publish, so only a
+                // pair keyed to the live .prototype is used; otherwise allocate from that
+                // prototype directly, which is what the uncached path below computes for a
+                // function with a data .prototype.
+                JSObject* prototype = nullptr;
+                JSObject* expectedPrototype = uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject);
+                if (Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
+                    result = constructEmptyObject(vm, structure);
+                    if (structure->hasPolyProto()) {
+                        result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
+                        prototype->didBecomePrototype(vm);
+                        ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
+                    }
+                } else
+                    result = constructEmptyObject(globalObject, expectedPrototype);
             }
         }
         OPERATION_RETURN(scope, result);
@@ -1316,7 +1335,22 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPopAndRecoverLength, EncodedJSValue, (JSG
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    array->butterfly()->setPublicLength(array->butterfly()->publicLength() + 1);
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        // The fast path decremented publicLength through the flat butterfly it
+        // loaded. A foreign flat->segmented conversion since then aliases that
+        // header slot in fragment 0, so the recovery goes through whichever
+        // regime the word holds now; the flat-only butterfly() accessor would
+        // decode a ButterflySpine as a Butterfly.
+        uint64_t word = array->taggedButterflyWord();
+        if (isSegmentedButterfly(word)) [[unlikely]] {
+            ButterflySpine* spine = butterflySpine(word);
+            setSegmentedPublicLength(spine, segmentedPublicLength(spine) + 1);
+        } else if (Butterfly* butterfly = untaggedButterfly(word))
+            butterfly->setPublicLength(butterfly->publicLength() + 1);
+    } else
+#endif
+        array->butterfly()->setPublicLength(array->butterfly()->publicLength() + 1);
 
     OPERATION_RETURN(scope, JSValue::encode(array->pop(globalObject)));
 }
@@ -2287,23 +2321,13 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpSearch, UCPUStrictInt32, (JSGlobalObject
     OPERATION_RETURN(scope, result ? toUCPUStrictInt32(result.start) : toUCPUStrictInt32(-1));
 }
 
-// M1-bigint-u64-fastpath, Layer (b): JIT-operation seam. The DFG/FTL HeapBigInt
-// arithmetic nodes lower to a callOperation into one of the operation*HeapBigInt
-// stubs below. For two non-negative single-digit operands (the overwhelmingly
-// hot case in scalebench pc1+2) we compute the result in registers and call
-// JSBigInt::createFromDigit() directly, skipping the out-of-line JSBigInt::*
-// dispatch, the inner *Impl ThrowScope, the HeapBigIntImpl wrapper, the
-// Vector<Digit,16> scratch and the tryCreateFromImpl memcpy. The
-// JITOperationPrologueCallFrameTracer is kept (GC safety). The outer
-// DECLARE_THROW_SCOPE is also kept because OPERATION_RETURN packages
-// scope.exception() into the ABI return tuple; in Release that scope is a
-// single VM& store and contributes nothing measurable.
-//
-// Correctness: createFromDigit RELEASE_ASSERTs on the (impossible-in-practice)
-// failure to allocate a <=32-byte cell, so this path never throws and the
-// returned exception slot is always null. The result digits are bit-identical
-// to what the general path would produce — see the per-op proofs in
-// JSBigInt.cpp. Not gilOff-gated: this is a general JSC speedup.
+// The operation*HeapBigInt stubs below compute two non-negative single-digit
+// operands in registers and allocate the result with JSBigInt::createFromDigit,
+// skipping the JSBigInt::* dispatch, the *Impl ThrowScope, the HeapBigIntImpl
+// wrapper and the scratch Vector of the general path. The result digits are
+// bit-identical to the general path's, and createFromDigit throws the same
+// OutOfMemoryError on allocation failure, which OPERATION_RETURN delivers through
+// scope.exception() exactly as for the general path. Independent of useJSThreads.
 static ALWAYS_INLINE bool bothNonNegativeSingleDigitHeapBigInt(JSBigInt* l, JSBigInt* r, JSBigInt::Digit& ld, JSBigInt::Digit& rd)
 {
     if (l->length() > 1 || r->length() > 1 || l->sign() || r->sign())
@@ -2327,8 +2351,8 @@ JSC_DEFINE_JIT_OPERATION(operationSubHeapBigInt, EncodedJSValue, (JSGlobalObject
         JSBigInt::Digit ld, rd;
         if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
             if (ld >= rd)
-                OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, ld - rd, 0, false)));
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, rd - ld, 0, true)));
+                OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld - rd, 0, false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, rd - ld, 0, true)));
         }
     }
 
@@ -2361,7 +2385,7 @@ JSC_DEFINE_JIT_OPERATION(operationMulHeapBigInt, EncodedJSValue, (JSGlobalObject
         JSBigInt::Digit ld, rd;
         if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
             UInt128 product = static_cast<UInt128>(ld) * static_cast<UInt128>(rd);
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, static_cast<JSBigInt::Digit>(product), static_cast<JSBigInt::Digit>(product >> 64), false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, static_cast<JSBigInt::Digit>(product), static_cast<JSBigInt::Digit>(product >> 64), false)));
         }
     }
 
@@ -2420,7 +2444,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitAndHeapBigInt, EncodedJSValue, (JSGlobalObj
     if constexpr (sizeof(JSBigInt::Digit) == 8) {
         JSBigInt::Digit ld, rd;
         if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]]
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, ld & rd, 0, false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld & rd, 0, false)));
     }
 
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bitwiseAnd(globalObject, leftOperand, rightOperand)));
@@ -2442,7 +2466,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitLShiftHeapBigInt, EncodedJSValue, (JSGlobal
             // rd in [0, 63]: result fits in two digits. rd >= 64 falls through
             // so the general path can produce wider results / range-check.
             UInt128 r = static_cast<UInt128>(ld) << static_cast<unsigned>(rd);
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, static_cast<JSBigInt::Digit>(r), static_cast<JSBigInt::Digit>(r >> 64), false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, static_cast<JSBigInt::Digit>(r), static_cast<JSBigInt::Digit>(r >> 64), false)));
         }
     }
 
@@ -2463,7 +2487,7 @@ JSC_DEFINE_JIT_OPERATION(operationAddHeapBigInt, EncodedJSValue, (JSGlobalObject
         JSBigInt::Digit ld, rd;
         if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
             UInt128 sum = static_cast<UInt128>(ld) + static_cast<UInt128>(rd);
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, static_cast<JSBigInt::Digit>(sum), static_cast<JSBigInt::Digit>(sum >> 64), false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, static_cast<JSBigInt::Digit>(sum), static_cast<JSBigInt::Digit>(sum >> 64), false)));
         }
     }
 
@@ -2486,7 +2510,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitRShiftHeapBigInt, EncodedJSValue, (JSGlobal
             // Non-negative >> non-negative is a plain logical shift; once the
             // whole digit is shifted out the result is exactly zero.
             JSBigInt::Digit q = rd >= JSBigInt::digitBits ? 0 : (ld >> static_cast<unsigned>(rd));
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, q, 0, false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, q, 0, false)));
         }
     }
 
@@ -2506,7 +2530,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitOrHeapBigInt, EncodedJSValue, (JSGlobalObje
     if constexpr (sizeof(JSBigInt::Digit) == 8) {
         JSBigInt::Digit ld, rd;
         if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]]
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, ld | rd, 0, false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld | rd, 0, false)));
     }
 
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bitwiseOr(globalObject, leftOperand, rightOperand)));
@@ -2525,7 +2549,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitXorHeapBigInt, EncodedJSValue, (JSGlobalObj
     if constexpr (sizeof(JSBigInt::Digit) == 8) {
         JSBigInt::Digit ld, rd;
         if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]]
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(vm, ld ^ rd, 0, false)));
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld ^ rd, 0, false)));
     }
 
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bitwiseXor(globalObject, leftOperand, rightOperand)));
@@ -7167,7 +7191,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerTierUpNowInLoop, void, (VM* vm
 
     bool inLoopHierarchy;
     {
-        Locker locker { jitCode->m_tierUpTriggersLock };
+        // Flag-off stays the unlocked single-mutator read; the key set is
+        // structurally immutable post-link either way.
+        std::optional<Locker<Lock>> threadsLocker;
+        if (Options::useJSThreads()) [[unlikely]]
+            threadsLocker.emplace(jitCode->m_tierUpTriggersLock);
         inLoopHierarchy = jitCode->tierUpInLoopHierarchy.contains(bytecodeIndex);
     }
     if (inLoopHierarchy)

@@ -794,11 +794,8 @@ public:
     // (choke-point rule, I14). Flag off they emit exactly today's single
     // loadPtr (I1). Returned jumps must be routed to the caller's slow /
     // fail path (the generic operation performs the access through the
-    // object-model's regime-aware C++ paths - the LLInt/Baseline
-    // instantiation of the R3 slow-path rule; the dedicated
-    // operationSegmentedButterfly* / operationSharedArrayStorage* shims in
-    // jit/ConcurrentButterflyOperations.h are the DFG/FTL tail-call form,
-    // Tasks 9/10).
+    // object-model's regime-aware C++ paths; no tier has dedicated
+    // segmented or shared-ArrayStorage operations).
     //
     // Frozen predicates (SPEC-jit section 5.5; OM section 2/3 + AS-rule):
     //   Read:  load tagged; top16 == 0xffff (segmented) => slow;

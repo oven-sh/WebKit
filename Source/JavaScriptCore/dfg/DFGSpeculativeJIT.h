@@ -1889,7 +1889,20 @@ public:
     }
 
     void emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure, GPRReg storageGPR, unsigned numElements, unsigned vectorLength);
-    
+
+    // A scratch buffer a node spills operands into ahead of an operation call.
+    // GIL-off the compiled code runs on every thread, so only a
+    // ScratchBufferRegistry index is baked and the current lite's buffer is
+    // resolved into a register at run time (`data` is null). Otherwise `data`
+    // is the constant address of the VM's shared buffer.
+    struct ScratchBufferAddress {
+        EncodedJSValue* data { nullptr };
+        unsigned bakedIndex { std::numeric_limits<unsigned>::max() };
+        bool isPerLite() const { return !data; }
+    };
+    ScratchBufferAddress scratchBufferAddress(size_t scratchSize);
+    void emitScratchBufferDataPointer(const ScratchBufferAddress&, GPRReg destGPR);
+
     void emitGetArgumentCount(InlineCallFrame*, GPRReg lengthGPR, bool includeThis = false);
     void emitGetArgumentCount(CodeOrigin, GPRReg lengthGPR, bool includeThis = false);
     void emitGetCallee(CodeOrigin, GPRReg calleeGPR);

@@ -4306,10 +4306,10 @@ ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decod
 ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& decoder, const CachedFunctionExecutable& cachedExecutable)
     : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
     , m_isGeneratedFromCache(true)
-    , m_hasCapturedVariables(false)
     , m_isCached(false)
     , m_features(0)
     , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
+    , m_hasCapturedVariables(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
 {

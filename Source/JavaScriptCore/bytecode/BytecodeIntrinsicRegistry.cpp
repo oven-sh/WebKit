@@ -37,7 +37,6 @@
 #include "JSAsyncDisposableStack.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncGenerator.h"
-#include "JSCConfig.h"
 #include "JSDisposableStack.h"
 #include "JSGenerator.h"
 #include "JSGlobalObject.h"
@@ -110,22 +109,11 @@ BytecodeIntrinsicRegistry::BytecodeIntrinsicRegistry(VM& vm)
     m_AsyncDisposableStackStateDisposed.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::State::Disposed)));
     m_InternalMicrotaskAsyncFromSyncIteratorContinue.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncFromSyncIteratorContinue)));
     m_InternalMicrotaskAsyncFromSyncIteratorDone.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncFromSyncIteratorDone)));
-    // SPEC-ungil §N.5 (r17 F5 mode-keyed lowering): builtins branch on this
-    // process-wide constant to pick the landed inline sequence (flag-off,
-    // GIL-on) vs the atomic claim host op (GIL-off). Derived from the
-    // FINALIZED Options, not the g_jscConfig.gilOffProcess byte: this
-    // registry is constructed early in the VM ctor, BEFORE the ctor reaches
-    // JSC::Config::finalize() which latches that byte (reading it here
-    // returns 0 for the first VM). Options::finalize() runs at the tail of
-    // JSC::initialize(), strictly before any VM exists, and the
-    // notifyOptionsChanged() latch (runtime/Options.cpp) forbids the
-    // derivation from flipping afterwards — so this is the same immutable
-    // process-wide value, available at registry-construction time. The
-    // derivation MUST stay identical to JSCConfig.h Config::finalize() and
-    // VM::isGILOffProcess().
-    bool gilOffProcess = Options::useJSThreads() && !Options::useThreadGIL()
-        && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
-    m_gilOffProcess.set(m_vm, jsBoolean(gilOffProcess));
+    // Builtins branch on this process-wide constant to pick the inline
+    // sequence (flag-off, GIL-on) vs the atomic claim host op (GIL-off). It is
+    // derived from the finalized Options, which cannot change once a VM exists,
+    // so the value is identical for every VM in the process.
+    m_gilOffProcess.set(m_vm, jsBoolean(VM::isGILOffProcess()));
 }
 
 std::optional<BytecodeIntrinsicRegistry::Entry> BytecodeIntrinsicRegistry::lookup(const Identifier& ident) const

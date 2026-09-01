@@ -776,7 +776,7 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
     int frameTopOffset = stackPointerOffsetFor(m_unlinkedCodeBlock) * sizeof(Register);
     addPtr(TrustedImm32(frameTopOffset), callFrameRegister, regT1);
     JumpList stackOverflow;
-    stackOverflow.append(branchPtrAgainstSoftStackLimit(*m_vm, Above, regT1)); // UNGIL §A.2.2 (AB-17): per-lite GIL-off; unsigned, matching the landed AbsoluteAddress form.
+    stackOverflow.append(branchPtrAgainstSoftStackLimit(*m_vm, GreaterThan, regT1));
 
     move(regT1, stackPointerRegister);
     checkStackPointerAlignment();

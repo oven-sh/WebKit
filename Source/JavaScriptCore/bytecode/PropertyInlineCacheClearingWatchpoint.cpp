@@ -77,7 +77,11 @@ void StructureTransitionPropertyInlineCacheClearingWatchpoint::fireInternal(VM& 
         m_key.object()->structure()->startWatchingPropertyForReplacements(vm, m_key.offset());
     }
 
-    m_key.object()->structure()->addTransitionWatchpoint(this);
+    if (!m_key.object()->structure()->addTransitionWatchpoint(this)) {
+        // Flag-on only: the new structure's set fired under us.
+        StringFireDetail detail("IC has been invalidated");
+        Ref { m_watchpointSet }->fireAll(vm, detail);
+    }
 }
 
 AdaptiveValuePropertyInlineCacheClearingWatchpoint::AdaptiveValuePropertyInlineCacheClearingWatchpoint(ClangVTableWorkaroundTag, WatchpointSet& watchpointSet)

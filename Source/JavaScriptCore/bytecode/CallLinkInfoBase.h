@@ -135,8 +135,8 @@ public:
     // the same incoming-calls sentinel lists the locked linkers mutate.
     // Out-of-line (CallLinkInfoBase.cpp) so this header needs no lock
     // includes; gilOff it takes CallLinkInfo::s_callLinkSerializationLock
-    // UNCONDITIONALLY (recursive — sweep can run from allocation inside a
-    // locked linker) and re-checks isOnList() under the lock: the caller's
+    // UNCONDITIONALLY (recursive; see its declaration for the nesting it
+    // admits) and re-checks isOnList() under the lock: the caller's
     // unlocked read may be stale against an in-flight drain. Most-derived
     // destructors with member teardown the drain can touch (~CallLinkInfo,
     // ~DirectCallLinkInfo, ~CachedCall, ~MicrotaskCall) must call this (or
