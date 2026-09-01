@@ -161,6 +161,7 @@ bool Thread::establishHandle(NewThreadContext& data, StackAllocationSpecificatio
     HANDLE threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
     if (!threadHandle) {
         LOG_ERROR("Failed to create thread at entry point %p with data %p: %ld", wtfThreadEntryPoint, &data, errno);
+        m_handle = INVALID_HANDLE_VALUE; // ~Thread closes any other value.
         return false;
     }
     establishPlatformSpecificHandle(threadHandle, threadIdentifier);

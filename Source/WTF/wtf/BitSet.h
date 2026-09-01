@@ -44,13 +44,14 @@ public:
 
     static_assert(sizeof(WordType) <= sizeof(UCPURegister), "WordType must not be bigger than the CPU atomic word size");
 
-    // TSAN (JSC GIL-off, family gc-marking-residual): a BitSet embedded in a
-    // concurrently published object (e.g. IsoCellSet per-block bits) can have
-    // its words read via concurrentGet() by another thread as soon as the
-    // owning object is published. Zero-initialize via relaxed atomic stores so
-    // construction is well-defined against concurrent relaxed readers; the
-    // publication hand-off itself is fence-ordered by the publishing code.
-    // Codegen for the runtime path is identical to plain stores.
+    // A BitSet embedded in a concurrently published object (e.g. IsoCellSet
+    // per-block bits) can have its words read via concurrentGet() by another
+    // thread as soon as the owner is published. Under TSAN the words are zeroed
+    // with relaxed atomic stores so the sanitizer sees the construction as
+    // well-defined against those readers. Relaxed atomic stores are never
+    // merged, vectorized or dead-store-eliminated, so the non-TSAN build keeps
+    // the aggregate zero-initialization and its original codegen.
+#if TSAN_ENABLED
     constexpr BitSet()
     {
         if (std::is_constant_evaluated()) {
@@ -61,6 +62,9 @@ public:
                 atomicStore(&bits[i], static_cast<WordType>(0), std::memory_order_relaxed);
         }
     }
+#else
+    constexpr BitSet() = default;
+#endif
 
     static constexpr size_t size()
     {
@@ -177,10 +181,12 @@ private:
     // a 64 bit unsigned int would give 0xffff8000
     static constexpr WordType one = 1;
 
-    // Not brace-initialized: the default constructor above zeroes the words
-    // (with relaxed atomic stores at runtime); a plain aggregate zero-init
-    // here would reintroduce the racy plain writes the constructor avoids.
+#if TSAN_ENABLED
+    // Zeroed by the default constructor's relaxed atomic stores.
     std::array<WordType, words> bits;
+#else
+    std::array<WordType, words> bits { };
+#endif
 };
 
 template<size_t bitSetSize, typename WordType>

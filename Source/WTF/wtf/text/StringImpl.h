@@ -149,12 +149,12 @@ struct StringStats {
 
 #endif
 
-// Process-global shared-atom-table latch (SPEC-vmstate §4). Defined in
-// AtomStringTable.cpp; set exactly once by WTF::enableSharedAtomStringTable()
-// and immutable after. The canonical accessor is sharedAtomStringTableEnabled()
+// Process-global shared-atom-table latch. Defined in SharedAtomStringTable.cpp;
+// set exactly once by WTF::enableSharedAtomStringTable() and immutable after.
+// The canonical accessor is sharedAtomStringTableEnabled()
 // (SharedAtomStringTable.h); the variable is redeclared here so the deref()
-// fast path can read the latch inline (relaxed load, SPEC-vmstate F4) without
-// pulling the table header into this very hot header.
+// fast path can read the latch inline (relaxed load) without pulling the
+// table header into this very hot header.
 WTF_EXPORT_PRIVATE extern std::atomic<bool> g_sharedAtomStringTableEnabled;
 
 class STRING_IMPL_ALIGNMENT StringImplShape  {
@@ -180,13 +180,15 @@ protected:
         const char* m_data8Char;
         const char16_t* m_data16Char;
     };
-    // SPEC-vmstate §4.5: atomic so concurrent flag publication (setIsAtom()
-    // under a shared-atom-table shard lock, lazy setHash(), cost reporting) is
+    // Atomic so concurrent flag publication (setIsAtom() under a
+    // shared-atom-table shard lock, lazy setHash(), cost reporting) is
     // well-defined when the process-global shared atom-string table is enabled.
-    // All accesses are relaxed. Plain stores are permitted only on provably
-    // unpublished strings (constructors, translator pre-insert); flag mutations
+    // All accesses are relaxed. With the shared table enabled, flag mutations
     // on possibly-published strings MUST use idempotent fetch_or/fetch_and so
-    // racing writers never drop each other's bits.
+    // racing writers never drop each other's bits; plain stores are permitted
+    // only on provably unpublished strings (constructors, translator
+    // pre-insert). With the shared table disabled a string is owned by one
+    // thread and the mutators keep the legacy load/modify/store.
     mutable std::atomic<unsigned> m_hashAndFlags;
 
     unsigned hashAndFlags() const { return m_hashAndFlags.load(std::memory_order_relaxed); }
@@ -1254,15 +1256,20 @@ inline size_t StringImpl::cost() const
     // We ensure this by pre-setting the s_hashFlagDidReportCost bit in all instances of
     // StaticStringImpl. As a result, StaticStringImpl instances will always return a cost of
     // 0 here and avoid modifying m_hashAndFlags.
-    if (hashAndFlags() & s_hashFlagDidReportCost)
+    unsigned flags = hashAndFlags();
+    if (flags & s_hashFlagDidReportCost)
         return 0;
 
-    // fetch_or: possibly published (SPEC-vmstate §4.5). A racing pair may both
-    // report the cost (benign, same as the pre-atomic code), but neither can
-    // drop a concurrently published flag bit.
-    m_hashAndFlags.fetch_or(s_hashFlagDidReportCost, std::memory_order_relaxed);
+    // Shared-atom-table mode: the string may be published, so use fetch_or. A
+    // racing pair may both report the cost (benign), but neither can drop a
+    // concurrently published flag bit. Legacy mode: the string is owned by
+    // this thread and the plain store is the pre-atomic path.
+    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]]
+        m_hashAndFlags.fetch_or(s_hashFlagDidReportCost, std::memory_order_relaxed);
+    else
+        m_hashAndFlags.store(flags | s_hashFlagDidReportCost, std::memory_order_relaxed);
     size_t result = length();
-    if (!is8Bit())
+    if (!(flags & s_hashFlag8BitBuffer))
         result <<= 1;
     return result;
 }
@@ -1288,13 +1295,23 @@ inline void StringImpl::setIsAtom(bool isAtom)
 {
     ASSERT(!isStatic());
     ASSERT(!isSymbol());
-    // SPEC-vmstate §4.5: RMW because the string may already be published
-    // (e.g. setIsAtom(true) under a shared-atom-table shard lock while another
-    // thread lazily publishes the hash via setHash()).
+    // Shared-atom-table mode: RMW because the string may already be published
+    // (e.g. setIsAtom(true) under a shard lock while another thread lazily
+    // publishes the hash via setHash()). Legacy mode: the string is owned by
+    // this thread and the plain store is the pre-atomic path.
+    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]] {
+        if (isAtom)
+            m_hashAndFlags.fetch_or(s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
+        else
+            m_hashAndFlags.fetch_and(~s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
+        return;
+    }
+    unsigned flags = hashAndFlags();
     if (isAtom)
-        m_hashAndFlags.fetch_or(s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
+        flags |= s_hashFlagStringKindIsAtom;
     else
-        m_hashAndFlags.fetch_and(~s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
+        flags &= ~s_hashFlagStringKindIsAtom;
+    m_hashAndFlags.store(flags, std::memory_order_relaxed);
 }
 
 inline void StringImpl::setHash(unsigned hash) const
@@ -1311,12 +1328,18 @@ inline void StringImpl::setHash(unsigned hash) const
     hash <<= s_flagCount;
     ASSERT(hash); // Verify that 0 is a valid sentinel hash value.
 
-    // SPEC-vmstate §4.5: lazy-hash publication may race with itself (every
-    // writer computes the identical hash from the immutable characters, so
-    // fetch_or is value-idempotent) and with concurrent flag publication
+    // Shared-atom-table mode: lazy-hash publication may race with itself
+    // (every writer computes the identical hash from the immutable characters,
+    // so fetch_or is value-idempotent) and with concurrent flag publication
     // (fetch_or never drops flag bits a racing writer just set; a plain
-    // read-modify-write would). Store hash with flags in low bits.
-    unsigned old = m_hashAndFlags.fetch_or(hash, std::memory_order_relaxed);
+    // read-modify-write would). Legacy mode: the string is owned by this
+    // thread and the plain store is the pre-atomic path. Store hash with
+    // flags in low bits.
+    unsigned old = hashAndFlags();
+    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]]
+        old = m_hashAndFlags.fetch_or(hash, std::memory_order_relaxed);
+    else
+        m_hashAndFlags.store(old | hash, std::memory_order_relaxed);
     // If a racing setHash() got here first, it must have stored the same hash.
     ASSERT_UNUSED(old, !(old & ~s_flagMask) || (old & ~s_flagMask) == hash);
 }

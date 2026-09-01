@@ -134,9 +134,11 @@ public:
     static dispatch_qos_class_t dispatchQOSClass(QOS);
 #endif
 
-    // Returns nullptr if thread creation failed.
+    // create() treats a failure to create the platform thread as fatal; tryCreate()
+    // returns nullptr instead (e.g. when the process has hit its thread limit).
     // The thread name must be a literal since on some platforms it's passed in to the thread.
     WTF_EXPORT_PRIVATE static Ref<Thread> create(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
+    WTF_EXPORT_PRIVATE static RefPtr<Thread> tryCreate(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
 
     // Returns Thread object.
     static Thread& currentSingleton();
@@ -379,16 +381,16 @@ protected:
 
     bool m_isRealtime : 1 { false };
 
-    // Dedicated bytes (the TSAN header-side pass recorded in
-    // Tools/tsan/suppressions.txt Part A item 5): cross-thread writers
-    // (didExit on thread teardown, registerJSThread) must not byte-RMW the
-    // packed bit-field run above while lock-free readers probe these flags;
-    // all accesses are relaxed atomics on the dedicated bytes.
+    // Dedicated bytes, kept out of the bit-field run above. m_didExit is stored
+    // by the exiting thread and read through hasExited() by join()/detach()/
+    // signal() on other threads, all under m_mutex. The owning thread stores
+    // m_isJSThread, m_gcThreadType and the bits above (exchangeIsCompilationThread,
+    // destructTLS) without m_mutex; a flag sharing m_didExit's byte would make
+    // each such store a byte-wide read-modify-write racing those locked reads,
+    // e.g. AutomaticThread::start() detaching a thread whose threadDidStart()
+    // calls registerGCThread().
     bool m_didExit { false };
     bool m_isJSThread { false };
-
-    // Stored outside the bit-field run: registerGCThread() must not byte-RMW
-    // the flag byte shared with m_isShuttingDown / m_didExit / m_isJSThread.
     Atomic<uint8_t> m_gcThreadType { static_cast<uint8_t>(GCThreadType::None) };
 
     // Lock & ParkingLot rely on ThreadSpecific. But Thread object can be destroyed even after ThreadSpecific things are destroyed.
