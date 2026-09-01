@@ -114,8 +114,9 @@ namespace JSC {
 // Construction included: the ValueProfileBase constructor initializes the bucket and
 // prediction words via those relaxed helpers, so appending a profile to the holder's
 // ConcurrentVector never performs a plain store to a word a compiler thread reads
-// atomically. m_operand and m_key are written once at profile creation (under the
-// holder's ConcurrentJSLock) and immutable afterwards.
+// atomically. m_operand and m_key are written once at profile creation by the OSR
+// exit compiler (the holder's only appender, serialized across threads by the DFG/FTL
+// OSRExitGenerationLocker when gilOff) and immutable afterwards.
 struct LazyOperandValueProfile : public MinimalValueProfile {
     LazyOperandValueProfile()
         : MinimalValueProfile()

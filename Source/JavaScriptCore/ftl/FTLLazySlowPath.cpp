@@ -79,8 +79,14 @@ void LazySlowPath::generate(CodeBlock* codeBlock)
     // T8: instead of re-acquiring ftlLazySlowPathGenerationLock on every such
     // traversal, release-publish the tagged code pointer here so the
     // operation's lock-free acquire-load fast path observes a fully
-    // constructed stub (write-once double-checked publication). GIL-on keeps
-    // the repatch byte-for-byte and never touches m_stubCodePtr.
+    // constructed stub (write-once double-checked publication). The
+    // release/acquire pair covers the data side only: the LinkBuffer cache
+    // flush above invalidated the i-cache lines, but its ISB synchronized
+    // this PE alone, so every consumer that did not generate the stub
+    // issues its own context synchronization (crossModifyingCodeFence in
+    // operationCompileFTLLazySlowPath, ISB in the thin thunk prefix) before
+    // executing it. GIL-on keeps the repatch byte-for-byte and never touches
+    // m_stubCodePtr.
     if (!codeBlock->vm().gilOff()) [[likely]]
         MacroAssembler::repatchJump(m_patchableJump, CodeLocationLabel<JITStubRoutinePtrTag>(m_stub.code()));
     else

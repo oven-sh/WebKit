@@ -43,7 +43,9 @@ public:
 
     void initialize(const ObjectPropertyCondition&, CodeBlock*);
 
-    void install(VM&);
+    // False (flag-on only) when the structure's transition set fired between
+    // the caller's watchability check and the link; nothing is linked then.
+    bool install(VM&);
 
     void fireInternal(VM&, const FireDetail&);
 

@@ -88,8 +88,7 @@ static bool attemptToWatch(CodeBlock* codeBlock, WatchpointSet& set, CodeBlockJe
         ConcurrentJSLocker locker(codeBlock->m_lock);
         watchpoint.initialize(codeBlock);
     }
-    set.add(&watchpoint);
-    return true;
+    return set.add(&watchpoint);
 }
 
 bool JITData::tryInitialize(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode)

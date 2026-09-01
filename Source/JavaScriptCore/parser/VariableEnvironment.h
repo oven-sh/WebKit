@@ -26,12 +26,15 @@
 #pragma once
 
 #include "Identifier.h"
+#include <atomic>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/InlineMap.h>
 #include <wtf/IteratorRange.h>
+#include <wtf/Lock.h>
 #include <wtf/PackedRefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 namespace JSC {
 
@@ -362,6 +365,14 @@ public:
 
     static void sortCompact(Compact&);
 
+    // An interned environment is shared by every executable compiled in its scope, on any
+    // thread. Inflation rewrites m_variables in place and publishes m_isInflated afterwards
+    // with release order, so a reader that observes isInflated() may use the (thereafter
+    // immutable) inflated set without a lock. Every other access to m_variables -- the
+    // inflation itself, operator== and the compact form -- runs under the lock of the
+    // CompactTDZEnvironmentMap that interned the environment.
+    bool isInflated() const { return m_isInflated.load(std::memory_order_acquire); }
+
     // Defined in VariableEnvironmentInlines.h.
     TDZEnvironment& toTDZEnvironment() const;
 
@@ -370,6 +381,7 @@ private:
     TDZEnvironment& toTDZEnvironmentSlow() const;
 
     mutable Variables m_variables;
+    mutable std::atomic<bool> m_isInflated { false };
     unsigned m_hash;
 };
 
@@ -434,7 +446,12 @@ template<> struct HashTraits<JSC::CompactTDZEnvironmentKey> : GenericHashTraits<
 
 namespace JSC {
 
-class CompactTDZEnvironmentMap : public RefCounted<CompactTDZEnvironmentMap> {
+// The VM's interning table for TDZ environments. It is shared by every thread of the VM:
+// codegen on any thread interns into it, and a Handle dies wherever its owning executable
+// is swept, which with shared-heap threads is whichever thread refilled an allocator. The
+// refcounts of the map and of TDZEnvironmentLink are therefore atomic, and m_lock
+// serializes the table and the lazy inflation of the environments it interns.
+class CompactTDZEnvironmentMap : public ThreadSafeRefCounted<CompactTDZEnvironmentMap> {
 public:
     class Handle {
         friend class CachedCompactTDZEnvironmentMapHandle;
@@ -459,10 +476,7 @@ public:
 
         explicit operator bool() const { return !!m_map; }
 
-        const CompactTDZEnvironment& environment() const
-        {
-            return *m_environment;
-        }
+        bool contains(UniquedStringImpl*) const;
 
     private:
         void swap(Handle& other)
@@ -483,10 +497,13 @@ private:
 
     Handle get(CompactTDZEnvironment*, bool& isNewEntry);
 
+    // Leaf lock: nothing but malloc runs under it, so it is safe to take from cell destructors
+    // running inside the sweep, and a holder never parks inside it.
+    Lock m_lock;
     UncheckedKeyHashMap<CompactTDZEnvironmentKey, unsigned> m_map;
 };
 
-class TDZEnvironmentLink : public RefCounted<TDZEnvironmentLink> {
+class TDZEnvironmentLink : public ThreadSafeRefCounted<TDZEnvironmentLink> {
     // Defined in VariableEnvironmentInlines.h.
     TDZEnvironmentLink(CompactTDZEnvironmentMap::Handle handle, RefPtr<TDZEnvironmentLink> parent);
 

@@ -47,17 +47,26 @@ void AdaptiveInferredPropertyValueWatchpointBase::initialize(const ObjectPropert
     RELEASE_ASSERT(key.kind() == PropertyCondition::Equivalence);
 }
 
-void AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
+bool AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
 {
     ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges)); // This is really costly.
 
     Structure* structure = m_key.object()->structure();
 
-    structure->addTransitionWatchpoint(&m_structureWatchpoint);
+    if (!structure->addTransitionWatchpoint(&m_structureWatchpoint))
+        return false;
 
     PropertyOffset offset = structure->get(vm, m_key.uid());
     WatchpointSet* set = structure->propertyReplacementWatchpointSet(offset);
-    set->add(&m_propertyWatchpoint);
+    if (set->add(&m_propertyWatchpoint))
+        return true;
+
+    // Flag-on only: the replacement set fired between the two links. Leave
+    // nothing linked, so a refused install never leaves a half-armed pair.
+    Locker locker { g_watchpointMembershipLock };
+    if (m_structureWatchpoint.isOnList())
+        m_structureWatchpoint.remove();
+    return false;
 }
 
 void AdaptiveInferredPropertyValueWatchpointBase::fire(VM& vm, const FireDetail& detail)
@@ -85,10 +94,9 @@ void AdaptiveInferredPropertyValueWatchpointBase::fire(VM& vm, const FireDetail&
     if (!isValid())
         return;
 
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
-        install(vm);
+    // A refused install (flag-on: a set fired under us) is a failed adaptation.
+    if (m_key.isWatchable(PropertyCondition::EnsureWatchability) && install(vm))
         return;
-    }
 
     handleFire(vm, detail);
 }
