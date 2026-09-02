@@ -965,13 +965,13 @@ CONCURRENT_SAFE void VMManager::requestStopAllInternal(StopReason reason)
             // park hook (release heap access). Without this, a GC
             // requested during a non-GC stop hangs the §10.4 barrier.
             if (reason == StopReason::GC) [[unlikely]] {
-                iterateVMs(scopedLambda<IteratorCallback>([&] (VM& vm) {
+                iterateVMs([&] (VM& vm) {
                     if (vm.isEntered()) {
                         vm.requestStop();
                         WTF::storeLoadFence();
                     }
                     return IterationStatus::Continue;
-                }));
+                });
                 m_worldConditionVariable.notifyAll();
             }
             return;

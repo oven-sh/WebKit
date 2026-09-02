@@ -139,7 +139,6 @@ inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, si
         return nullptr;
     Butterfly* result = fromBase(base, preCapacity, propertyCapacity);
     if (hasIndexingHeader) {
-#if USE(JSVALUE64)
         // TSAN-TRIAGE §3.15 (butterfly-words): a fresh butterfly is
         // pre-publication, but auxiliary memory is recycled and the spec's
         // stale-tolerant readers (M5/C4 re-dispatch paths) may still issue
@@ -148,9 +147,6 @@ inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, si
         // defined; codegen-identical to the plain copy, flag-off unchanged.
         static_assert(sizeof(IndexingHeader) == sizeof(uint64_t));
         butterflyConcurrentStore(std::bit_cast<uint64_t*>(result->indexingHeader()), std::bit_cast<uint64_t>(indexingHeader));
-#else
-        *result->indexingHeader() = indexingHeader;
-#endif
     }
     // Use memcpy since this butterfly is not tied to any object yet.
     memset(result->propertyStorage() - propertyCapacity, 0, propertyCapacity * sizeof(EncodedJSValue));

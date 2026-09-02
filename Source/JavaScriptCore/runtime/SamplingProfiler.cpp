@@ -991,7 +991,9 @@ String SamplingProfiler::StackFrame::url()
 Vector<SamplingProfiler::StackTrace> SamplingProfiler::releaseStackTraces()
 {
     ASSERT(m_lock.isLocked());
-    {
+    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
+    // and a heap iteration on a shared heap needs the world stopped for every client.
+    if (!m_vm.gilOff()) {
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
@@ -1112,7 +1114,9 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
     DeferGC deferGC(m_vm);
     Locker locker { m_lock };
 
-    {
+    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
+    // and a heap iteration on a shared heap needs the world stopped for every client.
+    if (!m_vm.gilOff()) {
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
@@ -1257,7 +1261,9 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
     Locker locker { m_lock };
     DeferGCForAWhile deferGC(m_vm);
 
-    {
+    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
+    // and a heap iteration on a shared heap needs the world stopped for every client.
+    if (!m_vm.gilOff()) {
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
@@ -1323,7 +1329,9 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
     Locker locker { m_lock };
     DeferGCForAWhile deferGC(m_vm);
 
-    {
+    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
+    // and a heap iteration on a shared heap needs the world stopped for every client.
+    if (!m_vm.gilOff()) {
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }

@@ -1844,7 +1844,7 @@ Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* obje
         // lock here; the impl acquires JSCellLock then m_lock INSIDE the stop
         // (lock spans are bounded and never held across a safepoint - O2 - so
         // no stopped mutator can be parked while holding them).
-        jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+        jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
             // The caller's isDictionary() / object->structure() == this checks
             // ran before the stop was requested. GIL-off, a racing flattener
             // can have won its own stop first (leaving this structure
@@ -1998,7 +1998,6 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
         // If the object had a Butterfly but after flattening/compacting we no longer have need of it,
         // we need to zero it out because the collector depends on the Structure to know the size for copying.
         if (!afterOutOfLineCapacity && !this->hasIndexingHeader(object)) {
-#if USE(JSVALUE64)
             if (Options::useJSThreads()) [[unlikely]] {
                 // r47 manifest-7 audit escape #3 (SCALEBENCH §47): we are
                 // world-stopped + cell-locked here (asserted above), so the
@@ -2013,7 +2012,6 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
                 word->store(0, std::memory_order_seq_cst);
                 vm.writeBarrier(object);
             } else
-#endif
                 object->setButterfly(vm, nullptr);
         }
         // If the object was down-sized to the point where the base of the Butterfly is no longer within the
@@ -2133,7 +2131,7 @@ void Structure::fireTTLWatchpointSetsAfterPinning(VM& vm, const Structure* sourc
     // Called with NO §6-ranked lock held (the pin call sites' Locker temporaries
     // have been destroyed) - GT11 caller contract for the veneer. Pre-M4 the
     // stub runs the closure inline under the GIL.
-    jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+    jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
         fireTransitionThreadLocal(vm, "F3: pinned-table transition from a structure with fired thread-locality sets");
     }));
 }

@@ -346,8 +346,9 @@ public:
     }
 
     bool hasVector() const { return !!vectorCagedConcurrently().getUnsafe(); }
-    void* vector() const LIFETIME_BOUND { return vectorCagedConcurrently().getMayBeNull(); }
-    void* vectorWithoutPACValidation() const LIFETIME_BOUND { return vectorCagedConcurrently().getUnsafe(); }
+    // CagedPtr loads its word relaxed, so these are the same single load as vectorCagedConcurrently().
+    void* vector() const LIFETIME_BOUND { return m_vector.getMayBeNull(); }
+    void* vectorWithoutPACValidation() const LIFETIME_BOUND { return m_vector.getUnsafe(); }
 
     std::span<const uint8_t> span() const LIFETIME_BOUND { return { static_cast<const uint8_t*>(vector()), byteLength() }; }
     
@@ -448,7 +449,6 @@ inline JSArrayBufferView* validateTypedArray(JSGlobalObject*, JSValue);
 inline ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()
 {
     ASSERT(isWastefulTypedArray(m_mode));
-#if USE(JSVALUE64)
     // r47-002 (FUZZ.md §47): pair with slowDownAndWasteMemory's
     // storeStoreFence before the m_mode flip - the caller's relaxed
     // m_mode==Wasteful (or any hasArrayBuffer()) observation must order
@@ -479,7 +479,6 @@ inline ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()
         }
         return untaggedButterfly(word)->indexingHeader()->arrayBuffer();
     }
-#endif
     return butterfly()->indexingHeader()->arrayBuffer();
 }
 

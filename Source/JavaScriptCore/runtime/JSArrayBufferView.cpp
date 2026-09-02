@@ -295,7 +295,6 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     VM& vm = heap->vm();
     DeferGCForAWhile deferGC(vm);
 
-#if USE(JSVALUE64)
     // Flag-on form; the legacy block below stays byte-identical for flag-off.
     // The wastage transition gives the view an IndexingHeader (its
     // ArrayBuffer*), so it dispatches on the tagged butterfly word:
@@ -430,7 +429,6 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
         heap->addReference(this, buffer.get());
         return buffer.unsafeGet();
     }
-#endif
 
     RELEASE_ASSERT(!hasIndexingHeader());
     Structure* structure = this->structure();
