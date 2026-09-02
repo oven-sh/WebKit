@@ -30,9 +30,15 @@
 
 namespace JSC {
 
-class JSAsyncFunctionGenerator final : public JSInternalFieldObjectImpl<5> {
+#if USE(BUN_JSC_ADDITIONS)
+static constexpr unsigned jsAsyncFunctionGeneratorNumberOfInternalFields = 6;
+#else
+static constexpr unsigned jsAsyncFunctionGeneratorNumberOfInternalFields = 5;
+#endif
+
+class JSAsyncFunctionGenerator final : public JSInternalFieldObjectImpl<jsAsyncFunctionGeneratorNumberOfInternalFields> {
 public:
-    using Base = JSInternalFieldObjectImpl<5>;
+    using Base = JSInternalFieldObjectImpl<jsAsyncFunctionGeneratorNumberOfInternalFields>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -52,8 +58,14 @@ public:
         This,
         Frame,
         Context,
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun async context (AsyncLocalStorage) captured at the most recent await and
+        // restored when the function resumes. A suspended async function has exactly one
+        // outstanding await, so one slot replaces a per-await InternalFieldTuple.
+        AsyncContext,
+#endif
     };
-    static_assert(numberOfInternalFields == 5);
+    static_assert(numberOfInternalFields == jsAsyncFunctionGeneratorNumberOfInternalFields);
     static_assert(static_cast<uint32_t>(Field::State) == static_cast<uint32_t>(JSGenerator::Field::State));
     static_assert(static_cast<uint32_t>(Field::Next) == static_cast<uint32_t>(JSGenerator::Field::Next));
     static_assert(static_cast<uint32_t>(Field::This) == static_cast<uint32_t>(JSGenerator::Field::This));
@@ -67,6 +79,9 @@ public:
             jsUndefined(),
             jsUndefined(),
             jsUndefined(),
+#if USE(BUN_JSC_ADDITIONS)
+            jsUndefined(),
+#endif
         } };
     }
 
@@ -107,6 +122,18 @@ public:
     {
         return Base::internalField(static_cast<unsigned>(Field::Context)).get();
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue asyncContext() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::AsyncContext)).get();
+    }
+
+    void setAsyncContext(VM& vm, JSValue value)
+    {
+        Base::internalField(static_cast<unsigned>(Field::AsyncContext)).set(vm, this, value);
+    }
+#endif
 
     DECLARE_EXPORT_INFO;
 

@@ -121,7 +121,7 @@ public:
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    static JSFullPromiseReaction* create(VM&, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next);
+    static JSFullPromiseReaction* create(VM&, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next, InternalMicrotask = InternalMicrotask::None);
 
     JSValue onFulfilled() const { return m_onFulfilled.get(); }
     JSValue onRejected() const { return m_onRejected.get(); }
@@ -133,8 +133,8 @@ public:
 
 
 private:
-    JSFullPromiseReaction(VM& vm, Structure* structure, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next)
-        : Base(vm, structure, promise, next, static_cast<uint8_t>(InternalMicrotask::None))
+    JSFullPromiseReaction(VM& vm, Structure* structure, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next, InternalMicrotask task)
+        : Base(vm, structure, promise, next, static_cast<uint8_t>(task))
         , m_onFulfilled(onFulfilled, WriteBarrierEarlyInit)
         , m_onRejected(onRejected, WriteBarrierEarlyInit)
         , m_context(context, WriteBarrierEarlyInit)

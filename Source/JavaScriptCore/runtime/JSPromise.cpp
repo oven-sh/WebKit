@@ -375,8 +375,10 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
     bool rejectedCallable = onRejected.isCallable();
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Capture async context for promise reaction as [userContext (undefined), asyncContext].
-    JSValue context = AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, jsUndefined());
+    // Capture Bun's async context for the reaction. It travels as the reaction's context with the
+    // PromiseReactionJobWithAsyncContext tag so no [userContext, asyncContext] tuple is allocated.
+    JSValue context = AsyncContextSwapScope::current(globalObject);
+    InternalMicrotask reactionJob = context.isUndefined() ? InternalMicrotask::PromiseReactionJob : InternalMicrotask::PromiseReactionJobWithAsyncContext;
 #endif
 
     switch (status()) {
@@ -405,7 +407,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             reaction = JSFullPromiseReaction::create(vm, promiseOrCapability,
                 fulfilledCallable ? onFulfilled : jsUndefined(),
                 rejectedCallable ? onRejected : jsUndefined(),
-                context, existing);
+                context, existing, InternalMicrotask::PromiseReactionJobWithAsyncContext);
         } else
 #endif
         if (onlyFulfill)
@@ -426,7 +428,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
         if (rejectedCallable)
 #if USE(BUN_JSC_ADDITIONS)
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
+            globalObject->queueMicrotask(vm, reactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
 #else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
@@ -439,7 +441,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
         JSValue settled = settlementValue();
         if (fulfilledCallable)
 #if USE(BUN_JSC_ADDITIONS)
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
+            globalObject->queueMicrotask(vm, reactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
 #else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled);
 #endif
@@ -948,6 +950,10 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 break;
             }
             JSValue context = fullReaction->context();
+            if (fullReaction->internalMicrotask() == InternalMicrotask::PromiseReactionJobWithAsyncContext) {
+                globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJobWithAsyncContext, static_cast<uint8_t>(status), promise, handler, arg, context);
+                return;
+            }
             if (!context.isUndefinedOrNull()) {
                 globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg, context);
                 return;
@@ -995,10 +1001,10 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
 void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* globalObject, VM& vm, JSValue resolution, InternalMicrotask task, JSValue context)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // Capture Bun's async context at the point of await and wrap it with the generator context.
-    // This allows AsyncFunctionResume and related microtasks to restore the async context when
-    // resuming the async function.
-    JSValue wrappedContext = AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, context);
+    // Capture Bun's async context at the point of await so AsyncFunctionResume and related
+    // microtasks restore it when resuming. For async (generator) functions this is a store into
+    // the generator; other drivers get an InternalFieldTuple [driver, asyncContext].
+    JSValue wrappedContext = AsyncContextSwapScope::captureForAwait(vm, globalObject, context);
 #define BUN_CONTEXT wrappedContext
 #else
 #define BUN_CONTEXT context

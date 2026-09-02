@@ -91,6 +91,7 @@ enum class InternalMicrotask : uint8_t {
 #if USE(BUN_JSC_ADDITIONS)
     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
     BunInvokeJobWithArguments, // Invoke job function with up to 4 arguments
+    PromiseReactionJobWithAsyncContext, // PromiseReactionJob whose trailing argument is Bun's async context rather than a user context
 #endif
 };
 
