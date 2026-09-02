@@ -30,6 +30,7 @@
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "CodeBlock.h"
+#include "CyclicModuleRecord.h"
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHasher.h>
 #include "JSLexicalEnvironment.h"
@@ -423,6 +424,114 @@ String JSScope::diagnoseImpossibleUndefinedVariable(JSGlobalObject* globalObject
                 SymbolTable* symbolTable = importedEnvironment->symbolTable();
                 ConcurrentJSLocker locker(symbolTable->m_lock);
                 out.append(",xsym="_s, symbolTable->contains(locker, resolution.localName.impl()) ? 1 : 0);
+            }
+        }
+    }
+    if (out.isEmpty())
+        return { };
+    out.append(']');
+    return out.toString();
+}
+
+// The value a TDZ check saw was empty. If the text it read is an import (or a module-scope binding) of a module environment on
+// the chain, look at the slot the binding resolves to now: a non-empty slot means the read produced a wrong value; an empty slot in
+// a module that finished evaluating without error means the environment was damaged. Ordinary TDZ (a `let` read before its
+// declaration ran, a binding of a module still evaluating in a cycle) prints nothing.
+String JSScope::diagnoseImpossibleTDZ(JSGlobalObject* globalObject, JSScope* start, StringView name, CodeBlock* codeBlock)
+{
+    if (!start || name.isEmpty() || name.length() > 64)
+        return { };
+    VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferScope(vm);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (catchScope.exception())
+        return { };
+
+    // What the slot of `key` in `environment` holds now: 0 empty, 1 a value, 8 no such symbol table entry, 9 no environment.
+    auto slotState = [&](JSModuleEnvironment* environment, UniquedStringImpl* key) -> unsigned {
+        if (!environment)
+            return 9;
+        SymbolTable* symbolTable = environment->symbolTable();
+        ScopeOffset offset;
+        {
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            auto iter = symbolTable->find(locker, key);
+            if (iter == symbolTable->end(locker))
+                return 8;
+            offset = iter->value.scopeOffset();
+        }
+        if (!environment->isValidScopeOffset(offset))
+            return 8;
+        return environment->variableAt(offset).get() ? 1 : 0;
+    };
+    auto recordState = [&](AbstractModuleRecord* record) -> unsigned {
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(record);
+        if (!cyclic)
+            return 9;
+        unsigned status = static_cast<unsigned>(cyclic->status());
+        return cyclic->evaluationError() ? 10 + status : status;
+    };
+    constexpr unsigned evaluated = static_cast<unsigned>(CyclicModuleRecord::Status::Evaluated);
+
+    StringBuilder out;
+    unsigned depth = 0;
+    for (JSScope* scope = start; scope; scope = scope->next(), ++depth) {
+        if (scope->type() != ModuleEnvironmentType)
+            continue;
+        auto* environment = uncheckedDowncast<JSModuleEnvironment>(scope);
+        AbstractModuleRecord* record = environment->moduleRecord();
+        if (!record)
+            continue;
+
+        // An import whose local name has this text.
+        for (auto& pair : record->importEntries()) {
+            if (!pair.key || StringView(pair.key.get()) != name)
+                continue;
+            const auto& entry = pair.value;
+            AbstractModuleRecord* exporter = record->hostResolveImportedModule(globalObject, entry.moduleRequest, entry.moduleRequestType);
+            unsigned exporterState = exporter ? recordState(exporter) : 99;
+            AbstractModuleRecord::Resolution resolution = AbstractModuleRecord::Resolution::notFound();
+            if (exporter) {
+                resolution = record->resolveImport(globalObject, Identifier::fromUid(vm, pair.key.get()));
+                if (catchScope.exception()) {
+                    catchScope.clearException();
+                    resolution = AbstractModuleRecord::Resolution::error();
+                }
+            }
+            unsigned slot = 9;
+            unsigned targetState = 99;
+            if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved && resolution.moduleRecord) {
+                slot = slotState(resolution.moduleRecord->moduleEnvironmentMayBeNull(), resolution.localName.impl());
+                targetState = recordState(resolution.moduleRecord);
+            }
+            bool impossible = slot == 1 || (slot == 0 && targetState == evaluated);
+            if (!impossible)
+                continue;
+            if (out.isEmpty())
+                out.append(" [bun-diag tdz jt="_s, codeBlock ? static_cast<unsigned>(codeBlock->jitType()) : 9u);
+            out.append(" env"_s, std::min(depth, 9u), ":imp res="_s, static_cast<unsigned>(resolution.type), " slot="_s, slot, " xst="_s, std::min(exporterState, 99u), " tst="_s, std::min(targetState, 99u), " self="_s, resolution.moduleRecord == record ? 1 : 0);
+        }
+        // A module-scope binding of this module with this text.
+        {
+            RefPtr<UniquedStringImpl> key;
+            {
+                SymbolTable* symbolTable = environment->symbolTable();
+                ConcurrentJSLocker locker(symbolTable->m_lock);
+                for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter) {
+                    if (iter->key && StringView(iter->key.get()) == name) {
+                        key = iter->key;
+                        break;
+                    }
+                }
+            }
+            if (key) {
+                unsigned slot = slotState(environment, key.get());
+                unsigned state = recordState(record);
+                if (slot == 1 || (slot == 0 && state == evaluated)) {
+                    if (out.isEmpty())
+                        out.append(" [bun-diag tdz jt="_s, codeBlock ? static_cast<unsigned>(codeBlock->jitType()) : 9u);
+                    out.append(" env"_s, std::min(depth, 9u), ":own slot="_s, slot, " st="_s, std::min(state, 99u), " atom="_s, key->isAtom() ? 1 : 0);
+                }
             }
         }
     }

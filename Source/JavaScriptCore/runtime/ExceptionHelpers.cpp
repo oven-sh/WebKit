@@ -76,7 +76,7 @@ JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Ident
     if (diagnosis.isNull())
         return createUndefinedVariableError(globalObject, ident);
     String message = tryMakeString(ident.string(), " is not defined"_s, diagnosis);
-    if (!message) [[unlikely]]
+    if (message.isNull()) [[unlikely]]
         return createUndefinedVariableError(globalObject, ident);
     return createReferenceError(globalObject, message);
 }
