@@ -659,6 +659,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, dumpJITMemoryPath, nullptr, Restricted, nullptr) \
     v(Double, dumpJITMemoryFlushInterval, 10, Restricted, "Maximum time in between flushes of the JIT memory dump in seconds."_s) \
     v(Bool, useUnlinkedCodeBlockJettisoning, false, Normal, "If true, UnlinkedCodeBlock can be jettisoned."_s) \
+    v(Bool, crashOnMisalignedMark, true, Normal, "Crash, naming the holder, when the marker is handed a pointer that is not the start of a cell in its MarkedBlock (a stale reference) instead of marking it and corrupting the block."_s) \
     v(Bool, forceOSRExitToLLInt, false, Normal, "If true, we always exit to the LLInt. If false, we exit to whatever is most convenient."_s) \
     v(Unsigned, getByValICMaxNumberOfIdentifiers, 4, Normal, "Number of identifiers we see in the LLInt that could cause us to bail on generating an IC for get_by_val."_s) \
     v(Bool, useRandomizingExecutableIslandAllocation, false, Normal, "For the arm64 ExecutableAllocator, if true, select which region to use randomly. This is useful for testing that jump islands work."_s) \

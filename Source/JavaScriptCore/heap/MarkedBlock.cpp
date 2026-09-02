@@ -441,6 +441,10 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     size_t numberOfUnallocatableAtoms = numberOfPayloadAtoms % m_atomsPerCell;
     m_startAtom = firstPayloadRegionAtom + numberOfUnallocatableAtoms;
     ASSERT(m_startAtom < firstPayloadRegionAtom + m_atomsPerCell);
+#if USE(BUN_JSC_ADDITIONS)
+    blockHeader().m_startAtom = m_startAtom;
+    blockHeader().m_atomsPerCell = m_atomsPerCell;
+#endif
 
     m_attributes = directory->attributes();
 
@@ -465,6 +469,10 @@ void MarkedBlock::Handle::didRemoveFromDirectory()
     m_index = std::numeric_limits<unsigned>::max();
     m_directory = nullptr;
     blockHeader().m_subspace = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    blockHeader().m_startAtom = 0;
+    blockHeader().m_atomsPerCell = 0;
+#endif
 }
 
 #if ASSERT_ENABLED
