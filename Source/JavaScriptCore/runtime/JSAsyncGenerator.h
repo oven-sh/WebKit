@@ -224,6 +224,18 @@ public:
     void enqueue(VM&, JSValue value, int32_t resumeMode, JSObject* settlementTarget);
     JSObject* dequeue(VM&);
 
+    // The GIL-off forms of enqueue and dequeue, which serialize the queue on the cell lock. See
+    // JSAsyncGenerator.cpp for the protocol.
+    enum class GILOffEnqueueAction : uint8_t {
+        None, // Another thread is driving; it reaches this request.
+        SettleCompleted, // The generator is completed; the caller settles the request without queueing it.
+        Resume, // The request was queued and this thread drives: AsyncGeneratorResume.
+        AwaitReturn, // The request was queued, the state is now draining-queue, and this thread drives: AsyncGeneratorAwaitReturn.
+    };
+    GILOffEnqueueAction enqueueGILOff(VM&, JSValue value, int32_t resumeMode, JSObject* settlementTarget);
+    JSObject* dequeueGILOff(VM&);
+    bool retireIfQueueEmptyGILOff(int32_t settledState);
+
     DECLARE_EXPORT_INFO;
 
     DECLARE_VISIT_CHILDREN;
