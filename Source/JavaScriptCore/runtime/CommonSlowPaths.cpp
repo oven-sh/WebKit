@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CommonSlowPaths.h"
+#include "JSScope.h"
 
 #include "ArithProfile.h"
 #include "ArrayPrototypeInlines.h"
@@ -323,6 +324,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
 
         RefPtr provider = codeBlock->source().provider();
         auto ident = provider->getRange(expressionStart, expressionStop);
+#if USE(BUN_JSC_ADDITIONS)
+        String diagnosis = JSScope::diagnoseImpossibleTDZ(globalObject, callFrame->uncheckedR(codeBlock->scopeRegister()).Register::scope(), ident, codeBlock);
+        if (!diagnosis.isNull()) {
+            String message = tryMakeString("Cannot access '"_s, ident, "' before initialization."_s, diagnosis);
+            if (!message.isNull())
+                THROW(createReferenceError(globalObject, message));
+        }
+#endif
         THROW(createTDZError(globalObject, ident));
     }
 }

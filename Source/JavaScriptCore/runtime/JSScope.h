@@ -56,6 +56,14 @@ public:
     static JSObject* NODELETE objectAtScope(JSScope*);
 
     static JSObject* resolve(JSGlobalObject*, JSScope*, const Identifier&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Empty unless `ident` is unresolvable from `start` while a module environment on the chain declares or imports a
+    // binding with the same text: then a short description of which invariant is broken, for the ReferenceError's message.
+    static String diagnoseImpossibleUndefinedVariable(JSGlobalObject*, JSScope* start, const Identifier&, unsigned resolveType, CodeBlock*);
+    // Empty unless `name` (the source text of a TDZ-checked read) is an import or module-scope binding of a module environment on the
+    // chain whose slot is not empty now, or is empty although its module finished evaluating without error.
+    static String diagnoseImpossibleTDZ(JSGlobalObject*, JSScope* start, StringView name, CodeBlock*);
+#endif
     static JSValue resolveScopeForHoistingFuncDeclInEval(JSGlobalObject*, JSScope*, const Identifier&);
     static ResolveOp abstractResolve(JSGlobalObject*, size_t depthOffset, JSScope*, const Identifier&, GetOrPut, ResolveType, InitializationMode);
 

@@ -4652,8 +4652,13 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject*
 
     OPERATION_RETURN(scope, JSValue::encode(environment->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
-            if (getPutInfo.resolveMode() == ThrowIfNotFound)
+            if (getPutInfo.resolveMode() == ThrowIfNotFound) {
+#if USE(BUN_JSC_ADDITIONS)
+                throwException(globalObject, scope, createUndefinedVariableError(globalObject, ident, callFrame->uncheckedR(codeBlock->scopeRegister()).Register::scope(), static_cast<unsigned>(getPutInfo.resolveType()), codeBlock));
+#else
                 throwException(globalObject, scope, createUndefinedVariableError(globalObject, ident));
+#endif
+            }
             return jsUndefined();
         }
 

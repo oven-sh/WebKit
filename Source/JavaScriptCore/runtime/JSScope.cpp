@@ -29,6 +29,10 @@
 #include "AbstractModuleRecord.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
+#include "CodeBlock.h"
+#include "CyclicModuleRecord.h"
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringHasher.h>
 #include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
 #include "JSScopeInlines.h"
@@ -304,6 +308,239 @@ JSObject* JSScope::resolve(JSGlobalObject* globalObject, JSScope* scope, const I
     };
     return resolve(globalObject, scope, ident, predicate1, predicate2);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+static unsigned computedHashOf(const StringImpl* impl)
+{
+    return impl->is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(impl->span8()) : StringHasher::computeHashAndMaskTop8Bits(impl->span16());
+}
+
+String JSScope::diagnoseImpossibleUndefinedVariable(JSGlobalObject* globalObject, JSScope* start, const Identifier& ident, unsigned resolveType, CodeBlock* codeBlock)
+{
+    if (!start || ident.isNull() || ident.isSymbol())
+        return { };
+    VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferScope(vm);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (catchScope.exception())
+        return { };
+
+    StringBuilder out;
+    unsigned depth = 0;
+    for (JSScope* scope = start; scope; scope = scope->next(), ++depth) {
+        if (scope->type() != ModuleEnvironmentType)
+            continue;
+        auto* environment = uncheckedDowncast<JSModuleEnvironment>(scope);
+        AbstractModuleRecord* record = environment->moduleRecord();
+        if (!record)
+            continue;
+
+        // Does the record resolve the name right now (by pointer, as the engine does)? resolveImport() assumes the
+        // exporter is in [[LoadedModules]]; don't let a damaged record turn the diagnostic into a null dereference.
+        AbstractModuleRecord::Resolution resolution = AbstractModuleRecord::Resolution::notFound();
+        std::optional<AbstractModuleRecord::ImportEntry> importEntry = record->tryGetImportEntry(ident.impl());
+        AbstractModuleRecord* exporter = importEntry ? record->hostResolveImportedModule(globalObject, importEntry->moduleRequest, importEntry->moduleRequestType) : nullptr;
+        if (!importEntry || exporter) {
+            resolution = record->resolveImport(globalObject, ident);
+            if (catchScope.exception()) {
+                catchScope.clearException();
+                resolution = AbstractModuleRecord::Resolution::error();
+            }
+        }
+        // Is there an import entry / symbol table entry whose key has the same text but is a different StringImpl?
+        const UniquedStringImpl* textEqualImportKey = nullptr;
+        bool pointerEqualImportKey = false; // found by linear scan: if the hash lookup then misses, the table or the key's hash word is damaged
+        unsigned iteratedImportEntries = 0; // != importEntries().size() means the map's inline header (in the record cell) is damaged
+        for (auto& pair : record->importEntries()) {
+            ++iteratedImportEntries;
+            if (pair.key.get() == ident.impl())
+                pointerEqualImportKey = true;
+            else if (pair.key && WTF::equal(pair.key.get(), ident.impl()))
+                textEqualImportKey = pair.key.get();
+        }
+        bool hashLookupFindsImportKey = !!importEntry;
+        bool symbolTableHasPointer = false;
+        const UniquedStringImpl* textEqualSymbolKey = nullptr;
+        {
+            SymbolTable* symbolTable = environment->symbolTable();
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            symbolTableHasPointer = symbolTable->contains(locker, ident.impl());
+            if (!symbolTableHasPointer) {
+                for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter) {
+                    if (iter->key && WTF::equal(iter->key.get(), ident.impl())) {
+                        textEqualSymbolKey = iter->key.get();
+                        break;
+                    }
+                }
+            }
+        }
+
+        bool impossible = resolution.type == AbstractModuleRecord::Resolution::Type::Resolved || textEqualImportKey || pointerEqualImportKey || hashLookupFindsImportKey || symbolTableHasPointer || textEqualSymbolKey;
+        if (!impossible)
+            continue;
+
+        if (out.isEmpty()) {
+            SUPPRESS_UNCOUNTED_LOCAL auto* impl = ident.impl();
+            RefPtr<AtomStringImpl> tableAtom = impl->is8Bit() ? AtomStringImpl::lookUp(impl->span8()) : AtomStringImpl::lookUp(impl->span16());
+            unsigned computedHash = computedHashOf(impl);
+            // Telemetry that only carries a hash of the message has to brute-force it back, so every field is a small
+            // enum: no counts, pointers or hashes.
+            out.append(" [bun-diag rt="_s, resolveType,
+                " jt="_s, codeBlock ? static_cast<unsigned>(codeBlock->jitType()) : 9u,
+                " atom="_s, impl->isAtom() ? 1 : 0,
+                " intable="_s, !tableAtom ? 0 : (tableAtom.get() == impl ? 1 : 2),
+                " rc="_s, impl->refCount() < 3 ? 0 : impl->refCount() < 20 ? 1 : 2,
+                " heq="_s, impl->isSymbol() || !impl->hasHash() ? 9 : (impl->existingHash() == computedHash ? 1 : 0),
+                " len="_s, std::min(impl->length(), 9u));
+        }
+        out.append(" env"_s, std::min(depth, 9u), ":imp="_s, static_cast<unsigned>(resolution.type),
+            ",hdr="_s, iteratedImportEntries == record->importEntries().size() ? 1 : 0,
+            ",ptrimp="_s, pointerEqualImportKey ? 1 : 0,
+            ",hashimp="_s, hashLookupFindsImportKey ? 1 : 0,
+            ",txtimp="_s, textEqualImportKey ? 1 : 0,
+            ",sym="_s, symbolTableHasPointer ? 1 : 0,
+            ",txtsym="_s, textEqualSymbolKey ? 1 : 0);
+        if (textEqualImportKey)
+            out.append(",ik_atom="_s, textEqualImportKey->isAtom() ? 1 : 0, ",ik_rc="_s, textEqualImportKey->refCount() < 3 ? 0 : textEqualImportKey->refCount() < 20 ? 1 : 2, ",ik_heq="_s, textEqualImportKey->isSymbol() || !textEqualImportKey->hasHash() ? 9 : (textEqualImportKey->existingHash() == computedHashOf(textEqualImportKey) ? 1 : 0));
+        if (importEntry && resolution.type != AbstractModuleRecord::Resolution::Type::Resolved) {
+            out.append(",exp="_s, exporter ? 1 : 0);
+            if (exporter) {
+                SUPPRESS_UNCOUNTED_LOCAL auto* importName = importEntry->importName.impl();
+                bool exportPtr = false;
+                bool exportTxt = false;
+                for (auto& pair : exporter->exportEntries()) {
+                    if (pair.key.get() == importName)
+                        exportPtr = true;
+                    else if (pair.key && importName && WTF::equal(pair.key.get(), importName))
+                        exportTxt = true;
+                }
+                out.append(",xptr="_s, exportPtr ? 1 : 0, ",xhash="_s, exporter->tryGetExportEntry(importName) ? 1 : 0, ",xtxt="_s, exportTxt ? 1 : 0, ",xenv="_s, exporter->moduleEnvironmentMayBeNull() ? 1 : 0);
+            }
+        }
+        if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved && resolution.moduleRecord) {
+            JSModuleEnvironment* importedEnvironment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
+            out.append(",xenv="_s, importedEnvironment ? 1 : 0);
+            if (importedEnvironment) {
+                SymbolTable* symbolTable = importedEnvironment->symbolTable();
+                ConcurrentJSLocker locker(symbolTable->m_lock);
+                out.append(",xsym="_s, symbolTable->contains(locker, resolution.localName.impl()) ? 1 : 0);
+            }
+        }
+    }
+    if (out.isEmpty())
+        return { };
+    out.append(']');
+    return out.toString();
+}
+
+// The value a TDZ check saw was empty. If the text it read is an import (or a module-scope binding) of a module environment on
+// the chain, look at the slot the binding resolves to now: a non-empty slot means the read produced a wrong value; an empty slot in
+// a module that finished evaluating without error means the environment was damaged. Ordinary TDZ (a `let` read before its
+// declaration ran, a binding of a module still evaluating in a cycle) prints nothing.
+String JSScope::diagnoseImpossibleTDZ(JSGlobalObject* globalObject, JSScope* start, StringView name, CodeBlock* codeBlock)
+{
+    if (!start || name.isEmpty() || name.length() > 64)
+        return { };
+    VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferScope(vm);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (catchScope.exception())
+        return { };
+
+    // What the slot of `key` in `environment` holds now: 0 empty, 1 a value, 8 no such symbol table entry, 9 no environment.
+    auto slotState = [&](JSModuleEnvironment* environment, UniquedStringImpl* key) -> unsigned {
+        if (!environment)
+            return 9;
+        SymbolTable* symbolTable = environment->symbolTable();
+        ScopeOffset offset;
+        {
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            auto iter = symbolTable->find(locker, key);
+            if (iter == symbolTable->end(locker))
+                return 8;
+            offset = iter->value.scopeOffset();
+        }
+        if (!environment->isValidScopeOffset(offset))
+            return 8;
+        return environment->variableAt(offset).get() ? 1 : 0;
+    };
+    auto recordState = [&](AbstractModuleRecord* record) -> unsigned {
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(record);
+        if (!cyclic)
+            return 9;
+        unsigned status = static_cast<unsigned>(cyclic->status());
+        return cyclic->evaluationError() ? 10 + status : status;
+    };
+    constexpr unsigned evaluated = static_cast<unsigned>(CyclicModuleRecord::Status::Evaluated);
+
+    StringBuilder out;
+    unsigned depth = 0;
+    for (JSScope* scope = start; scope; scope = scope->next(), ++depth) {
+        if (scope->type() != ModuleEnvironmentType)
+            continue;
+        auto* environment = uncheckedDowncast<JSModuleEnvironment>(scope);
+        AbstractModuleRecord* record = environment->moduleRecord();
+        if (!record)
+            continue;
+
+        // An import whose local name has this text.
+        for (auto& pair : record->importEntries()) {
+            if (!pair.key || StringView(pair.key.get()) != name)
+                continue;
+            const auto& entry = pair.value;
+            AbstractModuleRecord* exporter = record->hostResolveImportedModule(globalObject, entry.moduleRequest, entry.moduleRequestType);
+            unsigned exporterState = exporter ? recordState(exporter) : 99;
+            AbstractModuleRecord::Resolution resolution = AbstractModuleRecord::Resolution::notFound();
+            if (exporter) {
+                resolution = record->resolveImport(globalObject, Identifier::fromUid(vm, pair.key.get()));
+                if (catchScope.exception()) {
+                    catchScope.clearException();
+                    resolution = AbstractModuleRecord::Resolution::error();
+                }
+            }
+            unsigned slot = 9;
+            unsigned targetState = 99;
+            if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved && resolution.moduleRecord) {
+                slot = slotState(resolution.moduleRecord->moduleEnvironmentMayBeNull(), resolution.localName.impl());
+                targetState = recordState(resolution.moduleRecord);
+            }
+            bool impossible = slot == 1 || (slot == 0 && targetState == evaluated);
+            if (!impossible)
+                continue;
+            if (out.isEmpty())
+                out.append(" [bun-diag tdz jt="_s, codeBlock ? static_cast<unsigned>(codeBlock->jitType()) : 9u);
+            out.append(" env"_s, std::min(depth, 9u), ":imp res="_s, static_cast<unsigned>(resolution.type), " slot="_s, slot, " xst="_s, std::min(exporterState, 99u), " tst="_s, std::min(targetState, 99u), " self="_s, resolution.moduleRecord == record ? 1 : 0);
+        }
+        // A module-scope binding of this module with this text.
+        {
+            RefPtr<UniquedStringImpl> key;
+            {
+                SymbolTable* symbolTable = environment->symbolTable();
+                ConcurrentJSLocker locker(symbolTable->m_lock);
+                for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter) {
+                    if (iter->key && StringView(iter->key.get()) == name) {
+                        key = iter->key;
+                        break;
+                    }
+                }
+            }
+            if (key) {
+                unsigned slot = slotState(environment, key.get());
+                unsigned state = recordState(record);
+                if (slot == 1 || (slot == 0 && state == evaluated)) {
+                    if (out.isEmpty())
+                        out.append(" [bun-diag tdz jt="_s, codeBlock ? static_cast<unsigned>(codeBlock->jitType()) : 9u);
+                    out.append(" env"_s, std::min(depth, 9u), ":own slot="_s, slot, " st="_s, std::min(state, 99u), " atom="_s, key->isAtom() ? 1 : 0);
+                }
+            }
+        }
+    }
+    if (out.isEmpty())
+        return { };
+    out.append(']');
+    return out.toString();
+}
+#endif
 
 ResolveOp JSScope::abstractResolve(JSGlobalObject* globalObject, size_t depthOffset, JSScope* scope, const Identifier& ident, GetOrPut getOrPut, ResolveType unlinkedType, InitializationMode initializationMode)
 {

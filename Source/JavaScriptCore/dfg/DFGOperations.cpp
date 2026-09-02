@@ -5972,8 +5972,13 @@ JSC_DEFINE_JIT_OPERATION(operationGetDynamicVar, EncodedJSValue, (JSGlobalObject
     OPERATION_RETURN(scope, JSValue::encode(jsScope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
             GetPutInfo getPutInfo(getPutInfoBits);
-            if (getPutInfo.resolveMode() == ThrowIfNotFound)
+            if (getPutInfo.resolveMode() == ThrowIfNotFound) {
+#if USE(BUN_JSC_ADDITIONS)
+                throwException(globalObject, scope, createUndefinedVariableError(globalObject, ident, callFrame->jsCallee() && callFrame->jsCallee()->inherits<JSFunction>() ? uncheckedDowncast<JSFunction>(callFrame->jsCallee())->scope() : dynamicDowncast<JSScope>(jsScope), static_cast<unsigned>(getPutInfo.resolveType()) | 0x100u, callFrame->codeBlock()));
+#else
                 throwException(globalObject, scope, createUndefinedVariableError(globalObject, ident));
+#endif
+            }
             return jsUndefined();
         }
 
