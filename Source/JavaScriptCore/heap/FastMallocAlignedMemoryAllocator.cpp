@@ -81,6 +81,23 @@ public:
         return Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount() && !VM::isInMiniMode();
     }
 
+    // Bringing up a VM takes a few dozen blocks, and a short program never asks for many more; for
+    // it the helper thread is only a thread to create, fault a supply on and tear down again at exit.
+    // So the provider stays dormant until the process has requested this many blocks. A heap that
+    // is ramping passes the threshold within its first milliseconds of allocation, and the helper
+    // then fills the supply to its full depth as it would have from the first request.
+    static bool isPastStartThreshold()
+    {
+        static std::atomic<bool> past { false };
+        static std::atomic<unsigned> requests { 0 };
+        if (past.load(std::memory_order_relaxed)) [[likely]]
+            return true;
+        if (requests.fetch_add(1, std::memory_order_relaxed) + 1 < Options::warmUpMarkedBlockStartAfterBlocks())
+            return false;
+        past.store(true, std::memory_order_relaxed);
+        return true;
+    }
+
     static WarmUpBlockProvider& singleton()
     {
         static LazyNeverDestroyed<WarmUpBlockProvider> provider;
@@ -261,7 +278,7 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 #else
     // MarkedBlock::tryCreate is the only caller today and always asks for a block-shaped region.
     // The guard keeps a future caller of some other size from being handed a block.
-    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && WarmUpBlockProvider::isEnabled()) {
+    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && WarmUpBlockProvider::isEnabled() && WarmUpBlockProvider::isPastStartThreshold()) {
         if (void* block = WarmUpBlockProvider::singleton().tryTake())
             return block;
     }
