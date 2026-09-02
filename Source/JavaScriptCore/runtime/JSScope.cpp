@@ -334,11 +334,17 @@ String JSScope::diagnoseImpossibleUndefinedVariable(JSGlobalObject* globalObject
         if (!record)
             continue;
 
-        // Does the record resolve the name right now (by pointer, as the engine does)?
-        AbstractModuleRecord::Resolution resolution = record->resolveImport(globalObject, ident);
-        if (catchScope.exception()) {
-            catchScope.clearException();
-            resolution = AbstractModuleRecord::Resolution::error();
+        // Does the record resolve the name right now (by pointer, as the engine does)? resolveImport() assumes the
+        // exporter is in [[LoadedModules]]; don't let a damaged record turn the diagnostic into a null dereference.
+        AbstractModuleRecord::Resolution resolution = AbstractModuleRecord::Resolution::notFound();
+        std::optional<AbstractModuleRecord::ImportEntry> importEntry = record->tryGetImportEntry(ident.impl());
+        AbstractModuleRecord* exporter = importEntry ? record->hostResolveImportedModule(globalObject, importEntry->moduleRequest, importEntry->moduleRequestType) : nullptr;
+        if (!importEntry || exporter) {
+            resolution = record->resolveImport(globalObject, ident);
+            if (catchScope.exception()) {
+                catchScope.clearException();
+                resolution = AbstractModuleRecord::Resolution::error();
+            }
         }
         // Is there an import entry / symbol table entry whose key has the same text but is a different StringImpl?
         const UniquedStringImpl* textEqualImportKey = nullptr;
@@ -351,7 +357,7 @@ String JSScope::diagnoseImpossibleUndefinedVariable(JSGlobalObject* globalObject
             else if (pair.key && WTF::equal(pair.key.get(), ident.impl()))
                 textEqualImportKey = pair.key.get();
         }
-        bool hashLookupFindsImportKey = !!record->tryGetImportEntry(ident.impl());
+        bool hashLookupFindsImportKey = !!importEntry;
         bool symbolTableHasPointer = false;
         const UniquedStringImpl* textEqualSymbolKey = nullptr;
         {
@@ -395,11 +401,10 @@ String JSScope::diagnoseImpossibleUndefinedVariable(JSGlobalObject* globalObject
             ",txtsym="_s, textEqualSymbolKey ? 1 : 0);
         if (textEqualImportKey)
             out.append(",ik_atom="_s, textEqualImportKey->isAtom() ? 1 : 0, ",ik_rc="_s, textEqualImportKey->refCount() < 3 ? 0 : textEqualImportKey->refCount() < 20 ? 1 : 2, ",ik_heq="_s, textEqualImportKey->isSymbol() || !textEqualImportKey->hasHash() ? 9 : (textEqualImportKey->existingHash() == computedHashOf(textEqualImportKey) ? 1 : 0));
-        if (auto entry = record->tryGetImportEntry(ident.impl()); entry && resolution.type != AbstractModuleRecord::Resolution::Type::Resolved) {
-            AbstractModuleRecord* exporter = record->hostResolveImportedModule(globalObject, entry->moduleRequest, entry->moduleRequestType);
+        if (importEntry && resolution.type != AbstractModuleRecord::Resolution::Type::Resolved) {
             out.append(",exp="_s, exporter ? 1 : 0);
             if (exporter) {
-                SUPPRESS_UNCOUNTED_LOCAL auto* importName = entry->importName.impl();
+                SUPPRESS_UNCOUNTED_LOCAL auto* importName = importEntry->importName.impl();
                 bool exportPtr = false;
                 bool exportTxt = false;
                 for (auto& pair : exporter->exportEntries()) {
