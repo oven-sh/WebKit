@@ -80,6 +80,17 @@ JSSlimPromiseReaction* JSSlimPromiseReaction::create(VM& vm, JSValue promise, In
     return result;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSSlimPromiseReaction* JSSlimPromiseReaction::createWithAsyncContext(VM& vm, JSValue asyncContext, InternalMicrotask task, JSValue context, JSPromiseReaction* next)
+{
+    ASSERT(task != InternalMicrotask::None);
+    ASSERT(!asyncContext.isEmpty() && !asyncContext.isUndefined());
+    JSSlimPromiseReaction* result = new (NotNull, allocateCell<JSSlimPromiseReaction>(vm)) JSSlimPromiseReaction(vm, vm.slimPromiseReactionStructure.get(), asyncContext, context, next, static_cast<uint8_t>(task), /* perCellBit */ true);
+    result->finishCreation(vm);
+    return result;
+}
+#endif
+
 JSSlimPromiseReaction* JSSlimPromiseReaction::createAsyncGeneratorRequest(VM& vm, JSValue settlementTarget, JSValue value, uint8_t resumeMode, JSPromiseReaction* next)
 {
     JSSlimPromiseReaction* result = new (NotNull, allocateCell<JSSlimPromiseReaction>(vm)) JSSlimPromiseReaction(vm, vm.slimPromiseReactionStructure.get(), settlementTarget, value, next, resumeMode, false);
@@ -113,6 +124,17 @@ JSFullPromiseReaction* JSFullPromiseReaction::create(VM& vm, JSValue promise, JS
     result->finishCreation(vm);
     return result;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSFullPromiseReaction* JSFullPromiseReaction::createWithAsyncContext(VM& vm, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue asyncContext, JSPromiseReaction* next)
+{
+    ASSERT(!asyncContext.isUndefined());
+    JSFullPromiseReaction* result = new (NotNull, allocateCell<JSFullPromiseReaction>(vm)) JSFullPromiseReaction(vm, vm.fullPromiseReactionStructure.get(), promise, onFulfilled, onRejected, asyncContext, next);
+    result->setPerCellBit(true);
+    result->finishCreation(vm);
+    return result;
+}
+#endif
 
 template<typename Visitor>
 void JSFullPromiseReaction::visitChildrenImpl(JSCell* cell, Visitor& visitor)

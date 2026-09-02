@@ -1216,7 +1216,7 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     size_t i = 0;
     while (i < tasks.size()) {
         auto t = tasks[i++];
-        std::array<const JSValue, maxMicrotaskArguments> args { { t.arg0, t.arg1, t.arg2, jsUndefined() } };
+        std::array<const JSValue, maxMicrotaskArguments> args { { t.arg0, t.arg1, t.arg2, t.arg3 } };
         runInternalMicrotask(globalObject, vm, t.task, t.payload, args);
         if (scope.exception()) [[unlikely]] {
             // The remaining entries are reactions that performPromiseThen…/

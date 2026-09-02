@@ -41,6 +41,7 @@
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
+#include "JSPromiseReaction.h"
 #endif
 #include "ObjectConstructor.h"
 #include "SyntheticModuleRecord.h"
@@ -1283,6 +1284,14 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
                 followPromiseOrDriver(iterator->target());
             break;
         }
+        case InternalMicrotask::PromiseFinallyReactionJob:
+        case InternalMicrotask::PromiseFinallyAwaitJob: {
+            // The context record holds the promise that .finally() returned.
+            JSCell* contextCell = cellOf(context);
+            if (auto* record = contextCell ? dynamicDowncast<JSSlimPromiseReaction>(contextCell) : nullptr)
+                follow(record->promise());
+            break;
+        }
         case InternalMicrotask::PromiseAllResolveJob:
         case InternalMicrotask::PromiseAllSettledResolveJob: {
             JSCell* contextCell = cellOf(cell);
@@ -1297,8 +1306,6 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
         case InternalMicrotask::PromiseResolveWithoutHandlerJob:
         case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
-        case InternalMicrotask::PromiseFinallyReactionJob:
-        case InternalMicrotask::PromiseFinallyAwaitJob:
         case InternalMicrotask::PromiseReactionJob:
         case InternalMicrotask::ModuleLoadStep:
         case InternalMicrotask::ModuleLoadTopSettled:

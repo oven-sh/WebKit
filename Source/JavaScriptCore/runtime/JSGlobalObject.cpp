@@ -3830,11 +3830,6 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
-{
-    queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
-}
-
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
     if (!m_ffiContext) [[unlikely]] {
