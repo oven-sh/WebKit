@@ -256,7 +256,7 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
-    JSValue result = retrieveArguments(vm, vm.topCallFrame, thisObj);
+    JSValue result = retrieveArguments(vm, vm.group3Primitives().topCallFrame, thisObj); // UNGIL §A.1.3 mode split.
     EXCEPTION_ASSERT(scope.exception() || result);
     return JSValue::encode(result);
 }
@@ -327,7 +327,7 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
-    JSValue caller = retrieveCallerFunction(vm, vm.topCallFrame, thisObj);
+    JSValue caller = retrieveCallerFunction(vm, vm.group3Primitives().topCallFrame, thisObj); // UNGIL §A.1.3 mode split.
     if (caller.isNull())
         return JSValue::encode(jsNull());
 

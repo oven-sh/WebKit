@@ -690,11 +690,21 @@ inline IterationStatus MarkedBlock::Handle::forEachMarkedCell(const Functor& fun
     if (areMarksStale)
         return IterationStatus::Continue;
     IterationStatus result = IterationStatus::Continue;
-    block.header().m_marks.forEachSetBit([&](size_t i) ALWAYS_INLINE_LAMBDA {
+    auto visit = [&](size_t i) ALWAYS_INLINE_LAMBDA {
         HeapCell* cell = reinterpret_cast_ptr<HeapCell*>(&m_block->atoms()[i]);
         result = functor(i, cell, kind);
         return result;
-    });
+    };
+#if TSAN_ENABLED
+    // Parallel markers CAS m_marks while the Output constraint walks it (as
+    // upstream does; the constraint runs again until nothing changes). Under
+    // TSAN, walk a copy made with relaxed loads, as specializedSweep does.
+    std::remove_cvref_t<decltype(block.header().m_marks)> marks;
+    marks.concurrentCopyFrom(block.header().m_marks);
+    marks.forEachSetBit(visit);
+#else
+    block.header().m_marks.forEachSetBit(visit);
+#endif
     return result;
 }
 

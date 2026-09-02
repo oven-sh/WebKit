@@ -35,6 +35,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/VectorTraits.h>
@@ -254,7 +255,9 @@ private:
     std::atomic<bool> m_value { false };
 };
 
-class MicrotaskQueue : public BasicRawSentinelNode<MicrotaskQueue>, public RefCounted<MicrotaskQueue> {
+// Thread safe: with threads, every global object of a VM refs the VM's default
+// queue, and threads create global objects (and the GC destroys them) at once.
+class MicrotaskQueue : public BasicRawSentinelNode<MicrotaskQueue>, public ThreadSafeRefCounted<MicrotaskQueue> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(MicrotaskQueue, JS_EXPORT_PRIVATE);
     WTF_MAKE_NONCOPYABLE(MicrotaskQueue);
 public:

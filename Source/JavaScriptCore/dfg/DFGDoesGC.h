@@ -34,6 +34,11 @@ struct Node;
 
 bool doesGC(Graph&, Node*);
 
+// doesGC() without its first question, whether clobberize() reports a write to
+// the heap: the answer that the node's kind and use kinds give. clobberize()
+// can call this one, and it cannot call doesGC(), which calls clobberize().
+bool doesGCIgnoringClobberize(Graph&, Node*);
+
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)

@@ -398,6 +398,7 @@ uint32_t segmentedVectorLength(ButterflySpine*);
 
 class JSObject;
 class JSObjectWithButterfly;
+class PropertyTable;
 class Structure;
 class VM;
 
@@ -611,7 +612,14 @@ JS_EXPORT_PRIVATE bool tryArrayStoragePropertyTransition(VM&, JSObjectWithButter
 // discipline (no nuke - the butterfly word is untouched; 8B-aligned, so legal
 // on PA cells too). Same false=RESTART contract as trySegmentedTransition.
 // inlineOffset == invalidOffset means no value store (pure reshape).
-JS_EXPORT_PRIVATE bool tryStructureOnlyTransition(VM&, JSObject*, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue);
+//
+// A dictionary source is edited in place, with no new StructureID, so a
+// newStructure planned from a copy of its table is stale after such an edit.
+// The caller then passes the table and its edit count as they were when it
+// planned (Structure::pinnedPropertyTableForConcurrentReadStamp,
+// PropertyTable::concurrentEditCount); a change under the cell lock is a
+// RESTART.
+JS_EXPORT_PRIVATE bool tryStructureOnlyTransition(VM&, JSObject*, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue, const PropertyTable* plannedTable = nullptr, uint32_t plannedEditCount = 0);
 
 // The try* cores above are the only entry into the transition protocol: a
 // racing transition that changes the SOURCE structure invalidates the

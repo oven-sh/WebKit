@@ -53,7 +53,7 @@ void cacheGlobalLexicalVar(CodeBlock* codeBlock, Metadata& metadata, JSGlobalLex
         offset = iter->value.scopeOffset();
     }
     ConcurrentJSLocker locker(codeBlock->m_lock);
-    metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
+    WTF::atomicStore(&metadata.m_getPutInfo, GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode()), std::memory_order_relaxed); // A Baseline compiler thread reads it.
     metadata.m_watchpointSet = watchpointSet;
     metadata.m_operand = reinterpret_cast<uintptr_t>(globalLexicalEnvironment->variableAt(offset).slot());
 }
@@ -81,7 +81,7 @@ inline void tryCachePutToScopeGlobal(
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
             ConcurrentJSLocker locker(codeBlock->m_lock);
-            metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
+            WTF::atomicStore(&metadata.m_getPutInfo, GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode()), std::memory_order_relaxed); // A Baseline compiler thread reads it.
             break;
         }
         [[fallthrough]];
@@ -148,7 +148,7 @@ inline void tryCacheGetFromScopeGlobal(
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
             ConcurrentJSLocker locker(codeBlock->m_lock);
-            metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
+            WTF::atomicStore(&metadata.m_getPutInfo, GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode()), std::memory_order_relaxed); // A Baseline compiler thread reads it.
             break;
         }
         [[fallthrough]];

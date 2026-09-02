@@ -149,6 +149,7 @@ public:
     static NodeIdentifier NODELETE getNextObjectIdentifier();
 
 private:
+    void dumpToStreamImpl(PrintStream&);
     static NodeIdentifier nextAvailableObjectIdentifier;
 
     // Finalized snapshots are not modified during building. So searching them

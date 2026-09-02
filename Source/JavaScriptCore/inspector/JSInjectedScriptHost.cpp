@@ -1020,6 +1020,34 @@ JSValue JSInjectedScriptHost::queryInstances(JSGlobalObject* globalObject, CallF
     JSArray* array = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
 
+    if (vm.gilOff()) [[unlikely]] {
+        // With the GIL off the heap walk runs with every other thread stopped,
+        // and the instance check can call into JS through a Proxy on the
+        // prototype chain. Collect the candidates in the walk and test them
+        // after the other threads resume.
+        MarkedVector<JSObject*> candidates;
+        vm.heap.runWithOtherClientsStopped([&] {
+            HeapIterationScope iterationScope(vm.heap);
+            vm.heap.objectSpace().forEachLiveCell(iterationScope, [&] (HeapCell* cell, HeapCell::Kind kind) {
+                if (isJSCellKind(kind)) {
+                    auto* jsCell = static_cast<JSCell*>(cell);
+                    if (jsCell->isObject() && !jsCell->inherits<ProxyObject>())
+                        candidates.append(asObject(jsCell));
+                }
+                return IterationStatus::Continue;
+            });
+        });
+        for (JSObject* candidate : candidates) {
+            bool isInstance = JSObject::defaultHasInstance(globalObject, candidate, prototype);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (isInstance) {
+                array->putDirectIndex(globalObject, array->length(), candidate);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+        }
+        return array;
+    }
+
     {
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, [&] (HeapCell* cell, HeapCell::Kind kind) {

@@ -29,6 +29,7 @@
 
 #include "BuiltinNames.h"
 #include "JSCJSValueInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "Parser.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -320,6 +321,9 @@ void BuiltinExecutables::clear()
     std::ranges::fill(m_unlinkedExecutables, nullptr);
 }
 
+// With the GIL off, several threads can ask for one builtin's executable at
+// once. The first one makes it under the compilation lock, which every parse
+// holds, and publishes it after it is complete.
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overrideName, length) \
 SourceCode BuiltinExecutables::name##Source() \
 {\
@@ -330,10 +334,16 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 {\
     unsigned index = static_cast<unsigned>(BuiltinCodeIndex::name);\
     if (!m_unlinkedExecutables[index]) {\
-        Identifier executableName = m_vm.propertyNames->builtinNames().functionName##PublicName();\
-        if (overrideName)\
-            executableName = Identifier::fromString(m_vm, overrideName);\
-        m_unlinkedExecutables[index] = createBuiltinExecutable(name##Source(), s_JSCBuiltinSourceMetadata[index], executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute);\
+        GILOffCompilationLocker compilationLocker(m_vm, m_vm.gilOffWithProcessGate());\
+        if (!m_unlinkedExecutables[index]) {\
+            Identifier executableName = m_vm.propertyNames->builtinNames().functionName##PublicName();\
+            if (overrideName)\
+                executableName = Identifier::fromString(m_vm, overrideName);\
+            UnlinkedFunctionExecutable* executable = createBuiltinExecutable(name##Source(), s_JSCBuiltinSourceMetadata[index], executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute);\
+            if (m_vm.gilOff())\
+                WTF::storeStoreFence();\
+            m_unlinkedExecutables[index] = executable;\
+        }\
     }\
     return m_unlinkedExecutables[index];\
 }

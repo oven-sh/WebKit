@@ -94,6 +94,10 @@ DEFINE_VISIT_CHILDREN(JSAsyncGenerator);
 // finds the generator settled with an empty queue drives it, and any other enqueuer leaves its
 // request to the driver, which finds it before it can retire. This is the spec's order, so a
 // request made on the driver's own thread during a settlement is queued exactly as the spec says.
+//
+// One store of a settled state is not made under the lock: the body's own bytecode stores the
+// suspend state at each yield. The body runs only while its request is at the head of the queue,
+// so an enqueuer that sees that state also sees a queue that is not empty, and does not drive.
 // The lock is never held across JS, a settlement or an allocation that can collect.
 static bool isSettledState(int32_t state)
 {

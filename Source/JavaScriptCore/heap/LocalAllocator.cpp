@@ -183,6 +183,12 @@ void LocalAllocator::stopAllocatingForGood()
     reset();
 }
 
+void LocalAllocator::stopAllocatingForClientTeardown()
+{
+    stopAllocating(MarkedBlock::Handle::StopAllocatingMode::Resumable);
+    reset();
+}
+
 void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     SuperSamplerScope superSamplerScope(false);
