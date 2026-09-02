@@ -153,10 +153,6 @@ enum class LinkTimeConstant : int32_t;
     macro(AsyncDisposableStackStateDisposed) \
     macro(InternalMicrotaskAsyncFromSyncIteratorContinue) \
     macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
-    macro(InternalMicrotaskAsyncGeneratorYieldAwaited) \
-    macro(InternalMicrotaskAsyncGeneratorBodyCallNormal) \
-    macro(InternalMicrotaskAsyncGeneratorBodyCallReturn) \
-    macro(InternalMicrotaskAsyncGeneratorResumeNext) \
     macro(gilOffProcess) \
 
 

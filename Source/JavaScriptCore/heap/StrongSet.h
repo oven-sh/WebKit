@@ -28,6 +28,7 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/StrongBlock.h>
 #include <wtf/HashCountedSet.h>
+#include <wtf/Lock.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -68,6 +69,12 @@ public:
     HandleSlot allocate();
     static void deallocate(HandleSlot);
 
+    // UNGIL §F.3: GIL-off, Strong allocate/free is cross-thread (AsyncTicket
+    // and thread-completion Strongs are created and dropped off the owning
+    // thread), so both go through m_gilOffLock. Set once by the VM ctor's
+    // designation block, before the VM is published; immutable after.
+    void noteOwnerVMDesignatedGILOff() { m_gilOff = true; }
+
     DECLARE_VISIT_AGGREGATE;
 
     // Runs with the JSLock held (see the class comment). The functor must not
@@ -89,6 +96,10 @@ public:
 
 private:
     JS_EXPORT_PRIVATE HandleSlot allocateSlow();
+    JS_EXPORT_PRIVATE HandleSlot allocateGILOff();
+    JS_EXPORT_PRIVATE void deallocateGILOff(HandleSlot);
+    HandleSlot allocateUnlocked();
+    static void deallocateUnlocked(HandleSlot);
     JS_EXPORT_PRIVATE void didFreeSlot(StrongBlock*, unsigned usedCount);
     void deallocateFromCurrentBlock(StrongBlock*, HandleSlot);
     void didBecomeEmpty(StrongBlock*);
@@ -122,6 +133,8 @@ private:
     StrongBlock* m_spareBlock { nullptr };
     unsigned m_blockCount { 0 };
     unsigned m_availabilityCount { 0 };
+    bool m_gilOff { false };
+    Lock m_gilOffLock;
 };
 
 inline StrongSet* StrongSet::setFor(HandleSlot slot)
@@ -147,6 +160,13 @@ inline HandleSlot StrongSet::tryAllocateFromCurrent()
 
 inline HandleSlot StrongSet::allocate()
 {
+    if (m_gilOff) [[unlikely]]
+        return allocateGILOff();
+    return allocateUnlocked();
+}
+
+inline HandleSlot StrongSet::allocateUnlocked()
+{
     if (HandleSlot slot = tryAllocateFromCurrent()) [[likely]]
         return slot;
     return allocateSlow();
@@ -158,6 +178,16 @@ inline HandleSlot StrongSet::allocate()
 // which is the whole reason the block carries an isCurrent() bit rather than the
 // set being asked to compare against m_currentBlock.
 inline void StrongSet::deallocate(HandleSlot slot)
+{
+    StrongSet* set = StrongBlock::blockFor(slot)->strongSet();
+    if (set->m_gilOff) [[unlikely]] {
+        set->deallocateGILOff(slot);
+        return;
+    }
+    deallocateUnlocked(slot);
+}
+
+inline void StrongSet::deallocateUnlocked(HandleSlot slot)
 {
     StrongBlock* block = StrongBlock::blockFor(slot);
     ASSERT(slot >= block->payload() && slot < block->payloadEnd());

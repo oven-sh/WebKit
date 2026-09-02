@@ -427,11 +427,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         ASSERT(g_jscConfig.gilOffProcess);
         if (heap.tryDesignateStickySharedServer()) {
             m_gilOff = true;
-            // FIXME(threads-rebase): upstream replaced HandleSet with StrongSet
-            // (slab allocator, JSLock-serialized). The §F.3 GIL-off Strong lock
-            // (m_strongLock, re-stamped here via noteOwnerVMDesignatedGILOff)
-            // has not been ported onto StrongSet yet; GIL-off Strong traffic
-            // from two threads currently races StrongSet's cursors.
+            // §F.3: the StrongSet is a Heap member built in the init list,
+            // before m_gilOff was known. Stamp it now, while the VM is still
+            // unpublished, so GIL-off Strong allocate/free take its lock.
+            heap.strongSet()->noteOwnerVMDesignatedGILOff();
             // U0c invariant check immediately before EVERY in-scope
             // noteSharedServerSticky() trigger (annex U0C). The second
             // trigger family — HeapClientSet::add's second-client site

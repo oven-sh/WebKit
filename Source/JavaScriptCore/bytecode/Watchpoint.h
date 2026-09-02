@@ -599,7 +599,7 @@ public:
     // Safe to call from another thread. Once inflated, the WatchpointSet never changes.
     WatchpointSet* inflatedSetConcurrently() const
     {
-        uintptr_t data = m_data;
+        uintptr_t data = m_data.loadRelaxed();
         if (isFat(data))
             return fat(data);
         return nullptr;

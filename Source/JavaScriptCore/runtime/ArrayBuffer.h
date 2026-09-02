@@ -303,6 +303,7 @@ public:
     // API user fetched m_contents directly from a TypedArray object, the buffer is backed by a
     // WebAssembly.Memory, or is a SharedArrayBuffer.
     inline void pinAndLock();
+    inline bool isLocked();
 
     void NODELETE makeWasmMemory();
     inline bool isWasmMemory();

@@ -49,6 +49,18 @@ StrongSet::StrongSet(VM& vm)
 {
 }
 
+HandleSlot StrongSet::allocateGILOff()
+{
+    Locker locker { m_gilOffLock };
+    return allocateUnlocked();
+}
+
+void StrongSet::deallocateGILOff(HandleSlot slot)
+{
+    Locker locker { m_gilOffLock };
+    deallocateUnlocked(slot);
+}
+
 StrongSet::~StrongSet()
 {
     while (!m_blocks.isEmpty())

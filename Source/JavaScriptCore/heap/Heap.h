@@ -2310,8 +2310,8 @@ private:
     // private access, satisfying both constraints.
     static constexpr void checkCampaign2TrailerLayout()
     {
-        static_assert(OBJECT_OFFSETOF(Heap, m_handleSet) < OBJECT_OFFSETOF(Heap, m_siblingSlotVisitors),
-            "T4-heap-layout-restore: sibling-visitor pool must be in the trailer (after m_handleSet)");
+        static_assert(OBJECT_OFFSETOF(Heap, m_strongSet) < OBJECT_OFFSETOF(Heap, m_siblingSlotVisitors),
+            "T4-heap-layout-restore: sibling-visitor pool must be in the trailer (after m_strongSet)");
         static_assert(OBJECT_OFFSETOF(Heap, m_opaqueRoots) < OBJECT_OFFSETOF(Heap, m_siblingMarkingAssistEnabled),
             "T4-heap-layout-restore: sibling-assist gate must be in the trailer (after m_opaqueRoots)");
         static_assert(OBJECT_OFFSETOF(Heap, m_worldState) < OBJECT_OFFSETOF(Heap, m_mutatorSlowPathLock),
