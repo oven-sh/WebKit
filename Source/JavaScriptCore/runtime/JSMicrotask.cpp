@@ -328,27 +328,33 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
 #endif
     if (realm->promiseThenWatchpointSet().isStillValid()) [[likely]] {
         JSObject* iteratorResult;
-        JSValue cached = producer->cachedDriverResult();
-
-        // The cached object is handed to `target` inside a fulfillment microtask and its value/done are only read
-        // when that microtask runs. A single driver consumes serially (one outstanding request at a time), so it is
-        // safe to mutate-and-reuse the cached object as long as the previous delivery was already consumed.
-        // A JSAsyncGenerator is user-visible and can be driven by several consumers at once (two `for await` loops
-        // over one generator, or two drivers hitting the completed fast path in the same turn). Its result may still
-        // be in flight for one driver when we settle another. So reuse is only safe when this settlement targets the
-        // same driver the object was last handed to.
-        bool canReuse = cached.isObject();
-        if constexpr (std::is_same_v<Producer, JSAsyncGenerator>)
-            canReuse = canReuse && producer->cachedDriverResultTarget() == target;
-        if (canReuse) [[likely]] {
-            iteratorResult = asObject(cached);
-            iteratorResult->putDirectOffset(vm, iteratorResultObjectValuePropertyOffset, value);
-            iteratorResult->putDirectOffset(vm, iteratorResultObjectDonePropertyOffset, jsBoolean(done));
-        } else {
+        // GIL-off, drivers on different threads can settle requests of one producer, so the cached
+        // result object and its target could be overwritten between another driver's check and use.
+        if (vm.gilOff()) [[unlikely]]
             iteratorResult = createIteratorResultObject(realm, value, done);
-            producer->setCachedDriverResult(vm, iteratorResult);
+        else {
+            JSValue cached = producer->cachedDriverResult();
+
+            // The cached object is handed to `target` inside a fulfillment microtask and its value/done are only read
+            // when that microtask runs. A single driver consumes serially (one outstanding request at a time), so it is
+            // safe to mutate-and-reuse the cached object as long as the previous delivery was already consumed.
+            // A JSAsyncGenerator is user-visible and can be driven by several consumers at once (two `for await` loops
+            // over one generator, or two drivers hitting the completed fast path in the same turn). Its result may still
+            // be in flight for one driver when we settle another. So reuse is only safe when this settlement targets the
+            // same driver the object was last handed to.
+            bool canReuse = cached.isObject();
             if constexpr (std::is_same_v<Producer, JSAsyncGenerator>)
-                producer->setCachedDriverResultTarget(vm, target);
+                canReuse = canReuse && producer->cachedDriverResultTarget() == target;
+            if (canReuse) [[likely]] {
+                iteratorResult = asObject(cached);
+                iteratorResult->putDirectOffset(vm, iteratorResultObjectValuePropertyOffset, value);
+                iteratorResult->putDirectOffset(vm, iteratorResultObjectDonePropertyOffset, jsBoolean(done));
+            } else {
+                iteratorResult = createIteratorResultObject(realm, value, done);
+                producer->setCachedDriverResult(vm, iteratorResult);
+                if constexpr (std::is_same_v<Producer, JSAsyncGenerator>)
+                    producer->setCachedDriverResultTarget(vm, target);
+            }
         }
         JSPromise::fulfillWithInternalMicrotask(vm, realm, iteratorResult, InternalMicrotask::AsyncGeneratorDriverResume, wrappedTarget);
         return;
@@ -542,7 +548,7 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
     VM& vm = globalObject->vm();
 
     // 1-4. Remove the first request from the queue.
-    auto* target = generator->dequeue(vm);
+    auto* target = vm.gilOff() ? generator->dequeueGILOff(vm) : generator->dequeue(vm);
     ASSERT(target);
 
     // A real .next()/.throw()/.return() settles its result JSPromise directly.
@@ -591,7 +597,14 @@ static void asyncGeneratorDrainQueue(JSGlobalObject* globalObject, JSAsyncGenera
     ASSERT(generator->state() == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::DrainingQueue));
 
     // 3. Repeat, while the queue is not empty.
-    while (!generator->isQueueEmpty()) {
+    for (;;) {
+        // GIL-off, an empty queue stores completed (3a) under the cell lock and retires this thread.
+        if (vm.gilOff()) [[unlikely]] {
+            if (generator->retireIfQueueEmptyGILOff(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)))
+                return;
+        } else if (generator->isQueueEmpty())
+            break;
+
         int32_t resumeMode = generator->resumeMode();
 
         // 5c. return completion -> AsyncGeneratorAwaitReturn and stop.
@@ -701,6 +714,22 @@ void enqueueAsyncGeneratorDriver(JSGlobalObject* globalObject, JSAsyncGenerator*
 
     resumeValue = resumeValueOrUndefined(resumeValue);
 
+    if (vm.gilOff()) [[unlikely]] {
+        switch (iterator->enqueueGILOff(vm, resumeValue, static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode), driver)) {
+        case JSAsyncGenerator::GILOffEnqueueAction::None:
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::SettleCompleted:
+            settleDriverWithIteratorResult(globalObject, vm, iterator, jsUndefined(), /* done */ true, driver);
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::Resume:
+            asyncGeneratorResume(globalObject, iterator, microtaskCallCache);
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::AwaitReturn:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return;
+    }
+
     // Mirror AsyncGeneratorEnqueue's completed-state fast path: settle { undefined, true } without enqueuing.
     int32_t state = iterator->state();
     if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)) {
@@ -750,8 +779,16 @@ static void asyncGeneratorYield(JSGlobalObject* globalObject, JSAsyncGenerator* 
     RETURN_IF_EXCEPTION(scope, void());
 
     // 10. Let queue be gen.[[AsyncGeneratorQueue]].
+    // GIL-off, steps 11-12 run under the cell lock: an empty queue stores suspended-yield and
+    // retires this thread (see JSAsyncGenerator::retireIfQueueEmptyGILOff).
+    if (vm.gilOff()) [[unlikely]] {
+        state = generator->state();
+        if (generator->retireIfQueueEmptyGILOff((state & ~JSAsyncGenerator::reasonMask) | static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorSuspendReason::Yield)))
+            return;
+    }
+
     // 11. If queue is not empty, then
-    if (!generator->isQueueEmpty()) {
+    if (vm.gilOff() || !generator->isQueueEmpty()) {
         // 11.a. NOTE: Execution continues without suspending the generator.
         // 11.b. Let toYield be the first element of queue.
         // 11.c. Let resumptionValue be Completion(toYield.[[Completion]]).

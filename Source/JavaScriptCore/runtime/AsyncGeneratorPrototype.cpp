@@ -62,6 +62,22 @@ JSValue asyncGeneratorNext(JSGlobalObject* globalObject, JSAsyncGenerator* gener
     VM& vm = globalObject->vm();
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
+    if (vm.gilOff()) [[unlikely]] {
+        switch (generator->enqueueGILOff(vm, argument, static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode), promise)) {
+        case JSAsyncGenerator::GILOffEnqueueAction::None:
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::SettleCompleted:
+            promise->resolve(globalObject, vm, createIteratorResultObject(generator->realm(), jsUndefined(), /* done */ true));
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::Resume:
+            asyncGeneratorResume(globalObject, generator, microtaskCallCache);
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::AwaitReturn:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return promise;
+    }
+
     // 5. Let state be gen.[[AsyncGeneratorState]].
     int32_t state = generator->state();
     // 6. If state is completed, then
@@ -122,6 +138,22 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeReturn, (JSGlobalObject* globalO
         return JSValue::encode(promise);
     }
 
+    if (vm.gilOff()) [[unlikely]] {
+        switch (generator->enqueueGILOff(vm, callFrame->argument(0), static_cast<int32_t>(JSGenerator::ResumeMode::ReturnMode), promise)) {
+        case JSAsyncGenerator::GILOffEnqueueAction::None:
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::AwaitReturn:
+            asyncGeneratorAwaitReturn(globalObject, generator);
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::Resume:
+            asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::SettleCompleted:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return JSValue::encode(promise);
+    }
+
     // 5. Let completion be ReturnCompletion(value).
     // 6. Perform AsyncGeneratorEnqueue(gen, completion, promiseCapability).
     generator->enqueue(vm, callFrame->argument(0), static_cast<int32_t>(JSGenerator::ResumeMode::ReturnMode), promise);
@@ -163,6 +195,23 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeThrow, (JSGlobalObject* globalOb
     }
 
     JSValue exception = callFrame->argument(0);
+
+    if (vm.gilOff()) [[unlikely]] {
+        switch (generator->enqueueGILOff(vm, exception, static_cast<int32_t>(JSGenerator::ResumeMode::ThrowMode), promise)) {
+        case JSAsyncGenerator::GILOffEnqueueAction::None:
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::SettleCompleted:
+            promise->reject(vm, exception);
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::Resume:
+            asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
+            break;
+        case JSAsyncGenerator::GILOffEnqueueAction::AwaitReturn:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return JSValue::encode(promise);
+    }
+
     int32_t state = generator->state();
     // 5. Let state be gen.[[AsyncGeneratorState]].
     // 6. If state is suspended-start, then
