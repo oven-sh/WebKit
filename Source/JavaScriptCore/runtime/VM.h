@@ -527,9 +527,9 @@ public:
     {
         if (gilOffWithProcessGate()) [[unlikely]] {
             if (std::atomic<uint16_t>* bits = currentLiteEntryScopeServiceBits())
-                return bits->load(std::memory_order_relaxed);
+                return bits->load(std::memory_order_relaxed) || hasTimeZoneChange() || hasLanguageChange();
         }
-        return m_entryScopeServicesRawBits;
+        return m_entryScopeServicesRawBits || hasTimeZoneChange() || hasLanguageChange();
     }
 
     // §A.1.5 registration backfill: copies the VM-level service word into a
@@ -1570,6 +1570,9 @@ public:
 
     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
+    // The cache has no lock, and every thread of a GIL-off VM would share it,
+    // so a GIL-off VM passes no cache. callMicrotask then makes a plain call.
+    MicrotaskCallCache* syncResumeCallCacheIfSingleMutator() { return gilOff() ? nullptr : &m_syncResumeCallCache.get(); }
     void clearMicrotaskCallCaches();
 
     enum class StructureChainIntegrityEvent : uint8_t {
@@ -1659,7 +1662,10 @@ public:
     // hold this back. A recording made across it is less exact (code is decoded again); a link has no debugger.
     JS_EXPORT_PRIVATE void deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
-    void deleteAllRegExpCode();
+private:
+    void whenIdleWithOtherThreadsStopped(DeleteAllCodeEffort, Function<void(bool deleteHeapCode)>&&);
+    void clearCodeCaches();
+public:
 
     enum class ShrinkFootprint : uint8_t {
         // Only let go of what is cheap to get back: linked code, code that a persistent bytecode cache can hand back,
@@ -1880,7 +1886,8 @@ public:
 
     // A termination has been requested and not yet withdrawn, in whichever form it has reached: the unhandled
     // NeedTermination trap, the termination-request flag, or the TerminationException as the pending exception.
-    bool hasPendingTermination() const { return traps().needHandling(VMTraps::NeedTermination) || hasTerminationRequest() || hasPendingTerminationException(); }
+    // GIL-off a raise also sets the current thread's own word (fireTrapVMWide), which its trap checks read.
+    bool hasPendingTermination() const { return traps().needHandling(VMTraps::NeedTermination) || (gilOffWithProcessGate() && trapsForCurrentThread().needHandling(VMTraps::NeedTermination)) || hasTerminationRequest() || hasPendingTerminationException(); }
 
     // Withdraws whatever termination is pending on this VM (see hasPendingTermination()) — the counterpart of
     // notifyNeedTermination() for a time-limited scope that has ended: what ran under the request stays cut short,

@@ -89,7 +89,11 @@ void MicrotaskCall::unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeBlock*
 
 void MicrotaskCall::clear()
 {
-    if (isOnList())
+    // The incoming-call list belongs to the CodeBlock, so another thread can
+    // be walking it. Take the same lock as relink() (see removeOnDestruction).
+    if (g_jscConfig.gilOffProcess) [[unlikely]]
+        removeOnDestruction();
+    else if (isOnList())
         remove();
     m_addressForCall = nullptr;
     m_codeBlock = nullptr;

@@ -387,10 +387,10 @@ public:
     // republication requires a non-Live current impl), and otherwise only
     // touched by ~ArrayBuffer.
 
-    // Relaxed snapshot of the published wrapper handle; may be null, or
-    // non-null but no longer Live (caller must check WeakImpl::state(), as
-    // Weak<>::get() does).
-    WeakImpl* wrapperImplConcurrently() { return m_wrapperImpl.loadRelaxed(); }
+    // Snapshot of the published wrapper handle; may be null, or non-null but no
+    // longer Live (caller must check WeakImpl::state(), as Weak<>::get() does).
+    // Callers dereference it, so the load acquires the publishing CAS.
+    WeakImpl* wrapperImplConcurrently() { return m_wrapperImpl.load(std::memory_order_acquire); }
 
     // First-wins publication. Returns true if `impl` was installed (caller
     // must then move the owning Weak into m_wrapper); returns false if

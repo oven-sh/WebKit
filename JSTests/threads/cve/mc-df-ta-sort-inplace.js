@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-DF S9 (docs/threads/cve/map-MC-DF.md): r269531 / bug 218944 re-opened
 // under shared-everything. JSGenericTypedArrayView<Adaptor>::sort()
 // (JSGenericTypedArrayViewInlines.h:950-988) copies the backing into a

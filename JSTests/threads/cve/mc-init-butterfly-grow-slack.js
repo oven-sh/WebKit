@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1", "--forceButterflySWBit=1")
+//@ threadsRequireGILOff
 // MC-INIT surface 2 regression (docs/threads/cve/map-MC-INIT.md):
 // butterfly growth must never expose tryCreateUninitialized slack.
 //

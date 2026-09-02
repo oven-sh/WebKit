@@ -168,6 +168,33 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
     doInitialize(prototype, inlineCapacity);
 }
 
+Structure* FunctionRareData::createInternalFunctionAllocationStructureFromBaseGILOff(VM& vm, JSGlobalObject* baseGlobalObject, JSObject* prototype, Structure* baseStructure)
+{
+    // Two mutators can both find the profile empty, or keyed to another base
+    // class, and both fill it. The second fill would then see a profile that
+    // already matches, and would replace it with a second structure and fire
+    // the rotation watchpoint for nothing. So the fill is serialized on the
+    // cell lock with the same tryLock poll as initializeObjectAllocationProfile,
+    // and a thread that finds a matching structure, before or under the lock,
+    // uses it.
+    auto matchingStructure = [&]() -> Structure* {
+        Structure* structure = internalFunctionAllocationStructure();
+        if (structure && structure->classInfoForCells() == baseStructure->classInfoForCells() && structure->realm() == baseGlobalObject)
+            return structure;
+        return nullptr;
+    };
+    while (!cellLock().tryLock()) {
+        if (Structure* structure = matchingStructure())
+            return structure;
+        if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            Thread::yield();
+    }
+    auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
+    if (Structure* structure = matchingStructure())
+        return structure;
+    return m_internalFunctionAllocationProfile.createAllocationStructureFromBase(vm, baseGlobalObject, this, prototype, baseStructure, allocationProfileWatchpointSet());
+}
+
 void FunctionRareData::clear(const char* reason)
 {
     VM& vm = this->vm();

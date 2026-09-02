@@ -30,15 +30,29 @@
 
 #include "JSCJSValue.h"
 #include "OperationResult.h"
+#include "Options.h"
 
 namespace JSC {
 
 class CallFrame;
 class JSGlobalObject;
+class ThrowScope;
 
 namespace FFI {
 
 JSC_DECLARE_HOST_FUNCTION(ffiHostCall);
+
+// With the GIL off, bun:ffi is for the main thread only. The FFI context (its
+// string arena and its UTF-8 cache) and each callback's return buffer belong to
+// the global object and have no lock. On a spawned thread of a GIL-off VM this
+// throws a TypeError and returns true.
+bool throwIfFFIRefusedOnCurrentThreadSlow(JSGlobalObject*, ThrowScope&);
+ALWAYS_INLINE bool throwIfFFIRefusedOnCurrentThread(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    if (Options::useJSThreads()) [[unlikely]]
+        return throwIfFFIRefusedOnCurrentThreadSlow(globalObject, scope);
+    return false;
+}
 
 } // namespace FFI
 

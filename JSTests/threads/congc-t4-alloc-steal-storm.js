@@ -1,4 +1,5 @@
 //@ requireOptions("--useSharedGCHeap=1", "--useConcurrentSharedGCMarking=1", "--useJSThreads=1", "--useDollarVM=1", "--numberOfGCMarkers=4")
+//@ threadsRequireGILOff
 // SPEC-congc CG-T4 (C1): allocation/steal storm during marking — ANNEX
 // CGT1.6 charter (CG-3a).
 //

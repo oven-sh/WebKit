@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MetadataTable.h"
+#include "Options.h"
 #include "UnlinkedMetadataTable.h"
 #include <array>
 #include <wtf/FastMalloc.h>
@@ -179,7 +180,11 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     if (!m_hasMetadata)
         return nullptr;
 
-    unsigned valueProfileSize = m_numValueProfiles * sizeof(EncodedJSValue);
+    std::optional<Locker<Lock>> threadsLocker;
+    if (Options::useJSThreads()) [[unlikely]]
+        threadsLocker.emplace(m_linkLock);
+
+    unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
     unsigned totalSize;
     std::array<Offset32, s_offsetTableEntries> expanded;
     bool expandsSteps = m_isBackedBySteps && !m_isLinked;
@@ -226,6 +231,10 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
     ASSERT(m_isFinalized);
     if (!m_hasMetadata)
         return;
+
+    std::optional<Locker<Lock>> threadsLocker;
+    if (Options::useJSThreads()) [[unlikely]]
+        threadsLocker.emplace(m_linkLock);
 
     if (metadataTable.buffer() == buffer()) {
         ASSERT(m_isLinked);

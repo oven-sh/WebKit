@@ -379,6 +379,8 @@ public:
 
     Heap(VM&, HeapType);
     ~Heap();
+    // Called by ~VM while the destroying thread still has heap access.
+    void prepareForVMDestruction();
     void lastChanceToFinalize();
     void releaseDelayedReleasedObjects();
 
@@ -974,6 +976,23 @@ public:
     JS_EXPORT_PRIVATE void willStartIterating();
     JS_EXPORT_PRIVATE void didFinishIterating();
 
+    // A HeapIterationScope, or any other walk of the block directories that
+    // stops allocation, is legal on a shared heap only while no other client
+    // can allocate (MarkedSpace::willStartIterating). This runs `func` inline
+    // when that already holds or the heap is not shared. Otherwise this thread
+    // conducts a JSThreadsSafepoint stop window around `func`, so the caller
+    // must hold the VM's JSLock and no cell, Structure or heap lock, and `func`
+    // must not call into JS.
+    template<typename Func> void runWithOtherClientsStopped(const Func& func)
+    {
+        if (!isSharedServer()) [[likely]] {
+            func();
+            return;
+        }
+        runWithOtherClientsStoppedSlow(ScopedLambda<void()>(func));
+    }
+    JS_EXPORT_PRIVATE void runWithOtherClientsStoppedSlow(const ScopedLambda<void()>&);
+
     Seconds lastFullGCLength() const { return m_lastFullGCLength; }
     Seconds lastEdenGCLength() const { return m_lastEdenGCLength; }
     void increaseLastFullGCLength(Seconds amount) { m_lastFullGCLength += amount; }
@@ -983,45 +1002,13 @@ public:
     size_t sizeBeforeLastFullCollection() const { return m_sizeBeforeLastFullCollect; }
     size_t sizeAfterLastFullCollection() const { return m_sizeAfterLastFullCollect; }
 
-    void deleteAllCodeBlocks(DeleteAllCodeEffort, bool keepWhatNeedsParsing = false);
-    void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort, OptionSet<UnlinkedCodeToDelete> = UnlinkedCodeToDelete::Generated);
-
-#if USE(BUN_JSC_ADDITIONS)
-    // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
-    // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge), and an
-    // embedder can. Written by whichever thread runs the collection, read from any. ApproximateTime() (zero) until the
-    // first such collection: a VM that has not allocated Options::optimizedCodeAgingQuietAllocationMB in total yet reads
-    // as quiet since the epoch, which is the right answer for "has it been busy lately".
-    ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime.load(std::memory_order_relaxed); }
-#endif
-
-#if USE(BUN_JSC_ADDITIONS)
-    // Moves the butterflies out of the sparse blocks of the Auxiliary subspace (those whose live bytes are at most
-    // maximumOccupancy of a block) into denser ones, so that the sparse blocks die with the next full collection, which
-    // the caller should request. For a program at rest; see the definition for the mechanism and for what is not moved.
-    // Never asserts on the caller's state: if this is not a moment at which it can run, nothing happens and
-    // AuxiliaryEvacuationResult::skipped says why.
-    //
-    // What this asks of an embedder: a raw pointer into an object's out-of-line storage (Butterfly*, the data() of
-    // contiguous() / contiguousDouble() / contiguousInt32(), a WriteBarrier<Unknown>* to an out-of-line property or an
-    // element) may be kept across a call that can reach this function only in a local variable or register of the VM's
-    // own thread, where the conservative scan finds it and leaves the storage in place. Anything kept elsewhere (the C++
-    // heap, another thread's stack) must be revalidated against JSObject::butterfly() afterwards, the way
-    // JSArrayIterator revalidates. No thread may read a butterfly without holding the JSLock. Typed array vectors and
-    // everything else in the Gigacage's primitive subspace are never moved: compiled code embeds their addresses.
-    struct AuxiliaryEvacuationResult {
-        ASCIILiteral skipped; // Null if the evacuation ran, otherwise the reason it did not.
-        unsigned candidateBlocks { 0 };
-        unsigned evacuatedBlocks { 0 };
-        unsigned movedCells { 0 };
-        unsigned pinnedCells { 0 };
-        unsigned cellsWithoutSingleOwner { 0 };
-        size_t movedBytes { 0 };
-        Seconds duration;
-    };
-    JS_EXPORT_PRIVATE AuxiliaryEvacuationResult evacuateSparseAuxiliaryBlocks(double maximumOccupancy);
-    void evacuateAuxiliaryBlocksIfDue();
-#endif
+    void deleteAllCodeBlocks(DeleteAllCodeEffort);
+    void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
+    // The bodies of the two above, for a caller that already holds a
+    // PreventCollectionScope (VM::whenIdleWithOtherThreadsStopped).
+    void deleteAllCodeBlocksWithCollectionPrevented();
+    void deleteAllUnlinkedCodeBlocksWithCollectionPrevented();
+    void clearUnlinkedBaselineCodeCaches();
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
 
@@ -1414,6 +1401,11 @@ private:
     Ticket requestCollectionShared(GCRequest); // §10B.1 ticketing (RCAC core); pre: access holder or conductor.
     Ticket requestCollectionShared(const AbstractLocker& threadLockLocker, GCRequest); // Same, with *m_threadLock already held.
     void runSharedGCElection(Ticket); // §10.2 election loop; returns once the ticket is served.
+    void stopCollectingContinuously(); // Joins the collectContinuously thread, if there is one.
+    bool sharedFixpointMayResume() const;
+    // True while the prevent gate is up and the holder's own ticket is
+    // already served: no further cycle may start. Requires *m_threadLock.
+    bool sharedGCPreventGateBlocksNextTicket(const AbstractLocker&) const { return m_sharedGCPreventCount && m_lastServedTicket >= m_sharedGCPreventHolderTicket; }
     bool tryConductSharedCollectionForPoll(GCClient::Heap&); // Non-blocking election attempt (SINFAC/CIND poll service).
     void conductSharedCollection(GCClient::Heap&); // §10 steps 3-9; pre: GCL held, GCA set.
 
@@ -1979,6 +1971,10 @@ private:
     // thread starts it" semantics: the holder's own collectNow(Sync) (heap
     // snapshots run one inside PreventCollectionScope) must still conduct.
     Thread* m_sharedGCPreventHolder { nullptr };
+    // While m_sharedGCPreventCount is nonzero, cycles are served only up to
+    // this ticket: the holder's own collectSync() ticket. Tickets granted
+    // after it wait for allowCollection(). Guarded by *m_threadLock.
+    Ticket m_sharedGCPreventHolderTicket { 0 };
     // Companion raise-tracking flag for allowCollection(); guarded by
     // m_collectContinuouslyLock (prevent/allow holders are serialized on
     // it). Lets allowCollection() clear the gate without consulting
@@ -2500,6 +2496,11 @@ public:
     JS_EXPORT_PRIVATE void acquireHeapAccess();
     JS_EXPORT_PRIVATE void releaseHeapAccess();
     bool hasHeapAccess() const { return m_accessState.load(std::memory_order_relaxed) == hasAccessState; }
+    // For a conductor that decides a client is stopped: the acquire pairs with
+    // the release of access, so the client's heap writes before it are ordered
+    // before the conductor's heap walk. (The fence next to the relaxed load
+    // gives the same order on hardware, but TSAN does not model fences.)
+    bool hasHeapAccessAcquire() const { return m_accessState.load(std::memory_order_acquire) == hasAccessState; }
 
     // T5-rootscan-skip-coop-parked-suspend (SCALEBENCH §31, offcpu16 row #4):
     // a cooperatively-parked sibling — access-released and about to descend
@@ -2654,8 +2655,11 @@ private:
     template<SubspaceAccess mode> \
     IsoSubspace* name() \
     { \
-        if (m_##name || mode == SubspaceAccess::Concurrently) \
-            return m_##name.get(); \
+        /* Acquire: a compiler thread reads the space that name##Slow published. */ \
+        if (IsoSubspace* space = WTF::atomicLoad(std::bit_cast<IsoSubspace**>(&m_##name), std::memory_order_acquire)) \
+            return space; \
+        if (mode == SubspaceAccess::Concurrently) \
+            return nullptr; \
         return name##Slow(); \
     } \
     JS_EXPORT_PRIVATE IsoSubspace* name##Slow(); \

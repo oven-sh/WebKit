@@ -43,8 +43,16 @@ inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
-        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-        setStructure(vm, Structure::becomePrototypeTransition(vm, oldStructure, &deferred));
+        if (Options::useJSThreads()) [[unlikely]] {
+            publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* sourceStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+                if (sourceStructure->mayBePrototype())
+                    return sourceStructure;
+                return Structure::becomePrototypeTransition(vm, sourceStructure, deferred);
+            }));
+        } else {
+            DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+            setStructure(vm, Structure::becomePrototypeTransition(vm, oldStructure, &deferred));
+        }
     }
 
     if (type() == GlobalProxyType) [[unlikely]]

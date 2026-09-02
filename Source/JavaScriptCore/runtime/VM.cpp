@@ -102,6 +102,7 @@
 #include "JSSet.h"
 #include "JSSourceCodeInlines.h"
 #include "JSTemplateObjectDescriptorInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "JSToWasm.h"
 #include "LLIntData.h"
 #include "LLIntExceptions.h"
@@ -121,6 +122,7 @@
 #include "NumberObject.h"
 #include "PinballCompletion.h"
 #include "PredictionFileCreatingFuzzerAgent.h"
+#include "PreventCollectionScope.h"
 #include "ProfilerDatabase.h"
 #include "ProgramCodeBlockInlines.h"
 #include "RaceAmplifier.h"
@@ -408,6 +410,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
             // HeapClientSet::add's second-client site.
             heap.verifyStickySharedServerDesignation();
             heap.noteSharedServerSticky();
+            // addTerminationDeadline creates the set lazily, which two threads
+            // could do at once. Create it now, while no other thread has the VM.
+            m_terminationDeadlines = TerminationDeadlineSet::create(*this);
         }
     }
 
@@ -1092,6 +1097,7 @@ VM::~VM()
                 "off-lock). Embedder contract: join all Threads, then destroy "
                 "the VM while holding the API lock (SPEC-api / UNGIL §F.2).");
         }
+        heap.prepareForVMDestruction();
         m_apiLock->uninstallVMLiteForVMDestruction(); // step (1)
         ASSERT(VMLite::currentIfExists() != m_mainVMLite.get());
         if (m_gilOff) [[unlikely]] {
@@ -1720,8 +1726,50 @@ Vector<Function<void()>> VM::takeDidPopListenersIfNoThreadEntered()
     return WTF::move(m_didPopListeners);
 }
 
+void VM::whenIdleWithOtherThreadsStopped(DeleteAllCodeEffort effort, Function<void(bool deleteHeapCode)>&& work)
+{
+    ASSERT(m_gilOff);
+    // whenIdle decides that no thread is entered under the registry lock and
+    // runs the callback after dropping it, so another thread can enter and run
+    // the code this is about to delete. Decide again with every other thread
+    // stopped: a stopped thread that is entered is stopped inside JS, so the
+    // work waits for the next time the VM goes idle.
+    whenIdle([this, effort, work = WTF::move(work)]() mutable {
+        // Heap::deleteAllCodeBlocks skips the heap part while a concurrent
+        // collection runs. Otherwise collection is prevented before the window
+        // opens: with concurrent shared marking a window can open in the middle
+        // of a cycle, and preventCollection() would wait for it from inside.
+        bool deleteHeapCode = !(effort == DeleteAllCodeIfNotCollecting && heap.collectionScope());
+        bool ran = false;
+        {
+            std::optional<PreventCollectionScope> preventCollectionScope;
+            if (deleteHeapCode) {
+                preventCollectionScope.emplace(heap);
+                heap.completeAllJITPlans();
+            }
+            JSThreadsSafepoint::PureCodeLifecycleStopWindowScope noHeapFactRewrite;
+            JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "delete all code");
+            JSThreadsSafepoint::stopTheWorldAndRun(*this, ScopedLambda<void()>([&] {
+                if (isAnyThreadEntered())
+                    return;
+                work(deleteHeapCode);
+                ran = true;
+            }));
+        }
+        if (!ran)
+            whenIdleWithOtherThreadsStopped(effort, WTF::move(work));
+    });
+}
+
 void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)
 {
+    if (m_gilOff) [[unlikely]] {
+        whenIdleWithOtherThreadsStopped(effort, [this](bool deleteHeapCode) {
+            if (deleteHeapCode)
+                heap.deleteAllCodeBlocksWithCollectionPrevented();
+        });
+        return;
+    }
     whenIdle([=, this] () {
         heap.deleteAllCodeBlocks(effort);
     });
@@ -1739,17 +1787,19 @@ void VM::deleteAllRegExpCode()
 
 void VM::deleteAllCode(DeleteAllCodeEffort effort)
 {
+    if (m_gilOff) [[unlikely]] {
+        whenIdleWithOtherThreadsStopped(effort, [this](bool deleteHeapCode) {
+            clearCodeCaches();
+            if (deleteHeapCode) {
+                heap.deleteAllCodeBlocksWithCollectionPrevented();
+                heap.deleteAllUnlinkedCodeBlocksWithCollectionPrevented();
+            }
+            heap.reportAbandonedObjectGraph();
+        });
+        return;
+    }
     whenIdle([=, this] () {
-        m_codeCache->clear(*this);
-        m_builtinExecutables->clear();
-        m_regExpCache->deleteAllCode(*this);
-        {
-            // The RegExp interpreter's backtracking pools past its first page are only a cache
-            // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
-            // compiler threads that interpret take this lock.
-            Locker locker { m_regExpAllocatorLock };
-            m_regExpAllocator.releaseRetainedPools();
-        }
+        clearCodeCaches();
         heap.deleteAllCodeBlocks(effort);
         // All of it: also what could be decoded again from a bytecode cache.
         heap.deleteAllUnlinkedCodeBlocks(effort, { UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
@@ -1757,66 +1807,21 @@ void VM::deleteAllCode(DeleteAllCodeEffort effort)
     });
 }
 
-void VM::deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort effort)
+void VM::clearCodeCaches()
 {
-    whenIdle([=, this] () {
-        SetForScope generatingAgain(m_isDeletingAllCodeToGenerateItAgain, true);
-        deleteAllCode(effort); // runs now: the VM is idle
-    });
-}
-
-bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
-{
-    // Not under JS, and not from inside the collector (a finalizer, a heap observer): deleting code waits for a
-    // collection that is under way to finish.
-    if (entryScope || heap.currentThreadIsDoingGCWork())
-        return false;
-
-    MonotonicTime before;
-    if (Options::logGC()) [[unlikely]]
-        before = MonotonicTime::now();
-    auto logTime = makeScopeExit([&] {
-        dataLogLnIf(Options::logGC(), "[shrinkFootprint: ", (MonotonicTime::now() - before).milliseconds(), " ms]");
-    });
-    sanitizeStackForVM(*this);
-    // The last exception thrown keeps the code on its captured stack alive (linked code, and through it the unlinked code
-    // that is about to be dropped and would then exist twice). No JS is running, so nobody is looking at it.
-    clearLastException();
-    bool keepCodeInUse = mode.contains(ShrinkFootprint::KeepCodeInUse);
-    if (keepCodeInUse || mode.contains(ShrinkFootprint::KeepCodeThatNeedsParsing)) {
-        // Linked code first: that finishes the compiler threads' plans, and optimized code may call RegExp code directly.
-        if (!keepCodeInUse)
-            heap.deleteAllCodeBlocks(PreventCollectionAndDeleteAllCode, true);
-        OptionSet<UnlinkedCodeToDelete> unlinkedCode { UnlinkedCodeToDelete::RecoverableFromCache };
-        if (keepCodeInUse)
-            unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
-        heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
-        if (!keepsUnlinkedCode())
-            m_codeCache->clearCodeDecodedFromPersistentPayloads();
-        if (!keepCodeInUse)
-            deleteAllRegExpCode();
-        else if (Options::releaseIdleRegExpCodeWhenShrinkingFootprint() && !numberOfActiveJITPlans()) {
-            // (A compiler thread may be inlining a RegExp's code, see DFG::SpeculativeJIT::compileRegExpTestInline.)
-            m_regExpCache->deleteCodeNotUsedInCurrentFullCollectionCycle(*this);
-        }
-        heap.reportAbandonedObjectGraph();
-    } else {
-        // This mode does not wait for a collection: if one is under way the code stays and the caller is told so.
-        if (heap.collectionScope())
-            return false;
-        deleteAllCode(DeleteAllCodeIfNotCollecting);
+    m_codeCache->clear(*this);
+    m_builtinExecutables->clear();
+    m_regExpCache->deleteAllCode(*this);
+    {
+        // The RegExp interpreter's backtracking pools past its first page are only a cache
+        // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
+        // compiler threads that interpret take this lock.
+        Locker locker { m_regExpAllocatorLock };
+        m_regExpAllocator.releaseRetainedPools();
     }
-    clearSourceProviderCaches();
-    if (mode.contains(ShrinkFootprint::LeaveCollectionToCaller))
-        return true;
-    heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
-    // FIXME: Consider stopping various automatic threads here.
-    // https://bugs.webkit.org/show_bug.cgi?id=185447
-    WTF::releaseFastMallocFreeMemory();
-    return true;
 }
 
-void VM::shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> mode)
+void VM::shrinkFootprintWhenIdle()
 {
     whenIdle([=, this] () {
         shrinkFootprintNow(mode);
@@ -1868,9 +1873,10 @@ Ref<TerminationDeadline> VM::addTerminationDeadline(MonotonicTime deadline)
 bool VM::cancelTermination()
 {
     ASSERT(currentThreadIsHoldingAPILock());
-    ASSERT(!traps().isDeferringTermination());
+    ASSERT(!trapsForCurrentThread().isDeferringTermination());
     ASSERT(!m_executionForbiddenOnTermination);
-    bool wasPending = traps().clearTrap(VMTraps::NeedTermination);
+    // notifyNeedTermination() raises VM-wide, so the withdrawal is VM-wide too.
+    bool wasPending = traps().clearTrapVMWide(VMTraps::NeedTermination);
     if (hasPendingTerminationException()) {
         clearException();
         wasPending = true;
@@ -2784,7 +2790,14 @@ void VM::didExhaustMicrotaskQueue()
     while (!m_aboutToBeNotifiedRejectedPromises.isEmpty()) {
         auto unhandledRejections = WTF::move(m_aboutToBeNotifiedRejectedPromises);
         for (auto& promise : unhandledRejections) {
-            if (promise->isHandled())
+            // With the GIL off, another thread sets the flags under the cell lock.
+            bool handled;
+            if (m_gilOff) [[unlikely]] {
+                Locker locker { promise->cellLock() };
+                handled = promise->isHandled();
+            } else
+                handled = promise->isHandled();
+            if (handled)
                 continue;
 
             callPromiseRejectionCallback(promise);
@@ -3697,6 +3710,8 @@ void VM::visitAggregateImpl(Visitor& visitor)
             if (lite->vm != this)
                 continue;
             visitor.append(lite->primitives.m_cachedSortScratch);
+            visitor.appendUnbarriered(lite->orderedHashTableIterationKey);
+            visitor.appendUnbarriered(lite->orderedHashTableIterationValue);
         }
     }
     visitor.append(m_sortScratchSentinel);
@@ -3890,8 +3905,20 @@ Wasm::DebugState* VM::debugState()
 
 AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
 {
-    if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]]
-        m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>>();
+    if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]] {
+        if (m_gilOff) [[unlikely]] {
+            // Two threads can decode cached bytecode at once. Create the table
+            // once, and publish it only after its zeroed entries are visible.
+            static Lock creationLock;
+            Locker locker { creationLock };
+            if (!m_cachedBytecodeTwoCharacterAtoms) {
+                auto table = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+                WTF::storeStoreFence();
+                m_cachedBytecodeTwoCharacterAtoms = WTF::move(table);
+            }
+        } else
+            m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+    }
     return m_cachedBytecodeTwoCharacterAtoms->data();
 }
 

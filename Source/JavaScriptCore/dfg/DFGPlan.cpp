@@ -559,7 +559,13 @@ bool Plan::reallyAdd(CommonData* commonData)
     if (!m_watchpoints.reallyAdd(m_codeBlock, m_identifiers, commonData))
         return false;
 
-    commonData->recordedStatuses = WTF::move(m_recordedStatuses);
+    {
+        // Another mutator's GC can visit this CodeBlock now, and the visitor
+        // reads recordedStatuses under this lock (CodeBlock::
+        // stronglyVisitStrongReferences), as in DesiredWeakReferences::reallyAdd.
+        ConcurrentJSLocker locker(m_codeBlock->m_lock);
+        commonData->recordedStatuses = WTF::move(m_recordedStatuses);
+    }
 
     ASSERT(m_vm->heap.isDeferred());
     for (auto* callLinkInfo : commonData->m_directCallLinkInfos)

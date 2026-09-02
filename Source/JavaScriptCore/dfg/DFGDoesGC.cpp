@@ -38,7 +38,11 @@ bool doesGC(Graph& graph, Node* node)
 {
     if (clobbersHeap(graph, node))
         return true;
-    
+    return doesGCIgnoringClobberize(graph, node);
+}
+
+bool doesGCIgnoringClobberize(Graph& graph, Node* node)
+{
     // Now consider nodes that don't clobber the world but that still may GC. This includes all
     // nodes. By default, we should assume every node can GC and return true. This includes the
     // world-clobbering nodes. We should only return false if we have proven that the node cannot

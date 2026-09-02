@@ -189,7 +189,7 @@ keeps it as-is.
 
 | # | Cell class (file:line) | Non-property mutable state | Disposition |
 |---|---|---|---|
-| R1 | JSMap/JSSet (runtime/JSMap.h:32, JSSet.h:32, JSOrderedHashTable storage) | hash table buffer, load factors | COVERED §N.1 — ALL ops (reads too) cell-locked; DFG/FTL map intrinsics DISABLED GIL-off (tier-inlined accesses disabled), locked native bodies |
+| R1 | JSMap/JSSet (runtime/JSMap.h:32, JSSet.h:32, JSOrderedHashTable storage) | hash table buffer, load factors | COVERED §N.1 since 2026-09-02. Before that date this row was wrong: nothing was locked (AUDIT-upstream-since-rebase.md, PRE-1). Now every operation on the current table holds the table's cell lock (JSOrderedHashTableHelper, *GILOff); a rehash or a clear publishes a new table and never writes the old one again; iteration scratch is per thread (VMLite). DFG/FTL Map and Set intrinsics and the Map and Set size IC are off GIL-off, and for-of over a Map or a Set takes the generic path. |
 | R2 | JSWeakMap/JSWeakSet (runtime/WeakMapImpl.h:209) | m_buffer, m_keyCount, m_deleteCount | COVERED §N.1 (WeakMapImpl named) |
 | R3 | JSMapIterator/JSSetIterator (runtime/JSMapIterator.h:36, JSSetIterator.h:36) | internal fields (entry cursor) + table traversal | COVERED §N.5 (internal-field claim/publish) + §N.1 (storage reads under cell lock); transparent-to-GC bucket hopping inherits N.1 |
 | R4 | JSString rope/atomization (runtime/JSString.h:637-682) | fiber0/flags publication | COVERED §N.2 — lock-free release-CAS publish, losers discard; resolveRopeToAtomString vs shared table per U0; JIT rope slow calls land here |

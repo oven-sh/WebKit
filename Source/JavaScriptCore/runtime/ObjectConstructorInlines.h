@@ -343,7 +343,9 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     if (!sourceStructure->canPerformFastPropertyEnumerationCommon())
         return false;
 
-    if (objectCloneFast(vm, target, source))
+    // The clone replaces the target's structure and butterfly with plain stores.
+    // With the GIL off, another thread can add to the target at the same time.
+    if (!vm.gilOff() && objectCloneFast(vm, target, source))
         return true;
 
     if (source->canHaveExistingOwnIndexedGetterSetterProperties())

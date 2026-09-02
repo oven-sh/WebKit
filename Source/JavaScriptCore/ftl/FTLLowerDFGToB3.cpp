@@ -8738,6 +8738,12 @@ IGNORE_CLANG_WARNINGS_END
 
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
+
+                // The shared handler-IC slow-path thunk calls the operation itself and
+                // unwinds with the frame's call site index set to callSiteIndex.
+                if (Options::useHandlerICInFTL())
+                    exceptionHandle->scheduleExitCreationForUnwind(params, callSiteIndex);
+
                 CCallHelpers::JumpList slowCases;
 
                 auto base = params[1].gpr();
@@ -19461,6 +19467,11 @@ IGNORE_CLANG_WARNINGS_END
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
+                // The shared handler-IC slow-path thunk calls the operation itself and
+                // unwinds with the frame's call site index set to callSiteIndex.
+                if (Options::useHandlerICInFTL())
+                    exceptionHandle->scheduleExitCreationForUnwind(params, callSiteIndex);
+
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITInstanceOfGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, semanticNodeOrigin, callSiteIndex,
@@ -21833,7 +21844,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         vmCall(Void, operationEnqueueAsyncGeneratorDriver, weakPointer(globalObject),
-            lowCell(m_node->child1()), lowCell(m_node->child2()), lowJSValue(m_node->child3()), m_out.constIntPtr(&vm().syncResumeCallCache()));
+            lowCell(m_node->child1()), lowCell(m_node->child2()), lowJSValue(m_node->child3()), m_out.constIntPtr(vm().syncResumeCallCacheIfSingleMutator()));
     }
 
     void compileStringReplace()
@@ -29877,6 +29888,10 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue decodeNonNullStructure(LValue structureID)
     {
+        // With threads, another thread's transition can nuke the ID. A nuked ID
+        // still names the old structure (see AssemblyHelpers).
+        if (Options::useJSThreads()) [[unlikely]]
+            structureID = m_out.bitAnd(structureID, m_out.constInt32(~static_cast<int32_t>(StructureID::nukedStructureIDBit)));
         return m_out.bitOr(m_out.constIntPtr(structureIDBase()), m_out.zeroExtPtr(structureID));
     }
 
