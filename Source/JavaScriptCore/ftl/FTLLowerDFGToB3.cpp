@@ -6027,7 +6027,11 @@ private:
                     [=] (CCallHelpers& jit) {
                         AllowMacroScratchRegisterUsage allowScratch(jit);
 
-                        if (!Options::useHandlerICInFTL())
+                        // A miss in the inline data-IC fast path dispatches to the handler chain
+                        // and returns to `done`; nothing below is reached in that mode.
+                        if (Options::useHandlerICInFTL())
+                            generator->generateDataICSlowPath(jit);
+                        else
                             generator->slowPathJump().link(&jit);
                         CCallHelpers::Label slowPathBegin = jit.label();
                         CCallHelpers::Call slowPathCall;
@@ -18815,6 +18819,12 @@ IGNORE_CLANG_WARNINGS_END
                     [=] (CCallHelpers& jit) {
                         AllowMacroScratchRegisterUsage allowScratch(jit);
 
+                        if constexpr (type == AccessType::InById) {
+                            // A miss in the inline data-IC fast path dispatches to the handler
+                            // chain and returns to `done`.
+                            if (Options::useHandlerICInFTL())
+                                generator->generateDataICSlowPath(jit);
+                        }
                         slowCases.link(&jit);
                         CCallHelpers::Label slowPathBegin = jit.label();
                         CCallHelpers::Call slowPathCall;
@@ -22344,12 +22354,11 @@ IGNORE_CLANG_WARNINGS_END
                         auto optimizationFunction = appropriateGetByIdOptimizeFunction(type);
 
                         if (Options::useHandlerICInFTL()) {
-                            // The base is a known cell and the data-IC fast path has no miss
-                            // jump: every miss ends in the chain's slow-path handler, which calls
-                            // m_slowOperation and returns to `done`. Nothing reaches this late
-                            // path; finalize only records its label.
+                            // The base is a known cell. A miss in the inline data-IC fast path
+                            // lands here and dispatches to the handler chain, whose slow-path
+                            // handler calls m_slowOperation; the dispatch returns to `done`.
                             downcast<HandlerPropertyInlineCache>(*generator->propertyCache()).m_slowOperation = optimizationFunction;
-                            generator->reportBaselineDataICSlowPathBegin(jit.label());
+                            generator->generateDataICSlowPath(jit);
                         } else {
                             generator->slowPathJump().link(&jit);
                             CCallHelpers::Label slowPathBegin = jit.label();
@@ -22443,11 +22452,10 @@ IGNORE_CLANG_WARNINGS_END
                         auto optimizationFunction = operationGetByIdWithThisOptimize;
 
                         if (Options::useHandlerICInFTL()) {
-                            // Same shape as getById: both operands are known cells and the
-                            // data-IC fast path has no miss jump, so nothing reaches this late
-                            // path; finalize only records its label.
+                            // Same shape as getById: both operands are known cells, and a miss in
+                            // the inline data-IC fast path dispatches to the handler chain here.
                             downcast<HandlerPropertyInlineCache>(*generator->propertyCache()).m_slowOperation = optimizationFunction;
-                            generator->reportBaselineDataICSlowPathBegin(jit.label());
+                            generator->generateDataICSlowPath(jit);
                         } else {
                             generator->slowPathJump().link(&jit);
                             CCallHelpers::Label slowPathBegin = jit.label();

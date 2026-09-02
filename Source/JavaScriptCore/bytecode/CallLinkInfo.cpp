@@ -713,7 +713,6 @@ void CallLinkInfo::setStub(VM& vm, Ref<PolymorphicCallStubRoutine>&& newStub)
 
 #if ENABLE(JIT)
 
-#if USE(JSVALUE64)
 // SPEC-jit section 5.8: immutable, never-retired "unlinked" record. The
 // flag-on fast path branches here when m_record is null (or the comparand
 // mismatches), so the miss path runs the SAME frozen tail as the hit path:
@@ -728,7 +727,6 @@ static const CallLinkRecord* emptyCallLinkRecord()
     });
     return &record.get();
 }
-#endif
 
 void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& jit, bool isTailCall, ScopedLambda<void()>&& prepareForTailCall)
 {

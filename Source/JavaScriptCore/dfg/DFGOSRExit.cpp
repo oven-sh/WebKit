@@ -362,7 +362,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeOSRExitSideState, void, (V
 
 IGNORE_WARNINGS_END
 
-#if USE(JSVALUE64)
 // UNGIL §A.1.6 (ANNEX A16) — U-T4a helpers (DFG siblings of FTLSaveRestore's
 // materializeBakedScratchBuffer*Pointer; duplicated locally so DFG does not
 // depend on an ENABLE(FTL_JIT) TU). Each materializes via the CURRENT lite —
@@ -409,7 +408,6 @@ static GPRReg osrExitReservedScratchGPR(CCallHelpers& jit)
     return InvalidGPRReg;
 #endif
 }
-#endif // USE(JSVALUE64)
 
 void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const Operands<ValueRecovery>& operands, SpeculationRecovery* recovery, uint32_t osrExitIndex)
 {
@@ -600,7 +598,6 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         scratch = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
     }
 
-#if USE(JSVALUE64)
     // Materializes a pointer to scratch slot `index` into `dest` (which must
     // be a register that is free at the call site).
     auto materializeScratchSlotPointer = [&](GPRReg dest, size_t index) {
@@ -635,7 +632,6 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         } else
             jit.load64(scratch + index, dest);
     };
-#endif
 
     for (size_t index = 0; index < operands.size(); ++index) {
         const ValueRecovery& recovery = operands[index];
@@ -664,11 +660,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         switch (recovery.technique()) {
         case UnboxedDoubleInFPR:
         case InFPR:
-#if USE(JSVALUE64)
             materializeScratchSlotPointer(GPRInfo::regT0, index);
-#else
-            jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), GPRInfo::regT0);
-#endif
             jit.storeDouble(recovery.fpr(), MacroAssembler::Address(GPRInfo::regT0));
             break;
 
@@ -700,11 +692,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         case CellDisplacedInJSStack:
         case BooleanDisplacedInJSStack:
             jit.loadValue(AssemblyHelpers::addressFor(recovery.virtualRegister()), JSRInfo::jsRegT10);
-#if USE(JSVALUE64)
             store64ToScratch(JSRInfo::jsRegT10.payloadGPR(), index);
-#else
-            jit.storeValue(JSRInfo::jsRegT10, scratch + index);
-#endif
             break;
 
         case Constant: {
@@ -731,11 +719,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             break;
 
         case UnboxedDoubleInFPR:
-#if USE(JSVALUE64)
             materializeScratchSlotPointer(GPRInfo::regT1, index);
-#else
-            jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), GPRInfo::regT1);
-#endif
             jit.loadDouble(MacroAssembler::Address(GPRInfo::regT1), FPRInfo::fpRegT0);
             jit.purifyNaN(FPRInfo::fpRegT0, FPRInfo::fpRegT0);
             jit.boxDouble(FPRInfo::fpRegT0, GPRInfo::regT0);
@@ -743,11 +727,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             break;
 
         case DoubleDisplacedInJSStack:
-#if USE(JSVALUE64)
             materializeScratchSlotPointer(GPRInfo::regT1, index);
-#else
-            jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), GPRInfo::regT1);
-#endif
             jit.loadDouble(AssemblyHelpers::addressFor(recovery.virtualRegister()), FPRInfo::fpRegT0);
             jit.purifyNaN(FPRInfo::fpRegT0, FPRInfo::fpRegT0);
             jit.boxDouble(FPRInfo::fpRegT0, GPRInfo::regT0);
@@ -792,13 +772,11 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         jit.move(CCallHelpers::TrustedImmPtr(scratchBuffer->addressOfActiveLength()), GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(scratchBufferSize), CCallHelpers::Address(GPRInfo::regT0));
     }
-#if USE(JSVALUE64)
     else if (perLiteScratch) [[unlikely]] {
         // Same GC-retention publication, against the CURRENT lite's buffer.
         materializePerLiteScratchBuffer(jit, bakedScratchIndex, GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(scratchBufferSize), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, u.m_activeLength))));
     }
-#endif
 
     if constexpr (validateDFGDoesGC) {
         if (Options::validateDoesGC()) {
@@ -858,7 +836,6 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
     }
 
     if (inlineStackContainsActiveCheckpoint) {
-#if USE(JSVALUE64)
         if (perLiteScratch) [[unlikely]] {
             // Registers are free here (state lives in the scratch buffer /
             // stack); materialize the CURRENT lite's tmp slice pointer.
@@ -868,10 +845,6 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             EncodedJSValue* tmpScratch = scratch + operands.tmpIndex(0);
             jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
         }
-#else
-        EncodedJSValue* tmpScratch = scratch + operands.tmpIndex(0);
-        jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
-#endif
         jit.prepareCallOperation(vm);
         jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeOSRExitSideState)), GPRInfo::nonArgGPR0);
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
@@ -947,12 +920,10 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         jit.move(CCallHelpers::TrustedImmPtr(scratchBuffer->addressOfActiveLength()), GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(GPRInfo::regT0));
     }
-#if USE(JSVALUE64)
     else if (perLiteScratch) [[unlikely]] {
         materializePerLiteScratchBuffer(jit, bakedScratchIndex, GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, u.m_activeLength))));
     }
-#endif
 
     // Now that things on the stack are recovered, do the arguments recovery. We assume that arguments
     // recoveries don't recursively refer to each other. But, we don't try to assume that they only

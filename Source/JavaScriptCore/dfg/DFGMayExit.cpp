@@ -195,6 +195,11 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         // Resizeable/GrowableSharedArrayBuffers when a put aliases some other access.
         if (node->arrayMode().isSomeTypedArrayView())
             return Exits;
+        // Under Options::useJSThreads() a segmented-aware store runs the write
+        // predicate and OSR-exits on an in-bounds miss (compileContiguousPutByVal).
+        // CSE only turns an exiting PutByVal into this node, so exiting is legal.
+        if (Options::useJSThreads() && node->arrayMode().needsSegmentedAwareCodegen()) [[unlikely]]
+            return Exits;
         break;
     }
 

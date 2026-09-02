@@ -413,7 +413,7 @@ Expected<PageCount, GrowFailReason> Memory::grow(VM& vm, PageCount delta)
             Ref<BufferMemoryHandle> retiredHandle = m_handle.copyRef();
             Expected<PageCount, GrowFailReason> result = oldPageCount;
             JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "Wasm BoundsChecking relocating grow");
-            JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+            JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
                 m_handle->transferAnchors(newHandle.get());
                 m_handle = WTF::move(newHandle);
                 ASSERT(basePointer() == newMemory);

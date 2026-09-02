@@ -129,14 +129,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
         jit.store64(bufferGPR, buffer);
     }
 
-#if USE(JSVALUE64)
     // The trampoline put the exit index in numberTagRegister; publish it for
     // operationCompileOSRExit. gilOff: deferred until after the register
     // dump below (see the same-VM guard block) — only bufferGPR is free
     // this early, and the guard needs it as the branchPtr immediate scratch.
     if (!perLiteMode)
         jit.store32(GPRInfo::numberTagRegister, &vm.osrExitIndex);
-#endif
 
     if (perLiteMode) [[unlikely]]
         materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR);
@@ -157,7 +155,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     }
     storeSpooler.finalizeFPR();
 
-#if USE(JSVALUE64)
     if (perLiteMode) [[unlikely]] {
         // operationCompileOSRExit reads osrExitIndex and publishes
         // osrExitJumpDestination through VM::group3Primitives(), which uses
@@ -182,7 +179,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
         materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR); // The compare above clobbered the assembler scratch, which is bufferGPR.
         jit.storePtr(GPRInfo::regT0, CCallHelpers::Address(bufferGPR, static_cast<int32_t>(validatedDestinationSlotOffset)));
     }
-#endif
 
     // This will implicitly pass GPRInfo::callFrameRegister as the first argument based on the operation type.
     jit.setupArguments<decltype(operationCompileOSRExit)>(bufferGPR);
@@ -216,7 +212,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     // gilOff: operationCompileOSRExit published the destination through the
     // exiting thread's lite; every real register is restored, so only the
     // reserved temp (bufferGPR) may be clobbered for the indirection.
-#if USE(JSVALUE64)
     if (perLiteMode) [[unlikely]] {
         // Jump through the per-lite destination word whose validated address
         // the guard block above stashed in the trailing scratch slot. Every
@@ -227,15 +222,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
         jit.farJump(CCallHelpers::Address(bufferGPR), OSRExitPtrTag);
     } else
         jit.farJump(MacroAssembler::AbsoluteAddress(&vm.osrExitJumpDestination), OSRExitPtrTag);
-#else
-    // The slot-initializing guard block above is JSVALUE64-only, so the
-    // validated-destination scratch slot is never written here; jumping
-    // through it would be a wild PC. gilOff is 64-bit-only (App. R5), so
-    // perLiteMode must be impossible on this leg — fail-stop, mirroring the
-    // firstGPR convention above.
-    RELEASE_ASSERT(!perLiteMode);
-    jit.farJump(MacroAssembler::AbsoluteAddress(&vm.osrExitJumpDestination), OSRExitPtrTag);
-#endif
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::DFGThunk);
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, nullptr, "DFG OSR exit generation thunk");

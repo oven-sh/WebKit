@@ -709,7 +709,6 @@ void Heap::lastChanceToFinalize()
         // (no-op when !isSharedServer(), I10). Dropped around
         // releaseDelayedReleasedObjects(), which may re-enter JS.
         MutatorSlowPathLocker mutatorSlowPathLocker(*this);
-        m_objectSpace.stopAllocatingForGood();
         m_objectSpace.lastChanceToFinalize();
     }
     releaseDelayedReleasedObjects();
@@ -1211,11 +1210,12 @@ void Heap::gatherStackRoots(ConservativeRoots& roots)
                 coopParkedClients.add(client.parkedRootSnapshotThread(), &client);
         });
     }
-    auto coopParkedSnapshotLookup = scopedLambda<CurrentThreadState*(Thread&)>([&](Thread& thread) -> CurrentThreadState* {
+    auto coopParkedSnapshotLookupFunctor = [&](Thread& thread) -> CurrentThreadState* {
         if (GCClient::Heap* client = coopParkedClients.get(&thread))
             return client->parkedRootSnapshot(); // seq_cst re-load AT USE TIME: cleared sibling falls back to suspend (incl. across growBuffer retries).
         return nullptr;
-    });
+    };
+    ScopedLambda<CurrentThreadState*(Thread&)> coopParkedSnapshotLookup(coopParkedSnapshotLookupFunctor);
     m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_currentThreadState, m_currentThread, coopParkedClients.isEmpty() ? nullptr : &coopParkedSnapshotLookup);
 #if ENABLE(C_LOOP)
     // SharedGC (I12, T6): the CLoop stack is per-VM, not per-thread. Phase 1
@@ -3205,7 +3205,7 @@ void Heap::acquireAccessSlow()
         // lives INSIDE the retry loop. A legacy acquirer lands here for two
         // distinct reasons: (1) its inline CAS (which expects exactly 0)
         // read the §10B.4 poison — then this check forwards; or (2) its
-        // inline CAS read some PRE-flip non-zero state (e.g. needFinalizeBit
+        // inline CAS read some PRE-flip non-zero state (e.g. needCollectionEpilogueBit
         // is legitimately set with no access holder after a collector-thread
         // cycle) — then it carries NO synchronizes-with edge to a concurrent
         // flip, this read may be stale-false, and a poison observed on a
@@ -4299,7 +4299,7 @@ void Heap::LambdaFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
     HandleSlot slot = handle.slot();
     // Lambda finalizers (ThreadObject's ThreadState hook, WebCore's
     // ScriptController completion guards, embedder hooks) may clear Strongs
-    // under HandleSet::m_strongLock and take API-rank locks such as
+    // under StrongSet::m_gilOffLock and take API-rank locks such as
     // ThreadState::joinLock, which must happen entered-with-access outside a
     // stop window. WeakBlock::sweep reaches here inside the conducted GIL-off
     // stop, so the body is deferred to drainDeferredLambdaFinalizers at the
@@ -4326,7 +4326,7 @@ void Heap::drainDeferredLambdaFinalizers()
     // conductorClient.acquireHeapAccess (the conductor is entered-with-access
     // — the carve-out's stated context), BEFORE the conductor returns and
     // re-enters its §10.2 ticket loop or releases anything. The lambdas clear
-    // Strongs under HandleSet::m_strongLock (a §LK.8 destructor-leaf lock,
+    // Strongs under StrongSet::m_gilOffLock (a §LK.8 destructor-leaf lock,
     // taken with access held — its sanctioned context) and take
     // ThreadState::joinLock (api-rank, never across user JS); both are now
     // ordinary mutator-side acquisitions racing other resumed mutators —
@@ -6065,7 +6065,7 @@ void Heap::noteSharedServerSticky() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         }
 
         // A collector-thread cycle that ended with no access holder leaves
-        // needFinalizeBit for the main mutator's next acquireAccess() or
+        // needCollectionEpilogueBit for the main mutator's next acquireAccess() or
         // stopIfNecessary(). Once ISS both forward to the per-client protocol
         // and never consume it, so the stale finalize() would run inside the
         // first conducted cycle after clients have registered precise
@@ -6075,9 +6075,9 @@ void Heap::noteSharedServerSticky() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         // thread holds the API lock; clause (b): hasAccessBit is pinned and
         // *m_threadLock is held). finalize() derefs the main VM's atoms, so
         // that VM's AtomStringTable must be current for the drain.
-        if (m_worldState.load() & needFinalizeBit) [[unlikely]] {
+        if (m_worldState.load() & needCollectionEpilogueBit) [[unlikely]] {
             auto* previousAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(vm().atomStringTable());
-            handleNeedFinalize();
+            handleNeedCollectionEpilogue();
             Thread::currentSingleton().setCurrentAtomStringTable(previousAtomStringTable);
         }
 

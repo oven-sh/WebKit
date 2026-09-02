@@ -67,7 +67,6 @@ void dumpThreadAtomicsRMWStats()
 
 enum class OwnPropertyKind : uint8_t { Missing, Data, Accessor };
 
-#if USE(JSVALUE64)
 // I5 fix - SPEC-ungil ANNEX C1 third arm / OM SPEC-objectmodel ANNEX Q (I31):
 // flag-on, the quickly-family deliberately answers FALSE for every
 // ArrayStorage shape so generic callers fall to the E5 / 4.6 cell-locked
@@ -105,7 +104,6 @@ static ArrayStorageElementProbe probeArrayStorageElementForAtomics(JSObject* obj
     value = stored;
     return ArrayStorageElementProbe::Plain;
 }
-#endif // USE(JSVALUE64)
 
 // Returns Missing with an exception pending for the two rejected receiver
 // classes (see the 4.5 atomicity comment below); every caller
@@ -140,7 +138,6 @@ static OwnPropertyKind getOwnPropertyForAtomics(JSGlobalObject* globalObject, JS
     // function name/length), so the re-validation runs after it on purpose.
     if (std::optional<uint32_t> index = parseIndex(propertyName)) {
         if (!object->canGetIndexQuickly(index.value())) [[unlikely]] {
-#if USE(JSVALUE64)
             // I5 fix: flag-on, AS shapes answer "not quickly" BY DESIGN (OM
             // ANNEX Q/I31) so generic callers fall to cell-locked access -
             // that is not "not a plain data property". Probe the locked AS
@@ -157,7 +154,6 @@ static OwnPropertyKind getOwnPropertyForAtomics(JSGlobalObject* globalObject, JS
                     return OwnPropertyKind::Data;
                 }
             }
-#endif
             throwTypeError(globalObject, scope, "Atomics property operations require a plain data property"_s);
             return OwnPropertyKind::Missing;
         }
@@ -235,7 +231,6 @@ static void putExistingOwnDataPropertyForAtomics(JSGlobalObject* globalObject, J
     object->putDirect(globalObject->vm(), propertyName, value, preservedAttributes);
 }
 
-#if USE(JSVALUE64)
 
 // ---------------- GIL-off re-home (SPEC-ungil §C.1/§C.2, U-T10) ----------------
 //
@@ -957,15 +952,12 @@ static JSValue atomicsRMWOnPropertyGilOff(JSGlobalObject* globalObject, JSObject
     }
 }
 
-#endif // USE(JSVALUE64)
 
 JSValue atomicsLoadOnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
 {
     VM& vm = globalObject->vm();
-#if USE(JSVALUE64)
     if (vm.gilOff()) [[unlikely]]
         return atomicsLoadOnPropertyGilOff(globalObject, object, propertyName);
-#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value;
     unsigned attributes = 0;
@@ -981,10 +973,8 @@ JSValue atomicsLoadOnProperty(JSGlobalObject* globalObject, JSObject* object, Pr
 JSValue atomicsStoreOnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value)
 {
     VM& vm = globalObject->vm();
-#if USE(JSVALUE64)
     if (vm.gilOff()) [[unlikely]]
         return atomicsStoreOnPropertyGilOff(globalObject, object, propertyName, value);
-#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue existing;
     unsigned attributes = 0;
@@ -1021,10 +1011,8 @@ JSValue atomicsStoreOnProperty(JSGlobalObject* globalObject, JSObject* object, P
 JSValue atomicsCompareExchangeOnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue expected, JSValue replacement)
 {
     VM& vm = globalObject->vm();
-#if USE(JSVALUE64)
     if (vm.gilOff()) [[unlikely]]
         return atomicsCompareExchangeOnPropertyGilOff(globalObject, object, propertyName, expected, replacement);
-#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue current;
     unsigned attributes = 0;
@@ -1059,10 +1047,8 @@ JSValue atomicsCompareExchangeOnProperty(JSGlobalObject* globalObject, JSObject*
 JSValue atomicsRMWOnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, AtomicsRMWOp op, JSValue operand)
 {
     VM& vm = globalObject->vm();
-#if USE(JSVALUE64)
     if (vm.gilOff()) [[unlikely]]
         return atomicsRMWOnPropertyGilOff(globalObject, object, propertyName, op, operand);
-#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (op == AtomicsRMWOp::Exchange) {
@@ -1257,7 +1243,7 @@ public:
         // removeListIfEmpty (normal GC; the sweep is then a no-op that
         // unregisters the address) and otherwise dies exactly at VM teardown
         // via lastChanceToFinalize — where this finalizer clears every
-        // surviving Strong under the JSLock, before the VM's HandleSet is
+        // surviving Strong under the JSLock, before the VM's StrongSet is
         // destroyed (the 5.10 / VM-UAF class ~AsyncTicket RELEASE_ASSERTs
         // against). The CFinalizer overload is deliberate: it runs inline at
         // sweep time, while the dead cell's address is still unique. The
@@ -1373,7 +1359,6 @@ static Seconds parseAtomicsTimeout(JSGlobalObject* globalObject, JSValue timeout
     return timeout;
 }
 
-#if USE(JSVALUE64)
 
 // ---------------- §C.3(b) under-listLock SVZ re-validation (U-T11) ----------------
 //
@@ -1492,7 +1477,6 @@ static PreParkRevalidation revalidateEnqueuedPropertyWaiterUnderListLock(JSGloba
     return outcome == LockedSVZOutcome::NotEqual ? PreParkRevalidation::NotEqual : PreParkRevalidation::Restart;
 }
 
-#endif // USE(JSVALUE64)
 
 JSValue atomicsWaitOnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue expected, JSValue timeoutValue) WTF_IGNORES_THREAD_SAFETY_ANALYSIS // The W1 episode drops/retakes listLock under a live Locker (the WaiterListManager pattern).
 {
@@ -1537,7 +1521,6 @@ JSValue atomicsWaitOnProperty(JSGlobalObject* globalObject, JSObject* object, Pr
     if (!uid)
         return throwTypeError(globalObject, scope, "Atomics.wait: invalid property name"_s), JSValue();
 
-#if USE(JSVALUE64)
     // §C.3(b) prologue: take the {offset, structureID} provenance the
     // under-listLock §9.5 re-load validates (I34). Outside any rank-2/3 lock
     // (the probe may reify lazy properties / take the cell lock).
@@ -1548,7 +1531,6 @@ JSValue atomicsWaitOnProperty(JSGlobalObject* globalObject, JSObject* object, Pr
         if (probe.restart || probe.kind != OwnPropertyKind::Data) [[unlikely]]
             continue; // Shape raced past the step-1 read; the fresh step-1 load re-classifies (and throws the precise error if it settled non-plain).
     }
-#endif
 
     // Step 2 (F4): still under the JSLock — table lock (rank 2), find-or-create
     // + first-waiter Strongs, drop; list lock (rank 3), enqueue Waiting, drop.
@@ -1558,7 +1540,6 @@ JSValue atomicsWaitOnProperty(JSGlobalObject* globalObject, JSObject* object, Pr
     // lost-waiter comment there (closeout review fix).
     Ref<PropertyWaiterList> list = table.findOrCreateList(vm, object, uid, waiter.get());
 
-#if USE(JSVALUE64)
     if (gilOff) [[unlikely]] {
         // §C.3(b): re-validate SVZ(o[k], expected) under the list lock, with
         // heap access still intact (before the GILDroppedSection).
@@ -1577,7 +1558,6 @@ JSValue atomicsWaitOnProperty(JSGlobalObject* globalObject, JSObject* object, Pr
             continue; // Restart: FRESH enqueue after re-deriving outside the lock.
         }
     }
-#endif
 
     uint8_t finalState;
     bool listNowEmpty = false;
@@ -1717,7 +1697,6 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
         if (!uid)
             return throwTypeError(globalObject, scope, "Atomics.waitAsync: invalid property name"_s), JSValue();
 
-#if USE(JSVALUE64)
         // §C.3(b) prologue (see atomicsWaitOnProperty).
         ConcurrentAtomicsProbe probe;
         if (vm.gilOff()) [[unlikely]] {
@@ -1726,7 +1705,6 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
             if (probe.restart || probe.kind != OwnPropertyKind::Data) [[unlikely]]
                 continue;
         }
-#endif
 
         // Promise + ticket are created once and reused across restart
         // iterations (each restart abandons only its waiter NODE; the
@@ -1748,7 +1726,6 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
         // be set BEFORE the enqueue publishes the waiter to notifiers.
         Ref<PropertyWaiterList> list = table.findOrCreateList(vm, object, uid, waiter.get());
 
-#if USE(JSVALUE64)
         if (vm.gilOff()) [[unlikely]] {
             // §C.3(b): re-validate under the list lock (see atomicsWaitOnProperty).
             PreParkRevalidation revalidation;
@@ -1772,7 +1749,6 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
                 continue; // Restart: FRESH waiter + enqueue after re-deriving outside the lock.
             }
         }
-#endif
 
         if (timeout != Seconds::infinity()) {
             // Arm the timeout on the VM's run loop (SPEC-api 5.6 / G28).
@@ -1825,8 +1801,8 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
                     return;
                 }
                 PropertyWaiterTable::singleton().removeListIfEmpty(cell, uid.get());
-                ticket->settle([](DeferredWorkTimer::Ticket dwtTicket) {
-                    JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
+                ticket->settle([](DeferredWorkTimer::Ticket& dwtTicket) {
+                    JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket.target());
                     JSGlobalObject* lexicalGlobalObject = promise->realm();
                     VM& innerVM = lexicalGlobalObject->vm();
                     promise->resolve(lexicalGlobalObject, innerVM, innerVM.smallStrings.timedOutString());
@@ -1885,8 +1861,8 @@ JSValue atomicsNotifyOnProperty(JSGlobalObject* globalObject, JSObject* object, 
                 listNowEmpty = list->waiters.isEmpty();
             }
             for (auto& ticket : asyncWoken) {
-                ticket->settle([](DeferredWorkTimer::Ticket dwtTicket) {
-                    JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
+                ticket->settle([](DeferredWorkTimer::Ticket& dwtTicket) {
+                    JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket.target());
                     JSGlobalObject* lexicalGlobalObject = promise->realm();
                     VM& innerVM = lexicalGlobalObject->vm();
                     promise->resolve(lexicalGlobalObject, innerVM, innerVM.smallStrings.okString());

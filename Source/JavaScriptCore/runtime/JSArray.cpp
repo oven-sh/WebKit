@@ -47,7 +47,6 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
     ASSERT(newLength > butterfly->vectorLength());
     ASSERT(newLength <= MAX_STORAGE_VECTOR_LENGTH);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel §4.4 T1 (Task 8; GT10's JSArray.cpp:96 site): flag-on,
     // a lock-free COPYING flat resize is legal ONLY with expected tag exactly
     // (currentButterflyTID(), 0) (I27). Foreign/SW=1/segmented words return
@@ -65,7 +64,6 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
             || untaggedButterfly(expectedTaggedWord) != butterfly)
             return false;
     }
-#endif
 
     Structure* structure = object->structure();
     unsigned propertyCapacity = structure->outOfLineCapacity();
@@ -114,7 +112,6 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
     newButterfly->setVectorLength(newVectorLength);
     newButterfly->setPublicLength(newLength);
 
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         // §4.4: ONE 64-bit CAS on the tagged word, new tag identical
         // (currentTID, 0) (T1/I27/I16). Failure = an SW flip (or conversion)
@@ -128,7 +125,6 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
         vm.writeBarrier(object);
         return true;
     }
-#endif
     object->setButterfly(vm, newButterfly);
     return true;
 }
@@ -516,7 +512,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel I31/L3 (Task 8): flag-on, every runtime AS access -
     // sparse-map structural edits included (sparse maps stay in place,
     // runtime-only, locked on both sides, §4.6) - holds the cell lock; the
@@ -527,7 +522,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
         threadsLocker.emplace(cellLock());
         storage = arrayStorage();
     }
-#endif
 
     unsigned length = storage->length();
 
@@ -537,9 +531,7 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     if (SparseArrayValueMap* map = storage->m_sparseMap.get()) {
         // Fail if the length is not writable.
         if (map->lengthIsReadOnly()) {
-#if USE(JSVALUE64)
             threadsLocker.reset();
-#endif
             return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         }
 
@@ -547,7 +539,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
             // Copy any keys we might be interested in into a vector.
             Vector<unsigned, 0, UnsafeVectorOverflow> keys;
             keys.reserveInitialCapacity(std::min(map->size(), static_cast<size_t>(length - newLength)));
-#if USE(JSVALUE64)
             if (Options::useJSThreads()) [[unlikely]] {
                 // The map serializes its table edits on its own cell lock, not
                 // this object's: a putEntry on another thread can rehash it
@@ -558,7 +549,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
                         keys.append(index);
                 });
             } else
-#endif
             {
                 SparseArrayValueMap::const_iterator end = map->end();
                 for (SparseArrayValueMap::const_iterator it = map->begin(); it != end; ++it) {
@@ -576,7 +566,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
                 unsigned i = keys.size();
                 while (i) {
                     unsigned index = keys[--i];
-#if USE(JSVALUE64)
                     if (Options::useJSThreads()) [[unlikely]] {
                         // Locked snapshot, then keyed remove; an entry a racing
                         // delete already removed needs nothing from us.
@@ -591,7 +580,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
                         map->remove(index);
                         continue;
                     }
-#endif
                     SparseArrayValueMap::iterator it = map->find(index);
                     ASSERT(it != map->notFound());
                     if (it->attributes() & PropertyAttribute::DontDelete) {
@@ -625,7 +613,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     return true;
 }
 
-#if USE(JSVALUE64)
 // Review round 4 sweep (same blocker class as the appendMemcpy/fastSlice
 // findings): flag-on single-snapshot probe for the remaining JSArray fast
 // paths that deref butterfly() as flat. Loads the tagged word ONCE and
@@ -664,7 +651,6 @@ static ALWAYS_INLINE bool jsThreadsFlatSnapshot(JSObject* object, JSThreadsFastP
     butterfly = untaggedButterfly(word);
     return true;
 }
-#endif
 
 bool JSArray::fastFill(VM& vm, unsigned startIndex, unsigned endIndex, JSValue value)
 {
@@ -679,25 +665,19 @@ bool JSArray::fastFill(VM& vm, unsigned startIndex, unsigned endIndex, JSValue v
         return false;
     convertToIndexingTypeIfNeeded(vm, nextType);
 
-#if USE(JSVALUE64)
     // Flag-on the relabel returns without transitioning when a racer settled
     // the shape first, so the published shape, not nextType, decides how the
     // lanes below must be written. Nothing between this read and the stores
     // can park.
     if (Options::useJSThreads() && indexingType() != nextType) [[unlikely]]
         return false;
-#endif
     ASSERT(nextType == indexingType());
 
-#if USE(JSVALUE64)
     Butterfly* butterfly;
     if (!jsThreadsFlatSnapshot(this, JSThreadsFastPathIntent::InPlaceWrite, butterfly))
         return false; // round 4: segmented / shared / foreign / AS => generic fill.
     if (Options::useJSThreads() && endIndex > butterfly->vectorLength()) [[unlikely]]
         return false; // round 4: aliased publicLength can race past this snapshot's storage.
-#else
-    Butterfly* butterfly = this->butterfly();
-#endif
 
     // There is a chance that endIndex is beyond the length. If it is, let's just fail.
     if (endIndex > butterfly->publicLength())
@@ -737,13 +717,9 @@ JSArray* JSArray::fastToReversed(JSGlobalObject* globalObject, uint64_t length)
 
     VM& vm = globalObject->vm();
 
-#if USE(JSVALUE64)
     Butterfly* sourceButterfly;
     if (!jsThreadsFlatSnapshot(this, JSThreadsFastPathIntent::Read, sourceButterfly))
         return nullptr; // round 4: segmented / flag-on AS => generic toReversed.
-#else
-    Butterfly* sourceButterfly = this->butterfly();
-#endif
 
     auto sourceType = indexingType();
     switch (sourceType) {
@@ -779,13 +755,11 @@ JSArray* JSArray::fastToReversed(JSGlobalObject* globalObject, uint64_t length)
             nullptr, AllocationFailureMode::ReturnNull);
         if (!memory) [[unlikely]]
             return nullptr;
-#if USE(JSVALUE64)
         // The allocation above is a park point: a stop-the-world relabel of
         // this array rewrites the snapshot's lanes in place, so sourceType
         // is only trusted if the published shape still matches it.
         if (Options::useJSThreads() && this->indexingType() != sourceType) [[unlikely]]
             return nullptr;
-#endif
         auto* butterfly = Butterfly::fromBase(memory, 0, 0);
         butterfly->setVectorLength(vectorLength);
         butterfly->setPublicLength(length);
@@ -855,13 +829,9 @@ JSArray* JSArray::fastWith(JSGlobalObject* globalObject, uint32_t index, JSValue
 
     VM& vm = globalObject->vm();
 
-#if USE(JSVALUE64)
     Butterfly* sourceButterfly;
     if (!jsThreadsFlatSnapshot(this, JSThreadsFastPathIntent::Read, sourceButterfly))
         return nullptr; // round 4: segmented / flag-on AS => generic with().
-#else
-    Butterfly* sourceButterfly = this->butterfly();
-#endif
 
     auto sourceType = indexingType();
     switch (sourceType) {
@@ -897,12 +867,10 @@ JSArray* JSArray::fastWith(JSGlobalObject* globalObject, uint32_t index, JSValue
             nullptr, AllocationFailureMode::ReturnNull);
         if (!memory) [[unlikely]]
             return nullptr;
-#if USE(JSVALUE64)
         // See fastToReversed: the allocation is a park point for an in-place
         // relabel of this array's lanes.
         if (Options::useJSThreads() && this->indexingType() != sourceType) [[unlikely]]
             return nullptr;
-#endif
         auto* butterfly = Butterfly::fromBase(memory, 0, 0);
         butterfly->setVectorLength(vectorLength);
         butterfly->setPublicLength(length);
@@ -984,15 +952,11 @@ std::optional<bool> JSArray::fastIncludes(JSGlobalObject* globalObject, JSValue 
     uint32_t length = static_cast<uint32_t>(length64);
     uint32_t index = static_cast<uint32_t>(index64);
 
-#if USE(JSVALUE64)
     Butterfly* snapshotButterfly;
     if (!jsThreadsFlatSnapshot(this, JSThreadsFastPathIntent::Read, snapshotButterfly))
         return std::nullopt; // round 4: segmented / flag-on AS => generic includes.
     if (Options::useJSThreads() && length > snapshotButterfly->vectorLength()) [[unlikely]]
         return std::nullopt; // round 4: racing length growth past this snapshot's storage.
-#else
-    Butterfly* snapshotButterfly = this->butterfly();
-#endif
 
     switch (this->indexingType()) {
     case ArrayWithInt32: {
@@ -1082,15 +1046,11 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
     if (isCopyOnWrite(indexingMode()))
         convertFromCopyOnWrite(vm);
 
-#if USE(JSVALUE64)
     Butterfly* snapshotButterfly;
     if (!jsThreadsFlatSnapshot(this, JSThreadsFastPathIntent::InPlaceWrite, snapshotButterfly))
         return false; // round 4: segmented / shared / foreign / AS => generic copyWithin.
     if (Options::useJSThreads() && length > snapshotButterfly->vectorLength()) [[unlikely]]
         return false; // round 4: racing length growth past this snapshot's storage.
-#else
-    Butterfly* snapshotButterfly = this->butterfly();
-#endif
 
     auto type = this->indexingType();
     switch (type) {
@@ -1161,13 +1121,9 @@ JSArray* JSArray::fastToSpliced(JSGlobalObject* globalObject, CallFrame* callFra
         if (newLength >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
             return nullptr;
 
-#if USE(JSVALUE64)
         Butterfly* sourceButterfly;
         if (!jsThreadsFlatSnapshot(this, JSThreadsFastPathIntent::Read, sourceButterfly))
             return nullptr; // round 4: segmented (flag-on) => generic splice.
-#else
-        Butterfly* sourceButterfly = this->butterfly();
-#endif
 
         if (length > sourceButterfly->vectorLength()) [[unlikely]]
             return nullptr;
@@ -1196,12 +1152,10 @@ JSArray* JSArray::fastToSpliced(JSGlobalObject* globalObject, CallFrame* callFra
             nullptr, AllocationFailureMode::ReturnNull);
         if (!memory) [[unlikely]]
             return nullptr;
-#if USE(JSVALUE64)
         // See fastToReversed: the allocation is a park point for an in-place
         // relabel of this array's lanes.
         if (Options::useJSThreads() && indexingType() != sourceType) [[unlikely]]
             return nullptr;
-#endif
         auto* resultButterfly = Butterfly::fromBase(memory, 0, 0);
         resultButterfly->setVectorLength(vectorLength);
         resultButterfly->setPublicLength(newLength);
@@ -1318,7 +1272,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     if (isCopyOnWrite(indexingMode()))
         convertFromCopyOnWrite(vm);
 
-#if USE(JSVALUE64)
     // Review round 4 (blocker fix, span overload): destination-side regime
     // guard - the in-place stores below are exclusive-owner-flat only (the
     // source is a local buffer, so no source guard is needed). See the
@@ -1331,7 +1284,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
                 && (butterflySharedWrite(selfWord) || butterflyWriterIsForeign(selfWord)))) // incl. §9.6 forceButterflySWBit
             return false;
     }
-#endif
 
     IndexingType type = indexingType();
     bool allowPromotion = false;
@@ -1369,18 +1321,15 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
         throwOutOfMemoryError(globalObject, scope);
         return false;
     }
-#if USE(JSVALUE64)
     // Destination shape re-read after the ensureLength park point; see the
     // JSArray* overload below.
     if (Options::useJSThreads() && indexingType() != copyType) [[unlikely]]
         return false;
-#endif
     ASSERT(copyType == indexingType());
 
     // Review round 4 (blocker fix): re-probe + single-snapshot after
     // ensureLength - see the JSArray* overload below.
     Butterfly* selfButterfly;
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t selfWord = taggedButterflyWord();
         if (isSegmentedButterfly(selfWord)
@@ -1392,9 +1341,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
             return false; // Defensive: never write past this snapshot's storage.
     } else
         selfButterfly = this->butterfly();
-#else
-    selfButterfly = this->butterfly();
-#endif
 
     if (otherType == ArrayWithUndecided) [[unlikely]] {
         auto* butterfly = selfButterfly;
@@ -1427,7 +1373,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     if (!canFastAppend(otherArray))
         return false;
 
-#if USE(JSVALUE64)
     // Review round 4 (blocker fix): this fast path memcpy-reads otherArray's
     // flat payload and memcpy-writes our own IN PLACE, with no flag-on regime
     // dispatch - canFastAppend only excludes ArrayStorage shapes. Flag-on:
@@ -1448,7 +1393,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
             && (butterflySharedWrite(selfWord) || butterflyWriterIsForeign(selfWord))) // incl. §9.6 forceButterflySWBit
             return false;
     }
-#endif
 
     IndexingType type = indexingType();
     IndexingType otherType = otherArray->indexingType();
@@ -1485,7 +1429,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
         throwOutOfMemoryError(globalObject, scope);
         return false;
     }
-#if USE(JSVALUE64)
     // The lane decoders below are chosen from copyType and otherType. Flag-on
     // the Undecided conversion above may have bailed to a racer's shape, and
     // ensureLength is a park point during which a stop-the-world relabel of
@@ -1493,7 +1436,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     // word, so the word re-probe below cannot see it: re-read both shapes.
     if (Options::useJSThreads() && (indexingType() != copyType || otherArray->indexingType() != otherType)) [[unlikely]]
         return false;
-#endif
     ASSERT(copyType == indexingType());
 
     // Review round 4 (blocker fix): flag-on, derive BOTH flat views from
@@ -1509,7 +1451,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     // element it still owes.
     Butterfly* selfButterfly;
     Butterfly* otherButterfly = nullptr;
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t selfWord = taggedButterflyWord();
         if (isSegmentedButterfly(selfWord)
@@ -1531,10 +1472,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
         selfButterfly = this->butterfly();
         otherButterfly = otherArray->butterfly();
     }
-#else
-    selfButterfly = this->butterfly();
-    otherButterfly = otherArray->butterfly();
-#endif
 
     if (otherType == ArrayWithUndecided) [[unlikely]] {
         auto* butterfly = selfButterfly;
@@ -1563,7 +1500,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel Task 8: segmented words cannot take the flat paths
     // below (butterfly() is flat-only). Sparse/overlong lengths go to
     // ArrayStorage (the conversion materializes flat under a §4.6 stop);
@@ -1616,7 +1552,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
             RELEASE_AND_RETURN(scope, setLength(globalObject, newLength, throwException));
         }
     }
-#endif
 
     // Review round 4 (TOCTOU blocker fix): single-snapshot dispatch - a
     // foreign §4.2 conversion needs no stop once the TTL sets are fired, so a
@@ -1624,7 +1559,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     // See JSArray::pop for the full rationale (incl. why post-snapshot
     // conversions keep the in-place writes below sound: the spine aliases this
     // flat memory).
-#if USE(JSVALUE64)
     Butterfly* butterfly;
     IndexingType mode;
     if (Options::useJSThreads()) [[unlikely]] {
@@ -1643,10 +1577,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         butterfly = this->butterfly();
         mode = indexingMode();
     }
-#else
-    Butterfly* butterfly = this->butterfly();
-    IndexingType mode = indexingMode();
-#endif
     switch (mode) {
     case ArrayClass:
         if (!newLength)
@@ -1657,14 +1587,12 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
                 ensureArrayStorage(vm)));
         }
         if (!createInitialUndecided(vm, newLength)) {
-#if USE(JSVALUE64)
             // Review round 2 (N3): flag-on, a racing first install won (or the
             // publication went segmented); re-dispatch on the settled state.
             // Indexing types only move away from blank, so this recursion
             // terminates.
             ASSERT(Options::useJSThreads());
             RELEASE_AND_RETURN(scope, setLength(globalObject, newLength, throwException));
-#endif
         }
         return true;
 
@@ -1674,7 +1602,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         if (newLength == butterfly->publicLength())
             return true;
         convertFromCopyOnWrite(vm);
-#if USE(JSVALUE64)
         // Round 4: flag-on the materialization may have been won by a foreign
         // thread and the word may already have moved on (even segmented) -
         // a plain butterfly() re-load is the TOCTOU above all over again.
@@ -1682,7 +1609,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         // monotone, so this recursion terminates).
         if (Options::useJSThreads()) [[unlikely]]
             RELEASE_AND_RETURN(scope, setLength(globalObject, newLength, throwException));
-#endif
         butterfly = this->butterfly();
         [[fallthrough]];
 
@@ -1715,13 +1641,11 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         }
 
         unsigned clearFrom = butterfly->publicLength();
-#if USE(JSVALUE64)
         // Round 4: bound the clear loop by THIS snapshot's vectorLength - on a
         // flat word that a racing conversion + T2 grow superseded, the aliased
         // publicLength slot can race past the snapshot's storage (see pop).
         if (Options::useJSThreads()) [[unlikely]]
             clearFrom = std::min(clearFrom, butterfly->vectorLength());
-#endif
         if (indexingType() == ArrayWithDouble) {
             for (unsigned i = clearFrom; i-- > newLength;)
                 butterfly->contiguousDouble().at(this, i) = PNaN;
@@ -1750,7 +1674,6 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
 
     ensureWritable(vm);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel Task 8: segmented words cannot take the flat paths
     // below (butterfly() is flat-only). Dense segmented pops go through the
     // §9.5 accessors; holes fall to the generic get/delete/setLength protocol
@@ -1813,7 +1736,6 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
             RELEASE_AND_RETURN(scope, pop(globalObject));
         }
     }
-#endif
 
     // Review round 4 (TOCTOU blocker fix): once a shape family's TTL sets are
     // fired, a foreign flat->segmented conversion (§4.2) needs only the cell
@@ -1826,7 +1748,6 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     // sound for the in-place writes below: the §4.2 spine aliases this flat
     // allocation's memory, so stores through the stale flat view land in the
     // live fragments.
-#if USE(JSVALUE64)
     Butterfly* butterfly;
     IndexingType type;
     if (Options::useJSThreads()) [[unlikely]] {
@@ -1844,10 +1765,6 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
         butterfly = this->butterfly();
         type = indexingType();
     }
-#else
-    Butterfly* butterfly = this->butterfly();
-    IndexingType type = indexingType();
-#endif
 
     switch (type) {
     case ArrayClass:
@@ -1866,14 +1783,12 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
         if (!length--)
             return jsUndefined();
 
-#if USE(JSVALUE64)
         // Round 4: on a flat word that a racing conversion + T2 grow
         // superseded, the ALIASED publicLength slot can race past this
         // snapshot's storage - bail to the generic path instead of asserting
         // (no crashes from races).
         if (Options::useJSThreads() && length >= butterfly->vectorLength()) [[unlikely]]
             break;
-#endif
         RELEASE_ASSERT(length < butterfly->vectorLength());
         JSValue value = butterfly->contiguous().at(this, length).get();
         if (value) {
@@ -1890,10 +1805,8 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
         if (!length--)
             return jsUndefined();
 
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && length >= butterfly->vectorLength()) [[unlikely]] // round 4: aliased publicLength can race past this snapshot
             break;
-#endif
         RELEASE_ASSERT(length < butterfly->vectorLength());
         double value = butterfly->contiguousDouble().at(this, length);
         if (value == value) {
@@ -1905,7 +1818,6 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     }
         
     case ARRAY_WITH_ARRAY_STORAGE_INDEXING_TYPES: {
-#if USE(JSVALUE64)
         // SPEC-objectmodel I31/L5 (Task 8): flag-on, every runtime AS access
         // is cell-locked; re-read the butterfly under the lock (AS-COPY
         // republishes). In-place element/length/m_numValuesInVector stores in
@@ -1917,14 +1829,11 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
             threadsLocker.emplace(cellLock());
             butterfly = this->butterfly();
         }
-#endif
         ArrayStorage* storage = butterfly->arrayStorage();
 
         unsigned length = storage->length();
         if (!length) {
-#if USE(JSVALUE64)
             threadsLocker.reset();
-#endif
             if (!isLengthWritable())
                 throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
             return jsUndefined();
@@ -1952,13 +1861,11 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     }
     
     unsigned length = getArrayLength();
-#if USE(JSVALUE64)
     // The arms above proved their snapshot's length non-zero, but an unlocked
     // racing shrink can have emptied the array since; without this check the
     // index wraps to UINT32_MAX and the tail acts on that named property.
     if (Options::useJSThreads() && !length) [[unlikely]]
         return jsUndefined();
-#endif
     unsigned index = length - 1;
     // Let element be the result of calling the [[Get]] internal method of O with argument indx.
     JSValue element = get(globalObject, index);
@@ -1981,7 +1888,6 @@ JSValue JSArray::fastShift(VM& vm)
 {
     ensureWritable(vm);
 
-#if USE(JSVALUE64)
     // Review round 3: the in-place memmove + slot clear + plain
     // setPublicLength below are owner-(currentTID, 0)-only mutations (§3/I27 -
     // moving shared element storage in place outside any lock or stop loses
@@ -2003,18 +1909,13 @@ JSValue JSArray::fastShift(VM& vm)
         butterfly = untaggedButterfly(word);
     } else
         butterfly = this->butterfly();
-#else
-    Butterfly* butterfly = this->butterfly();
-#endif
 
     auto indexingType = this->indexingType();
-#if USE(JSVALUE64)
     // A racing first install CASes the word before setStructure writes the
     // indexing byte, so a null word can pair with an indexed type whose cases
     // below dereference it (see setLength).
     if (Options::useJSThreads() && !butterfly && indexingType != ArrayClass) [[unlikely]]
         return { };
-#endif
 
     switch (indexingType) {
     case ArrayClass:
@@ -2030,10 +1931,8 @@ JSValue JSArray::fastShift(VM& vm)
         if (length > shiftThreshold) [[unlikely]]
             return { };
 
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && length > butterfly->vectorLength()) [[unlikely]]
             return { }; // round 4: aliased publicLength raced past this snapshot's storage (see pop).
-#endif
         JSValue result = butterfly->contiguous().at(this, 0).get();
         if (!result)
             return { };
@@ -2063,10 +1962,8 @@ JSValue JSArray::fastShift(VM& vm)
         if (length > shiftThreshold) [[unlikely]]
             return { };
 
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && length > butterfly->vectorLength()) [[unlikely]]
             return { }; // round 4: aliased publicLength raced past this snapshot's storage.
-#endif
         double result = butterfly->contiguousDouble().at(this, 0);
         if (result != result)
             return { };
@@ -2113,7 +2010,6 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         return nullptr;
     }
 
-#if USE(JSVALUE64)
     // Review round 4 (blocker fix): this fast path memcpy-reads the source's
     // flat payload with no flag-on regime dispatch. Flag-on: the ArrayStorage
     // leg below reads AS innards that are cell-locked-only (I31) — bail to the
@@ -2146,7 +2042,6 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         if (hasAnyArrayStorage(source->indexingType()))
             return nullptr; // I31: AS reads are cell-locked; generic path.
     }
-#endif
 
     auto arrayType = source->indexingType() | IsArray;
     switch (arrayType) {
@@ -2156,7 +2051,6 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         if (count >= MIN_SPARSE_ARRAY_INDEX || sourceStructure->holesMustForwardToPrototype(source))
             return nullptr;
 
-#if USE(JSVALUE64)
         if (sourceSegmented) [[unlikely]] {
             // ---- T1 leg (A): segmented-source flat-result fast slice. ----
             // Flag-on only (sourceSegmented is set only under useJSThreads);
@@ -2223,19 +2117,14 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
             // ZERO relabels — no convertUndecidedForValue, no §A.3 STW.
             return createWithButterfly(vm, &deferralContext, resultStructure, butterfly);
         }
-#endif
 
         Butterfly* sourceButterfly;
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]] {
             sourceButterfly = untaggedButterfly(sourceWord);
             if (!sourceButterfly) [[unlikely]]
                 return nullptr; // E5 None-first: racing N3 first install (round 4).
         } else
             sourceButterfly = source->butterfly();
-#else
-        sourceButterfly = source->butterfly();
-#endif
 
         if (startIndex + count > sourceButterfly->vectorLength())
             return nullptr;
@@ -2309,7 +2198,6 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
     }
 }
 
-#if USE(JSVALUE64)
 // SPEC-objectmodel §4.6 AS-COPY (Task 8; GT10's JSArray.cpp:1650 site, I31):
 // flag-on, the whole shift runs under the cell lock (every AS access is
 // cell-locked, reads included - L5), AS innards are NEVER relaid out in place
@@ -2404,14 +2292,11 @@ bool JSArray::shiftCountWithArrayStorageConcurrent(VM& vm, unsigned startIndex, 
     publishArrayStorageButterflyLocked(vm, this, newButterfly); // T3/I17; superseded storage never written again (I7).
     return true;
 }
-#endif // USE(JSVALUE64)
 
 bool JSArray::shiftCountWithArrayStorage(VM& vm, unsigned startIndex, unsigned count, ArrayStorage* storage)
 {
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]]
         return shiftCountWithArrayStorageConcurrent(vm, startIndex, count); // §4.6 AS-COPY; re-reads the storage under the cell lock.
-#endif
     unsigned oldLength = storage->length();
     RELEASE_ASSERT(count <= oldLength);
     
@@ -2506,7 +2391,6 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
 
     ensureWritable(vm);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel Task 8 + review round 3 (I27 carve-out): the flat
     // branches below relocate element storage IN PLACE (gcSafeMemmove + slot
     // clears + plain setPublicLength). That is sound only for the word's
@@ -2532,9 +2416,6 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         butterfly = untaggedButterfly(word);
     } else
         butterfly = this->butterfly();
-#else
-    Butterfly* butterfly = this->butterfly();
-#endif
 
     auto indexingType = this->indexingType();
     switch (indexingType) {
@@ -2555,10 +2436,8 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         if (oldLength - (startIndex + count) >= MIN_SPARSE_ARRAY_INDEX || oldLength > shiftArrayStorageThreshold)
             return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm));
 
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && oldLength > butterfly->vectorLength()) [[unlikely]]
             return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm)); // round 4: aliased publicLength raced past this snapshot's storage.
-#endif
 
         // Storing to a hole is fine since we're still having a good time. But reading from a hole
         // is totally not fine, since we might have to read from the proto chain.
@@ -2605,10 +2484,8 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
         if (oldLength - (startIndex + count) >= MIN_SPARSE_ARRAY_INDEX || oldLength > shiftArrayStorageThreshold)
             return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm));
 
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && oldLength > butterfly->vectorLength()) [[unlikely]]
             return shiftCountWithArrayStorage(vm, startIndex, count, ensureArrayStorage(vm)); // round 4: aliased publicLength raced past this snapshot's storage.
-#endif
 
         // Storing to a hole is fine since we're still having a good time. But reading from a hole 
         // is totally not fine, since we might have to read from the proto chain.
@@ -2649,7 +2526,6 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
     }
 }
 
-#if USE(JSVALUE64)
 // SPEC-objectmodel §4.6 AS-COPY (Task 8; GT10's JSArray.cpp:1818 site, I31):
 // the unshift analogue of shiftCountWithArrayStorageConcurrent. One fresh AS
 // butterfly (indexBias 0) is built with the gap [startIndex, startIndex +
@@ -2732,17 +2608,14 @@ bool JSArray::unshiftCountWithArrayStorageConcurrent(JSGlobalObject* globalObjec
     }
     return handled;
 }
-#endif // USE(JSVALUE64)
 
 // Returns true if the unshift can be handled, false to fallback.
 bool JSArray::unshiftCountWithArrayStorage(JSGlobalObject* globalObject, unsigned startIndex, unsigned count, ArrayStorage* storage)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]]
         RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorageConcurrent(globalObject, startIndex, count)); // §4.6 AS-COPY
-#endif
 
     unsigned length = storage->length();
 
@@ -2804,7 +2677,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
 
     ensureWritable(vm);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel Task 8 + review round 3: as in
     // shiftCountWithAnyIndexingType - segmented, SW=1, and foreign words all
     // route through the ArrayStorage path (§4.6 stop-routed conversion +
@@ -2825,9 +2697,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         butterfly = untaggedButterfly(word);
     } else
         butterfly = this->butterfly();
-#else
-    Butterfly* butterfly = this->butterfly();
-#endif
 
     switch (indexingType()) {
     case ArrayClass:
@@ -2857,10 +2726,8 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
 
         // We have to check for holes before we start moving things around so that we don't get halfway
         // through shifting and then realize we should have been in ArrayStorage mode.
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && oldLength > butterfly->vectorLength()) [[unlikely]]
             RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorage(globalObject, startIndex, count, ensureArrayStorage(vm))); // round 4: aliased publicLength raced past this snapshot's storage.
-#endif
         if (moveCount && holesMustForwardToPrototype()) [[unlikely]] {
             auto* buffer = butterfly->contiguous().data() + startIndex;
             if (containsHole(buffer, moveCount)) [[unlikely]]
@@ -2876,7 +2743,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
             throwOutOfMemoryError(globalObject, scope);
             return true;
         }
-#if USE(JSVALUE64)
         // SPEC-objectmodel Task 8 + review round 3: flag-on, ensureLength may
         // have gone segmented (T2) or a foreign F1 flip may have raced the
         // growth (SW=1). The in-place move below is owner-(currentTID, 0)
@@ -2892,9 +2758,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
             butterfly = untaggedButterfly(word);
         } else
             butterfly = this->butterfly();
-#else
-        butterfly = this->butterfly();
-#endif
 
         if (moveCount)
             gcSafeMemmove(butterfly->contiguous().data() + startIndex + count, butterfly->contiguous().data() + startIndex, moveCount * sizeof(EncodedJSValue));
@@ -2932,10 +2795,8 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
 
         // We have to check for holes before we start moving things around so that we don't get halfway
         // through shifting and then realize we should have been in ArrayStorage mode.
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && oldLength > butterfly->vectorLength()) [[unlikely]]
             RELEASE_AND_RETURN(scope, unshiftCountWithArrayStorage(globalObject, startIndex, count, ensureArrayStorage(vm))); // round 4: aliased publicLength raced past this snapshot's storage.
-#endif
         if (moveCount && holesMustForwardToPrototype()) [[unlikely]] {
             for (unsigned i = oldLength; i-- > startIndex;) {
                 double v = butterfly->contiguousDouble().at(this, i);
@@ -2953,7 +2814,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
             throwOutOfMemoryError(globalObject, scope);
             return true;
         }
-#if USE(JSVALUE64)
         // SPEC-objectmodel Task 8 + review round 3: flag-on, ensureLength may
         // have gone segmented (T2) or a foreign F1 flip may have raced the
         // growth (SW=1). The in-place move below is owner-(currentTID, 0)
@@ -2968,9 +2828,6 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
             butterfly = untaggedButterfly(word);
         } else
             butterfly = this->butterfly();
-#else
-        butterfly = this->butterfly();
-#endif
 
         if (moveCount)
             gcSafeMemmove(butterfly->contiguousDouble().data() + startIndex + count, butterfly->contiguousDouble().data() + startIndex, moveCount * sizeof(double));
@@ -2999,7 +2856,6 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
     unsigned vectorEnd;
     WriteBarrier<Unknown>* vector;
 
-#if USE(JSVALUE64)
     // Round 4 sweep: single-snapshot dispatch; segmented / flag-on AS / null
     // words skip the flat vector scan entirely - the trailing get() loop
     // below is the generic (regime-safe) path and covers every index.
@@ -3009,9 +2865,6 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
             args.append(get(globalObject, i));
         return;
     }
-#else
-    Butterfly* butterfly = this->butterfly();
-#endif
 
     switch (indexingType()) {
     case ArrayClass:
@@ -3026,10 +2879,8 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
     case ArrayWithInt32:
     case ArrayWithContiguous: {
         vectorEnd = butterfly->publicLength();
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]]
             vectorEnd = std::min(vectorEnd, butterfly->vectorLength()); // round 4: snapshot bound.
-#endif
         vector = butterfly->contiguous().data();
         break;
     }
@@ -3038,10 +2889,8 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
         vector = nullptr;
         vectorEnd = 0;
         unsigned doubleEnd = butterfly->publicLength();
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]]
             doubleEnd = std::min(doubleEnd, butterfly->vectorLength()); // round 4: snapshot bound.
-#endif
         for (; i < doubleEnd; ++i) {
             double v = butterfly->contiguousDouble().at(this, i);
             if (v != v)
@@ -3093,7 +2942,6 @@ void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElemen
     // FIXME: What prevents this from being called with a RuntimeArray? The length function will always return 0 in that case.
     ASSERT(length == this->length());
 
-#if USE(JSVALUE64)
     // Round 4 sweep: single-snapshot dispatch; segmented / flag-on AS / null
     // words skip the flat vector scan - the trailing get() loop below is the
     // generic (regime-safe) path and covers every index.
@@ -3105,9 +2953,6 @@ void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElemen
         }
         return;
     }
-#else
-    Butterfly* butterfly = this->butterfly();
-#endif
     switch (indexingType()) {
     case ArrayClass:
         return;
@@ -3122,13 +2967,11 @@ void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElemen
     case ArrayWithContiguous: {
         vector = butterfly->contiguous().data();
         vectorEnd = butterfly->publicLength();
-#if USE(JSVALUE64)
         // Flag-on the caller's `length` sized the destination frame before
         // this call and a racing push can bump publicLength past it, so the
         // scan is bounded by the snapshot's storage and by `length`.
         if (Options::useJSThreads()) [[unlikely]]
             vectorEnd = std::min({ vectorEnd, butterfly->vectorLength(), length });
-#endif
         break;
     }
         
@@ -3136,10 +2979,8 @@ void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElemen
         vector = nullptr;
         vectorEnd = 0;
         unsigned doubleEnd = butterfly->publicLength();
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]]
             doubleEnd = std::min({ doubleEnd, butterfly->vectorLength(), length }); // Same bounds as the Int32/Contiguous case.
-#endif
         for (; i < doubleEnd; ++i) {
             ASSERT(i < butterfly->vectorLength());
             double v = butterfly->contiguousDouble().at(this, i);
@@ -3441,7 +3282,6 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
 
     IndexingType sourceType = sourceArray->indexingType();
 
-#if USE(JSVALUE64)
     // Round 4 sweep: this recurses into arbitrarily NESTED shared arrays -
     // every level needs its own single-snapshot probe (segmented / flag-on AS
     // => bail to the generic flatten), and sourceLength (read via the
@@ -3452,9 +3292,6 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
         return std::numeric_limits<uint64_t>::max();
     if (Options::useJSThreads() && sourceLength > sourceButterfly->vectorLength()) [[unlikely]]
         return std::numeric_limits<uint64_t>::max();
-#else
-    Butterfly* sourceButterfly = sourceArray->butterfly();
-#endif
 
     switch (sourceType) {
     case ArrayWithInt32: {
@@ -3541,7 +3378,6 @@ static uint64_t fastFlatIntoBuffer(JSGlobalObject* globalObject, T* resultBuffer
     IndexingType sourceType = sourceArray->indexingType();
 
     uint64_t resultIndex = startIndex;
-#if USE(JSVALUE64)
     // Round 4 sweep: per-level single-snapshot probe + bound, as in
     // calculateFlattenedLength above (a max() return makes every caller bail
     // to the generic flatten; the result array's clearRange covers any
@@ -3551,9 +3387,6 @@ static uint64_t fastFlatIntoBuffer(JSGlobalObject* globalObject, T* resultBuffer
         return std::numeric_limits<uint64_t>::max();
     if (Options::useJSThreads() && sourceLength > sourceButterfly->vectorLength()) [[unlikely]]
         return std::numeric_limits<uint64_t>::max();
-#else
-    Butterfly* sourceButterfly = sourceArray->butterfly();
-#endif
 
     switch (sourceType) {
     case ArrayWithInt32: {
@@ -3634,7 +3467,6 @@ JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_
     case ArrayWithInt32:
     case ArrayWithDouble:
     case ArrayWithContiguous: {
-#if USE(JSVALUE64)
         // Round 4 sweep: probe + snapshot bound (the per-level probes inside
         // the helpers re-check every nested array, including `this` again).
         {
@@ -3644,10 +3476,6 @@ JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_
             if (length > selfButterfly->vectorLength()) [[unlikely]]
                 return nullptr;
         }
-#else
-        if (length > this->butterfly()->vectorLength()) [[unlikely]]
-            return nullptr;
-#endif
 
         if (holesMustForwardToPrototype()) [[unlikely]]
             return nullptr;
@@ -3674,7 +3502,6 @@ JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_
             nullptr, AllocationFailureMode::ReturnNull);
         if (!memory) [[unlikely]]
             return nullptr;
-#if USE(JSVALUE64)
         // The allocation above is a park point for a stop-the-world relabel of
         // this array, and the fill below dispatches on the shape it re-reads:
         // a relabeled source would write cells or boxed doubles into the Int32
@@ -3682,7 +3509,6 @@ JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_
         // since nesting only exists under a Contiguous result.
         if (Options::useJSThreads() && this->indexingType() != sourceType) [[unlikely]]
             return nullptr;
-#endif
 
         auto* butterfly = Butterfly::fromBase(memory, 0, 0);
         butterfly->setVectorLength(vectorLength);
@@ -3699,14 +3525,12 @@ JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (resultIndex == std::numeric_limits<uint64_t>::max())
             return nullptr;
-#if USE(JSVALUE64)
         // publicLength was fixed from the first pass. Flag-on a racing hole
         // fill or nested push can make the second pass copy a different
         // count; values left in [publicLength, resultIndex) would sit in
         // slack the GC never visits, so the result must match the first pass.
         if (Options::useJSThreads() && resultIndex != flattenedLength) [[unlikely]]
             return nullptr;
-#endif
 
         Butterfly::clearRange(indexingType, butterfly, resultIndex, vectorLength);
         return createWithButterfly(vm, nullptr, resultStructure, butterfly);

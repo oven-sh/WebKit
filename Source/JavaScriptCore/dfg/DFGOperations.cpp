@@ -1335,7 +1335,6 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPopAndRecoverLength, EncodedJSValue, (JSG
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         // The fast path decremented publicLength through the flat butterfly it
         // loaded. A foreign flat->segmented conversion since then aliases that
@@ -1349,7 +1348,6 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPopAndRecoverLength, EncodedJSValue, (JSG
         } else if (Butterfly* butterfly = untaggedButterfly(word))
             butterfly->setPublicLength(butterfly->publicLength() + 1);
     } else
-#endif
         array->butterfly()->setPublicLength(array->butterfly()->publicLength() + 1);
 
     OPERATION_RETURN(scope, JSValue::encode(array->pop(globalObject)));

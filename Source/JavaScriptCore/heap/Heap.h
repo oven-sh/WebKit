@@ -2239,7 +2239,7 @@ private:
     // Every member that campaign-2 (729430dbc80c..d8ed7b6f5254) inserted
     // into the MIDDLE of `class Heap` is collected here, in one contiguous
     // block AFTER the last pre-campaign-2 member (m_signpostMessage), so
-    // every hot pre-existing field — m_objectSpace, m_handleSet,
+    // every hot pre-existing field — m_objectSpace, m_strongSet,
     // m_opaqueRoots, m_helperClient, m_worldState, m_barrierThreshold,
     // m_mutatorState, m_threadLock, the allocation counters, every
     // IsoSubspace — sits at its EXACT pre-campaign-2 byte offset again.

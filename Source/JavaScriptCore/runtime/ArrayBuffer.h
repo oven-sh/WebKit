@@ -427,7 +427,6 @@ private:
     // embedder-only path, never a JS bench path.
     std::atomic<unsigned> m_pinCount { 0 };
     bool m_isWasmMemory { false };
-    WeakPtr<Wasm::Memory> m_associatedWasmMemory;
     // m_locked == true means that some API user fetched m_contents directly from a TypedArray object,
     // the buffer is backed by a WebAssembly.Memory, or is a SharedArrayBuffer.
     std::atomic<bool> m_locked { false };

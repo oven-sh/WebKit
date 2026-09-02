@@ -1394,7 +1394,6 @@ public:
     void compileReallocatePropertyStorage(Node*);
     void compileNukeStructureAndSetButterfly(Node*);
     void compileGetButterfly(Node*);
-#if USE(JSVALUE64)
     // SPEC-jit section 5.5 / Task 9: threaded (Options::useJSThreads())
     // butterfly access emission for the DFG tier. The plan captures the
     // TTL-elision decisions (E1/E2, registered through
@@ -1467,7 +1466,6 @@ public:
     void compileContiguousPutByValSegmentedAware(Node*);
     void compileDoublePutByValSegmentedAware(Node*);
     void compileArrayPushSegmentedAware(Node*);
-#endif
     void compileCallDOMGetter(Node*);
     void compileCallDOM(Node*);
 #if USE(BUN_JSC_ADDITIONS)

@@ -895,7 +895,7 @@ VMLite* carrierLiteOfCurrentThreadIfExists(VM&);
 // detachDeferredOwnCarrierClientForVMDestruction, called later in ~VM right
 // before heap.lastChanceToFinalize(): the destroying thread's client access
 // must survive the access-requiring mid-~VM steps (Strong-clearing teardown
-// such as the SD15 purge and DWT shutdown mutate the HandleSet, which
+// such as the SD15 purge and DWT shutdown mutate the StrongSet, which
 // requires an entered thread WITH access — GIL-on the destroyer holds
 // access through all of ~VM for the same reason). Null for a main-thread
 // destroyer (borrowed client, flipped in the walk) and when this thread has
@@ -2145,7 +2145,7 @@ void VM::pushCheckpointOSRSideState(std::unique_ptr<CheckpointOSRExitSideState>&
         // grows down, so addresses must strictly increase as we walk back
         // toward older entries, starting from bounds.end().
         uint32_t uid = Thread::currentSingleton().uid();
-        auto bounds = StackBounds::currentThreadStackBounds();
+        auto bounds = Thread::currentSingleton().stack();
         void* previousCallFrame = bounds.end();
         for (size_t i = m_checkpointSideState.size(); i--;) {
             if (m_checkpointSideState[i]->owningThreadUid != uid)
@@ -2217,7 +2217,7 @@ void VM::popAllCheckpointOSRSideStateUntil(CallFrame* target)
     // stale side state is consumed by a LATER checkpoint exit as the wrong
     // bytecodeIndex — the DW-1 wrong-pc family).
     if (gilOff()) [[unlikely]] {
-        auto bounds = StackBounds::currentThreadStackBounds().withSoftOrigin(target);
+        auto bounds = Thread::currentSingleton().stack().withSoftOrigin(target);
         ASSERT(bounds.contains(target));
         Locker locker { m_checkpointSideStateLock };
         uint32_t uid = Thread::currentSingleton().uid();
@@ -2412,7 +2412,7 @@ void VM::dumpTypeProfilerData()
 // queue on the destroying thread, which still holds the token at that point
 // (see ~VM). Only record pointers move under the queue lock — Strong is not
 // movable (its "move" is a copy that allocates a handle), so the records are
-// never held by value in the guarded vector — and HandleSet::m_strongLock
+// never held by value in the guarded vector — and StrongSet::m_gilOffLock
 // (also a leaf) is therefore never nested under it.
 //
 // Lock placement note (recorded spec delta, U-T8e summary): §E.1b.4 names

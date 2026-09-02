@@ -4739,7 +4739,6 @@ private:
             Edge(lastIndexProperty, NumberUse));
     }
 
-#if USE(JSVALUE64)
     // T3-jit-segmented-arraymode: the exact set of NodeTypes whose DFG
     // SpeculativeJIT compile path knows how to handle an UNSET storage child
     // and dispatch flat-vs-segmented inline (DFGSpeculativeJIT*.cpp T3
@@ -4760,7 +4759,6 @@ private:
             return false;
         }
     }
-#endif
 
     Node* checkArray(ArrayMode arrayMode, const NodeOrigin& origin, Node* array, Node* index, bool (*storageCheck)(const ArrayMode&) = canCSEStorage)
     {
@@ -4803,7 +4801,6 @@ private:
             return nullptr;
 
         if (arrayMode.usesButterfly()) {
-#if USE(JSVALUE64)
             // T3-jit-segmented-arraymode: when the profile (or a prior
             // BadIndexingType OSR-exit at this origin) recorded a segmented
             // butterfly word, a GetButterfly storage child is HARMFUL — its
@@ -4831,7 +4828,6 @@ private:
             if (arrayMode.needsSegmentedAwareCodegen() && Options::useJSThreads()
                 && !m_graph.m_plan.isFTL() && consumerHasSegmentedAwareCodegen(m_currentNode)) [[unlikely]]
                 return nullptr;
-#endif
             return m_insertionSet.insertNode(
                 m_indexInBlock, SpecNone, GetButterfly, origin, Edge(array, CellUse));
         }

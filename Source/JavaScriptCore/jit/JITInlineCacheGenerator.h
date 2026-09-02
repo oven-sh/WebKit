@@ -93,7 +93,9 @@ public:
             propertyCache.callSiteIndex = callSiteIndex;
         }
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            downcast<RepatchingPropertyInlineCache>(propertyCache).m_usedRegisters = usedRegisters.toScalarRegisterSet();
+            // With JS threads on, the optimizing tiers use handler ICs, which keep no register set.
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache))
+                repatchingIC->m_usedRegisters = usedRegisters.toScalarRegisterSet();
             if (codeOrigin.inlineCallFrame())
                 propertyCache.m_globalObject = baselineCodeBlockForInlineCallFrame(codeOrigin.inlineCallFrame())->globalObject();
             else
@@ -145,10 +147,12 @@ public:
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         propertyCache.m_identifier = propertyName;
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.valueGPR = valueRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.valueGPR = valueRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(valueRegs);
@@ -213,9 +217,10 @@ public:
         JSValueRegs valueRegs, JSValueRegs baseRegs, JSValueRegs thisRegs, GPRReg propertyCacheGPR)
     {
         JITByIdGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters, propertyName, baseRegs, valueRegs, propertyCacheGPR);
-        if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>)
-            downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers.extraGPR = thisRegs.payloadGPR();
-        else
+        if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache))
+                repatchingIC->m_registers.extraGPR = thisRegs.payloadGPR();
+        } else
             UNUSED_PARAM(thisRegs);
     }
 };
@@ -238,9 +243,10 @@ public:
         JSValueRegs baseRegs, JSValueRegs valueRegs, GPRReg propertyCacheGPR, GPRReg scratchGPR)
     {
         JITByIdGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters, propertyName, baseRegs, valueRegs, propertyCacheGPR);
-        if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>)
-            downcast<RepatchingPropertyInlineCache>(propertyCache).m_usedRegisters.remove(scratchGPR);
-        else
+        if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache))
+                repatchingIC->m_usedRegisters.remove(scratchGPR);
+        } else
             UNUSED_PARAM(scratchGPR);
     }
 };
@@ -272,12 +278,14 @@ public:
     {
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.extraGPR = propertyRegs.payloadGPR();
-            registers.valueGPR = valueRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
-            registers.arrayProfileGPR = arrayProfileGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.extraGPR = propertyRegs.payloadGPR();
+                registers.valueGPR = valueRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+                registers.arrayProfileGPR = arrayProfileGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(propertyRegs);
@@ -321,11 +329,13 @@ public:
     {
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.extraGPR = propertyRegs.payloadGPR();
-            registers.valueGPR = resultRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.extraGPR = propertyRegs.payloadGPR();
+                registers.valueGPR = resultRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(propertyRegs);
@@ -397,12 +407,14 @@ public:
     {
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.extraGPR = propertyRegs.payloadGPR();
-            registers.valueGPR = resultRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
-            registers.arrayProfileGPR = arrayProfileGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.extraGPR = propertyRegs.payloadGPR();
+                registers.valueGPR = resultRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+                registers.arrayProfileGPR = arrayProfileGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(propertyRegs);
@@ -465,11 +477,13 @@ public:
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         propertyCache.prototypeIsKnownObject = prototypeIsKnownObject;
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = valueGPR;
-            registers.valueGPR = resultGPR;
-            registers.extraGPR = prototypeGPR;
-            registers.propertyCacheGPR = propertyCacheGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = valueGPR;
+                registers.valueGPR = resultGPR;
+                registers.extraGPR = prototypeGPR;
+                registers.propertyCacheGPR = propertyCacheGPR;
+            }
         } else {
             UNUSED_PARAM(valueGPR);
             UNUSED_PARAM(resultGPR);
@@ -511,12 +525,14 @@ public:
     {
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.extraGPR = propertyRegs.payloadGPR();
-            registers.valueGPR = resultRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
-            registers.arrayProfileGPR = arrayProfileGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.extraGPR = propertyRegs.payloadGPR();
+                registers.valueGPR = resultRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+                registers.arrayProfileGPR = arrayProfileGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(propertyRegs);
@@ -561,13 +577,15 @@ public:
     {
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.extraGPR = thisRegs.payloadGPR();
-            registers.valueGPR = resultRegs.payloadGPR();
-            registers.extra2GPR = propertyRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
-            registers.arrayProfileGPR = arrayProfileGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.extraGPR = thisRegs.payloadGPR();
+                registers.valueGPR = resultRegs.payloadGPR();
+                registers.extra2GPR = propertyRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+                registers.arrayProfileGPR = arrayProfileGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(propertyRegs);
@@ -612,10 +630,12 @@ public:
     {
         JITInlineCacheGenerator::setUpPropertyInlineCacheImpl(propertyCache, codeBlock, accessType, cacheType, codeOrigin, callSiteIndex, usedRegisters);
         if constexpr (std::is_same_v<std::decay_t<PropertyInlineCache>, JSC::PropertyInlineCache>) {
-            auto& registers = downcast<RepatchingPropertyInlineCache>(propertyCache).m_registers;
-            registers.baseGPR = baseRegs.payloadGPR();
-            registers.extraGPR = brandRegs.payloadGPR();
-            registers.propertyCacheGPR = propertyCacheGPR;
+            if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(propertyCache)) {
+                auto& registers = repatchingIC->m_registers;
+                registers.baseGPR = baseRegs.payloadGPR();
+                registers.extraGPR = brandRegs.payloadGPR();
+                registers.propertyCacheGPR = propertyCacheGPR;
+            }
         } else {
             UNUSED_PARAM(baseRegs);
             UNUSED_PARAM(brandRegs);

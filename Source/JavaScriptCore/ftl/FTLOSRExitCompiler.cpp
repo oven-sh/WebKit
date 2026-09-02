@@ -314,7 +314,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
     // that slot for saveAllRegisters().
 
     if (addressing.baked) [[unlikely]] {
-        saveAllRegisters(jit, scopedLambda<void(AssemblyHelpers&, GPRReg)>(
+        saveAllRegisters(jit, ScopedLambda<void(AssemblyHelpers&, GPRReg)>(
             [&] (AssemblyHelpers& jit, GPRReg baseGPR) {
                 addressing.materializeDataBase(jit, baseGPR);
                 jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(addressing.registerScratchOffset)), baseGPR);

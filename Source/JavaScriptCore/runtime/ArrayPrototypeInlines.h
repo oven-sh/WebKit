@@ -309,7 +309,6 @@ inline bool canUseFastArrayJoin(const JSObject* thisObject)
 // vectorLength. Flag-off the tag bits are zero and this is exactly butterfly().
 ALWAYS_INLINE bool flatButterflySnapshot(JSObject* object, Butterfly*& butterfly)
 {
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t word = object->taggedButterflyWord();
         if (isSegmentedButterfly(word) || !(word & butterflyPointerMask)) [[unlikely]]
@@ -317,7 +316,6 @@ ALWAYS_INLINE bool flatButterflySnapshot(JSObject* object, Butterfly*& butterfly
         butterfly = untaggedButterfly(word);
         return true;
     }
-#endif
     butterfly = object->butterfly();
     return true;
 }
@@ -339,10 +337,8 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto& butterfly = *snapshotButterfly;
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && length > butterfly.vectorLength()) [[unlikely]]
             break;
-#endif
         auto data = butterfly.contiguous().data();
 
         JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
@@ -374,10 +370,8 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         unsigned originalLength = butterfly.publicLength();
         if (length > originalLength) [[unlikely]]
             break;
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && length > butterfly.vectorLength()) [[unlikely]]
             break;
-#endif
         auto data = butterfly.contiguous().data();
         bool holesKnownToBeOK = false;
 
@@ -419,10 +413,8 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto& butterfly = *snapshotButterfly;
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && length > butterfly.vectorLength()) [[unlikely]]
             break;
-#endif
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });
         auto data = butterfly.contiguousDouble().data();

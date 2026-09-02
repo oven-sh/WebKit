@@ -83,11 +83,7 @@ private:
                 : first(pair.first)
             {
                 static_assert(sizeof(JSValue) == sizeof(EncodedJSValue));
-#if USE(JSVALUE64)
                 WTF::atomicStore(std::bit_cast<EncodedJSValue*>(&second), JSValue::encode(pair.second), std::memory_order_relaxed);
-#else
-                updateEncodedJSValueConcurrent(*std::bit_cast<EncodedJSValue*>(&second), JSValue::encode(pair.second));
-#endif
             }
 
             BytecodeIndex first; // Written once at append time on the owning mutator (addSpeculationFailureValueProfile asserts !isCompilationThread()); immutable afterwards.

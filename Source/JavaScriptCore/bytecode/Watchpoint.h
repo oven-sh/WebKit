@@ -718,11 +718,6 @@ private:
         return static_cast<WatchpointState>((data & StateMask) >> StateShift);
     }
     
-    static uintptr_t encodeState(WatchpointState state)
-    {
-        return (static_cast<uintptr_t>(state) << StateShift) | IsThinFlag;
-    }
-    
     bool isThin() const { return isThin(m_data.load(dataLoadOrder)); }
     bool isFat() const { return isFat(m_data.load(dataLoadOrder)); };
     

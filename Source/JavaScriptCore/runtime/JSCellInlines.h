@@ -87,7 +87,7 @@ inline JSCell::JSCell(VM&, Structure* structure)
 
 // This constructor should not be used directly. Exceptions are for quite few well-defined builtin objects, e.g. JSString, empty JSFinalObject etc.
 // Structure must be kept alive somehow (e.g. by JSGlobalObject, or ensureStillAliveHere).
-#if TSAN_ENABLED && USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+#if TSAN_ENABLED && CPU(LITTLE_ENDIAN)
 ALWAYS_INLINE JSCell::JSCell(CreatingWellDefinedBuiltinCellTag, StructureID structureID, uint32_t blob)
 {
     // V7 (TSAN, cell-header family): on a recycled cell this init races with
@@ -466,7 +466,6 @@ inline void JSCell::setPerCellBit(bool value)
     if (value == perCellBit())
         return;
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel §3.0 (review round 4): flag-on, m_flags' per-cell-bit
     // lane is one of the header's VOLATILE lanes (cellHeaderVolatileMask,
     // ConcurrentButterfly.h) - it can be mutated with no cell lock while a
@@ -488,7 +487,6 @@ inline void JSCell::setPerCellBit(bool value)
                 return;
         }
     }
-#endif
 
     if (value)
         m_flags |= static_cast<TypeInfo::InlineTypeFlags>(TypeInfoPerCellBit);

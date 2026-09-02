@@ -1394,40 +1394,8 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLeng
         // re-check under the handle lock, which detach() publishes under.
         if (isDetached())
             return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
-#if ENABLE(WEBASSEMBLY)
-        // Atomic: a concurrent detach() zeroes m_maxByteLength with an
-        // atomic store, and we are outside the handle lock here.
-        size_t maxByteLength = WTF::atomicLoad(&m_contents.m_maxByteLength, std::memory_order_relaxed);
-        // The associated-wasm-memory delegation (landed: a page-count-changing
-        // resize of a buffer associated with a non-shared Wasm memory routes
-        // through the memory, which calls back refreshAfterWasmMemoryGrow) is
-        // decided here, OUTSIDE the handle lock: Wasm::Memory::grow takes the
-        // handle's lock itself, and annex N6 arm 4 requires a relocating
-        // BoundsChecking grow to run under a heap §10 stop — neither may
-        // happen under our hold of the same lock. (The stop conduction on the
-        // wasm side is now established in Wasm::Memory::grow's BoundsChecking
-        // arm — see ArrayBufferContents::refreshAfterWasmMemoryGrow.)
-        if (Options::useWasmMemoryToBufferAPIs()) {
-            if (maxByteLength < newByteLength)
-                return makeUnexpected(GrowFailReason::InvalidGrowSize);
-            size_t currentSizeInBytes = WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed);
-            int64_t deltaByteLength = static_cast<int64_t>(newByteLength) - static_cast<int64_t>(currentSizeInBytes);
-            if (isWasmMemory() && (deltaByteLength < 0 || deltaByteLength % PageCount::pageSize))
-                return makeUnexpected(GrowFailReason::InvalidGrowSize);
-            if (deltaByteLength) {
-                auto newPageCount = PageCount::fromBytesWithRoundUp(newByteLength);
-                auto oldPageCount = PageCount::fromBytes(memoryHandle->size());
-                if (newPageCount.bytes() > MAX_ARRAY_BUFFER_SIZE)
-                    return makeUnexpected(GrowFailReason::WouldExceedMaximum);
-                if (newPageCount != oldPageCount) {
-                    if (RefPtr<Wasm::Memory> memory = m_associatedWasmMemory.get()) {
-                        std::ignore = memory->grow(vm, PageCount(newPageCount.pageCount() - oldPageCount.pageCount()));
-                        return deltaByteLength;
-                    }
-                }
-            }
-        }
-#endif
+        // Wasm memory buffers are resized through their JSWebAssemblyMemory (see the
+        // RELEASE_ASSERT above), so this path never delegates to a Wasm::Memory.
         return resizeGILOff(vm, *this, *memoryHandle, &m_contents.m_sizeInBytes, &m_contents.m_maxByteLength, isWasmMemory(), newByteLength);
     }
 
@@ -1438,7 +1406,7 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLeng
     if (m_contents.m_maxByteLength < newByteLength)
         return makeUnexpected(GrowFailReason::InvalidGrowSize);
 
-    int64_t deltaByteLength = static_cast<int64_t>(newByteLength) - static_cast<int64_t>(m_contents.m_sizeInBytes);
+    int64_t deltaByteLength = static_cast<int64_t>(newByteLength) - static_cast<int64_t>(WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed));
     if (!deltaByteLength)
         return 0;
 
@@ -1499,10 +1467,11 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLeng
         memoryHandle->updateSize(desiredSize);
     }
 
-    if (m_contents.m_sizeInBytes < newByteLength)
-        zeroFill(std::bit_cast<uint8_t*>(data()) + m_contents.m_sizeInBytes, newByteLength - m_contents.m_sizeInBytes);
+    size_t oldByteLength = WTF::atomicLoad(&m_contents.m_sizeInBytes, std::memory_order_relaxed);
+    if (oldByteLength < newByteLength)
+        zeroFill(std::bit_cast<uint8_t*>(data()) + oldByteLength, newByteLength - oldByteLength);
 
-    m_contents.m_sizeInBytes = newByteLength;
+    WTF::atomicStore(&m_contents.m_sizeInBytes, newByteLength, std::memory_order_relaxed);
 
     if (deltaByteLength > 0)
         vm.heap.reportExtraMemoryAllocated(static_cast<JSCell*>(nullptr), deltaByteLength);

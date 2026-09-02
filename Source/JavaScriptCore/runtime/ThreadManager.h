@@ -217,7 +217,7 @@ public:
     void retireUnsettled();
 
 private:
-    AsyncTicket(VM&, Ref<DeferredWorkTimer::TicketData>&&, Ref<ThreadState>&& registrant, JSObject* extraDependency);
+    AsyncTicket(VM&, Ref<DeferredWorkTimer::Ticket>&&, Ref<ThreadState>&& registrant, JSObject* extraDependency);
 
     // §E.4 helper: the post-CAS settle body (open-arm inbox append with the
     // rule-1 decrement, or the r17 F6 main fallback after the drop).
@@ -229,7 +229,7 @@ private:
     void scheduleViaDeferredWorkTimer(DeferredWorkTimer::Task&&);
 
     VM& m_vm;
-    Ref<DeferredWorkTimer::TicketData> m_ticket;
+    Ref<DeferredWorkTimer::Ticket> m_ticket;
     Ref<ThreadState> m_registrant;
     Strong<JSPromise> m_promise;
     JSObject* m_extraDependency { nullptr };

@@ -573,7 +573,7 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             // out of this block is `return nullptr`).
             PerEventStopClaim claim(vm, sourceStructure, [&] { return !anySetStillValid(); });
             if (claim.acquired() && anySetStillValid()) {
-                jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+                jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
                     // Re-check inside the stop: a racing fire may have got here first.
                     if (sourceStructure->transitionThreadLocalIsStillValid() || sourceStructure->writeThreadLocalIsStillValid())
                         sourceStructure->fireTransitionThreadLocal(vm, "F2: flat->segmented conversion (foreign or shared-write transition)");
@@ -972,7 +972,7 @@ void fireTTLSetsForSharedTransition(VM& vm, Structure* source, Structure* target
     PerEventStopClaim claim(vm, source, [&] { return !anyTTLSetStillValid(source, target); });
     if (!claim.acquired() || !anyTTLSetStillValid(source, target))
         return;
-    jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+    jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
         // Re-check inside the stop: a racing fire may have got here first.
         if (source->transitionThreadLocalIsStillValid() || source->writeThreadLocalIsStillValid())
             source->fireTransitionThreadLocal(vm, reason);
@@ -1901,7 +1901,7 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
                 continue; // The word moved while a competing stop was in flight: re-dispatch.
             if (butterflyWordAtomic(object)->load(std::memory_order_seq_cst) != word)
                 continue; // Cheap pre-stop re-validation: never pay a rendezvous for a stale plan.
-            jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+            jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
                 // Re-verify the settled pair inside the stop: mutators are
                 // stopped at safepoints, and nuke windows are poll-free
                 // (O2/M5), so the ID cannot be caught mid-nuke here.
@@ -1969,7 +1969,7 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
             // until it reads invalid and re-dispatch stop-free.
             PerEventStopClaim claim(vm, structure, [&] { return !structure->writeThreadLocalIsStillValid(); });
             if (claim.acquired() && structure->writeThreadLocalIsStillValid()) {
-                jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+                jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
                     if (structure->writeThreadLocalIsStillValid()) // A racing fire may have got here first.
                         structure->fireWriteThreadLocal(vm, "F1: first foreign write to a flat thread-local-write instance");
                 }));
@@ -2062,7 +2062,6 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
     }
 }
 
-#if USE(JSVALUE64)
 // §4.8 driver (review round 3): the flag-on replacement for the OWNER's
 // JSObject::convertFromCopyOnWrite plain nuke + publish (which raced the
 // cell-locked foreign materializer - see the round-3 comment at that site).
@@ -2157,9 +2156,7 @@ bool ensureSegmentedOutOfLineCapacity(VM& vm, JSObjectWithButterfly* object, siz
         // fresh spine; the allocations drop unreferenced.
     }
 }
-#endif // USE(JSVALUE64)
 
-#if USE(JSVALUE64)
 
 // ===== Task 8: §4.4 array transitions - casButterfly and the resize drivers =====
 
@@ -2538,7 +2535,7 @@ bool tryGrowSegmentedVectorLength(VM& vm, JSObjectWithButterfly* object, unsigne
             return false; // The word moved while a competing migration was in flight: re-dispatch on the fresh state.
         if (butterflyWordAtomic(object)->load(std::memory_order_seq_cst) != word)
             return false; // Cheap pre-stop re-validation: never pay a rendezvous for a stale plan.
-        jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+        jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
         // Re-verify inside the stop; allocate nothing (O4).
         if (butterflyWordAtomic(object)->load(std::memory_order_seq_cst) != word)
             return; // The world moved before the stop landed: re-dispatch.
@@ -2953,7 +2950,6 @@ bool JSObjectWithButterfly::putIndexConcurrent(VM& vm, unsigned i, JSValue value
 // NeedsStringResolution and the caller resolves them OUTSIDE any lock via
 // the §N.2 single-flight protocol, then re-probes.
 
-#if USE(JSVALUE64)
 
 namespace {
 
@@ -3474,7 +3470,6 @@ ASCIILiteral JSObject::putDirectForAtomicsMissingAdd(VM& vm, PropertyName proper
     return putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
 }
 
-#endif // USE(JSVALUE64)
 
 // ===== Task 6b: §4.5 GC visit of a segmented butterfly =====
 //
@@ -3748,7 +3743,6 @@ Structure* visitSegmentedButterfly(Visitor& visitor, JSObjectWithButterfly* obje
 template Structure* visitSegmentedButterfly(AbstractSlotVisitor&, JSObjectWithButterfly*, ButterflySpine*, StructureID, Structure*, PropertyOffset, IndexingType);
 template Structure* visitSegmentedButterfly(SlotVisitor&, JSObjectWithButterfly*, ButterflySpine*, StructureID, Structure*, PropertyOffset, IndexingType);
 
-#endif // USE(JSVALUE64)
 
 // ===== Task 10: §9.6 stress modes + §8 invariant assertion ledger =====
 //

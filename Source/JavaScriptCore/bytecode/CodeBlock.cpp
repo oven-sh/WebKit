@@ -2619,7 +2619,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // jettisoned itself, it just dies unmarked in this collection.
     if (reason == Profiler::JettisonDueToOldAge && Options::useBaselineJITCodeSharing()) {
         CodeBlock* baseline = JSC::JITCode::isOptimizingJIT(jitType()) ? baselineAlternative() : this;
-        if (baseline->jitType() == JITType::BaselineJIT && (baseline == this || !vm.heap.isMarked(baseline)) && baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode == baseline->m_jitCode)
+        if (baseline->jitType() == JITType::BaselineJIT && (baseline == this || !vm.heap.isMarked(baseline)) && static_cast<JITCode*>(baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode.get()) == baseline->m_jitCode.get())
             baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
     }
 #endif
@@ -2856,7 +2856,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
         // closes, so suppressing the nested context loses nothing.
         JSThreadsSafepoint::PureCodeLifecycleStopWindowScope pureCodeLifecycleScope;
         JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "CodeBlock jettison");
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>(doJettison));
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>(doJettison));
         return;
     }
     doJettison();

@@ -87,15 +87,13 @@ void JITInlineCacheGenerator::finalize(
     ASSERT(m_propertyCache);
     if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*m_propertyCache)) {
         // FTL handler-IC site (useHandlerICInFTL): there is no inline slab and no
-        // patchable slow-path call. doneLocation is where the IC continues;
-        // slowPathStartLocation is the label of the FTL late path, recorded as
-        // the Baseline/DFG data ICs do but read by nothing for a handler IC: a
+        // patchable slow-path call. doneLocation is where the IC continues; a
         // miss ends in the chain's slow-path handler, which calls m_slowOperation
         // and returns. The initial handler is installed on the main thread at plan
         // finalization (HandlerPropertyInlineCache::initializeHandlerForOptimizingJIT).
         UNUSED_PARAM(start);
+        UNUSED_PARAM(slowPath);
         handlerIC->doneLocation = fastPath.locationOf<JSInternalPtrTag>(m_done);
-        handlerIC->slowPathStartLocation = slowPath.locationOf<JITStubRoutinePtrTag>(m_slowPathBegin);
         return;
     }
     auto& repatchingIC = downcast<RepatchingPropertyInlineCache>(*m_propertyCache);
@@ -164,7 +162,7 @@ JITGetByIdGenerator::JITGetByIdGenerator(
     }, propertyCache);
 }
 
-#if USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+#if CPU(LITTLE_ENDIAN)
 // SPEC-jit section 4.2 (Task 4), flag-on single-load reader of the inlined
 // fast-path unit. Emits:
 //
@@ -197,7 +195,7 @@ static CCallHelpers::Jump emitPackedInlineAccessCheckThreaded(CCallHelpers& jit,
     jit.urshift64(CCallHelpers::TrustedImm32(32), wordGPR);
     return jit.branchTest64(CCallHelpers::NonZero, wordGPR, wordGPR);
 }
-#endif // USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+#endif // CPU(LITTLE_ENDIAN)
 
 // scratch2GPR: a true scratch used only by the useJSThreads single-load form
 // (section 4.2); the flag-on slow cases join outSlowCases like the flag-off
@@ -208,7 +206,7 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
 
     switch (cacheType) {
     case CacheType::GetByIdSelf: {
-#if USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+#if CPU(LITTLE_ENDIAN)
         if (Options::useJSThreads()) [[unlikely]] {
             // Single 64-bit load of {byIdSelfOffset, structureID} (section 4.2/I6).
             // scratch2GPR (never resultJSR: it may alias baseJSR) holds the word.
@@ -244,7 +242,8 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
             // {offset, structureID} word with a stale holder.
             // HandlerPropertyInlineCache::setInlinedHandler never installs
             // this shape under the flag, so emit no inline fast path here:
-            // every access dispatches through the handler chain below (F2).
+            // every access jumps to the slow path, which dispatches through the handler chain (F2).
+            outSlowCases.append(jit.jump());
             break;
         }
         jit.load32(CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()), scratch1GPR);
@@ -365,7 +364,7 @@ JITPutByIdGenerator::JITPutByIdGenerator(
 static void generatePutByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg propertyCacheGPR, JSValueRegs baseJSR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, CCallHelpers::JumpList& outSlowCases)
 {
     UNUSED_PARAM(scratch3GPR);
-#if USE(JSVALUE64) && CPU(LITTLE_ENDIAN)
+#if CPU(LITTLE_ENDIAN)
     if (Options::useJSThreads()) [[unlikely]] {
         // Single 64-bit load of {byIdSelfOffset, structureID} (section 4.2/I6).
         // scratch2GPR may alias baseJSR (Baseline passes base as the
@@ -397,13 +396,9 @@ void JITPutByIdGenerator::generateDataICFastPath(CCallHelpers& jit)
     using BaselineJITRegisters::PutById::propertyCacheGPR;
     using BaselineJITRegisters::PutById::scratch1GPR;
 
-#if USE(JSVALUE64)
     // Dead at the IC site: handler stubs may clobber it (BaselineJITRegisters
     // "Required for HandlerIC" assert), so no live value can be in it here.
     constexpr GPRReg scratch3GPR = BaselineJITRegisters::PutById::scratch2GPR;
-#else
-    constexpr GPRReg scratch3GPR = InvalidGPRReg;
-#endif
 
     m_start = jit.label();
     // The second scratch can be the same to baseJSR. In Baseline JIT, we clobber the baseJSR to save registers.

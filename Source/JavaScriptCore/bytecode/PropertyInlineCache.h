@@ -941,7 +941,7 @@ ALWAYS_INLINE bool RepatchingPropertyInlineCache::considerBufferingStructure(VM&
     {
         Locker locker { m_bufferedStructuresLock };
         if (std::holds_alternative<std::monostate>(m_bufferedStructures)) {
-            if (m_identifier)
+            if (identifier())
                 m_bufferedStructures = Vector<StructureID>();
             else
                 m_bufferedStructures = Vector<std::tuple<StructureID, CacheableIdentifier>>();
@@ -957,7 +957,7 @@ ALWAYS_INLINE bool RepatchingPropertyInlineCache::considerBufferingStructure(VM&
                 isNewlyAdded = true;
             },
             [&](Vector<std::tuple<StructureID, CacheableIdentifier>>& structures) {
-                ASSERT(!m_identifier);
+                ASSERT(!identifier());
                 for (auto& [bufferedStructureID, bufferedCacheableIdentifier] : structures) {
                     if (bufferedStructureID == structureID && bufferedCacheableIdentifier == impl)
                         return;

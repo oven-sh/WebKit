@@ -92,15 +92,9 @@ void CCallHelpers::logShadowChickenTailPacket(GPRReg shadowPacket, JSValueRegs t
 
 void CCallHelpers::maskButterflyTag(GPRReg destGPR)
 {
-#if USE(JSVALUE64)
     and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), destGPR);
-#else
-    UNUSED_PARAM(destGPR);
-    RELEASE_ASSERT_NOT_REACHED(); // flag-on requires 64-bit (D8)
-#endif
 }
 
-#if USE(JSVALUE64)
 
 namespace CCallHelpersConcurrentButterfly {
 
@@ -315,35 +309,6 @@ void CCallHelpers::storeProperty(JSValueRegs value, GPRReg object, GPRReg offset
         BaseIndex(scratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 }
 
-#else // !USE(JSVALUE64)
-
-auto CCallHelpers::loadButterflyForRead(GPRReg baseGPR, GPRReg destGPR, ConcurrentButterflyShape, GPRReg, GPRReg) -> JumpList
-{
-    RELEASE_ASSERT(!Options::useJSThreads()); // D8: 64-bit only flag-on
-    loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
-    return { };
-}
-
-auto CCallHelpers::loadButterflyForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg, ConcurrentButterflyShape, GPRReg, GPRReg) -> JumpList
-{
-    RELEASE_ASSERT(!Options::useJSThreads());
-    loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
-    return { };
-}
-
-void CCallHelpers::loadProperty(GPRReg object, GPRReg offset, JSValueRegs result, GPRReg, JumpList&, GPRReg)
-{
-    RELEASE_ASSERT(!Options::useJSThreads());
-    AssemblyHelpers::loadProperty(object, offset, result);
-}
-
-void CCallHelpers::storeProperty(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg, JumpList&, GPRReg)
-{
-    RELEASE_ASSERT(!Options::useJSThreads());
-    AssemblyHelpers::storeProperty(value, object, offset, scratch);
-}
-
-#endif // USE(JSVALUE64)
 
 static_assert(!((maxFrameExtentForSlowPathCall + 2 * sizeof(CPURegister)) % 16), "Stack must be aligned after CTI thunk entry");
 

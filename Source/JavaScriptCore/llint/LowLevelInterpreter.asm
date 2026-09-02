@@ -1256,7 +1256,7 @@ end
 # 32-bit elaborations of the discriminator are empty). `temp` must not be t6
 # (call sites pass t0/t2). Clobbers t6 in addition to `temp`.
 macro copyCalleeSavesToVMEntryFrameCalleeSavesBufferGroup3(vm, temp)
-    if ARM64 or ARM64E or X86_64 or ARMv7 or RISCV64
+    if ARM64 or ARM64E or X86_64 or RISCV64
         branchIfGilOffGroup3ToT6(.liteTopEntryFrame)
     .topEntryFrameVMStorage:
         loadp VM::topEntryFrame[vm], temp
@@ -1289,7 +1289,7 @@ macro copyCalleeSavesToVMEntryFrameCalleeSavesBufferGroup3(vm, temp)
 end
 
 macro restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferGroup3(vm, temp)
-    if ARM64 or ARM64E or X86_64 or ARMv7 or RISCV64
+    if ARM64 or ARM64E or X86_64 or RISCV64
         branchIfGilOffGroup3ToT6(.liteTopEntryFrame)
     .topEntryFrameVMStorage:
         loadp VM::topEntryFrame[vm], temp
@@ -3125,7 +3125,6 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     move 0, t0
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
     loadp offsetOfCodeBlock[t5], t0
-if JSVALUE64
     # The (arity-check entrypoint, codeBlock) pair above is two independent
     # loads. A gilOff tier-up on another thread cannot tear it, because a
     # script executable's arity-check mirror is permanently null in a gilOff
@@ -3142,16 +3141,13 @@ if JSVALUE64
     # contract (t0 = callee, reloaded from the callee frame). Flag-off: one
     # not-taken branch.
     ifJSThreadsBranch(t3, .threadsRevalidatePair)
-end
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
-if JSVALUE64
 .threadsRevalidatePair:
     bpeq offsetOfJITCodeWithArityCheck[t5], t1, .callCode
     loadp Callee - PrologueStackPointerDelta[sp], t0
     jmp slowCase
-end
 .notJSFunction:
     bbneq JSCell::m_type[t0], InternalFunctionType, slowCase
     jmp internalFunctionTrampoline

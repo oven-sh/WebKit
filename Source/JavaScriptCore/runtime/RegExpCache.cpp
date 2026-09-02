@@ -154,7 +154,7 @@ void RegExpCache::deleteAllCode(VM& vm)
         // mutator stopped: none is mid-match and none can enter until the
         // window closes. Nested inside the debugger's window it runs inline.
         JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "RegExpCache deleteAllCode");
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambdaRef<void()>(clearCode));
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>(clearCode));
         return;
     }
     clearCode();

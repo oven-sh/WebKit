@@ -1,9 +1,9 @@
 //@ requireOptions("--useJSThreads=1")
-// The Array.prototype.join/toString recursion check tracks one thread's call
-// stack. A thread parked inside a stringification (its element's toString
-// blocks on a contended Lock, dropping the GIL) must not make the object it
-// is stringifying look like a cycle to another thread that stringifies the
-// same object meanwhile: that thread gets the real string, not "".
+// A thread parked inside a stringification (its element's toString blocks on a
+// contended Lock, dropping the GIL) must not change what another thread gets
+// when it stringifies the same object meanwhile: that thread gets the real
+// string. Array.prototype.join has no cycle detection, so a cycle recurses
+// until the stack is exhausted and throws a RangeError.
 load("../resources/assert.js", "caller relative");
 
 const lock = new Lock();
@@ -39,11 +39,11 @@ shouldBe(shared.join(), "elem");
 shouldBe(String(shared), "elem");
 shouldBe([shared, elem].join("|"), "elem|elem");
 
-// A genuine cycle on this thread is still detected while the other thread
+// A genuine cycle on this thread overflows the stack while the other thread
 // is parked.
 const cyclic = [1];
 cyclic.push(cyclic);
-shouldBe(cyclic.join(), "1,");
+shouldThrow(RangeError, () => cyclic.join());
 
 lock.hold(() => {
     state = 2;

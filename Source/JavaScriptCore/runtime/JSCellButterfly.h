@@ -99,13 +99,11 @@ public:
         // generic getDirectIndex() loop, which dispatches on the regime itself.
         // Flag-off the word is the plain butterfly pointer.
         Butterfly* butterfly = nullptr;
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]] {
             uint64_t word = array->taggedButterflyWord();
             if (!isSegmentedButterfly(word))
                 butterfly = untaggedButterfly(word);
         } else
-#endif
             butterfly = array->butterfly();
 
         // FIXME: JSCellButterfly::createFromArray should support re-using non contiguous indexing types as well.
@@ -124,7 +122,6 @@ public:
             return result;
 
         unsigned copyLength = length;
-#if USE(JSVALUE64)
         if (Options::useJSThreads() && butterfly && (indexingType == ContiguousShape || indexingType == Int32Shape || indexingType == DoubleShape)) [[unlikely]] {
             // `length` was read from a word a racing owner resize may have
             // replaced since; the snapshot owns only [0, vectorLength) and the
@@ -133,7 +130,6 @@ public:
             for (unsigned i = copyLength; i < length; i++)
                 result->setIndex(vm, i, jsUndefined());
         }
-#endif
 
         if (butterfly && (indexingType == ContiguousShape || indexingType == Int32Shape)) {
             for (unsigned i = 0; i < copyLength; i++) {
