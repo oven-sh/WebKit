@@ -2869,9 +2869,17 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
     returnConstantScope()
 
 .rClosureVarWithVarInjectionChecks:
-    bineq t0, ClosureVarWithVarInjectionChecks, .rDynamic
+    bineq t0, ClosureVarWithVarInjectionChecks, .rInterceptedGlobalProperty
     varInjectionCheck(.rDynamic, t2)
     resolveScope()
+
+.rInterceptedGlobalProperty:
+if BUN_JSC_ADDITIONS
+    bineq t0, InterceptedGlobalProperty, .rDynamic
+    getConstantScope(t0)
+    globalLexicalBindingEpochCheck(.rDynamic, t0, t2)
+    return(t0)
+end
 
 .rDynamic:
     callSlowPath(_slow_path_resolve_scope)
@@ -2884,6 +2892,22 @@ macro loadScopeWithStructureCheck(opcodeStruct, get, metadata, scope, scratch, s
     loadq [cfr, scope, 8], scope
     loadi JSCell::m_structureID[scope], scratch
     bineq scratch, %opcodeStruct%::Metadata::m_structureID[metadata], slowPath
+end
+
+if BUN_JSC_ADDITIONS
+    # InterceptedGlobalProperty: the scope must (still) be the CodeBlock's global object -- otherwise a global let/const
+    # now shadows the name and the slow path re-resolves -- and the cache is against its interceptor's structure.
+    # Leaves the interceptor in `interceptor`.
+    macro loadInterceptorWithStructureCheck(opcodeStruct, get, metadata, interceptor, scratch, slowPath)
+        get(m_scope, interceptor)
+        loadq [cfr, interceptor, 8], interceptor
+        loadp CodeBlock[cfr], scratch
+        loadp CodeBlock::m_globalObject[scratch], scratch
+        bpneq interceptor, scratch, slowPath
+        loadp JSGlobalObject::m_globalScopeInterceptor[interceptor], interceptor
+        loadi JSCell::m_structureID[interceptor], scratch
+        bineq scratch, %opcodeStruct%::Metadata::m_structureID[metadata], slowPath
+    end
 end
 
 llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatch, metadata, return)
@@ -2954,10 +2978,24 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
         end)
 
 .gClosureVarWithVarInjectionChecks:
-    bineq t0, ClosureVarWithVarInjectionChecks, .gDynamic
+    bineq t0, ClosureVarWithVarInjectionChecks, .gInterceptedGlobalProperty
     varInjectionCheck(.gDynamic, t2)
     loadVariable(get, m_scope, t0)
     getClosureVar()
+
+.gInterceptedGlobalProperty:
+if BUN_JSC_ADDITIONS
+    bineq t0, InterceptedGlobalProperty, .gDynamic
+    loadInterceptorWithStructureCheck(OpGetFromScope, get, t5, t0, t1, .gDynamic)
+    move t0, t3
+    loadp OpGetFromScope::Metadata::m_operand[t5], t1
+    loadPropertyAtVariableOffset(t1, t0, t2)
+    # A property holding the interceptor itself is left to the global's getOwnPropertySlot (node:vm substitutes the
+    # context's globalThis for it).
+    bqeq t2, t3, .gDynamic
+    valueProfile(size, OpGetFromScope, m_valueProfile, t2, t5)
+    return(t2)
+end
 
 .gDynamic:
     callSlowPath(_llint_slow_path_get_from_scope)
@@ -3078,12 +3116,34 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
     dispatch()
 
 .pClosureVarWithVarInjectionChecks:
-    bineq t0, ClosureVarWithVarInjectionChecks, .pModuleVar
+    bineq t0, ClosureVarWithVarInjectionChecks, .pInterceptedGlobalProperty
     varInjectionCheck(.pDynamic, t2)
     loadVariable(get, m_scope, t0)
     putClosureVar()
     writeBarrierOnOperands(size, get, m_scope, m_value)
     dispatch()
+
+.pInterceptedGlobalProperty:
+if BUN_JSC_ADDITIONS
+    bineq t0, InterceptedGlobalProperty, .pModuleVar
+    loadInterceptorWithStructureCheck(OpPutToScope, get, t5, t0, t1, .pDynamic)
+    # Store into the interceptor at the cached offset ...
+    get(m_value, t1)
+    loadConstantOrVariable(size, t1, t2)
+    loadi OpPutToScope::Metadata::m_interceptorOffset[t5], t1
+    storePropertyAtVariableOffset(t1, t0, t2)
+    # ... and into the global's own variable for the name, if it is one.
+    loadp OpPutToScope::Metadata::m_operand[t5], t1
+    btpz t1, .pInterceptedGlobalPropertyBarriers
+    storeq t2, [t1]
+.pInterceptedGlobalPropertyBarriers:
+    loadp CodeBlock[cfr], t3
+    loadp CodeBlock::m_globalObject[t3], t3
+    loadp JSGlobalObject::m_globalScopeInterceptor[t3], t3
+    writeBarrierOnCellAndValueWithReload(t3, t2, macro () end)
+    writeBarrierOnGlobalObject(size, get, m_value)
+    dispatch()
+end
 
 .pModuleVar:
     bineq t0, ModuleVar, .pDynamic

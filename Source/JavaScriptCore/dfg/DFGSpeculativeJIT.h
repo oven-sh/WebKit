@@ -1603,6 +1603,7 @@ public:
     void compileIsConstructor(Node*);
     void compileTypeOf(Node*);
     void compileCheckIsConstant(Node*);
+    void compileCheckNotCellOperand(Node*);
     void compileCheckNotEmpty(Node*);
     void compileCheckStructure(Node*);
     void emitStructureCheck(Node*, GPRReg cellGPR, GPRReg tempGPR);

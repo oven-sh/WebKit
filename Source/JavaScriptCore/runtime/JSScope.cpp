@@ -140,6 +140,14 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
 
     if (scope->isGlobalObject()) {
         JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(scope);
+#if USE(BUN_JSC_ADDITIONS)
+        if (globalObject->interceptsGlobalScope()) [[unlikely]] {
+            // Whether or not the name exists yet, and wherever it lives (interceptor, symbol table, structure), the
+            // access goes through the global's method table until an inline cache against the interceptor forms.
+            op = ResolveOp(needsVarInjectionChecks ? GlobalPropertyWithVarInjectionChecks : InterceptedGlobalProperty, 0, nullptr, nullptr, nullptr, 0);
+            return true;
+        }
+#endif
         {
             SymbolTable* symbolTable = globalObject->symbolTable();
             ConcurrentJSLocker locker(symbolTable->m_lock);
@@ -399,6 +407,15 @@ bool JSScope::isNestedLexicalScope()
     return uncheckedDowncast<JSLexicalEnvironment>(this)->symbolTable()->isNestedLexicalScope();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+ResolveType JSScope::globalPropertyResolveType(JSGlobalObject* globalObject, ResolveType current)
+{
+    if (needsVarInjectionChecks(current))
+        return GlobalPropertyWithVarInjectionChecks;
+    return globalObject->interceptsGlobalScope() ? InterceptedGlobalProperty : GlobalProperty;
+}
+#endif
+
 JSScope* JSScope::constantScopeForCodeBlock(ResolveType type, CodeBlock* codeBlock)
 {
     switch (type) {
@@ -406,6 +423,9 @@ JSScope* JSScope::constantScopeForCodeBlock(ResolveType type, CodeBlock* codeBlo
     case GlobalVar:
     case GlobalPropertyWithVarInjectionChecks:
     case GlobalVarWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
         return codeBlock->globalObject();
     case GlobalLexicalVarWithVarInjectionChecks:
     case GlobalLexicalVar:

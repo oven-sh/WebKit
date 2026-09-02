@@ -5230,6 +5230,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case CheckNotCellOperand:
+        // "Anything but this cell" isn't expressible as an AbstractValue; the constant folder removes the check when the
+        // child provably isn't it.
+        break;
+
     case AssertNotEmpty:
     case CheckNotEmpty: {
         AbstractValue& value = forNode(node->child1());

@@ -460,6 +460,15 @@ private:
                 break;
             }
 
+            case CheckNotCellOperand: {
+                AbstractValue& value = m_state.forNode(node->child1());
+                if ((value.m_type & SpecCell) && !(value.value() && value.value() != node->cellOperand()->value()))
+                    break;
+                node->remove(m_graph);
+                eliminated = true;
+                break;
+            }
+
             case AssertNotEmpty:
             case CheckNotEmpty: {
                 if (m_state.forNode(node->child1()).m_type & SpecEmpty)

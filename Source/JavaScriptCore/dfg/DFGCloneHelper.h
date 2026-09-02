@@ -187,6 +187,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(CheckBadValue, Common) \
     CLONE_STATUS(CheckIdent, Common) \
     CLONE_STATUS(CheckIsConstant, Common) \
+    CLONE_STATUS(CheckNotCellOperand, Common) \
     CLONE_STATUS(CheckNotEmpty, Common) \
     CLONE_STATUS(CheckStructure, Common) \
     CLONE_STATUS(CheckStructureOrEmpty, Common) \

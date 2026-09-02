@@ -5968,26 +5968,27 @@ JSC_DEFINE_JIT_OPERATION(operationGetDynamicVar, EncodedJSValue, (JSGlobalObject
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Identifier ident = Identifier::fromUid(vm, impl);
-    OPERATION_RETURN(scope, JSValue::encode(jsScope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
+    // The Identifier (a ref of the uid) is only needed to build an error.
+    PropertyName propertyName(impl);
+    OPERATION_RETURN(scope, JSValue::encode(jsScope->getPropertySlot(globalObject, propertyName, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
             GetPutInfo getPutInfo(getPutInfoBits);
             if (getPutInfo.resolveMode() == ThrowIfNotFound)
-                throwException(globalObject, scope, createUndefinedVariableError(globalObject, ident));
+                throwException(globalObject, scope, createUndefinedVariableError(globalObject, Identifier::fromUid(vm, impl)));
             return jsUndefined();
         }
 
         if (jsScope->isGlobalLexicalEnvironment()) {
             // When we can't statically prove we need a TDZ check, we must perform the check on the slow path.
-            JSValue result = slot.getValue(globalObject, ident);
+            JSValue result = slot.getValue(globalObject, propertyName);
             if (result == jsTDZValue()) {
-                throwException(globalObject, scope, createTDZError(globalObject, ident.string()));
+                throwException(globalObject, scope, createTDZError(globalObject, Identifier::fromUid(vm, impl).string()));
                 return jsUndefined();
             }
             return result;
         }
 
-        return slot.getValue(globalObject, ident);
+        return slot.getValue(globalObject, propertyName);
     })));
 }
 
@@ -5995,30 +5996,31 @@ ALWAYS_INLINE static void putDynamicVar(JSGlobalObject* globalObject, VM& vm, JS
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    const Identifier& ident = Identifier::fromUid(vm, impl);
+    // The Identifier (a ref of the uid) is only needed to build an error.
+    PropertyName propertyName(impl);
     GetPutInfo getPutInfo(getPutInfoBits);
-    bool hasProperty = scope->hasProperty(globalObject, ident);
+    bool hasProperty = scope->hasProperty(globalObject, propertyName);
     RETURN_IF_EXCEPTION(throwScope, void());
     if (hasProperty
         && scope->isGlobalLexicalEnvironment()
         && !isInitialization(getPutInfo.initializationMode())) {
         // When we can't statically prove we need a TDZ check, we must perform the check on the slow path.
         PropertySlot slot(scope, PropertySlot::InternalMethodType::Get);
-        JSGlobalLexicalEnvironment::getOwnPropertySlot(scope, globalObject, ident, slot);
-        if (slot.getValue(globalObject, ident) == jsTDZValue()) {
-            throwException(globalObject, throwScope, createTDZError(globalObject, ident.string()));
+        JSGlobalLexicalEnvironment::getOwnPropertySlot(scope, globalObject, propertyName, slot);
+        if (slot.getValue(globalObject, propertyName) == jsTDZValue()) {
+            throwException(globalObject, throwScope, createTDZError(globalObject, Identifier::fromUid(vm, impl).string()));
             return;
         }
     }
 
     if (getPutInfo.resolveMode() == ThrowIfNotFound && !hasProperty) {
-        throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));
+        throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, Identifier::fromUid(vm, impl)));
         return;
     }
 
     PutPropertySlot slot(scope, isStrictMode, PutPropertySlot::UnknownContext, isInitialization(getPutInfo.initializationMode()));
     throwScope.release();
-    scope->methodTable()->put(scope, globalObject, ident, JSValue::decode(value), slot);
+    scope->methodTable()->put(scope, globalObject, propertyName, JSValue::decode(value), slot);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutDynamicVarStrict, void, (JSGlobalObject* globalObject, JSObject* jsScope, EncodedJSValue value, UniquedStringImpl* impl, unsigned getPutInfoBits))

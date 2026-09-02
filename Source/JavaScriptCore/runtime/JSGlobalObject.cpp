@@ -2492,13 +2492,28 @@ bool JSGlobalObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObject::setGlobalScopeInterceptor(VM& vm, JSObject* interceptor)
+{
+    // The global's own structure must not be cacheable, or an access could still be cached against it (bypassing the
+    // interceptor) by the ordinary GlobalProperty machinery before this is set or by get_by_id on the global.
+    ASSERT(structure()->typeInfo().prohibitsPropertyCaching());
+    ASSERT(interceptor && !m_globalScopeInterceptor);
+    m_globalScopeInterceptor.set(vm, this, interceptor);
+}
+#endif
+
 // https://tc39.es/ecma262/#sec-candeclareglobalfunction
 bool JSGlobalObject::canDeclareGlobalFunction(const Identifier& ident)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasProperty = interceptsGlobalScope() ? methodTable()->getOwnPropertySlot(this, this, ident, slot) : getOwnPropertySlot(this, this, ident, slot);
+#else
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
+#endif
     RETURN_IF_EXCEPTION(scope, { });
     if (!hasProperty) [[likely]]
         return isStructureExtensible();
@@ -2519,7 +2534,11 @@ void JSGlobalObject::createGlobalFunctionBinding(const Identifier& ident)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasProperty = interceptsGlobalScope() ? methodTable()->getOwnPropertySlot(this, this, ident, slot) : getOwnPropertySlot(this, this, ident, slot);
+#else
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
+#endif
     RETURN_IF_EXCEPTION(scope, void());
     if (hasProperty) [[unlikely]] {
         if (slot.attributes() & PropertyAttribute::DontDelete) {
@@ -3014,6 +3033,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
+    visitor.append(thisObject->m_globalScopeInterceptor);
     visitor.append(thisObject->m_internalFieldTupleStructure);
     thisObject->m_ffiFunctionStructure.visit(visitor);
     thisObject->m_ffiCallbackStructure.visit(visitor);

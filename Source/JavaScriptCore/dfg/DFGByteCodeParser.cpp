@@ -6983,6 +6983,9 @@ bool NODELETE ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opco
     case ClosureVar:
     case ResolvedClosureVar:
     case ModuleVar:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
         return false;
 
     case UnresolvedProperty:
@@ -10409,6 +10412,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 case GlobalVarWithVarInjectionChecks:
                 case GlobalLexicalVar:
                 case GlobalLexicalVarWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+                case InterceptedGlobalProperty:
+#endif
                     constantScope = metadata.m_constantScope.get();
                     break;
                 case ModuleVar:
@@ -10434,7 +10440,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             if (needsVarInjectionChecks(resolveType))
                 m_graph.watchpoints().addLazily(m_inlineStackTop->m_codeBlock->globalObject()->varInjectionWatchpointSet());
 
-            if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks) {
+            if (isGlobalPropertyResolveType(resolveType)) {
                 JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
                 unsigned identifierNumber = m_inlineStackTop->m_identifierRemap[bytecode.m_var];
                 if (!m_graph.watchGlobalProperty(globalObject, identifierNumber))
@@ -10447,7 +10453,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
             case GlobalPropertyWithVarInjectionChecks:
             case GlobalVarWithVarInjectionChecks:
             case GlobalLexicalVar:
-            case GlobalLexicalVarWithVarInjectionChecks: {
+            case GlobalLexicalVarWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+            case InterceptedGlobalProperty:
+#endif
+            {
                 RELEASE_ASSERT(constantScope);
                 RELEASE_ASSERT(constantScope == JSScope::constantScopeForCodeBlock(resolveType, m_inlineStackTop->m_codeBlock));
                 set(bytecode.m_dst, weakJSConstant(constantScope));
@@ -10527,7 +10537,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 resolveType = getPutInfo.resolveType();
                 if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks || resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks)
                     watchpoints = metadata.m_watchpointSet;
-                else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
+                else if (isGlobalPropertyResolveType(resolveType))
                     structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
             }
@@ -10571,6 +10581,35 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 set(bytecode.m_dst, result);
                 break;
             }
+#if USE(BUN_JSC_ADDITIONS)
+            case InterceptedGlobalProperty: {
+                if (!m_graph.watchGlobalProperty(globalObject, identifierNumber))
+                    addToGraph(ForceOSRExit);
+
+                SpeculatedType prediction = getPrediction();
+                CacheableIdentifier identifier = CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid);
+                JSObject* interceptor = globalObject->globalScopeInterceptor();
+
+                // `structure`, if the baseline cache formed, is a structure of the interceptor under which the name is
+                // a plain own data property of it, which the global's getOwnPropertySlot returns first: load it from
+                // the interceptor directly. Anything else takes the generic path (the name may not exist at all, so
+                // one that can throw the ReferenceError).
+                GetByStatus status = structure ? GetByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, identifier, GetByStatus::LookupMode::Normal) : GetByStatus(GetByStatus::LikelyTakesSlowPath);
+                if (status.state() != GetByStatus::Simple || status.numVariants() != 1 || status[0].structureSet().size() != 1 || status[0].conditionSet().size()) {
+                    set(bytecode.m_dst, addToGraph(GetDynamicVar, OpInfo(makeDynamicVarOpInfo(identifierNumber, getPutInfo.operand())), OpInfo(prediction), get(bytecode.m_scope)));
+                    break;
+                }
+
+                Node* base = weakJSConstant(interceptor);
+                Node* result = load(prediction, base, base, identifierNumber, status[0]);
+                // The global's getOwnPropertySlot substitutes its globalThis for a property holding the interceptor
+                // itself; leave that to it.
+                addToGraph(CheckNotCellOperand, OpInfo(m_graph.freeze(interceptor)), result);
+                addToGraph(Phantom, get(bytecode.m_scope));
+                set(bytecode.m_dst, result);
+                break;
+            }
+#endif
             case GlobalVar:
             case GlobalVarWithVarInjectionChecks:
             case GlobalLexicalVar:
@@ -10700,15 +10739,21 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Structure* structure = nullptr;
             InlineWatchpointSet* watchpoints = nullptr;
             uintptr_t operand;
+#if USE(BUN_JSC_ADDITIONS)
+            unsigned interceptorOffset = 0;
+#endif
             {
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
                 getPutInfo = metadata.m_getPutInfo;
                 resolveType = getPutInfo.resolveType();
                 if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks || resolveType == ResolvedClosureVar || resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks)
                     watchpoints = metadata.m_watchpointSet;
-                else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
+                else if (isGlobalPropertyResolveType(resolveType))
                     structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
+#if USE(BUN_JSC_ADDITIONS)
+                interceptorOffset = metadata.m_interceptorOffset;
+#endif
             }
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
@@ -10743,6 +10788,33 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 addToGraph(Phantom, get(bytecode.m_scope));
                 break;
             }
+#if USE(BUN_JSC_ADDITIONS)
+            case InterceptedGlobalProperty: {
+                if (!m_graph.watchGlobalProperty(globalObject, identifierNumber))
+                    addToGraph(ForceOSRExit);
+                JSObject* interceptor = globalObject->globalScopeInterceptor();
+
+                // A baseline cache means: the name is a plain, writable own data property of the interceptor at
+                // `interceptorOffset` under `structure`, and `operand`, if non-zero, is the global's own variable slot for
+                // it, which the global's put() also stores to. Anything else takes the generic path (the name may not exist at
+                // all, so one that can throw the strict-mode ReferenceError).
+                PutByStatus status = (uid && structure) ? PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none()) : PutByStatus(PutByStatus::LikelyTakesSlowPath);
+                if (status.numVariants() != 1 || status[0].kind() != PutByVariant::Replace || status[0].structure().size() != 1 || status[0].offset() != static_cast<PropertyOffset>(interceptorOffset)) {
+                    ASSERT(identifierNumber != UINT_MAX);
+                    addToGraph(PutDynamicVar, OpInfo(makeDynamicVarOpInfo(identifierNumber, getPutInfo.operand())), OpInfo(getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
+                    break;
+                }
+                Node* base = weakJSConstant(interceptor);
+                Node* variableScope = operand ? weakJSConstant(globalObject) : nullptr; // ahead of replace(), after which exit is invalid
+                Node* valueNode = get(bytecode.m_value);
+                replace(base, identifierNumber, status[0], valueNode);
+                if (variableScope)
+                    addToGraph(PutGlobalVariable, OpInfo(operand), variableScope, valueNode);
+                // Keep scope alive until after put.
+                addToGraph(Phantom, get(bytecode.m_scope));
+                break;
+            }
+#endif
             case GlobalLexicalVar:
             case GlobalLexicalVarWithVarInjectionChecks:
             case GlobalVar:

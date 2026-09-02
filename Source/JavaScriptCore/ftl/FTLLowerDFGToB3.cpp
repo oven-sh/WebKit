@@ -969,6 +969,9 @@ private:
         case CheckIsConstant:
             compileCheckIsConstant();
             break;
+        case CheckNotCellOperand:
+            compileCheckNotCellOperand();
+            break;
         case CheckNotEmpty:
             compileCheckNotEmpty();
             break;
@@ -4308,6 +4311,12 @@ private:
             m_out.jump(continuation);
             m_out.appendTo(continuation, lastNext);
         }
+    }
+
+    void compileCheckNotCellOperand()
+    {
+        LValue value = lowJSValue(m_node->child1());
+        speculate(BadCache, jsValueValue(value), m_node->child1().node(), m_out.equal(value, weakPointer(m_node->cellOperand()->cell())));
     }
 
     void compileCheckIsConstant()

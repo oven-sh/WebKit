@@ -1403,14 +1403,22 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     case GlobalProperty:
     case GlobalPropertyWithVarInjectionChecks:
     case UnresolvedProperty:
-    case UnresolvedPropertyWithVarInjectionChecks: {
+    case UnresolvedPropertyWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
+    {
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
             bool hasProperty = globalObject->hasProperty(globalObject, ident);
             CHECK_EXCEPTION();
             if (hasProperty) {
                 ConcurrentJSLocker locker(codeBlock->m_lock);
+#if USE(BUN_JSC_ADDITIONS)
+                metadata.m_resolveType = JSScope::globalPropertyResolveType(globalObject, resolveType);
+#else
                 metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
+#endif
                 metadata.m_globalObject.set(vm, codeBlock, globalObject);
                 metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
             }

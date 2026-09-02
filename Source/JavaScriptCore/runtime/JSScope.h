@@ -61,6 +61,10 @@ public:
 
     static bool hasConstantScope(ResolveType);
     static JSScope* NODELETE constantScopeForCodeBlock(ResolveType, CodeBlock*);
+#if USE(BUN_JSC_ADDITIONS)
+    // The type a resolve/get/put that found its name on `globalObject` itself is to be cached as.
+    static ResolveType globalPropertyResolveType(JSGlobalObject*, ResolveType current);
+#endif
 
     static void collectClosureVariablesUnderTDZ(JSScope*, TDZEnvironment& result, PrivateNameEnvironment&);
 

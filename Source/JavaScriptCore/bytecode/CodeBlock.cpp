@@ -617,7 +617,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                     metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
             } else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
                 metadata.m_constantScope.set(vm, this, constantScope);
-                if (op.type == GlobalProperty || op.type == GlobalPropertyWithVarInjectionChecks)
+                if (isGlobalPropertyResolveType(op.type))
                     metadata.m_globalLexicalBindingEpoch = m_globalObject->globalLexicalBindingEpoch();
             } else
                 metadata.m_globalObject.clear();
@@ -3372,7 +3372,7 @@ void CodeBlock::notifyLexicalBindingUpdate()
             auto bytecode = instruction->as<OpResolveScope>();
             auto& metadata = bytecode.metadata(this);
             ResolveType originalResolveType = metadata.m_resolveType;
-            if (originalResolveType == GlobalProperty || originalResolveType == GlobalPropertyWithVarInjectionChecks) {
+            if (isGlobalPropertyResolveType(originalResolveType)) {
                 const Identifier& ident = identifier(bytecode.m_var);
                 if (isShadowed(ident.impl()))
                     metadata.m_globalLexicalBindingEpoch = 0;

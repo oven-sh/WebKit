@@ -2599,6 +2599,9 @@ private:
             break;
         }
 
+        case CheckNotCellOperand:
+            break;
+
         case ObjectCreate: {
             if (node->child1()->shouldSpeculateObject()) {
                 fixEdge<ObjectUse>(node->child1());
