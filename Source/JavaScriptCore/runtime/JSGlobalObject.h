@@ -1291,12 +1291,7 @@ private:
     void haveABadTimeImpl(VM&);
 
 public:
-    void notifyArrayBufferDetaching()
-    {
-        if (!m_arrayBufferDetachWatchpointSet->isStillValid())
-            return;
-        notifyArrayBufferDetachingSlow();
-    }
+    inline void notifyArrayBufferDetaching(); // Defined in JSGlobalObjectInlines.h
 
     void clearStructureCache(VM&);
         

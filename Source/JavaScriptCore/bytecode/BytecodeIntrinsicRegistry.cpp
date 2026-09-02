@@ -110,10 +110,6 @@ BytecodeIntrinsicRegistry::BytecodeIntrinsicRegistry(VM& vm)
     m_AsyncDisposableStackStateDisposed.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::State::Disposed)));
     m_InternalMicrotaskAsyncFromSyncIteratorContinue.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncFromSyncIteratorContinue)));
     m_InternalMicrotaskAsyncFromSyncIteratorDone.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncFromSyncIteratorDone)));
-    m_InternalMicrotaskAsyncGeneratorYieldAwaited.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorYieldAwaited)));
-    m_InternalMicrotaskAsyncGeneratorBodyCallNormal.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorBodyCallNormal)));
-    m_InternalMicrotaskAsyncGeneratorBodyCallReturn.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorBodyCallReturn)));
-    m_InternalMicrotaskAsyncGeneratorResumeNext.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncGeneratorResumeNext)));
     // SPEC-ungil §N.5 (r17 F5 mode-keyed lowering): builtins branch on this
     // process-wide constant to pick the landed inline sequence (flag-off,
     // GIL-on) vs the atomic claim host op (GIL-off). Derived from the

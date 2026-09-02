@@ -395,19 +395,6 @@ public:
         return OBJECT_OFFSETOF(CallLinkInfo, m_record);
     }
 
-    uint32_t slowPathCount()
-    {
-        // TSAN wave 5 (calllink, SPEC §5.7 racy-profiling tolerance): the
-        // writers are the LLInt asm slow-path counter bump and the JIT
-        // slow-path thunk (both outside TSAN's view, §0 tradeoff); this C++
-        // read runs on DFG compiler threads (CallLinkStatus). Relaxed atomic
-        // load so the cross-thread read of a concurrently-bumped advisory
-        // counter is defined; a stale count only skews the couldTakeSlowPath
-        // heuristic. Field type/layout unchanged (asm names
-        // CallLinkInfo::m_slowPathCount directly).
-        return WTF::atomicLoad(&m_slowPathCount, std::memory_order_relaxed);
-    }
-
     CodeOrigin codeOrigin() const { return m_codeOrigin; }
 
     // TSAN wave 3 (calllink, SPEC-jit 5.8): this can run on a concurrent
