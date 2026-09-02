@@ -60,7 +60,6 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_derivedContextType(static_cast<unsigned>(info.derivedContextType()))
     , m_evalContextType(static_cast<unsigned>(info.evalContextType()))
     , m_codeType(static_cast<unsigned>(codeType))
-    , m_age(0)
     , m_hasCheckpoints(false)
     , m_parseMode(info.parseMode())
     , m_codeGenerationMode(codeGenerationMode)
@@ -100,7 +99,7 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     Locker locker { thisObject->cellLock() };
     if (visitor.isFirstVisit())
-        thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
+        WTF::atomicStore(&thisObject->m_age, static_cast<uint8_t>(std::min<unsigned>(thisObject->age() + 1, maxAge)), std::memory_order_relaxed);
     for (auto& barrier : thisObject->m_functionDecls)
         visitor.append(barrier);
     for (auto& barrier : thisObject->m_functionExprs)

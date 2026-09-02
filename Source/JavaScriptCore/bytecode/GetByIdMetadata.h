@@ -133,7 +133,7 @@ union GetByIdModeMetadata {
         defaultMode.structureID = StructureID();
         defaultMode.cachedOffset = 0;
         defaultMode.padding1 = 0;
-        mode = GetByIdMode::Default;
+        WTF::atomicStore(&mode, GetByIdMode::Default, std::memory_order_relaxed); // A Baseline compiler thread reads it (loadModeConcurrently).
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
     }
 
@@ -193,7 +193,7 @@ inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache()
         return;
     }
 #endif
-    mode = GetByIdMode::Default;
+    WTF::atomicStore(&mode, GetByIdMode::Default, std::memory_order_relaxed); // A Baseline compiler thread reads it (loadModeConcurrently).
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
 }
@@ -203,7 +203,7 @@ inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
     // SPEC-jit §4.3/I18: Unset mode is poison under JS threads (the asm reads
     // the mode byte and word 1 non-coherently); flag-on this must be unreachable.
     ASSERT(!Options::useJSThreads());
-    mode = GetByIdMode::Unset;
+    WTF::atomicStore(&mode, GetByIdMode::Unset, std::memory_order_relaxed); // A Baseline compiler thread reads it (loadModeConcurrently).
     unsetMode.structureID = structure->id();
     defaultMode.cachedOffset = 0;
 }
@@ -223,7 +223,7 @@ inline void GetByIdModeMetadata::setArrayLengthMode()
         return;
     }
 #endif
-    mode = GetByIdMode::ArrayLength;
+    WTF::atomicStore(&mode, GetByIdMode::ArrayLength, std::memory_order_relaxed); // A Baseline compiler thread reads it (loadModeConcurrently).
     // We should clear the structure ID to avoid the old structure ID being saved.
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;

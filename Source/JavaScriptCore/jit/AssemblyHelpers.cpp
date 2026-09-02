@@ -1037,6 +1037,14 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 void AssemblyHelpers::emitNonNullDecodeZeroExtendedStructureID(RegisterID source, RegisterID dest)
 {
 #if CPU(ADDRESS64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        // A transition on another thread can nuke the ID (set its low bit)
+        // while this thread reads it. A nuked ID still names the old
+        // structure, so clear the bit, as StructureID::decode does.
+        and32(TrustedImm32(~static_cast<int32_t>(StructureID::nukedStructureIDBit)), source, dest);
+        or64(TrustedImm64(structureIDBase()), dest, dest);
+        return;
+    }
     // This could use BFI on arm64 but that only helps if the start of structure heap is encodable as a mov and not as an immediate in the add so it's probably not super important.
     or64(TrustedImm64(structureIDBase()), source, dest);
 #else // not CPU(ADDRESS64)

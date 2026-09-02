@@ -613,6 +613,39 @@ void Heap::dumpHeapStatisticsAtVMDestruction()
 
 // The VM is being destroyed and the collector will never run again.
 // Run all pending finalizers now because we won't get another chance.
+void Heap::stopCollectingContinuously()
+{
+    if (!m_collectContinuouslyThread)
+        return;
+    {
+        Locker locker { m_collectContinuouslyLock };
+        m_shouldStopCollectingContinuously = true;
+        m_collectContinuouslyCondition.notifyOne();
+    }
+    m_collectContinuouslyThread->waitForCompletion();
+    m_collectContinuouslyThread = nullptr;
+}
+
+void Heap::prepareForVMDestruction()
+{
+    if (!isSharedServer())
+        return;
+    // In the shared heap, a granted ticket is served by a mutator that conducts
+    // the collection, and the destroying thread is the last mutator. Once it
+    // gives up its heap access, lastChanceToFinalize would wait for a conductor
+    // that never comes. So stop the thread that requests collections, then
+    // serve what it requested. (The legacy heap's collector thread serves the
+    // tickets by itself.)
+    stopCollectingContinuously();
+    Ticket pending;
+    {
+        Locker locker { *m_threadLock };
+        pending = m_lastServedTicket < m_lastGrantedTicket ? m_lastGrantedTicket : 0;
+    }
+    if (pending)
+        runSharedGCElection(pending);
+}
+
 void Heap::lastChanceToFinalize()
 {
     MonotonicTime before;
@@ -629,14 +662,7 @@ void Heap::lastChanceToFinalize()
     RELEASE_ASSERT(!vm().entryScope);
     RELEASE_ASSERT(m_mutatorState == MutatorState::Running);
     
-    if (m_collectContinuouslyThread) {
-        {
-            Locker locker { m_collectContinuouslyLock };
-            m_shouldStopCollectingContinuously = true;
-            m_collectContinuouslyCondition.notifyOne();
-        }
-        m_collectContinuouslyThread->waitForCompletion();
-    }
+    stopCollectingContinuously();
 
     dataLogIf(Options::logGC(), "1");
     
@@ -1045,6 +1071,23 @@ void Heap::willStartIterating()
 void Heap::didFinishIterating()
 {
     m_objectSpace.didFinishIterating();
+}
+
+void Heap::runWithOtherClientsStoppedSlow(const ScopedLambda<void()>& func)
+{
+    if (worldIsStoppedForAllClients() || (jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor())) {
+        func();
+        return;
+    }
+    // A heap becomes a shared server only for a GIL-off VM.
+    VM& vm = this->vm();
+    ASSERT(vm.gilOff());
+    // The window reads the heap and, for deleteAllCode, clears code that no
+    // thread is running. It rewrites no object or Structure a parked thread's
+    // optimized code depends on, so parked threads need not jettison on resume.
+    JSThreadsSafepoint::PureCodeLifecycleStopWindowScope noHeapFactRewrite;
+    JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "heap walk");
+    JSThreadsSafepoint::stopTheWorldAndRun(vm, func);
 }
 
 void Heap::completeAllJITPlans()
@@ -1478,18 +1521,20 @@ size_t Heap::protectedGlobalObjectCount()
 
 size_t Heap::globalObjectCount()
 {
-    HeapIterationScope iterationScope(*this);
     size_t result = 0;
-    m_objectSpace.forEachLiveCell(
-        iterationScope,
-        [&] (HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
-            if (!isJSCellKind(kind))
+    runWithOtherClientsStopped([&] {
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(
+            iterationScope,
+            [&] (HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                if (!isJSCellKind(kind))
+                    return IterationStatus::Continue;
+                JSCell* cell = static_cast<JSCell*>(heapCell);
+                if (cell->isObject() && asObject(cell)->isGlobalObject())
+                    result++;
                 return IterationStatus::Continue;
-            JSCell* cell = static_cast<JSCell*>(heapCell);
-            if (cell->isObject() && asObject(cell)->isGlobalObject())
-                result++;
-            return IterationStatus::Continue;
-        });
+            });
+    });
     return result;
 }
 
@@ -1516,14 +1561,16 @@ TypeCountSet Heap::protectedObjectTypeCounts()
 TypeCountSet Heap::objectTypeCounts()
 {
     TypeCountSet result;
-    HeapIterationScope iterationScope(*this);
-    m_objectSpace.forEachLiveCell(
-        iterationScope,
-        [&] (HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-            if (isJSCellKind(kind))
-                recordType(result, static_cast<JSCell*>(cell));
-            return IterationStatus::Continue;
-        });
+    runWithOtherClientsStopped([&] {
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(
+            iterationScope,
+            [&] (HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
+                if (isJSCellKind(kind))
+                    recordType(result, static_cast<JSCell*>(cell));
+                return IterationStatus::Continue;
+            });
+    });
     return result;
 }
 
@@ -1532,31 +1579,38 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
 
-    // SharedGC (T9): main-VM-only — embedder API on the main VM's mutator
-    // (!vm.entryScope asserted below names the one main VM); not run by the
-    // conductor. Post-GIL it must also exclude OTHER threads being entered —
-    // that exclusion is the JSThreadsStopScope / deviation-8 charter (jit
-    // R1), not clientSet() iteration.
-    VM& vm = this->vm();
     PreventCollectionScope preventCollectionScope(*this);
-    
+    deleteAllCodeBlocksWithCollectionPrevented();
+}
+
+void Heap::deleteAllCodeBlocksWithCollectionPrevented()
+{
+    // Reached only through VM::deleteAllCode and VM::deleteAllLinkedCode. For
+    // a GIL-off VM they call this inside a stop window in which no thread of
+    // the VM is entered (VM::whenIdleWithOtherThreadsStopped), so no other
+    // thread can run, compile against, or return into the code cleared here.
+    VM& vm = this->vm();
+
     // If JavaScript is running, it's not safe to delete all JavaScript code, since
-    // we'll end up returning to deleted code.
-    RELEASE_ASSERT(!vm.entryScope);
+    // we'll end up returning to deleted code. GIL-off, vm.entryScope is never
+    // written; isEntered() asks every thread of the VM.
+    RELEASE_ASSERT(!vm.isEntered());
     RELEASE_ASSERT(!m_collectionScope);
 
     completeAllJITPlans();
 
-    forEachScriptExecutableSpace(
-        [&] (auto& spaceAndSet) {
-            HeapIterationScope heapIterationScope(*this);
-            auto& set = spaceAndSet.clearableCodeSet;
-            set.forEachLiveCell(
-                [&] (HeapCell* cell, HeapCell::Kind) {
-                    ScriptExecutable* executable = static_cast<ScriptExecutable*>(cell);
-                    executable->clearCode(set);
-                });
-        });
+    runWithOtherClientsStopped([&] {
+        forEachScriptExecutableSpace(
+            [&] (auto& spaceAndSet) {
+                HeapIterationScope heapIterationScope(*this);
+                auto& set = spaceAndSet.clearableCodeSet;
+                set.forEachLiveCell(
+                    [&] (HeapCell* cell, HeapCell::Kind) {
+                        ScriptExecutable* executable = static_cast<ScriptExecutable*>(cell);
+                        executable->clearCode(set);
+                    });
+            });
+    });
 
     // MicrotaskCallCache lives outside any CodeBlock and keys its cached entry points on the callee's
     // executable, so after the code is detached above its callee check would still hit and call into it.
@@ -1586,19 +1640,30 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
 
-    // SharedGC (T9): main-VM-only — see deleteAllCodeBlocks().
-    VM& vm = this->vm();
     PreventCollectionScope preventCollectionScope(*this);
+    deleteAllUnlinkedCodeBlocksWithCollectionPrevented();
+}
+
+void Heap::deleteAllUnlinkedCodeBlocksWithCollectionPrevented()
+{
+    // Same callers and the same stop window as deleteAllCodeBlocksWithCollectionPrevented().
+    VM& vm = this->vm();
 
     RELEASE_ASSERT(!m_collectionScope);
 
-    HeapIterationScope heapIterationScope(*this);
-    unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
-        [&] (HeapCell* cell, HeapCell::Kind) {
-            UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
-            executable->clearCode(vm);
-        });
+    runWithOtherClientsStopped([&] {
+        HeapIterationScope heapIterationScope(*this);
+        unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
+            [&] (HeapCell* cell, HeapCell::Kind) {
+                UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                executable->clearCode(vm);
+            });
+        clearUnlinkedBaselineCodeCaches();
+    });
+}
 
+void Heap::clearUnlinkedBaselineCodeCaches()
+{
 #if ENABLE(JIT)
     // Shareable Baseline JIT code is cached on UnlinkedCodeBlock::m_unlinkedBaselineCode (populated by
     // CodeBlock::setupWithUnlinkedBaselineCode). That cache is not owned by any linked CodeBlock or
@@ -1609,7 +1674,10 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
     // while a cache-only entry is freed as soon as its last ref goes away, synchronously here.
     if (Options::useBaselineJITCodeSharing()) {
         auto clearUnlinkedBaselineCode = [] (HeapCell* cell, HeapCell::Kind) {
-            static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode = nullptr;
+            // Readers copy the field under the lock (unlinkedBaselineCodeConcurrently).
+            auto* unlinkedCodeBlock = static_cast<UnlinkedCodeBlock*>(cell);
+            ConcurrentJSLocker locker(unlinkedCodeBlock->m_lock);
+            unlinkedCodeBlock->m_unlinkedBaselineCode = nullptr;
         };
         for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
             if (space)
@@ -1972,7 +2040,36 @@ void Heap::collectSync(GCRequest request)
     // callers never wait on a ticket while holding access without
     // electioneering, and never need notifyVMStop (§10.2).
     if (isSharedServer()) [[unlikely]] {
-        runSharedGCElection(requestCollectionShared(request));
+        Ticket ticket;
+        bool holdsPreventGate;
+        {
+            Locker locker { *m_threadLock };
+            ticket = requestCollectionShared(locker, request);
+            holdsPreventGate = m_sharedGCPreventCount && m_sharedGCPreventHolder == &Thread::currentSingleton();
+            if (holdsPreventGate)
+                m_sharedGCPreventHolderTicket = ticket - 1;
+        }
+        if (!holdsPreventGate) {
+            runSharedGCElection(ticket);
+            return;
+        }
+
+        // The prevent-scope holder gets exactly one cycle, its own, as in legacy
+        // mode: a heap analyzer installed for this call must see only that cycle,
+        // and no cycle may run after it until allowCollection(). Tickets granted
+        // before this one are served first, with the analyzer uninstalled.
+        HeapProfiler* heapProfiler = vm().heapProfiler();
+        HeapAnalyzer* analyzer = heapProfiler ? heapProfiler->activeHeapAnalyzer() : nullptr;
+        if (analyzer)
+            heapProfiler->setActiveHeapAnalyzer(nullptr);
+        runSharedGCElection(ticket - 1);
+        if (analyzer)
+            heapProfiler->setActiveHeapAnalyzer(analyzer);
+        {
+            Locker locker { *m_threadLock };
+            m_sharedGCPreventHolderTicket = ticket;
+        }
+        runSharedGCElection(ticket);
         return;
     }
 
@@ -2101,6 +2198,8 @@ NEVER_INLINE bool Heap::runNotRunningPhase(GCConductor conn)
     {
         Locker locker { *m_threadLock };
         if (m_requests.isEmpty())
+            return false;
+        if (sharedGCPreventGateBlocksNextTicket(locker)) [[unlikely]]
             return false;
     }
     
@@ -2277,6 +2376,17 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
     return changePhase(conn, CollectorPhase::Fixpoint);
 }
 
+// Whether a shared-heap fixpoint may hand the world back to the mutators now.
+bool Heap::sharedFixpointMayResume() const
+{
+    ASSERT(isSharedServer());
+    if (Options::useConcurrentSharedGCMarking())
+        return Options::numberOfGCMarkers() >= 2;
+    if (VM::isGILOffProcess())
+        return Options::numberOfGCMarkers() >= 2 && !t_sharedGCConcurrentHandoffsThisCycle;
+    return false;
+}
+
 NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
 {
     RELEASE_ASSERT(conn == GCConductor::Collector || m_currentThreadState);
@@ -2331,9 +2441,16 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         
     dataLogIf(Options::logGC(), visitor.collectorMarkStack().size(), "+", m_mutatorMarkStack->size() + visitor.mutatorMarkStack().size(), " ");
         
+    // The scheduler's deadline is when the mutator should resume. In the shared
+    // heap the fixpoint often does not resume (see below). It then loops back
+    // here with the same deadline, and a deadline that has already passed (a
+    // zero pause budget) drains nothing on every pass. So drain to the end.
+    MonotonicTime drainDeadline = m_scheduler->timeToResume();
+    if (isSharedServer() && !sharedFixpointMayResume()) [[unlikely]]
+        drainDeadline = MonotonicTime::infinity();
     {
         ParallelModeEnabler enabler(visitor);
-        visitor.drainInParallel(m_scheduler->timeToResume());
+        visitor.drainInParallel(drainDeadline);
     }
         
     m_scheduler->synchronousDrainingDidStall();
@@ -2385,15 +2502,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Same >=2-marker rule (§3.7). Flag-off: VM::isGILOffProcess() is false,
     // this arm is dead, behavior identical to the §27.S2 default.
     if (isSharedServer()) [[unlikely]] {
-        if (Options::useConcurrentSharedGCMarking()) {
-            if (Options::numberOfGCMarkers() < 2)
-                return true;
-        } else if (VM::isGILOffProcess()) {
-            if (Options::numberOfGCMarkers() < 2 || t_sharedGCConcurrentHandoffsThisCycle)
-                return true;
-            t_sharedGCConcurrentHandoffsThisCycle++;
-        } else
+        if (!sharedFixpointMayResume())
             return true;
+        if (!Options::useConcurrentSharedGCMarking())
+            t_sharedGCConcurrentHandoffsThisCycle++;
     }
 
     m_scheduler->willResume();
@@ -5551,6 +5663,7 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
                     RELEASE_ASSERT(!m_sharedGCPreventCount); // Holders serialize on m_collectContinuouslyLock.
                     m_sharedGCPreventCount = 1;
                     m_sharedGCPreventHolder = &Thread::currentSingleton();
+                    m_sharedGCPreventHolderTicket = 0;
                     m_sharedGCPreventGateRaised = true;
                 }
                 return !m_gcConductorActive && m_currentPhase == CollectorPhase::NotRunning;
@@ -5584,6 +5697,7 @@ void Heap::allowCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
             RELEASE_ASSERT(m_sharedGCPreventHolder == &Thread::currentSingleton());
             m_sharedGCPreventCount = 0;
             m_sharedGCPreventHolder = nullptr;
+            m_sharedGCPreventHolderTicket = 0;
             m_gcElectionCondition.notifyAll();
         }
         m_sharedGCPreventGateRaised = false;
@@ -6357,7 +6471,7 @@ bool Heap::tryConductSharedCollectionForPoll(GCClient::Heap& client) WTF_IGNORES
             // sit granted-unserved until allowCollection(). shouldConduct
             // stays false; the poll retries naturally. The holder itself
             // may conduct (legacy semantics).
-        } else if (m_lastServedTicket < m_lastGrantedTicket) {
+        } else if (m_lastServedTicket < m_lastGrantedTicket && !sharedGCPreventGateBlocksNextTicket(locker)) {
             m_gcConductorActive = true;
             // §3.5 owner stamp (restamp NotRunning-only — ANNEX CGD3.1; CG-I21).
             ASSERT(!m_gcConductorThread || m_currentPhase == CollectorPhase::NotRunning);
@@ -7019,9 +7133,12 @@ void Heap::conductSharedCollection(GCClient::Heap& conductorClient) WTF_IGNORES_
                 ASSERT(m_lastServedTicket == m_lastGrantedTicket);
                 break;
             }
+            if (sharedGCPreventGateBlocksNextTicket(locker)) [[unlikely]]
+                break;
         }
         // collectInMutatorThread() runs runCurrentPhase until runNotRunningPhase
-        // finds m_requests empty, so it drains every queued ticket and only the
+        // finds m_requests empty (or the prevent gate blocks the next ticket), so
+        // it drains every servable ticket and only the
         // batch's last cycle is observable here (m_lastCollectionScope). The
         // hooks, reclaim and rebias below therefore run once per drained
         // BATCH, in the final window of that last cycle (WSAC set, GCL held:
@@ -7486,7 +7603,8 @@ void Heap::stopIfNecessaryForAllClients()
         // would refuse anyway (the gate check inside
         // tryConductSharedCollectionForPoll() remains authoritative).
         ticketsPending = m_lastServedTicket < m_lastGrantedTicket && !m_gcConductorActive
-            && (!m_sharedGCPreventCount || m_sharedGCPreventHolder == &Thread::currentSingleton());
+            && (!m_sharedGCPreventCount || m_sharedGCPreventHolder == &Thread::currentSingleton())
+            && !sharedGCPreventGateBlocksNextTicket(AbstractLocker(NoLockingNecessary));
         m_threadLock->unlock();
     }
     if (ticketsPending) [[unlikely]]
@@ -8408,9 +8526,9 @@ void Heap::releaseHeapAccess()
         auto space = makeUnique<IsoSubspace>(serverSpace); \
         if (Options::useSharedGCHeap()) [[unlikely]] \
             m_threadLocalCache.registerExternalAllocator(&space->localAllocator()); \
-        WTF::storeStoreFence(); \
-        m_##name = WTF::move(space); \
-        return m_##name.get(); \
+        IsoSubspace* result = space.release(); \
+        WTF::atomicStore(std::bit_cast<IsoSubspace**>(&m_##name), result, std::memory_order_release); \
+        return result; \
     }
 
 #define DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW(name) \

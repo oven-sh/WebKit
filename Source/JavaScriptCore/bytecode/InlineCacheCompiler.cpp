@@ -4519,10 +4519,12 @@ bool InlineCacheCompiler::canEmitIntrinsicGetter(PropertyInlineCache& propertyCa
     }
     case WebAssemblyInstanceExportsIntrinsic:
         return structure->typeInfo().type() == WebAssemblyInstanceType;
+    // The inline size read loads the table's count with no lock. With the GIL
+    // off, another thread can retire that table, which overwrites the count.
     case JSSetSizeIntrinsic:
-        return structure->typeInfo().type() == JSSetType;
+        return structure->typeInfo().type() == JSSetType && !structure->vm().gilOff();
     case JSMapSizeIntrinsic:
-        return structure->typeInfo().type() == JSMapType;
+        return structure->typeInfo().type() == JSMapType && !structure->vm().gilOff();
     case RegExpHasIndicesIntrinsic:
     case RegExpGlobalIntrinsic:
     case RegExpIgnoreCaseIntrinsic:

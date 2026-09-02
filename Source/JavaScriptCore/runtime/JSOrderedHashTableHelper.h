@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/GCMemoryOperations.h>
 #include <JavaScriptCore/HashMapHelper.h>
 #include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/VMLite.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -163,7 +165,12 @@ public:
     ALWAYS_INLINE static constexpr TableSize deletedEntryCount(Storage& storage) { return asNumber(storage, deletedEntryCountIndex()); }
     ALWAYS_INLINE static constexpr TableSize usedCapacity(Storage& storage) { return aliveEntryCount(storage) + deletedEntryCount(storage); }
     ALWAYS_INLINE static constexpr TableSize capacity(Storage& storage) { return asNumber(storage, capacityIndex()); }
-    ALWAYS_INLINE static constexpr TableSize iterationEntry(Storage& storage) { return asNumber(storage, iterationEntryIndex()); }
+    ALWAYS_INLINE static TableSize iterationEntry(Storage& storage)
+    {
+        if (VMLite* lite = iterationLiteIfGILOff()) [[unlikely]]
+            return lite->orderedHashTableIterationEntry;
+        return asNumber(storage, iterationEntryIndex());
+    }
 
     ALWAYS_INLINE static constexpr void incrementAliveEntryCount(Storage& storage) { JSOrderedHashTableTraits::increment(slot(storage, aliveEntryCountIndex())); }
     ALWAYS_INLINE static constexpr void decrementAliveEntryCount(Storage& storage) { JSOrderedHashTableTraits::decrement(slot(storage, aliveEntryCountIndex())); }
@@ -580,32 +587,35 @@ public:
         JSValue key;
         JSValue value;
     };
-    ALWAYS_INLINE static TransitionResult transitAndNext(VM& vm, Storage& storage, Entry from)
+    // `from` is an entry of `obsolete`. Moves it to the same entry of the next
+    // table: a clear starts the next table empty, and a rehash drops the deleted
+    // entries before it.
+    ALWAYS_INLINE static void adjustEntryForNextTable(Storage& obsolete, Entry& from)
     {
-        Storage& candidate = transit(storage, [&](Storage& obsolete) ALWAYS_INLINE_LAMBDA {
-            if (!from)
-                return;
+        if (!from)
+            return;
 
-            if (isCleared(obsolete)) {
-                from = 0;
-                return;
-            }
+        if (isCleared(obsolete)) {
+            from = 0;
+            return;
+        }
 
-            TableIndex deletedEntryCount = Helper::deletedEntryCount(obsolete);
-            if (!deletedEntryCount)
-                return;
+        TableIndex deletedEntryCount = Helper::deletedEntryCount(obsolete);
+        if (!deletedEntryCount)
+            return;
 
-            TableIndex start = deletedEntriesStartIndex();
-            TableIndex end = start + deletedEntryCount;
-            Entry fromCopy = from;
-            for (TableIndex i = start; i < end; ++i) {
-                Entry deletedEntry = toNumber(get(obsolete, i));
-                if (deletedEntry >= fromCopy)
-                    break;
-                --from;
-            }
-        });
-
+        TableIndex start = deletedEntriesStartIndex();
+        TableIndex end = start + deletedEntryCount;
+        Entry fromCopy = from;
+        for (TableIndex i = start; i < end; ++i) {
+            Entry deletedEntry = toNumber(get(obsolete, i));
+            if (deletedEntry >= fromCopy)
+                break;
+            --from;
+        }
+    }
+    ALWAYS_INLINE static TransitionResult nextLiveEntry(VM& vm, Storage& candidate, Entry from)
+    {
         ASSERT(!isObsolete(candidate));
         TableSize capacity = Helper::capacity(candidate);
         TableIndex entryKeyIndex = entryDataStartIndex(dataTableStartIndex(capacity), from);
@@ -624,6 +634,31 @@ public:
             return { &candidate, entry, key, value };
         }
     }
+    ALWAYS_INLINE static TransitionResult transitAndNext(VM& vm, Storage& storage, Entry from)
+    {
+        if (vm.gilOff()) [[unlikely]] {
+            // A table that is still current is read under its lock. An obsolete
+            // table is never written again, so its header can be read after
+            // the lock is dropped.
+            Storage* current = &storage;
+            for (;;) {
+                Storage* next;
+                {
+                    Locker locker { current->cellLock() };
+                    if (!isObsolete(*current))
+                        return nextLiveEntry(vm, *current, from);
+                    next = nextTable(*current);
+                }
+                adjustEntryForNextTable(*current, from);
+                current = next;
+            }
+        }
+
+        Storage& candidate = transit(storage, [&](Storage& obsolete) ALWAYS_INLINE_LAMBDA {
+            adjustEntryForNextTable(obsolete, from);
+        });
+        return nextLiveEntry(vm, candidate, from);
+    }
 
     ALWAYS_INLINE static JSValue getKey(Storage& storage, Entry entry)
     {
@@ -640,12 +675,299 @@ public:
         auto result = transitAndNext(vm, storage, entry);
         if (!result.storage)
             return vm.orderedHashTableSentinel();
+        if (vm.gilOff()) [[unlikely]] {
+            VMLite& lite = VMLite::current();
+            lite.orderedHashTableIterationEntry = result.entry;
+            lite.orderedHashTableIterationKey = result.key;
+            lite.orderedHashTableIterationValue = result.value;
+            return result.storage;
+        }
         set(*result.storage, iterationEntryIndex(), result.entry);
         return result.storage;
     }
     ALWAYS_INLINE static JSValue getIterationEntry(Storage& storage) { return toJSValue(iterationEntry(storage)); }
-    ALWAYS_INLINE static JSValue getIterationEntryKey(Storage& storage) { return getKey(storage, iterationEntry(storage)); }
-    ALWAYS_INLINE static JSValue getIterationEntryValue(Storage& storage) { return getValue(storage, iterationEntry(storage)); }
+    ALWAYS_INLINE static JSValue getIterationEntryKey(Storage& storage)
+    {
+        if (VMLite* lite = iterationLiteIfGILOff()) [[unlikely]]
+            return lite->orderedHashTableIterationKey;
+        return getKey(storage, iterationEntry(storage));
+    }
+    ALWAYS_INLINE static JSValue getIterationEntryValue(Storage& storage)
+    {
+        if (VMLite* lite = iterationLiteIfGILOff()) [[unlikely]]
+            return lite->orderedHashTableIterationValue;
+        return getValue(storage, iterationEntry(storage));
+    }
+
+    // With the GIL off, the entry that nextAndUpdateIterationEntry found is
+    // kept per thread, not in the table: the table is shared by every thread
+    // that iterates it, and another thread can rehash it, which overwrites the
+    // header that getKey and getValue read. Each caller reads the entry on the
+    // thread that found it, before any other iteration on that thread.
+    ALWAYS_INLINE static VMLite* iterationLiteIfGILOff()
+    {
+        if (!g_jscConfig.gilOffProcess) [[likely]]
+            return nullptr;
+        VMLite* lite = VMLite::currentIfExists();
+        return lite && lite->gilOff ? lite : nullptr;
+    }
+
+    // ---- With the GIL off ----
+    //
+    // Several threads use one table. The owner's current table is read and
+    // written only under that table's cell lock. Rehash and clear make a new
+    // table, publish it as the old table's next table and as the owner's
+    // current table, and never write the old table again, so an obsolete table
+    // can be read without its lock. Nothing under the lock allocates, calls into
+    // JS, or parks: the caller normalizes and hashes the key first, which also
+    // resolves a rope key (a stored key was resolved when it was added), and a
+    // new table is allocated before the lock is taken. The lock holder then
+    // checks that the table it planned against is still current.
+
+    // Calls func(table) with the owner's current table locked. The owner must
+    // have a table.
+    template<typename Func>
+    ALWAYS_INLINE static decltype(auto) withCurrentTableLockedGILOff(HashTable* owner, const Func& func)
+    {
+        for (;;) {
+            Storage* storage = owner->m_storage.get();
+            ASSERT(storage);
+            Locker locker { storage->cellLock() };
+            if (isObsolete(*storage))
+                continue;
+            AssertNoGC assertNoGC;
+            return func(*storage);
+        }
+    }
+
+    // A thread that finds a table through its owner takes the table's lock
+    // before it reads the table. So a new table is filled under its own lock,
+    // and the lock orders the fill before every read of the published table.
+    static void releaseFreshTableGILOff(Storage& fresh)
+    {
+        Locker locker { fresh.cellLock() };
+    }
+
+    // Returns the owner's table, creating it if the owner has none.
+    static Storage* materializeGILOff(JSGlobalObject* globalObject, HashTable* owner)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (Storage* storage = owner->m_storage.get())
+            return storage;
+        Storage* fresh = tryCreate(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        releaseFreshTableGILOff(*fresh);
+        WTF::storeStoreFence();
+        Storage* expected = nullptr;
+        if (Storage* winner = WTF::atomicCompareExchangeStrong(owner->m_storage.slot(), expected, fresh))
+            return winner;
+        vm.writeBarrier(owner, fresh);
+        return fresh;
+    }
+
+    // Copies the live entries of `base` into the empty table `copy`. With
+    // UpdateDeletedEntries::Yes, `base` is being retired by a rehash, and the
+    // deleted entries are recorded in it for the iterators that still point at
+    // it (see adjustEntryForNextTable).
+    template<UpdateDeletedEntries update>
+    static void fillTableGILOff(JSGlobalObject* globalObject, Storage& base, Storage& copy)
+    {
+        VM& vm = getVM(globalObject);
+        TableSize baseCapacity = capacity(base);
+        TableSize newCapacity = capacity(copy);
+        ASSERT(!isObsolete(base));
+        ASSERT(aliveEntryCount(base) <= dataCapacity(newCapacity));
+        set(copy, aliveEntryCountIndex(), aliveEntryCount(base));
+
+        TableIndex baseEntryKeyIndex = dataTableStartIndex(baseCapacity);
+        TableIndex baseDeletedEntriesIndex = deletedEntriesStartIndex();
+        TableIndex newEntryKeyIndex = dataTableStartIndex(newCapacity);
+        TableIndex newHashTableStartIndex = hashTableStartIndex();
+        TableIndex newBucketCount = bucketCount(newCapacity);
+
+        for (Entry baseEntry = 0;; ++baseEntry, baseEntryKeyIndex += EntrySize) {
+            JSValue baseKey = get(base, baseEntryKeyIndex);
+            if (!baseKey)
+                break;
+
+            if (isDeleted(vm, baseKey)) {
+                if constexpr (update == UpdateDeletedEntries::Yes)
+                    set(base, baseDeletedEntriesIndex++, baseEntry);
+                continue;
+            }
+
+            setKeyOrValueData(vm, copy, newEntryKeyIndex, baseKey);
+            if constexpr (Traits::hasValueData)
+                setKeyOrValueData(vm, copy, newEntryKeyIndex + 1, get(base, baseEntryKeyIndex + 1));
+
+            TableSize hash = jsMapHashForAlreadyHashedValue(globalObject, vm, baseKey);
+            addToChain(copy, bucketIndex(newHashTableStartIndex, newBucketCount, hash), newEntryKeyIndex);
+            newEntryKeyIndex += EntrySize;
+        }
+    }
+
+    // Replaces the owner's table `base` with a rehash into `newCapacity`. Does
+    // nothing if `base` is no longer current, or no longer fits; the caller
+    // then plans again against the current table.
+    static void rehashGILOff(JSGlobalObject* globalObject, HashTable* owner, Storage& base, TableSize newCapacity)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Storage* fresh = tryCreate(globalObject, 0, 0, newCapacity);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        Locker locker { base.cellLock() };
+        AssertNoGC assertNoGC;
+        if (isObsolete(base) || owner->m_storage.get() != &base)
+            return;
+        if (aliveEntryCount(base) > dataCapacity(newCapacity))
+            return;
+        {
+            Locker freshLocker { fresh->cellLock() };
+            fillTableGILOff<UpdateDeletedEntries::Yes>(globalObject, base, *fresh);
+        }
+        WTF::storeStoreFence();
+        setNextTable(vm, base, fresh);
+        owner->m_storage.set(vm, owner, fresh);
+    }
+
+    // Adds an entry that find() did not find. The table has room.
+    ALWAYS_INLINE static void insertGILOff(VM& vm, Storage& storage, JSValue normalizedKey, JSValue value, TableSize hash)
+    {
+        TableSize capacity = Helper::capacity(storage);
+        Entry newEntry = usedCapacity(storage);
+        ASSERT(newEntry < dataCapacity(capacity));
+        TableIndex newEntryKeyIndex = entryDataStartIndex(dataTableStartIndex(capacity), newEntry);
+        incrementAliveEntryCount(storage);
+        addToChain(storage, bucketIndex(capacity, hash), newEntryKeyIndex);
+        setKeyOrValueData(vm, storage, newEntryKeyIndex, normalizedKey);
+        if constexpr (Traits::hasValueData)
+            setKeyOrValueData(vm, storage, newEntryKeyIndex + 1, value);
+    }
+
+    static void addNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, JSValue value, TableSize hash)
+    {
+        VM& vm = getVM(globalObject);
+        DeferTerminationForAWhile noTermination(vm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        ASSERT(normalizeMapKey(normalizedKey) == normalizedKey);
+
+        for (;;) {
+            Storage* base = materializeGILOff(globalObject, owner);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            TableSize newCapacity;
+            {
+                Locker locker { base->cellLock() };
+                if (isObsolete(*base))
+                    continue;
+                AssertNoGC assertNoGC;
+
+                auto result = find(globalObject, *base, normalizedKey, hash);
+                if (isValidTableIndex(result.entryKeyIndex)) {
+                    if constexpr (Traits::hasValueData)
+                        setKeyOrValueData(vm, *base, result.entryKeyIndex + 1, value);
+                    return;
+                }
+
+                // The same growth policy as expandIfNeeded.
+                TableSize capacity = Helper::capacity(*base);
+                TableSize dataCapacity = Helper::dataCapacity(capacity);
+                TableSize deletedEntryCount = Helper::deletedEntryCount(*base);
+                if (aliveEntryCount(*base) + deletedEntryCount < dataCapacity) {
+                    insertGILOff(vm, *base, normalizedKey, value, hash);
+                    return;
+                }
+                TableSize expansionFactor = capacity < LargeCapacity ? 4 : 2;
+                newCapacity = Checked<TableSize>(capacity) * expansionFactor;
+                if (deletedEntryCount >= (dataCapacity / 2))
+                    newCapacity = capacity;
+            }
+
+            rehashGILOff(globalObject, owner, *base, newCapacity);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+
+    static bool removeNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, TableSize hash)
+    {
+        VM& vm = getVM(globalObject);
+        DeferTerminationForAWhile noTermination(vm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        ASSERT(normalizeMapKey(normalizedKey) == normalizedKey);
+        if (!owner->m_storage.get())
+            return false;
+
+        Storage* base = nullptr;
+        TableSize shrinkTo = 0;
+        bool removed = withCurrentTableLockedGILOff(owner, [&](Storage& storage) {
+            auto result = find(globalObject, storage, normalizedKey, hash);
+            if (!isValidTableIndex(result.entryKeyIndex))
+                return false;
+            deleteData(vm, storage, result.entryKeyIndex);
+            if constexpr (Traits::hasValueData)
+                deleteData(vm, storage, result.entryKeyIndex + 1);
+            incrementDeletedEntryCount(storage);
+            decrementAliveEntryCount(storage);
+
+            // The same shrink policy as shrinkIfNeeded.
+            TableSize capacity = Helper::capacity(storage);
+            if (aliveEntryCount(storage) < (capacity >> 3) && capacity != InitialCapacity) {
+                base = &storage;
+                shrinkTo = capacity / 2;
+            }
+            return true;
+        });
+
+        // Shrinking only saves memory, so a shrink that loses a race is dropped.
+        if (base) {
+            rehashGILOff(globalObject, owner, *base, shrinkTo);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        return removed;
+    }
+
+    static void clearGILOff(JSGlobalObject* globalObject, HashTable* owner)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!owner->m_storage.get())
+            return;
+        Storage* fresh = tryCreate(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        releaseFreshTableGILOff(*fresh);
+        WTF::storeStoreFence();
+        withCurrentTableLockedGILOff(owner, [&](Storage& base) {
+            setClearedTableSentinel(base);
+            setNextTable(vm, base, fresh);
+            owner->m_storage.set(vm, owner, fresh);
+        });
+    }
+
+    // Returns a copy of the owner's table, or null if the owner has none.
+    static Storage* copyGILOff(JSGlobalObject* globalObject, HashTable* owner)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        for (;;) {
+            if (!owner->m_storage.get())
+                return nullptr;
+            TableSize plannedCapacity = withCurrentTableLockedGILOff(owner, [&](Storage& base) {
+                return capacity(base);
+            });
+            Storage* fresh = tryCreate(globalObject, 0, 0, plannedCapacity);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            bool filled = withCurrentTableLockedGILOff(owner, [&](Storage& base) {
+                if (capacity(base) != plannedCapacity)
+                    return false;
+                fillTableGILOff<UpdateDeletedEntries::No>(globalObject, base, *fresh);
+                return true;
+            });
+            if (filled)
+                return fresh;
+        }
+    }
 };
 
 } // namespace JSC

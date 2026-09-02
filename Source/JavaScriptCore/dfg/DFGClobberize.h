@@ -28,6 +28,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "DFGAbstractHeap.h"
+#include "DFGDoesGC.h"
 #include "DFGGraph.h"
 #include "DFGHeapLocation.h"
 #include "DFGLazyNode.h"
@@ -63,7 +64,6 @@ namespace JSC { namespace DFG {
 // runtime park site under them.
 inline bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
 {
-    UNUSED_PARAM(graph);
     if (!Options::useJSThreads() || Options::useThreadGIL()) [[likely]]
         return false;
     switch (node->op()) {
@@ -168,8 +168,18 @@ inline bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
         // variants are inline stores with no parkable slow path.
         return node->multiPutByOffsetData().writesStructures() || node->multiPutByOffsetData().reallocatesStorage();
 
-    default:
+    // Parks by design, with no heap write: its GIL-off leg is an invalidation
+    // point, and a park that overlaps a heap-fact rewrite jettisons the code
+    // (see its case in clobberize()).
+    case CheckTraps:
         return false;
+
+    // Everything else that can allocate in the GC heap can park, because the
+    // allocation can wait for a collection. The cases above name the nodes
+    // whose reasons are not an allocation. Nodes that already clobber the
+    // heap do not need this, and get it anyway.
+    default:
+        return doesGCIgnoringClobberize(graph, node);
     }
 }
 

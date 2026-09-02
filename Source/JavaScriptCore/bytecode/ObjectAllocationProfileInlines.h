@@ -104,8 +104,14 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
     Allocator allocator = subspaceFor<JSFinalObject>(vm)->allocatorFor(allocationSize, AllocatorForMode::EnsureAllocator);
 
     // Take advantage of extra inline capacity available in the size class.
-    if (allocator) {
-        size_t slop = (allocator.cellSize() - allocationSize) / sizeof(WriteBarrier<Unknown>);
+    size_t cellSize = allocator ? allocator.cellSize() : 0;
+    // SharedGC (§5.5 never-populate rule): the server allocator table stays
+    // empty, so allocatorFor() answers no allocator. The client TLC still
+    // allocates from this size class (CompleteSubspace::allocatorForSlow).
+    if (!allocator && Options::useSharedGCHeap() && allocationSize <= MarkedSpace::largeCutoff) [[unlikely]]
+        cellSize = MarkedSpace::s_sizeClassForSizeStep[MarkedSpace::sizeClassToIndex(allocationSize)];
+    if (cellSize) {
+        size_t slop = (cellSize - allocationSize) / sizeof(WriteBarrier<Unknown>);
         inlineCapacity += slop;
         if (inlineCapacity > JSFinalObject::maxInlineCapacity)
             inlineCapacity = JSFinalObject::maxInlineCapacity;

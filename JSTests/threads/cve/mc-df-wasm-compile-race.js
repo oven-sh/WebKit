@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-DF S1 (docs/threads/cve/map-MC-DF.md): the CVE-2017-5116 shape.
 // In Chrome 61, wasm bytes in a SharedArrayBuffer were validated on one read
 // and compiled from another while a Worker rewrote them. Our defense is

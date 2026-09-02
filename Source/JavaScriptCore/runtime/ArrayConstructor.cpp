@@ -362,6 +362,11 @@ static JSArray* tryCreateArrayFromClonedArguments(JSGlobalObject* globalObject, 
 static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
 {
     VM& vm = globalObject->vm();
+    // The fast path sizes the array from one pass over the table and fills it
+    // in another. With the GIL off, another thread can add to the table between
+    // the two, so Array.from takes the generic path.
+    if (vm.gilOff()) [[unlikely]]
+        return nullptr;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     unsigned length = set->size();
@@ -459,6 +464,11 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
 static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMapIterator* mapIterator)
 {
     VM& vm = globalObject->vm();
+    // The fast path sizes the array from one pass over the table and fills it
+    // in another. With the GIL off, another thread can add to the table between
+    // the two, so Array.from takes the generic path.
+    if (vm.gilOff()) [[unlikely]]
+        return nullptr;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSMap* map = mapIterator->iteratedObject();
@@ -584,6 +594,11 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
 static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSetIterator* setIterator)
 {
     VM& vm = globalObject->vm();
+    // The fast path sizes the array from one pass over the table and fills it
+    // in another. With the GIL off, another thread can add to the table between
+    // the two, so Array.from takes the generic path.
+    if (vm.gilOff()) [[unlikely]]
+        return nullptr;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSSet* set = setIterator->iteratedObject();

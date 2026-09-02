@@ -1787,8 +1787,11 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
     if (firstArray->holesMustForwardToPrototype()) [[unlikely]]
         return nullptr;
 
+    Butterfly* firstButterfly = nullptr;
+    if (!flatButterflySnapshot(firstArray, firstButterfly)) [[unlikely]]
+        return nullptr;
     IndexingType type = firstArray->indexingType();
-    CheckedUint32 checkedResultSize = firstArray->butterfly()->publicLength();
+    CheckedUint32 checkedResultSize = firstButterfly->publicLength();
     for (unsigned i = 0; i < argumentCount; ++i) {
         JSValue argumentValue = callFrame->uncheckedArgument(i);
         if (argumentValue.isObject()) {
@@ -1799,10 +1802,13 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
                 JSArray* array = uncheckedDowncast<JSArray>(argumentObject);
                 if (array->holesMustForwardToPrototype()) [[unlikely]]
                     return nullptr;
+                Butterfly* sourceButterfly = nullptr;
+                if (!flatButterflySnapshot(array, sourceButterfly)) [[unlikely]]
+                    return nullptr;
                 type = mergeIndexingTypesForCopying(type, array->indexingType(), /* allowPromotion */ true);
                 if (type == NonArray) [[unlikely]]
                     return nullptr;
-                checkedResultSize += array->butterfly()->publicLength();
+                checkedResultSize += sourceButterfly->publicLength();
                 continue;
             }
             JSType objectType = argumentObject->type();
@@ -1839,11 +1845,35 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
     butterfly->setVectorLength(vectorLength);
     butterfly->setPublicLength(resultSize);
 
+    // With threads, another thread can change a source between the two passes:
+    // grow or shrink it, segment its word, or relabel its type while the
+    // allocation above parks. So each source is read again here and must still
+    // fit the result's size and type. Bailing leaves the new butterfly
+    // unreferenced.
     unsigned offset = 0;
-    auto copySource = [&](JSArray* array) {
-        Butterfly* sourceButterfly = array->butterfly();
+    auto copySource = [&](JSArray* array) -> bool {
+        Butterfly* sourceButterfly = nullptr;
+        if (!flatButterflySnapshot(array, sourceButterfly)) [[unlikely]]
+            return false;
         unsigned sourceSize = sourceButterfly->publicLength();
         IndexingType sourceType = array->indexingType();
+        if (Options::useJSThreads()) [[unlikely]] {
+            sourceSize = std::min(sourceSize, sourceButterfly->vectorLength());
+            if (sourceSize > resultSize - offset || mergeIndexingTypesForCopying(type, sourceType, /* allowPromotion */ true) != type)
+                return false;
+            // Another thread can store into the source while it is copied, so a
+            // copy of words in the same representation is made a word at a time,
+            // as Butterfly.h requires for shared storage.
+            bool sameRepresentation = (type == ArrayWithDouble) == (sourceType == ArrayWithDouble);
+            if (type != ArrayWithUndecided && sourceType != ArrayWithUndecided && sameRepresentation) {
+                void* destination = type == ArrayWithDouble
+                    ? static_cast<void*>(butterfly->contiguousDouble().data() + offset)
+                    : static_cast<void*>(butterfly->contiguous().data() + offset);
+                butterflyConcurrentCopyWords(destination, sourceButterfly->contiguous().data(), sizeof(JSValue) * sourceSize);
+                offset += sourceSize;
+                return true;
+            }
+        }
         if (type == ArrayWithDouble) {
             double* buffer = butterfly->contiguousDouble().data();
             if (sourceType == ArrayWithDouble)
@@ -1855,20 +1885,27 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
         }
         offset += sourceSize;
+        return true;
     };
-    copySource(firstArray);
+    if (!copySource(firstArray)) [[unlikely]]
+        return nullptr;
     for (unsigned i = 0; i < argumentCount; ++i) {
         JSValue argumentValue = callFrame->uncheckedArgument(i);
         if (argumentValue.isObject() && isJSArray(asObject(argumentValue))) [[likely]] {
-            copySource(uncheckedDowncast<JSArray>(asObject(argumentValue)));
+            if (!copySource(uncheckedDowncast<JSArray>(asObject(argumentValue)))) [[unlikely]]
+                return nullptr;
             continue;
         }
+        if (Options::useJSThreads() && offset >= resultSize) [[unlikely]]
+            return nullptr;
         if (type == ArrayWithDouble)
             butterfly->contiguousDouble().data()[offset] = argumentValue.asNumber();
         else
             butterfly->contiguous().data()[offset].setWithoutWriteBarrier(argumentValue);
         ++offset;
     }
+    if (Options::useJSThreads() && offset != resultSize) [[unlikely]]
+        return nullptr;
     ASSERT(offset == resultSize);
 
     Butterfly::clearRange(type, butterfly, resultSize, vectorLength);

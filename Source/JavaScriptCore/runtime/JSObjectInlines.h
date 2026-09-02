@@ -1934,6 +1934,20 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         return;
     }
 
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Another thread can brand the object first. That is the error above.
+        bool alreadyBranded = false;
+        publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            alreadyBranded = oldStructure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(oldStructure)->checkBrand(asSymbol(brand));
+            if (alreadyBranded)
+                return oldStructure;
+            return Structure::setBrandTransition(vm, oldStructure, asSymbol(brand), deferred);
+        }));
+        if (alreadyBranded)
+            throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
+        return;
+    }
+
     scope.release();
 
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);

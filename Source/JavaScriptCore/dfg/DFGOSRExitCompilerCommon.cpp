@@ -31,6 +31,7 @@
 #include "CodeBlockInlines.h"
 #include "DFGJITCode.h"
 #include "DFGOperations.h"
+#include "FrameTracers.h"
 #include "JIT.h"
 #include "JSCJSValueInlines.h"
 #include "JSThreadsSafepoint.h"
@@ -43,9 +44,10 @@ namespace JSC { namespace DFG {
 
 static Lock osrExitGenerationLock;
 
-OSRExitGenerationLocker::OSRExitGenerationLocker(VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+OSRExitGenerationLocker::OSRExitGenerationLocker(VM& vm, CallFrame* callFrame) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     ASSERT(vm.gilOff());
+    NativeCallFrameTracer tracer(vm, callFrame);
     while (!osrExitGenerationLock.tryLock()) {
         if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
             continue; // Parked across a stop-the-world window: retry the tryLock.

@@ -360,7 +360,7 @@ JSStringRef JSContextCreateBacktrace(JSContextRef ctx, unsigned maxStackSize)
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     StringBuilder builder;
-    CallFrame* frame = vm.topCallFrame;
+    CallFrame* frame = vm.group3Primitives().topCallFrame; // UNGIL §A.1.3 mode split.
 
     ASSERT(maxStackSize);
     BacktraceFunctor functor(builder, maxStackSize);

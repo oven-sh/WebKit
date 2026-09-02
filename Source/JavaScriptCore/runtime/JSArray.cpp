@@ -1482,6 +1482,18 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
             for (unsigned i = startIndex; i < newLength; ++i)
                 butterfly->contiguousInt32().at(this, i).setWithoutWriteBarrier(JSValue());
         }
+#if TSAN_ENABLED
+    } else if (Options::useJSThreads()) [[unlikely]] {
+        // Another thread can store into the source while it is copied. Under
+        // TSAN the copy is made a word at a time with atomics, which is also
+        // safe against the GC.
+        void* destination = type == ArrayWithDouble
+            ? static_cast<void*>(selfButterfly->contiguousDouble().data() + startIndex)
+            : static_cast<void*>(selfButterfly->contiguous().data() + startIndex);
+        butterflyConcurrentCopyWords(destination, otherButterfly->contiguous().data(), sizeof(JSValue) * otherLength);
+        if (type != ArrayWithDouble && type != ArrayWithInt32)
+            vm.writeBarrier(this);
+#endif
     } else if (type == ArrayWithDouble) {
         // Double array storage do not need to be safe against GC since they are not scanned.
         memcpy(selfButterfly->contiguousDouble().data() + startIndex, otherButterfly->contiguousDouble().data(), sizeof(double) * otherLength);
@@ -1697,7 +1709,7 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
                 // bound), not publicLength.
                 if (WriteBarrierBase<Unknown>* slot = segmentedIndexedSlotIfReadable(spine, index)) {
                     if (hasDouble(indexingType()))
-                        *std::bit_cast<double*>(slot) = PNaN;
+                        WTF::atomicStore(std::bit_cast<double*>(slot), PNaN, std::memory_order_relaxed);
                     else
                         slot->clear();
                 }

@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // mc-jit-double-relabel-stale-shape.js — MC-JIT surface S2(b) (docs/threads/
 // cve/map-MC-JIT.md): per-event-STW Double relabel (OM section 4.7 / I28) vs
 // a compiled loop holding a hoisted shape proof across the stop.

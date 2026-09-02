@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-CODE S6 (docs/threads/cve/map-MC-CODE.md): deferred Class-A fire
 // ordering — GIL-removal precondition 10 (INTEGRATE-jit.md; full caveat at
 // the WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire*) overload,

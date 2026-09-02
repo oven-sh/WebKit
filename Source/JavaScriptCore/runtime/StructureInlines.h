@@ -752,8 +752,13 @@ ALWAYS_INLINE void Structure::setPropertyTable(VM& vm, PropertyTable* table)
     // under useJSThreads the table's fill stores must be ordered before the
     // slot store. Locked readers are ordered by m_lock; flag-off readers are
     // same-thread.
-    if (Options::useJSThreads()) [[unlikely]]
-        WTF::storeStoreFence();
+    if (Options::useJSThreads()) [[unlikely]] {
+        // A release store, so that TSAN also sees the order (it does not model
+        // the fence). getConcurrently loads the slot to match.
+        WTF::atomicStore(m_propertyTableUnsafe.slot(), table, std::memory_order_release);
+        vm.writeBarrier(this, table);
+        return;
+    }
     m_propertyTableUnsafe.setMayBeNull(vm, this, table);
 }
 

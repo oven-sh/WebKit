@@ -154,7 +154,7 @@ inline VM& DeferredWorkTimer::Ticket::vm()
     return target()->vm();
 }
 
-inline void DeferredWorkTimer::Ticket::cancel()
+void DeferredWorkTimer::Ticket::cancel()
 {
     dataLogLnIf(DeferredWorkTimerInternal::verbose, "Canceling ticket: ", RawPointer(this));
     m_isCancelled.store(true, std::memory_order_relaxed);

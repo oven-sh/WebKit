@@ -3860,6 +3860,14 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     VM& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // GIL-off, threads share this global object, and the three cache fields below have no lock.
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        IntlCollator* collator = IntlCollator::create(vm, collatorStructure());
+        collator->initializeCollator(this, locale, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return collator;
+    }
+
     String localeString = locale->value(this);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -4441,7 +4449,7 @@ void JSGlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& globalObject
 static bool incumbentRealmIs(VM& vm, JSGlobalObject* target)
 {
     bool result = false;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+    StackVisitor::visit(vm.group3Primitives().topCallFrame, vm, [&](StackVisitor& visitor) { // UNGIL §A.1.3 mode split.
         if (visitor->isNativeCalleeFrame())
             return IterationStatus::Continue;
         if (auto* codeBlock = visitor->codeBlock()) {

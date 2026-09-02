@@ -1536,13 +1536,15 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
 }
 
 // N2 (§2.1) restartable locked core; see the header comment for the contract.
-bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value)
+bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value, const PropertyTable* plannedTable, uint32_t plannedEditCount)
 {
     RELEASE_ASSERT(Options::useJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(expectedSource && newStructure);
     RELEASE_ASSERT(inlineOffset == invalidOffset || isInlineOffset(inlineOffset)); // Out-of-line adds touch the butterfly: §4.3.
-    ASSERT(newStructure->outOfLineCapacity() == expectedSource->outOfLineCapacity()); // Butterfly untouched (N2).
+    // Butterfly untouched (N2). With a planned dictionary table, an in-place add
+    // can change the source's size until the table is checked under the lock.
+    ASSERT(plannedTable || newStructure->outOfLineCapacity() == expectedSource->outOfLineCapacity());
 
     StructureID sourceID = object->structureID(); // RAW bits (M5).
     if (sourceID.isNuked() || sourceID != expectedSource->id())
@@ -1573,6 +1575,17 @@ bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSou
         unlockCellChecked(cellLock);
         return false; // RESTART: a racing (E4 or locked) transition won.
     }
+
+    // Every in-place edit of a dictionary table holds this cell lock and bumps
+    // the count after it, so an unchanged {table, count} pair proves that the
+    // caller's plan saw the table as it is now.
+    if (plannedTable
+        && (source->pinnedPropertyTableForConcurrentReadStamp() != plannedTable
+            || plannedTable->concurrentEditCount() != plannedEditCount)) {
+        unlockCellChecked(cellLock);
+        return false; // RESTART: an in-place dictionary edit landed after the plan.
+    }
+    ASSERT(newStructure->outOfLineCapacity() == source->outOfLineCapacity());
 
     // Release-store the inline value FIRST (no holes, I9): any reader that
     // sees the new StructureID sees the value. Existing-slot inline access
@@ -1779,7 +1792,7 @@ bool tryMaterializeCopyOnWriteButterflyForSharedWrite(VM& vm, JSObjectWithButter
     unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(
         propertyCapacity, std::min<size_t>(nextLength(oldButterfly->vectorLength()), MAX_STORAGE_VECTOR_LENGTH));
     Butterfly* newButterfly = Butterfly::createUninitialized(vm, object, 0, propertyCapacity, true, newVectorLength * sizeof(JSValue));
-    memcpy(newButterfly->propertyStorage(), oldButterfly->propertyStorage(), oldButterfly->vectorLength() * sizeof(JSValue) + sizeof(IndexingHeader));
+    butterflyConcurrentCopyWords(newButterfly->propertyStorage(), oldButterfly->propertyStorage(), oldButterfly->vectorLength() * sizeof(JSValue) + sizeof(IndexingHeader)); // Word-wise under TSAN; a plain memcpy otherwise.
 
     WTF::storeStoreFence(); // Contents before publication (M2-equivalent; today's convertFromCopyOnWrite fences here too).
 
@@ -1874,7 +1887,7 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
 
         // Settled structure (M5): never decode a nuked ID; the nuke window is
         // bounded straight-line (O2), so spinning via re-dispatch terminates.
-        StructureID structureIDValue = object->structureID(); // RAW bits.
+        StructureID structureIDValue = object->structureIDConcurrently(); // RAW bits.
         if (structureIDValue.isNuked())
             continue;
         Structure* structure = structureIDValue.decode();
@@ -2075,7 +2088,7 @@ void materializeCopyOnWriteButterflyConcurrent(VM& vm, JSObjectWithButterfly* ob
     RELEASE_ASSERT(Options::useJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     while (true) {
-        StructureID id = object->structureID(); // RAW bits (M5): never decode a nuked ID.
+        StructureID id = object->structureIDConcurrently(); // RAW bits (M5): never decode a nuked ID.
         if (id.isNuked())
             continue; // Bounded nuke window (O2); spin to the settled ID.
         Structure* structure = id.decode();
@@ -2360,7 +2373,7 @@ namespace {
 ALWAYS_INLINE void fillFragmentSlotWithHole(WriteBarrierBase<Unknown>* slot, bool fillDouble)
 {
     if (fillDouble)
-        *std::bit_cast<double*>(slot) = PNaN; // §4.7 raw hole.
+        WTF::atomicStore(std::bit_cast<double*>(slot), PNaN, std::memory_order_relaxed); // §4.7 raw hole.
     else
         slot->clear();
 }
@@ -2730,7 +2743,7 @@ void shrinkButterflyForSetLengthConcurrent(VM& vm, JSObjectWithButterfly* object
             for (uint32_t i = length; i < bound; ++i) {
                 WriteBarrierBase<Unknown>* slot = spine->indexedSlot(i);
                 if (fillDouble)
-                    *std::bit_cast<double*>(slot) = PNaN; // §4.7 raw hole.
+                    WTF::atomicStore(std::bit_cast<double*>(slot), PNaN, std::memory_order_relaxed); // §4.7 raw hole.
                 else
                     slot->clear();
             }
@@ -3911,7 +3924,7 @@ void applyForceSegmentedButterfliesStressIfNeeded(VM& vm, JSObjectWithButterfly*
         if (regime != ButterflyRegime::Flat && regime != ButterflyRegime::FlatShared)
             return; // None: nothing allocated. Segmented: stress goal met (I3).
 
-        StructureID id = object->structureID(); // RAW bits (M5).
+        StructureID id = object->structureIDConcurrently(); // RAW bits (M5).
         if (id.isNuked())
             continue; // Mid-publication: spin (bounded, O2), then re-classify.
         Structure* structure = id.decode();

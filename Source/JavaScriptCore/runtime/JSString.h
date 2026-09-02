@@ -319,7 +319,8 @@ public:
 
     AtomStringImpl* existingAtomOrNull() const
     {
-        StringImpl* impl = valueInternal().impl();
+        // With threads, another thread can swap in the atom (swapToAtomString).
+        StringImpl* impl = getValueImpl();
         if (!impl->isAtom())
             return nullptr;
         // Record for profiling.

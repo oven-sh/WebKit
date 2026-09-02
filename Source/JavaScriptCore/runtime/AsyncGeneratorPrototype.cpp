@@ -121,7 +121,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeNext, (JSGlobalObject* globalObj
         return JSValue::encode(promise);
     }
 
-    return JSValue::encode(asyncGeneratorNext(globalObject, generator, callFrame->argument(0), &vm.syncResumeCallCache()));
+    return JSValue::encode(asyncGeneratorNext(globalObject, generator, callFrame->argument(0), vm.syncResumeCallCacheIfSingleMutator()));
 }
 
 // https://tc39.es/ecma262/#sec-asyncgenerator-prototype-return
@@ -146,7 +146,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeReturn, (JSGlobalObject* globalO
             asyncGeneratorAwaitReturn(globalObject, generator);
             break;
         case JSAsyncGenerator::GILOffEnqueueAction::Resume:
-            asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
+            asyncGeneratorResume(globalObject, generator, vm.syncResumeCallCacheIfSingleMutator());
             break;
         case JSAsyncGenerator::GILOffEnqueueAction::SettleCompleted:
             RELEASE_ASSERT_NOT_REACHED();
@@ -169,7 +169,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeReturn, (JSGlobalObject* globalO
     } else if (JSAsyncGenerator::isSuspendedYieldState(state)) {
         // 9. Else if state is suspended-yield, then
         // 9.a. Perform AsyncGeneratorResume(gen, completion).
-        asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
+        asyncGeneratorResume(globalObject, generator, vm.syncResumeCallCacheIfSingleMutator());
     } else {
         // 10. Else,
         // 10.a. Assert: state is either executing or draining-queue.
@@ -204,7 +204,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeThrow, (JSGlobalObject* globalOb
             promise->reject(vm, exception);
             break;
         case JSAsyncGenerator::GILOffEnqueueAction::Resume:
-            asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
+            asyncGeneratorResume(globalObject, generator, vm.syncResumeCallCacheIfSingleMutator());
             break;
         case JSAsyncGenerator::GILOffEnqueueAction::AwaitReturn:
             RELEASE_ASSERT_NOT_REACHED();
@@ -237,7 +237,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeThrow, (JSGlobalObject* globalOb
     // 10. If state is suspended-yield, then
     // 10.a. Perform AsyncGeneratorResume(gen, completion).
     if (JSAsyncGenerator::isSuspendedYieldState(state))
-        asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
+        asyncGeneratorResume(globalObject, generator, vm.syncResumeCallCacheIfSingleMutator());
     else {
         // 11. Else,
         // 11.a. Assert: state is either executing or draining-queue.

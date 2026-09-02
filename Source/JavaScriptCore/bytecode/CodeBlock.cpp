@@ -105,6 +105,19 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+void CodeBlock::createRareDataIfNecessaryConcurrently()
+{
+    static_assert(sizeof(m_rareData) == sizeof(RareData*), "the pointer is read and written as a raw word");
+    auto** slot = reinterpret_cast<RareData**>(&m_rareData);
+    if (WTF::atomicLoad(slot, std::memory_order_acquire))
+        return;
+    static Lock creationLock;
+    Locker locker { creationLock };
+    if (WTF::atomicLoad(slot, std::memory_order_relaxed))
+        return;
+    WTF::atomicStore(slot, makeUnique<RareData>().release(), std::memory_order_release);
+}
+
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CodeBlockRareData);
 
 const ClassInfo CodeBlock::s_info = {
@@ -958,8 +971,15 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         // We could have already set it to false because we detected an uninlineable call.
         // Don't override that observation. (Explicit load+store instead of &=:
         // m_shouldAlwaysBeInlined is a relaxed atomic byte now — see CodeBlock.h.)
-        if (m_shouldAlwaysBeInlined)
-            m_shouldAlwaysBeInlined = canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
+        // capabilityLevel() must run even when the flag is already false: it caches the
+        // level, and noticeIncomingCall() crashes on a Baseline caller whose level is unset.
+        // This CodeBlock may not have gone through JIT::compileAndLinkWithoutFinalizing()
+        // (shared baseline code from the LLInt slow path).
+        {
+            bool canBeInlined = canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
+            if (m_shouldAlwaysBeInlined)
+                m_shouldAlwaysBeInlined = canBeInlined;
+        }
         break;
     }
 

@@ -1711,6 +1711,16 @@ static void directPutByVal(JSGlobalObject* globalObject, JSObject* baseObject, J
         case ALL_DOUBLE_INDEXING_TYPES:
         case ALL_CONTIGUOUS_INDEXING_TYPES:
             if (arrayProfile) {
+                if (Options::useJSThreads()) [[unlikely]] {
+                    // The word may be segmented, which butterfly() must not decode.
+                    if (index < baseObject->getVectorLength()) {
+                        if (index >= baseObject->getArrayLength())
+                            arrayProfile->setMayStoreHole();
+                        break;
+                    }
+                    arrayProfile->setOutOfBounds();
+                    break;
+                }
                 if (index < baseObject->butterfly()->vectorLength()) {
                     if (index >= baseObject->butterfly()->publicLength())
                         arrayProfile->setMayStoreHole();

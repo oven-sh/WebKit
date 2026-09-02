@@ -382,6 +382,8 @@ public:
 
     Heap(VM&, HeapType);
     ~Heap();
+    // Called by ~VM while the destroying thread still has heap access.
+    void prepareForVMDestruction();
     void lastChanceToFinalize();
     void releaseDelayedReleasedObjects();
 
@@ -969,6 +971,23 @@ public:
     JS_EXPORT_PRIVATE void willStartIterating();
     JS_EXPORT_PRIVATE void didFinishIterating();
 
+    // A HeapIterationScope, or any other walk of the block directories that
+    // stops allocation, is legal on a shared heap only while no other client
+    // can allocate (MarkedSpace::willStartIterating). This runs `func` inline
+    // when that already holds or the heap is not shared. Otherwise this thread
+    // conducts a JSThreadsSafepoint stop window around `func`, so the caller
+    // must hold the VM's JSLock and no cell, Structure or heap lock, and `func`
+    // must not call into JS.
+    template<typename Func> void runWithOtherClientsStopped(const Func& func)
+    {
+        if (!isSharedServer()) [[likely]] {
+            func();
+            return;
+        }
+        runWithOtherClientsStoppedSlow(ScopedLambda<void()>(func));
+    }
+    JS_EXPORT_PRIVATE void runWithOtherClientsStoppedSlow(const ScopedLambda<void()>&);
+
     Seconds lastFullGCLength() const { return m_lastFullGCLength; }
     Seconds lastEdenGCLength() const { return m_lastEdenGCLength; }
     void increaseLastFullGCLength(Seconds amount) { m_lastFullGCLength += amount; }
@@ -980,6 +999,11 @@ public:
 
     void deleteAllCodeBlocks(DeleteAllCodeEffort);
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
+    // The bodies of the two above, for a caller that already holds a
+    // PreventCollectionScope (VM::whenIdleWithOtherThreadsStopped).
+    void deleteAllCodeBlocksWithCollectionPrevented();
+    void deleteAllUnlinkedCodeBlocksWithCollectionPrevented();
+    void clearUnlinkedBaselineCodeCaches();
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
     bool isPagedOut();
@@ -1364,6 +1388,11 @@ private:
     Ticket requestCollectionShared(GCRequest); // §10B.1 ticketing (RCAC core); pre: access holder or conductor.
     Ticket requestCollectionShared(const AbstractLocker& threadLockLocker, GCRequest); // Same, with *m_threadLock already held.
     void runSharedGCElection(Ticket); // §10.2 election loop; returns once the ticket is served.
+    void stopCollectingContinuously(); // Joins the collectContinuously thread, if there is one.
+    bool sharedFixpointMayResume() const;
+    // True while the prevent gate is up and the holder's own ticket is
+    // already served: no further cycle may start. Requires *m_threadLock.
+    bool sharedGCPreventGateBlocksNextTicket(const AbstractLocker&) const { return m_sharedGCPreventCount && m_lastServedTicket >= m_sharedGCPreventHolderTicket; }
     bool tryConductSharedCollectionForPoll(GCClient::Heap&); // Non-blocking election attempt (SINFAC/CIND poll service).
     void conductSharedCollection(GCClient::Heap&); // §10 steps 3-9; pre: GCL held, GCA set.
 
@@ -1911,6 +1940,10 @@ private:
     // thread starts it" semantics: the holder's own collectNow(Sync) (heap
     // snapshots run one inside PreventCollectionScope) must still conduct.
     Thread* m_sharedGCPreventHolder { nullptr };
+    // While m_sharedGCPreventCount is nonzero, cycles are served only up to
+    // this ticket: the holder's own collectSync() ticket. Tickets granted
+    // after it wait for allowCollection(). Guarded by *m_threadLock.
+    Ticket m_sharedGCPreventHolderTicket { 0 };
     // Companion raise-tracking flag for allowCollection(); guarded by
     // m_collectContinuouslyLock (prevent/allow holders are serialized on
     // it). Lets allowCollection() clear the gate without consulting
@@ -2432,6 +2465,11 @@ public:
     JS_EXPORT_PRIVATE void acquireHeapAccess();
     JS_EXPORT_PRIVATE void releaseHeapAccess();
     bool hasHeapAccess() const { return m_accessState.load(std::memory_order_relaxed) == hasAccessState; }
+    // For a conductor that decides a client is stopped: the acquire pairs with
+    // the release of access, so the client's heap writes before it are ordered
+    // before the conductor's heap walk. (The fence next to the relaxed load
+    // gives the same order on hardware, but TSAN does not model fences.)
+    bool hasHeapAccessAcquire() const { return m_accessState.load(std::memory_order_acquire) == hasAccessState; }
 
     // T5-rootscan-skip-coop-parked-suspend (SCALEBENCH §31, offcpu16 row #4):
     // a cooperatively-parked sibling — access-released and about to descend
@@ -2586,8 +2624,11 @@ private:
     template<SubspaceAccess mode> \
     IsoSubspace* name() \
     { \
-        if (m_##name || mode == SubspaceAccess::Concurrently) \
-            return m_##name.get(); \
+        /* Acquire: a compiler thread reads the space that name##Slow published. */ \
+        if (IsoSubspace* space = WTF::atomicLoad(std::bit_cast<IsoSubspace**>(&m_##name), std::memory_order_acquire)) \
+            return space; \
+        if (mode == SubspaceAccess::Concurrently) \
+            return nullptr; \
         return name##Slow(); \
     } \
     JS_EXPORT_PRIVATE IsoSubspace* name##Slow(); \

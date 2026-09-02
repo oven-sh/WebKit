@@ -108,8 +108,11 @@ public:
     Structure* createInternalFunctionAllocationStructureFromBase(VM& vm, JSGlobalObject* baseGlobalObject, JSObject* prototype, Structure* baseStructure)
     {
         initializeAllocationProfileWatchpointSet();
+        if (vm.gilOff()) [[unlikely]]
+            return createInternalFunctionAllocationStructureFromBaseGILOff(vm, baseGlobalObject, prototype, baseStructure);
         return m_internalFunctionAllocationProfile.createAllocationStructureFromBase(vm, baseGlobalObject, this, prototype, baseStructure, allocationProfileWatchpointSet());
     }
+    Structure* createInternalFunctionAllocationStructureFromBaseGILOff(VM&, JSGlobalObject* baseGlobalObject, JSObject* prototype, Structure* baseStructure);
     void clearInternalFunctionAllocationProfile(VM& vm, const char* reason)
     {
         m_internalFunctionAllocationProfile.clear();

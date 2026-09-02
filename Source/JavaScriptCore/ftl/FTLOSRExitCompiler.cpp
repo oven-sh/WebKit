@@ -910,7 +910,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         // and tail-calls our return value — the protocol stays data-only.
         // Exits are rare and trigger reoptimization, so the extra thunk
         // round-trips are noise.
-        OSRExitGenerationLocker locker(vm);
+        OSRExitGenerationLocker locker(vm, callFrame);
         if (!exit.m_code)
             compileStub(vm, exitID, jitCode, exit, exitValues, codeBlock);
         else {

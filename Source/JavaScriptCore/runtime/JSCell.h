@@ -220,6 +220,23 @@ public:
     // structure() yields the pre-transition Structure for a transiently nuked ID;
     // its offsets stay valid because live storage never shrinks mid-transition.
     StructureID structureID() const { return cellHeaderConcurrentLoad(m_structureID); }
+    // For a loop that retries until a nuked structure ID settles. structureID()
+    // is a plain load outside TSAN builds, so the compiler may keep the first
+    // value in a register and spin on it forever.
+    StructureID structureIDConcurrently() const
+    {
+        StructureID result;
+        __atomic_load(const_cast<StructureID*>(&m_structureID), &result, __ATOMIC_RELAXED);
+        return result;
+    }
+    // Acquire pairs with the header CAS that publishes a structure, so the
+    // reader also sees what was set on that structure before the publish.
+    Structure* structureAcquire() const
+    {
+        StructureID result;
+        __atomic_load(const_cast<StructureID*>(&m_structureID), &result, __ATOMIC_ACQUIRE);
+        return result.decode();
+    }
     Structure* structure() const { return cellHeaderConcurrentLoad(m_structureID).decode(); }
     void setStructure(VM&, Structure*);
     // V7 (TSAN): header writers store via cellHeaderConcurrentStore so they

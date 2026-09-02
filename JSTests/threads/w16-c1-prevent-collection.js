@@ -47,7 +47,7 @@ const HAVE_SNAPSHOT = typeof generateHeapSnapshot === "function";
 const HAVE_SNAPSHOT_GCDEBUG = typeof generateHeapSnapshotForGCDebugging === "function";
 
 const W = HAVE_THREADS ? 8 : 1;
-const ROUNDS = 200;   // churn rounds per worker
+const ROUNDS = 100;   // churn rounds per worker; 200 ran past the runner timeout in Debug+ASAN
 const SNAPS = 12;     // prevent-collection windows opened by the main thread
 
 function churnWorker(seed) {

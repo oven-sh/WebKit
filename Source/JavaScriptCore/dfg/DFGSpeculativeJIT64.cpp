@@ -9900,7 +9900,17 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
         and32(TrustedImm32(IndexingTypeMask), scratch1GPR);
 
         auto handleJSArrayLoad = [&](IndexingType expectedType) {
-            loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+            if (Options::useJSThreads()) [[unlikely]] {
+                // The dispatch above is on the indexing type, not the structure,
+                // so nothing is elided. The shape excludes ArrayStorage. scratch1GPR
+                // (the indexing type) is dead once this arm is entered.
+                ThreadedButterflyPlan plan;
+                plan.shape = CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage;
+                JumpList slowCases = emitThreadedButterflyLoadForRead(baseGPR, scratch2GPR, scratch1GPR, plan);
+                if (!slowCases.empty())
+                    speculationCheck(BadIndexingType, JSValueSource::unboxedCell(baseGPR), nullptr, slowCases);
+            } else
+                loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
             Jump outOfBounds = branch32(AboveOrEqual, indexGPR, Address(scratch2GPR, Butterfly::offsetOfPublicLength()));
 
             if (arrayMode.isInBounds()) {
@@ -10155,7 +10165,15 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
         and32(TrustedImm32(IndexingModeMask), scratch1GPR);
 
         auto handleJSArrayStore = [&](IndexingType expectedMode) {
-            loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+            if (Options::useJSThreads()) [[unlikely]] {
+                // As in compileMultiGetByVal, but with the write predicate.
+                ThreadedButterflyPlan plan;
+                plan.shape = CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage;
+                JumpList slowCases = emitThreadedButterflyLoadForWrite(baseGPR, scratch2GPR, scratch1GPR, InvalidGPRReg, plan);
+                if (!slowCases.empty())
+                    speculationCheck(BadIndexingType, JSValueSource::unboxedCell(baseGPR), nullptr, slowCases);
+            } else
+                loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
 
             if (arrayMode.isInBounds())
                 speculationCheck(OutOfBounds, JSValueSource::unboxedCell(baseGPR), nullptr, branch32(AboveOrEqual, indexGPR, Address(scratch2GPR, Butterfly::offsetOfPublicLength())));

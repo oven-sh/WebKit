@@ -21,6 +21,7 @@
 #include "config.h"
 #include "StringConstructor.h"
 
+#include "ArrayPrototypeInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "SparseArrayValueMap.h"
@@ -165,6 +166,35 @@ JSString* stringFromCodePoint(JSGlobalObject* globalObject, int32_t arg)
     return jsNontrivialString(vm, String({ buffer, 2 }));
 }
 
+// With threads, the caller holds the array's cell lock. The sparse map is its
+// own cell, and its writers take the map's lock, so the map is read with
+// getEntry(), which takes it.
+template<bool withThreads>
+static ALWAYS_INLINE JSValue arrayStorageSegment(ArrayStorage* storage, uint64_t index)
+{
+    JSValue value;
+    if (index < storage->length()) {
+        if (index < storage->vectorLength()) {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+            value = storage->m_vector[index].get();
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        } else if (SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            JSValue candidate;
+            if constexpr (withThreads) {
+                if (std::optional<SparseArrayEntry> entry = map->getEntry(index))
+                    candidate = entry->getConcurrently();
+            } else {
+                auto it = map->find(index);
+                if (it != map->notFound())
+                    candidate = it->get();
+            }
+            if (candidate && !candidate.isGetterSetter() && !candidate.isCustomGetterSetter()) [[likely]]
+                value = candidate;
+        }
+    }
+    return value;
+}
+
 // https://tc39.es/ecma262/#sec-string.raw
 JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -203,8 +233,19 @@ JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* ca
     for (uint64_t index = 0; ; ++index) {
         JSValue segment;
         if (rawArray) [[likely]] {
-            Butterfly* butterfly = rawArray->butterfly();
-            switch (rawArray->indexingType()) {
+            Butterfly* butterfly = nullptr;
+            IndexingType indexingType;
+            if (Options::useJSThreads()) [[unlikely]] {
+                indexingType = rawArray->indexingType();
+                // A segmented word takes the generic path. The publicLength slot is shared
+                // with a spine, so it can be past this snapshot's storage.
+                if (!hasAnyArrayStorage(indexingType) && (!flatButterflySnapshot(rawArray, butterfly) || index >= butterfly->vectorLength()))
+                    indexingType = NonArray;
+            } else {
+                butterfly = rawArray->butterfly();
+                indexingType = rawArray->indexingType();
+            }
+            switch (indexingType) {
             case ALL_INT32_INDEXING_TYPES:
                 if (index < butterfly->publicLength()) {
                     JSValue value = butterfly->contiguous().at(rawArray, index).get();
@@ -227,23 +268,14 @@ JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* ca
             case ALL_ARRAY_STORAGE_INDEXING_TYPES: [[likely]] {
                 // This is the hot case because String.raw is used with tagged-templates,
                 // and its template callsite object is a frozen array.
-                ArrayStorage* storage = butterfly->arrayStorage();
-                if (index < storage->length()) {
-                    JSValue value;
-                    if (index < storage->vectorLength()) {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                        value = storage->m_vector[index].get();
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-                    } else if (SparseArrayValueMap* map = storage->m_sparseMap.get()) {
-                        auto it = map->find(index);
-                        if (it != map->notFound()) {
-                            JSValue candidate = it->get();
-                            if (!candidate.isGetterSetter() && !candidate.isCustomGetterSetter()) [[likely]]
-                                value = candidate;
-                        }
-                    }
-                    segment = value;
+                if (Options::useJSThreads()) [[unlikely]] {
+                    // A writer can install a new ArrayStorage under the cell lock, so
+                    // read under it and re-load the word.
+                    Locker locker { rawArray->cellLock() };
+                    segment = arrayStorageSegment<true>(untaggedButterfly(rawArray->taggedButterflyWord())->arrayStorage(), index);
+                    break;
                 }
+                segment = arrayStorageSegment<false>(butterfly->arrayStorage(), index);
                 break;
             }
             default:

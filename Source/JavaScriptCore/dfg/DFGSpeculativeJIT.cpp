@@ -8754,7 +8754,7 @@ void SpeculativeJIT::compileEnqueueAsyncGeneratorDriver(Node* node)
     JSValueRegs resumeValueRegs = resumeValue.jsValueRegs();
 
     flushRegisters();
-    callOperation(operationEnqueueAsyncGeneratorDriver, LinkableConstant::globalObject(*this, node), iteratorGPR, driverGPR, resumeValueRegs, TrustedImmPtr(&vm().syncResumeCallCache()));
+    callOperation(operationEnqueueAsyncGeneratorDriver, LinkableConstant::globalObject(*this, node), iteratorGPR, driverGPR, resumeValueRegs, TrustedImmPtr(vm().syncResumeCallCacheIfSingleMutator()));
 
     noResult(node);
 }
@@ -9367,6 +9367,13 @@ void SpeculativeJIT::compileSpread(Node* node)
             sourceGPR = butterflyGPR;
             slowPath.append(loadButterflyForRead(argument, butterflyGPR, ConcurrentButterflyShape::KnownNonArrayStorage));
             load32(Address(butterflyGPR, Butterfly::offsetOfPublicLength()), lengthGPR);
+            // A segmented array shares its publicLength slot with this flat
+            // butterfly, so another thread's push can raise it past this
+            // butterfly's vector. Copy no more than the vector holds.
+            load32(Address(butterflyGPR, Butterfly::offsetOfVectorLength()), scratch1GPR);
+            Jump lengthFitsVector = branch32(BelowOrEqual, lengthGPR, scratch1GPR);
+            move(scratch1GPR, lengthGPR);
+            lengthFitsVector.link(this);
         } else {
             loadPtr(Address(argument, JSObject::butterflyOffset()), lengthGPR);
             load32(Address(lengthGPR, Butterfly::offsetOfPublicLength()), lengthGPR);

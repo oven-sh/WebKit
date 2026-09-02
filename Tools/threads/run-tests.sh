@@ -7,6 +7,7 @@
 #   JSTests/threads/heap-*.js                          (heap)
 #   JSTests/threads/objectmodel/*.js                   (objectmodel)
 #   JSTests/threads/vmstate/*.js                       (vmstate N6)
+#   JSTests/threads/semantics/*.js                     (CORPUS2-INTEGRATE)
 #   JSTests/threads/jit/**/*.js                        (jit)
 # With --cve, the corpus is INSTEAD the CVE susceptibility suite
 # (JSTests/threads/cve/*.js, thread-cve-audit/-close) — the mechanical form
@@ -38,6 +39,15 @@
 #                                  normally. Annotate ONLY tests whose
 #                                  GIL-off failure is deterministic; a
 #                                  flaky race pin would flap XFAIL/XPASS.
+#   //@ threadsRequireGILOff
+#                                  the test waits for another thread by
+#                                  spinning on shared state. GIL-on, threads
+#                                  yield only at blocking calls (SPEC-api
+#                                  §5.2, Dev 9), so the spinner never lets
+#                                  the other thread run. Under an EFFECTIVE
+#                                  GIL-on configuration (same probe as
+#                                  threadsExpectFail) the run is SKIPped with
+#                                  that reason; mode unknown runs normally.
 # blocking-gate.js additionally gets --can-block-is-false appended (annex
 # T2: "runner appends it"; the threads.yaml stanza does the same at INT).
 #
@@ -298,9 +308,17 @@ if [[ "$CVE" -eq 1 ]]; then
         [[ -e "$f" ]] && FILES+=("$f")
     done
 else
-    for f in "$JT"/api/*.js "$JT"/atomics/*.js "$JT"/races/*.js \
-             "$JT"/heap-*.js "$JT"/objectmodel/*.js "$JT"/vmstate/*.js; do
-        [[ -e "$f" ]] && FILES+=("$f")
+    # Every directory of the corpus, and the tests at its top level.
+    # harness.js and resources/ are libraries, not tests. bench/ holds the
+    # benchmark bodies that bench-gate.sh runs, and cve/ is the --cve lane.
+    for f in "$JT"/*.js "$JT"/api/*.js "$JT"/arrays/*.js "$JT"/atomics/*.js \
+             "$JT"/gc-stress/*.js "$JT"/invariants/*.js "$JT"/lifecycle/*.js \
+             "$JT"/objectmodel/*.js "$JT"/races/*.js "$JT"/scaling/*.js \
+             "$JT"/semantics/*.js "$JT"/shared-objects/*.js "$JT"/sync/*.js \
+             "$JT"/vmstate/*.js; do
+        [[ -e "$f" ]] || continue
+        [[ "$(basename "$f")" == "harness.js" ]] && continue
+        FILES+=("$f")
     done
     if [[ -d "$JT/jit" ]]; then
         while IFS= read -r f; do
@@ -447,6 +465,16 @@ file_expectfail_giloff() { # $1 = file
     return 1
 }
 
+# ---- threadsRequireGILOff support ----
+file_requires_giloff() { # $1 = file
+    local line
+    while IFS= read -r line; do
+        [[ "$line" == "//@"* ]] || return 1
+        [[ "$line" == '//@ threadsRequireGILOff'* ]] && return 0
+    done < "$1"
+    return 1
+}
+
 # GIL-mode probe: decides whether a run's EFFECTIVE configuration is
 # GIL-off by asking the build itself — $vm.useThreadGIL() returns the
 # post-U0-validation option value under the run's exact argv + ambient
@@ -533,6 +561,10 @@ for file in "${FILES[@]}"; do
     if file_expectfail_giloff "$file"; then
         FILE_XFAIL_GILOFF=1
     fi
+    FILE_REQUIRES_GILOFF=0
+    if file_requires_giloff "$file"; then
+        FILE_REQUIRES_GILOFF=1
+    fi
 
     runindex=0
     while IFS= read -r runspec; do
@@ -570,6 +602,14 @@ for file in "${FILES[@]}"; do
             continue
             ;;
         esac
+        if [[ "$FILE_REQUIRES_GILOFF" -eq 1 ]]; then
+            probe_gil_mode "${args[*]:-}"
+            if [[ "$GIL_MODE" == "on" ]]; then
+                SKIPPED=$((SKIPPED + 1))
+                echo "SKIP $label (threadsRequireGILOff: the test spins on shared state, and GIL-on threads yield only at blocking calls)"
+                continue
+            fi
+        fi
         # threadsExpectFail("gilOff"): invert the verdict ONLY when the
         # run's EFFECTIVE mode is GIL-off ($vm.useThreadGIL() probe — mode
         # "unknown" runs normally, fail-loud).

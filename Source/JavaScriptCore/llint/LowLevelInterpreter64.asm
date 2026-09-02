@@ -877,6 +877,10 @@ end
 
 macro structureIDToStructureWithScratch(structureIDThenStructure, scratch)
     if ADDRESS64
+        # With threads, a transition on another thread can nuke the ID (its low
+        # bit, StructureID::nukedStructureIDBit). A nuked ID still names the old
+        # structure. Without threads the bit is never set here.
+        andi ~1, structureIDThenStructure
         leap _g_config, scratch
         loadp JSCConfigOffset + constexpr JSC::offsetOfJSCConfigStructureIDBase[scratch], scratch
         addp scratch, structureIDThenStructure

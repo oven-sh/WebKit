@@ -27,6 +27,7 @@
 #pragma once
 
 #include "IntlDateTimeFormat.h"
+#include "JSCConfig.h"
 #include <atomic>
 #include <optional>
 #include <unicode/udatpg.h>
@@ -68,8 +69,14 @@ public:
     String canonicalizeUnicodeLocaleID(const String& languageTag);
 
     // The cache is reset only at the VM entry service scope; get and insert never check.
+    //
+    // GIL-off the cache stays empty. A lock here would not be enough: a cached impl is shared by
+    // every IntlDateTimeFormat made from it, IntlDateTimeFormatImpl's ref count is not atomic, and
+    // those cells ref and deref it on whichever thread creates or sweeps them.
     RefPtr<const IntlDateTimeFormatImpl> findCachedDateTimeFormatImpl(const IntlDateTimeFormatImplKey& key)
     {
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            return nullptr;
         if (auto cached = m_cachedDateTimeFormatImpls.findIfCached(key))
             return *cached;
         return nullptr;
@@ -77,20 +84,27 @@ public:
 
     void cacheDateTimeFormatImpl(const IntlDateTimeFormatImplKey& key, Ref<const IntlDateTimeFormatImpl>&& impl)
     {
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            return;
         m_cachedDateTimeFormatImpls.insert(key, RefPtr<const IntlDateTimeFormatImpl>(WTF::move(impl)));
     }
 
     void clearForTimeZoneChange() { clearDateTimeFormatImplCache(); }
-    uint64_t languagesEpoch() const { return m_lastSeenLanguagesEpoch; }
-    bool hasLanguageChange() const { return m_lastSeenLanguagesEpoch != s_languagesEpoch.load(std::memory_order_acquire); }
+    uint64_t languagesEpoch() const { return m_lastSeenLanguagesEpoch.load(std::memory_order_relaxed); }
+    bool hasLanguageChange() const { return languagesEpoch() != s_languagesEpoch.load(std::memory_order_acquire); }
     void clearForLanguageChange()
     {
-        m_lastSeenLanguagesEpoch = s_languagesEpoch.load(std::memory_order_acquire);
+        m_lastSeenLanguagesEpoch.store(s_languagesEpoch.load(std::memory_order_acquire), std::memory_order_relaxed);
         clearDateTimeFormatImplCache();
     }
 
 private:
-    void clearDateTimeFormatImplCache() { m_cachedDateTimeFormatImpls.clear(); }
+    void clearDateTimeFormatImplCache()
+    {
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            return;
+        m_cachedDateTimeFormatImpls.clear();
+    }
 
     static constexpr size_t dateTimeFormatImplCacheCapacity = 4;
     using DateTimeFormatImplCache = WTF::TinyLRUCache<IntlDateTimeFormatImplKey, RefPtr<const IntlDateTimeFormatImpl>, dateTimeFormatImplCacheCapacity>;
@@ -121,7 +135,8 @@ private:
     static std::atomic<uint64_t> s_languagesEpoch;
 
     DateTimeFormatImplCache m_cachedDateTimeFormatImpls;
-    uint64_t m_lastSeenLanguagesEpoch { 0 };
+    // GIL-off, every thread that enters the VM can store this, and localeCompare reads it.
+    std::atomic<uint64_t> m_lastSeenLanguagesEpoch { 0 };
 };
 
 } // namespace JSC

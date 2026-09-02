@@ -148,6 +148,7 @@ public:
     void assertNoUnswept();
     size_t objectCount();
     size_t size();
+    bool otherClientsCanChangeBlockLists();
     size_t NODELETE capacity();
 
     bool isPagedOut();

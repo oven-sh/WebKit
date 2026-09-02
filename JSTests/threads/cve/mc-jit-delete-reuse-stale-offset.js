@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // mc-jit-delete-reuse-stale-offset.js — MC-JIT surface S2(c) (docs/threads/
 // cve/map-MC-JIT.md): foreign delete -> quarantine-epoch reuse vs a compiled
 // loop holding a hoisted CheckStructure proof + butterfly base across the

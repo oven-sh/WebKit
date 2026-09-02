@@ -267,7 +267,7 @@ void VMTraps::tryInstallTrapBreakpoints(VMTraps::SignalContext& context, StackBo
 
 void VMTraps::invalidateCodeBlocksOnStack()
 {
-    invalidateCodeBlocksOnStack(vm().topCallFrame);
+    invalidateCodeBlocksOnStack(vm().group3Primitives().topCallFrame); // UNGIL §A.1.3 mode split.
 }
 
 void VMTraps::invalidateCodeBlocksOnStack(CallFrame* topCallFrame)
@@ -1086,6 +1086,45 @@ CONCURRENT_SAFE void VMTraps::fireTrapVMWide(Event event)
     // to the stack-limit stop request + the flag-off-only syncWaiter wake).
     if (isAsyncEvent(event))
         updateThreadStopRequestIfNeeded();
+}
+
+CONCURRENT_SAFE bool VMTraps::clearTrapVMWide(Event event)
+{
+    ASSERT(!(event & ~AllEvents));
+    ASSERT(onlyContainsAsyncEvents(event));
+    VM& vm = this->vm(); // Valid: VM-level instance only (see header contract).
+
+    if (!vm.gilOff())
+        return clearTrap(event);
+
+    ASSERT(!(event & CarrierOnlyServicedEvents));
+
+    bool wasSet = false;
+    {
+        // Same walk and lock ranks as fireTrapVMWide.
+        assertNoPerLiteTrapSignalingLockHeldOnCurrentThread();
+        auto& registry = VMLiteRegistry::singleton();
+        Locker locker { registry.lock };
+        for (VMLite* lite : registry.lites) {
+            if (lite->vm != &vm)
+                continue;
+            VMTraps* liteTraps = perThreadTrapsIfExists(*lite);
+            if (liteTraps && liteTraps != this) {
+                if (liteTraps->clearTrapWithoutCancellingThreadStop(event) & event)
+                    wasSet = true;
+                liteTraps->updateThreadStopRequestIfNeeded();
+            }
+        }
+        if (clearTrapWithoutCancellingThreadStop(event) & event) // The VM word.
+            wasSet = true;
+
+        // A withdrawn termination leaves no consumed raise to retire.
+        if (event & NeedTermination)
+            m_carrierTookSharedTermination.store(false);
+    }
+
+    updateThreadStopRequestIfNeeded();
+    return wasSet;
 }
 
 void VMTraps::fanOutTerminationToSiblingLites()

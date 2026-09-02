@@ -1171,12 +1171,20 @@ private:
 
     void createRareDataIfNecessary()
     {
+        if (Options::useJSThreads()) [[unlikely]] {
+            createRareDataIfNecessaryConcurrently();
+            return;
+        }
         if (!m_rareData) {
             auto rareData = makeUnique<RareData>();
             WTF::storeStoreFence();
             m_rareData = WTF::move(rareData);
         }
     }
+    // With threads, two threads can ask for the rare data of one CodeBlock at
+    // once (a direct eval reads its cache from it). A second assignment would
+    // free the first RareData while the other thread uses it.
+    JS_EXPORT_PRIVATE void createRareDataIfNecessaryConcurrently();
 
     void insertBasicBlockBoundariesForControlFlowProfiler();
     void ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&, BytecodeIndex);

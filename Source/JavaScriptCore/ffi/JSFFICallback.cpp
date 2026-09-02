@@ -30,6 +30,7 @@
 
 #include "Error.h"
 #include "ExceptionHelpers.h"
+#include "FFICallHost.h"
 #include "FFICallbackThunk.h"
 #include "FFIConversions.h"
 #include "JSCInlines.h"
@@ -82,9 +83,11 @@ Structure* JSFFICallback::createStructure(VM& vm, JSGlobalObject* globalObject, 
 
 JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* callable, Ref<FFI::Signature>&& signature, bool threadsafe, void* embedderContext)
 {
-    globalObject->ffiContext();
-
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (FFI::throwIfFFIRefusedOnCurrentThread(globalObject, scope)) [[unlikely]]
+        return nullptr;
+
+    globalObject->ffiContext();
 
     if (!Options::useJIT()) [[unlikely]] {
         throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);

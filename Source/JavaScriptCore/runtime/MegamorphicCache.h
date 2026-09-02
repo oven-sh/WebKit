@@ -256,6 +256,8 @@ public:
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & getterCachePrimaryMask;
         auto& entry = m_getterCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {

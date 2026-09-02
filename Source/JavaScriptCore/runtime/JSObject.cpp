@@ -735,7 +735,7 @@ bool JSObject::canGetIndexQuicklyConcurrent(unsigned i) const
             const WriteBarrierBase<Unknown>* slot = segmentedIndexedSlotIfReadable(butterflySpine(word), i); // C4
             if (!slot)
                 return false;
-            double value = *std::bit_cast<const double*>(slot);
+            double value = WTF::atomicLoad(const_cast<double*>(std::bit_cast<const double*>(slot)), std::memory_order_relaxed);
             return value == value;
         }
         const Butterfly* butterfly = untaggedButterfly(word);
@@ -790,7 +790,7 @@ JSValue JSObject::getIndexQuicklyConcurrent(unsigned i) const
             const WriteBarrierBase<Unknown>* slot = segmentedIndexedSlotIfReadable(butterflySpine(word), i); // C4
             if (!slot) [[unlikely]]
                 return jsUndefined();
-            value = *std::bit_cast<const double*>(slot); // §4.7 raw double
+            value = WTF::atomicLoad(const_cast<double*>(std::bit_cast<const double*>(slot)), std::memory_order_relaxed); // §4.7 raw double
         } else {
             const Butterfly* butterfly = untaggedButterfly(word);
             if (!butterfly || i >= butterfly->vectorLength()) [[unlikely]] // E5 None-first + snapshot bound (round 4)
@@ -2194,7 +2194,13 @@ void JSObject::notifyPresenceOfIndexedAccessors(VM& vm)
     if (!globalObject)
         return;
 
-    {
+    if (Options::useJSThreads()) [[unlikely]] {
+        publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            if (oldStructure->mayInterceptIndexedAccesses())
+                return oldStructure;
+            return Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AddIndexedAccessors, deferred);
+        }));
+    } else {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AddIndexedAccessors, &deferred));
@@ -2409,7 +2415,7 @@ Butterfly* JSObject::createInitialIndexedStorageConcurrent(VM& vm, TransitionKin
     };
 
     while (true) {
-        StructureID oldStructureID = structureID(); // RAW bits (M5).
+        StructureID oldStructureID = structureIDConcurrently(); // RAW bits (M5).
         if (oldStructureID.isNuked())
             continue; // A racing publication is mid-flight; re-plan on the settled state.
         Structure* oldStructure = oldStructureID.decode();
@@ -2417,11 +2423,10 @@ Butterfly* JSObject::createInitialIndexedStorageConcurrent(VM& vm, TransitionKin
             return nullptr; // A racing install won; the caller re-dispatches on the settled state.
 
         PlannedPropertyTableSnapshot tableSnapshot(oldStructure); // Before the clone inside nonPropertyTransition.
-        Structure* newStructure;
-        {
-            DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-            newStructure = Structure::nonPropertyTransition(vm, oldStructure, transitionKind, &deferred);
-        }
+        // Fired at the end of this iteration, after the stop below publishes
+        // newStructure, so an adaptive watchpoint re-installs on it.
+        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+        Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, transitionKind, &deferred);
         IndexingType targetType = newStructure->indexingType();
         unsigned propertyCapacity = tableSnapshot.outOfLineCapacity;
         unsigned propertySize = tableSnapshot.outOfLineSize;
@@ -2834,7 +2839,7 @@ ArrayStorage* JSObject::createArrayStorageConcurrent(VM& vm, unsigned length, un
     DeferGC deferGC(vm);
 
     while (true) {
-        StructureID oldStructureID = this->structureID(); // RAW bits (M5).
+        StructureID oldStructureID = this->structureIDConcurrently(); // RAW bits (M5).
         if (oldStructureID.isNuked())
             continue; // A racing publication is mid-flight; re-plan on the settled state.
         Structure* oldStructure = oldStructureID.decode();
@@ -2847,11 +2852,10 @@ ArrayStorage* JSObject::createArrayStorageConcurrent(VM& vm, unsigned length, un
         }
 
         PlannedPropertyTableSnapshot tableSnapshot(oldStructure); // Before the clone inside nonPropertyTransition.
-        Structure* newStructure;
-        {
-            DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-            newStructure = Structure::nonPropertyTransition(vm, oldStructure, suggestedArrayStorageTransition(), &deferred);
-        }
+        // Fired at the end of this iteration, after the stop below publishes
+        // newStructure, so an adaptive watchpoint re-installs on it.
+        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+        Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, suggestedArrayStorageTransition(), &deferred);
         unsigned propertyCapacity = tableSnapshot.outOfLineCapacity;
         unsigned propertySize = tableSnapshot.outOfLineSize;
 
@@ -3358,7 +3362,7 @@ ArrayStorage* JSObject::convertToArrayStorageConcurrent(VM& vm, TransitionKind t
     DeferGC deferGC(vm);
 
     while (true) {
-        StructureID oldStructureID = this->structureID(); // RAW bits (M5).
+        StructureID oldStructureID = this->structureIDConcurrently(); // RAW bits (M5).
         if (oldStructureID.isNuked())
             continue; // A racing publication is mid-flight; re-plan on the settled state.
         Structure* oldStructure = oldStructureID.decode();
@@ -3383,11 +3387,10 @@ ArrayStorage* JSObject::convertToArrayStorageConcurrent(VM& vm, TransitionKind t
             : untaggedButterfly(planningWord)->vectorLength();
 
         PlannedPropertyTableSnapshot tableSnapshot(oldStructure); // Before the clone inside nonPropertyTransition.
-        Structure* newStructure;
-        {
-            DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-            newStructure = Structure::nonPropertyTransition(vm, oldStructure, transition, &deferred);
-        }
+        // Fired at the end of this iteration, after the stop below publishes
+        // newStructure, so an adaptive watchpoint re-installs on it.
+        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+        Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, transition, &deferred);
         unsigned propertyCapacity = tableSnapshot.outOfLineCapacity;
         unsigned propertySize = tableSnapshot.outOfLineSize;
         Butterfly* newButterfly = Butterfly::createUninitialized(vm, this, 0, propertyCapacity, true, ArrayStorage::sizeFor(planningVectorLength));
@@ -3560,7 +3563,7 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
     // remains the conservative path for every possibly-shared object.
 
     while (true) {
-        StructureID oldStructureID = this->structureID(); // RAW bits (M5).
+        StructureID oldStructureID = this->structureIDConcurrently(); // RAW bits (M5).
         if (oldStructureID.isNuked())
             continue; // A racing publication is mid-flight; re-plan on the settled state.
         Structure* oldStructure = oldStructureID.decode();
@@ -3605,11 +3608,10 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
         ASSERT(hasUndecided(sourceType) || hasInt32(sourceType) || hasDouble(sourceType));
 
         PlannedPropertyTableSnapshot tableSnapshot(oldStructure); // Before the clone inside nonPropertyTransition.
-        Structure* newStructure;
-        {
-            DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-            newStructure = Structure::nonPropertyTransition(vm, oldStructure, transition, &deferred);
-        }
+        // Fired at the end of this iteration, after the stop below publishes
+        // newStructure, so an adaptive watchpoint re-installs on it.
+        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+        Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, transition, &deferred);
         IndexingType targetType = newStructure->indexingType();
         ASSERT(hasInt32(targetType) || hasDouble(targetType) || hasContiguous(targetType));
 
@@ -4185,6 +4187,14 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
         
     case NonArrayWithArrayStorage:
     case ArrayWithArrayStorage: {
+        if (Options::useJSThreads()) [[unlikely]] {
+            publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+                if (!hasArrayStorage(oldStructure->indexingType()))
+                    return oldStructure;
+                return Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::SwitchToSlowPutArrayStorage, deferred);
+            }));
+            break;
+        }
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::SwitchToSlowPutArrayStorage, &deferred);
@@ -4217,9 +4227,15 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
         return;
     
     if (structure()->hasMonoProto()) {
-        DeferredStructureTransitionWatchpointFire deferred(vm, structure());
-        Structure* newStructure = Structure::changePrototypeTransition(vm, structure(), prototype, deferred);
-        setStructure(vm, newStructure);
+        if (Options::useJSThreads()) [[unlikely]] {
+            publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+                return Structure::changePrototypeTransition(vm, oldStructure, prototype, *deferred);
+            }));
+        } else {
+            DeferredStructureTransitionWatchpointFire deferred(vm, structure());
+            Structure* newStructure = Structure::changePrototypeTransition(vm, structure(), prototype, deferred);
+            setStructure(vm, newStructure);
+        }
         // Prototype-chain gets changed for the already cached structures. Invalidate the cache.
         if (mayBePrototype()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype);
@@ -4611,7 +4627,7 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
         // FIX-2 class-(2) poll: same rationale as putDirectInternal's loop
         // top (this RESTART loop holds heap access with no bytecode poll).
         JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm);
-        Structure* structure = thisObject->structure(); // M5: nuke-masked decode.
+        Structure* structure = thisObject->structureAcquire(); // M5: nuke-masked decode. Acquire: the property table read below.
         // FIX-4: snapshot the cacheable-dictionary pinned table's edit count
         // BEFORE resolving the offset, so the under-lock {table, edit count}
         // re-validation below proves the freshness of `offset` and of the
@@ -4621,12 +4637,21 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
         // this snapshot and the under-lock recheck — including one already in
         // flight when we snapshot — is observed at the recheck and forces a
         // RESTART before anything stale is published.
+        //
+        // A cacheable dictionary's table is not always pinned: a delete from a
+        // cacheable dictionary makes a structure that keeps the dictionary kind
+        // and holds an unpinned copy of the table (Structure::
+        // removeNewPropertyTransition, as upstream). Nothing edits an unpinned
+        // table in place, because an in-place add pins the table first, under
+        // the cell lock. So a null table is a valid plan, and the recheck below
+        // compares the table pointer whether or not it was null.
+        bool plannedCacheableDictionary = structure->isDictionary() && !structure->isUncacheableDictionary();
         PropertyTable* plannedDictionaryTable = nullptr;
         uint32_t plannedDictionaryEditCount = 0;
-        if (structure->isDictionary() && !structure->isUncacheableDictionary()) {
-            plannedDictionaryTable = structure->pinnedPropertyTableForConcurrentDelete();
-            RELEASE_ASSERT(plannedDictionaryTable); // Dictionary tables are pinned.
-            plannedDictionaryEditCount = plannedDictionaryTable->concurrentEditCount();
+        if (plannedCacheableDictionary) {
+            plannedDictionaryTable = structure->pinnedPropertyTableForConcurrentReadStamp();
+            if (plannedDictionaryTable)
+                plannedDictionaryEditCount = plannedDictionaryTable->concurrentEditCount();
         }
         unsigned attributes = 0;
         PropertyOffset offset = structure->get(vm, propertyName, attributes);
@@ -4754,10 +4779,10 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
             Locker cellLocker { thisObject->cellLock() };
             if (thisObject->structureID() != structure->id())
                 continue; // RESTART: a racing transition won while we planned/parked (I34 re-validation).
-            if (plannedDictionaryTable
+            if (plannedCacheableDictionary
                 && (!structure->isDictionary()
-                    || structure->pinnedPropertyTableForConcurrentDelete() != plannedDictionaryTable
-                    || plannedDictionaryTable->concurrentEditCount() != plannedDictionaryEditCount))
+                    || structure->pinnedPropertyTableForConcurrentReadStamp() != plannedDictionaryTable
+                    || (plannedDictionaryTable && plannedDictionaryTable->concurrentEditCount() != plannedDictionaryEditCount)))
                 continue; // RESTART: an in-place dictionary edit or a flatten landed after the snapshot (S6 L3/L4 guard; Locker unlocks on scope exit).
             // The !isDictionary() re-read above covers a flatten on its own:
             // flattenDictionaryStructure renumbers offsets IN PLACE, restores
@@ -5372,7 +5397,7 @@ void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArrayBuil
                     for (uint32_t i = 0; i < usedLength; ++i) {
                         const WriteBarrierBase<Unknown>* slot = spine->indexedSlot(i);
                         if (isDouble) {
-                            double value = *std::bit_cast<const double*>(slot); // Raw 8B lane (§4.7).
+                            double value = WTF::atomicLoad(const_cast<double*>(std::bit_cast<const double*>(slot)), std::memory_order_relaxed); // Raw 8B lane (§4.7).
                             if (value != value)
                                 continue;
                         } else if (!slot->get())
@@ -5529,12 +5554,43 @@ JSString* JSObject::toString(JSGlobalObject* globalObject) const
     RELEASE_AND_RETURN(scope, primitive.toString(globalObject));
 }
 
+// A transition that changes only the structure (seal, a prototype change, a
+// dictionary conversion, and so on) reads the structure, plans the new one, and
+// stores it. With threads, another thread can change the structure in between:
+// a delete publishes a structure without the property and clears its slot, and
+// an add publishes one with the new property. A plain store would undo that. So
+// the new structure is published only if the structure it was planned from is
+// still the object's, with its property table unchanged. Otherwise it is planned
+// again.
+void JSObject::publishStructureOnlyTransitionConcurrently(VM& vm, const StructureOnlyTransitionPlan& planTransition)
+{
+    ASSERT(Options::useJSThreads());
+    while (true) {
+        JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm);
+        Structure* oldStructure = structureAcquire(); // Another thread may have just published it with its property table.
+        PropertyTable* plannedTable = oldStructure->pinnedPropertyTableForConcurrentReadStamp();
+        uint32_t plannedEditCount = plannedTable ? plannedTable->concurrentEditCount() : 0;
+        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+        Structure* newStructure = planTransition(oldStructure, &deferred);
+        if (newStructure == oldStructure)
+            return;
+        if (tryStructureOnlyTransition(vm, this, oldStructure, newStructure, invalidOffset, JSValue(), plannedTable, plannedEditCount))
+            return;
+    }
+}
+
 void JSObject::seal(VM& vm)
 {
     if (isSealed(vm))
         return;
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
+    if (Options::useJSThreads()) [[unlikely]] {
+        publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            return Structure::sealTransition(vm, oldStructure, deferred);
+        }));
+        return;
+    }
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -5548,6 +5604,12 @@ void JSObject::freeze(VM& vm)
         return;
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
+    if (Options::useJSThreads()) [[unlikely]] {
+        publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            return Structure::freezeTransition(vm, oldStructure, deferred);
+        }));
+        return;
+    }
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -5583,6 +5645,12 @@ bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
     }
 
     object->enterDictionaryIndexingMode(vm);
+    if (Options::useJSThreads()) [[unlikely]] {
+        object->publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            return Structure::preventExtensionsTransition(vm, oldStructure, deferred);
+        }));
+        return true;
+    }
     {
         Structure* oldStructure = object->structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -7383,6 +7451,16 @@ bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject,
 
 void JSObject::convertToDictionary(VM& vm)
 {
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Another thread can have made the object an uncacheable dictionary,
+        // which is already a dictionary.
+        publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            if (oldStructure->isUncacheableDictionary())
+                return oldStructure;
+            return Structure::toCacheableDictionaryTransition(vm, oldStructure, deferred);
+        }));
+        return;
+    }
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, oldStructure);
     setStructure(vm, Structure::toCacheableDictionaryTransition(vm, oldStructure, &deferredWatchpointFire));
@@ -7390,11 +7468,23 @@ void JSObject::convertToDictionary(VM& vm)
 
 void JSObject::convertToUncacheableDictionary(VM& vm)
 {
-    Structure* oldStructure = structure();
-    if (oldStructure->isUncacheableDictionary())
-        return;
-    DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, oldStructure);
-    setStructure(vm, Structure::toUncacheableDictionaryTransition(vm, oldStructure, &deferredWatchpointFire));
+    if (Options::useJSThreads()) [[unlikely]] {
+        bool converted = false;
+        publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
+            converted = !oldStructure->isUncacheableDictionary();
+            if (!converted)
+                return oldStructure;
+            return Structure::toUncacheableDictionaryTransition(vm, oldStructure, deferred);
+        }));
+        if (!converted)
+            return;
+    } else {
+        Structure* oldStructure = structure();
+        if (oldStructure->isUncacheableDictionary())
+            return;
+        DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, oldStructure);
+        setStructure(vm, Structure::toUncacheableDictionaryTransition(vm, oldStructure, &deferredWatchpointFire));
+    }
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }

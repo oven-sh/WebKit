@@ -262,12 +262,17 @@ JSArrayBuffer* JSArrayBufferView::possiblySharedJSBuffer(JSGlobalObject* globalO
 
 void JSArrayBufferView::detachFromArrayBuffer()
 {
-    Locker locker { cellLock() };
-    RELEASE_ASSERT(hasArrayBuffer());
-    RELEASE_ASSERT(!isShared());
-    m_length = 0;
-    m_byteOffset = 0;
-    m_vector.clear();
+    {
+        Locker locker { cellLock() };
+        RELEASE_ASSERT(hasArrayBuffer());
+        RELEASE_ASSERT(!isShared());
+        m_length = 0;
+        m_byteOffset = 0;
+        m_vector.clear();
+    }
+    // With threads, the notification can fire a watchpoint under a
+    // stop-the-world, and a thread must not hold a cell lock across a stop:
+    // another thread that waits for the lock could not park.
     realm()->notifyArrayBufferDetaching();
 }
 
@@ -383,7 +388,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
                         newSpine->tsanPublish();
                         desired = encodeSegmentedButterfly(newSpine);
                     } else {
-                        StructureID id = structureID();
+                        StructureID id = structureIDConcurrently();
                         if (id.isNuked())
                             continue; // A racing publication is mid-flight; re-dispatch on the settled state.
                         Structure* structure = id.decode();

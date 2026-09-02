@@ -52,11 +52,13 @@ CCallHelpers::Address calleeSaveSlot(InlineCallFrame*, CodeBlock* baselineCodeBl
 // VMLiteRegistry, the per-lite scratchBufferLock, LinkBuffer and executable
 // allocator locks). Contended acquisition spins on tryLock and parks for
 // stop-the-world, so the waiting mutator, which holds heap access, stays
-// visible to the stop fan. GIL-on never constructs one.
+// visible to the stop fan. GIL-on never constructs one. `callFrame` is the
+// exiting frame: a thread that parks walks its own stack from its top call
+// frame when it resumes, and the exit operations set no tracer of their own.
 class OSRExitGenerationLocker {
     WTF_MAKE_NONCOPYABLE(OSRExitGenerationLocker);
 public:
-    explicit OSRExitGenerationLocker(VM&);
+    OSRExitGenerationLocker(VM&, CallFrame*);
     ~OSRExitGenerationLocker();
 };
 

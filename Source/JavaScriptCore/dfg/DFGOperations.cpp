@@ -896,6 +896,36 @@ ALWAYS_INLINE EncodedJSValue getByValCellInt(JSGlobalObject* globalObject, VM& v
 ALWAYS_INLINE EncodedJSValue getByValArrayStorageInt(JSGlobalObject* globalObject, VM& vm, JSObject* base, int32_t index)
 {
     ASSERT(hasAnyArrayStorage(base->indexingType()));
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Another thread can replace the butterfly under the object's cell
+        // lock, and can rehash the sparse map under the map's own cell lock.
+        // So re-load the word under the first, and read the map through
+        // getEntry, which takes the second, as JSObject::getOwnPropertySlotByIndex
+        // does. The generic path must run unlocked, so a hole or an accessor is
+        // answered there.
+        if (index >= 0) [[likely]] {
+            unsigned i = static_cast<unsigned>(index);
+            JSValue value;
+            {
+                Locker locker { base->cellLock() };
+                ArrayStorage* storage = untaggedButterfly(base->taggedButterflyWord())->arrayStorage();
+                SparseArrayValueMap* map = storage->m_sparseMap.get();
+                if (!map || !map->sparseMode()) {
+                    if (i < storage->vectorLength())
+                        value = storage->m_vector[i].get();
+                    else if (map) {
+                        std::optional<SparseArrayEntry> entry = map->getEntry(i);
+                        if (entry && !entry->attributes())
+                            value = entry->getNonSparseMode();
+                    }
+                }
+            }
+            if (value)
+                return JSValue::encode(value);
+        }
+        return getByValCellInt(globalObject, vm, base, index);
+    }
+
     if (index >= 0) [[likely]] {
         unsigned i = static_cast<unsigned>(index);
         ArrayStorage* storage = base->butterfly()->arrayStorage();
@@ -1402,6 +1432,37 @@ static ALWAYS_INLINE void assertArrayShiftElementsPreconditions(JSArray* array, 
     ASSERT(!array->holesMustForwardToPrototype());
 }
 
+// Loads the butterfly the operationArrayShiftElements* family moves elements in, and its length.
+// Returns false to make the caller take the generic shift. Flag-on, the JIT caller's length check ran
+// on a butterfly loaded earlier, and another thread may have changed the array since. This makes the
+// same checks as JSArray::fastShift, on one load of the tagged word: the in-place move is only safe
+// for a flat butterfly that this thread owns and that no other thread has written.
+static ALWAYS_INLINE bool butterflyForArrayShiftElements(JSArray* array, IndexingType expectedType, Butterfly*& butterfly, unsigned& length)
+{
+    if (Options::useJSThreads()) [[unlikely]] {
+        uint64_t word = array->taggedButterflyWord();
+        if (isSegmentedButterfly(word)
+            || !(word & butterflyPointerMask)
+            || butterflySharedWrite(word)
+            || butterflyWriterIsForeign(word))
+            return false;
+        butterfly = untaggedButterfly(word);
+        if (array->indexingType() != expectedType)
+            return false;
+        length = butterfly->publicLength();
+        if (length < 2 || length > JSArray::shiftThreshold || length > butterfly->vectorLength())
+            return false;
+        assertArrayShiftElementsPreconditions(array, length);
+        return true;
+    }
+
+    ASSERT(array->indexingType() == expectedType);
+    butterfly = array->butterfly();
+    length = butterfly->publicLength();
+    assertArrayShiftElementsPreconditions(array, length);
+    return true;
+}
+
 // Element-move core of fastShift for small non-CopyOnWrite arrays whose prototype chain is known to
 // be sane. There is one entry point per indexing type because the caller speculates on the array
 // mode and so knows statically which one applies. Each returns the empty value without mutating the
@@ -1413,10 +1474,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayShiftElementsInt32, EncodedJSVal
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
-    ASSERT(array->indexingType() == ArrayWithInt32);
-    Butterfly* butterfly = array->butterfly();
-    unsigned length = butterfly->publicLength();
-    assertArrayShiftElementsPreconditions(array, length);
+    Butterfly* butterfly;
+    unsigned length;
+    if (!butterflyForArrayShiftElements(array, ArrayWithInt32, butterfly, length)) [[unlikely]]
+        return JSValue::encode(JSValue());
 
     JSValue result = butterfly->contiguous().at(array, 0).get();
     if (!result) [[unlikely]]
@@ -1436,10 +1497,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayShiftElementsContiguous, Encoded
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
-    ASSERT(array->indexingType() == ArrayWithContiguous);
-    Butterfly* butterfly = array->butterfly();
-    unsigned length = butterfly->publicLength();
-    assertArrayShiftElementsPreconditions(array, length);
+    Butterfly* butterfly;
+    unsigned length;
+    if (!butterflyForArrayShiftElements(array, ArrayWithContiguous, butterfly, length)) [[unlikely]]
+        return JSValue::encode(JSValue());
 
     JSValue result = butterfly->contiguous().at(array, 0).get();
     if (!result) [[unlikely]]
@@ -1459,10 +1520,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayShiftElementsDouble, EncodedJSVa
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
-    ASSERT(array->indexingType() == ArrayWithDouble);
-    Butterfly* butterfly = array->butterfly();
-    unsigned length = butterfly->publicLength();
-    assertArrayShiftElementsPreconditions(array, length);
+    Butterfly* butterfly;
+    unsigned length;
+    if (!butterflyForArrayShiftElements(array, ArrayWithDouble, butterfly, length)) [[unlikely]]
+        return JSValue::encode(JSValue());
 
     double result = butterfly->contiguousDouble().at(array, 0);
     // A hole reads back as PNaN and is indistinguishable from a real NaN element, so both bail to
@@ -1769,12 +1830,22 @@ static ALWAYS_INLINE JSString* arrayJoinWithStringSeparator(JSGlobalObject* glob
 {
     unsigned length = array->length();
     if (!separator->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
-        auto* butterfly = array->butterfly();
-        JSOnlyStringsAndInt32sJoiner joiner(StringView { });
-        auto* joined = joiner.tryJoin<ContiguousShape>(globalObject, butterfly->contiguous().data(), length);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (joined)
-            return joined;
+        Butterfly* butterfly = nullptr;
+        unsigned joinLength = length;
+        bool isFlat = true;
+        if (Options::useJSThreads()) [[unlikely]] {
+            isFlat = flatButterflySnapshot(array, butterfly);
+            if (isFlat)
+                joinLength = std::min(joinLength, butterfly->vectorLength());
+        } else
+            butterfly = array->butterfly();
+        if (isFlat) [[likely]] {
+            JSOnlyStringsAndInt32sJoiner joiner(StringView { });
+            auto* joined = joiner.tryJoin<ContiguousShape>(globalObject, butterfly->contiguous().data(), joinLength);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (joined)
+                return joined;
+        }
     }
 
     auto view = separator->view(globalObject);
@@ -1924,7 +1995,7 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpExecStickyKnownRegExp, EncodedJSValue, (
 
     regExpObject->setLastIndex(globalObject, result.end);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, result, /* oneCharacterMatch */ false);
+    threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regExp, string, result, /* oneCharacterMatch */ false);
     OPERATION_RETURN(scope, JSValue::encode(array));
 }
 
@@ -6715,8 +6786,12 @@ JSC_DEFINE_JIT_OPERATION(operationLinkDirectCall, void, (DirectCallLinkInfo* cal
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerReoptimizationNow, void, (CodeBlock* codeBlock, CodeBlock* optimizedCodeBlock, OSRExitBase* exit))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerReoptimizationNow, void, (CallFrame* callFrame, CodeBlock* codeBlock, CodeBlock* optimizedCodeBlock, OSRExitBase* exit))
 {
+    // The jettison below can park for a stop-the-world, and a thread that resumes from a park
+    // walks its stack from its top call frame. callFrame is the exiting frame.
+    NativeCallFrameTracer tracer(codeBlock->vm(), callFrame);
+
     // It's sort of preferable that we don't GC while in here. Anyways, doing so wouldn't
     // really be profitable.
     DeferGCForAWhile deferGC(codeBlock->vm());

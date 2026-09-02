@@ -69,10 +69,12 @@ shouldBe(new Thread(function() { return arguments.length; }).join(), 0);
 // sloppy; we only require that the call succeeds and is consistent.
 shouldBe(new Thread(function() { "use strict"; return this; }).join(), undefined);
 
-// Spawning many threads works; each runs its body exactly once.
+// Spawning many threads works; each runs its body exactly once. The count is
+// an atomic add: with the GIL off, a plain ++ from several threads can lose
+// an update, as it can on a SharedArrayBuffer.
 const counters = { spawned: 0 };
 const threads = spawnN(8, (i) => {
-    counters.spawned++;
+    Atomics.add(counters, "spawned", 1);
     return i * 2;
 });
 const results = joinAll(threads);

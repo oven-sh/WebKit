@@ -919,7 +919,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::addSymbolicBreakpoint(cons
 
         JSC::MarkedVector<JSC::NativeExecutable*> foundNativeExecutables;
         JSC::MarkedVector<JSC::InternalFunction*> foundInternalFunctions;
-        {
+        m_debugger.vm().heap.runWithOtherClientsStopped([&] {
             JSC::HeapIterationScope iterationScope(m_debugger.vm().heap);
             m_debugger.vm().heap.objectSpace().forEachLiveCell(iterationScope, [&] (JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
                 if (isJSCellKind(kind)) {
@@ -931,7 +931,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::addSymbolicBreakpoint(cons
 
                 return IterationStatus::Continue;
             });
-        }
+        });
 
         JSC::MarkedVector<JSC::NativeExecutable*> newNativeExecutables;
         {

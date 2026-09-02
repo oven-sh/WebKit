@@ -616,6 +616,15 @@ void MarkedBlock::Handle::decommitUnusedPages()
             live = &header.m_newlyAllocated;
         else if (!block().areMarksStale(space.markingVersion()) || (space.isMarking() && block().marksConveyLivenessDuringMarking(space.markingVersion())))
             live = &header.m_marks;
+#if TSAN_ENABLED
+        // Markers CAS m_marks while this reads it, which the liveness rules
+        // above allow. Under TSAN, read a copy made with relaxed loads.
+        WTF::BitSet<atomsPerBlock> liveCopy;
+        if (live) {
+            liveCopy.concurrentCopyFrom(*live);
+            live = &liveCopy;
+        }
+#endif
         if (live) {
             for (unsigned page = 0; page < pageCount; ++page) {
                 if (keep & (1u << page))

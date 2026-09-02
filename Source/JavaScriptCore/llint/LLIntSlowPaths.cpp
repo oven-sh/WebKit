@@ -553,33 +553,51 @@ static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
 }
 #endif // ENABLE(JIT)
 
+// Upstream calls entryOSR with no top call frame, and keeps GC out of it
+// instead. With the GIL off, installing the code can park for a stop-the-world,
+// and a thread that resumes from a park walks its stack from its top call frame
+// (VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite). The
+// prologue has already set up this frame's header, which is all the walk reads.
+static ALWAYS_INLINE void traceEntryFrameIfGILOff(CallFrame* callFrame)
+{
+    VM& vm = callFrame->deprecatedVM();
+    if (vm.gilOff()) [[unlikely]] {
+        NativeCallFrameTracer tracer(vm, callFrame);
+    }
+}
+
 LLINT_SLOW_PATH_DECL(entry_osr)
 {
     UNUSED_PARAM(pc);
+    traceEntryFrameIfGILOff(callFrame);
     return entryOSR(callFrame->codeBlock(), "entry_osr", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call)
 {
     UNUSED_PARAM(pc);
+    traceEntryFrameIfGILOff(callFrame);
     return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct)
 {
     UNUSED_PARAM(pc);
+    traceEntryFrameIfGILOff(callFrame);
     return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call_arityCheck)
 {
     UNUSED_PARAM(pc);
+    traceEntryFrameIfGILOff(callFrame);
     return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct_arityCheck)
 {
     UNUSED_PARAM(pc);
+    traceEntryFrameIfGILOff(callFrame);
     return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
 }
 
@@ -2231,7 +2249,7 @@ LLINT_SLOW_PATH_DECL(slow_path_async_iterator_open_get_next)
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpAsyncIteratorOpen::getNext), codeBlock, globalObject, iterator, vm.propertyNames->next, metadata.m_modeMetadata);
     LLINT_CHECK_EXCEPTION();
     nextRegister = result;
-    codeBlock->valueProfileForOffset(bytecode.m_nextValueProfile).m_buckets[0] = JSValue::encode(result);
+    codeBlock->valueProfileForOffset(bytecode.m_nextValueProfile).storeBucketConcurrently(0, JSValue::encode(result)); // THREADS §5.7.4
     LLINT_END();
 }
 
@@ -2240,11 +2258,11 @@ LLINT_SLOW_PATH_DECL(slow_path_async_iterator_next_with_driver)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpAsyncIteratorNext>();
     auto& metadata = bytecode.metadata(codeBlock);
-    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastAsyncGenerator;
+    CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, IterationMode::FastAsyncGenerator);
     JSObject* iterator = asObject(getNonConstantOperand(callFrame, bytecode.m_iterator).asCell());
     auto* driver = asObject(getNonConstantOperand(callFrame, bytecode.m_driver).asCell());
     JSValue resumeValue = bytecode.m_hasValue ? getOperand(callFrame, resumeValueOperandFor(bytecode)) : JSValue();
-    JSValue result = asyncIteratorNextWithDriver(globalObject, iterator, driver, resumeValue, &vm.syncResumeCallCache());
+    JSValue result = asyncIteratorNextWithDriver(globalObject, iterator, driver, resumeValue, vm.syncResumeCallCacheIfSingleMutator());
     LLINT_RETURN(result);
 }
 
@@ -3178,7 +3196,7 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_array_sort_comparator_return(CallFr
 
 extern "C" UGPRPair SYSV_ABI llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
 {
-    CallFrame* callFrame = vm->topCallFrame;
+    CallFrame* callFrame = vm->group3Primitives().topCallFrame; // UNGIL §A.1.3 mode split.
     auto scope = DECLARE_THROW_SCOPE(*vm);
     JSGlobalObject* globalObject = nullptr;
     if (callFrame)

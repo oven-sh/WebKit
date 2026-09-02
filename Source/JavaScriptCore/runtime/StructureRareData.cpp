@@ -384,7 +384,7 @@ Box<InlineWatchpointSet> StructureRareData::copySharedPolyProtoWatchpointConcurr
 {
     ASSERT(Options::useJSThreads());
     static_assert(sizeof(Box<InlineWatchpointSet>) == sizeof(uintptr_t));
-    // Relaxed atomic load of the pointer word, then a thread-safe ref through
+    // Acquire load of the pointer word, then a thread-safe ref through
     // a borrowed (non-owning) view. Lifetime: the slot is publish-once
     // flag-on (see above) and holds its ref until this cell is swept, and a
     // reader can only reach this rare data through a live Structure — so the
@@ -395,7 +395,7 @@ Box<InlineWatchpointSet> StructureRareData::copySharedPolyProtoWatchpointConcurr
         uintptr_t word;
         Box<InlineWatchpointSet> box;
     } borrowed;
-    borrowed.word = WTF::atomicLoad(reinterpret_cast<uintptr_t*>(const_cast<Box<InlineWatchpointSet>*>(&m_polyProtoWatchpoint)), std::memory_order_relaxed);
+    borrowed.word = WTF::atomicLoad(reinterpret_cast<uintptr_t*>(const_cast<Box<InlineWatchpointSet>*>(&m_polyProtoWatchpoint)), std::memory_order_acquire);
     return borrowed.box;
 }
 

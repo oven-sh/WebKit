@@ -1355,7 +1355,7 @@ private:
     ArrayMode getArrayMode(ArrayProfile& liveProfile, Array::Action action)
     {
         liveProfile.computeUpdatedPrediction(m_inlineStackTop->m_profiledBlock);
-        ArrayProfile profile = liveProfile;
+        ArrayProfile profile = liveProfile.snapshotConcurrently();
         return ArrayMode::fromObserved(profile, action, profile.outOfBounds());
     }
 
@@ -2905,6 +2905,43 @@ static bool calleeMayBeCrossRealm(CallVariant variant, JSGlobalObject* globalObj
     return function->realmMayBeNull() != globalObject;
 }
 
+// With the GIL off, the inline Map and Set code would read and write a hash
+// table that other threads change under its lock (JSOrderedHashTableHelper),
+// so these calls stay calls to the native functions, which take the lock.
+static bool isOrderedHashTableIntrinsic(Intrinsic intrinsic)
+{
+    switch (intrinsic) {
+    case JSMapGetIntrinsic:
+    case JSMapHasIntrinsic:
+    case JSMapSetIntrinsic:
+    case JSMapDeleteIntrinsic:
+    case JSMapEntriesIntrinsic:
+    case JSMapKeysIntrinsic:
+    case JSMapValuesIntrinsic:
+    case JSMapIterationNextIntrinsic:
+    case JSMapIterationEntryIntrinsic:
+    case JSMapIterationEntryKeyIntrinsic:
+    case JSMapIterationEntryValueIntrinsic:
+    case JSMapIteratorNextIntrinsic:
+    case JSMapStorageIntrinsic:
+    case JSMapSizeIntrinsic:
+    case JSSetHasIntrinsic:
+    case JSSetAddIntrinsic:
+    case JSSetDeleteIntrinsic:
+    case JSSetEntriesIntrinsic:
+    case JSSetValuesIntrinsic:
+    case JSSetIterationNextIntrinsic:
+    case JSSetIterationEntryIntrinsic:
+    case JSSetIterationEntryKeyIntrinsic:
+    case JSSetIteratorNextIntrinsic:
+    case JSSetStorageIntrinsic:
+    case JSSetSizeIntrinsic:
+        return true;
+    default:
+        return false;
+    }
+}
+
 template<typename ChecksFunctor>
 auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, BytecodeIndex osrExitIndex, NodeType callOp, InlineCallFrame::Kind kind, CodeSpecializationKind specializationKind, SpeculatedType prediction, const ChecksFunctor& insertChecks) -> CallOptimizationResult
 {
@@ -2915,6 +2952,11 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
     if (!isOpcodeShape<OpCallShape>(m_currentInstruction)) {
         VERBOSE_LOG("    Failing because instruction is not OpCallShape.\n");
+        return CallOptimizationResult::DidNothing;
+    }
+
+    if (m_vm->gilOff() && isOrderedHashTableIntrinsic(intrinsic)) [[unlikely]] {
+        VERBOSE_LOG("    Failing because Map and Set operations are not inlined with the GIL off.\n");
         return CallOptimizationResult::DidNothing;
     }
 
@@ -6057,6 +6099,9 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
     if (thisNode != unwrapped)
         return false;
 
+    if (m_vm->gilOff() && isOrderedHashTableIntrinsic(variant.intrinsic())) [[unlikely]]
+        return false;
+
     switch (variant.intrinsic()) {
     case DataViewByteLengthIntrinsic: {
         if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
@@ -8420,11 +8465,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto bytecode = currentInstruction->as<OpToThis>();
             Node* op1 = get(VirtualRegister(bytecode.m_srcDst));
             auto& metadata = bytecode.metadata(codeBlock);
-            StructureID cachedStructureID = metadata.m_cachedStructureID;
+            StructureID cachedStructureID = WTF::atomicLoad(&metadata.m_cachedStructureID, std::memory_order_relaxed); // A mutator writes it with relaxed atomics.
             Structure* cachedStructure = nullptr;
             if (cachedStructureID)
                 cachedStructure = cachedStructureID.decode();
-            if (metadata.m_toThisStatus != ToThisOK
+            if (WTF::atomicLoad(&metadata.m_toThisStatus, std::memory_order_relaxed) != ToThisOK
                 || !cachedStructure
                 || !cachedStructure->classInfoForCells()->isSubClassOf(JSObject::info())
                 || cachedStructure->classInfoForCells()->isSubClassOf(JSScope::info())
@@ -11977,13 +12022,13 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
     }
     if (!globalObject->stringIteratorProtocolWatchpointSet().isStillValid())
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastString);
-    if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid()) {
+    if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid() || m_vm->gilOff()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMap);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapKeys);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapValues);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapEntries);
     }
-    if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid()) {
+    if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid() || m_vm->gilOff()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastSet);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastSetValues);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastSetEntries);
@@ -12611,13 +12656,13 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
     }
     if (!globalObject->stringIteratorProtocolWatchpointSet().isStillValid())
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastString);
-    if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid()) {
+    if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid() || m_vm->gilOff()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMap);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapKeys);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapValues);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastMapEntries);
     }
-    if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid()) {
+    if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid() || m_vm->gilOff()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastSet);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastSetValues);
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastSetEntries);
@@ -13278,7 +13323,8 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
 
     JSGlobalObject* globalObject = codeBlock->globalObjectFor(currentCodeOrigin());
 
-    if (!globalObject->promiseSpeciesWatchpointSet().isStillValid()) {
+    // GIL-off, the fused driver is never used (see asyncIteratorOpenTryFastImpl).
+    if (!globalObject->promiseSpeciesWatchpointSet().isStillValid() || m_vm->gilOff()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastAsyncGenerator);
         seenModes &= ~static_cast<uint32_t>(IterationMode::AsyncFromSync);
     }
@@ -13573,7 +13619,7 @@ void ByteCodeParser::handleAsyncIteratorNext(const JSInstruction* currentInstruc
     // monomorphic site emits only the branch it needs, guarded by a speculation that OSR-exits on mismatch.
     uint32_t seenModes = metadata.m_iterationMetadata.seenModes & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::Generic));
 
-    if (!globalObject->promiseSpeciesWatchpointSet().isStillValid())
+    if (!globalObject->promiseSpeciesWatchpointSet().isStillValid() || m_vm->gilOff())
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastAsyncGenerator);
 
     unsigned numberOfRemainingModes = std::popcount(seenModes);

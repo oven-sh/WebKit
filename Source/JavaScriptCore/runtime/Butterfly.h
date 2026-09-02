@@ -67,14 +67,31 @@ struct ContiguousData {
 
         explicit operator bool() const { return !!m_data.get(); }
 
+        // With threads, another thread can read or write a double element at the
+        // same time, which the object model allows (a raw 8-byte lane). Under
+        // TSAN, the double accesses are relaxed atomics, so that the reports name
+        // real races only. Other builds keep the plain accesses.
+        static constexpr bool isDouble = std::is_same_v<std::remove_const_t<T>, double>;
+
         const T& operator=(const T& value)
         {
             ASSERT(m_isWritable);
+#if TSAN_ENABLED
+            if constexpr (isDouble) {
+                WTF::atomicStore(&m_data, value, std::memory_order_relaxed);
+                return value;
+            }
+#endif
             m_data = value;
             return value;
         }
 
+#if TSAN_ENABLED
+        operator const T&() const requires (!isDouble) { return m_data; }
+        operator std::remove_const_t<T>() const requires isDouble { return WTF::atomicLoad(const_cast<double*>(&m_data), std::memory_order_relaxed); }
+#else
         operator const T&() const { return m_data; }
+#endif
 
         // WriteBarrier forwarded methods.
 
