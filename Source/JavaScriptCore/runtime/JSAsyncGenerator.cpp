@@ -26,7 +26,9 @@
 #include "config.h"
 #include "JSAsyncGenerator.h"
 
+#include "DeferGCInlines.h"
 #include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGeneratorInlines.h"
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
 #include "JSPromise.h"
@@ -79,5 +81,85 @@ void JSAsyncGenerator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSAsyncGenerator);
+
+// GIL-off, several threads can call next(), return() and throw() on one generator. The spec's
+// enqueue decides from the state alone whether to resume, so two threads could both see a
+// suspended state and both resume the body, or an enqueue could see a running state just before
+// the driver suspends and never be resumed.
+//
+// GIL-off, every queue edit, and every store of a settled state (suspended-start, suspended-yield
+// or completed), happens under the cell lock. A thread drives the generator from the enqueue that
+// finds it settled with an empty queue until it stores a settled state again, which it does only
+// after finding the queue empty under the lock (retireIfQueueEmptyGILOff). So an enqueuer that
+// finds the generator settled with an empty queue drives it, and any other enqueuer leaves its
+// request to the driver, which finds it before it can retire. This is the spec's order, so a
+// request made on the driver's own thread during a settlement is queued exactly as the spec says.
+// The lock is never held across JS, a settlement or an allocation that can collect.
+static bool isSettledState(int32_t state)
+{
+    return state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Init)
+        || state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)
+        || JSAsyncGenerator::isSuspendedYieldState(state);
+}
+
+auto JSAsyncGenerator::enqueueGILOff(VM& vm, JSValue value, int32_t resumeMode, JSObject* settlementTarget) -> GILOffEnqueueAction
+{
+    ASSERT(vm.gilOff());
+    DeferGC deferGC(vm); // enqueue can allocate a queue entry, and no collection may start under the cell lock.
+    Locker locker { cellLock() };
+
+    int32_t state = this->state();
+    if (!isQueueEmpty() || !isSettledState(state)) {
+        enqueue(vm, value, resumeMode, settlementTarget);
+        return GILOffEnqueueAction::None;
+    }
+
+    bool isInit = state == static_cast<int32_t>(AsyncGeneratorState::Init);
+    bool isCompleted = state == static_cast<int32_t>(AsyncGeneratorState::Completed);
+    switch (static_cast<JSGenerator::ResumeMode>(resumeMode)) {
+    case JSGenerator::ResumeMode::NormalMode:
+        if (isCompleted)
+            return GILOffEnqueueAction::SettleCompleted;
+        enqueue(vm, value, resumeMode, settlementTarget);
+        return GILOffEnqueueAction::Resume;
+    case JSGenerator::ResumeMode::ReturnMode:
+        enqueue(vm, value, resumeMode, settlementTarget);
+        if (isInit || isCompleted) {
+            setState(static_cast<int32_t>(AsyncGeneratorState::DrainingQueue));
+            return GILOffEnqueueAction::AwaitReturn;
+        }
+        return GILOffEnqueueAction::Resume;
+    case JSGenerator::ResumeMode::ThrowMode:
+        if (isInit) {
+            setState(static_cast<int32_t>(AsyncGeneratorState::Completed));
+            return GILOffEnqueueAction::SettleCompleted;
+        }
+        if (isCompleted)
+            return GILOffEnqueueAction::SettleCompleted;
+        enqueue(vm, value, resumeMode, settlementTarget);
+        return GILOffEnqueueAction::Resume;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSObject* JSAsyncGenerator::dequeueGILOff(VM& vm)
+{
+    ASSERT(vm.gilOff());
+    Locker locker { cellLock() };
+    return dequeue(vm);
+}
+
+// Called by the driver where the spec checks whether the queue is empty. Returns true, having
+// stored settledState, if it is; the caller then no longer drives and must not touch the
+// generator. Returns false if it is not, and the head request is stable: enqueuers only append.
+bool JSAsyncGenerator::retireIfQueueEmptyGILOff(int32_t settledState)
+{
+    ASSERT(isSettledState(settledState));
+    Locker locker { cellLock() };
+    if (!isQueueEmpty())
+        return false;
+    setState(settledState);
+    return true;
+}
 
 } // namespace JSC
