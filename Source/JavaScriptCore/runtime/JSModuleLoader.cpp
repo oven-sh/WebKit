@@ -1227,7 +1227,7 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
             // the exception. They run on the next normal microtask drain.
             while (i < tasks.size()) {
                 auto rest = tasks[i++];
-                globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2);
+                globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
             }
             tasks.shrink(0);
             return;

@@ -110,16 +110,16 @@ let log = [];
 // async generators and for-await
 {
     log = [];
-    async function* gen() {
-        log.push(["gen start", get()]);
+    async function* gen(name) {
+        log.push([name + " gen start", get()]);
         yield 1;
-        log.push(["gen after yield", get()]);
+        log.push([name + " gen after yield", get()]);
         await null;
         yield 2;
-        log.push(["gen end", get()]);
+        log.push([name + " gen end", get()]);
     }
     async function consume(name) {
-        for await (const v of gen())
+        for await (const v of gen(name))
             log.push([name + " body", get()]);
         log.push([name + " done", get()]);
     }
@@ -131,8 +131,8 @@ let log = [];
         if (name.startsWith("A ")) { shouldBe(ctx, A, name); sawA++; }
         if (name.startsWith("none ")) { shouldBe(ctx, undefined, name); sawNone++; }
     }
-    shouldBe(sawA, 3);
-    shouldBe(sawNone, 3);
+    shouldBe(sawA, 6);
+    shouldBe(sawNone, 6);
     shouldBe(get(), undefined, "residue after drain 3");
 }
 

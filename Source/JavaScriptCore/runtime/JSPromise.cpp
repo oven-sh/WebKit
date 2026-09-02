@@ -1029,9 +1029,12 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 break;
             }
             JSValue context = fullReaction->context();
+            if (fullReaction->contextIsAsyncContext()) {
+                globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status) | promiseReactionJobAsyncContextFlag, promise, handler, arg, context);
+                return;
+            }
             if (!context.isUndefinedOrNull()) {
-                uint8_t payload = static_cast<uint8_t>(status) | (fullReaction->contextIsAsyncContext() ? promiseReactionJobAsyncContextFlag : 0);
-                globalObject->queueMicrotask(vm, task, payload, promise, handler, arg, context);
+                globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg, context);
                 return;
             }
 #else
