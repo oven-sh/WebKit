@@ -274,7 +274,7 @@ ALWAYS_INLINE uint64_t mergeVolatileHeaderBits(uint64_t desired, uint64_t fresh)
     return (desired & ~cellHeaderVolatileMask) | (fresh & cellHeaderVolatileMask);
 }
 
-#if (CPU(X86_64) || CPU(ARM64)) && USE(JSVALUE64)
+#if CPU(X86_64) || CPU(ARM64)
 #define JSC_CONCURRENT_BUTTERFLY_HAS_HARDWARE_DCAS 1
 #else
 #define JSC_CONCURRENT_BUTTERFLY_HAS_HARDWARE_DCAS 0

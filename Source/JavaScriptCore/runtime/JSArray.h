@@ -212,7 +212,6 @@ private:
     bool unshiftCountWithArrayStorage(JSGlobalObject*, unsigned startIndex, unsigned count, ArrayStorage*);
     bool unshiftCountSlowCase(const AbstractLocker&, VM&, DeferGC&, bool, unsigned);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel §4.6 AS-COPY (Task 8; GT10 sites JSArray.cpp:1650/:1818,
     // I31): flag-on, shift/unshift never relay out ArrayStorage innards in
     // place - the whole operation runs under the cell lock (every AS access is
@@ -224,7 +223,6 @@ private:
     // caller's generic fallback. Defined in JSArray.cpp.
     bool shiftCountWithArrayStorageConcurrent(VM&, unsigned startIndex, unsigned count);
     bool unshiftCountWithArrayStorageConcurrent(JSGlobalObject*, unsigned startIndex, unsigned count);
-#endif
 
     bool setLengthWithArrayStorage(JSGlobalObject*, unsigned newLength, bool throwException, ArrayStorage*);
     void setLengthWritable(JSGlobalObject*, bool writable);

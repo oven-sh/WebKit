@@ -434,12 +434,12 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
                     else {
                         if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
                         }
                     }
                 } else {
                     if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                        repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                        repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
                 }
             } else {
                 if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))

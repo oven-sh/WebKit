@@ -446,7 +446,7 @@ void WaiterListManager::timeoutAsyncWaiter(void* ptr, Ref<Waiter>&& waiter)
 {
     dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::currentSingleton(), "> timeoutAsyncWaiter ", waiter.get(), ") for ptr ", RawPointer(ptr));
     if (VM::isGILOffProcess()) [[unlikely]] {
-        RefPtr<DeferredWorkTimer::TicketData> ticket;
+        RefPtr<DeferredWorkTimer::Ticket> ticket;
         if (RefPtr<WaiterList> list = findList(ptr)) {
             {
                 Locker listLocker { list->lock };
@@ -468,8 +468,8 @@ void WaiterListManager::timeoutAsyncWaiter(void* ptr, Ref<Waiter>&& waiter)
         }
         if (ticket) {
             VM* waiterVM = waiter->vm();
-            waiterVM->deferredWorkTimer->scheduleWorkSoon(ticket.get(), [](DeferredWorkTimer::Ticket dwtTicket) {
-                JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
+            waiterVM->deferredWorkTimer->scheduleWorkSoonIfActive(DeferredWorkTimer::WeakTicket { ticket }, [](DeferredWorkTimer::Ticket& dwtTicket) {
+                JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket.target());
                 JSGlobalObject* globalObject = promise->realm();
                 VM& vm = promise->vm();
                 promise->resolve(globalObject, vm, vm.smallStrings.timedOutString());
@@ -506,7 +506,7 @@ unsigned WaiterListManager::notifyWaiter(VM& vm, void* ptr, unsigned count)
             // deferredWorkTimer first or the waiter is still listed and is
             // cancelled there. Sync waiters keep the in-lock condition notify
             // (rank-4-class park internals, not a settle).
-            Vector<RefPtr<DeferredWorkTimer::TicketData>, 4> pendingSettles;
+            Vector<RefPtr<DeferredWorkTimer::Ticket>, 4> pendingSettles;
             {
                 Locker listLocker { list->lock };
                 while (notified < count && list->size()) {
@@ -526,8 +526,8 @@ unsigned WaiterListManager::notifyWaiter(VM& vm, void* ptr, unsigned count)
                 }
             }
             for (auto& ticket : pendingSettles) {
-                vm.deferredWorkTimer->scheduleWorkSoon(ticket.get(), [](DeferredWorkTimer::Ticket dwtTicket) {
-                    JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
+                vm.deferredWorkTimer->scheduleWorkSoonIfActive(DeferredWorkTimer::WeakTicket { ticket }, [](DeferredWorkTimer::Ticket& dwtTicket) {
+                    JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket.target());
                     JSGlobalObject* globalObject = promise->realm();
                     VM& vm = promise->vm();
                     promise->resolve(globalObject, vm, vm.smallStrings.okString());

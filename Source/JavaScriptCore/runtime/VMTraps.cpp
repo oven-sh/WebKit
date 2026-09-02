@@ -605,7 +605,7 @@ CONCURRENT_SAFE void VMTraps::requestThreadStopIfNeeded(Locker<Lock>& locker)
         // has received the trap request. We'll call it from another thread so that
         // requestThreadStopIfNeeded() does not block.
         if (!m_signalSender)
-            m_signalSender = adoptRef(new SignalSender(locker, vm()));
+            m_signalSender = adoptRef(new SignalSender(locker, vm));
         m_signalSender->notify(locker);
     }
 #else

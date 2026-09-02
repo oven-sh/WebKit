@@ -77,7 +77,6 @@ struct ValueProfileBase {
     // only ever SELECT speculation; emitted guards validate. C++ accesses go through these
     // relaxed-atomic helpers so the race is explicit and TSAN-clean. On 32-bit the
     // JSCJSValue.h tag/payload protocol is kept.
-#if USE(JSVALUE64)
     EncodedJSValue loadBucketConcurrently(unsigned i) const
     {
         ASSERT(i < totalNumberOfBuckets);
@@ -89,20 +88,6 @@ struct ValueProfileBase {
         ASSERT(i < totalNumberOfBuckets);
         WTF::atomicStore(&m_buckets[i], value, std::memory_order_relaxed);
     }
-#else
-    // 32-bit: keep JSCJSValue.h's tag/payload protocol (plain when !ENABLE(CONCURRENT_JS)).
-    EncodedJSValue loadBucketConcurrently(unsigned i) const
-    {
-        ASSERT(i < totalNumberOfBuckets);
-        return JSValue::encode(JSValue::decodeConcurrent(&m_buckets[i]));
-    }
-
-    void storeBucketConcurrently(unsigned i, EncodedJSValue value)
-    {
-        ASSERT(i < totalNumberOfBuckets);
-        updateEncodedJSValueConcurrent(m_buckets[i], value);
-    }
-#endif
 
     void clearBuckets()
     {
@@ -224,12 +209,10 @@ struct ValueProfileBase {
     SpeculatedType m_prediction;
 };
 
-#if USE(JSVALUE64)
 // THREADS §5.7.4: word-atomicity of bucket accesses relies on naturally aligned 8-byte words.
 static_assert(sizeof(EncodedJSValue) == 8);
 static_assert(alignof(ValueProfileBase<1, 0>) >= alignof(EncodedJSValue));
 static_assert(alignof(ValueProfileBase<0, 1>) >= alignof(EncodedJSValue));
-#endif
 
 struct MinimalValueProfile : public ValueProfileBase<0, 1> {
     MinimalValueProfile(): ValueProfileBase<0, 1>() { }

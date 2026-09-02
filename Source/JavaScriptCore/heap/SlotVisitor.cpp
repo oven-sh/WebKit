@@ -887,6 +887,22 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
     }
 }
 
+SlotVisitor::SharedDrainResult SlotVisitor::waitForTermination(MonotonicTime timeout)
+{
+    Locker locker { m_heap.m_markingMutex };
+    for (;;) {
+        if (hasElapsed(timeout))
+            return SharedDrainResult::TimedOut;
+
+        if (didReachTermination(locker)) {
+            // No marker needs waking here. There is no work which can be processed in the helpers.
+            return SharedDrainResult::Done;
+        }
+
+        m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout);
+    }
+}
+
 void SlotVisitor::donateAll()
 {
     if (isEmpty())

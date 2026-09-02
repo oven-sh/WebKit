@@ -662,8 +662,8 @@ void settleLockGrant(NativeLockState& state, AsyncTicket& ticket)
     Ref<AsyncTicket> protectedTicket { ticket };
     if (ticket.grantWithFunction) {
         JSObject* function = ticket.extraDependency();
-        ticket.settle([state = WTF::move(protectedState), ticket = WTF::move(protectedTicket), function](DeferredWorkTimer::Ticket dwtTicket) {
-            JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
+        ticket.settle([state = WTF::move(protectedState), ticket = WTF::move(protectedTicket), function](DeferredWorkTimer::Ticket& dwtTicket) {
+            JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket.target());
             JSGlobalObject* globalObject = promise->realm();
             VM& vm = globalObject->vm();
             // Delivery point: from here on the hold is observable by JS, so
@@ -702,8 +702,8 @@ void settleLockGrant(NativeLockState& state, AsyncTicket& ticket)
         });
         return;
     }
-    ticket.settle([state = WTF::move(protectedState), ticket = WTF::move(protectedTicket)](DeferredWorkTimer::Ticket dwtTicket) {
-        JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
+    ticket.settle([state = WTF::move(protectedState), ticket = WTF::move(protectedTicket)](DeferredWorkTimer::Ticket& dwtTicket) {
+        JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket.target());
         JSGlobalObject* globalObject = promise->realm();
         VM& vm = globalObject->vm();
         // Delivery point (see the with-fn arm): the resolved release fn is

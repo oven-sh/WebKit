@@ -330,11 +330,12 @@ void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
                 // butterfly/structure facts. Wrap identically to the gilOff
                 // reroute (suppression depth is this requester's own
                 // thread-local; the wrapped closure runs on this stack).
-                auto workThenBumpHeapFactRewriteEpoch = scopedLambda<void()>([&] {
+                auto workThenBumpHeapFactRewriteEpochFunctor = [&] {
                     work();
                     if (!t_pureCodeLifecycleStopWindowDepth)
                         noteConductorHeapFactRewrite();
-                });
+                };
+                ScopedLambda<void()> workThenBumpHeapFactRewriteEpoch(workThenBumpHeapFactRewriteEpochFunctor);
                 return jsThreadsThreadGranularStopTheWorldAndRun(vm, workThenBumpHeapFactRewriteEpoch);
             }
         }
@@ -384,11 +385,12 @@ void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
         // requests inside an open window run this wrapped closure inline on
         // the conductor (R1.h branch of the reroute) — a nested in-window
         // bump is pre-resume too, hence sound and merely redundant.
-        auto workThenBumpHeapFactRewriteEpoch = scopedLambda<void()>([&] {
+        auto workThenBumpHeapFactRewriteEpochFunctor = [&] {
             work();
             if (!t_pureCodeLifecycleStopWindowDepth)
                 noteConductorHeapFactRewrite();
-        });
+        };
+        ScopedLambda<void()> workThenBumpHeapFactRewriteEpoch(workThenBumpHeapFactRewriteEpochFunctor);
         return jsThreadsThreadGranularStopTheWorldAndRun(vm, workThenBumpHeapFactRewriteEpoch);
     }
 

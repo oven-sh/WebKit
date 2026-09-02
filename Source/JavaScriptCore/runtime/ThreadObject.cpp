@@ -146,7 +146,7 @@ static void settleJoinTicket(AsyncTicket& ticket, JSThread* thread, bool failed)
 {
     // `thread` is rooted by the ticket's dependency vector; the promise by
     // the ticket's Strong (and the DWT ticket target), both until settle.
-    ticket.settle([protectedTicket = Ref { ticket }, thread, failed](DeferredWorkTimer::Ticket) {
+    ticket.settle([protectedTicket = Ref { ticket }, thread, failed](DeferredWorkTimer::Ticket&) {
         JSPromise* promise = protectedTicket->promise().get();
         JSGlobalObject* globalObject = promise->realm();
         VM& vm = globalObject->vm();

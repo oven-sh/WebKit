@@ -111,10 +111,10 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
         ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(requiredScratchMemorySizeInBytes());
         buffer = static_cast<char*>(scratchBuffer->dataBuffer());
     }
-    auto materializeBufferBase = scopedLambda<void(AssemblyHelpers&, GPRReg)>(
-        [&] (AssemblyHelpers& jit, GPRReg dest) {
-            materializeBakedScratchBufferDataPointer(jit, bakedIndex, dest);
-        });
+    auto materializeBufferBaseFunctor = [&] (AssemblyHelpers& jit, GPRReg dest) {
+        materializeBakedScratchBufferDataPointer(jit, bakedIndex, dest);
+    };
+    ScopedLambda<void(AssemblyHelpers&, GPRReg)> materializeBufferBase(materializeBufferBaseFunctor);
 
     if (bakedIndexMode) [[unlikely]]
         saveAllRegisters(jit, materializeBufferBase);

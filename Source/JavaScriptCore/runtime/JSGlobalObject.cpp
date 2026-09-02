@@ -3399,7 +3399,7 @@ void JSGlobalObject::haveABadTime(VM& vm)
     // GIL-on/flag-off: unchanged — the GIL is the serializer; no stop is
     // requested (one predicted-false byte test).
     if (vm.gilOff()) [[unlikely]] {
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
             // ANNEX HBT item 2: conductor re-checks isHavingABadTime() after
             // winning arbitration — a sibling may have completed this
             // global's transition while we waited.
@@ -4084,7 +4084,7 @@ void JSGlobalObject::tryInstallArrayBufferSpeciesWatchpoint(ArrayBufferSharingMo
     // Flag-off / GIL-on: gilOff() is false, falls through to the unchanged
     // inline body — byte-identical.
     if (vm.gilOff()) [[unlikely]] {
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
             if (arrayBufferSpeciesWatchpointSet(sharingMode).state() != ClearWatchpoint)
                 return; // arbitration loser: a sibling already installed/invalidated.
             tryInstallArrayBufferSpeciesWatchpointImpl(sharingMode);
@@ -4166,7 +4166,7 @@ void JSGlobalObject::tryInstallTypedArraySpeciesWatchpoint(TypedArrayType type)
     // STW cost is irrelevant. Flag-off / GIL-on: gilOff() is false, falls
     // through to the unchanged inline body — byte-identical.
     if (vm.gilOff()) [[unlikely]] {
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
             if (typedArraySpeciesWatchpointSet(type).state() != ClearWatchpoint)
                 return; // arbitration loser: a sibling already installed/invalidated.
             tryInstallTypedArraySpeciesWatchpointImpl(type);

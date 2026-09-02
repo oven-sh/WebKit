@@ -213,11 +213,18 @@ void MarkedSpace::freeMemory()
 
 void MarkedSpace::lastChanceToFinalize()
 {
-    // Must call stopAllocatingForGood first.
     ASSERT(!isIterating());
     // SharedGC (T8): server teardown — under MSPL (Heap::lastChanceToFinalize)
-    // or stopped; the per-block bit writes inside are I5b writers.
+    // or stopped; the per-block bit writes inside are I5b writers. Per-client
+    // teardown goes through GCThreadLocalCache::stopAllocatingForGood (also
+    // under MSPL).
     ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld());
+    forEachDirectory(
+        [&] (BlockDirectory& directory) -> IterationStatus {
+            directory.stopAllocatingForGood();
+            return IterationStatus::Continue;
+        });
+
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.lastChanceToFinalize();
@@ -367,20 +374,6 @@ void MarkedSpace::stopAllocating()
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocating();
-            return IterationStatus::Continue;
-        });
-}
-
-void MarkedSpace::stopAllocatingForGood()
-{
-    ASSERT(!isIterating());
-    // SharedGC (§5.2(4)/§5.3 teardown, T8): server teardown holds MSPL
-    // (Heap::lastChanceToFinalize); per-client teardown goes through
-    // GCThreadLocalCache::stopAllocatingForGood (also under MSPL).
-    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients() || heap().mutatorSlowPathLock().isHeld());
-    forEachDirectory(
-        [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.stopAllocatingForGood();
             return IterationStatus::Continue;
         });
 }

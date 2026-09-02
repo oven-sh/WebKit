@@ -83,7 +83,6 @@ static constexpr bool traceHandlerExecution = false;
 static constexpr bool traceHandlerStats = false || ICStatsInternal::traceHandlerChains;
 }
 
-#if USE(JSVALUE64)
 // B4-getbyid-optimize-never-settles-giloff: spine layout used by the
 // segmented-aware ArrayLength stub below (mirrors DFGSegmentedSpineInternal in
 // DFGSpeculativeJIT.cpp). The static_asserts hard-fail any layout drift, so
@@ -99,7 +98,6 @@ static_assert(spineOffsetOfOutOfLineFragmentCount == 0, "B4: emitted offsets ass
 static_assert(spineOffsetOfFragments == 32, "B4: emitted offsets assume the frozen ButterflySpine layout");
 static_assert(segmentedFloor == 0xffff000000000000ULL, "B4: tagged>=segmentedFloor <=> top16==0xffff");
 } // namespace ICCompilerSegmentedSpineInternal
-#endif
 
 template<typename... Args>
 static void NODELETE traceHandler(CCallHelpers& jit, ICEvent::Kind kind, Args&&... args)
@@ -3941,7 +3939,6 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     }
 
     case AccessCase::ArrayLength: {
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]] {
             // failAndIgnore bumps the countdown that the slow path's repatch
             // attempt decrements, so a state the stub never handles keeps the
@@ -4019,7 +4016,6 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
                 m_failAndIgnore.append(failAndIgnore);
             return;
         }
-#endif
         // SPEC-jit section 5.5 (Task 8): READ choke point (conservative
         // MaybeArrayStorage form - ArrayLength is reachable for AS arrays).
         m_failAndIgnore.append(jit.loadButterflyForRead(baseGPR, scratchGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
@@ -5423,8 +5419,6 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
     return finishCodeGeneration(WTF::move(stub));
 }
 
-#if CPU(ADDRESS64)
-
 // SPEC-jit section 5.5 (Task 8): the out-of-line branch goes through the
 // butterfly READ choke point; predicate failures (segmented / shared-written)
 // fall through to the next handler and ultimately the generic path. For the
@@ -5435,7 +5429,7 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
 // structureID (R7/F7 ARM64 address dependency) when it survives to this
 // point, else InvalidGPRReg (gap recorded in the Task 8 inventory).
 template<bool ownProperty>
-static void loadHandlerImpl(VM&, CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, GPRReg baseGPR, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg structureIDGPR)
+static void loadHandlerImpl(CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, GPRReg baseGPR, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg structureIDGPR)
 {
     jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch2GPR);
     if constexpr (ownProperty)
@@ -5464,7 +5458,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByIdLoadHandlerImpl()
     CCallHelpers::JumpList fallThrough;
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
-    loadHandlerImpl<ownProperty>(vm, jit, fallThrough, baseGPR, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR, ownProperty ? scratch1GPR : InvalidGPRReg);
+    loadHandlerImpl<ownProperty>(jit, fallThrough, baseGPR, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR, ownProperty ? scratch1GPR : InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -5635,7 +5629,7 @@ static void getterCallFromGetterSetterImpl(CCallHelpers& jit, GPRReg baseGPR, [[
     InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
 }
 
-static void getterHandlerImpl(VM&, CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, GPRReg baseGPR, GPRReg resultGPR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+static void getterHandlerImpl(CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, GPRReg baseGPR, GPRReg resultGPR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfHolder()), scratch1GPR);
     jit.moveConditionally64(CCallHelpers::Equal, scratch1GPR, CCallHelpers::TrustedImm32(0), baseGPR, scratch1GPR, scratch1GPR);
@@ -5664,7 +5658,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> getByIdGetterHandler()
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    getterHandlerImpl(vm, jit, fallThrough, baseGPR, resultGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
+    getterHandlerImpl(jit, fallThrough, baseGPR, resultGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6113,7 +6107,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdCustomValueHandler(VM& vm)
 }
 
 template<bool isStrict>
-static void setterHandlerImpl(VM&, CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, GPRReg baseGPR, GPRReg valueGPR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+static void setterHandlerImpl(CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, GPRReg baseGPR, GPRReg valueGPR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfHolder()), scratch1GPR);
     jit.moveConditionally64(CCallHelpers::Equal, scratch1GPR, CCallHelpers::TrustedImm32(0), baseGPR, scratch1GPR, scratch1GPR);
@@ -6201,7 +6195,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByIdSetterHandlerImpl()
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    setterHandlerImpl<isStrict>(vm, jit, fallThrough, baseGPR, valueGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
+    setterHandlerImpl<isStrict>(jit, fallThrough, baseGPR, valueGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6408,7 +6402,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValLoadHandlerImpl()
 
     // R7 note: scratch1GPR no longer holds the structureID (the uid check
     // reused it) - ARM64 dependency gap recorded in the Task 8 inventory.
-    loadHandlerImpl<ownProperty>(vm, jit, fallThrough, baseGPR, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR, InvalidGPRReg);
+    loadHandlerImpl<ownProperty>(jit, fallThrough, baseGPR, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR, InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6528,7 +6522,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValNonStringPrimitiveKeyLoadHa
     fallThrough.append(emitNonStringPrimitiveKeyCheck<keyType>(jit, propertyGPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    loadHandlerImpl<ownProperty>(vm, jit, fallThrough, baseGPR, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR, ownProperty ? scratch1GPR : InvalidGPRReg);
+    loadHandlerImpl<ownProperty>(jit, fallThrough, baseGPR, resultGPR, scratch1GPR, scratch2GPR, scratch3GPR, ownProperty ? scratch1GPR : InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6806,7 +6800,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValGetterHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyGPR, scratch1GPR));
 
-    getterHandlerImpl(vm, jit, fallThrough, baseGPR, resultGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
+    getterHandlerImpl(jit, fallThrough, baseGPR, resultGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -7117,7 +7111,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValSetterHandlerImpl()
         // handler always defers to the generic path (Task 8 inventory).
         fallThrough.append(jit.jump());
     } else
-        setterHandlerImpl<isStrict>(vm, jit, fallThrough, baseGPR, valueGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, InvalidGPRReg);
+        setterHandlerImpl<isStrict>(jit, fallThrough, baseGPR, valueGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 

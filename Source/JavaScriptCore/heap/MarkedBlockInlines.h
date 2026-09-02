@@ -170,7 +170,10 @@ ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapV
                 if (header.m_lock.fencelessValidate(count.value, Dependency::fence(myMarkingVersion)))
                     return false;
             } else {
-                bool result = fencedHeader.m_marks.get(block.atomNumber(cell));
+                // A marker's concurrentTestAndSet races this optimistic read. The
+                // fencelessValidate re-check tolerates the race; the relaxed atomic
+                // read makes the word access defined. Codegen is identical.
+                bool result = fencedHeader.m_marks.concurrentGet(block.atomNumber(cell), fenceBefore);
                 if (header.m_lock.fencelessValidate(count.value, Dependency::fence(result)))
                     return result;
             }

@@ -80,16 +80,11 @@ constexpr bool dumpVerbose = false;
 // loadButterflyForRead/ForWrite choke points.
 static void emitLegacyButterflyTagTrap(AssemblyHelpers& jit, GPRReg butterflyGPR)
 {
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         auto untagged = jit.branch64(AssemblyHelpers::Below, butterflyGPR, AssemblyHelpers::TrustedImm64(static_cast<int64_t>(butterflyTagFloor)));
         jit.breakpoint();
         untagged.link(&jit);
     }
-#else
-    UNUSED_PARAM(jit);
-    UNUSED_PARAM(butterflyGPR);
-#endif
 }
 
 // SPEC-jit section 5.5 Task 8 (I14(a)) + r48 (FUZZ.md / SCALEBENCH §48):
@@ -108,7 +103,6 @@ static void emitLegacyButterflyTagTrap(AssemblyHelpers& jit, GPRReg butterflyGPR
 static void emitLoadTypedArrayArrayBuffer(AssemblyHelpers& jit, GPRReg baseGPR, GPRReg resultGPR, [[maybe_unused]] GPRReg scratchGPR)
 {
     jit.loadPtr(AssemblyHelpers::Address(baseGPR, JSObject::butterflyOffset()), resultGPR);
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         ASSERT(scratchGPR != resultGPR && scratchGPR != baseGPR);
         // Segmented iff TID == notTTLTID (the all-ones TID, I3; payload != 0
@@ -135,7 +129,6 @@ static void emitLoadTypedArrayArrayBuffer(AssemblyHelpers& jit, GPRReg baseGPR, 
         done.link(&jit);
         return;
     }
-#endif
     jit.loadPtr(AssemblyHelpers::Address(resultGPR, Butterfly::offsetOfArrayBuffer()), resultGPR);
 }
 
@@ -243,7 +236,6 @@ void AssemblyHelpers::loadButterflyTIDTag(GPRReg destGPR)
 // out-of-line so AssemblyHelpers.h doesn't need ConcurrentButterflyOperations.h.
 void AssemblyHelpers::emitTagInstalledButterflyWithTID(GPRReg resultGPR, GPRReg storageGPR, GPRReg scratchGPR)
 {
-#if USE(JSVALUE64)
     ASSERT(scratchGPR != resultGPR);
     ASSERT(scratchGPR != storageGPR);
     loadButterflyTIDTag(scratchGPR);
@@ -252,12 +244,6 @@ void AssemblyHelpers::emitTagInstalledButterflyWithTID(GPRReg resultGPR, GPRReg 
     // left untagged for the caller's post-install header/element writes.
     or64(storageGPR, scratchGPR);
     storePtr(scratchGPR, Address(resultGPR, JSObject::butterflyOffset()));
-#else
-    UNUSED_PARAM(resultGPR);
-    UNUSED_PARAM(storageGPR);
-    UNUSED_PARAM(scratchGPR);
-    RELEASE_ASSERT_NOT_REACHED(); // flag-on requires 64-bit (D8)
-#endif
 }
 
 AssemblyHelpers::Jump AssemblyHelpers::branchIfFastTypedArray(GPRReg baseGPR)
@@ -2136,10 +2122,8 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedType
     // r48: segment-aware butterfly -> arrayBuffer load (clobbers scratchGPR
     // flag-on; mode is re-loaded for the isGrowableShared test below).
     AssemblyHelpersInternal::emitLoadTypedArrayArrayBuffer(*this, baseGPR, scratch2GPR, scratchGPR);
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]]
         load8(Address(baseGPR, JSArrayBufferView::offsetOfMode()), scratchGPR);
-#endif
 
     auto isGrowableShared = branchTest32(NonZero, scratchGPR, TrustedImm32(isGrowableSharedMode));
 #if USE(LARGE_TYPED_ARRAYS)
@@ -2216,10 +2200,8 @@ std::tuple<AssemblyHelpers::Jump, AssemblyHelpers::JumpList> AssemblyHelpers::lo
         // scratchGPR flag-on; mode is re-loaded for the isGrowableShared test
         // below).
         AssemblyHelpersInternal::emitLoadTypedArrayArrayBuffer(*this, baseGPR, scratch2GPR, scratchGPR);
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]]
             load8(Address(baseGPR, JSArrayBufferView::offsetOfMode()), scratchGPR);
-#endif
     }
 
     auto isGrowableShared = branchTest32(NonZero, scratchGPR, TrustedImm32(isGrowableSharedMode));

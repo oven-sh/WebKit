@@ -244,7 +244,6 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 
     ensureWritable(vm);
 
-#if USE(JSVALUE64)
     // SPEC-objectmodel Task 8 (§4.4) + review round 3 (§3 foreign-first-write
     // protocol, I12/I21): the flat in-place fast paths below mutate a FLAT
     // word (element store + plain setPublicLength) and are sound only for the
@@ -373,7 +372,6 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             return;
         }
     }
-#endif
 
     Butterfly* butterfly = this->butterfly();
 
@@ -492,7 +490,6 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 
     case ArrayWithArrayStorage: {
-#if USE(JSVALUE64)
         // SPEC-objectmodel I31/L5 (Task 8): flag-on, every runtime AS access
         // is cell-locked; the in-vector fast push re-reads the storage under
         // the lock (AS-COPY republishes) - its element/length/
@@ -522,7 +519,6 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
             putByIndexBeyondVectorLengthWithArrayStorage(globalObject, unlockedStorage->length(), value, true, unlockedStorage);
             return;
         }
-#endif
         ArrayStorage* storage = butterfly->arrayStorage();
 
         // Fast case - push within vector, always update m_length & m_numValuesInVector.

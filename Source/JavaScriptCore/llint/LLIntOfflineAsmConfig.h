@@ -154,15 +154,14 @@
 // (the same surface as loadButterflyTIDTagToT6 and AssemblyHelpers'
 // loadVMLite). The C_LOOP backend is C++ and reads the lite through
 // cloopLoadCurrentVMLite (VMLite::currentIfExists(), the thread_local the
-// initial-exec symbol mirrors), so the JSVALUE64 cloop assembles the lite arms
+// initial-exec symbol mirrors), so the cloop assembles the lite arms
 // on any OS; they are not reachable today, because runtime/Options.cpp forces
 // useThreadGIL=1 on every C_LOOP build and the gilOffProcess byte therefore
-// stays 0. Elsewhere (Darwin and Windows hardware LLInt, 32-bit cloop) the
+// stays 0. Elsewhere (Darwin and Windows hardware LLInt) the
 // discriminator assembles to nothing: runtime/Options.cpp refuses the GIL-off
 // shape on every non-Linux and non-x86-64/arm64 configuration, so the byte
 // stays 0 and the VM block is the only Group-3 storage.
-#if (OS(LINUX) && (CPU(X86_64) || CPU(ARM64)) && !ENABLE(C_LOOP) && USE(JSVALUE64)) \
-    || (ENABLE(C_LOOP) && USE(JSVALUE64))
+#if (OS(LINUX) && (CPU(X86_64) || CPU(ARM64)) && !ENABLE(C_LOOP)) || ENABLE(C_LOOP)
 #define OFFLINE_ASM_GILOFF_TLS 1
 #else
 #define OFFLINE_ASM_GILOFF_TLS 0

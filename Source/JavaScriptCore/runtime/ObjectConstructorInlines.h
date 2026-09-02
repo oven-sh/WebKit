@@ -141,7 +141,6 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
 }
 
 
-#if USE(JSVALUE64)
 // Flag-on source side of a property-storage memcpy. A foreign flat->segmented
 // conversion needs only the cell lock once the shape's thread-local sets have
 // fired, so the word is loaded once and only that load is dereferenced.
@@ -158,7 +157,6 @@ ALWAYS_INLINE Butterfly* flatButterflySnapshotForStructure(JSObject* source, Str
         return nullptr;
     return untaggedButterfly(word);
 }
-#endif
 
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
@@ -166,9 +164,7 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
 
     Structure* targetStructure = target->structure();
     Structure* sourceStructure = source->structure();
-#if USE(JSVALUE64)
     StructureID sourceStructureID = sourceStructure->id(); // The object's own structure, before the frozen-source rewrite below.
-#endif
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
@@ -236,13 +232,11 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
     if (propertyCapacity) {
         Butterfly* newButterfly = Butterfly::createUninitialized(vm, target, 0, propertyCapacity, /* hasIndexingHeader */ false, 0);
         Butterfly* sourceButterfly;
-#if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]] {
             sourceButterfly = flatButterflySnapshotForStructure(source, sourceStructureID);
             if (!sourceButterfly)
                 return false; // Segmented, or a racing transition: the generic path copies property by property.
         } else
-#endif
             sourceButterfly = source->butterfly();
         // memcpy is fine since newButterfly is not tied to any object yet.
         memcpy(newButterfly->propertyStorage() - propertyCapacity, sourceButterfly->propertyStorage() - propertyCapacity, propertyCapacity * sizeof(EncodedJSValue));
@@ -263,9 +257,7 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
     static constexpr bool verbose = false;
 
     Structure* sourceStructure = source->structure();
-#if USE(JSVALUE64)
     StructureID sourceStructureID = sourceStructure->id(); // The object's own structure, before the frozen-source rewrite below.
-#endif
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
@@ -312,13 +304,11 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
     DeferGC deferGC(vm);
     Butterfly* newButterfly = Butterfly::createUninitialized(vm, nullptr, 0, propertyCapacity, /* hasIndexingHeader */ false, 0);
     Butterfly* sourceButterfly;
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         sourceButterfly = flatButterflySnapshotForStructure(source, sourceStructureID);
         if (!sourceButterfly)
             return nullptr; // Segmented, or a racing transition: the generic path copies property by property.
     } else
-#endif
         sourceButterfly = source->butterfly();
     // memcpy is fine since newButterfly is not tied to any object yet.
     memcpy(newButterfly->propertyStorage() - propertyCapacity, sourceButterfly->propertyStorage() - propertyCapacity, propertyCapacity * sizeof(EncodedJSValue));

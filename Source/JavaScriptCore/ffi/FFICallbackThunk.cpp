@@ -319,12 +319,13 @@ public:
         : m_vm(vm)
     {
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-        m_savedNeedExceptionCheck = m_vm.m_needExceptionCheck;
+        auto& state = m_vm.exceptionScopeVerificationState();
+        m_savedNeedExceptionCheck = state.m_needExceptionCheck;
         if (m_savedNeedExceptionCheck) {
-            m_savedThrowPointRecursionDepth = m_vm.m_simulatedThrowPointRecursionDepth;
-            m_savedThrowPointLocation = m_vm.m_simulatedThrowPointLocation;
-            m_savedNativeStackTraceOfLastSimulatedThrow = WTF::move(m_vm.m_nativeStackTraceOfLastSimulatedThrow);
-            m_vm.m_needExceptionCheck = false;
+            m_savedThrowPointRecursionDepth = state.m_simulatedThrowPointRecursionDepth;
+            m_savedThrowPointLocation = state.m_simulatedThrowPointLocation;
+            m_savedNativeStackTraceOfLastSimulatedThrow = WTF::move(state.m_nativeStackTraceOfLastSimulatedThrow);
+            state.m_needExceptionCheck = false;
         }
 #endif
     }
@@ -332,12 +333,13 @@ public:
     ~CallbackEntryScope()
     {
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-        if (m_vm.m_needExceptionCheck || !m_savedNeedExceptionCheck)
+        auto& state = m_vm.exceptionScopeVerificationState();
+        if (state.m_needExceptionCheck || !m_savedNeedExceptionCheck)
             return;
-        m_vm.m_needExceptionCheck = true;
-        m_vm.m_simulatedThrowPointRecursionDepth = m_savedThrowPointRecursionDepth;
-        m_vm.m_simulatedThrowPointLocation = m_savedThrowPointLocation;
-        m_vm.m_nativeStackTraceOfLastSimulatedThrow = WTF::move(m_savedNativeStackTraceOfLastSimulatedThrow);
+        state.m_needExceptionCheck = true;
+        state.m_simulatedThrowPointRecursionDepth = m_savedThrowPointRecursionDepth;
+        state.m_simulatedThrowPointLocation = m_savedThrowPointLocation;
+        state.m_nativeStackTraceOfLastSimulatedThrow = WTF::move(m_savedNativeStackTraceOfLastSimulatedThrow);
 #endif
     }
 
