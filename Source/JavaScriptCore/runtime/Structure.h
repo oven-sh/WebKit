@@ -352,7 +352,11 @@ public:
     // of pinnedPropertyTableForConcurrentDelete(): callers branch on null.
     PropertyTable* pinnedPropertyTableForConcurrentReadStamp() const
     {
-        return isPinnedPropertyTable() ? m_propertyTableUnsafe.get() : nullptr;
+        if (!isPinnedPropertyTable())
+            return nullptr;
+        // Callers dereference the table, which another thread can have built
+        // just before it published this structure.
+        return WTF::atomicLoad(const_cast<Structure*>(this)->m_propertyTableUnsafe.slot(), std::memory_order_acquire);
     }
     // Acquire-load the S6 L3/L4 edit-stamp for the M7(c) reader's
     // single-snapshot recheck (0 if non-pinned — see above). Declared here,
@@ -1124,8 +1128,9 @@ public:
             setBitFieldConcurrently(setBits, s_##lowerName##Mask << offset);\
             return;\
         }\
-        m_bitField &= ~(s_##lowerName##Mask << offset);\
-        m_bitField |= setBits;\
+        /* Flag off, only the mutator writes, but compiler threads read the word. */\
+        uint32_t oldBits = WTF::atomicLoad(&m_bitField, std::memory_order_relaxed);\
+        WTF::atomicStore(&m_bitField, (oldBits & ~(s_##lowerName##Mask << offset)) | setBits, std::memory_order_relaxed);\
     }
 
     DEFINE_BITFIELD(DictionaryKind, dictionaryKind, DictionaryKind, 2, 0);
@@ -1507,6 +1512,7 @@ private:
         JSC_TSAN_DEFERRED_MEMBER_FORWARD(size)
         JSC_TSAN_DEFERRED_MEMBER_FORWARD(forEachTransition)
         JSC_TSAN_DEFERRED_MEMBER_FORWARD(finalizeUnconditionally)
+        JSC_TSAN_DEFERRED_MEMBER_FORWARD(reconcileWeakReferencesAtGCEnd)
 #undef JSC_TSAN_DEFERRED_MEMBER_FORWARD
 
     private:

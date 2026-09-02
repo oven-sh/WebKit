@@ -4937,8 +4937,12 @@ JSBigInt::ImplResult JSBigInt::remainderImpl(JSGlobalObject* globalObject, BigIn
     }
 
     // Cached multiplicative inverse optimization for repeated modulo with the same divisor.
+    // The cache lives on the VM with no lock, so GIL-off threads skip it entirely: a thread that
+    // re-arms it rewrites the inverse another thread may be reading.
     if constexpr (std::is_same_v<BigIntImpl2, HeapBigIntImpl>) {
-        if (vm.m_cachedBigIntDivisor.get() == y.toHeapBigInt(globalObject)) {
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
+            // No cache.
+        } else if (vm.m_cachedBigIntDivisor.get() == y.toHeapBigInt(globalObject)) {
             if (xSpan.size() <= 2 * ySpan.size()) {
                 unsigned resultLength = ySpan.size();
                 if (resultLength <= maxInPlaceCachedModSize) {

@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-TEAR S4 (docs/threads/cve/map-MC-TEAR.md): TypedArray/ArrayBuffer
 // {base, length} torn-pair susceptibility under a detach / transfer /
 // resize-shrink / re-grow storm. Targets UNGIL-HANDOUT §N.6 / annex N6:

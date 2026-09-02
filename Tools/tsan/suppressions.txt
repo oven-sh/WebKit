@@ -355,7 +355,7 @@ race:JSC::DirectArguments::isMappedArgument
 race:GenericArgumentsImplInternal::acquireLoadDescriptor
 
 # CallLinkInfo packed type/callType byte probe (calllink family ruling §5.8).
-race:JSC::CallLinkInfo::loadCallTypeAndType
+race:JSC::CallLinkInfo::loadCallTypeAndMode
 
 # ----------------------------------------------------------------------------
 # r11 mop-up additions (2026-06-09): same wave-7 class ("atomic probe vs
@@ -483,6 +483,10 @@ race:JSC::UnlinkedFunctionExecutable::recordParse
 # the bare aligned_alloc keys plus the SlotVisitor m_handle/m_atomSizeClass
 # reader-side keys whose previous-write IS this frame.
 race:JSC::MarkedBlock::tryCreate
+# The same hand-out after the rebase: upstream's WarmUpBlockProvider (new since
+# 5851d4722e46) allocates blocks on the JSCWarmUp thread, so tryCreate is no
+# longer on the writer stack. The racing access is JIT-emitted, as above.
+race:WarmUpBlockProvider::refill
 
 # MarkedBlock::Header placement-new ctor stores (m_directory/m_vm/
 # m_markingVersion/...) on a freshly allocated block, paired with a JIT-side
@@ -547,3 +551,56 @@ race:JSC::JSArrayBuffer::JSArrayBuffer
 # Distinct from the §20.3.4 m_parkedRootSnapshotThread heap-field family
 # (closed in r24 via relaxed-atomic).
 race:JSC::MachineThreads::tryCopyCooperativelyParkedThreadStack
+
+# ---- Upstream races found after the rebase (2026-09-02). Each one also exists
+# with the flag off, between upstream threads.
+#
+# Wasm worklist threads read EntryPlan::m_state without the plan lock
+# (WasmWorklist.cpp, WasmIPIntPlan.h; upstream FIXME in WasmEntryPlan.h). The
+# state only moves forward, so a stale read only delays a dequeue.
+race:JSC::Wasm::EntryPlan::multiThreaded
+race:JSC::Wasm::IPIntPlan::hasWork
+# VMTraps::m_needToInvalidateCodeBlocks is a plain bool, set under the VMTraps
+# lock by the signal sender and read under the CodeBlockSet lock. A stale false
+# returns early without clearing it, so the next check handles it.
+race:JSC::VMTraps::invalidateCodeBlocksOnStack
+# The GC's atomic probe of FunctionExecutable::m_rareData on a cell the mutator
+# just built (the wave-7 class: the real happens-before is the publication of
+# the cell, which TSAN does not model).
+race:JSC::FunctionExecutable::rareDataConcurrently
+# Upstream publishes the global JIT worklist once, inside call_once, after a
+# storeStoreFence. A VM that reads null in its destructor never enqueued a plan.
+race:JSC::JITWorklist::existingGlobalWorklistOrNull
+# Upstream: the GC reads the write-once m_isFinalized and m_hasMetadata bits
+# while link() sets m_isLinked in the same bitfield byte, which writes the other
+# bits back unchanged.
+race:JSC::UnlinkedMetadataTable::sizeInBytesForGC
+# Upstream WTF: runTask reads m_numActive with no lock in a RELEASE_ASSERT
+# (ParallelHelperPool.cpp:110, :117) while another helper's runTask decrements
+# it under the pool lock (:121). The same reasoning as claimTask above.
+race:WTF::ParallelHelperClient::runTask
+# A CodeBlock built on one thread and first called on another. installCode
+# publishes it with a release store (ScriptExecutable.cpp), and the LLInt
+# prologue loads it in assembly, which TSAN does not see. So this slow path's
+# reads of the new CodeBlock and its instructions show no happens-before. The
+# LLInt load is an address dependency, which orders them on arm64 as well.
+race:llint_check_stack_and_vm_traps
+# The same publish, seen from the other LLInt slow paths that read the new
+# CodeBlock's metadata (for example an array allocation profile in
+# llint_slow_path_new_array). Anchored on the writer: the CodeBlock's
+# constructor and finishCreation run before installCode publishes it.
+race:JSC::CodeBlock::CodeBlock
+race:JSC::CodeBlock::finishCreation
+# The calllink family, like race:JSC::CallLinkInfo::loadCallTypeAndMode: a DFG
+# plan allocates the DirectCallLinkInfo, one mutator installs the code, and
+# another reaches it through loads in JIT code.
+race:JSC::DirectCallLinkInfo::loadCallTypeAndDataIC
+# The cell hand-out class (wave 7), two more anchors. A thread allocates a cell
+# and stores it into a shared object; another thread loads it and uses it. The
+# real order is the value's publication and the address dependency, which TSAN
+# does not see (the JS value store and load are relaxed, or in JIT code).
+# - The block's directory fields are written when the block joins a directory,
+#   before any of its cells is handed out (MarkedBlock.cpp, didAddToDirectory).
+# - A string's fields are written by its constructor before it is published.
+race:JSC::MarkedBlock::Handle::didAddToDirectory
+race:JSC::JSString::JSString

@@ -27,6 +27,7 @@
 #include "DebuggerParseData.h"
 
 #include "JSCJSValueInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "Parser.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -179,6 +180,9 @@ bool gatherDebuggerParseData(VM& vm, const SourceCode& source, DebuggerParseData
     JSParserScriptMode scriptMode = DebuggerParseInfo<T>::scriptMode;
 
     ParserError error;
+    // The parser uses VM-wide tables. With the GIL off, every parse holds the
+    // compilation lock.
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
     std::unique_ptr<RootNode> rootNode = parseRootNode<RootNode>(vm, source, ImplementationVisibility::Public,
         JSParserBuiltinMode::NotBuiltin, lexicallyScopedFeatures, scriptMode, parseMode,
         error, ConstructorKind::None, nullptr, &debuggerParseData);

@@ -349,7 +349,7 @@ void GCThreadLocalCache::stopAllocatingForGood()
     if (Options::validateFreeListStructure()) [[unlikely]]
         FreeList::setStructureValidationContext("tlcSAFG"); // Teardown flush provenance.
     for (auto& entry : m_perDirectory) {
-        entry.value->stopAllocatingForGood();
+        entry.value->stopAllocatingForClientTeardown();
         entry.key->detachLocalAllocator(*entry.value);
     }
     if (Options::validateFreeListStructure()) [[unlikely]]

@@ -302,6 +302,18 @@ public:
 
     bool mayBeRegExpMatchesArray() const { return arrayProfileFlagsConcurrently().contains(ArrayProfileFlag::MayBeRegExpMatchesArray); }
 
+    // A copy for a compiler thread. Mutators update the fields with relaxed
+    // atomics, so the copy reads each field the same way.
+    ArrayProfile snapshotConcurrently() const
+    {
+        ArrayProfile result;
+        result.m_lastSeenStructureID = WTF::atomicLoad(const_cast<StructureID*>(&m_lastSeenStructureID), std::memory_order_relaxed);
+        result.m_speculationFailureStructureID = WTF::atomicLoad(const_cast<StructureID*>(&m_speculationFailureStructureID), std::memory_order_relaxed);
+        result.m_arrayProfileFlags = arrayProfileFlagsConcurrently();
+        result.m_observedArrayModes = observedArrayModes();
+        return result;
+    }
+
     CString briefDescription(CodeBlock*);
     CString briefDescriptionWithoutUpdating();
     

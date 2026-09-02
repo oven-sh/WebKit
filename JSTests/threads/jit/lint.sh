@@ -89,7 +89,7 @@ if [[ "$BUTTERFLY_USES" -gt "$MAX_BUTTERFLY_USES" ]]; then
 else
     pass "I14 LLInt m_butterfly use count within recorded envelope ($BUTTERFLY_USES <= $MAX_BUTTERFLY_USES)"
 fi
-for macro in threadedButterflyReadPredicate threadedButterflyWritePredicate loadButterflyTIDTagToT4; do
+for macro in threadedButterflyReadPredicate threadedButterflyWritePredicate loadButterflyTIDTagToT6; do
     if ! grep -q "$macro" "$ASM"; then
         fail "I14: LLInt choke macro $macro missing from LowLevelInterpreter64.asm"
     fi

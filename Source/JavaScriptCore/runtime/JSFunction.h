@@ -104,7 +104,7 @@ public:
     // unsynchronized check-then-act and only one cell may be published) or
     // the constructor initializes it on recycled cell memory — all other
     // accesses are relaxed atomics (plain mov codegen).
-    uintptr_t executableOrRareDataConcurrently() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_executableOrRareData), std::memory_order_relaxed); }
+    uintptr_t executableOrRareDataConcurrently() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_executableOrRareData), std::memory_order_acquire); } // Acquire: callers dereference the rare data, which another thread may have just published.
 
     ExecutableBase* executable() const
     {

@@ -87,9 +87,17 @@ for (let round = 0; round < ROUNDS; ++round) {
             const v1 = new Int32Array(sab);
             if (v1[0] !== SENTINEL)
                 throw new Error("sibling reader: SAB sentinel lost");
-            const v2 = new Int32Array(ab);
-            const x = v2[0];
-            if (x !== SENTINEL && x !== undefined) // undefined once detached
+            // Main transfers `ab` while these readers run. A view made after
+            // that throws TypeError; a view made before it reads undefined.
+            let x;
+            try {
+                x = new Int32Array(ab)[0];
+            } catch (e) {
+                if (!(e instanceof TypeError))
+                    throw e;
+                x = undefined;
+            }
+            if (x !== SENTINEL && x !== undefined)
                 throw new Error("sibling reader: AB corrupt word " + x);
             const v3 = new Int32Array(rab);
             const y = v3[0];

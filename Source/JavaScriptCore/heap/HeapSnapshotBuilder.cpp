@@ -347,6 +347,24 @@ String HeapSnapshotBuilder::json()
 void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
 {
     VM& vm = m_profiler.vm();
+    if (vm.gilOff()) [[unlikely]] {
+        // The dump reads the snapshot's nodes, which a collection prunes
+        // (Heap::removeDeadHeapSnapshotNodes), and it reads each node's cell:
+        // its structure, and its own properties. With the GIL off, other threads
+        // can start a collection or change those cells, so the dump runs with
+        // collection prevented and the other threads stopped.
+        PreventCollectionScope preventCollectionScope(vm.heap);
+        vm.heap.runWithOtherClientsStopped([&] {
+            dumpToStreamImpl(out);
+        });
+        return;
+    }
+    dumpToStreamImpl(out);
+}
+
+void HeapSnapshotBuilder::dumpToStreamImpl(PrintStream& out)
+{
+    VM& vm = m_profiler.vm();
     DeferGCForAWhile deferGC(vm);
 
     // Build a node to identifier map of allowed nodes to use when serializing edges.

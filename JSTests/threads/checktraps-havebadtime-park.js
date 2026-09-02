@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // checktraps-dejank-invalidation-point: haveABadTime during a poll-park
 // stress.
 //

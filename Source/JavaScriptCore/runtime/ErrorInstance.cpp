@@ -183,7 +183,7 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     String messageWithSource = message;
 
     if (m_stackTrace && !m_stackTrace->isEmpty() && hasSourceAppender()) {
-        auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame);
+        auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.group3Primitives().topCallFrame); // UNGIL §A.1.3 mode split.
         if (codeBlock) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();

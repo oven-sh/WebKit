@@ -567,10 +567,41 @@ SpeculatedType speculationFromClassInfoInheritance(const ClassInfo* classInfo)
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_CHECK)
 #undef JSC_TYPED_ARRAY_CHECK
 
-    if (classInfo->isSubClassOf(JSObject::info()))
-        return SpecObjectOther;
-    
-    return SpecCellOther;
+    // classInfo is none of the classes above and derives from none of them. It can still be a base
+    // class of some of them (JSCell, JSObject, JSNonFinalObject, ...), and their cells inherit
+    // classInfo too, so their types belong in the result. Without this, filtering a JSFinalObject
+    // by JSObject::info() gives an empty type.
+    SpeculatedType result = classInfo->isSubClassOf(JSObject::info()) ? SpecObjectOther : SpecCellOther;
+    auto addIfDerived = [&](const ClassInfo* derived, SpeculatedType type) {
+        if (derived->isSubClassOf(classInfo))
+            result |= type;
+    };
+    addIfDerived(JSString::info(), SpecString);
+    addIfDerived(Symbol::info(), SpecSymbol);
+    addIfDerived(JSBigInt::info(), SpecHeapBigInt);
+    addIfDerived(JSObject::info(), SpecObjectOther);
+    addIfDerived(JSFinalObject::info(), SpecFinalObject);
+    addIfDerived(DirectArguments::info(), SpecDirectArguments);
+    addIfDerived(ScopedArguments::info(), SpecScopedArguments);
+    addIfDerived(RegExpObject::info(), SpecRegExpObject);
+    addIfDerived(DateInstance::info(), SpecDateObject);
+    addIfDerived(JSMap::info(), SpecMapObject);
+    addIfDerived(JSMapIterator::info(), SpecMapIteratorObject);
+    addIfDerived(JSSet::info(), SpecSetObject);
+    addIfDerived(JSSetIterator::info(), SpecSetIteratorObject);
+    addIfDerived(JSWeakMap::info(), SpecWeakMapObject);
+    addIfDerived(JSWeakSet::info(), SpecWeakSetObject);
+    addIfDerived(ProxyObject::info(), SpecProxyObject);
+    addIfDerived(JSGlobalProxy::info(), SpecGlobalProxy);
+    addIfDerived(JSDataView::info(), SpecDataViewObject);
+    addIfDerived(StringObject::info(), SpecStringObject);
+    addIfDerived(JSArray::info(), SpecArray | SpecDerivedArray);
+    addIfDerived(JSFunction::info(), SpecFunction);
+    addIfDerived(JSPromise::info(), SpecPromiseObject);
+#define JSC_TYPED_ARRAY_ADD(type) addIfDerived(JS ## type ## Array::info(), Spec ## type ## Array);
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_ADD)
+#undef JSC_TYPED_ARRAY_ADD
+    return result;
 }
 
 static constexpr unsigned SpeculationMappingSize { static_cast<unsigned>(UINT8_MAX) + 1 };

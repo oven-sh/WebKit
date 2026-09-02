@@ -23,6 +23,7 @@
 #pragma once
 
 #include "ArrayConventions.h"
+#include "ArrayProfile.h"
 #include "ArrayStorage.h"
 #include "Butterfly.h"
 #include "CPU.h"
@@ -46,6 +47,7 @@
 #include "Structure.h"
 #include "StructureTransitionTable.h"
 #include <JavaScriptCore/JSCJSValueCell.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -591,8 +593,11 @@ public:
             if (i >= butterfly->vectorLength())
                 return false;
             butterfly->contiguous().at(this, i).setWithoutWriteBarrier(v);
-            if (i >= butterfly->publicLength())
+            if (i >= butterfly->publicLength()) {
                 butterfly->setPublicLength(i + 1);
+                if (arrayProfile)
+                    arrayProfile->setMayStoreHole();
+            }
             vm.writeBarrier(this, v);
             return true;
         }
@@ -609,16 +614,23 @@ public:
                 return true;
             }
             butterfly->contiguousDouble().at(this, i) = value;
-            if (i >= butterfly->publicLength())
+            if (i >= butterfly->publicLength()) {
                 butterfly->setPublicLength(i + 1);
+                if (arrayProfile)
+                    arrayProfile->setMayStoreHole();
+            }
             return true;
         }
         case NonArrayWithArrayStorage:
-        case ArrayWithArrayStorage:
-            if (i >= butterfly->vectorLength())
+        case ArrayWithArrayStorage: {
+            ArrayStorage* storage = butterfly->arrayStorage();
+            if (i >= storage->vectorLength())
                 return false;
+            if (arrayProfile && !storage->m_vector[i])
+                arrayProfile->setMayStoreHole();
             setIndexQuicklyForArrayStorageIndexingType(vm, i, v);
             return true;
+        }
         case NonArrayWithSlowPutArrayStorage:
         case ArrayWithSlowPutArrayStorage:
             if (i >= butterfly->arrayStorage()->vectorLength() || !butterfly->arrayStorage()->m_vector[i])
@@ -1046,6 +1058,13 @@ public:
 
     JS_EXPORT_PRIVATE void seal(VM&);
     JS_EXPORT_PRIVATE void freeze(VM&);
+
+    // With threads, publishes a transition that changes only the structure.
+    // planTransition gets the structure to plan from, and returns the new one,
+    // or the same one when there is nothing to do. It can run more than once.
+    // See JSObject.cpp.
+    using StructureOnlyTransitionPlan = ScopedLambda<Structure*(Structure*, DeferredStructureTransitionWatchpointFire*)>;
+    JS_EXPORT_PRIVATE void publishStructureOnlyTransitionConcurrently(VM&, const StructureOnlyTransitionPlan&);
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool NODELETE isExtensible(JSObject*, JSGlobalObject*);
