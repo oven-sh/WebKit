@@ -399,7 +399,6 @@ void ClonedArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if USE(JSVALUE64)
     // Load the tagged word once and read the flat arm only through that
     // snapshot, within its own vectorLength: a foreign thread can publish a
     // segmented spine (no stop once the structure's thread-local watchpoints
@@ -418,10 +417,6 @@ void ClonedArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
         butterfly = this->butterfly();
         type = this->indexingType();
     }
-#else
-    Butterfly* butterfly = this->butterfly();
-    IndexingType type = this->indexingType();
-#endif
 
     switch (type) {
     case ALL_CONTIGUOUS_INDEXING_TYPES: {

@@ -89,7 +89,7 @@ static ALWAYS_INLINE void runDebuggerWalkWithSpawnedThreadsStopped(VM& vm, const
         // Watchdog context (review round): name this requester class in the
         // 30s stop-watchdog crash log instead of a nil Class-A context.
         JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(&vm, "Debugger STW walk");
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambdaRef<void()>(functor));
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>(functor));
         return;
     }
     functor();
@@ -302,7 +302,6 @@ void Debugger::attach(JSGlobalObject* globalObject)
                         if (function->scope()->realm() == globalObject && function->executable()->isFunctionExecutable() && !function->isHostOrBuiltinFunction())
                             sourceProviders.add(uncheckedDowncast<FunctionExecutable>(function->executable())->source().provider());
                     }
-                }
 #if ENABLE(WEBASSEMBLY)
                     else if (auto* module = dynamicDowncast<JSWebAssemblyModule>(cell)) {
                         if (module->realm() == globalObject)

@@ -418,7 +418,6 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
     ASSERT((length + objectOffset) <= array->length());
     ASSERT(array->isIteratorProtocolFastAndNonObservable());
 
-#if USE(JSVALUE64)
     // CVE-AUDIT MC-DF S10b / Tier-B B2 (round-4 single-snapshot): callers
     // gate on a §10.7 mayBeSegmentedButterfly() check (setFromArrayLike) or
     // none at all (genericTypedArrayViewPrivateFuncFromFast, which has an
@@ -464,9 +463,6 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
         sourceButterfly = untaggedButterfly(snapshotWord);
     } else
         sourceButterfly = array->butterfly();
-#else
-    Butterfly* sourceButterfly = array->butterfly();
-#endif
 
     // If the destination is uint32_t or int32_t, we can use copyElements.
     // 1. int32_t -> uint32_t conversion does not change any bit representation. So we can simply copy them.
@@ -501,7 +497,6 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
     ASSERT((length + objectOffset) <= array->length());
     ASSERT(array->isIteratorProtocolFastAndNonObservable());
 
-#if USE(JSVALUE64)
     // CVE-AUDIT MC-DF S10b / Tier-B B2 (round-4 single-snapshot): same
     // root cause as copyFromInt32ShapeArray above — every source deref goes
     // through ONE tagged-word load; segmented/null/short snapshot routes
@@ -527,9 +522,6 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
         sourceButterfly = untaggedButterfly(snapshotWord);
     } else
         sourceButterfly = array->butterfly();
-#else
-    Butterfly* sourceButterfly = array->butterfly();
-#endif
 
     if constexpr (Adaptor::typeValue == TypeFloat64 || Adaptor::typeValue == TypeFloat32) {
         WTF::copyElements(typedSpan().subspan(offset), std::span<const double> { sourceButterfly->contiguousDouble().data() + objectOffset, length });
@@ -596,7 +588,6 @@ bool JSGenericTypedArrayView<Adaptor>::setFromArrayLike(JSGlobalObject* globalOb
                         return true;
                     }
                 }
-#if USE(JSVALUE64)
                 else if (indexingType == Int32Shape || indexingType == DoubleShape) {
                     // SCALEBENCH §35 flatten1-segmented-int32shape-segwalk-copy:
                     // re-load the tagged word (mayBeSegmentedButterfly proved it
@@ -648,9 +639,7 @@ bool JSGenericTypedArrayView<Adaptor>::setFromArrayLike(JSGlobalObject* globalOb
                     }
                     // Raced flat between the two loads: fall through to generic.
                 }
-#endif
             }
-#if USE(JSVALUE64)
             // SCALEBENCH §35 setFromArrayLike-seg-generic-get-4deep-vtable-pl:
             // any JSArray that did not match a memcpy/segwalk arm above
             // (ContiguousShape, segmented-word-raced-flat, or the
@@ -688,7 +677,6 @@ bool JSGenericTypedArrayView<Adaptor>::setFromArrayLike(JSGlobalObject* globalOb
                 }
                 return success;
             }
-#endif
         }
     }
 
@@ -1176,23 +1164,31 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
 
     auto originalSpan = typedSpan();
 
-    if constexpr (elementSize == 1) {
-        // Measured crossover. Below this, clearing the histograms costs more than std::sort, which
-        // uses insertion sort on inputs this short.
-        constexpr size_t countingSortThreshold = 128;
-        if (length >= countingSortThreshold) {
-            countingSort(originalSpan.first(length));
+    // Counting and radix sort make several passes over the lanes and index by the values they
+    // read, so they need lanes no other thread writes. GIL-off they run on the private copy below.
+    auto sortLargeInPlace = [&](std::span<ElementType> span) -> bool {
+        if constexpr (elementSize == 1) {
+            // Measured crossover. Below this, clearing the histograms costs more than std::sort, which
+            // uses insertion sort on inputs this short.
+            constexpr size_t countingSortThreshold = 128;
+            if (span.size() >= countingSortThreshold) {
+                countingSort(span);
+                return true;
+            }
+        } else {
+            // Measured crossovers against std::sort on randomly distributed input. Below these, the histogram
+            // pass and the scratch allocation cost more than std::sort, which uses insertion sort on short
+            // inputs. The crossover climbs with the element size because a wider element needs more passes.
+            constexpr size_t radixSortThreshold = elementSize == 2 ? 128 : (elementSize == 4 ? 512 : 8192);
+            if (span.size() >= radixSortThreshold)
+                return radixSort(span);
+        }
+        return false;
+    };
+
+    if (!g_jscConfig.gilOffProcess) [[likely]] {
+        if (sortLargeInPlace(originalSpan.first(length)))
             return SortResult::Success;
-        }
-    } else {
-        // Measured crossovers against std::sort on randomly distributed input. Below these, the histogram
-        // pass and the scratch allocation cost more than std::sort, which uses insertion sort on short
-        // inputs. The crossover climbs with the element size because a wider element needs more passes.
-        constexpr size_t radixSortThreshold = elementSize == 2 ? 128 : (elementSize == 4 ? 512 : 8192);
-        if (length >= radixSortThreshold) {
-            if (radixSort(originalSpan.first(length)))
-                return SortResult::Success;
-        }
     }
 
     auto array = originalSpan.data();
@@ -1223,19 +1219,22 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
         array = forShared.mutableSpan().data();
     }
 
-    switch (Adaptor::typeValue) {
-    case TypeFloat16:
-        sortFloat<int16_t>(array, array + length);
-        break;
-    case TypeFloat32:
-        sortFloat<int32_t>(array, array + length);
-        break;
-    case TypeFloat64:
-        sortFloat<int64_t>(array, array + length);
-        break;
-    default:
-        std::sort(array, array + length);
-        break;
+    bool sorted = g_jscConfig.gilOffProcess && sortLargeInPlace(forShared.mutableSpan().first(length));
+    if (!sorted) {
+        switch (Adaptor::typeValue) {
+        case TypeFloat16:
+            sortFloat<int16_t>(array, array + length);
+            break;
+        case TypeFloat32:
+            sortFloat<int32_t>(array, array + length);
+            break;
+        case TypeFloat64:
+            sortFloat<int64_t>(array, array + length);
+            break;
+        default:
+            std::sort(array, array + length);
+            break;
+        }
     }
 
     if (mustCopyOut) {

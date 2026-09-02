@@ -49,7 +49,7 @@ namespace JSC {
 
 // ---------------- AsyncTicket ----------------
 
-AsyncTicket::AsyncTicket(VM& vm, Ref<DeferredWorkTimer::TicketData>&& ticket, Ref<ThreadState>&& registrant, JSObject* extraDependency)
+AsyncTicket::AsyncTicket(VM& vm, Ref<DeferredWorkTimer::Ticket>&& ticket, Ref<ThreadState>&& registrant, JSObject* extraDependency)
     : m_vm(vm)
     , m_ticket(WTF::move(ticket))
     , m_registrant(WTF::move(registrant))
@@ -61,7 +61,7 @@ AsyncTicket::AsyncTicket(VM& vm, Ref<DeferredWorkTimer::TicketData>&& ticket, Re
 // where both types are complete. A never-settled ticket's Strong dies here
 // (SPEC-api 5.5: not an error; DWT VM-shutdown cancelPendingWork is the
 // liveness backstop). Destroying a still-set Strong mutates the VM's
-// HandleSet, which requires the API lock: settle tasks clear the Strong
+// StrongSet, which requires the API lock: settle tasks clear the Strong
 // under the JSLock, and every other last-ref drop site (DWT shutdown, the
 // 5.6 timeout timer task) runs under a JSLockHolder. The assert documents
 // that discipline for any future holder of the last Ref.
@@ -80,7 +80,10 @@ Ref<AsyncTicket> AsyncTicket::create(JSGlobalObject* globalObject, JSPromise* pr
     // shell-liveness point (I20/4.6.3) — a pending asyncJoin/asyncHold/
     // asyncWait/waitAsync keeps the shell alive from HERE, not from settle
     // time. The registrant is the calling thread's ThreadState (4.6.2).
-    DeferredWorkTimer::Ticket ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, vm, promise, WTF::move(dependencies));
+    // The timer holds the ticket strongly until it is retired; the weak handle
+    // addPendingWork returns is live here, and this AsyncTicket keeps its own ref.
+    RefPtr<DeferredWorkTimer::Ticket> ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, vm, promise, WTF::move(dependencies)).get();
+    RELEASE_ASSERT(ticket);
     Ref<AsyncTicket> result = adoptRef(*new AsyncTicket(vm, Ref { *ticket }, ensureCurrentThreadState(), extraDependency));
     result->m_promise.set(vm, promise);
     // §E.3 INCREMENT: a COUNTED registration (see the ThreadManager.h
@@ -103,7 +106,7 @@ Ref<AsyncTicket> AsyncTicket::create(JSGlobalObject* globalObject, JSPromise* pr
 // cleared at settle).
 void AsyncTicket::scheduleViaDeferredWorkTimer(DeferredWorkTimer::Task&& task)
 {
-    m_vm.deferredWorkTimer->scheduleWorkSoon(m_ticket.ptr(), [protectedThis = Ref { *this }, task = WTF::move(task)](DeferredWorkTimer::Ticket dwtTicket) mutable {
+    m_vm.deferredWorkTimer->scheduleWorkSoonIfActive(DeferredWorkTimer::WeakTicket { m_ticket }, [protectedThis = Ref { *this }, task = WTF::move(task)](DeferredWorkTimer::Ticket& dwtTicket) mutable {
         task(dwtTicket);
         // §E.4 retirement parity (MC-DOS S4, mc-dos-waiter-table-storm):
         // the task-queue path retires the DWT registration right after the
@@ -111,7 +114,7 @@ void AsyncTicket::scheduleViaDeferredWorkTimer(DeferredWorkTimer::Task&& task)
         // runQueuedSettleTaskOnRegistrant below). This tail historically
         // relied on doWork's m_pendingTickets removal alone, which UNROOTS
         // NOTHING: JSGlobalObject::visitChildren marks target+dependencies
-        // of every LIVE, un-cancelled TicketData in the realm's
+        // of every LIVE, un-cancelled Ticket in the realm's
         // m_weakTickets set, and any holder of a stray Ref to the ticket —
         // e.g. the 5.6 finite-timeout timer lambda, which pins its
         // Ref<AsyncTicket> for the FULL timeout — keeps the settled
@@ -123,7 +126,7 @@ void AsyncTicket::scheduleViaDeferredWorkTimer(DeferredWorkTimer::Task&& task)
         // contains() assert there would fire — flips the visitor's skip
         // bit; dependencies are NOT freed (cancel, not cancelAndClear), so
         // concurrent mayBeCancelled readers stay safe.
-        dwtTicket->cancel();
+        dwtTicket.cancel();
         protectedThis->m_promise.clear();
     });
 }
@@ -200,8 +203,8 @@ void AsyncTicket::runQueuedSettleTaskOnRegistrant(DeferredWorkTimer::Task&& task
     // keepalive supersedes DWT shell-liveness for spawned registrants (U24).
     // Caller (the E2A loop) holds this thread's §F token.
     ASSERT(m_vm.currentThreadIsHoldingAPILock());
-    task(m_ticket.ptr());
-    m_vm.deferredWorkTimer->cancelPendingWork(m_ticket.ptr());
+    task(m_ticket.get());
+    m_vm.deferredWorkTimer->cancelPendingWork(m_ticket.get());
     m_promise.clear();
 }
 
@@ -242,7 +245,7 @@ void AsyncTicket::retireUnsettled()
         }
     }
     if (!m_ticket->isCancelled())
-        m_vm.deferredWorkTimer->cancelPendingWork(m_ticket.ptr());
+        m_vm.deferredWorkTimer->cancelPendingWork(m_ticket.get());
     m_promise.clear();
 }
 
@@ -805,7 +808,7 @@ static void closeThreadInboxAndComplete(VM& vm, VMLite& lite, ThreadState& state
             // asyncJoin settles via the joiner's own inbox or the main
             // fallback; SD12 — asyncJoin never counted keepalive, so no
             // decrement fires here).
-            joiner->settle([protectedTicket = joiner.copyRef(), protectedState = Ref { state }, failed](DeferredWorkTimer::Ticket) {
+            joiner->settle([protectedTicket = joiner.copyRef(), protectedState = Ref { state }, failed](DeferredWorkTimer::Ticket&) {
                 JSPromise* promise = protectedTicket->promise().get();
                 if (!promise)
                     return;
