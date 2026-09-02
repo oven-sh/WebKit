@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "BaselineJITCode.h"
 #include "CodeBlock.h"
 #include "DeferGCInlines.h"
 #include "HeapInlines.h"

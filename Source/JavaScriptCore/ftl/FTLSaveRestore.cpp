@@ -36,6 +36,7 @@
 #include "RegisterSet.h"
 #include "VM.h"
 #include "VMLite.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace FTL {
 
@@ -149,7 +150,7 @@ static void saveAllRegistersImpl(AssemblyHelpers& jit, const ScopedLambda<void(A
 
 void saveAllRegisters(AssemblyHelpers& jit, char* scratchMemory)
 {
-    saveAllRegistersImpl(jit, scopedLambda<void(AssemblyHelpers&, GPRReg)>([&] (AssemblyHelpers& jit, GPRReg baseGPR) {
+    saveAllRegistersImpl(jit, ScopedLambda<void(AssemblyHelpers&, GPRReg)>([&] (AssemblyHelpers& jit, GPRReg baseGPR) {
         jit.move(MacroAssembler::TrustedImmPtr(scratchMemory), baseGPR);
     }));
 }
@@ -201,7 +202,7 @@ static void restoreAllRegistersImpl(AssemblyHelpers& jit, const ScopedLambda<voi
 
 void restoreAllRegisters(AssemblyHelpers& jit, char* scratchMemory)
 {
-    restoreAllRegistersImpl(jit, scopedLambda<void(AssemblyHelpers&, GPRReg)>([&] (AssemblyHelpers& jit, GPRReg baseGPR) {
+    restoreAllRegistersImpl(jit, ScopedLambda<void(AssemblyHelpers&, GPRReg)>([&] (AssemblyHelpers& jit, GPRReg baseGPR) {
         jit.move(MacroAssembler::TrustedImmPtr(scratchMemory), baseGPR);
     }));
 }

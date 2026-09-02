@@ -106,7 +106,6 @@ inline Structure* JSFinalObject::createStructure(VM& vm, JSGlobalObject* globalO
     return Structure::create(vm, globalObject, prototype, typeInfo(), info(), defaultIndexingType, inlineCapacity);
 }
 
-#if USE(JSVALUE64)
 // SPEC-objectmodel Task 2: flag-on, every butterfly install/replacement stamps
 // the installing thread's TID into the high bits of the butterfly word (§2).
 // The SW bit is monotonic (I4) and preserved verbatim on replacement. The
@@ -367,16 +366,13 @@ inline void JSObject::growOutOfLineStorageForConcurrentLockedAdd(VM& vm, Structu
     WTF::storeStoreFence();
     setStructureIDDirectly(structureID);
 }
-#endif // USE(JSVALUE64)
 
 inline void JSObject::setButterfly(VM& vm, Butterfly* butterfly)
 {
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         setButterflyConcurrent(vm, butterfly);
         return;
     }
-#endif
     if (isX86() || vm.heap.mutatorShouldBeFenced()) {
         WTF::storeStoreFence();
         butterflyRef().set(vm, this, butterfly);
@@ -389,12 +385,10 @@ inline void JSObject::setButterfly(VM& vm, Butterfly* butterfly)
 
 inline void JSObject::nukeStructureAndSetButterfly(VM& vm, StructureID oldStructureID, Butterfly* butterfly)
 {
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         nukeStructureAndSetButterflyConcurrent(vm, oldStructureID, butterfly);
         return;
     }
-#endif
     if (isX86() || vm.heap.mutatorShouldBeFenced()) {
         setStructureIDDirectly(oldStructureID.nuke());
         WTF::storeStoreFence();
@@ -658,7 +652,6 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
 {
     ASSERT(!value.isGetterSetter() && !(attributes & PropertyAttribute::Accessor));
     ASSERT(!value.isCustomGetterSetter());
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         // Review round 1: route through the cell-locked form (value stored in
         // the same critical section as the table edit - I9/L3/L4).
@@ -667,7 +660,6 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
             structure()->setContainsReadOnlyProperties();
         return;
     }
-#endif
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
@@ -718,7 +710,6 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
     return result;
 }
 
-#if USE(JSVALUE64)
 // SPEC-objectmodel §6 L3/L4 + I9 (review round 1): flag-on, every "without
 // transition" add - the pinned-table/dictionary form where the structure and
 // the object mutate in tandem - runs under the cell lock, OUTER to the m_lock
@@ -805,7 +796,6 @@ inline NEVER_INLINE PropertyOffset JSObject::putDirectWithoutTransitionConcurren
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return result;
 }
-#endif // USE(JSVALUE64)
 
 // https://tc39.es/ecma262/#sec-ordinaryset
 ALWAYS_INLINE bool JSObject::putInlineForJSObject(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -891,7 +881,6 @@ ALWAYS_INLINE bool JSObject::hasOwnProperty(JSGlobalObject* globalObject, unsign
     return const_cast<JSObject*>(this)->methodTable()->getOwnPropertySlotByIndex(const_cast<JSObject*>(this), globalObject, propertyName, slot);
 }
 
-#if USE(JSVALUE64)
 // See the declaration in JSObject.h. false = RESTART the whole operation.
 inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Structure* expectedSource, StructureID sourceID, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
@@ -1033,9 +1022,7 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
     }
     return tryStructureOnlyTransition(vm, this, expectedSource, newStructure, offset, value);
 }
-#endif // USE(JSVALUE64)
 
-#if USE(JSVALUE64)
 // V5B-transition-heavy-regression: NEVER_INLINE forwarding trampoline for the
 // jsThreads==true arm of putDirectInternal below. Previously BOTH template
 // instantiations of the shared impl body were carried inline at every
@@ -1077,7 +1064,6 @@ NEVER_INLINE auto putDirectInternalConcurrentOutOfLine(const Functor& functor) -
     ASSERT(Options::useJSThreads());
     return functor();
 }
-#endif // USE(JSVALUE64)
 
 template<JSObject::PutMode mode>
 ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, PutPropertySlot& slot)
@@ -1113,14 +1099,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // JSObject::nukeStructureAndSetButterfly member keeps runtime dispatch for
     // all other callers.
     auto nukeStructureAndSetButterflyStatic = [&]<bool jsThreadsStatic>(StructureID oldStructureID, Butterfly* newButterfly) ALWAYS_INLINE_LAMBDA {
-#if USE(JSVALUE64)
         if constexpr (jsThreadsStatic) {
             ASSERT(Options::useJSThreads());
             nukeStructureAndSetButterflyConcurrent(vm, oldStructureID, newButterfly);
             return;
         }
         ASSERT(!Options::useJSThreads());
-#endif
         if (isX86() || vm.heap.mutatorShouldBeFenced()) {
             setStructureIDDirectly(oldStructureID.nuke());
             WTF::storeStoreFence();
@@ -1134,7 +1118,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
     auto impl = [&]<bool jsThreads>() ALWAYS_INLINE_LAMBDA -> ASCIILiteral {
     while (true) {
-#if USE(JSVALUE64)
     // FIX-2 class-(2) poll (stw-watchdog-timeout residual): this RESTART /
     // M5-nuke-spin loop is C++ straight-line with no bytecode poll site - a
     // mutator that keeps re-dispatching here while a SA.3 stop pends (e.g.
@@ -1145,14 +1128,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // afterwards (W1: every iteration is a fresh acquisition episode).
     if constexpr (jsThreads)
         JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm);
-#endif
     StructureID structureID = this->structureID();
-#if USE(JSVALUE64)
     if constexpr (jsThreads) {
         if (structureID.isNuked()) [[unlikely]]
             continue; // M5: a racing publication is mid-flight; spin to the settled ID.
     }
-#endif
     Structure* structure = structureID.decode();
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
@@ -1161,7 +1141,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
         }
 
-#if USE(JSVALUE64)
         if constexpr (jsThreads) {
             // §6 L3/L4 (review round 1): dictionary adds/replaces mutate the
             // structure and the object in tandem; serialize against deletes/
@@ -1326,7 +1305,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
             return { };
         }
-#endif
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
             unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
@@ -1387,7 +1365,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             validateOffset(offset);
             ASSERT(newStructure->isValidOffset(offset));
 
-#if USE(JSVALUE64)
             if constexpr (jsThreads) {
                 // Review round 1: route through the E4 gate / locked
                 // protocols instead of the unconditional lock-free sequence.
@@ -1398,7 +1375,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
                 return { };
             }
-#endif
 
             Butterfly* newButterfly = butterfly();
             if (structure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
@@ -1427,7 +1403,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
             return ReadonlyPropertyChangeError;
 
-#if USE(JSVALUE64)
         // §3 F1 (review round 1): a REPLACE through an out-of-line offset is a
         // butterfly write; a foreign writer on an SW=0 flat word must fire
         // writeThreadLocal and flip SW before the plain store lands (I12/I21
@@ -1481,13 +1456,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             putDirectOffset(vm, offset, value);
             structure->didReplaceProperty(offset);
         } else {
-#endif
 
         structure->didReplaceProperty(offset);
         putDirectOffset(vm, offset, value);
-#if USE(JSVALUE64)
         }
-#endif
 
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
@@ -1496,7 +1468,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             // This allows adaptive watchpoints to observe if the new structure is the one we want.
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
             Structure* attributeChanged = Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire);
-#if USE(JSVALUE64)
             if constexpr (jsThreads) {
                 if (attributeChanged != structure) [[unlikely]] {
                     // Review round 1: an attribute change is a butterfly-untouched
@@ -1509,7 +1480,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 } else
                     setStructure(vm, attributeChanged);
             } else
-#endif
             setStructure(vm, attributeChanged);
             if (mayBePrototype()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
@@ -1534,7 +1504,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     validateOffset(offset);
     ASSERT(newStructure->isValidOffset(offset));
 
-#if USE(JSVALUE64)
     if constexpr (jsThreads) {
         // Review round 1: same E4-gate / locked-protocol routing as the
         // existing-structure transition leg above.
@@ -1547,7 +1516,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
         return { };
     }
-#endif
 
     size_t oldCapacity = structure->outOfLineCapacity();
     size_t newCapacity = newStructure->outOfLineCapacity();
@@ -1573,7 +1541,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     } // while (true)
     };
 
-#if USE(JSVALUE64)
     // V5B-1 / V5B-transition-heavy-regression: frozen-Config one-byte test;
     // the threads instantiation is OUTLINED behind the NEVER_INLINE
     // trampoline above (one shared out-of-line copy per PutMode), so flag-off
@@ -1585,7 +1552,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             return impl.template operator()</* jsThreads */ true>();
         });
     }
-#endif
     return impl.template operator()</* jsThreads */ false>();
 }
 

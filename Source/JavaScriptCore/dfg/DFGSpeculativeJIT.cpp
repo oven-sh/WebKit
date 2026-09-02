@@ -2520,10 +2520,10 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
         bool first = true;
         for (BasicBlock* pred : block->predecessors) {
             if (first) {
-                in = outSets[pred->index];
+                in = outSets[pred->index()];
                 first = false;
             } else
-                in.filter(outSets[pred->index]);
+                in.filter(outSets[pred->index()]);
         }
         return in;
     };
@@ -2698,7 +2698,6 @@ void SpeculativeJIT::compileCheckTraps(Node* node)
 
 void SpeculativeJIT::compileContiguousPutByVal(Node* node)
 {
-#if USE(JSVALUE64)
     // T3-jit-segmented-arraymode: storage child intentionally UNSET
     // (FixupPhase::checkArray, gated by consumerHasSegmentedAwareCodegen);
     // self-contained flat-vs-segmented dispatch. Local CSE (which runs after
@@ -2711,7 +2710,6 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
         compileContiguousPutByValSegmentedAware(node);
         return;
     }
-#endif
     SpeculateCellOperand base(this, m_graph.varArgChild(node, 0));
     SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
     JSValueOperand value(this, m_graph.varArgChild(node, 2), ManualOperandSpeculation);
@@ -2785,14 +2783,12 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
 
 void SpeculativeJIT::compileDoublePutByVal(Node* node)
 {
-#if USE(JSVALUE64)
     // T3-jit-segmented-arraymode: see compileContiguousPutByVal.
     if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
         && !m_graph.varArgChild(node, 3)) [[unlikely]] {
         compileDoublePutByValSegmentedAware(node);
         return;
     }
-#endif
     ArrayMode arrayMode = node->arrayMode();
 
     SpeculateCellOperand base(this, m_graph.varArgChild(node, 0));
@@ -8441,7 +8437,6 @@ std::optional<unsigned> SpeculativeJIT::tryGetConstantStringLength(Edge edge)
 
 void SpeculativeJIT::compileGetArrayLength(Node* node)
 {
-#if USE(JSVALUE64)
     // T3-jit-segmented-arraymode: storage child intentionally UNSET
     // (FixupPhase::checkArray, gated by consumerHasSegmentedAwareCodegen);
     // self-contained flat-vs-segmented dispatch. The !child2() check makes
@@ -8451,7 +8446,6 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
         compileGetArrayLengthSegmentedAware(node);
         return;
     }
-#endif
     switch (node->arrayMode().type()) {
     case Array::Undecided:
     case Array::Int32:
@@ -10540,7 +10534,6 @@ void SpeculativeJIT::compileArrayPush(Node* node)
 {
     ASSERT(node->arrayMode().isJSArray());
 
-#if USE(JSVALUE64)
     // T3-jit-segmented-arraymode: storage child intentionally UNSET
     // (FixupPhase::checkArray, gated by consumerHasSegmentedAwareCodegen);
     // self-contained flat-vs-segmented dispatch with a no-exit
@@ -10552,7 +10545,6 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         compileArrayPushSegmentedAware(node);
         return;
     }
-#endif
 
     Edge& storageEdge = m_graph.varArgChild(node, 0);
     Edge& arrayEdge = m_graph.varArgChild(node, 1);
@@ -11236,7 +11228,6 @@ void SpeculativeJIT::compileNukeStructureAndSetButterfly(Node* node)
     noResult(node);
 }
 
-#if USE(JSVALUE64)
 
 // ===========================================================================
 // SPEC-jit section 5.5 / Task 9: TID/SW butterfly predicates + TTL elision
@@ -11820,11 +11811,9 @@ void SpeculativeJIT::compileArrayPushSegmentedAware(Node* node)
     jsValueResult(resultRegs, node);
 }
 
-#endif // USE(JSVALUE64)
 
 void SpeculativeJIT::compileGetButterfly(Node* node)
 {
-#if USE(JSVALUE64)
     if (Options::useJSThreads()) [[unlikely]] {
         // SPEC-jit section 5.5 / Task 9. This is the only flag-on arm: a
         // TID-tagged word cannot be read by the raw load below, so the
@@ -11854,7 +11843,6 @@ void SpeculativeJIT::compileGetButterfly(Node* node)
         storageResult(resultGPR, node);
         return;
     }
-#endif
 
     SpeculateCellOperand base(this, node->child1());
     GPRTemporary result(this, Reuse, base);
@@ -15998,7 +15986,6 @@ void SpeculativeJIT::compilePutByOffset(Node* node)
 {
     StorageAccessData& storageAccessData = node->storageAccessData();
 
-#if USE(JSVALUE64)
     if (Options::useJSThreads() && isOutOfLineOffset(storageAccessData.offset)) [[unlikely]] {
         // SPEC-jit section 5.5 / Task 9: out-of-line stores re-load the TAGGED
         // butterfly from the base and run the frozen WRITE predicate in the
@@ -18097,7 +18084,6 @@ void SpeculativeJIT::compileHasIndexedProperty(Node* node, S_JITOperation_GCZ sl
     });
 }
 
-#if USE(JSVALUE64)
 // UNGIL §A.1.6 (ANNEX A16, U-T4b) — AB17c F4: per-lite catch OSR-entry
 // buffer materialization for gilOff-mode DFG compilations (sibling of the
 // DFGOSRExit.cpp materializePerLiteScratchBuffer / FTLSaveRestore helpers;
@@ -18119,14 +18105,12 @@ static void materializePerLiteCatchOSREntryBuffer(AssemblyHelpers& jit, unsigned
             static_cast<int32_t>(static_cast<ptrdiff_t>(bakedIndex & (VMLite::scratchSegmentSize - 1)) * sizeof(void*))),
         dest);
 }
-#endif // USE(JSVALUE64)
 
 void SpeculativeJIT::compileExtractCatchLocal(Node* node)
 {
     GPRTemporary result(this);
     GPRReg resultGPR = result.gpr();
 
-#if USE(JSVALUE64)
     if (vm().gilOff()) [[unlikely]] {
         // A16 (AB17c F4): the buffer is a per-lite registry index, not a
         // baked shared pointer — see JITCompiler::makeCatchOSREntryBuffer
@@ -18141,7 +18125,6 @@ void SpeculativeJIT::compileExtractCatchLocal(Node* node)
         jsValueResult(resultRegs, node);
         return;
     }
-#endif
 
     JSValue* ptr = &reinterpret_cast<JSValue*>(jitCode()->common.catchOSREntryBuffer->dataBuffer())[node->catchOSREntryIndex()];
     loadValue(ptr, resultGPR);
@@ -18150,7 +18133,6 @@ void SpeculativeJIT::compileExtractCatchLocal(Node* node)
 
 void SpeculativeJIT::compileClearCatchLocals(Node* node)
 {
-#if USE(JSVALUE64)
     if (vm().gilOff()) [[unlikely]] {
         // A16 (AB17c F4): zero the CURRENT lite's buffer's active length
         // (offset 0 of the resolved ScratchBuffer — mirrors the FTL
@@ -18164,7 +18146,6 @@ void SpeculativeJIT::compileClearCatchLocals(Node* node)
         noResult(node);
         return;
     }
-#endif
     ScratchBuffer* scratchBuffer = jitCode()->common.catchOSREntryBuffer;
     ASSERT(scratchBuffer);
     GPRTemporary scratch(this);

@@ -341,7 +341,7 @@ void WatchpointSet::fireAllUnderClassAStop(VM& vm, const FireDetail& detail)
         // Mode::Stopped (an escaped lock-holding direct caller wedged a
         // mutator), the M4 wait loop crashes naming this set.
         JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "WatchpointSet Class-A fire");
-        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
             drainClassAFireQueue(vm);
         }));
     }
