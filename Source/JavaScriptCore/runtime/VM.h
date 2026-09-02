@@ -1055,6 +1055,12 @@ public:
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
+
+    // Set the first time any global installs a non-default microtask queue
+    // (node:vm microtaskMode: "afterEvaluate"). Lets promise reaction enqueue
+    // sites skip handler-realm routing when every global shares one queue.
+    bool mayHaveMultipleMicrotaskQueues() const { return m_mayHaveMultipleMicrotaskQueues; }
+    void setMayHaveMultipleMicrotaskQueues() { m_mayHaveMultipleMicrotaskQueues = true; }
 #endif
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTF::move(func); }
     void callOnEachMicrotaskTick()
@@ -1297,6 +1303,9 @@ private:
 public:
     SentinelLinkedList<MicrotaskQueue, BasicRawSentinelNode<MicrotaskQueue>> m_microtaskQueues;
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_mayHaveMultipleMicrotaskQueues { false };
+#endif
     bool m_failNextNewCodeBlock { false };
     bool m_globalConstRedeclarationShouldThrow { true };
     bool m_allowRedeclaringSymbols { false };
