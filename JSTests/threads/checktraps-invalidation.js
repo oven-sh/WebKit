@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // checktraps-dejank-invalidation-point: invalidation-point semantics of the
 // de-janked CheckTraps.
 //

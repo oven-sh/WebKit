@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-VAL susceptibility test (docs/threads/cve/map-MC-VAL.md, surface V4):
 // compile-time validation vs. link-time consumption — a TTL/structure
 // watchpoint set fires BETWEEN the compiler's validity check and the

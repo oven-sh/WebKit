@@ -349,7 +349,9 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
             MarkedArgumentBufferWithSize<32> values;
             MarkedArgumentBuffer structures;
             unsigned startIndex = 1;
-            if (objectCloneFast(vm, targetObject, asObject(callFrame->uncheckedArgument(1))))
+            // objectCloneFast stores the target's structure with no check. With the GIL
+            // off, another thread can add to the target at the same time.
+            if (!vm.gilOff() && objectCloneFast(vm, targetObject, asObject(callFrame->uncheckedArgument(1))))
                 startIndex = 2;
             for (unsigned i = startIndex; i < argsCount; ++i) {
                 JSValue sourceValue = callFrame->uncheckedArgument(i);

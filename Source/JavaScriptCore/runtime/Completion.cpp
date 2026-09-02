@@ -33,6 +33,7 @@
 #include "JSLock.h"
 #include "JSModuleLoader.h"
 #include "JSPromise.h"
+#include "JSThreadsSafepoint.h"
 #include "JSWithScope.h"
 #include "ModuleAnalyzer.h"
 #include "Options.h"
@@ -45,6 +46,9 @@ namespace JSC {
 
 static inline bool checkSyntaxInternal(VM& vm, const SourceCode& source, ParserError& error)
 {
+    // The parser uses VM-wide tables (VM::addSourceProviderCache). With the GIL
+    // off, every parse holds the compilation lock.
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
     return !!parseRootNode<ProgramNode>(
         vm, source, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
         NoLexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode, error);
@@ -84,9 +88,13 @@ bool checkModuleSyntax(JSGlobalObject* globalObject, const SourceCode& source, P
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     RELEASE_ASSERT(vm.atomStringTable() == Thread::currentSingleton().atomStringTable());
-    std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
-        vm, source, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-        StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
+    std::unique_ptr<ModuleProgramNode> moduleProgramNode;
+    {
+        GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
+        moduleProgramNode = parseRootNode<ModuleProgramNode>(
+            vm, source, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
+    }
     if (!moduleProgramNode)
         return false;
 

@@ -37,6 +37,7 @@
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "JSSourceCode.h"
+#include "JSThreadsSafepoint.h"
 #include "JSWebAssembly.h"
 #include "Microtask.h"
 #include "ModuleAnalyzer.h"
@@ -1338,9 +1339,15 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     }
 
     ParserError error;
-    std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
-        vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-        StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
+    std::unique_ptr<ModuleProgramNode> moduleProgramNode;
+    {
+        // The parser uses VM-wide tables (VM::addSourceProviderCache). With the
+        // GIL off, every parse holds the compilation lock.
+        GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
+        moduleProgramNode = parseRootNode<ModuleProgramNode>(
+            vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
+    }
     if (error.isValid()) {
         auto* errorObject = error.toErrorObject(globalObject, sourceCode);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));

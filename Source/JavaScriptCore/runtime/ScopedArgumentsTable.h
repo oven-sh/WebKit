@@ -75,7 +75,7 @@ public:
     
     void lock()
     {
-        m_locked = true;
+        WTF::atomicStore(&m_locked, true, std::memory_order_relaxed); // With threads, any mutator can lock the table; every store writes true.
     }
     
     ScopedArgumentsTable* trySet(VM&, uint32_t index, ScopeOffset);

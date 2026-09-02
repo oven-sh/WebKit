@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-INIT surface 9 (docs/threads/cve/map-MC-INIT.md):
 // ClonedArguments::materializeSpecials publication order.
 //

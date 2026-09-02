@@ -1,7 +1,8 @@
 //@ requireOptions("--useJSThreads=1")
 // push/pop/length and butterfly-resizing operations on arrays shared between
-// threads. Under the GIL stub each array operation is atomic, so exact totals
-// are asserted; lock-guarded sections must stay exact in any implementation.
+// threads. Lock-guarded sections must stay exact in any implementation. An
+// unguarded push is not atomic with the GIL off, so there only the invariants
+// that hold under any interleaving are asserted.
 load("../resources/assert.js", "caller relative");
 
 // --- Single foreign thread pushes enough to force repeated vector growth ---
@@ -44,19 +45,28 @@ shouldBe(shared.length, threadCount * perThread);
     }
 }
 
-// --- Unguarded concurrent pushes: atomic under the GIL, so still exact ---
+// --- Unguarded concurrent pushes ---
+//
+// push reads length, stores the element, and then stores length + 1. With the
+// GIL on, nothing runs between those steps, so the total is exact. With the GIL
+// off, two threads can read the same length, so an element can be overwritten,
+// and a thread that read an old length can shrink the array under another one,
+// which leaves holes. What holds either way: the array is no longer than the
+// number of pushes, and every element is a pushed value that appears once.
 
 const unguarded = [];
 joinAll(spawnN(threadCount, index => {
     for (let i = 0; i < perThread; ++i)
         unguarded.push(index * perThread + i);
 }));
-shouldBe(unguarded.length, threadCount * perThread);
+shouldBeTrue(unguarded.length <= threadCount * perThread, "unguarded array is longer than the number of pushes: " + unguarded.length);
 {
     const seen = new Array(threadCount * perThread).fill(false);
     for (let i = 0; i < unguarded.length; ++i) {
         const value = unguarded[i];
-        shouldBeTrue(value !== undefined, "unguarded push left a hole at " + i);
+        if (value === undefined)
+            continue;
+        shouldBeTrue(Number.isInteger(value) && value >= 0 && value < seen.length, "unguarded push value in range: " + value);
         shouldBeFalse(seen[value], "unguarded push value duplicated: " + value);
         seen[value] = true;
     }

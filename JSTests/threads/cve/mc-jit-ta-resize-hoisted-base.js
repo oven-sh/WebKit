@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // mc-jit-ta-resize-hoisted-base.js — MC-JIT surface S4 (docs/threads/cve/
 // map-MC-JIT.md): typed-array fast paths' cached/hoisted {base, length}
 // pairs vs concurrent detach / transfer / shrink / grow.

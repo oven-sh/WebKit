@@ -51,6 +51,13 @@ public:
     void prepareForAllocation();
     void resumeAllocating();
     void stopAllocatingForGood();
+    // For a client that leaves a shared heap while the heap keeps running.
+    // stopAllocatingForGood() skips recording the cells allocated since the
+    // last collection in the newly-allocated bitmap, because it is for a heap
+    // whose lastChanceToFinalize() runs next. Here the heap runs on, and
+    // without the bitmap those cells look dead: a sweep by another client
+    // would reuse them while they are still referenced.
+    void stopAllocatingForClientTeardown();
     
     static constexpr ptrdiff_t offsetOfFreeList();
     static constexpr ptrdiff_t offsetOfCellSize();

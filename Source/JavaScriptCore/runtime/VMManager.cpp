@@ -440,7 +440,7 @@ static bool allEnteredThreadsAreQuiescent(VM& vm)
             return IterationStatus::Continue; // HBT2.1: the conductor may retain/re-acquire access.
         // SB1 item 2 sample (fence-assisted; live client deref is sound
         // under the walk's lock hold per EXIT1.4(b)).
-        if (lite.clientHeap->hasHeapAccess()) {
+        if (lite.clientHeap->hasHeapAccessAcquire()) {
             quiescent = false;
             return IterationStatus::Done;
         }
@@ -468,7 +468,7 @@ static bool gilOffMutatorsBlockModeStopService()
         GCClient::Heap* client = lite->clientHeap;
         if (!client || client == servicingClient)
             continue;
-        if (client->hasHeapAccess())
+        if (client->hasHeapAccessAcquire())
             return true;
     }
     return false;

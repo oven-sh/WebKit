@@ -85,7 +85,7 @@ ScopedArgumentsTable* ScopedArgumentsTable::tryClone(VM& vm)
 
 ScopedArgumentsTable* ScopedArgumentsTable::trySetLength(VM& vm, uint32_t newLength)
 {
-    if (!m_locked) [[likely]] {
+    if (!WTF::atomicLoad(&m_locked, std::memory_order_relaxed)) [[likely]] {
         size_t oldSize = m_watchpointSets.size();
         if (!m_arguments.tryGrow(newLength))
             return nullptr;
@@ -111,7 +111,7 @@ static_assert(std::is_trivially_destructible<ScopeOffset>::value);
 ScopedArgumentsTable* ScopedArgumentsTable::trySet(VM& vm, uint32_t i, ScopeOffset value)
 {
     ScopedArgumentsTable* result;
-    if (m_locked) [[unlikely]] {
+    if (WTF::atomicLoad(&m_locked, std::memory_order_relaxed)) [[unlikely]] {
         result = tryClone(vm);
         if (!result) [[unlikely]]
             return nullptr;

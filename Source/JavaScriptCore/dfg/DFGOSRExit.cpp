@@ -227,7 +227,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     // OSRExitGenerationLocker). GIL-on never takes it.
     std::optional<OSRExitGenerationLocker> generationLocker;
     if (vm.gilOff()) [[unlikely]] {
-        generationLocker.emplace(vm);
+        generationLocker.emplace(vm, callFrame);
         auto osrExitThunk = vm.getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
         const auto& existing = codeBlock->dfgJITData()->exitCode(exitIndex);
         if (existing.executableMemory() && existing.executableMemory() != osrExitThunk.executableMemory()) {

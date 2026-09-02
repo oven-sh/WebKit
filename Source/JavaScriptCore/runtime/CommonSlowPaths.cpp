@@ -998,10 +998,11 @@ ALWAYS_INLINE UGPRPair asyncIteratorOpenTryFastImpl(VM& vm, JSGlobalObject* glob
     if (symbolIterator.isUndefinedOrNull()) {
         JSAsyncFromSyncIterator* wrapper = createAsyncFromSyncIteratorForIterable(globalObject, iterable);
         RETURN_IF_EXCEPTION(throwScope, encodeResult(nullptr, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::Generic))));
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::AsyncFromSync;
+        CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, IterationMode::AsyncFromSync);
         GET(bytecode.m_iterator) = wrapper;
         PROFILE_VALUE_IN(JSValue(wrapper), m_iteratorValueProfile);
-        if (globalObject->promiseSpeciesWatchpointSet().state() == IsWatched) [[likely]]
+        // GIL-off, the fused path is not used: see the FastAsyncGenerator case below.
+        if (globalObject->promiseSpeciesWatchpointSet().state() == IsWatched && !vm.gilOff()) [[likely]]
             GET(bytecode.m_next) = vm.fastAsyncGeneratorSentinel();
         else
             GET(bytecode.m_next) = globalObject->asyncFromSyncIteratorPrototypeNextFunction();
@@ -1025,21 +1026,29 @@ ALWAYS_INLINE UGPRPair asyncIteratorOpenTryFastImpl(VM& vm, JSGlobalObject* glob
     }
 
     if (iterationMode != IterationMode::Generic) {
-        if (!canUseFastIterationMode(metadata.m_iterationMetadata.seenModes, iterationMode)) [[unlikely]]
+        if (!canUseFastIterationMode(CommonSlowPaths::loadIterationModeSeenModesConcurrently(metadata.m_iterationMetadata), iterationMode)) [[unlikely]]
             iterationMode = IterationMode::Generic;
         else if (globalObject->promiseSpeciesWatchpointSet().state() != IsWatched) [[unlikely]]
             iterationMode = IterationMode::Generic;
+        else if (vm.gilOff()) [[unlikely]] {
+            // The fused path queues the loop body as the driver of the next
+            // request before the body suspends. With the GIL off, the thread
+            // that settles that request can resume the body while this thread
+            // is still running it. The generic path registers the reaction
+            // after the body has returned.
+            iterationMode = IterationMode::Generic;
+        }
     }
 
     if (iterationMode == IterationMode::FastAsyncGenerator) {
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastAsyncGenerator;
+        CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, IterationMode::FastAsyncGenerator);
         GET(bytecode.m_iterator) = iterable;
         PROFILE_VALUE_IN(iterable, m_iteratorValueProfile);
         GET(bytecode.m_next) = vm.fastAsyncGeneratorSentinel();
         return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastAsyncGenerator)));
     }
 
-    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::Generic;
+    CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, IterationMode::Generic);
     return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::Generic)));
 }
 

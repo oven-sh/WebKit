@@ -590,32 +590,58 @@ void MarkedSpace::didFinishIterating()
     m_isIterating = false;
 }
 
+bool MarkedSpace::otherClientsCanChangeBlockLists()
+{
+    JSC::Heap& heap = this->heap();
+    return heap.isSharedServer()
+        && !heap.worldIsStoppedForAllClients()
+        && !(jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor());
+}
+
 size_t MarkedSpace::objectCount()
 {
-    size_t result = 0;
-    forEachBlock(
-        [&] (MarkedBlock::Handle* block) {
-            result += block->markCount();
-        });
-    for (PreciseAllocation* allocation : m_preciseAllocations) {
-        if (allocation->isMarked())
-            result++;
+    auto count = [&] {
+        size_t result = 0;
+        forEachBlock(
+            [&] (MarkedBlock::Handle* block) {
+                result += block->markCount();
+            });
+        for (PreciseAllocation* allocation : m_preciseAllocations) {
+            if (allocation->isMarked())
+                result++;
+        }
+        return result;
+    };
+    // Another client's allocation slow path can add a block or a precise
+    // allocation, growing the vectors walked here. The exclusive MSPL excludes
+    // every such path; the caller must not hold it already.
+    if (otherClientsCanChangeBlockLists()) [[unlikely]] {
+        MutatorSlowPathLocker mutatorSlowPathLocker(heap());
+        return count();
     }
-    return result;
+    return count();
 }
 
 size_t MarkedSpace::size()
 {
-    size_t result = 0;
-    forEachBlock(
-        [&] (MarkedBlock::Handle* block) {
-            result += block->markCount() * block->cellSize();
-        });
-    for (PreciseAllocation* allocation : m_preciseAllocations) {
-        if (allocation->isMarked())
-            result += allocation->cellSize();
+    auto measure = [&] {
+        size_t result = 0;
+        forEachBlock(
+            [&] (MarkedBlock::Handle* block) {
+                result += block->markCount() * block->cellSize();
+            });
+        for (PreciseAllocation* allocation : m_preciseAllocations) {
+            if (allocation->isMarked())
+                result += allocation->cellSize();
+        }
+        return result;
+    };
+    // Same exclusion as objectCount().
+    if (otherClientsCanChangeBlockLists()) [[unlikely]] {
+        MutatorSlowPathLocker mutatorSlowPathLocker(heap());
+        return measure();
     }
-    return result;
+    return measure();
 }
 
 size_t MarkedSpace::capacity()

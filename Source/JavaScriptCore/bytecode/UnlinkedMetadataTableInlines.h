@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MetadataTable.h"
+#include "Options.h"
 #include "UnlinkedMetadataTable.h"
 #include <wtf/FastMalloc.h>
 
@@ -168,6 +169,10 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     if (!m_hasMetadata)
         return nullptr;
 
+    std::optional<Locker<Lock>> threadsLocker;
+    if (Options::useJSThreads()) [[unlikely]]
+        threadsLocker.emplace(m_linkLock);
+
     unsigned totalSize = this->totalSize();
     unsigned offsetTableSize = this->offsetTableSize();
     unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
@@ -202,6 +207,10 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
     ASSERT(m_isFinalized);
     if (!m_hasMetadata)
         return;
+
+    std::optional<Locker<Lock>> threadsLocker;
+    if (Options::useJSThreads()) [[unlikely]]
+        threadsLocker.emplace(m_linkLock);
 
     if (metadataTable.buffer() == buffer()) {
         ASSERT(m_isLinked);

@@ -356,6 +356,16 @@ audited, the honest verdict is needs-test: the storm test must run JIT-on
 (it loops hot enough to tier up) so these sites are exercised, not just the
 LLInt paths.
 
+**Finding (2026-09-02): the views break the invariant.** The storm test
+crashes under TSAN, and in Release and Debug with `GIGACAGE_ENABLED=0` (about
+1 run in 20). `JSArrayBufferView::detachFromArrayBuffer` publishes length 0 and
+then a null `m_vector`, GIL off as well. A JIT store on another thread paired
+the old length (4096) with the null base and wrote to address 4095. The
+`ArrayBuffer` arm keeps its base word until the stop, as the quarantine rule
+says; the view arm does not. With the Gigacage on, the null base is caged to
+the start of the primitive cage, so the store lands there instead of
+faulting. Open: LANDING-PLAN.md, "Open items".
+
 ---
 
 ## Test index

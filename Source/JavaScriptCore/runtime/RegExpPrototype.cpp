@@ -874,7 +874,11 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
 
     RegExp* regexp = regexpObject->regExp();
 
-    bool cacheable = limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime();
+    // GIL-off, several threads run this on one VM at once. The split cache and
+    // vm.stringSplitIndice are VM-wide with no lock, so each split skips the
+    // cache and keeps its spans in a vector of its own.
+    const bool gilOff = vm.gilOffWithProcessGate();
+    bool cacheable = limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime() && !gilOff;
     if (cacheable) {
         StringImpl* impl = inputString->tryGetValueImpl();
         cacheable = impl && impl->isAtom();
@@ -889,7 +893,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
             // (RegExp.$1, lastMatch, leftContext, ...) via performMatch. Replay its final
             // match so those observable properties match the uncached path.
             if (cachedLastMatch)
-                globalObject->regExpGlobalData().recordMatch(vm, globalObject, regexp, inputString, cachedLastMatch, false);
+                threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regexp, inputString, cachedLastMatch, false);
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
@@ -992,7 +996,8 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
 
     unsigned maxSizeForDirectPath = 100000;
 
-    auto& spans = vm.stringSplitIndice;
+    Vector<unsigned> threadLocalSpans;
+    auto& spans = gilOff ? threadLocalSpans : vm.stringSplitIndice;
     spans.shrink(0);
     MatchResult lastMatchResult = genericSplit(
         globalObject, regexp, inputString, input, inputSize, position, matchPosition, regExpIsSticky, regExpIsUnicode,

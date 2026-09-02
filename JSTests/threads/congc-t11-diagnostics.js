@@ -1,4 +1,5 @@
 //@ requireOptions("--useSharedGCHeap=1", "--useConcurrentSharedGCMarking=1", "--useJSThreads=1", "--useDollarVM=1", "--numberOfGCMarkers=4")
+//@ threadsRequireGILOff
 // SPEC-congc CG-T11 (all stages): diagnostics-as-asserts — ANNEX CGT1.9
 // charter (CG-3a).
 //

@@ -174,13 +174,13 @@ public:
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
 
-    bool hasQuickDFGTierUpUpdated() const { return m_quickDFGTierUp != TriState::Indeterminate; }
-    bool isQuickDFGTierUp() const { return m_quickDFGTierUp == TriState::True; }
-    void setQuickDFGTierUp(TriState state) { m_quickDFGTierUp = state; }
-    TriState quickDFGTierUp() const { return m_quickDFGTierUp; }
+    bool hasQuickDFGTierUpUpdated() const { return quickDFGTierUp() != TriState::Indeterminate; }
+    bool isQuickDFGTierUp() const { return quickDFGTierUp() == TriState::True; }
+    void setQuickDFGTierUp(TriState state) { WTF::atomicStore(&m_quickDFGTierUp, state, std::memory_order_relaxed); }
+    TriState quickDFGTierUp() const { return WTF::atomicLoad(const_cast<TriState*>(&m_quickDFGTierUp), std::memory_order_relaxed); }
 
-    bool isQuickFTLTierUp() const { return m_quickFTLTierUp; }
-    void setQuickFTLTierUp(bool value) { m_quickFTLTierUp = value; }
+    bool isQuickFTLTierUp() const { return WTF::atomicLoad(const_cast<bool*>(&m_quickFTLTierUp), std::memory_order_relaxed); }
+    void setQuickFTLTierUp(bool value) { WTF::atomicStore(&m_quickFTLTierUp, value, std::memory_order_relaxed); }
 
     // Special registers
     void setThisRegister(VirtualRegister thisRegister) { m_thisRegister = thisRegister; }
@@ -294,8 +294,8 @@ public:
 
     static constexpr unsigned maxAge = 7;
 
-    unsigned age() const { return m_age; }
-    void resetAge() { m_age = 0; }
+    unsigned age() const { return WTF::atomicLoad(const_cast<uint8_t*>(&m_age), std::memory_order_relaxed); }
+    void resetAge() { WTF::atomicStore(&m_age, static_cast<uint8_t>(0), std::memory_order_relaxed); }
 
     NeedsClassFieldInitializer needsClassFieldInitializer() const
     {
@@ -413,11 +413,14 @@ private:
     unsigned m_derivedContextType : 2;
     unsigned m_evalContextType : 2;
     unsigned m_codeType : 2;
-    unsigned m_age : 3;
-    static_assert(((1U << 3) - 1) >= maxAge);
     bool m_hasCheckpoints : 1;
-    TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
-    bool m_quickFTLTierUp : 1 { false };
+    // Not bitfields: the GC writes the age, and any mutator writes the tier-up
+    // hints, while compiler threads read the bits above. A bitfield write
+    // rewrites its whole unit, so it could undo a write to a neighbor.
+    uint8_t m_age { 0 };
+    static_assert(std::numeric_limits<uint8_t>::max() >= maxAge);
+    TriState m_quickDFGTierUp { TriState::Indeterminate };
+    bool m_quickFTLTierUp { false };
 
 public:
     ConcurrentJSLock m_lock;
@@ -428,7 +431,9 @@ public:
     // race the install must snapshot through unlinkedBaselineCodeConcurrently() instead of
     // touching m_unlinkedBaselineCode directly — a bare RefPtr load racing the install is a
     // torn-pointer / ref-count hazard, not advisory profiling. Once installed, the value is
-    // never replaced or cleared for the lifetime of this UnlinkedCodeBlock. Both paths are
+    // never replaced. It is cleared only while every mutator is stopped: by a collection
+    // (Heap::releaseUnusedSharedBaselineCode, the old-age jettison in CodeBlock::jettison)
+    // and by Heap::clearUnlinkedBaselineCodeCaches inside deleteAllCode's stop window. Both paths are
     // cold (tier-up / plan creation), so the lock is fine. Definitions live in CodeBlock.cpp
     // next to the installer (BaselineJITCode is incomplete here). Flag-off the lock is
     // uncontended and behavior is unchanged.

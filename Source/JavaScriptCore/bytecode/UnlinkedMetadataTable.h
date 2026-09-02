@@ -28,6 +28,7 @@
 #include "Opcode.h"
 #include "ValueProfile.h"
 #include <wtf/Atomics.h>
+#include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
@@ -200,6 +201,10 @@ private:
     // Dedicated byte, not part of the bitfield above: accessed cross-thread with relaxed
     // atomics (THREADS §5.7); see didOptimize()/setDidOptimize().
     TriState m_didOptimize { TriState::Indeterminate };
+    // With JS threads on, link() (in a new CodeBlock) and unlink() (in a swept CodeBlock's
+    // destructor) can run on two threads at once, and both free and replace m_rawBuffer.
+    // Leaf lock: only malloc, free and memcpy run under it.
+    Lock m_linkLock;
     unsigned m_numValueProfiles { 0 };
     unsigned m_stepsCount { 0 };
     const uint32_t* m_steps { nullptr };

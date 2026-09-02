@@ -608,3 +608,64 @@ claim without bisection). The other 6 benches are within ±0.7%.
 in §24.4; semantics/ic-instanceof-vs-transition DEADLYSIGNAL in JIT code
 (amplifier-owned per §0); the four KNOWN-FAILING tests (separate fix
 queue).
+
+## Post-rebase campaign (2026-09-02)
+
+The first TSAN run since the rebase onto `491b5cc236e9`. It used the full-JIT
+configuration above (`ENABLE_C_LOOP=OFF`, `USE_SYSTEM_MALLOC=ON`), on the
+whole corpus and on the CVE suite, in both GIL modes.
+
+Report files per round, counting each test process that reported at least
+once:
+
+| Round | Corpus, GIL on | Corpus, GIL off | CVE, GIL on | CVE, GIL off |
+|---|---|---|---|---|
+| 1 | 75 | 100 | 21 | 39 |
+| 2 | 1 | 5 | 0 | 3 |
+| 3 | 1 | 5 | 0 | 1 |
+| 4 | 0 | 6 | 1 | 2 |
+| 5 | 0 | 3 | 0 | 1 |
+| 6 | 0 | 7 | 0 | 1 |
+| 7 | 0 | 2 | 0 | 1 |
+| 8 | 0 | 2 | 0 | 2 |
+| 9 (the final tree) | 0 | 1 | 0 | 2 |
+
+In round 9, the "Corpus, GIL off" file is the open `m_numValuesInVector`
+group, and the two "CVE, GIL off" files are the `mc-grow-buffer-storm.js`
+crash and one more report of the CodeBlock publish that the LLInt hides, which
+is suppressed now.
+
+Each run reports the races whose timing it hits, so later rounds show
+different subsets. Every group was triaged with the rules in TSAN-TRIAGE.md
+section 0. Three kinds came out:
+
+- **Upstream races, present flag off.** Suppressed, each with a one-line
+  reason in `Tools/tsan/suppressions.txt`: Wasm plan state, `VMTraps`
+  invalidation, `WarmUpBlockProvider::refill` (new upstream since the merge
+  base), the global JIT worklist pointer, `UnlinkedMetadataTable` bit fields,
+  `ParallelHelperClient::runTask`. One old entry named an accessor that the
+  rebase had renamed (`loadCallTypeAndType`), so it matched nothing; a stale
+  name fails silently, so check the names after a rebase.
+- **Accesses that TSAN cannot pair.** A publish or a read in JIT or LLInt
+  code, or an address dependency. Suppressed with the reason
+  (`llint_check_stack_and_vm_traps`, `DirectCallLinkInfo`), or made acquire
+  under `TSAN_ENABLED` only (the mark bit copies, the double element accessor
+  in `Butterfly.h`, `InlineWatchpointSet::inflatedSetConcurrently`), so that
+  other builds do not change.
+- **Real ordering bugs, fixed in all builds.** A pointer loaded relaxed and
+  then dereferenced, with the publisher on another thread: `CodeBlock`
+  rare data, `FunctionRareData`, the client heap's lazy `IsoSubspace`s, the
+  poly-proto watchpoint box, and the property table of a just-published
+  structure. On x86 these are compiler-ordering bugs only; on arm64 they can
+  read uninitialized memory. Also: the direct eval cache and the
+  `isHandled` read of a promise were not locked, and the Map and Set tables,
+  which had no GIL-off protocol at all (audit row OM-10).
+
+Left open:
+
+- `ArrayStorage::m_numValuesInVector`, read with no lock as a density
+  heuristic in `putByIndexBeyondVectorLength`.
+- `cve/mc-grow-buffer-storm.js` crashes in every round, GIL off. It is not a
+  race report: a typed array view's detach publishes a null base, and JIT code
+  on another thread stores through it. TSAN builds use the system malloc, so
+  there is no Gigacage to hide it. See LANDING-PLAN.md, "Open items".

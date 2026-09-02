@@ -111,7 +111,7 @@ Ref<ScriptCallStack> createScriptCallStack(JSC::JSGlobalObject* globalObject, si
     JSLockHolder locker(globalObject);
 
     VM& vm = globalObject->vm();
-    CallFrame* frame = vm.topCallFrame;
+    CallFrame* frame = vm.group3Primitives().topCallFrame; // UNGIL §A.1.3 mode split.
     if (!frame)
         return ScriptCallStack::create();
 
@@ -128,7 +128,7 @@ Ref<ScriptCallStack> createScriptCallStackForConsole(JSC::JSGlobalObject* global
     JSLockHolder locker(globalObject);
 
     VM& vm = globalObject->vm();
-    CallFrame* frame = vm.topCallFrame;
+    CallFrame* frame = vm.group3Primitives().topCallFrame; // UNGIL §A.1.3 mode split.
     if (!frame)
         return ScriptCallStack::create();
 

@@ -244,6 +244,35 @@ JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JS
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (vm.gilOff()) [[unlikely]] {
+        // Another thread can add to the set between size() and the copy below,
+        // which writes one element per entry it finds. Collect the entries
+        // first, and size the result from them.
+        MarkedArgumentBuffer keys;
+        if (set->storage()) {
+            auto& storage = set->storageRef();
+            for (JSSet::Helper::Entry entry = 0;; ++entry) {
+                auto transitionResult = JSSet::Helper::transitAndNext(vm, storage, entry);
+                if (!transitionResult.storage)
+                    break;
+                keys.append(transitionResult.key);
+                entry = transitionResult.entry;
+            }
+        }
+        if (keys.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        JSCellButterfly* result = JSCellButterfly::tryCreate(vm, vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous), keys.size());
+        if (!result) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        for (unsigned index = 0; index < keys.size(); ++index)
+            result->setIndex(vm, index, keys.at(index));
+        return result;
+    }
+
     unsigned length = set->size();
     JSCellButterfly* result = JSCellButterfly::tryCreate(vm, vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous), length);
     if (!result) [[unlikely]] {

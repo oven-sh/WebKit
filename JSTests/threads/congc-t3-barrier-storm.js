@@ -1,4 +1,5 @@
 //@ requireOptions("--useSharedGCHeap=1", "--useConcurrentSharedGCMarking=1", "--useJSThreads=1", "--useDollarVM=1", "--numberOfGCMarkers=4")
+//@ threadsRequireGILOff
 // SPEC-congc CG-T3 (C1): barrier storm — ANNEX CGT1.5 charter (CG-3a).
 //
 // N threads store-heavy during forced concurrent marking: every store into

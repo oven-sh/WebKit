@@ -39,16 +39,27 @@
 #include "JSCInlines.h"
 #include "JSFFIFunction.h"
 #include "JSGlobalObject.h"
+#include "ThreadManager.h"
 #include "TopExceptionScope.h"
 
 namespace JSC {
 
 namespace FFI {
 
+bool throwIfFFIRefusedOnCurrentThreadSlow(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    if (!getVM(globalObject).gilOff() || !ThreadManager::isJSThreadCurrent())
+        return false;
+    throwTypeError(globalObject, scope, "bun:ffi is not available on spawned threads when the GIL is off"_s);
+    return true;
+}
+
 static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwIfFFIRefusedOnCurrentThread(globalObject, scope)) [[unlikely]]
+        return { };
 
     auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
     Signature& signature = function->signature();

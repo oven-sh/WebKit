@@ -162,20 +162,18 @@ public:
     // deref'd locally; it was never published, so nothing a foreign reader
     // can hold is ever displaced or freed under it — no GC-deferred retire
     // needed once replacement cannot happen). The copy accessor loads the
-    // word with a relaxed atomic before taking its (thread-safe) ref.
-    // Flag-off arms are bit-identical to the old plain code. Residual
-    // (recorded for the triage doc): sharedPolyProtoWatchpoint() still
-    // returns a const reference, so foreign call sites (LLIntSlowPaths.cpp,
-    // InlineCacheCompiler.cpp — other slices' files) dereference the word
-    // with a plain load; closing that pair needs a by-value accessor (a
-    // flag-off codegen change at those call sites) or caller-side edits.
+    // word with an acquire load before taking its (thread-safe) ref: the
+    // caller uses the set, which another thread may have just published.
+    // sharedPolyProtoWatchpoint() returns by value for the same reason, so
+    // no caller reads the word with a plain load. Flag off, that costs one
+    // ref and one deref on the cold IC paths that call it.
     Box<InlineWatchpointSet> copySharedPolyProtoWatchpoint() const
     {
         if (!Options::useJSThreads()) [[likely]]
             return m_polyProtoWatchpoint;
         return copySharedPolyProtoWatchpointConcurrently();
     }
-    const Box<InlineWatchpointSet>& sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
+    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return copySharedPolyProtoWatchpoint(); }
     void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint)
     {
         if (!Options::useJSThreads()) [[likely]] {

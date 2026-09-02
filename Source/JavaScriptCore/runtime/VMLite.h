@@ -564,6 +564,16 @@ public:
     // backfills"). Called after VMLiteRegistry::registerLite at every
     // GIL-off registration site; idempotent vs a racing install fan.
     JS_EXPORT_PRIVATE void backfillBakedScratchBuffers();
+
+    // GIL-off Map and Set iteration (JSOrderedHashTableHelper): the entry the
+    // last nextAndUpdateIterationEntry on this thread found, with its key and
+    // value. With the GIL on, the table itself holds the entry, but a table is
+    // shared by every thread that iterates it. The key and value are GC roots
+    // (VM::visitAggregateImpl), because a delete on another thread can remove
+    // them from the table while this thread still holds them here.
+    uint32_t orderedHashTableIterationEntry { 0 };
+    JSValue orderedHashTableIterationKey;
+    JSValue orderedHashTableIterationValue;
 };
 static_assert(OBJECT_OFFSETOF(VMLite, primitives) == 0);
 

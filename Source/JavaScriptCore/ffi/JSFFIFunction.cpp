@@ -103,6 +103,9 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
         return nullptr;
     }
 
+    if (FFI::throwIfFFIRefusedOnCurrentThread(globalObject, scope)) [[unlikely]]
+        return nullptr;
+
 #if ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
     UNUSED_PARAM(structure);
     UNUSED_PARAM(signatureRef);

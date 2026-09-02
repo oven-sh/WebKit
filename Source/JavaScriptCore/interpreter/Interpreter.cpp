@@ -1707,7 +1707,11 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
     }
 
     EvalCodeBlock* codeBlock = nullptr;
-    JSCallee* callee = globalObject->evalCallee();
+    // Eval code reads its scope from the callee when it starts, and the scope is
+    // cleared when the eval returns. With the GIL off, another thread can run an
+    // eval on this global object at the same time, so each eval gets its own
+    // callee.
+    JSCallee* callee = vm.gilOff() ? JSCallee::create(vm, globalObject, scope) : globalObject->evalCallee();
 #if CPU(ARM64) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
     void* entry = nullptr;
     {

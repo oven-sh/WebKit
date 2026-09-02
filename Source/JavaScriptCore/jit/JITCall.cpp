@@ -599,7 +599,7 @@ void JIT::emit_op_async_iterator_next(const JSInstruction* instruction)
     else
         moveValue(JSValue(), resumeValueGPR);
     loadGlobalObject(globalObjectGPR);
-    callOperation(operationAsyncIteratorNextWithDriver, globalObjectGPR, iteratorGPR, driverGPR, resumeValueGPR, TrustedImmPtr(&vm().syncResumeCallCache()));
+    callOperation(operationAsyncIteratorNextWithDriver, globalObjectGPR, iteratorGPR, driverGPR, resumeValueGPR, TrustedImmPtr(vm().syncResumeCallCacheIfSingleMutator()));
     emitPutVirtualRegister(bytecode.m_dst, returnValueGPR);
     Jump doneCase = jump();
 

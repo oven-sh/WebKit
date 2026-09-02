@@ -884,6 +884,16 @@ void Options::notifyOptionsChanged()
         Options::useWasm() = false;
     }
 
+    // The bun:ffi IC stub and the DFG and FTL call paths read the VM-level
+    // exception word and publish the VM-level top call frame, which with the GIL
+    // off are not the current thread's. Every FFI call then goes through
+    // ffiHostCall, which uses the per-thread state.
+    if (Options::useJSThreads() && !Options::useThreadGIL()) {
+        Options::useFFIICStub() = false;
+        Options::useFFICallInDFG() = false;
+        Options::useFFIDirectCall() = false;
+    }
+
 #if !(CPU(X86_64) || CPU(ARM64)) || ENABLE(C_LOOP)
     // UNGIL §A.1.3 / AB-1 (A6-amend review finding, 2026-06-11): the GIL-off
     // Group-3 mode split is implemented only for the 64-bit JIT

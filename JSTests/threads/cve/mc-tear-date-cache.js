@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-TEAR S7 (docs/threads/cve/map-MC-TEAR.md): DateInstance
 // GregorianDateTime cache tear. UNGIL-HANDOUT §N.3 rules the cache BYPASSED
 // GIL-off ("the cached pair is >8 bytes, not CASable") with m_data lazy

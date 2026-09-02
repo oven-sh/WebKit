@@ -1,4 +1,4 @@
-//@ requireOptions("--useJSThreads=1", "--useVMLite=1", "--useSharedAtomStringTable=1", "--useSharedGCHeap=1", "--useThreadGILOffUnsafe=1")
+//@ requireOptions("--useJSThreads=1", "--useVMLite=1", "--useSharedAtomStringTable=1", "--useSharedGCHeap=1", "--useThreadGILOffUnsafe=1", "--useDollarVM=1")
 // MC-GC S12b (docs/threads/cve/map-MC-GC.md): m_weakGCHashTables registry
 // publication race vs the conducted prune — the JDK-8147611 / CVE-2026-7936
 // "weak-table read vs sweep" analog. Heap::registerWeakGCHashTable /

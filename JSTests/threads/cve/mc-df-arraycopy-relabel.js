@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1", "--verifyConcurrentButterfly=1")
+//@ threadsRequireGILOff
 // MC-DF S8 + S10b (docs/threads/cve/map-MC-DF.md): the CVE-2014-0456
 // System.arraycopy shape — type/layout checked on fetch 1, raw bytes
 // copied on fetch 2 — at the two §10.7 sites the round-4 single-snapshot
@@ -75,7 +76,16 @@ for (let r = 0; r < ROUNDS; ++r) {
     // A few back-to-back attempts per round widen the hit window without
     // waiting on the writer.
     for (let k = 0; k < 8; ++k) {
-        dst.set(a, 0);                         // S10b: setFromArrayLike fast path
+        // The writer grows `a` past LEN, and set() throws RangeError when it
+        // reads a source length that no longer fits in dst. That is the spec
+        // outcome, not the bug this test hunts, so only a copy that ran is
+        // checked.
+        try {
+            dst.set(a, 0);                     // S10b: setFromArrayLike fast path
+        } catch (e) {
+            if (!(e instanceof RangeError))
+                throw e;
+        }
         for (let i = 0; i < LEN; ++i) {
             const v = dst[i];
             if (v !== SENTINEL && v !== 0)     // 0 = hole-as-undefined → toNative 0

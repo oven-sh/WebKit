@@ -492,7 +492,7 @@ ASCIILiteral getIteratorErrorMessage(IterableValidationResult result, JSValue it
     return ""_s;
 }
 
-IterationMode getIterationMode(VM&, JSGlobalObject* globalObject, JSValue iterable, JSValue symbolIterator)
+IterationMode getIterationMode(VM& vm, JSGlobalObject* globalObject, JSValue iterable, JSValue symbolIterator)
 {
     if (!iterable.isCell()) [[unlikely]]
         return IterationMode::Generic;
@@ -547,8 +547,11 @@ IterationMode getIterationMode(VM&, JSGlobalObject* globalObject, JSValue iterab
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    // With the GIL off, Map and Set iteration takes the generic path, as it does
+    // once the protocol watchpoint fires. The DFG makes the same choice, so a
+    // fast-mode iterator never reaches code that does not handle its mode.
     if (dynamicDowncast<JSMap>(iterable.asCell())) {
-        if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid())
+        if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid() || vm.gilOff())
             return IterationMode::Generic;
 
         if (globalObject->mapProtoEntriesFunctionConcurrently() != symbolIteratorFunction)
@@ -558,7 +561,7 @@ IterationMode getIterationMode(VM&, JSGlobalObject* globalObject, JSValue iterab
     }
 
     if (auto* mapIterator = dynamicDowncast<JSMapIterator>(iterable.asCell())) {
-        if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid())
+        if (!globalObject->mapIteratorProtocolWatchpointSet().isStillValid() || vm.gilOff())
             return IterationMode::Generic;
 
         // mapIter[Symbol.iterator] is inherited from %IteratorPrototype% and just returns this; identity-check it
@@ -584,7 +587,7 @@ IterationMode getIterationMode(VM&, JSGlobalObject* globalObject, JSValue iterab
     }
 
     if (dynamicDowncast<JSSet>(iterable.asCell())) {
-        if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid())
+        if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid() || vm.gilOff())
             return IterationMode::Generic;
 
         if (globalObject->setProtoValuesFunctionConcurrently() != symbolIteratorFunction)
@@ -594,7 +597,7 @@ IterationMode getIterationMode(VM&, JSGlobalObject* globalObject, JSValue iterab
     }
 
     if (auto* setIterator = dynamicDowncast<JSSetIterator>(iterable.asCell())) {
-        if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid())
+        if (!globalObject->setIteratorProtocolWatchpointSet().isStillValid() || vm.gilOff())
             return IterationMode::Generic;
 
         if (globalObject->iteratorProtoSymbolIteratorFunction() != symbolIteratorFunction)

@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-LOCK S5 (docs/threads/cve/map-MC-LOCK.md): safepoint state-machine
 // convergence vs native park sites — the AB-17B regression (the in-tree
 // instance of the ERTS allocator-carrier deadlock shape). The conductor's

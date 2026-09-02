@@ -2393,7 +2393,10 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
     if (Options::useJSThreads()) [[unlikely]] {
         if (VMLite::currentIfExists()) {
             for (unsigned attempt = 0; attempt < 3; ++attempt) {
-                PropertyTable* fastTable = propertyTableOrNull();
+                // The probe's loads depend on this pointer, which orders them
+                // after setPropertyTable's release store. TSAN does not see a
+                // dependency, so under TSAN the load is acquire.
+                PropertyTable* fastTable = WTF::atomicLoad(const_cast<Structure*>(this)->m_propertyTableUnsafe.slot(), TSAN_ENABLED ? std::memory_order_acquire : std::memory_order_relaxed);
                 if (!fastTable)
                     break;
                 uint32_t editCount = fastTable->concurrentEditCount(); // Acquire: orders the probe after it.

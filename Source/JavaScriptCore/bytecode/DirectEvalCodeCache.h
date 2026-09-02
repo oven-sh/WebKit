@@ -29,6 +29,7 @@
 #pragma once
 
 #include "BytecodeIndex.h"
+#include "Options.h"
 #include "SlotVisitorMacros.h"
 #include <wtf/HashMap.h>
 #include <wtf/RefPtr.h>
@@ -130,7 +131,8 @@ namespace JSC {
 
         void set(JSGlobalObject* globalObject, JSCell* owner, const CacheLookupKey& cacheKey, DirectEvalExecutable* evalExecutable)
         {
-            if (m_cacheMap.size() < maxCacheEntries)
+            // setSlow checks the size again under the lock.
+            if (Options::useJSThreads() || m_cacheMap.size() < maxCacheEntries)
                 setSlow(globalObject, owner, cacheKey, evalExecutable);
         }
 

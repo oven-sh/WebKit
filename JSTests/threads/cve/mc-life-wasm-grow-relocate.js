@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-LIFE S6 (docs/threads/cve/map-MC-LIFE.md): relocating wasm Memory grow
 // vs spawned typed-array readers. Both halves of annex N6 arm 4 are NOW
 // LANDED: the stale-mapping quarantine in ArrayBufferContents::

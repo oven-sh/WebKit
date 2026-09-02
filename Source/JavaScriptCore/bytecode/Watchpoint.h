@@ -435,10 +435,8 @@ private:
 // load the state as a single raw byte; the Atomic wrapper must not change that.
 static_assert(sizeof(Atomic<WatchpointState>) == 1);
 
-// InlineWatchpointSet is a low-overhead, non-copyable watchpoint set in which
-// it is not possible to quickly query whether it is being watched in a single
-// branch. There is a fairly simple tradeoff between WatchpointSet and
-// InlineWatchpointSet:
+// InlineWatchpointSet is a low-overhead, non-copyable watchpoint set. There is
+// a fairly simple tradeoff between WatchpointSet and InlineWatchpointSet:
 //
 // Do you have to emit JIT code that tests whether the watchpoint set is being
 // watched? Both work, but WatchpointSet needs a single branch while
@@ -650,7 +648,7 @@ public:
     // Safe to call from another thread. Once inflated, the WatchpointSet never changes.
     WatchpointSet* inflatedSetConcurrently() const
     {
-        uintptr_t data = m_data.loadRelaxed();
+        uintptr_t data = m_data.load(dataLoadOrder);
         if (isFat(data))
             return fat(data);
         return nullptr;

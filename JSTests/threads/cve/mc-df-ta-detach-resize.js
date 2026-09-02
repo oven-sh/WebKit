@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-DF S2 (docs/threads/cve/map-MC-DF.md): TypedArray/DataView fast paths
 // load LENGTH, bounds-check, then load BASE (two fetches, no ordering on the
 // reader side). A second agent detaching / transferring / shrinking /

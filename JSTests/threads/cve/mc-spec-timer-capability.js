@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1", "--useSharedArrayBuffer=0")
+//@ threadsRequireGILOff
 // MC-SPEC S1/S2 capability WITNESS (docs/threads/cve/map-MC-SPEC.md).
 //
 // This is not a failure detector for a bug — MC-SPEC is structural. It is

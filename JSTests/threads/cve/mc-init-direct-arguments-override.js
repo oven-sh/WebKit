@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1")
+//@ threadsRequireGILOff
 // MC-INIT surface 10 (docs/threads/cve/map-MC-INIT.md): DirectArguments
 // lazy override storage (m_mappedArguments) publication.
 //

@@ -28,6 +28,7 @@
 #include "JSONObject.h"
 
 #include "ArrayConstructor.h"
+#include "ArrayPrototypeInlines.h"
 #include "BigIntObject.h"
 #include "BooleanObject.h"
 #include "GetterSetter.h"
@@ -1727,7 +1728,11 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         }
 
         if (hasContiguous(indexingType)) {
-            auto* butterfly = array.butterfly();
+            Butterfly* butterfly = nullptr;
+            if (!flatButterflySnapshot(&array, butterfly)) [[unlikely]] {
+                recordFailure("segmented butterfly"_s);
+                return;
+            }
             unsigned length = butterfly->publicLength();
             if (length > butterfly->vectorLength()) [[unlikely]] {
                 recordFailure("!lengthBeyondVector"_s);
@@ -1795,13 +1800,11 @@ template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendInt32Array(JSArray& array)
 {
-    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — bail via
-    // the existing recordFailure path (general stringifier).
-    if (array.mayBeSegmentedButterfly()) [[unlikely]] {
+    Butterfly* butterfly = nullptr;
+    if (!flatButterflySnapshot(&array, butterfly)) [[unlikely]] {
         recordFailure("segmented butterfly"_s);
         return;
     }
-    auto* butterfly = array.butterfly();
     unsigned length = butterfly->publicLength();
     if (length > butterfly->vectorLength()) [[unlikely]] {
         recordFailure("!lengthBeyondVector"_s);

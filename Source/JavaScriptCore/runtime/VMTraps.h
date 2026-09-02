@@ -288,6 +288,12 @@ public:
     // valid for the VM-embedded instance.
     JS_EXPORT_PRIVATE CONCURRENT_SAFE void fireTrapVMWide(Event);
 
+    // The withdrawal counterpart of fireTrapVMWide (VM::cancelTermination):
+    // clears the bit in every lite of this VM and in the VM word. Returns
+    // whether any of them had it. Flag-off / GIL-on: clearTrap(). Same
+    // VM-level-instance-only contract.
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE bool clearTrapVMWide(Event);
+
     // UNGIL annex W W1 terminate arm, interim single-shared-word form: raise
     // VM-wide termination (rule 3) on behalf of a carrier that has ALREADY
     // observed/serviced this termination itself (the §J.3-parked W1 servicer,

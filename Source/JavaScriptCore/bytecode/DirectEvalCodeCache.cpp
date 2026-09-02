@@ -40,6 +40,8 @@ void DirectEvalCodeCache::setSlow(JSGlobalObject* globalObject, JSCell* owner, c
         return;
 
     Locker locker { m_lock };
+    if (m_cacheMap.size() >= maxCacheEntries)
+        return;
     m_cacheMap.set(cacheKey, WriteBarrier<DirectEvalExecutable>(globalObject->vm(), owner, evalExecutable));
 }
 
