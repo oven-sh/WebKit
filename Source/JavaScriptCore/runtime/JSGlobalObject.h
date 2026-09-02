@@ -517,7 +517,6 @@ public:
     String m_name;
 
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_isAsyncContextTrackingEnabled { false };
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
@@ -771,8 +770,12 @@ public:
     DECLARE_EXPORT_INFO;
 
 #if USE(BUN_JSC_ADDITIONS)
-    bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
-    void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
+    bool isAsyncContextTrackingEnabled() const { return vm().isAsyncContextTrackingEnabled(); }
+    void setAsyncContextTrackingEnabled(bool isEnabled)
+    {
+        if (isEnabled)
+            vm().setAsyncContextTrackingEnabled();
+    }
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
 #endif
 

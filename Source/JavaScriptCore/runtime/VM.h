@@ -529,6 +529,9 @@ public:
 
     VMType vmType;
     bool m_mightBeExecutingTaintedCode { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_asyncContextTrackingEnabled { false };
+#endif
     ClientData* clientData { nullptr };
 #if ENABLE(WEBASSEMBLY)
     Wasm::Context wasmContext;
@@ -652,6 +655,13 @@ public:
     StringReplaceCache stringReplaceCache;
 
     bool mightBeExecutingTaintedCode() const { return m_mightBeExecutingTaintedCode; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Set once the embedder starts using JSGlobalObject::m_asyncContextData (its
+    // first AsyncLocalStorage); never cleared. Until then no async context can have
+    // been captured anywhere in this VM, so the capture/restore paths are skipped.
+    bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
+    void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
+#endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode = value; }
 
@@ -1354,6 +1364,7 @@ public:
         JSValue arg0;
         JSValue arg1;
         JSValue arg2;
+        JSValue arg3 { };
     };
     // While non-null, internal-microtask reactions for already-settled promises
     // are appended here instead of the global microtask queue.

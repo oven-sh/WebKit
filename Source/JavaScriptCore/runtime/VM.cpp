@@ -2008,6 +2008,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
             visitor.appendUnbarriered(t.arg0);
             visitor.appendUnbarriered(t.arg1);
             visitor.appendUnbarriered(t.arg2);
+            visitor.appendUnbarriered(t.arg3);
         }
     }
 #endif
