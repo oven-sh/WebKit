@@ -2354,8 +2354,13 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
 
     LLINT_RETURN(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
-            if (metadata.m_getPutInfo.resolveMode() == ThrowIfNotFound)
+            if (metadata.m_getPutInfo.resolveMode() == ThrowIfNotFound) {
+#if USE(BUN_JSC_ADDITIONS)
+                return throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident, callFrame->uncheckedR(codeBlock->scopeRegister()).Register::scope(), static_cast<unsigned>(metadata.m_getPutInfo.resolveType()), codeBlock));
+#else
                 return throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));
+#endif
+            }
             return jsUndefined();
         }
 

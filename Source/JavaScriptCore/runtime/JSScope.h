@@ -56,6 +56,11 @@ public:
     static JSObject* NODELETE objectAtScope(JSScope*);
 
     static JSObject* resolve(JSGlobalObject*, JSScope*, const Identifier&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Empty unless `ident` is unresolvable from `start` while a module environment on the chain declares or imports a
+    // binding with the same text: then a short description of which invariant is broken, for the ReferenceError's message.
+    static String diagnoseImpossibleUndefinedVariable(JSGlobalObject*, JSScope* start, const Identifier&, unsigned resolveType, CodeBlock*);
+#endif
     static JSValue resolveScopeForHoistingFuncDeclInEval(JSGlobalObject*, JSScope*, const Identifier&);
     static ResolveOp abstractResolve(JSGlobalObject*, size_t depthOffset, JSScope*, const Identifier&, GetOrPut, ResolveType, InitializationMode);
 
