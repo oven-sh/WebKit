@@ -1044,12 +1044,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDecl
         } else {
             lastIdent = nullptr;
             ASSERT(!isUsingDeclaration); // Already handled above with failIfFalse(matchSpecIdentifier()).
-            TreeDestructuringPattern pattern;
-            {
-                bool allowsInOperator = true;
-                SetForScope allowsInScope(m_allowsIn, allowsInOperator);
-                pattern = parseDestructuringPattern(context, destructuringKindFromDeclarationType(declarationType), exportType, nullptr, nullptr, assignmentContext);
-            }
+            TreeDestructuringPattern pattern = parseDestructuringPattern(context, destructuringKindFromDeclarationType(declarationType), exportType, nullptr, nullptr, assignmentContext);
             failIfFalse(pattern, "Cannot parse this destructuring pattern");
             hasInitializer = match(EQUAL);
             failIfTrue(declarationListContext == VarDeclarationContext && !hasInitializer, "Expected an initializer in destructuring variable declaration");
@@ -1289,6 +1284,11 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
     failIfStackOverflow();
     m_parserState.assignmentCount++;
     SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
+    // Everything inside a pattern (element initializers, computed property names, the subscripts of
+    // assignment targets) is parsed with [+In] even when the pattern itself sits in the init of a
+    // for statement, which is the only context that sets m_allowsIn to false. The initializer that
+    // follows the whole pattern is parsed by the caller and does inherit the enclosing [In].
+    AllowInOverride allowInOverride(this);
     TreeDestructuringPattern pattern;
     switch (m_token.m_type) {
     case OPENBRACKET: {
@@ -2294,6 +2294,10 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFormalParameters(TreeB
     bool isRestParameter = false;
     const Identifier* duplicateParameter = nullptr;
     unsigned restParameterStart = 0;
+    // Parameter initializers are parsed with [+In]. This only matters for arrow functions, whose
+    // parameters (both in the isArrowFunctionParameters() lookahead and in the real parse) are reached
+    // from parseAssignmentExpression() and so still see the [~In] of an enclosing for statement's init.
+    AllowInOverride allowInOverride(this);
     do {
         TreeDestructuringPattern parameter = 0;
         TreeExpression defaultValue = 0;
@@ -2384,6 +2388,13 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
         else
             failIfFalse(parseArrowFunctionSingleExpressionBodySourceElements(syntaxChecker), "Cannot parse body of this arrow function");
     } else {
+        // A block body is a FunctionBody and is parsed with [+In] whatever the enclosing context allows,
+        // while an arrow function's expression body (above) inherits the enclosing [In]. The enclosing
+        // context only matters for a block-bodied arrow function in the init of a for statement: its
+        // body is the one function body reached with m_allowsIn == false. Without the override every
+        // `in` in the body is rejected, and a for statement inside the body (which sets m_allowsIn back
+        // to true when it is done with its own init) would re-enable `in` for the rest of the outer init.
+        AllowInOverride allowInOverride(this);
         if (m_debuggerParseData)
             failIfFalse(parseSourceElements(context, CheckForStrictMode), bodyType == StandardFunctionBodyBlock ? "Cannot parse body of this function" : "Cannot parse body of this arrow function");
         else
