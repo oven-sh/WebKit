@@ -81,6 +81,25 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     if (error.isValid())
         return nullptr;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A generator or async function compiles to a wrapper that creates a separate body function. The body is the
+    // callee of the stack frames recorded while the function's code runs, and of the "async" frames recorded while
+    // it is suspended at an await. The parser only names the body after the wrapper's declared name, so a wrapper
+    // whose name was inferred from its binding (`const f = async () => { ... }`) gets an anonymous body. Propagate
+    // the inferred name so those frames are named the same way the wrapper's own frame is.
+    if (isGeneratorOrAsyncFunctionWrapperParseMode(executable->parseMode())) {
+        const Identifier& ecmaName = executable->ecmaName();
+        if (!ecmaName.isEmpty() && !ecmaName.isSymbol()) {
+            for (auto& functionExpr : result->functionExprs()) {
+                UnlinkedFunctionExecutable* body = functionExpr.get();
+                if (isGeneratorOrAsyncFunctionBodyParseMode(body->parseMode()) && body->ecmaName().isEmpty())
+                    body->setEcmaName(ecmaName);
+            }
+        }
+    }
+#endif
+
     vm.codeCache()->updateCache(executable, source, kind, result);
     return result;
 }
