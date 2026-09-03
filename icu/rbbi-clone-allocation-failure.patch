@@ -1,0 +1,94 @@
+RuleBasedBreakIterator::clone() (what ubrk_clone / ubrk_safeClone call) crashes
+instead of reporting U_MEMORY_ALLOCATION_ERROR when any allocation other than the
+iterator object itself fails. The copy constructor delegates to the default
+constructor, which allocates fDictionaryCache, fBreakCache and their UVector32
+buffers (64, 32, 832 and 32 bytes); if one of those fails it records the error in
+fErrorCode and leaves the pointers null, and the copy constructor then runs
+operator=, which ends with fBreakCache->reset(). operator= also allocates
+fLookAheadMatches without checking the result, and handleNext() stores into it
+whenever a look-ahead rule matches (the grapheme rules have one, for regional
+indicator sequences), so that failure crashes on the first iteration instead.
+
+JSC clones a break iterator for every Intl.Segmenter.prototype.segment() call and
+every %Segments.prototype%[Symbol.iterator]() call and checks the status, but the
+crash happens inside ubrk_clone before there is a status to check. This is the
+crash Bun's crash reporter shows on Windows as
+RuleBasedBreakIterator::BreakCache::reset <- RuleBasedBreakIterator::operator=
+<- RuleBasedBreakIterator::clone <- ubrk_clone <- JSC::IntlSegmenter::segment,
+where the static CRT's malloc returns null once the process is out of commit.
+
+operator= now refuses to touch an iterator whose construction failed, records a
+failed fLookAheadMatches allocation in fErrorCode, and clone() (plus the
+rules-string constructor, the other in-tree user of operator=) reports a copy
+with a failed fErrorCode as a failed clone, which the C API already maps to
+U_MEMORY_ALLOCATION_ERROR. Successful clones are unchanged.
+
+rbbi-clone-allocation-failure-check.cpp exercises this against the freshly built
+libraries in ../Dockerfile: per granularity it fails each allocation ubrk_clone
+makes in turn. Unpatched (73.2 and 78.3 alike, including the libicuuc.a in the
+shipped prebuilts) every allocation except the iterator object's own crashes the
+process; patched, each one comes back as nullptr + U_MEMORY_ALLOCATION_ERROR.
+
+Present in ICU 73.2 and 78.3 and, at the time of writing, unfixed in ICU main
+(where this still applies, with a one line offset; not reported upstream yet).
+When an ICU bump makes these hunks fail to apply, drop the patch lines and run
+the build: the check program says whether upstream now handles this itself (in
+which case this file can go) or the hunks just need rebasing.
+
+--- a/source/common/rbbi.cpp
++++ b/source/common/rbbi.cpp
+@@ -179,6 +179,9 @@
+     if (U_SUCCESS(status)) {
+         *this = *bi;
+         delete bi;
++        if (U_FAILURE(fErrorCode)) {
++            status = fErrorCode;
++        }
+     }
+ }
+ 
+@@ -281,6 +284,15 @@
+     if (this == &that) {
+         return *this;
+     }
++    if (U_FAILURE(fErrorCode)) {
++        // Construction failed (RuleBasedBreakIterator(UErrorCode*) could not
++        // allocate fBreakCache / fDictionaryCache, which are dereferenced below)
++        // or an earlier assignment did; the iterator is unusable either way.
++        // The copy constructor gets here through the default constructor, which
++        // has no status to report that through, so clone() and the rules
++        // constructor check fErrorCode afterwards instead.
++        return *this;
++    }
+     BreakIterator::operator=(that);
+ 
+     if (fLanguageBreakEngines != nullptr) {
+@@ -320,6 +332,11 @@
+     if (fData && fData->fForwardTable->fLookAheadResultsSize > 0) {
+         fLookAheadMatches = static_cast<int32_t *>(
+             uprv_malloc(fData->fForwardTable->fLookAheadResultsSize * sizeof(int32_t)));
++        if (fLookAheadMatches == nullptr) {
++            // handleNext() stores into this buffer unconditionally whenever a
++            // look-ahead rule matches.
++            fErrorCode = U_MEMORY_ALLOCATION_ERROR;
++        }
+     }
+ 
+ 
+@@ -346,7 +363,15 @@
+ //-----------------------------------------------------------------------------
+ RuleBasedBreakIterator*
+ RuleBasedBreakIterator::clone() const {
+-    return new RuleBasedBreakIterator(*this);
++    RuleBasedBreakIterator *result = new RuleBasedBreakIterator(*this);
++    if (result != nullptr && U_FAILURE(result->fErrorCode)) {
++        // The copy could not allocate its caches or look-ahead buffer; report
++        // that the same way as failing to allocate the object itself, which
++        // ubrk_clone() / ubrk_safeClone() turn into U_MEMORY_ALLOCATION_ERROR.
++        delete result;
++        return nullptr;
++    }
++    return result;
+ }
+ 
+ /**
