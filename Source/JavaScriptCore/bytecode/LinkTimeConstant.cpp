@@ -43,6 +43,11 @@ void printInternal(PrintStream& out, JSC::LinkTimeConstant constant)
 {
     switch (constant) {
         JSC_FOREACH_LINK_TIME_CONSTANTS(PRINT_LINK_TIME_CONSTANT)
+#if USE(BUN_JSC_ADDITIONS)
+#define PRINT_PRIMORDIAL_LINK_TIME_CONSTANT(name, key, kind) PRINT_LINK_TIME_CONSTANT(name, nullptr)
+        JSC_FOREACH_PRIMORDIAL_NAME(PRINT_PRIMORDIAL_LINK_TIME_CONSTANT)
+#undef PRINT_PRIMORDIAL_LINK_TIME_CONSTANT
+#endif
     }
 }
 

@@ -415,32 +415,94 @@ static JSValue initializeEvalFunction(VM&, JSObject* object)
 static JSValue createProxyProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return ProxyConstructor::create(vm, ProxyConstructor::createStructure(vm, global, global->functionPrototype()));
+    JSObject* holder = ProxyConstructor::create(vm, ProxyConstructor::createStructure(vm, global, global->functionPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->snapshotPrimordialsFromHolder(vm, holder, PrimordialHolder::ProxyObject);
+#endif
+    return holder;
 }
 
 static JSValue createJSONProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return JSONObject::create(vm, global, JSONObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = JSONObject::create(vm, global, JSONObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->snapshotPrimordialsFromHolder(vm, holder, PrimordialHolder::JSONObject);
+#endif
+    return holder;
 }
 
 static JSValue createMathProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return MathObject::create(vm, global, MathObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = MathObject::create(vm, global, MathObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->snapshotPrimordialsFromHolder(vm, holder, PrimordialHolder::MathObject);
+#endif
+    return holder;
 }
 
 static JSValue createReflectProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return ReflectObject::create(vm, global, ReflectObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = ReflectObject::create(vm, global, ReflectObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->snapshotPrimordialsFromHolder(vm, holder, PrimordialHolder::ReflectObject);
+#endif
+    return holder;
 }
 
 static JSValue createAtomicsProperty(VM& vm, JSObject *object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return AtomicsObject::create(vm, global, AtomicsObject::createStructure(vm, global, global->objectPrototype()));
+    JSObject* holder = AtomicsObject::create(vm, global, AtomicsObject::createStructure(vm, global, global->objectPrototype()));
+#if USE(BUN_JSC_ADDITIONS)
+    global->snapshotPrimordialsFromHolder(vm, holder, PrimordialHolder::AtomicsObject);
+#endif
+    return holder;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The global's own binding for a namespace object if it is still the pristine
+// object JSC created for this global, else a fresh un-installed one so its static
+// table can be read. The untouched static entry is reified from the table itself
+// so no getOwnPropertySlot override (a node:vm sandbox) can run user code here.
+template<typename NamespaceObject>
+static JSObject* pristineNamespaceObject(VM& vm, JSGlobalObject* globalObject, const Identifier& name, JSValue (*create)(VM&, JSObject*))
+{
+    unsigned attributes;
+    PropertyOffset offset = globalObject->getDirectOffset(vm, name, attributes);
+    if (!isValidOffset(offset) && !globalObject->staticPropertiesReified()) {
+        if (auto entry = globalObject->findPropertyHashEntry(name)) {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            DeferTerminationForAWhile deferScope(vm);
+            reifyStaticProperty(vm, entry->table->classForThis, name, *entry->value, *globalObject);
+            catchScope.assertNoExceptionExceptTermination();
+            offset = globalObject->getDirectOffset(vm, name, attributes);
+        }
+    }
+    if (isValidOffset(offset)) {
+        JSValue value = globalObject->getDirect(offset);
+        auto* existing = value.isCell() ? dynamicDowncast<NamespaceObject>(value.asCell()) : nullptr;
+        if (existing && existing->globalObject() == globalObject)
+            return existing;
+    }
+    return uncheckedDowncast<JSObject>(create(vm, globalObject));
+}
+
+JSObject* JSGlobalObject::primordialHolderObject(VM& vm, PrimordialHolder holder)
+{
+    switch (holder) {
+#define JSC_PRIMORDIAL_HOLDER_CASE(Holder, expression) \
+    case PrimordialHolder::Holder: \
+        return static_cast<JSObject*>(expression);
+        JSC_FOREACH_PRIMORDIAL_HOLDER_ACCESSOR(JSC_PRIMORDIAL_HOLDER_CASE)
+#undef JSC_PRIMORDIAL_HOLDER_CASE
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+}
+#endif
 
 static JSValue createConsoleProperty(VM& vm, JSObject* object)
 {
@@ -1052,12 +1114,31 @@ static ObjectPropertyCondition setupAbsenceAdaptiveWatchpoint(JSGlobalObject* gl
     return condition;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static PrimordialHolder nativeErrorPrimordialHolder(ErrorType errorType, bool prototype)
+{
+    switch (errorType) {
+    case ErrorType::EvalError: return prototype ? PrimordialHolder::EvalErrorPrototype : PrimordialHolder::EvalErrorConstructor;
+    case ErrorType::RangeError: return prototype ? PrimordialHolder::RangeErrorPrototype : PrimordialHolder::RangeErrorConstructor;
+    case ErrorType::ReferenceError: return prototype ? PrimordialHolder::ReferenceErrorPrototype : PrimordialHolder::ReferenceErrorConstructor;
+    case ErrorType::SyntaxError: return prototype ? PrimordialHolder::SyntaxErrorPrototype : PrimordialHolder::SyntaxErrorConstructor;
+    case ErrorType::TypeError: return prototype ? PrimordialHolder::TypeErrorPrototype : PrimordialHolder::TypeErrorConstructor;
+    case ErrorType::URIError: return prototype ? PrimordialHolder::URIErrorPrototype : PrimordialHolder::URIErrorConstructor;
+    default: RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+#endif
+
 template<ErrorType errorType>
 void JSGlobalObject::initializeErrorConstructor(LazyClassStructure::Initializer& init)
 {
     init.setPrototype(NativeErrorPrototype::create(init.vm, NativeErrorPrototype::createStructure(init.vm, this, m_errorStructure.prototype(this)), errorTypeName(errorType)));
     init.setStructure(ErrorInstance::createStructure(init.vm, this, init.prototype));
     init.setConstructor(NativeErrorConstructor<errorType>::create(init.vm, NativeErrorConstructor<errorType>::createStructure(init.vm, this, m_errorStructure.constructor(this)), uncheckedDowncast<NativeErrorPrototype>(init.prototype)));
+#if USE(BUN_JSC_ADDITIONS)
+    snapshotPrimordialsFromHolder(init.vm, init.prototype, nativeErrorPrimordialHolder(errorType, true));
+    snapshotPrimordialsFromHolder(init.vm, init.constructor, nativeErrorPrimordialHolder(errorType, false));
+#endif
 }
 
 void JSGlobalObject::initializeAggregateErrorConstructor(LazyClassStructure::Initializer& init)
@@ -1065,6 +1146,10 @@ void JSGlobalObject::initializeAggregateErrorConstructor(LazyClassStructure::Ini
     init.setPrototype(AggregateErrorPrototype::create(init.vm, AggregateErrorPrototype::createStructure(init.vm, this, m_errorStructure.prototype(this))));
     init.setStructure(ErrorInstance::createStructure(init.vm, this, init.prototype));
     init.setConstructor(AggregateErrorConstructor::create(init.vm, AggregateErrorConstructor::createStructure(init.vm, this, m_errorStructure.constructor(this)), uncheckedDowncast<AggregateErrorPrototype>(init.prototype)));
+#if USE(BUN_JSC_ADDITIONS)
+    snapshotPrimordialsFromHolder(init.vm, init.prototype, PrimordialHolder::AggregateErrorPrototype);
+    snapshotPrimordialsFromHolder(init.vm, init.constructor, PrimordialHolder::AggregateErrorConstructor);
+#endif
 }
 
 void JSGlobalObject::initializeSuppressedErrorConstructor(LazyClassStructure::Initializer& init)
@@ -1095,6 +1180,9 @@ void JSGlobalObject::init(VM& vm)
     ASSERT(vm.currentThreadIsHoldingAPILock());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    initializePrimordialLinkTimeConstants();
+#endif
     convertToDictionary(vm);
 
     m_debugger = nullptr;
@@ -1229,9 +1317,11 @@ void JSGlobalObject::init(VM& vm)
         });
     m_typedArrayProto.initLater(
         [] (const Initializer<JSTypedArrayViewPrototype>& init) {
-            init.set(JSTypedArrayViewPrototype::create(init.vm, init.owner, JSTypedArrayViewPrototype::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get())));
+            JSTypedArrayViewPrototype* prototype = JSTypedArrayViewPrototype::create(init.vm, init.owner, JSTypedArrayViewPrototype::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
+            init.set(prototype);
 
-            // Make sure that the constructor gets initialized, too.
+            // Make sure that the constructor gets initialized, too (its initializer
+            // installs prototype.constructor and snapshots both holders).
             init.owner->m_typedArraySuperConstructor.get(init.owner);
         });
     m_typedArraySuperConstructor.initLater(
@@ -1240,7 +1330,20 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
+#if USE(BUN_JSC_ADDITIONS)
+            // Both init orders converge here, after prototype.constructor is installed.
+            init.owner->snapshotPrimordialsFromHolder(init.vm, prototype, PrimordialHolder::TypedArrayPrototype);
+            init.owner->snapshotPrimordialsFromHolder(init.vm, constructor, PrimordialHolder::TypedArrayConstructor);
+#endif
         });
+
+#if USE(BUN_JSC_ADDITIONS)
+#define INIT_TYPED_ARRAY_LATER_SNAPSHOT_PRIMORDIALS(type) \
+            init.global->snapshotPrimordialsFromHolder(init.vm, init.prototype, PrimordialHolder::type##ArrayPrototype); \
+            init.global->snapshotPrimordialsFromHolder(init.vm, init.constructor, PrimordialHolder::type##ArrayConstructor);
+#else
+#define INIT_TYPED_ARRAY_LATER_SNAPSHOT_PRIMORDIALS(type)
+#endif
 
 #define INIT_TYPED_ARRAY_LATER(type) \
     m_typedArray ## type.initLater( \
@@ -1249,6 +1352,7 @@ void JSGlobalObject::init(VM& vm)
             init.setStructure(JS ## type ## Array::createStructure(init.vm, init.global, init.prototype)); \
             init.setConstructor(JS ## type ## ArrayConstructor::create(init.vm, init.global, JS ## type ## ArrayConstructor::createStructure(init.vm, init.global, init.global->m_typedArraySuperConstructor.get(init.global)), init.prototype, #type "Array"_s)); \
             init.global->typedArrayStructure(Type##type, /* isResizableOrGrowableShared */ true); /* Initialize resizable Structure too */ \
+            INIT_TYPED_ARRAY_LATER_SNAPSHOT_PRIMORDIALS(type) \
         }); \
     m_resizableOrGrowableSharedTypedArray ## type ## Structure.initLater( \
         [] (const Initializer<Structure>& init) { \
@@ -1267,6 +1371,10 @@ void JSGlobalObject::init(VM& vm)
             init.setStructure(JSDataView::createStructure(init.vm, init.global, init.prototype));
             init.setConstructor(JSDataViewConstructor::create(init.vm, init.global, JSDataViewConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()), init.prototype, "DataView"_s));
             init.global->typedArrayStructure(TypeDataView, /* isResizableOrGrowableShared */ true); /* Initialize resizable Structure too */
+#if USE(BUN_JSC_ADDITIONS)
+            init.global->snapshotPrimordialsFromHolder(init.vm, init.prototype, PrimordialHolder::DataViewPrototype);
+            init.global->snapshotPrimordialsFromHolder(init.vm, init.constructor, PrimordialHolder::DataViewConstructor);
+#endif
         });
     m_resizableOrGrowableSharedTypedArrayDataViewStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -1478,18 +1586,28 @@ void JSGlobalObject::init(VM& vm)
 
 #undef CREATE_PROTOTYPE_FOR_SIMPLE_TYPE
 
+#if USE(BUN_JSC_ADDITIONS)
+#define CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS(capitalName) \
+            init.global->snapshotPrimordialsFromHolder(init.vm, init.prototype, JSC_PRIMORDIAL_LAZY_TYPE_PROTOTYPE_HOLDER_##capitalName); \
+            init.global->snapshotPrimordialsFromHolder(init.vm, init.constructor, JSC_PRIMORDIAL_LAZY_TYPE_CONSTRUCTOR_HOLDER_##capitalName);
+#else
+#define CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS(capitalName)
+#endif
+
 #define CREATE_PROTOTYPE_FOR_LAZY_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) if (featureFlag) {  \
     m_ ## properName ## Structure.initLater(\
         [] (LazyClassStructure::Initializer& init) { \
             init.setPrototype(capitalName##Prototype::create(init.vm, init.global, capitalName##Prototype::createStructure(init.vm, init.global, init.global->m_ ## prototypeBase ## Prototype.get()))); \
             init.setStructure(instanceType::createStructure(init.vm, init.global, init.prototype)); \
             init.setConstructor(capitalName ## Constructor::create(init.vm, capitalName ## Constructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()), uncheckedDowncast<capitalName ## Prototype>(init.prototype))); \
+            CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS(capitalName) \
         }); \
     }
 
     FOR_EACH_LAZY_BUILTIN_TYPE(CREATE_PROTOTYPE_FOR_LAZY_TYPE)
 
 #undef CREATE_PROTOTYPE_FOR_LAZY_TYPE
+#undef CREATE_PROTOTYPE_FOR_LAZY_TYPE_CAPTURE_PRIMORDIALS
 
     // Constructors
 
@@ -1526,6 +1644,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     m_promiseConstructor.set(vm, this, promiseConstructor);
     m_stringConstructor.set(vm, this, stringConstructor);
+#if USE(BUN_JSC_ADDITIONS)
+    m_symbolConstructor.set(vm, this, symbolConstructor);
+    m_bigIntConstructor.set(vm, this, bigIntConstructor);
+    m_weakObjectRefConstructor.set(vm, this, weakObjectRefConstructor);
+    m_finalizationRegistryConstructor.set(vm, this, finalizationRegistryConstructor);
+#endif
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Promise)].set(vm, this, promiseConstructor);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::String)].set(vm, this, stringConstructor);
 
@@ -1931,6 +2055,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         RELEASE_ASSERT(is<JSFunction>(hasOwnPropertyFunction));
         m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::hasOwnPropertyFunction)].set(vm, this, uncheckedDowncast<JSFunction>(hasOwnPropertyFunction));
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    snapshotEagerPrimordials(vm);
+    catchScope.assertNoException();
+#endif
 
 #define INIT_PRIVATE_GLOBAL(funcName, code) \
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::funcName)].initLater([] (const Initializer<JSCell>& init) { \
@@ -3043,6 +3172,12 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_iteratorConstructor);
     visitor.append(thisObject->m_promiseConstructor);
     visitor.append(thisObject->m_stringConstructor);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_symbolConstructor);
+    visitor.append(thisObject->m_bigIntConstructor);
+    visitor.append(thisObject->m_weakObjectRefConstructor);
+    visitor.append(thisObject->m_finalizationRegistryConstructor);
+#endif
 
     thisObject->m_defaultCollator.visit(visitor);
     visitor.append(thisObject->m_cachedLocaleCompareCollator);
