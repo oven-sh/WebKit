@@ -118,6 +118,9 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
             m_moduleName->moduleName(),
             specifier->importedName(),
             specifier->localName(),
+#if USE(BUN_JSC_ADDITIONS)
+            static_cast<unsigned>(std::max(0, specifier->startOffset())),
+#endif
         });
     }
     return true;
