@@ -2974,8 +2974,11 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
                 reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
-                // Leave the rest lazy on throw; the caller propagates.
-                if (vm.exceptionForInspection()) [[unlikely]]
+                // Leave the rest lazy on throw; the caller propagates. This is
+                // the exception check for the builder's ThrowScope: the next
+                // builder declares its own, and would assert if the check
+                // were still pending.
+                if (vm.exception()) [[unlikely]]
                     return;
             }
         }
