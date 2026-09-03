@@ -52,6 +52,10 @@ public:
 
     DECLARE_EXPORT_INFO;
 
+#if USE(BUN_JSC_ADDITIONS)
+    DECLARE_VISIT_CHILDREN;
+#endif
+
     static size_t estimatedSize(JSCell*, VM&);
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
