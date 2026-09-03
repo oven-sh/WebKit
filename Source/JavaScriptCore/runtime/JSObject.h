@@ -1238,6 +1238,11 @@ ALWAYS_INLINE bool JSObject::getPropertySlot(JSGlobalObject* globalObject, Prope
             if (object->getOwnNonIndexPropertySlot<debugLLIntGetById>(vm, structure, propertyName, slot))
                 return true;
         }
+        // A miss on a static-table object may be a PropertyCallback builder that threw
+        // (setUpStaticFunctionSlot reports the slot as not found so that the caller sees the
+        // exception). Stop here instead of continuing up the prototype chain with it pending.
+        if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) && vm.exceptionForInspection()) [[unlikely]]
+            return false;
         // FIXME: This doesn't look like it's following the specification:
         // https://bugs.webkit.org/show_bug.cgi?id=172572
         JSValue prototype = structure->storedPrototype(object);

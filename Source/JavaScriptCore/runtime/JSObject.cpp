@@ -2632,6 +2632,10 @@ bool JSObject::getOwnStaticPropertySlot(VM& vm, PropertyName propertyName, Prope
         if (auto* table = info->staticPropHashTable) {
             if (getStaticPropertySlotFromTable(vm, table->classForThis, *table, this, propertyName, slot))
                 return true;
+            // The entry may have been found but its PropertyCallback builder threw, which
+            // setUpStaticFunctionSlot reports as a miss. Don't go on to the parent class tables.
+            if (vm.exceptionForInspection()) [[unlikely]]
+                return false;
         }
     }
     return false;
@@ -2960,9 +2964,12 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
         convertToDictionary(vm);
 
     // A PropertyCallback builder can enter JS; defer termination (like
-    // LazyProperty::callFunc) so it can't return with one pending. No
-    // ThrowScope here: JSObject::deleteProperty reaches this without one.
+    // LazyProperty::callFunc) so it can't return with one pending. A TopExceptionScope
+    // rather than a ThrowScope (JSObject::deleteProperty reaches this without checking
+    // afterwards, like JSBoundFunction::nameSlow's callers) so that each builder's own
+    // scope is checked here before the next builder runs.
     DeferTerminationForAWhile deferScope(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     for (const ClassInfo* info = classInfo(); info; info = info->parentClass) {
         const HashTable* hashTable = info->staticPropHashTable;
         if (!hashTable)
@@ -2974,8 +2981,8 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
                 reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
-                // Leave the rest lazy on throw; the caller propagates.
-                if (vm.exceptionForInspection()) [[unlikely]]
+                // Leave the rest lazy on throw; the exception stays pending for the caller.
+                if (scope.exception()) [[unlikely]]
                     return;
             }
         }
