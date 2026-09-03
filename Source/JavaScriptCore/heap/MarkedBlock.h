@@ -321,6 +321,12 @@ public:
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
         void* m_verifierMemo { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+        // The handle's cell geometry, kept here too so the marker can check a pointer is a cell start without leaving
+        // the block (see SlotVisitor::appendHiddenSlowImpl). Zero until the block joins a directory.
+        AtomNumberType m_startAtom { 0 };
+        AtomNumberType m_atomsPerCell { 0 };
+#endif
     };
     
 private:
@@ -369,6 +375,10 @@ public:
     bool testAndSetMarked(const void*, Dependency);
         
     bool isAtom(const void*);
+#if USE(BUN_JSC_ADDITIONS)
+    // isAtom() using the copy of the geometry in the block header: true if p is the first atom of a cell of this block.
+    bool isCellStart(const void* p);
+#endif
     void clearMarked(const void*);
     
     bool isNewlyAllocated(const void*);
@@ -673,6 +683,22 @@ inline bool MarkedBlock::isAtom(const void* p)
         return false;
     return true;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+inline bool MarkedBlock::isCellStart(const void* p)
+{
+    uintptr_t offset = std::bit_cast<uintptr_t>(p) - std::bit_cast<uintptr_t>(this);
+    if (offset % atomSize)
+        return false;
+    size_t atomNumber = offset / atomSize;
+    const Header& header = this->header();
+    size_t startAtom = header.m_startAtom;
+    size_t atomsPerCell = header.m_atomsPerCell;
+    if (!atomsPerCell || atomNumber < startAtom || atomNumber >= endAtom)
+        return false;
+    return !((atomNumber - startAtom) % atomsPerCell);
+}
+#endif
 
 template <typename Functor>
 inline IterationStatus MarkedBlock::Handle::forEachCell(const Functor& functor)

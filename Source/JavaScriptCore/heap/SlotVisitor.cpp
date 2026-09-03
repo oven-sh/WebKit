@@ -235,6 +235,22 @@ void SlotVisitor::appendHiddenSlow(JSCell* cell, Dependency dependency)
     appendHiddenSlowImpl(cell, dependency);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A precisely visited pointer that is not the start of a cell in its block is a stale reference to a dead cell whose
+// block has since been reused for another size class. Marking it sets a bit the sweeper will read against the new cell
+// size and writes the cell state byte into whatever lives there now, which corrupts live objects in that block without
+// crashing here. Crash here instead, with the holder (the cell whose visitChildren produced the pointer) in the report.
+NEVER_INLINE NO_RETURN_DUE_TO_CRASH void SlotVisitor::reportMisalignedMark(JSCell* cell)
+{
+    MarkedBlock& block = cell->markedBlock();
+    JSCell* holder = m_currentCell;
+    uint64_t holderStructureID = holder ? static_cast<uint64_t>(holder->structureID().bits()) : 0;
+    uint64_t cellSize = m_heap.objectSpace().blocks().set().contains(&block) ? block.cellSize() : 0;
+    dataLogLn("GC: visited pointer ", RawPointer(cell), " is not a cell start in its MarkedBlock (cell size ", cellSize, "); holder ", RawPointer(holder), " structureID ", holderStructureID, " root reason ", static_cast<unsigned>(rootMarkReason()));
+    CRASH_WITH_INFO(std::bit_cast<uintptr_t>(cell), std::bit_cast<uintptr_t>(holder), holderStructureID, cellSize, static_cast<uint64_t>(rootMarkReason()));
+}
+#endif
+
 ALWAYS_INLINE void SlotVisitor::appendHiddenSlowImpl(JSCell* cell, Dependency dependency)
 {
     ASSERT(!m_isCheckingForDefaultMarkViolation);
@@ -245,8 +261,16 @@ ALWAYS_INLINE void SlotVisitor::appendHiddenSlowImpl(JSCell* cell, Dependency de
     
     if (cell->isPreciseAllocation())
         setMarkedAndAppendToMarkStack(cell->preciseAllocation(), cell, dependency);
-    else
+    else {
+#if USE(BUN_JSC_ADDITIONS)
+        // Only the first visit of a cell per cycle gets here; the geometry it needs sits in the block header next to the mark bits.
+        if (Options::crashOnMisalignedMark()) {
+            if (!cell->markedBlock().isCellStart(cell)) [[unlikely]]
+                reportMisalignedMark(cell);
+        }
+#endif
         setMarkedAndAppendToMarkStack(cell->markedBlock(), cell, dependency);
+    }
 }
 
 template<typename ContainerType>
