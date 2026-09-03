@@ -524,6 +524,7 @@ public:
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
+    size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
     bool isPagedOut();
     
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
@@ -724,7 +725,6 @@ private:
     JS_EXPORT_PRIVATE void reportExtraMemoryAllocatedSlowCase(GCDeferralContext*, const JSCell*, size_t);
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
-    size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
 
     bool shouldCollectInCollectorThread(const AbstractLocker&);
     void collectInCollectorThread();
