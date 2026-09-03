@@ -863,7 +863,12 @@ public:
         }
 
         size_t size = m_baseOffset + m_currentPage->size();
-        auto buffer = MallocSpan<uint8_t, VMMalloc>::malloc(size);
+        // The payload is the encoder's largest allocation and the cache is optional: report ENOMEM instead of crashing.
+        auto buffer = MallocSpan<uint8_t, VMMalloc>::tryMalloc(size);
+        if (!buffer) {
+            error = BytecodeCacheError::StandardError(ENOMEM);
+            return nullptr;
+        }
         auto bufferSpan = buffer.mutableSpan();
         for (const auto& page : m_pages)
             memcpySpan(consumeSpan(bufferSpan, page.size()), page.span());
