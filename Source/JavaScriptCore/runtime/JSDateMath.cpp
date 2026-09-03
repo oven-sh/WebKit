@@ -90,6 +90,9 @@
 #undef U_HIDE_DRAFT_API
 #endif
 #include <unicode/ucal.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include <unicode/udat.h>
+#endif
 #define U_HIDE_DRAFT_API 1
 
 namespace JSC {
@@ -102,6 +105,9 @@ class OpaqueICUTimeZone {
     WTF_MAKE_TZONE_ALLOCATED(OpaqueICUTimeZone);
 public:
     std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> m_calendar;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<UDateFormat, ICUDeleter<udat_close>> m_displayNameFormat;
+#endif
     TimeZone m_canonicalTimeZone;
 };
 
@@ -456,6 +462,42 @@ TimeZone DateCache::defaultTimeZone()
     return timeZoneCache()->m_canonicalTimeZone;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// ucal_getTimeZoneDisplayName() has no instant parameter, so when ICU has no
+// metazone name for the zone it falls back to "GMT+HH:MM" computed from the
+// zone's *current* raw offset. For zones whose base offset has changed
+// (Europe/Istanbul, Europe/Volgograd, Asia/Kolkata during WWII, ...) that
+// produces self-contradicting Date.prototype.toString() output like
+// "GMT+0200 (GMT+03:00)". Formatting the "zzzz" skeleton at the instant via
+// udat_format resolves both the historical metazone name and the fallback
+// offset correctly; this is the same path Intl.DateTimeFormat uses.
+String DateCache::timeZoneDisplayName(double millisecondsFromEpoch)
+{
+    auto& timeZoneCache = *this->timeZoneCache();
+    if (!timeZoneCache.m_displayNameFormat) {
+        String timeZoneForICU = timeZoneCache.m_canonicalTimeZone.toICUString();
+        StringView timeZoneView(timeZoneForICU);
+        auto upconverted = timeZoneView.upconvertedCharacters();
+        CString language = defaultLanguage().utf8();
+        static constexpr char16_t pattern[] = { 'z', 'z', 'z', 'z' };
+        UErrorCode status = U_ZERO_ERROR;
+        auto* format = udat_open(UDAT_PATTERN, UDAT_PATTERN, language.data(), upconverted, timeZoneView.length(), pattern, std::size(pattern), &status);
+        if (U_FAILURE(status))
+            return String();
+        timeZoneCache.m_displayNameFormat = std::unique_ptr<UDateFormat, ICUDeleter<udat_close>>(format);
+    }
+    Vector<char16_t, 32> buffer;
+    auto status = callBufferProducingFunction(udat_format, timeZoneCache.m_displayNameFormat.get(), millisecondsFromEpoch, buffer, nullptr);
+    if (U_FAILURE(status))
+        return String();
+    return String::adopt(WTF::move(buffer));
+}
+
+String DateCache::timeZoneDisplayName(bool)
+{
+    return timeZoneDisplayName(ucal_getNow());
+}
+#else
 String DateCache::timeZoneDisplayName(bool isDST)
 {
     if (m_timeZoneStandardDisplayNameCache.isNull()) {
@@ -478,6 +520,7 @@ String DateCache::timeZoneDisplayName(bool isDST)
         return m_timeZoneDSTDisplayNameCache;
     return m_timeZoneStandardDisplayNameCache;
 }
+#endif
 
 static Lock timeZoneCacheLock;
 
