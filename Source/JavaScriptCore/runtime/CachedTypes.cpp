@@ -2895,14 +2895,31 @@ static void decodeArrayFromTail(Decoder& decoder, const void* elements, unsigned
 
 class CachedSourceOrigin : public CachedObject<SourceOrigin> {
 public:
+    // Upstream WebKit stores sourceOrigin.url().string() and re-parses it
+    // on decode with URL({}, string). In Bun, source origins are always
+    // file paths constructed via fileURLWithFileSystemPath. On Windows,
+    // fileURLWithFileSystemPath produces a URL with a different internal
+    // host() than what re-parsing the same URL's string() gives (drive
+    // letter "B:" is treated as host). This breaks SourceCodeKey::operator==
+    // which compares host(). To avoid this, we store the file system path
+    // directly and reconstruct via fileURLWithFileSystemPath on decode,
+    // so both encode/decode and runtime use the same construction path.
     void encode(Encoder& encoder, const SourceOrigin& sourceOrigin)
     {
-        m_string.encode(encoder, sourceOrigin.url().string());
+        String path = sourceOrigin.url().fileSystemPath();
+#if OS(WINDOWS)
+        // fileSystemPath() returns backslashes on Windows, but
+        // fileURLWithFileSystemPath handles forward and back slashes
+        // differently — forward slashes match how source URLs are
+        // constructed at runtime (e.g. "B:/BUN/root/app.js").
+        path = makeStringByReplacingAll(path, '\\', '/');
+#endif
+        m_string.encode(encoder, path);
     }
 
     SourceOrigin decode(Decoder& decoder) const
     {
-        return SourceOrigin { URL({ }, m_string.decode(decoder)) };
+        return SourceOrigin { URL::fileURLWithFileSystemPath(m_string.decode(decoder)) };
     }
 
 private:
@@ -4908,8 +4925,13 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         if (!cachedEntry->decode(decoder.get(), entry))
             return nullptr;
     }
-    if (entry.first != key)
+    if (entry.first != key) {
+        dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] key mismatch for ", key.source().provider().sourceURL(),
+            " hash: ", entry.first.hash(), " vs ", key.hash(),
+            " length: ", entry.first.length(), " vs ", key.length(),
+            " host: '", entry.first.host(), "' vs '", key.host(), "'");
         return nullptr;
+    }
 
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
