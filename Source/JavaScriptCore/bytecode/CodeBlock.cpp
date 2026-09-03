@@ -1376,9 +1376,8 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
     // counter of its own. It is expensive to rebuild, but it also pins its baseline alternative and every baseline
     // CodeBlock it inlined along with their metadata, so rather than never ageing it ages against the mutator as a
     // whole: a full collection lets it go once it is past its TTL and (almost) nothing has been allocated since the
-    // previous full collection looked at it - the process has been sitting idle - and renews it whenever the mutator
-    // has been allocating, exactly as before. Collections are themselves allocation-driven, so a busy mutator never
-    // sees two such quiet collections in a row; an embedder's idle-time collections do.
+    // previous full collection looked at it and the embedder says the application is idle, and renews it whenever the
+    // mutator has been allocating, keeping the code exactly as before.
     if (agesByMutatorQuietness()) {
         unsigned quietMB = Options::optimizedCodeAgingQuietAllocationMB();
         if (!quietMB)
@@ -1392,6 +1391,11 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
             m_creationTime = ApproximateTime::now();
             return false;
         }
+        // Any full collection may renew the lease, but only one the embedder requested because the application went idle
+        // (GCRequest::isIdle) lets the code go: never one paced by allocation, forced by the program (which may do so on
+        // a timer while hot code runs between the calls) or triggered by memory pressure.
+        if (!vm().heap.isIdleCollection())
+            return false;
         Seconds quietFor = Seconds(Options::optimizedCodeAgingQuietSeconds());
         if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]]
             quietFor = std::min(quietFor, ttl);

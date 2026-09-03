@@ -345,6 +345,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionStreamingJSONParse);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 static JSC_DECLARE_HOST_FUNCTION(functionFullGC);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
 static JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
@@ -707,6 +710,9 @@ private:
 #endif
         addFunction(vm, "gc"_s, functionGCAndSweep, 0);
         addFunction(vm, "fullGC"_s, functionFullGC, 0);
+#if USE(BUN_JSC_ADDITIONS)
+        addFunction(vm, "idleFullGC"_s, functionIdleFullGC, 0);
+#endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
         addFunction(vm, "memoryUsageStatistics"_s, functionMemoryUsageStatistics, 0);
@@ -2112,6 +2118,19 @@ JSC_DEFINE_HOST_FUNCTION(functionFullGC, (JSGlobalObject* globalObject, CallFram
     vm.heap.collectSync(CollectionScope::Full);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// A full collection tagged the way an embedder tags one it runs because the application went idle (GCRequest::isIdle).
+JSC_DEFINE_HOST_FUNCTION(functionIdleFullGC, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    GCRequest request(CollectionScope::Full);
+    request.isIdle = true;
+    vm.heap.collectSync(request);
+    return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionEdenGC, (JSGlobalObject* globalObject, CallFrame*))
 {

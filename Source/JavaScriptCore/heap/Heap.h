@@ -728,6 +728,8 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     // Monotonic; lets a full collection tell whether the mutator did anything since an earlier one (CodeBlock::shouldJettisonDueToOldAge).
     uint64_t totalBytesAllocated() const { return m_totalBytesAllocated; }
+    // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
+    bool isIdleCollection() const { return m_currentRequest.isIdle; }
 #endif
 
     bool shouldCollectInCollectorThread(const AbstractLocker&);

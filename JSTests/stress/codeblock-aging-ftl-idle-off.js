@@ -15,8 +15,8 @@ for (var i = 0; i < 1e6 && !reached; i++)
     reached = f(o)[1];
 if (!reached)
     throw new Error("test needs f to reach FTL");
-fullGC();
+idleFullGC();
 var start = preciseTime();
 while (preciseTime() - start < 0.04) { }
-fullGC();
+idleFullGC();
 shouldBe(f(o)[1], true, "with the option off an FTL block never ages out;");
