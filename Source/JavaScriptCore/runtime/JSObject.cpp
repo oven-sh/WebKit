@@ -2876,10 +2876,18 @@ JSString* JSObject::toString(JSGlobalObject* globalObject) const
 
 void JSObject::seal(VM& vm)
 {
-    if (isSealed(vm))
+    // Structure::isSealed only consults the named-property table, so it cannot
+    // short-circuit when indexed properties are present.
+    if (!hasIndexedProperties(indexingType()) && isSealed(vm))
         return;
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
+    if (hasAnyArrayStorage(indexingType())) {
+        if (SparseArrayValueMap* map = butterfly()->arrayStorage()->m_sparseMap.get())
+            map->seal();
+    }
+    if (isSealed(vm))
+        return;
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -2889,10 +2897,28 @@ void JSObject::seal(VM& vm)
 
 void JSObject::freeze(VM& vm)
 {
-    if (isFrozen(vm))
+    bool isArray = isJSArray(this);
+    if (!isArray && !hasIndexedProperties(indexingType()) && isFrozen(vm))
         return;
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
+    if (hasAnyArrayStorage(indexingType())) {
+        if (SparseArrayValueMap* map = butterfly()->arrayStorage()->m_sparseMap.get()) {
+            map->freeze();
+            // defineOwnIndexedProperty would have called this for each ReadOnly
+            // index; the prototype-chain indexed-put fast paths consult the
+            // MayHaveIndexedAccessors bit it sets.
+            if (!map->isEmpty())
+                notifyPresenceOfIndexedAccessors(vm);
+            // JSArray "length" is not in the PropertyTable; freeze it here so
+            // that JSArray::isLengthWritable reports false like the generic
+            // SetIntegrityLevel loop would.
+            if (isArray)
+                map->setLengthIsReadOnly();
+        }
+    }
+    if (isFrozen(vm))
+        return;
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -2903,6 +2929,12 @@ void JSObject::freeze(VM& vm)
 void JSObject::materializeLazyOwnProperties(VM& vm)
 {
     if (!structure()->typeInfo().overridesGetOwnSpecialPropertyNames())
+        return;
+
+    // JSArray's only special own property is "length", which is always virtual
+    // (never reified onto the PropertyTable) and already DontDelete; enumerating
+    // own names here would just atomize every index for no effect.
+    if (isJSArray(this))
         return;
 
     // Force reifying lazy properties. Special properties (e.g. function "length" / "name",
