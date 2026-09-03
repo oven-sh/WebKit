@@ -332,7 +332,15 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     // it is still empty, so a thread that already has atoms keeps whatever it has grown to.
     if (m_atomStringTable->table().isEmpty()) {
         m_atomStringTable->table().clear();
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun's VM holds about 1250 atoms when it has started. HashTable sizes a reservation for
+        // 2048 keys at 8192 slots and shrinks any table that is less than a sixth full, so at 1250
+        // the first atom that a parser frees halved the table again: a rehash of every atom (70 us)
+        // on each start. A reservation for 1024 keys gets 4096 slots, which hold 1250 with no shrink.
+        m_atomStringTable->table().reserveInitialCapacity(1024);
+#else
         m_atomStringTable->table().reserveInitialCapacity(2048);
+#endif
     }
 
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
