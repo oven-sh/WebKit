@@ -31,7 +31,10 @@
 
 namespace JSC {
 
-#if !OS(WINDOWS)
+// clang-cl accepts GNU inline asm but does not define __GNUC__, so COMPILER(CLANG) is
+// checked in addition to COMPILER(GCC_COMPATIBLE). MSVC proper falls through to the
+// setjmp fallback below.
+#if COMPILER(GCC_COMPATIBLE) || COMPILER(CLANG)
 
 // ALLOCATE_AND_GET_REGISTER_STATE has to ensure that the GC sees callee-saves. It achieves this by
 // ensuring that the callee-saves are either spilled to the stack or saved in the RegisterState. The code
@@ -55,9 +58,13 @@ struct RegisterState {
     SAVE_REG(edi, registers.edi); \
     SAVE_REG(esi, registers.esi)
 
-#elif CPU(X86_64)
+#elif CPU(X86_64) && OS(WINDOWS)
+// Win64 calling convention: rdi and rsi are callee-saved (unlike SysV).
 struct RegisterState {
     uint64_t rbx;
+    uint64_t rbp;
+    uint64_t rdi;
+    uint64_t rsi;
     uint64_t r12;
     uint64_t r13;
     uint64_t r14;
@@ -70,6 +77,31 @@ struct RegisterState {
 #define ALLOCATE_AND_GET_REGISTER_STATE(registers) \
     RegisterState registers; \
     SAVE_REG(rbx, registers.rbx); \
+    SAVE_REG(rbp, registers.rbp); \
+    SAVE_REG(rdi, registers.rdi); \
+    SAVE_REG(rsi, registers.rsi); \
+    SAVE_REG(r12, registers.r12); \
+    SAVE_REG(r13, registers.r13); \
+    SAVE_REG(r14, registers.r14); \
+    SAVE_REG(r15, registers.r15)
+
+#elif CPU(X86_64)
+struct RegisterState {
+    uint64_t rbx;
+    uint64_t rbp;
+    uint64_t r12;
+    uint64_t r13;
+    uint64_t r14;
+    uint64_t r15;
+};
+
+#define SAVE_REG(regname, where) \
+    asm volatile ("movq %%" #regname ", %0" : "=m"(where) : : "memory")
+
+#define ALLOCATE_AND_GET_REGISTER_STATE(registers) \
+    RegisterState registers; \
+    SAVE_REG(rbx, registers.rbx); \
+    SAVE_REG(rbp, registers.rbp); \
     SAVE_REG(r12, registers.r12); \
     SAVE_REG(r13, registers.r13); \
     SAVE_REG(r14, registers.r14); \
@@ -158,7 +190,7 @@ struct RegisterState {
     SAVE_REG(23, registers.r23)
 
 #endif
-#endif // !OS(WINDOWS)
+#endif // COMPILER(GCC_COMPATIBLE) || COMPILER(CLANG)
 
 #ifndef ALLOCATE_AND_GET_REGISTER_STATE
 

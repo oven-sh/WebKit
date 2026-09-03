@@ -240,9 +240,6 @@ auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspe
     // currentMayBeNull, not currentSingleton: the libpas scavenger calls this while holding
     // the heap lock, and currentSingleton would lazy-allocate a Thread for it.
     RELEASE_ASSERT_WITH_MESSAGE(this != Thread::currentMayBeNull(), "We do not support suspending the current thread itself.");
-    DWORD result = SuspendThread(m_handle);
-    if (result == (DWORD)-1)
-        return makeUnexpected(result);
     // SuspendThread only requests a suspension; on multi-core Windows the target may
     // continue to execute in user mode briefly after SuspendThread returns. Callers that
     // read registers (MachineStackMarker) happen to force a sync via GetThreadContext,
@@ -250,14 +247,32 @@ auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspe
     // pasSuspenderBeginSuspend -- would otherwise decommit TLC pages while the mutator
     // is still writing to them. Force the suspension to complete synchronously here so
     // every Thread::suspend caller can rely on the invariant.
-    CONTEXT ctx;
-    ctx.ContextFlags = CONTEXT_INTEGER;
-    if (!GetThreadContext(m_handle, &ctx)) {
-        DWORD error = GetLastError();
-        ResumeThread(m_handle);
-        return makeUnexpected(error);
+    //
+    // GetThreadContext can fail transiently (the target is in early start, in exit, or in
+    // certain kernel transitions). CoreCLR and Go both retry SuspendThread/GetThreadContext
+    // with a short backoff for exactly this reason. Follow the same pattern here rather
+    // than immediately returning failure, because a failure here causes MachineThreads to
+    // skip scanning this thread's stack for the current GC cycle, dropping its roots.
+    constexpr unsigned maxAttempts = 100;
+    constexpr unsigned spinAttempts = 8;
+    DWORD lastError = 0;
+    for (unsigned attempt = 0; attempt < maxAttempts; ++attempt) {
+        DWORD result = SuspendThread(m_handle);
+        if (result != (DWORD)-1) {
+            CONTEXT ctx;
+            ctx.ContextFlags = CONTEXT_INTEGER;
+            if (GetThreadContext(m_handle, &ctx))
+                return { };
+            lastError = GetLastError();
+            ResumeThread(m_handle);
+        } else
+            lastError = GetLastError();
+        if (attempt < spinAttempts)
+            SwitchToThread();
+        else
+            Sleep(1);
     }
-    return { };
+    return makeUnexpected(lastError);
 }
 
 // During resume, suspend or resume should not be executed from the other threads.
@@ -269,8 +284,24 @@ void Thread::resume(const ThreadSuspendLocker&)
 size_t Thread::getRegisters(const ThreadSuspendLocker&, PlatformRegisters& registers)
 {
     registers.ContextFlags = CONTEXT_INTEGER | CONTEXT_CONTROL;
-    GetThreadContext(m_handle, &registers);
+    if (!GetThreadContext(m_handle, &registers)) [[unlikely]] {
+        // On failure the CONTEXT (including the stack pointer) is undefined; the caller
+        // would compute a bogus stack range and OOM in MachineThreads::growBuffer. Crash
+        // with the Win32 error instead of wandering off into a huge allocation.
+        RELEASE_ASSERT_NOT_REACHED(static_cast<uint64_t>(GetLastError()));
+    }
+    // We only requested CONTEXT_INTEGER | CONTEXT_CONTROL, so only that prefix of CONTEXT
+    // is populated. Return just that range so the conservative root scan does not copy the
+    // remainder of the struct (which the caller zero-initializes; see MachineStackMarker).
+#if CPU(X86_64)
+    static_assert(offsetof(CONTEXT, Rax) < offsetof(CONTEXT, Rsp) && offsetof(CONTEXT, Rsp) < offsetof(CONTEXT, Rip));
+    return offsetof(CONTEXT, Rip) + sizeof(registers.Rip);
+#elif CPU(ARM64)
+    static_assert(offsetof(CONTEXT, Sp) < offsetof(CONTEXT, Pc));
+    return offsetof(CONTEXT, Pc) + sizeof(registers.Pc);
+#else
     return sizeof(CONTEXT);
+#endif
 }
 
 void Thread::barrierInstructionCache()
