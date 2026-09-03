@@ -58,6 +58,20 @@ IntlSegments::IntlSegments(VM& vm, Structure* structure, std::unique_ptr<UBreakI
 {
 }
 
+// The buffer is shared with the IntlSegmentIterators created from this object; it is accounted for here, where it is allocated.
+void IntlSegments::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+    vm.heap.reportExtraMemoryAllocated(this, extraMemorySize());
+}
+
+size_t IntlSegments::estimatedSize(JSCell* cell, VM& vm)
+{
+    auto* thisObject = uncheckedDowncast<IntlSegments>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->extraMemorySize();
+}
+
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter.prototype.containing
 JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValue)
 {
@@ -108,6 +122,7 @@ void IntlSegments::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<IntlSegments>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_string);
+    visitor.reportExtraMemoryVisited(thisObject->extraMemorySize());
 }
 
 DEFINE_VISIT_CHILDREN(IntlSegments);
