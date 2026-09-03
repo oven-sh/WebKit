@@ -94,7 +94,7 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
     return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
 }
 
-void JSModuleEnvironment::getOwnSpecialPropertyNames(JSObject* cell, JSGlobalObject*, PropertyNameArrayBuilder& propertyNamesArray, DontEnumPropertiesMode)
+void JSModuleEnvironment::getOwnSpecialPropertyNames(JSObject* cell, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNamesArray, DontEnumPropertiesMode mode)
 {
     JSModuleEnvironment* thisObject = uncheckedDowncast<JSModuleEnvironment>(cell);
     if (propertyNamesArray.includeStringProperties()) {
@@ -108,6 +108,16 @@ void JSModuleEnvironment::getOwnSpecialPropertyNames(JSObject* cell, JSGlobalObj
                 propertyNamesArray.add(importEntry.localName);
         }
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // The module environment's own let/const/var/function bindings live in the
+    // symbol table inherited from JSLexicalEnvironment. Enumerate them too so
+    // debugger clients see module-scope variables; JSModuleEnvironment is only
+    // reached for property-name enumeration via DebuggerScope.
+    Base::getOwnSpecialPropertyNames(cell, globalObject, propertyNamesArray, mode);
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(mode);
+#endif
 }
 
 bool JSModuleEnvironment::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
