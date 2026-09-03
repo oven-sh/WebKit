@@ -165,6 +165,13 @@
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
+#if OS(WINDOWS)
+#include <windows.h>
+#include <wtf/MathExtras.h>
+#include <wtf/PageBlock.h>
+#include <wtf/StackPointer.h>
+#endif
+
 #if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
 #include "ConservativeRoots.h"
 #endif
@@ -1253,27 +1260,71 @@ size_t VM::updateSoftReservedZoneSize(size_t softReservedZoneSize)
 }
 
 #if OS(WINDOWS)
-// On Windows the reserved stack space consists of committed memory, a guard page, and uncommitted memory,
-// where the guard page is a barrier between committed and uncommitted memory.
-// When data from the guard page is read or written, the guard page is moved, and memory is committed.
-// This is how the system grows the stack.
-// When using the C stack on Windows we need to precommit the needed stack space.
-// Otherwise we might crash later if we access uncommitted stack memory.
-// This can happen if we allocate stack space larger than the page guard size (4K).
-// The system does not get the chance to move the guard page, and commit more memory,
-// and we crash if uncommitted memory is accessed.
-// The MSVC compiler fixes this by inserting a call to the _chkstk() function,
-// when needed, see http://support.microsoft.com/kb/100775.
-// By touching every page up to the stack limit with a dummy operation,
-// we force the system to move the guard page, and commit memory.
+// LLInt and JIT frames are not __chkstk-probed the way C++ frames are, so they may
+// touch the stack more than a guard region below the last access. Everything down
+// to VM::softStackLimit() therefore has to be committed before they run. Both of
+// these return the limit down to which the stack is actually usable afterwards.
 
-static void preCommitStackMemory(void* stackLimit)
+static void* commitStackByTouching(char* limit)
 {
-    const int pageSize = 4096;
-    for (volatile char* p = reinterpret_cast<char*>(&stackLimit); p > stackLimit; p -= pageSize) {
-        char ch = *p;
-        *p = ch;
-    }
+    // Let the kernel's guard-page handler walk the guard region down a page at a time.
+    for (volatile char* p = static_cast<char*>(currentStackPointer()); p >= limit; p -= pageSize())
+        *p = *p;
+    return limit;
+}
+
+static void* commitStack(void* stackLimit)
+{
+    // NT_TIB::StackLimit is the lowest committed non-guard stack address; the guard run
+    // (one page plus the thread's stack guarantee) sits immediately below it and the
+    // rest of the reservation is uncommitted.
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    char* oldLimit = static_cast<char*>(tib->StackLimit);
+    char* newLimit = roundDownToMultipleOf(pageSize(), static_cast<char*>(stackLimit));
+    if (newLimit >= oldLimit)
+        return stackLimit;
+
+    // Touching costs a guard-page fault per page and leaves several MB of dirty stack
+    // per thread. Instead, leave things exactly as the guard-page handler would have
+    // after the last touch: pages committed down to newLimit, a guard run of the same
+    // size just below it, and StackLimit (which SEH dispatch validates the stack pointer
+    // against) lowered to match. Untouched pages then fault in on demand, in any order.
+    // If the stack does not look like that to begin with, just touch.
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    // VirtualQuery describes pages from the queried address forward only, so find the
+    // bottom of the guard run a page at a time, then check that everything from the
+    // reservation base up to it is a single untouched reserved span.
+    MEMORY_BASIC_INFORMATION below { };
+    char* oldGuard = oldLimit;
+    while (VirtualQuery(oldGuard - 1, &below, sizeof(below)) == sizeof(below) && below.State == MEM_COMMIT && (below.Protect & PAGE_GUARD))
+        oldGuard = static_cast<char*>(below.BaseAddress);
+    size_t guardSize = oldLimit - oldGuard;
+    char* reservationBase = static_cast<char*>(below.AllocationBase);
+    MEMORY_BASIC_INFORMATION reserved { };
+    bool asExpected = guardSize && below.State == MEM_RESERVE
+        && VirtualQuery(reservationBase, &reserved, sizeof(reserved)) == sizeof(reserved)
+        && reserved.State == MEM_RESERVE && reservationBase + reserved.RegionSize == oldGuard;
+    char* newGuard = newLimit - guardSize;
+    // The kernel never places the guard run on the last reserved page; neither do we.
+    if (!asExpected || newGuard < reservationBase + pageSize())
+        return commitStackByTouching(newLimit);
+
+    // If the host is out of commit, growing the stack by touching would raise
+    // EXCEPTION_STACK_OVERFLOW right here. Run JS within what is already committed
+    // instead; the caller raises the soft stack limit to match, so the shortfall
+    // surfaces as an earlier RangeError rather than a crash, and is retried on the
+    // next VM entry.
+    if (!VirtualAlloc(newGuard, oldGuard - newGuard, MEM_COMMIT, PAGE_READWRITE))
+        return oldLimit;
+
+    // Un-guard the old run before guarding the new one: when newLimit falls inside the
+    // old run the two ranges overlap, and this order leaves the whole new run guarded.
+    DWORD previous;
+    RELEASE_ASSERT(VirtualProtect(oldGuard, guardSize, PAGE_READWRITE, &previous));
+    RELEASE_ASSERT(VirtualProtect(newGuard, guardSize, PAGE_READWRITE | PAGE_GUARD, &previous));
+    tib->StackLimit = newLimit;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    return stackLimit;
 }
 #endif
 
@@ -1300,7 +1351,6 @@ void VM::updateStackLimits()
     }
 
     if (lastSoftStackLimit != newSoftStackLimit) {
-        traps().setStackSoftLimit(newSoftStackLimit);
 #if OS(WINDOWS)
         // We only need to precommit stack memory dictated by the VM::softStackLimit() limit.
         // This is because VM::softStackLimit() applies to stack usage by LLINT asm or JIT
@@ -1318,8 +1368,9 @@ void VM::updateStackLimits()
         // which raises EXCEPTION_STACK_OVERFLOW on commit-constrained hosts when the reserve
         // is large.
         if (m_stackPointerAtVMEntry)
-            preCommitStackMemory(newSoftStackLimit);
+            newSoftStackLimit = std::max(newSoftStackLimit, commitStack(newSoftStackLimit));
 #endif
+        traps().setStackSoftLimit(newSoftStackLimit);
     }
 }
 
