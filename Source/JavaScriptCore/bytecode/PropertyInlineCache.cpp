@@ -855,8 +855,16 @@ void PropertyInlineCache::initializeWithUnitHandler(CodeBlock* codeBlock, Ref<In
         if (handlerIC->m_inlinedHandler)
             handlerIC->clearInlinedHandler(codeBlock);
         ASSERT(!handlerIC->m_inlinedHandler);
-        if (m_handler)
-            m_handler->removeOwner(codeBlock);
+        // Walk the entire existing chain when removing this CodeBlock as an owner,
+        // not just the head: replacing m_handler below cascades the destruction of
+        // every linked handler via m_next, but each handler in the chain registered
+        // codeBlock in its m_stubRoutine's owner set when it was prepended. Mirrors
+        // resetStubAsJumpInAccess.
+        auto* cursor = m_handler.get();
+        while (cursor) {
+            cursor->removeOwner(codeBlock);
+            cursor = cursor->next();
+        }
         m_handler = WTF::move(handler);
         m_handler->addOwner(codeBlock);
     } else {
