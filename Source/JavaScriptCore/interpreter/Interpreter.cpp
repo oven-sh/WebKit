@@ -73,6 +73,7 @@
 #include "LLIntThunks.h"
 #include "LiteralParser.h"
 #include "MicrotaskCall.h"
+#include "ModuleGraphInstance.h"
 #include "ModuleProgramCodeBlock.h"
 #include "NativeCallee.h"
 #include "ProgramCodeBlock.h"
@@ -1709,6 +1710,11 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
 
 JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramExecutable* executable, JSGlobalObject* lexicalGlobalObject, JSModuleEnvironment* scope, JSValue sentValue, JSValue resumeMode)
 {
+    return executeModuleProgram(record, record, executable, lexicalGlobalObject, scope, sentValue, resumeMode);
+}
+
+JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, JSObject* generatorState, ModuleProgramExecutable* executable, JSGlobalObject* lexicalGlobalObject, JSModuleEnvironment* scope, JSValue sentValue, JSValue resumeMode)
+{
     VM& vm = this->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -1737,9 +1743,15 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     RefPtr<JSC::JITCode> jitCode;
 
     ProtoCallFrame protoCallFrame;
+    auto stateField = [&]() -> WriteBarrier<Unknown>& {
+        if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(generatorState))
+            return recordInstance->internalField(ModuleRecordInstance::Field::State);
+        ASSERT(generatorState == record);
+        return record->internalField(JSModuleRecord::Field::State);
+    };
     EncodedJSValue args[numberOfArguments] = {
-        JSValue::encode(record),
-        JSValue::encode(record->internalField(JSModuleRecord::Field::State).get()),
+        JSValue::encode(generatorState),
+        JSValue::encode(stateField().get()),
         JSValue::encode(sentValue),
         JSValue::encode(resumeMode),
         JSValue::encode(scope),
@@ -1767,7 +1779,7 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
             protoCallFrame.init(codeBlock, globalObject, callee, jsUndefined(), nullptr, numberOfArguments + 1, args);
         }
 
-        record->internalField(JSModuleRecord::Field::State).set(vm, record, jsNumber(static_cast<int>(JSModuleRecord::State::Executing)));
+        stateField().set(vm, generatorState, jsNumber(static_cast<int>(JSModuleRecord::State::Executing)));
     }
 
     // Execute the code:

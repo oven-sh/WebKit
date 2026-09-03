@@ -82,6 +82,9 @@ enum class InternalMicrotask : uint8_t {
     DynamicImportEvaluateSettled,
     DynamicImportDeferLoadSettled,
     DynamicImportDeferDependencySettled,
+    ModuleGraphInstanceLoadSettled,
+    ModuleGraphInstanceEvaluateSettled,
+    ModuleGraphInstanceDependencySettled,
     ImportModuleNamespace,
 #if ENABLE(WEBASSEMBLY)
     WebAssemblyCompileStreaming,

@@ -607,6 +607,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
+            metadata.m_moduleImportSlot = op.moduleImportSlot;
             if (op.lexicalEnvironment) {
                 if (op.type == ModuleVar) {
                     // Keep the linked module environment strongly referenced.

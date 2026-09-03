@@ -1009,6 +1009,7 @@ runtime/ModuleGraphLoadingState.cpp
 runtime/ModuleLoadingContext.cpp
 runtime/ModuleLoaderPayload.cpp
 runtime/ModuleProgramExecutable.cpp
+runtime/ModuleGraphInstance.cpp
 runtime/ModuleRegistryEntry.cpp
 runtime/NarrowingNumberPredictionFuzzerAgent.cpp
 runtime/NativeCallee.cpp

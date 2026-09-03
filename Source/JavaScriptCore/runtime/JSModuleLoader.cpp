@@ -35,6 +35,11 @@
 #include "JSMicrotask.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
+#include "ModuleGraphInstance.h"
+#include "StrongInlines.h"
+#include "JSModuleEnvironment.h"
+#include "JSMapInlines.h"
+#include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "JSSourceCode.h"
 #include "JSWebAssembly.h"
@@ -364,7 +369,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         if (entry->fetchError())
             removeFailedFetchEntry(entry);
         else {
-            JSValue error = entry->error(globalObject);
+            JSValue error = entry->error(globalObject, flags.contains(ModuleLoadFlag::ForGraphInstance) ? ModuleRegistryEntry::IncludeEvaluationError::No : ModuleRegistryEntry::IncludeEvaluationError::Yes);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (error)
                 return JSPromise::rejectedPromise(globalObject, error);
@@ -449,6 +454,172 @@ static String moduleReferrer(const Identifier& referrerKey)
     if (referrerKey.isSymbol())
         return emptyString();
     return referrerKey.string();
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObject, const Identifier& key, RefPtr<ScriptFetchParameters>&& parameters, ModuleGraphInstance* instance)
+{
+    VM& vm = globalObject->vm();
+    if (instance->isCleared())
+        return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Module graph instance has been disposed"_s));
+    // A registry entry whose fetch or instantiation failed is another program
+    // run's failure (possibly produced on behalf of another instance, e.g. by a
+    // host module provider that runs code at fetch time): this instance loads
+    // afresh. Evaluation failures stay (instances evaluate separately anyway).
+    {
+        JSModuleLoader* loader = globalObject->moduleLoader();
+        auto type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
+        Locker locker { loader->cellLock() };
+        if (ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, type)) {
+            if (entry->hasSettledFailure())
+                loader->removeEntry(key);
+        }
+    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* promise = nullptr;
+    {
+        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
+        promise = globalObject->moduleLoader()->loadModuleSync(globalObject, key, WTF::move(parameters), nullptr, { ModuleLoadFlag::ForGraphInstance });
+    }
+    RELEASE_AND_RETURN(scope, promise);
+}
+
+// The continuations of an instance import() are internal microtasks
+// (InternalMicrotask::ModuleGraphInstanceLoadSettled / EvaluateSettled in
+// JSMicrotask.cpp): nothing script-observable (no species lookup, no function
+// objects), and nothing Strong<>-rooted, so an evaluation that never settles
+// does not keep the instance alive.
+JSObject* JSModuleLoader::createGraphInstanceImportContext(JSGlobalObject* globalObject, ModuleGraphInstance* instance, const Identifier& key, ScriptFetchParameters::Type type, bool deferred)
+{
+    VM& vm = globalObject->vm();
+    JSObject* context = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    context->putDirect(vm, vm.propertyNames->builtinNames().moduleGraphInstancePrivateName(), instance);
+    context->putDirect(vm, vm.propertyNames->name, identifierToJSValue(vm, key));
+    context->putDirect(vm, vm.propertyNames->type, jsNumber(static_cast<int32_t>(type)));
+    context->putDirect(vm, vm.propertyNames->builtinNames().deferPrivateName(), jsBoolean(deferred));
+    return context;
+}
+
+JSPromise* JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(JSGlobalObject* globalObject, const Identifier& key, ModuleGraphInstance* instance, ScriptFetchParameters::Type type, bool deferred, JSPromise* dynamicImportPromise)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (instance->isCleared())
+        RELEASE_AND_RETURN(scope, JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Module graph instance has been disposed"_s)));
+    // The loading instance is current only while linking (host-provided
+    // synthetic modules consult it); evaluating the instance below runs script,
+    // and loads that script triggers must not be attributed to this instance.
+    AbstractModuleRecord* record = nullptr;
+    {
+        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
+        record = globalObject->moduleLoader()->linkWithoutEvaluating(globalObject, key, nullptr, type);
+    }
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto phase = deferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
+    auto* sourceRecord = dynamicDowncast<JSModuleRecord>(record);
+    if (!sourceRecord) {
+        if (is<CyclicModuleRecord>(record)) {
+            // As for a static import (JSModuleRecord::createInstanceEnvironment):
+            // only Source Text Module Records can be instantiated per instance,
+            // and sharing the primary's copy of another Cyclic Module Record
+            // (WebAssembly) would hand out a namespace nobody evaluated.
+            throwTypeError(globalObject, scope, makeString("Module '"_s, key.string(), "' cannot be instantiated into a module graph instance (only JavaScript and synthetic modules can)"_s));
+            return nullptr;
+        }
+        // Synthetic modules: an environment in the instance when they carry
+        // per-instance state, otherwise shared with the primary graph.
+        JSModuleNamespaceObject* ns = record->getModuleNamespace(globalObject, instance, phase);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, ns));
+    }
+    JSPromise* evaluated = sourceRecord->instantiateIntoGraphInstanceAsync(globalObject, instance, phase, dynamicImportPromise);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* context = createGraphInstanceImportContext(globalObject, instance, key, type, deferred);
+    context->putDirect(vm, vm.propertyNames->value, sourceRecord);
+    JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
+    evaluated->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphInstanceEvaluateSettled, result, context);
+    return result;
+}
+
+JSPromise* JSModuleLoader::importIntoGraphInstance(JSGlobalObject* globalObject, JSString* specifierValue, JSValue parameters, const SourceOrigin& referrer, ModuleGraphInstance* instance, bool deferred)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (instance->isCleared())
+        RELEASE_AND_RETURN(scope, JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Module graph instance has been disposed"_s)));
+    JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
+
+    auto specifier = specifierValue->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // Import attributes (`with { type }`) select the fetch parameters like a
+    // regular import() does.
+    RefPtr<ScriptFetchParameters> fetchParameters;
+    {
+        auto attributes = retrieveImportAttributesFromDynamicImportOptions(globalObject, parameters, { vm.propertyNames->type.impl() });
+        if (scope.exception()) [[unlikely]] {
+            result->rejectWithCaughtException(vm, scope);
+            RELEASE_AND_RETURN(scope, result);
+        }
+        auto type = retrieveTypeImportAttribute(globalObject, attributes);
+        if (scope.exception()) [[unlikely]] {
+            result->rejectWithCaughtException(vm, scope);
+            RELEASE_AND_RETURN(scope, result);
+        }
+        if (type) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (type.value() == ScriptFetchParameters::Type::HostDefined)
+                fetchParameters = ScriptFetchParameters::create(attributes.get(vm.propertyNames->type.impl()));
+            else
+#endif
+                fetchParameters = ScriptFetchParameters::create(type.value());
+        }
+    }
+    Identifier referrerKey = referrer.url().isValid() ? Identifier::fromString(vm, referrer.url().fileSystemPath()) : Identifier::fromString(vm, referrer.string());
+    Identifier key = globalObject->moduleLoader()->resolve(globalObject, Identifier::fromString(vm, specifier), referrerKey, nullptr, false);
+    if (scope.exception()) [[unlikely]] {
+        result->rejectWithCaughtException(vm, scope);
+        RELEASE_AND_RETURN(scope, result);
+    }
+    auto fetchType = fetchParameters ? fetchParameters->type() : ScriptFetchParameters::Type::JavaScript;
+    // Fetch + parse synchronously with this graph as the loading instance, so
+    // host-side module objects created on the way (CommonJS behind an import)
+    // belong to this graph. Evaluation stays asynchronous.
+    JSPromise* loaded = loadModuleForGraphInstance(globalObject, key, WTF::move(fetchParameters), instance);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* context = createGraphInstanceImportContext(globalObject, instance, key, fetchType, deferred);
+    loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphInstanceLoadSettled, result, context);
+    return result;
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
+
+AbstractModuleRecord* JSModuleLoader::linkWithoutEvaluating(JSGlobalObject* globalObject, const Identifier& moduleKey, RefPtr<ScriptFetcher> scriptFetcher, ScriptFetchParameters::Type type)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ModuleRegistryEntry* entry = ensureRegistered(globalObject, moduleKey, type);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    AbstractModuleRecord* record = entry->record();
+    if (!record) {
+        throwTypeError(globalObject, scope, makeString("Module '"_s, moduleKey.string(), "' has not been fetched"_s));
+        return nullptr;
+    }
+    // Only a fetch or instantiation failure makes the template unusable; the
+    // primary graph's evaluation error is its own (an instance evaluates the
+    // record separately, with its own [[EvaluationError]]).
+    JSValue error = entry->error(globalObject, ModuleRegistryEntry::IncludeEvaluationError::No);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (error) {
+        scope.throwException(globalObject, error);
+        return nullptr;
+    }
+    record->link(globalObject, WTF::move(scriptFetcher));
+    if (Exception* exception = scope.exception()) {
+        attachErrorInfo(globalObject, scope, record, entry->key(), entry->moduleType(), ModuleFailure::Kind::Instantiation);
+        entry->setInstantiationError(globalObject, exception->value());
+        return nullptr;
+    }
+    return record;
 }
 
 JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder)
@@ -801,7 +972,14 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
         // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
         JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            // A host fetch hook that throws synchronously: record the failure on
+            // the entry (a later load of this key sees it, or retries after the
+            // entry is dropped) rather than leaving a New entry in the map.
+            if (!vm.isTerminationException(exception))
+                mapEntry->setFetchError(globalObject, exception->value());
+            return nullptr;
+        }
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
@@ -1236,7 +1414,7 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     tasks.shrink(0);
 }
 
-JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& parameters, RefPtr<ScriptFetcher>&& scriptFetcher)
+JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& parameters, RefPtr<ScriptFetcher>&& scriptFetcher, OptionSet<ModuleLoadFlag> flags)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1248,7 +1426,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         vm.m_synchronousModuleQueue = queue.prev;
     });
 
-    JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
+    JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), flags);
     RETURN_IF_EXCEPTION(scope, result);
 
     scope.release();
@@ -1309,9 +1487,42 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         Vector<Identifier, 4> exportNames;
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        if (args.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return promise->rejectWithCaughtException(vm, scope);
+        }
 
-        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, args, lazyExportsSource);
+        ModuleGraphInstance* loadingInstance = syntheticSourceProvider->regeneratesPerGraphInstance() ? globalObject->currentGraphInstanceForLoading() : nullptr;
+        MarkedArgumentBuffer primaryValues;
+        if (loadingInstance) {
+            // Generated on behalf of a graph: those values are the graph's; the
+            // primary's are produced later, if the primary ever links to them.
+            for (unsigned i = 0; i < args.size(); ++i)
+                primaryValues.append(JSValue());
+            if (primaryValues.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return promise->rejectWithCaughtException(vm, scope);
+            }
+        }
+        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, loadingInstance ? primaryValues : args, lazyExportsSource ? lazyExportsSource : (loadingInstance ? globalObject->globalThis() : nullptr));
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        if (moduleRecord) {
+            moduleRecord->setSyntheticSourceProvider(syntheticSourceProvider, !!loadingInstance);
+            if (loadingInstance) {
+                JSModuleEnvironment* environment = JSModuleEnvironment::create(vm, globalObject, nullptr, moduleRecord->moduleEnvironment()->symbolTable(), jsTDZValue(), moduleRecord);
+                RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+                for (unsigned i = 0; i < exportNames.size(); ++i) {
+                    bool putResult = false;
+                    symbolTablePutTouchWatchpointSet(environment, globalObject, exportNames[i], args.at(i) ? args.at(i) : jsUndefined(), false, true, putResult);
+                    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+                }
+                // The instance may have been disposed while the host generated
+                // this module (that ran script): the record is still created (it
+                // is the primary's too), just not filed under the instance.
+                if (!loadingInstance->isCleared())
+                    loadingInstance->add(vm, moduleRecord, environment);
+            }
+        }
 
         scope.release();
         promise->fulfill(vm, moduleRecord);

@@ -40,6 +40,7 @@ namespace JSC {
 class CyclicModuleRecord;
 class JSModuleEnvironment;
 class JSModuleNamespaceObject;
+class ModuleGraphInstance;
 class JSMap;
 class JSPromise;
 
@@ -197,6 +198,23 @@ public:
     const Identifier& moduleKey() const { return m_moduleKey; }
     ScriptFetchParameters::Type moduleType() const;
     const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
+
+    // Import slots (module graph instances): the distinct records this module's
+    // named imports resolve to, fixed at link time. Every JSModuleEnvironment of
+    // this record carries one trailing slot per entry holding the environment of
+    // that exporter in the same graph instance, so a ModuleVar access is
+    // "walk to the importing environment, load slot" in every tier.
+    unsigned importSlotCount() const { return m_importedRecords.size(); }
+    AbstractModuleRecord* importedRecordAt(unsigned index) const { return m_importedRecords[index].get(); }
+    std::optional<unsigned> importSlotIndexFor(AbstractModuleRecord* exporter) const
+    {
+        for (unsigned i = 0; i < m_importedRecords.size(); ++i) {
+            if (m_importedRecords[i].get() == exporter)
+                return i;
+        }
+        return std::nullopt;
+    }
+    void setImportedRecords(VM&, const Vector<AbstractModuleRecord*>&);
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
     const ExportEntries& exportEntries() const LIFETIME_BOUND { return m_exportEntries; }
@@ -242,6 +260,10 @@ public:
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
 
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation, bool shouldPreventExtensions = true);
+    // Module graph instances (prototype): a namespace object bound to `instance`'s environments (not cached on the record).
+    JS_EXPORT_PRIVATE JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation);
+    // This record's environment in `instance` (creating it for synthetic records with per-graph state when asked), or null.
+    JS_EXPORT_PRIVATE JSModuleEnvironment* graphInstanceEnvironment(JSGlobalObject*, ModuleGraphInstance*, bool createForSynthetic);
 #if USE(BUN_JSC_ADDITIONS)
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions)
     {
@@ -249,9 +271,9 @@ public:
     }
 #endif
 
-    void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
-    bool readyForSyncExecution();
-    void evaluateSync(JSGlobalObject*);
+    void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen, ModuleGraphInstance* = nullptr);
+    bool readyForSyncExecution(ModuleGraphInstance* = nullptr);
+    void evaluateSync(JSGlobalObject*, ModuleGraphInstance* = nullptr);
 
     JSPromise* asyncCapability() const;
     void asyncCapability(VM&, JSPromise*);
@@ -274,9 +296,9 @@ public:
 
     void evaluateModuleSync(JSGlobalObject*);
 #if USE(BUN_JSC_ADDITIONS)
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
+    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise, ModuleGraphInstance*);
 #else
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index);
+    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance*);
 #endif
     unsigned innerModuleLinking(JSGlobalObject*, Vector<CyclicModuleRecord*, 8>& stack, unsigned index, RefPtr<ScriptFetcher>);
 
@@ -348,6 +370,8 @@ protected:
     std::optional<int> m_pendingAsyncDependencies;
 
     bool m_hasTLA { false };
+    Vector<WriteBarrier<AbstractModuleRecord>> m_importedRecords;
+    bool m_importedRecordsSet { false };
     SourceProviderSourceType m_sourceType;
 };
 

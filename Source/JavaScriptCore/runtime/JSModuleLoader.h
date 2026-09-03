@@ -39,8 +39,11 @@ namespace JSC {
 class ErrorInstance;
 class JSPromise;
 class JSModuleNamespaceObject;
+class ModuleGraphInstance;
 class JSModuleRecord;
 class JSSourceCode;
+class JSMap;
+class JSModuleEnvironment;
 class ModuleRegistryEntry;
 class SourceOrigin;
 
@@ -49,6 +52,9 @@ enum class ModuleLoadFlag : uint8_t {
     Dynamic = 1 << 1,
     UseImportMap = 1 << 2,
     Deferred = 1 << 3,
+    // Loading a template for a module graph instance: the primary graph's
+    // evaluation error for an already-loaded module is not this load's failure.
+    ForGraphInstance = 1 << 4,
 };
 
 class JSModuleLoader final : public JSCell {
@@ -94,6 +100,20 @@ public:
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
+    // Module graph instances (prototype): link a fetched module graph without
+    // evaluating it, so it can serve as the template for instantiateIntoGraphInstance.
+    JS_EXPORT_PRIVATE AbstractModuleRecord* linkWithoutEvaluating(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetcher>, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript);
+#if USE(BUN_JSC_ADDITIONS)
+    // import() from code of a module graph instance: fetch and link the graph as
+    // a template (through the synchronous loader), instantiate it into the
+    // instance, and resolve with the instance's namespace object. (An
+    // asynchronous-loader form is needed for ports without loadModuleSync.)
+    JS_EXPORT_PRIVATE static JSPromise* importIntoGraphInstance(JSGlobalObject*, JSString* specifier, JSValue parameters, const SourceOrigin& referrer, ModuleGraphInstance*, bool deferred = false);
+    JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
+    // Resolves with the instance's namespace object once its (possibly asynchronous) evaluation completes.
+    JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false, JSPromise* dynamicImportPromise = nullptr);
+    static JSObject* createGraphInstanceImportContext(JSGlobalObject*, ModuleGraphInstance*, const Identifier& key, ScriptFetchParameters::Type, bool deferred);
+#endif
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
@@ -208,7 +228,7 @@ public:
         m_moduleMap.clear();
         m_resolutionFailures.clear();
     }
-    JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+    JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&, OptionSet<ModuleLoadFlag> = { ModuleLoadFlag::Evaluate });
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 #endif
 

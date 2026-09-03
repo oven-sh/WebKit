@@ -605,6 +605,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpModuleRecord, false, Normal, nullptr) \
     v(Bool, dumpModuleLoadingState, false, Normal, nullptr) \
     v(Bool, exposeInternalModuleLoader, false, Normal, "expose the internal module loader object to the global space for debugging"_s) \
+    v(Bool, useModuleGraphInstances, false, Normal, "Allow a linked module graph to be instantiated more than once per global object (ModuleGraphInstance)"_s) \
     \
     v(Bool, exposePrivateIdentifiers, false, Normal, "Allow non-builtin scripts to use private identifiers. Mostly useful to expose @superSamplerBegin/End intrinsics for profiling"_s) \
     \

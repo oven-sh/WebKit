@@ -31,6 +31,10 @@
 
 namespace JSC {
 
+class ModuleGraphInstance;
+
+class JSModuleEnvironment;
+
 class JSModuleNamespaceObject final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -73,6 +77,11 @@ public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     AbstractModuleRecord* moduleRecord() LIFETIME_BOUND { return m_moduleRecord.get(); }
+    // Module graph instances (prototype): when set (a JSMap record → environment),
+    // bindings are read from that instance's environments instead of the records'.
+    ModuleGraphInstance* graphInstance() const { return m_graphInstance.get(); }
+    void setGraphInstance(VM&, ModuleGraphInstance*, JSModuleEnvironment*);
+    JSModuleEnvironment* environmentFor(JSGlobalObject*, AbstractModuleRecord*);
 
 #if USE(BUN_JSC_ADDITIONS)
     WTF::TriState m_hasESModuleMarker = WTF::TriState::Indeterminate;
@@ -94,6 +103,10 @@ private:
 
     ExportMap m_exports;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
+    WriteBarrier<ModuleGraphInstance> m_graphInstance;
+    // This namespace's own module environment in that instance: local exports and
+    // (through its import slots) re-exports resolve here without the instance map.
+    WriteBarrier<JSModuleEnvironment> m_instanceEnvironment;
     const bool m_isDeferred;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isOverridingValue = false;

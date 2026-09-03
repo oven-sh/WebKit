@@ -896,9 +896,34 @@ void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar)
-        loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), returnValueGPR);
-    else if (profiledResolveType == ClosureVar) {
+    if (profiledResolveType == ModuleVar) {
+        if (!Options::useModuleGraphInstances()) {
+            // The exporter environment is a link-time constant.
+            loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), returnValueGPR);
+        } else {
+            // Module graph instances: the import slot index (like the exporter
+            // environment) is a per-CodeBlock link-time value, and baseline code
+            // is shared between CodeBlocks of one UnlinkedCodeBlock, so read it
+            // from metadata. Slot 0: constant environment. Otherwise walk to the
+            // importing module environment (a lexical depth) and load its import
+            // slot; an unfilled slot goes to the slow path.
+            load32FromMetadata(bytecode, Metadata::offsetOfModuleImportSlot(), scratch1GPR);
+            Jump hasImportSlot = branchTest32(NonZero, scratch1GPR);
+            loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), returnValueGPR);
+            Jump done = jump();
+            hasImportSlot.link(this);
+            emitGetVirtualRegister(scope, scopeGPR);
+            static_assert(scopeGPR == returnValueGPR);
+            unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
+            for (unsigned index = 0; index < localScopeDepth; ++index)
+                loadPtr(Address(returnValueGPR, JSScope::offsetOfNext()), returnValueGPR);
+            static_assert(sizeof(WriteBarrier<Unknown>) == 8);
+            sub32(TrustedImm32(1), scratch1GPR);
+            load64(BaseIndex(returnValueGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
+            addSlowCase(branchIfEmpty(returnValueGPR));
+            done.link(this);
+        }
+    } else if (profiledResolveType == ClosureVar) {
         emitGetVirtualRegister(scope, scopeGPR);
         static_assert(scopeGPR == returnValueGPR);
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
@@ -1093,10 +1118,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
             emitResolveClosure(needsVarInjectionChecks(resolveType));
             break;
         case Dynamic:
+        case ModuleVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
-        case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

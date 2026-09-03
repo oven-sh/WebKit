@@ -218,6 +218,9 @@ struct ResolveOp {
     InlineWatchpointSet* watchpointSet;
     uintptr_t operand;
     RefPtr<UniquedStringImpl> importedName;
+    // ModuleVar: 1 + the import slot's ScopeOffset in the importing environment
+    // (0 = none; resolve to the linked exporter environment as a constant).
+    unsigned moduleImportSlot { 0 };
 };
 
 class GetPutInfo {

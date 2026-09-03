@@ -522,6 +522,7 @@ op :resolve_scope,
     },
     metadata: {
         resolveType: ResolveType, # offset 4
+        moduleImportSlot: unsigned, # ModuleVar: 1 + import slot ScopeOffset in the importing environment, 0 = none
         _0: { # offset 5
             localScopeDepth: unsigned,
             globalLexicalBindingEpoch: unsigned,

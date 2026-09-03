@@ -25,6 +25,11 @@
 
 #include "config.h"
 #include "SyntheticModuleRecord.h"
+#include "SourceProvider.h"
+#include "StructureInlines.h"
+#include "ArrayConstructor.h"
+#include "ObjectConstructor.h"
+#include "JSArray.h"
 
 #include "ArgList.h"
 #include "BuiltinNames.h"
@@ -85,8 +90,14 @@ Synchronousness SyntheticModuleRecord::link(JSGlobalObject*, RefPtr<ScriptFetche
     return Synchronousness::Sync;
 }
 
-JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
+JSValue SyntheticModuleRecord::evaluate(JSGlobalObject* globalObject)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A record first produced for a module graph instance gives the primary its
+    // own values when the primary graph evaluates it.
+    materializePrimaryIfPending(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 
@@ -174,6 +185,9 @@ void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, 
     if (localName == vm.propertyNames->starNamespacePrivateName)
         return;
 
+    if (m_primaryPending)
+        RELEASE_AND_RETURN(scope, materializePrimaryIfPending(globalObject));
+
     JSModuleEnvironment* environment = moduleEnvironment();
     SymbolTable* symbolTable = environment->symbolTable();
     ScopeOffset scopeOffset;
@@ -236,7 +250,105 @@ SyntheticModuleRecord* SyntheticModuleRecord::parseJSONModule(JSGlobalObject* gl
     JSValue result = JSONParseWithException(globalObject, sourceCode.view());
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleKey, result, SourceProviderSourceType::JSON));
+    SyntheticModuleRecord* record = SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleKey, result, SourceProviderSourceType::JSON);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (record && Options::useModuleGraphInstances())
+        record->m_jsonSource = WTF::move(sourceCode);
+    RELEASE_AND_RETURN(scope, record);
+}
+
+void SyntheticModuleRecord::materializePrimaryIfPending(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // While a graph is loading, the primary is nobody's business yet.
+    if (!m_primaryPending || !m_provider || globalObject->currentGraphInstanceForLoading())
+        return;
+    m_primaryPending = false; // before generate(): the provider may re-enter
+    MarkedArgumentBuffer values;
+    Vector<Identifier, 4> names;
+    m_provider->generate(globalObject, moduleKey(), names, values);
+    if (scope.exception()) [[unlikely]] {
+        m_primaryPending = true; // a later use retries
+        return;
+    }
+    if (values.hasOverflowed()) [[unlikely]] {
+        m_primaryPending = true;
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    JSModuleEnvironment* environment = moduleEnvironment();
+    SymbolTable* symbolTable = environment->symbolTable();
+    for (const auto& [key, entry] : exportEntries()) {
+        SymbolTableEntry::Fast symbolEntry = symbolTable->get(entry.localName.impl());
+        if (symbolEntry.isNull())
+            continue;
+        JSValue value = jsUndefined();
+        for (unsigned i = 0; i < names.size(); ++i) {
+            if (names[i] == entry.localName) {
+                value = values.at(i);
+                break;
+            }
+        }
+        environment->variableAt(symbolEntry.scopeOffset()).set(vm, environment, value ? value : jsUndefined());
+    }
+}
+
+bool SyntheticModuleRecord::hasPerGraphInstanceState() const
+{
+    // Two explicit signals: a JSON module re-parses its source per instance, and
+    // a host provider that says so regenerates its values per instance. Every
+    // other synthetic module is shared with the primary graph.
+    if (!m_jsonSource.isNull())
+        return true;
+    return m_provider && m_provider->regeneratesPerGraphInstance();
+}
+
+JSModuleEnvironment* SyntheticModuleRecord::createGraphInstanceEnvironment(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(hasPerGraphInstanceState());
+    JSModuleEnvironment* primary = moduleEnvironment();
+    JSModuleEnvironment* environment = JSModuleEnvironment::create(vm, globalObject, nullptr, primary->symbolTable(), jsTDZValue(), this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!m_jsonSource.isNull()) {
+        JSValue value = JSONParseWithException(globalObject, m_jsonSource.view());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        bool putResult = false;
+        symbolTablePutTouchWatchpointSet(environment, globalObject, vm.propertyNames->defaultKeyword, value, false, true, putResult);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return environment;
+    }
+    if (m_provider && m_provider->regeneratesPerGraphInstance()) {
+        // The host produces this graph's values (the caller has set the graph as
+        // the current loading instance); names not produced stay undefined.
+        MarkedArgumentBuffer values;
+        Vector<Identifier, 4> names;
+        m_provider->generate(globalObject, moduleKey(), names, values);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (values.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        SymbolTable* symbolTable = primary->symbolTable();
+        for (const auto& [key, entry] : exportEntries()) {
+            SymbolTableEntry::Fast symbolEntry = symbolTable->get(entry.localName.impl());
+            if (symbolEntry.isNull())
+                continue;
+            JSValue value = jsUndefined();
+            for (unsigned i = 0; i < names.size(); ++i) {
+                if (names[i] == entry.localName) {
+                    value = values.at(i);
+                    break;
+                }
+            }
+            environment->variableAt(symbolEntry.scopeOffset()).set(vm, environment, value ? value : jsUndefined());
+        }
+        return environment;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
 }
 
 SyntheticModuleRecord* SyntheticModuleRecord::createTextModule(JSGlobalObject* globalObject, const Identifier& moduleKey, SourceCode&& sourceCode)

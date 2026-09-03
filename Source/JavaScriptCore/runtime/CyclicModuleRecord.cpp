@@ -36,6 +36,8 @@
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
+#include "ModuleGraphInstance.h"
+#include "Options.h"
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
@@ -49,6 +51,144 @@
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
+
+// Evaluation state of this record in a module graph instance. A record the
+// instance did not instantiate (shared with the primary graph) uses its own.
+static ModuleRecordInstance* recordInstanceFor(const CyclicModuleRecord* record, ModuleGraphInstance* instance)
+{
+    if (!instance)
+        return nullptr;
+    // Evaluating an instance never reads or writes the primary graph's state:
+    // instantiation gives every Cyclic Module Record the instance reaches its
+    // own state (JSModuleRecord::createInstanceEnvironment), and a cleared
+    // instance is refused before evaluation starts.
+    ModuleRecordInstance* recordInstance = instance->recordInstance(const_cast<CyclicModuleRecord*>(record));
+    RELEASE_ASSERT(recordInstance, "module graph instance has no state for a cyclic module record it evaluates");
+    return recordInstance;
+}
+
+CyclicModuleRecord::Status CyclicModuleRecord::status(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->status();
+    return status();
+}
+
+JSValue CyclicModuleRecord::evaluationError(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->evaluationError();
+    return evaluationError();
+}
+
+unsigned CyclicModuleRecord::dfsAncestorIndex(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->dfsAncestorIndex();
+    return dfsAncestorIndex();
+}
+
+CyclicModuleRecord* CyclicModuleRecord::cycleRoot(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->cycleRoot();
+    return AbstractModuleRecord::cycleRoot();
+}
+
+AbstractModuleRecord::AsyncEvaluationOrder CyclicModuleRecord::asyncEvaluationOrder(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->asyncEvaluationOrder();
+    return AbstractModuleRecord::asyncEvaluationOrder();
+}
+
+std::optional<int> CyclicModuleRecord::pendingAsyncDependencies(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->pendingAsyncDependencies();
+    return AbstractModuleRecord::pendingAsyncDependencies();
+}
+
+JSPromise* CyclicModuleRecord::topLevelCapability(ModuleGraphInstance* instance) const
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        return state->topLevelCapability();
+    return AbstractModuleRecord::topLevelCapability();
+}
+
+void CyclicModuleRecord::setStatus(ModuleGraphInstance* instance, Status newStatus)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setStatus(newStatus);
+    else
+        setStatus(newStatus);
+}
+
+void CyclicModuleRecord::setEvaluationError(VM& vm, ModuleGraphInstance* instance, JSValue error)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setEvaluationError(vm, error);
+    else
+        setEvaluationError(vm, error);
+}
+
+void CyclicModuleRecord::setDFSAncestorIndex(ModuleGraphInstance* instance, unsigned index)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setDFSAncestorIndex(index);
+    else
+        setDFSAncestorIndex(index);
+}
+
+void CyclicModuleRecord::setCycleRoot(VM& vm, ModuleGraphInstance* instance, CyclicModuleRecord* root)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setCycleRoot(vm, root);
+    else
+        AbstractModuleRecord::setCycleRoot(vm, root);
+}
+
+void CyclicModuleRecord::setAsyncEvaluationOrder(ModuleGraphInstance* instance, AsyncEvaluationOrder order)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setAsyncEvaluationOrder(order);
+    else
+        AbstractModuleRecord::setAsyncEvaluationOrder(order);
+}
+
+void CyclicModuleRecord::setPendingAsyncDependencies(ModuleGraphInstance* instance, std::optional<int> value)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setPendingAsyncDependencies(value);
+    else
+        AbstractModuleRecord::setPendingAsyncDependencies(value);
+}
+
+void CyclicModuleRecord::appendAsyncParentModule(VM& vm, ModuleGraphInstance* instance, AbstractModuleRecord* parent)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->appendAsyncParentModule(vm, parent);
+    else
+        AbstractModuleRecord::appendAsyncParentModule(vm, parent);
+}
+
+void CyclicModuleRecord::setTopLevelCapability(VM& vm, ModuleGraphInstance* instance, JSPromise* capability)
+{
+    if (ModuleRecordInstance* state = recordInstanceFor(this, instance))
+        state->setTopLevelCapability(vm, capability);
+    else
+        AbstractModuleRecord::setTopLevelCapability(vm, capability);
+}
+
+template<typename Functor>
+void CyclicModuleRecord::forEachAsyncParentModule(ModuleGraphInstance* instance, const Functor& functor) const
+{
+    ModuleRecordInstance* state = recordInstanceFor(this, instance);
+    const Vector<WriteBarrier<AbstractModuleRecord>>& parents = state ? state->asyncParentModules() : asyncParentModules();
+    for (const WriteBarrier<AbstractModuleRecord>& parent : parents)
+        functor(uncheckedDowncast<CyclicModuleRecord>(parent.get()));
+}
+
 
 const ClassInfo CyclicModuleRecord::s_info = { "CyclicModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CyclicModuleRecord) };
 
@@ -149,11 +289,37 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 4. Assert: realm is not undefined.
     SymbolTable* symbolTable = nullptr;
     if (jsModule) {
+        // Module graph instances: fix the import slots (distinct exporter records
+        // of the named imports) before the environment is sized.
+        if (Options::useModuleGraphInstances()) {
+            Vector<AbstractModuleRecord*> importedRecords;
+            UncheckedKeyHashSet<AbstractModuleRecord*> seenRecords;
+            for (const auto& [key, in] : importEntries()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // SingleTypeScript: a named import that may be absent; when it
+                // does resolve it is bound (and needs a slot) exactly like Single.
+                if (in.type != ImportEntryType::Single && in.type != ImportEntryType::SingleTypeScript)
+                    continue;
+#else
+                if (in.type != ImportEntryType::Single)
+                    continue;
+#endif
+                AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, in.moduleRequest, in.moduleRequestType);
+                RETURN_IF_EXCEPTION(scope, void());
+                Resolution resolution = importedModule->resolveExport(globalObject, in.importName);
+                RETURN_IF_EXCEPTION(scope, void());
+                if (resolution.type != Resolution::Type::Resolved)
+                    continue;
+                if (seenRecords.add(resolution.moduleRecord).isNewEntry)
+                    importedRecords.append(resolution.moduleRecord);
+            }
+            setImportedRecords(vm, importedRecords);
+        }
         // 5. Let env be NewModuleEnvironment(realm.[[GlobalEnv]]).
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
-        env = JSModuleEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsTDZValue(), this);
+        env = JSModuleEnvironment::create(vm, globalObject, globalObject->moduleEnvironmentParentScope(), symbolTable, jsTDZValue(), this);
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
@@ -331,6 +497,9 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 22. Let lexDeclarations be the LexicallyScopedDeclarations of code.
     // 23. Let privateEnv be null.
     // 24. For each element d of lexDeclarations, do
+    Vector<WriteBarrier<FunctionExecutable>> functionDeclExecutables;
+    if (Options::useModuleGraphInstances())
+        functionDeclExecutables.grow(unlinkedCodeBlock->numberOfFunctionDecls());
     for (size_t i = 0, numberOfFunctions = unlinkedCodeBlock->numberOfFunctionDecls(); i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then
@@ -351,6 +520,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             // 24.a.iii.1. Let fo be InstantiateFunctionObject of d with arguments env and privateEnv.
             auto* executable = unlinkedFunctionExecutable->link(vm, moduleProgramExecutable, moduleProgramExecutable->source());
             RETURN_IF_EXCEPTION(scope, void());
+            if (Options::useModuleGraphInstances())
+                functionDeclExecutables[i].setWithoutWriteBarrier(executable);
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
             if (isAsyncGeneratorWrapperParseMode(parseMode))
@@ -368,6 +539,9 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+
+    if (Options::useModuleGraphInstances())
+        jsModule->retainForGraphInstances(vm, moduleProgramExecutable, WTF::move(functionDeclExecutables));
 
     if (jsModule->features() & ImportMetaFeature) {
         JSObject* metaProperties = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
@@ -419,36 +593,40 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
+JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise, ModuleGraphInstance* instance)
 #else
-JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
+JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
 #endif
 {
+    ModuleGraphInstance::BusyScope busy(globalObject, instance);
     // https://tc39.es/ecma262/#sec-moduleevaluation
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (instance && instance->isCleared()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Module graph instance was disposed"_s)));
+
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
     // FIXME: is this needed?
     // 2. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
-    ASSERT(m_status == Status::Linked || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+    ASSERT(status(instance) == Status::Linked || status(instance) == Status::EvaluatingAsync || status(instance) == Status::Evaluated);
     CyclicModuleRecord* module = this;
     // 3. If module.[[Status]] is either EVALUATING-ASYNC or EVALUATED, then
-    if (m_status == Status::EvaluatingAsync || m_status == Status::Evaluated) {
+    if (status(instance) == Status::EvaluatingAsync || status(instance) == Status::Evaluated) {
         // 3.a. If module.[[CycleRoot]] is not EMPTY, then
-        if (CyclicModuleRecord* root = m_cycleRoot.get()) {
+        if (CyclicModuleRecord* root = cycleRoot(instance)) {
             // 3.a.i. Set module to module.[[CycleRoot]].
             module = root;
         // 3.b. Else,
         } else {
             // 3.b.i. Assert: module.[[Status]] is EVALUATED and module.[[EvaluationError]] is a throw completion.
-            ASSERT(m_status == Status::Evaluated);
-            ASSERT(m_evaluationError);
+            ASSERT(status(instance) == Status::Evaluated);
+            ASSERT(evaluationError(instance));
         }
     }
     // 4. If module.[[TopLevelCapability]] is not EMPTY, then
-    if (JSPromise* promise = module->topLevelCapability()) {
+    if (JSPromise* promise = module->topLevelCapability(instance)) {
         // 4.a. Return module.[[TopLevelCapability]].[[Promise]].
         RELEASE_AND_RETURN(scope, promise);
     }
@@ -457,12 +635,12 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 6. Let capability be ! NewPromiseCapability(%Promise%).
     JSPromise* capability = JSPromise::create(vm, globalObject->promiseStructure());
     // 7. Set module.[[TopLevelCapability]] to capability.
-    module->setTopLevelCapability(vm, capability);
+    module->setTopLevelCapability(vm, instance, capability);
     // 8. Let result be Completion(InnerModuleEvaluation(module, stack, 0)).
 #if USE(BUN_JSC_ADDITIONS)
-    module->innerModuleEvaluation(globalObject, stack, 0, referrerAsyncOrder, dynamicImportPromise);
+    module->innerModuleEvaluation(globalObject, stack, 0, referrerAsyncOrder, dynamicImportPromise, instance);
 #else
-    module->innerModuleEvaluation(globalObject, stack, 0);
+    module->innerModuleEvaluation(globalObject, stack, 0, instance);
 #endif
     // 9. If result is an abrupt completion, then
     if (Exception* exception = scope.exception()) {
@@ -471,28 +649,28 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
         for (AbstractModuleRecord* abstractRecord : stack) {
             // 9.a.i. Assert: m.[[Status]] is EVALUATING.
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(abstractRecord);
-            ASSERT(cyclic->status() == Status::Evaluating);
+            ASSERT(cyclic->status(instance) == Status::Evaluating);
             // 9.a.ii. Set m.[[Status]] to EVALUATED.
-            cyclic->setStatus(Status::Evaluated);
+            cyclic->setStatus(instance, Status::Evaluated);
             // 9.a.iii. Set m.[[EvaluationError]] to result.
-            cyclic->setEvaluationError(vm, exception->value());
+            cyclic->setEvaluationError(vm, instance, exception->value());
         }
         // 9.b. Assert: module.[[Status]] is EVALUATED.
-        ASSERT(module->status() == Status::Evaluated);
+        ASSERT(module->status(instance) == Status::Evaluated);
         // 9.c. Assert: module.[[EvaluationError]] and result are the same Completion Record.
-        ASSERT(module->evaluationError() == exception->value());
+        ASSERT(module->evaluationError(instance) == exception->value());
         // 9.d. Perform ! Call(capability.[[Reject]], undefined, « result.[[Value]] »).
         capability->rejectWithCaughtException(vm, scope);
     // 10. Else,
     } else {
         // 10.a. Assert: module.[[Status]] is either EVALUATING-ASYNC or EVALUATED.
-        ASSERT(module->status() == Status::EvaluatingAsync || module->status() == Status::Evaluated);
+        ASSERT(module->status(instance) == Status::EvaluatingAsync || module->status(instance) == Status::Evaluated);
         // 10.b. Assert: module.[[EvaluationError]] is EMPTY.
-        ASSERT(module->evaluationError() == nullptr);
+        ASSERT(!module->evaluationError(instance));
         // 10.c. If module.[[Status]] is EVALUATED, then
-        if (module->status() == Status::Evaluated) {
+        if (module->status(instance) == Status::Evaluated) {
             // 10.c.i. Assert: module.[[AsyncEvaluationOrder]] is either UNSET or DONE.
-            ASSERT(module->asyncEvaluationOrder().isUnset() || module->asyncEvaluationOrder().isDone());
+            ASSERT(module->asyncEvaluationOrder(instance).isUnset() || module->asyncEvaluationOrder(instance).isDone());
             // 10.c.ii. NOTE: module.[[AsyncEvaluationOrder]] is DONE if and only if module had already been evaluated and that evaluation was asynchronous.
             // 10.c.iii. Perform ! Call(capability.[[Resolve]], undefined, « undefined »).
             capability->fulfill(vm, jsUndefined());
@@ -504,10 +682,13 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, capability);
 }
 
-void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability)
+void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability, ModuleGraphInstance* instance)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (ModuleRecordInstance* recordInstance = recordInstanceFor(this, instance))
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSModuleRecord>(this)->executeInstance(globalObject, recordInstance, capability));
 
 #if ENABLE(WEBASSEMBLY)
     if (auto* wasmModule = dynamicDowncast<WebAssemblyModuleRecord>(this)) {
@@ -530,7 +711,7 @@ void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capabi
     RELEASE_AND_RETURN(scope, uncheckedDowncast<JSModuleRecord>(this)->execute(globalObject, capability));
 }
 
-void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
+void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
 {
     // ExecuteAsyncModule(module)
     // https://tc39.es/ecma262/#sec-execute-async-module
@@ -539,7 +720,7 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Assert: module.[[Status]] is either EVALUATING or EVALUATING-ASYNC.
-    ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
+    ASSERT(status(instance) == Status::Evaluating || status(instance) == Status::EvaluatingAsync);
     // 2. Assert: module.[[HasTLA]] is true.
     ASSERT(hasTLA());
     // 3. Let capability be ! NewPromiseCapability(%Promise%).
@@ -555,15 +736,19 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // 7. Let onRejected be CreateBuiltinFunction(rejectedClosure, 0, "", « »).
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+    // The context names the module and, for a module graph instance, the instance (its ModuleRecordInstance).
+    JSCell* context = this;
+    if (ModuleRecordInstance* recordInstance = recordInstanceFor(this, instance))
+        context = recordInstance;
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, context);
     // 9. Perform ! module.ExecuteModule(capability).
-    execute(globalObject, promise);
+    execute(globalObject, promise, instance);
     RETURN_IF_EXCEPTION(scope, void());
     // 10. Return UNUSED.
     RELEASE_AND_RETURN(scope, void());
 }
 
-static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList)
+static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList, ModuleGraphInstance* instance)
 {
     // GatherAvailableAncestors(module, execList)
     // https://tc39.es/ecma262/#sec-gather-available-ancestors
@@ -581,30 +766,29 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
     while (!worklist.isEmpty()) {
         CyclicModuleRecord* record = worklist.takeLast();
         // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
-        for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules()) {
-            auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
+        record->forEachAsyncParentModule(instance, [&](CyclicModuleRecord* m) {
             // 1.a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
             // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
-            ASSERT_IMPLIES(!m->cycleRoot(), m->evaluationError());
-            CyclicModuleRecord* root = m->cycleRoot();
-            if (!root || root->evaluationError() != nullptr)
-                continue;
-            auto pending = m->pendingAsyncDependencies();
+            ASSERT_IMPLIES(!m->cycleRoot(instance), m->evaluationError(instance));
+            CyclicModuleRecord* root = m->cycleRoot(instance);
+            if (!root || !!root->evaluationError(instance))
+                return;
+            auto pending = m->pendingAsyncDependencies(instance);
             // Verify the invariant in debug: execList ∋ m  iff  pending == 0 (under cycleRoot OK).
             ASSERT(pending);
             ASSERT(execList.contains(m) == !*pending);
             if (!*pending)
-                continue;
+                return;
             // 1.a.i. Assert: m.[[Status]] is EVALUATING-ASYNC.
-            ASSERT(m->status() == CyclicModuleRecord::Status::EvaluatingAsync);
+            ASSERT(m->status(instance) == CyclicModuleRecord::Status::EvaluatingAsync);
             // 1.a.ii. Assert: m.[[EvaluationError]] is EMPTY.
-            ASSERT(m->evaluationError() == nullptr);
+            ASSERT(!m->evaluationError(instance));
             // 1.a.iii. Assert: m.[[AsyncEvaluationOrder]] is an integer.
-            ASSERT(m->asyncEvaluationOrder().hasOrder());
+            ASSERT(m->asyncEvaluationOrder(instance).hasOrder());
             // 1.a.iv. Assert: m.[[PendingAsyncDependencies]] > 0. (Implied by *pending != 0 above.)
             // 1.a.v. Set m.[[PendingAsyncDependencies]] to m.[[PendingAsyncDependencies]] - 1.
             int newDependencies = *pending - 1;
-            m->setPendingAsyncDependencies(newDependencies);
+            m->setPendingAsyncDependencies(instance, newDependencies);
             // 1.a.vi. If m.[[PendingAsyncDependencies]] = 0, then
             if (!newDependencies) {
                 // 1.a.vi.1. Append m to execList.
@@ -613,12 +797,12 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
                 if (!m->hasTLA())
                     worklist.append(m);
             }
-        }
+        });
     }
     // 2. Return UNUSED.
 }
 
-void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JSValue error)
+void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JSValue error, ModuleGraphInstance* instance)
 {
     // AsyncModuleExecutionRejected(module, error)
     // https://tc39.es/ecma262/#sec-async-module-execution-rejected
@@ -632,41 +816,45 @@ void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JS
     while (!stack.isEmpty()) {
         CyclicModuleRecord* module = stack.takeLast();
         // 1. If module.[[Status]] is EVALUATED, then
-        if (module->status() == CyclicModuleRecord::Status::Evaluated) {
+        if (module->status(instance) == CyclicModuleRecord::Status::Evaluated) {
             // 1.a. Assert: module.[[EvaluationError]] is not EMPTY.
-            ASSERT(module->evaluationError() != nullptr);
+            ASSERT(!!module->evaluationError(instance));
             // 1.b. Return UNUSED.
             continue;
         }
         // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
-        ASSERT(module->status() == CyclicModuleRecord::Status::EvaluatingAsync);
+        ASSERT(module->status(instance) == CyclicModuleRecord::Status::EvaluatingAsync);
         // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
-        ASSERT(module->asyncEvaluationOrder().hasOrder());
+        ASSERT(module->asyncEvaluationOrder(instance).hasOrder());
         // 4. Assert: module.[[EvaluationError]] is EMPTY.
-        ASSERT(module->evaluationError() == nullptr);
+        ASSERT(!module->evaluationError(instance));
         // 5. Set module.[[EvaluationError]] to ThrowCompletion(error).
-        module->setEvaluationError(vm, error);
+        module->setEvaluationError(vm, instance, error);
         // 6. Set module.[[Status]] to EVALUATED.
-        module->setStatus(CyclicModuleRecord::Status::Evaluated);
+        module->setStatus(instance, CyclicModuleRecord::Status::Evaluated);
         // 7. Set module.[[AsyncEvaluationOrder]] to DONE.
-        module->setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
+        module->setAsyncEvaluationOrder(instance, AbstractModuleRecord::AsyncEvaluationOrder::done());
         // 8. NOTE: module.[[AsyncEvaluationOrder]] is set to DONE for symmetry with AsyncModuleExecutionFulfilled. In InnerModuleEvaluation, the value of a module's [[AsyncEvaluationOrder]] internal slot is unused when its [[EvaluationError]] internal slot is not EMPTY.
         // 9. If module.[[TopLevelCapability]] is not EMPTY, then
-        if (auto* topLevel = module->topLevelCapability()) {
+        if (auto* topLevel = module->topLevelCapability(instance)) {
             // 9.a. Assert: module.[[CycleRoot]] and module are the same Module Record.
-            ASSERT(module->cycleRoot() == module);
+            ASSERT(module->cycleRoot(instance) == module);
             // 9.b. Perform ! Call(module.[[TopLevelCapability]].[[Reject]], undefined, « error »).
             topLevel->reject(vm, error);
         }
         // 10. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
         //     10.a. Perform AsyncModuleExecutionRejected(m, error).
-        for (const WriteBarrier<AbstractModuleRecord>& m : module->asyncParentModules() | std::views::reverse)
-            stack.append(uncheckedDowncast<CyclicModuleRecord>(m.get()));
+        {
+            Vector<CyclicModuleRecord*, 8> parents;
+            module->forEachAsyncParentModule(instance, [&](CyclicModuleRecord* m) { parents.append(m); });
+            for (CyclicModuleRecord* m : parents | std::views::reverse)
+                stack.append(m);
+        }
     }
     // 11. Return UNUSED.
 }
 
-void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
+void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
 {
     // AsyncModuleExecutionFulfilled(module)
     // https://tc39.es/ecma262/#sec-async-module-execution-fulfilled
@@ -675,26 +863,26 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. If module.[[Status]] is EVALUATED, then
-    if (status() == CyclicModuleRecord::Status::Evaluated) {
+    if (status(instance) == CyclicModuleRecord::Status::Evaluated) {
         // 1.a. Assert: module.[[EvaluationError]] is not EMPTY.
-        ASSERT(evaluationError() != nullptr);
+        ASSERT(!!evaluationError(instance));
         // 1.b. Return UNUSED.
         RELEASE_AND_RETURN(scope, void());
     }
     // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
-    ASSERT(status() == CyclicModuleRecord::Status::EvaluatingAsync);
+    ASSERT(status(instance) == CyclicModuleRecord::Status::EvaluatingAsync);
     // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
-    ASSERT(asyncEvaluationOrder().hasOrder());
+    ASSERT(asyncEvaluationOrder(instance).hasOrder());
     // 4. Assert: module.[[EvaluationError]] is EMPTY.
-    ASSERT(evaluationError() == nullptr);
+    ASSERT(!evaluationError(instance));
     // 5. Set module.[[AsyncEvaluationOrder]] to DONE.
-    setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
+    setAsyncEvaluationOrder(instance, AbstractModuleRecord::AsyncEvaluationOrder::done());
     // 6. Set module.[[Status]] to EVALUATED.
-    setStatus(CyclicModuleRecord::Status::Evaluated);
+    setStatus(instance, CyclicModuleRecord::Status::Evaluated);
     // 7. If module.[[TopLevelCapability]] is not EMPTY, then
-    if (auto* capability = topLevelCapability()) {
+    if (auto* capability = topLevelCapability(instance)) {
         // 7.a. Assert: module.[[CycleRoot]] and module are the same Module Record.
-        ASSERT(cycleRoot() == this);
+        ASSERT(cycleRoot(instance) == this);
         // 7.b. Perform ! Call(module.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
         capability->fulfill(vm, jsUndefined());
     }
@@ -702,54 +890,54 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
     Vector<CyclicModuleRecord*, 8> execList;
     // 9. Perform GatherAvailableAncestors(module, execList).
-    gatherAvailableAncestors(this, execList);
+    gatherAvailableAncestors(this, execList, instance);
     // 10. Assert: All elements of execList have their [[AsyncEvaluationOrder]] field set to an integer, [[PendingAsyncDependencies]] field set to 0, and [[EvaluationError]] field set to EMPTY.
 #if ASSERT_ENABLED
     for (CyclicModuleRecord* element : execList) {
-        ASSERT(element->asyncEvaluationOrder().hasOrder());
-        ASSERT(element->pendingAsyncDependencies() && !*element->pendingAsyncDependencies());
-        ASSERT(!element->evaluationError());
+        ASSERT(element->asyncEvaluationOrder(instance).hasOrder());
+        ASSERT(element->pendingAsyncDependencies(instance) && !*element->pendingAsyncDependencies(instance));
+        ASSERT(!element->evaluationError(instance));
     }
 #endif
     // 11. Let sortedExecList be a List whose elements are the elements of execList, sorted by their [[AsyncEvaluationOrder]] field in ascending order.
-    std::ranges::sort(execList, [](CyclicModuleRecord* left, CyclicModuleRecord* right) {
-        return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
+    std::ranges::sort(execList, [instance](CyclicModuleRecord* left, CyclicModuleRecord* right) {
+        return left->asyncEvaluationOrder(instance).order() < right->asyncEvaluationOrder(instance).order();
     });
     // 12. For each Cyclic Module Record m of sortedExecList, do
     for (CyclicModuleRecord* m : execList) {
         // 12.a. If m.[[Status]] is EVALUATED, then
-        if (m->status() == CyclicModuleRecord::Status::Evaluated) {
+        if (m->status(instance) == CyclicModuleRecord::Status::Evaluated) {
             // 12.a.i. Assert: m.[[EvaluationError]] is not EMPTY.
-            ASSERT(m->evaluationError() != nullptr);
+            ASSERT(!!m->evaluationError(instance));
         // 12.b. Else if m.[[HasTLA]] is true, then
         } else if (m->hasTLA()) {
             // 12.b.i. Perform ExecuteAsyncModule(m).
-            m->executeAsync(globalObject);
+            m->executeAsync(globalObject, instance);
             if (Exception* exception = scope.exception()) {
                 JSValue error = exception->value();
                 TRY_CLEAR_EXCEPTION(scope, void());
-                m->asyncExecutionRejected(globalObject, error);
+                m->asyncExecutionRejected(globalObject, error, instance);
             }
         // 12.c. Else,
         } else {
             // 12.c.i. Let result be m.ExecuteModule().
-            m->execute(globalObject);
+            m->execute(globalObject, nullptr, instance);
             // 12.c.ii. If result is an abrupt completion, then
             if (Exception* exception = scope.exception()) {
                 JSValue error = exception->value();
                 TRY_CLEAR_EXCEPTION(scope, void());
                 // 12.c.ii.1. Perform AsyncModuleExecutionRejected(m, result.[[Value]]).
-                m->asyncExecutionRejected(globalObject, error);
+                m->asyncExecutionRejected(globalObject, error, instance);
             // 12.c.iii. Else,
             } else {
                 // 12.c.iii.1. Set m.[[AsyncEvaluationOrder]] to DONE.
-                m->setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
+                m->setAsyncEvaluationOrder(instance, AbstractModuleRecord::AsyncEvaluationOrder::done());
                 // 12.c.iii.2. Set m.[[Status]] to EVALUATED.
-                m->setStatus(CyclicModuleRecord::Status::Evaluated);
+                m->setStatus(instance, CyclicModuleRecord::Status::Evaluated);
                 // 12.c.iii.3. If m.[[TopLevelCapability]] is not EMPTY, then
-                if (auto* capability = m->topLevelCapability()) {
+                if (auto* capability = m->topLevelCapability(instance)) {
                     // 12.c.iii.3.a. Assert: m.[[CycleRoot]] and m are the same Module Record.
-                    ASSERT(m->cycleRoot() == m);
+                    ASSERT(m->cycleRoot(instance) == m);
                     // 12.c.iii.3.b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
                     capability->fulfill(vm, jsUndefined());
                 }

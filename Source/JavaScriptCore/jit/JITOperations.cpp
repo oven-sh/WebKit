@@ -65,6 +65,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSGlobalObjectFunctions.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMapIterator.h"
+#include "JSModuleEnvironment.h"
+#include "AbstractModuleRecord.h"
 #include "JSMicrotask.h"
 #include "JSPromise.h"
 #include "JSRemoteFunction.h"
@@ -4593,15 +4595,19 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     auto bytecode = pc->as<OpResolveScope>();
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* environment = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    auto& metadata = bytecode.metadata(codeBlock);
+
+    if (metadata.m_resolveType == ModuleVar) {
+        JSObject* result = JSModuleEnvironment::resolveModuleVarScope(globalObject, environment, metadata.m_localScopeDepth, uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get()));
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
+
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:

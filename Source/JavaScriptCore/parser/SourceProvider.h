@@ -211,6 +211,13 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
+        // Module graph instances: a generator that yields a fresh module per call
+        // and honours JSGlobalObject::currentGraphInstanceForLoading() (e.g. a
+        // CommonJS module evaluated in that graph's cache) — such records get
+        // their own environment per graph and a lazily produced primary.
+        void setRegeneratesPerGraphInstance(bool value) { m_regeneratesPerGraphInstance = value; }
+        bool regeneratesPerGraphInstance() const { return m_regeneratesPerGraphInstance; }
+
         unsigned hash() const final
         {
             return m_source.impl()->hash();
@@ -243,6 +250,7 @@ private:
         String m_source;
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
+        bool m_regeneratesPerGraphInstance { false };
     };
 
 #if ENABLE(WEBASSEMBLY)

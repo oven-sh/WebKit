@@ -2849,6 +2849,25 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
 
 .rModuleVar:
     bineq t0, ModuleVar, .rGlobalPropertyWithVarInjectionChecks
+    # With module graph instances the exporting environment is per instance: it
+    # is the importing environment's import slot (walk localScopeDepth to the
+    # importing module environment, load the slot; empty = not filled yet).
+    loadi OpResolveScope::Metadata::m_moduleImportSlot[t5], t1
+    btiz t1, .rModuleVarConstant
+    loadi OpResolveScope::Metadata::m_localScopeDepth[t5], t2
+    get(m_scope, t0)
+    loadq [cfr, t0, 8], t0
+    btiz t2, .rModuleVarLoad
+.rModuleVarWalk:
+    loadp JSScope::m_next[t0], t0
+    subi 1, t2
+    btinz t2, .rModuleVarWalk
+.rModuleVarLoad:
+    subi 1, t1
+    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+    btqz t0, .rDynamic
+    return(t0)
+.rModuleVarConstant:
     returnConstantScope()
 
 .rGlobalPropertyWithVarInjectionChecks:

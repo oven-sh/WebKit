@@ -274,6 +274,8 @@ class Heap;
     v(jsModuleRecordSpace, jsModuleRecordHeapCellType, JSModuleRecord) \
     v(moduleRegistryEntrySpace, destructibleCellHeapCellType, ModuleRegistryEntry) \
     v(moduleLoadingContextSpace, destructibleCellHeapCellType, ModuleLoadingContext) \
+    v(moduleGraphInstanceSpace, destructibleObjectHeapCellType, ModuleGraphInstance) \
+    v(moduleRecordInstanceSpace, destructibleCellHeapCellType, ModuleRecordInstance) \
     v(sentinelSpace, cellHeapCellType, JSSentinel) \
     v(syntheticModuleRecordSpace, syntheticModuleRecordHeapCellType, SyntheticModuleRecord) \
     v(jsMicrotaskDispatcherSpace, destructibleCellHeapCellType, JSMicrotaskDispatcher) \

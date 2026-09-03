@@ -47,6 +47,7 @@
 #include "JSCellButterfly.h"
 #include "JSIteratorHelper.h"
 #include "JSLexicalEnvironment.h"
+#include "JSModuleEnvironment.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSPromise.h"
@@ -1390,14 +1391,18 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+
+    if (metadata.m_resolveType == ModuleVar) {
+        JSObject* result = JSModuleEnvironment::resolveModuleVarScope(globalObject, scope, metadata.m_localScopeDepth, uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get()));
+        CHECK_EXCEPTION();
+        RETURN(result);
+    }
+
     JSObject* resolvedScope = JSScope::resolve(globalObject, scope, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     CHECK_EXCEPTION();
 
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:
