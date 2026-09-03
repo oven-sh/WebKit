@@ -178,8 +178,14 @@ void JSArrayBufferView::finishCreation(VM& vm)
     ASSERT(is<JSArrayBufferView>(this));
     switch (m_mode) {
     case FastTypedArray:
+#if USE(BUN_JSC_ADDITIONS)
+        vm.heap.reportTypedArrayVectorBytesAllocated(byteLengthRaw());
+#endif
         return;
     case OversizeTypedArray:
+#if USE(BUN_JSC_ADDITIONS)
+        vm.heap.reportTypedArrayVectorBytesAllocated(byteLengthRaw());
+#endif
         vm.heap.addFinalizer(this, finalize);
         return;
     case WastefulTypedArray:
@@ -233,8 +239,12 @@ void JSArrayBufferView::finalize(JSCell* cell)
     // to a WastefulTypedArray via slowDownAndWasteMemory(). Hence, it is possible
     // to get to this finalizer and found the mode to be WastefulTypedArray.
     ASSERT(thisObject->m_mode == OversizeTypedArray || thisObject->hasArrayBuffer());
-    if (thisObject->m_mode == OversizeTypedArray)
+    if (thisObject->m_mode == OversizeTypedArray) {
+#if USE(BUN_JSC_ADDITIONS)
+        Heap::heap(cell)->reportTypedArrayVectorBytesDeallocated(thisObject->byteLengthRaw());
+#endif
         Gigacage::free(Gigacage::Primitive, thisObject->vector());
+    }
 }
 
 JSArrayBuffer* JSArrayBufferView::unsharedJSBuffer(JSGlobalObject* globalObject)
@@ -319,6 +329,12 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     setButterfly(vm, Butterfly::createOrGrowArrayRight(
         butterfly(), vm, this, structure,
         structure->outOfLineCapacity(), false, 0, 0));
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The backing bytes are now owned by the ArrayBuffer and will be counted by
+    // m_arrayBuffers via addReference() below.
+    heap->reportTypedArrayVectorBytesDeallocated(byteLengthRaw());
+#endif
 
     {
         Locker locker { cellLock() };
