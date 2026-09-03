@@ -609,8 +609,8 @@ public:
     Vector<UniqueRef<ChainedWatchpoint>> m_installedChainedWatchpoints;
 
     void installObjectAdaptiveStructureWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
-    void installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
-    void installChainedWatchpoint(InlineWatchpointSet& from, InlineWatchpointSet& to);
+    JS_EXPORT_PRIVATE void installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
+    JS_EXPORT_PRIVATE void installChainedWatchpoint(InlineWatchpointSet& from, InlineWatchpointSet& to);
 
     inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
     inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
