@@ -416,6 +416,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // Compat alias: upstream renamed Structure::globalObject() -> realm() in 7d4583947a7b.
     JSGlobalObject* globalObject() const LIFETIME_BOUND { return m_realm.get(); }
+
+    JS_EXPORT_PRIVATE String sourceConstructorName() const;
 #endif
 
     // NOTE: This method should only be called during the creation of structures, since the realm
