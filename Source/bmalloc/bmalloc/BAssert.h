@@ -41,7 +41,8 @@
 #elif BCPU(ARM_THUMB2)
 #define BBreakpointTrap()  __asm__ volatile ("bkpt #0")
 #elif BCPU(ARM64)
-#define BBreakpointTrap()  __asm__ volatile ("brk #0xbb08")
+// `brk #0`, not upstream's `brk #0xbb08`: see WTF_FATAL_CRASH_INST in wtf/Assertions.h.
+#define BBreakpointTrap()  __asm__ volatile ("brk #0")
 #else
 #error "Unsupported CPU".
 #endif
