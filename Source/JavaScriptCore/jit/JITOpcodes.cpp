@@ -31,12 +31,14 @@
 #include "BaselineJITRegisters.h"
 #include "BasicBlockLocation.h"
 #include "BinarySwitch.h"
+#include "BytecodeGeneratorification.h"
 #include "BytecodeGenerator.h"
 #include "Exception.h"
 #include "JITInlines.h"
 #include "JITThunks.h"
 #include "JSCast.h"
 #include "JSFunction.h"
+#include "JSLexicalEnvironment.h"
 #include "JSPropertyNameEnumerator.h"
 #include "JumpTable.h"
 #include "LinkBuffer.h"
@@ -1968,6 +1970,37 @@ void JIT::emit_op_create_lexical_environment(const JSInstruction* currentInstruc
     emitGetVirtualRegister(scope, argumentGPR1);
     emitGetVirtualRegister(symbolTable, argumentGPR2);
     callOperationNoExceptionCheck(value == jsUndefined() ? operationCreateLexicalEnvironmentUndefined : operationCreateLexicalEnvironmentTDZ, dst, argumentGPR0, argumentGPR1, argumentGPR2);
+}
+
+void JIT::emit_op_save_generator_locals(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpSaveGeneratorLocals>();
+    constexpr GPRReg scopeGPR = regT2;
+    constexpr JSValueRegs valueJSR = jsRegT10;
+    static_assert(noOverlap(scopeGPR, valueJSR));
+
+    emitGetVirtualRegister(bytecode.m_scope, scopeGPR);
+    forEachLiveGeneratorLocal(m_unlinkedCodeBlock->bitVector(bytecode.m_liveLocals), m_unlinkedCodeBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned slot) {
+        loadValue(addressFor(virtualRegisterForLocal(index)), valueJSR);
+        storeValue(valueJSR, Address(scopeGPR, JSLexicalEnvironment::offsetOfVariable(ScopeOffset(bytecode.m_firstScopeOffset + slot))));
+    });
+    emitWriteBarrier(scopeGPR);
+}
+
+void JIT::emit_op_restore_generator_locals(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpRestoreGeneratorLocals>();
+    constexpr GPRReg scopeGPR = regT2;
+    constexpr JSValueRegs valueJSR = jsRegT10;
+    static_assert(noOverlap(scopeGPR, valueJSR));
+
+    emitGetVirtualRegister(bytecode.m_scope, scopeGPR);
+    unsigned valueProfile = bytecode.m_valueProfile;
+    forEachLiveGeneratorLocal(m_unlinkedCodeBlock->bitVector(bytecode.m_liveLocals), m_unlinkedCodeBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned slot) {
+        loadValue(Address(scopeGPR, JSLexicalEnvironment::offsetOfVariable(ScopeOffset(bytecode.m_firstScopeOffset + slot))), valueJSR);
+        storeValue(valueJSR, addressFor(virtualRegisterForLocal(index)));
+        emitValueProfilingSite(valueProfile++, valueJSR);
+    });
 }
 
 void JIT::emit_op_create_direct_arguments(const JSInstruction* currentInstruction)

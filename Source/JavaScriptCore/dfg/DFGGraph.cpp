@@ -29,6 +29,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "ArrayPrototype.h"
+#include "BytecodeGeneratorification.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
 #include "CodeBlockWithJITType.h"
@@ -1953,6 +1954,22 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
                 }
                 case op_call_ignore_result:
                     return { };
+                case op_restore_generator_locals: {
+                    if (node->op() != GetClosureVar)
+                        return { };
+                    auto bytecode = instruction->as<OpRestoreGeneratorLocals>();
+                    unsigned slot = node->scopeOffset().offset() - bytecode.m_firstScopeOffset;
+                    std::optional<VirtualRegister> local;
+                    forEachLiveGeneratorLocal(profiledBlock->bitVector(bytecode.m_liveLocals), profiledBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned candidate) {
+                        if (candidate == slot)
+                            local = virtualRegisterForLocal(index);
+                    });
+                    if (!local)
+                        return { };
+                    if (InlineCallFrame* inlineCallFrame = node->origin.semantic.inlineCallFrame())
+                        *local += inlineCallFrame->stackOffset;
+                    return MethodOfGettingAValueProfile::lazyOperandValueProfile(node->origin.semantic, *local);
+                }
                 default: {
                     auto* valueProfile = profiledBlock->tryGetValueProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex());
                     if (!valueProfile)

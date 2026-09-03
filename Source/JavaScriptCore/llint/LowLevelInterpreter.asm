@@ -2282,6 +2282,8 @@ slowPathOp(unreachable)
 slowPathOp(new_promise)
 slowPathOp(new_generator)
 slowPathOp(new_async_function_generator)
+slowPathOp(save_generator_locals)
+slowPathOp(restore_generator_locals)
 
 macro llintSlowPathOp(opcodeName)
     llintOp(op_%opcodeName%, unused, macro (unused, unused, dispatch)

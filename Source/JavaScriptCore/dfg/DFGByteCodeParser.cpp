@@ -34,6 +34,7 @@
 #include "BooleanConstructor.h"
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
+#include "BytecodeGeneratorification.h"
 #include "BytecodeOperandsForCheckpoint.h"
 #include "CacheableIdentifierInlines.h"
 #include "CallLinkStatus.h"
@@ -10844,6 +10845,37 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* lexicalEnvironment = addToGraph(CreateActivation, OpInfo(symbolTable), OpInfo(initialValue), scope);
             set(bytecode.m_dst, lexicalEnvironment);
             NEXT_OPCODE(op_create_lexical_environment);
+        }
+
+        case op_save_generator_locals: {
+            auto bytecode = currentInstruction->as<OpSaveGeneratorLocals>();
+            CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
+            Node* scopeNode = get(bytecode.m_scope);
+            forEachLiveGeneratorLocal(codeBlock->bitVector(bytecode.m_liveLocals), codeBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned slot) {
+                addToGraph(PutClosureVar, OpInfo(bytecode.m_firstScopeOffset + slot), scopeNode, get(virtualRegisterForLocal(index)));
+                emitExitOK();
+            });
+            addToGraph(Phantom, scopeNode);
+            NEXT_OPCODE(op_save_generator_locals);
+        }
+
+        case op_restore_generator_locals: {
+            auto bytecode = currentInstruction->as<OpRestoreGeneratorLocals>();
+            CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
+            Node* scopeNode = get(bytecode.m_scope);
+            addToGraph(Phantom, scopeNode);
+            CodeBlock* profiledBlock = m_inlineStackTop->m_profiledBlock;
+            unsigned valueProfile = bytecode.m_valueProfile;
+            forEachLiveGeneratorLocal(codeBlock->bitVector(bytecode.m_liveLocals), codeBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned slot) {
+                VirtualRegister local = virtualRegisterForLocal(index);
+                SpeculatedType prediction = profiledBlock->valueProfileForOffset(valueProfile++).computeUpdatedPrediction();
+                mergeSpeculation(prediction, m_inlineStackTop->m_lazyOperands.prediction(LazyOperandValueProfileKey(m_currentIndex, m_inlineStackTop->remapOperand(local))));
+                if (prediction == SpecNone)
+                    prediction = SpecEmpty;
+                set(local, addToGraph(GetClosureVar, OpInfo(bytecode.m_firstScopeOffset + slot), OpInfo(prediction), scopeNode), ImmediateSetWithFlush);
+                emitExitOK();
+            });
+            NEXT_OPCODE(op_restore_generator_locals);
         }
 
         case op_push_with_scope: {

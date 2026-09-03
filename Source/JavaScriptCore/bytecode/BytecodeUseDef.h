@@ -43,12 +43,26 @@ void computeUsesForBytecodeIndex(Block* codeBlock, const JSInstruction* instruct
         functor(codeBlock->scopeRegister());
 
     computeUsesForBytecodeIndexImpl(instruction, checkpoint, functor);
+
+    if (opcodeID == op_save_generator_locals) {
+        auto bytecode = instruction->as<OpSaveGeneratorLocals>();
+        codeBlock->bitVector(bytecode.m_liveLocals).forEachSetBit([&](size_t index) {
+            functor(virtualRegisterForLocal(index));
+        });
+    }
 }
 
 template<typename Block, typename Functor>
 void computeDefsForBytecodeIndex(Block* codeBlock, const JSInstruction* instruction, Checkpoint checkpoint, const Functor& functor)
 {
     computeDefsForBytecodeIndexImpl(codeBlock->numVars(), instruction, checkpoint, functor);
+
+    if (instruction->opcodeID() == op_restore_generator_locals) {
+        auto bytecode = instruction->as<OpRestoreGeneratorLocals>();
+        codeBlock->bitVector(bytecode.m_liveLocals).forEachSetBit([&](size_t index) {
+            functor(virtualRegisterForLocal(index));
+        });
+    }
 }
 
 #undef CALL_FUNCTOR

@@ -28,6 +28,7 @@
 
 #include "ArithProfile.h"
 #include "ArrayPrototypeInlines.h"
+#include "BytecodeGeneratorification.h"
 #include "BytecodeStructs.h"
 #include "ClonedArguments.h"
 #include "CommonSlowPathsInlines.h"
@@ -1438,6 +1439,34 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_rest)
     unsigned numParamsToSkip = bytecode.m_numParametersToSkip;
     JSValue* argumentsToCopyRegion = callFrame->addressOfArgumentsStart() + numParamsToSkip;
     RETURN(constructArray(globalObject, structure, argumentsToCopyRegion, argumentCount > numParamsToSkip ? argumentCount - numParamsToSkip : 0));
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_save_generator_locals)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpSaveGeneratorLocals>();
+    JSLexicalEnvironment* environment = uncheckedDowncast<JSLexicalEnvironment>(GET(bytecode.m_scope).jsValue().asCell());
+    WriteBarrierBase<Unknown>* variables = environment->variables() + bytecode.m_firstScopeOffset;
+    forEachLiveGeneratorLocal(codeBlock->bitVector(bytecode.m_liveLocals), codeBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned slot) {
+        variables[slot].setWithoutWriteBarrier(GET(virtualRegisterForLocal(index)).jsValue());
+    });
+    vm.writeBarrier(environment);
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_restore_generator_locals)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpRestoreGeneratorLocals>();
+    JSLexicalEnvironment* environment = uncheckedDowncast<JSLexicalEnvironment>(GET(bytecode.m_scope).jsValue().asCell());
+    WriteBarrierBase<Unknown>* variables = environment->variables() + bytecode.m_firstScopeOffset;
+    unsigned valueProfile = bytecode.m_valueProfile;
+    forEachLiveGeneratorLocal(codeBlock->bitVector(bytecode.m_liveLocals), codeBlock->bitVector(bytecode.m_savedLocals), [&](size_t index, unsigned slot) {
+        JSValue value = variables[slot].get();
+        GET(virtualRegisterForLocal(index)) = value;
+        codeBlock->valueProfileForOffset(valueProfile++).m_buckets[0] = JSValue::encode(value);
+    });
+    END();
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_get_by_val_with_this)
