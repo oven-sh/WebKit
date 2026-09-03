@@ -863,6 +863,7 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         setBaselineJITData(WTF::move(baselineJITData));
 #if USE(BUN_JSC_ADDITIONS)
         m_previousCounter = static_cast<BaselineJITData*>(m_jitData)->executeCounter().count();
+        m_previousCounterHoldsAllocation = false;
 #endif
 
         // Set optimization thresholds only after instructions is initialized and JITData is initialized, since these
@@ -1342,6 +1343,22 @@ Seconds CodeBlock::timeToLive(JITType jitType)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool CodeBlock::agesByMutatorQuietness()
+{
+    switch (jitType()) {
+    case JITType::FTLJIT:
+        return true;
+#if ENABLE(DFG_JIT)
+    case JITType::DFGJIT:
+        return !Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation;
+#endif
+    default:
+        return false;
+    }
+}
+#endif
+
 template<typename Visitor>
 ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker&, Visitor& visitor)
 {
@@ -1354,19 +1371,34 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
 #if USE(BUN_JSC_ADDITIONS)
     JITType type = jitType();
     Seconds ttl = timeToLive(type);
+
+    // Optimizing tiers: a DFG block ages like a baseline one, using the tier-up counter its code already decrements at
+    // returns and loop back-edges as the sign of life. FTL code, and DFG code compiled without tier-up checks, has no
+    // counter of its own. It is expensive to rebuild, but it also pins its baseline alternative and every baseline
+    // CodeBlock it inlined along with their metadata, so rather than never ageing it ages against the mutator as a
+    // whole: a full collection lets it go once it is past its TTL and (almost) nothing has been allocated since the
+    // previous full collection looked at it - the process has been sitting idle - and renews it whenever the mutator
+    // has been allocating, exactly as before. Collections are themselves allocation-driven, so a busy mutator never
+    // sees two such quiet collections in a row; an embedder's idle-time collections do.
+    if (agesByMutatorQuietness()) {
+        unsigned quietMB = Options::optimizedCodeAgingQuietAllocationMB();
+        if (!quietMB)
+            return false;
+        // Whole megabytes so the float holds them exactly.
+        float allocatedMB = static_cast<float>(vm().heap.totalBytesAllocated() >> 20);
+        if (!m_previousCounterHoldsAllocation || allocatedMB - m_previousCounter > quietMB) {
+            // First look at this block in this regime, or the mutator has been allocating since its lease started: renew it from here.
+            m_previousCounter = allocatedMB;
+            m_previousCounterHoldsAllocation = true;
+            m_creationTime = ApproximateTime::now();
+            return false;
+        }
+        Seconds quietFor = Options::useEagerCodeBlockJettisonTiming() ? ttl : Seconds(Options::optimizedCodeAgingQuietSeconds());
+        return timeSinceCreation() >= quietFor;
+    }
+
     if (timeSinceCreation() < ttl)
         return false;
-
-    // Optimizing tiers: an FTL block is small and very expensive to rebuild, so it never ages out (it stays alive for as
-    // long as the structures it speculated on do, see determineLiveness()). A DFG block ages like a baseline one, using
-    // the tier-up counter its code already decrements at returns and loop back-edges as the sign of life; a DFG block
-    // compiled without tier-up checks has no such signal and is kept.
-    if (type == JITType::FTLJIT)
-        return false;
-#if ENABLE(DFG_JIT)
-    if (type == JITType::DFGJIT && (!Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation))
-        return false;
-#endif
 
     if (Options::useExecutionCountForCodeBlockAging()) {
         // LLInt and Baseline CodeBlocks already tick an execution counter on
@@ -1379,7 +1411,9 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         // reconcileWeakReferencesAtGCEnd also writes for UnlinkedCodeBlock aging when
         // VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the
         // same current count for the same tier, so they agree; outside that mode
-        // updateActivity() never touches the field.
+        // updateActivity() never touches the field. (For agesByMutatorQuietness() code
+        // the field holds an allocation total instead, tagged by m_previousCounterHoldsAllocation,
+        // and updateActivity() leaves it alone.)
         float currentCount = 0;
         bool hasCounter = false;
         switch (type) {
@@ -1404,8 +1438,9 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         default:
             break;
         }
-        if (hasCounter && currentCount != m_previousCounter) {
+        if (hasCounter && (currentCount != m_previousCounter || m_previousCounterHoldsAllocation)) {
             m_previousCounter = currentCount;
+            m_previousCounterHoldsAllocation = false;
             // Push the effective creation time forward so the block is not
             // considered for old-age jettison again until leaseMultiplier * ttl
             // has elapsed with no observed execution.
@@ -1925,6 +1960,13 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     auto updateActivity = [&] {
         if (!VM::useUnlinkedCodeBlockJettisoning())
             return;
+#if USE(BUN_JSC_ADDITIONS)
+        if (agesByMutatorQuietness()) {
+            if (!m_visitChildrenSkippedDueToOldAge)
+                m_unlinkedCode->resetAge();
+            return;
+        }
+#endif
         auto* jitCode = m_jitCode.get();
         float count = 0;
         bool alwaysActive = false;
