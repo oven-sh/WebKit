@@ -144,19 +144,26 @@ public:
         if (!m_useSystemHeap) [[likely]] {
             void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
             size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
-            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, false, -1, true, &structureArena));
-            structureHeap = mi_heap_new_in_arena(structureArena);
+            // mimalloc aligns the start up to an arena slice and then needs at least one whole
+            // chunk of slices (MI_ARENA_MIN_SIZE, 32 MiB on 64-bit). The 32 MiB reservation the
+            // loop above ends on when address space is short does not have that after the first
+            // block is taken off, and neither does a small structureHeapSizeInKB. Hand out blocks
+            // from the reservation directly in that case, as when bmalloc is disabled.
+            if (mi_manage_os_memory_ex(memory, size, false, false, false, -1, true, &structureArena)) {
+                structureHeap = mi_heap_new_in_arena(structureArena);
 #if OS(LINUX) && defined(MADV_DOFORK)
-            // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
-            // mi_arena_t and theaps inside this region and registers them in
-            // process-wide lists that _mi_process_fork_child walks pre-exec.
-            while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+                // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
+                // mi_arena_t and theaps inside this region and registers them in
+                // process-wide lists that _mi_process_fork_child walks pre-exec.
+                while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
 #elif OS(DARWIN)
-            // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
-            // same rationale as the Linux MADV_DOFORK branch above.
-            vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
+                // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
+                // same rationale as the Linux MADV_DOFORK branch above.
+                vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
 #endif
-            return;
+                return;
+            }
+            m_useSystemHeap = true;
         }
         m_usedBlocks.set(0);
 #else
