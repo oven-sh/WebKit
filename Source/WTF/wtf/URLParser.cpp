@@ -3887,22 +3887,33 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
 
 std::optional<String> URLParser::formURLDecode(StringView input)
 {
-    auto utf8 = input.utf8(StrictConversion);
-    if (utf8.isNull())
+    auto utf8 = input.tryGetUTF8(StrictConversion);
+    if (!utf8)
         return std::nullopt;
-    auto percentDecoded = percentDecode(byteCast<Latin1Character>(utf8.span()));
+    auto percentDecoded = percentDecode(byteCast<Latin1Character>(utf8->span()));
+    // fromUTF8ReplacingInvalidSequences sizes a Vector<char16_t> by the byte count unless the bytes are all ASCII.
+    if (!isValidCapacityForVector<char16_t>(percentDecoded.size()) && !charactersAreAllASCII(percentDecoded.span()))
+        return std::nullopt;
     return String::fromUTF8ReplacingInvalidSequences(percentDecoded.span());
 }
 
 // https://url.spec.whatwg.org/#concept-urlencoded-parser
-auto URLParser::parseURLEncodedForm(StringView input) -> URLEncodedForm
+auto URLParser::tryParseURLEncodedForm(StringView input, size_t maxPairs) -> std::optional<URLEncodedForm>
 {
     URLEncodedForm output;
     for (StringView bytes : input.split('&')) {
-        if (auto nameAndValue = parseQueryNameAndValue(bytes))
-            output.append(WTF::move(*nameAndValue));
+        auto nameAndValue = parseQueryNameAndValue(bytes);
+        if (!nameAndValue)
+            continue;
+        if (output.size() >= maxPairs || !output.tryAppend(WTF::move(*nameAndValue)))
+            return std::nullopt;
     }
     return output;
+}
+
+auto URLParser::parseURLEncodedForm(StringView input) -> URLEncodedForm
+{
+    return tryParseURLEncodedForm(input).value_or(URLEncodedForm { });
 }
 
 std::optional<KeyValuePair<String, String>> URLParser::parseQueryNameAndValue(StringView bytes)

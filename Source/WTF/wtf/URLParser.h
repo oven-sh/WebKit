@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <limits>
 #include <unicode/uidna.h>
 #include <wtf/Expected.h>
 #include <wtf/Forward.h>
@@ -56,6 +57,8 @@ public:
     
     using URLEncodedForm = Vector<KeyValuePair<String, String>>;
     WTF_EXPORT_PRIVATE static URLEncodedForm parseURLEncodedForm(StringView);
+    // Returns nullopt when the form has more than maxPairs pairs, or more than the Vector can grow to hold.
+    WTF_EXPORT_PRIVATE static std::optional<URLEncodedForm> tryParseURLEncodedForm(StringView, size_t maxPairs = std::numeric_limits<size_t>::max());
     WTF_EXPORT_PRIVATE static std::optional<KeyValuePair<String, String>> parseQueryNameAndValue(StringView);
     WTF_EXPORT_PRIVATE static String serialize(const URLEncodedForm&);
 
