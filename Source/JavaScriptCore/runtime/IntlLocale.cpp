@@ -407,7 +407,10 @@ void IntlLocale::initializeLocale(JSGlobalObject* globalObject, const String& ta
 
     if (!language.isNull() || !script.isNull() || !region.isNull() || !variants.isNull()) {
         if (!localeID.canonicalize()) {
-            throwTypeError(globalObject, scope, "failed to initialize Locale"_s);
+            // The tag already passed isStructurallyValidLanguageTag; canonicalization failing here is an
+            // ICU capacity limit (ULOC_FULLNAME_CAPACITY), which every other Intl entry point surfaces as
+            // RangeError via canonicalizeLocaleList. Match that and V8 so instanceof RangeError guards work.
+            throwRangeError(globalObject, scope, "failed to initialize Locale"_s);
             return;
         }
         localeID.overrideLanguageScriptRegionVariants(language, script, region, variants);
@@ -473,7 +476,9 @@ void IntlLocale::initializeLocale(JSGlobalObject* globalObject, const String& ta
 
     m_localeID = localeID.toCanonical();
     if (m_localeID.isNull()) {
-        throwTypeError(globalObject, scope, "failed to initialize Locale"_s);
+        // See the comment on the canonicalize() failure above: structurally valid input exceeding ICU's
+        // internal buffer capacity must be a RangeError for consistency with canonicalizeLocaleList and V8.
+        throwRangeError(globalObject, scope, "failed to initialize Locale"_s);
         return;
     }
 }
