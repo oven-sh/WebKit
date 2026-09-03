@@ -1755,38 +1755,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             globalObject->m_canDoASCIIUCADUCETLocaleCompare = collator->canDoASCIIUCADUCETComparison();
         });
 
-    m_defaultDateTimeFormat.initLater(
-        [] (const Initializer<IntlDateTimeFormat>& init) {
-            JSGlobalObject* globalObject = init.owner;
-            VM& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            auto* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
-            dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Any, IntlDateTimeFormat::Defaults::All);
-            RETURN_IF_EXCEPTION(scope, void());
-            init.set(dateTimeFormat);
-        });
-
-    m_defaultDateFormat.initLater(
-        [] (const Initializer<IntlDateTimeFormat>& init) {
-            JSGlobalObject* globalObject = init.owner;
-            VM& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            auto* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
-            dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Date, IntlDateTimeFormat::Defaults::Date);
-            RETURN_IF_EXCEPTION(scope, void());
-            init.set(dateTimeFormat);
-        });
-
-    m_defaultTimeFormat.initLater(
-        [] (const Initializer<IntlDateTimeFormat>& init) {
-            JSGlobalObject* globalObject = init.owner;
-            VM& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            auto* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
-            dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Time, IntlDateTimeFormat::Defaults::Time);
-            RETURN_IF_EXCEPTION(scope, void());
-            init.set(dateTimeFormat);
-        });
+    resetDefaultDateTimeFormats();
 
     m_defaultNumberFormat.initLater(
         [] (const Initializer<IntlNumberFormat>& init) {
@@ -2422,6 +2391,55 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
+}
+
+// The formatters behind the no-argument Date.prototype.toLocale{,Date,Time}String (and Temporal
+// toLocaleString) paths take their time zone from vm().dateCache when they are materialized, so
+// they are re-armed whenever that cache has been refreshed for a time zone change since. Anything
+// already materialized is dropped and rebuilt on the next use.
+void JSGlobalObject::resetDefaultDateTimeFormats()
+{
+    m_defaultDateTimeFormatsTimeZoneID = vm().dateCache.cachedTimeZoneID();
+
+    m_defaultDateTimeFormat.initLater(
+        [] (const Initializer<IntlDateTimeFormat>& init) {
+            JSGlobalObject* globalObject = init.owner;
+            VM& vm = init.vm;
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
+            dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Any, IntlDateTimeFormat::Defaults::All);
+            RETURN_IF_EXCEPTION(scope, void());
+            init.set(dateTimeFormat);
+        });
+
+    m_defaultDateFormat.initLater(
+        [] (const Initializer<IntlDateTimeFormat>& init) {
+            JSGlobalObject* globalObject = init.owner;
+            VM& vm = init.vm;
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
+            dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Date, IntlDateTimeFormat::Defaults::Date);
+            RETURN_IF_EXCEPTION(scope, void());
+            init.set(dateTimeFormat);
+        });
+
+    m_defaultTimeFormat.initLater(
+        [] (const Initializer<IntlDateTimeFormat>& init) {
+            JSGlobalObject* globalObject = init.owner;
+            VM& vm = init.vm;
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
+            dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Time, IntlDateTimeFormat::Defaults::Time);
+            RETURN_IF_EXCEPTION(scope, void());
+            init.set(dateTimeFormat);
+        });
+}
+
+void JSGlobalObject::resetDefaultDateTimeFormatsIfTimeZoneChanged()
+{
+    if (m_defaultDateTimeFormatsTimeZoneID == vm().dateCache.cachedTimeZoneID()) [[likely]]
+        return;
+    resetDefaultDateTimeFormats();
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

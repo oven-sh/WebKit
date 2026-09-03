@@ -1,17 +1,24 @@
-//@ skip
-// FIXME: https://bugs.webkit.org/show_bug.cgi?id=318362
-// Skipped: exposes a known, deferred bug. Distinct from the DateInstanceData
-// staleness covered by intl-datetimeformat-stale-data-*-across-tz-change.js:
-// there the stale state is a held Date instance's cached GregorianDateTime,
-// while here even a freshly created Date is affected. The per-global default
-// formatters (JSGlobalObject::m_defaultDateTimeFormat / m_defaultDateFormat /
+//@ runDefault("--useDollarVM=1")
+//@ skip if $hostOS == "playstation"
+
+// https://bugs.webkit.org/show_bug.cgi?id=318362
+// Distinct from the DateInstanceData staleness covered by
+// intl-datetimeformat-stale-data-*-across-tz-change.js: there the stale state
+// is a held Date instance's cached GregorianDateTime, while here even a freshly
+// created Date is affected. The per-global default formatters
+// (JSGlobalObject::m_defaultDateTimeFormat / m_defaultDateFormat /
 // m_defaultTimeFormat) backing the no-argument Date.prototype.toLocale*String
-// paths are initialized once and never invalidated, so after a host TZ change
-// they keep formatting in the old time zone while every other construction
-// shape moves.
+// paths capture the DateCache's default time zone when they are materialized,
+// so they have to be re-armed once the DateCache has been refreshed for a time
+// zone change (DateCache::cachedTimeZoneID() moved), or they keep formatting in
+// the old time zone while every other construction shape moves.
 //
-// Remove the //@ skip (and add the "skip if $hostOS == playstation" guard the
-// sibling tests use) once the default formatters are invalidated on TZ change.
+// This covers the time zone flavor of the default-formatter staleness only.
+// The language-change flavor
+// (intl-datetimeformat-default-formatter-stale-across-language-change.js) and
+// the evicted-DateInstanceData case filed under the same bug
+// (intl-datetimeformat-stale-data-evicted-across-tz-change.js) are still
+// skipped.
 
 function expect(label, got, want)
 {
@@ -41,6 +48,26 @@ setTimeout(() => {
 
     if (!$vm.setHostTimeZone("Asia/Tokyo"))
         throw new Error("Failed to set host time zone to Asia/Tokyo");
+
+    // $vm.setHostTimeZone only bumps WTF::lastTimeZoneID(); this VM's DateCache
+    // is refreshed by the entry-scope service on the next entry, so right now
+    // every shape still sees LA. Using the default formatters inside that
+    // window is the interesting part: they have to agree with the
+    // not-yet-refreshed DateCache now, and whatever this builds must still be
+    // replaced once the DateCache has been refreshed below. A re-arm keyed on
+    // WTF::lastTimeZoneID() itself would rebuild them right here from the
+    // stale DateCache, stamp them as current, and leave them stale afterwards.
+    const preRefreshZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect("pre-refresh toLocaleString agrees with slow path",
+        warm.toLocaleString(), warm.toLocaleString(undefined, {}));
+    expect("pre-refresh toLocaleDateString agrees with slow path",
+        warm.toLocaleDateString(), warm.toLocaleDateString(undefined, {}));
+    expect("pre-refresh toLocaleTimeString agrees with slow path",
+        warm.toLocaleTimeString(), warm.toLocaleTimeString(undefined, {}));
+    if (preRefreshZone === "America/Los_Angeles")
+        expect("pre-refresh toLocaleString is still LA", warm.toLocaleString(), laAll);
+    else
+        expect("pre-refresh tz", preRefreshZone, "Asia/Tokyo");
 
     setTimeout(() => {
         expect("post-change tz",

@@ -689,6 +689,11 @@ public:
     bool m_needsSiteSpecificQuirks { false };
     bool m_canDoASCIIUCADUCETLocaleCompare { false };
     unsigned m_globalLexicalBindingEpoch { 1 };
+    // DateCache::cachedTimeZoneID() at the time m_default{DateTime,Date,Time}Format were last
+    // armed. They capture the DateCache's default time zone when they are materialized, so once the
+    // DateCache has been refreshed for a time zone change they have to be re-armed too, or the
+    // no-argument toLocale*String paths keep formatting in the old zone. See defaultDateTimeFormat().
+    uint64_t m_defaultDateTimeFormatsTimeZoneID { 0 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
@@ -846,9 +851,21 @@ public:
     IntlCollator* defaultCollator() const LIFETIME_BOUND { return m_defaultCollator.get(this); }
     IntlCollator* cachedLocaleCompareCollator(JSString* locale);
     bool canDoASCIIUCADUCETLocaleCompare() const { return m_canDoASCIIUCADUCETLocaleCompare; }
-    IntlDateTimeFormat* defaultDateTimeFormat() const LIFETIME_BOUND { return m_defaultDateTimeFormat.get(this); }
-    IntlDateTimeFormat* defaultDateFormat() const LIFETIME_BOUND { return m_defaultDateFormat.get(this); }
-    IntlDateTimeFormat* defaultTimeFormat() const LIFETIME_BOUND { return m_defaultTimeFormat.get(this); }
+    IntlDateTimeFormat* defaultDateTimeFormat() LIFETIME_BOUND
+    {
+        resetDefaultDateTimeFormatsIfTimeZoneChanged();
+        return m_defaultDateTimeFormat.get(this);
+    }
+    IntlDateTimeFormat* defaultDateFormat() LIFETIME_BOUND
+    {
+        resetDefaultDateTimeFormatsIfTimeZoneChanged();
+        return m_defaultDateFormat.get(this);
+    }
+    IntlDateTimeFormat* defaultTimeFormat() LIFETIME_BOUND
+    {
+        resetDefaultDateTimeFormatsIfTimeZoneChanged();
+        return m_defaultTimeFormat.get(this);
+    }
     IntlNumberFormat* defaultNumberFormat() const LIFETIME_BOUND { return m_defaultNumberFormat.get(this); }
 
     NullGetterFunction* nullGetterFunction() const LIFETIME_BOUND { return m_nullGetterFunction.get(); }
@@ -1407,6 +1424,9 @@ private:
     JS_EXPORT_PRIVATE void init(VM&);
     void initStaticGlobals(VM&);
     void fixupPrototypeChainWithObjectPrototype(VM&);
+
+    void resetDefaultDateTimeFormats();
+    JS_EXPORT_PRIVATE void resetDefaultDateTimeFormatsIfTimeZoneChanged();
 
     JS_EXPORT_PRIVATE static void clearRareData(JSCell*);
 
