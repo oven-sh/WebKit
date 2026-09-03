@@ -103,6 +103,7 @@
 #include "StringConstructor.h"
 #include "StringPrototype.h"
 #include "StringPrototypeInlines.h"
+#include "StringRecursionChecker.h"
 #include "SuperSampler.h"
 #include "Symbol.h"
 #include "TypeProfilerLog.h"
@@ -1735,6 +1736,13 @@ JSC_DEFINE_JIT_OPERATION(operationArrayConcatAppendOne, JSArray*, (JSGlobalObjec
 
 static ALWAYS_INLINE JSString* arrayJoinWithStringSeparator(JSGlobalObject* globalObject, JSArray* array, JSString* separator, ThrowScope& scope)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    StringRecursionChecker checker(globalObject, array);
+    EXCEPTION_ASSERT(!scope.exception() || checker.earlyReturnValue());
+    if (checker.earlyReturnValue())
+        return jsEmptyString(globalObject->vm());
+#endif // USE(BUN_JSC_ADDITIONS)
+
     unsigned length = array->length();
     if (!separator->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
         auto* butterfly = array->butterfly();
