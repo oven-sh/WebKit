@@ -33,6 +33,11 @@ bool GCRequest::subsumedBy(const GCRequest& other) const
     // If we have callbacks, then there is no chance that we're subsumed by an existing request.
     if (didFinishEndPhase)
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    // An idle request must run as one; a pending ordinary collection does not stand in for it.
+    if (isIdle && !other.isIdle)
+        return false;
+#endif
     
     if (other.scope == CollectionScope::Full)
         return true;
@@ -53,7 +58,12 @@ bool GCRequest::subsumedBy(const GCRequest& other) const
 
 void GCRequest::dump(PrintStream& out) const
 {
-    out.print("{scope = ", scope, ", didFinishEndPhase = ", didFinishEndPhase ? "engaged" : "null", "}");
+    out.print("{scope = ", scope, ", didFinishEndPhase = ", didFinishEndPhase ? "engaged" : "null");
+#if USE(BUN_JSC_ADDITIONS)
+    if (isIdle)
+        out.print(", idle");
+#endif
+    out.print("}");
 }
 
 } // namespace JSC
