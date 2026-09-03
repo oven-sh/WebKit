@@ -5969,6 +5969,10 @@ JSC_DEFINE_JIT_OPERATION(operationGetDynamicVar, EncodedJSValue, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Identifier ident = Identifier::fromUid(vm, impl);
+    if (getPutInfoBits & GetPutInfo::resolvesScopeFirstBit) {
+        jsScope = JSScope::resolve(globalObject, uncheckedDowncast<JSScope>(jsScope), ident);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
     OPERATION_RETURN(scope, JSValue::encode(jsScope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
             GetPutInfo getPutInfo(getPutInfoBits);

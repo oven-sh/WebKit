@@ -119,8 +119,9 @@ inline void tryCachePutToScopeGlobal(
     }
 }
 
+template<typename Bytecode>
 inline void tryCacheGetFromScopeGlobal(
-    JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpGetFromScope& bytecode, JSObject* scope, PropertySlot& slot, const Identifier& ident)
+    JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, Bytecode& bytecode, JSObject* scope, PropertySlot& slot, const Identifier& ident)
 {
     auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_getPutInfo.resolveType();
@@ -164,6 +165,87 @@ inline void tryCacheGetFromScopeGlobal(
             structure->startWatchingPropertyForReplacements(vm, slot.cachedOffset());
         }
     }
+}
+
+// The resolve half of the fused op's slow path: what slow_path_resolve_scope does to its metadata once the scope is known.
+inline void noteResolvedScope(CodeBlock* codeBlock, VM& vm, OpResolveAndGetFromScope::Metadata& metadata, JSObject* resolvedScope, const Identifier& ident, bool& hasPropertyCheckThrew)
+{
+    hasPropertyCheckThrew = false;
+    ResolveType resolveType = metadata.m_resolveType;
+    ASSERT(resolveType != ModuleVar);
+    switch (resolveType) {
+    case GlobalProperty:
+    case GlobalPropertyWithVarInjectionChecks:
+    case UnresolvedProperty:
+    case UnresolvedPropertyWithVarInjectionChecks: {
+        if (resolvedScope->isGlobalObject()) {
+            JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            bool hasProperty = globalObject->hasProperty(globalObject, ident);
+            if (scope.exception()) [[unlikely]] {
+                hasPropertyCheckThrew = true;
+                return;
+            }
+            if (hasProperty) {
+                ConcurrentJSLocker locker(codeBlock->m_lock);
+                metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
+                metadata.m_globalObject.set(vm, codeBlock, globalObject);
+                metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
+            }
+        } else if (resolvedScope->isGlobalLexicalEnvironment()) {
+            JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(resolvedScope);
+            ConcurrentJSLocker locker(codeBlock->m_lock);
+            metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalLexicalVarWithVarInjectionChecks : GlobalLexicalVar;
+            metadata.m_globalLexicalEnvironment.set(vm, codeBlock, globalLexicalEnvironment);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+// The fused op's slow path: resolve from the base scope, then read the variable the way slow_path_get_from_scope does.
+// Returns an empty value with an exception pending on failure.
+inline JSValue resolveAndGetFromScopeSlow(JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpResolveAndGetFromScope& bytecode, JSScope* baseScope)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& metadata = bytecode.metadata(codeBlock);
+    const Identifier& ident = codeBlock->identifier(bytecode.m_var);
+
+    JSObject* scope = JSScope::resolve(globalObject, baseScope, ident);
+    RETURN_IF_EXCEPTION(throwScope, { });
+    bool threw = false;
+    noteResolvedScope(codeBlock, vm, metadata, scope, ident, threw);
+    if (threw) [[unlikely]]
+        return { };
+
+    ASSERT(metadata.m_getPutInfo.resolveType() != ModuleVar);
+    return scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
+        if (!found) {
+            if (metadata.m_getPutInfo.resolveMode() == ThrowIfNotFound) {
+                throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));
+                return { };
+            }
+            return jsUndefined();
+        }
+
+        JSValue result = JSValue();
+        if (scope->isGlobalLexicalEnvironment()) {
+            // When we can't statically prove we need a TDZ check, we must perform the check on the slow path.
+            result = slot.getValue(globalObject, ident);
+            if (result == jsTDZValue()) {
+                throwException(globalObject, throwScope, createTDZError(globalObject, ident.string()));
+                return { };
+            }
+        }
+
+        tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, scope, slot, ident);
+
+        if (!result)
+            return slot.getValue(globalObject, ident);
+        return result;
+    });
 }
 
 ALWAYS_INLINE JSCellButterfly* trySpreadFast(JSGlobalObject* globalObject, JSCell* iterable)

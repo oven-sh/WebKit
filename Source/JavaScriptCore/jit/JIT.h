@@ -596,6 +596,8 @@ namespace JSC {
         void emitSlow_op_resolve_scope(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emit_op_get_from_scope(const JSInstruction*);
         void emitSlow_op_get_from_scope(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emit_op_resolve_and_get_from_scope(const JSInstruction*);
+        void emitSlow_op_resolve_and_get_from_scope(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emit_op_put_to_scope(const JSInstruction*);
         void emit_op_get_from_arguments(const JSInstruction*);
         void emit_op_put_to_arguments(const JSInstruction*);
@@ -646,14 +648,27 @@ namespace JSC {
 
     private:
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_put_to_scopeGenerator(VM&);
+        static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_resolve_and_get_from_scopeGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> op_throw_handlerGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> op_check_traps_handlerGenerator(VM&);
+        // The scope-access thunks serve resolve_scope / get_from_scope and the two halves of resolve_and_get_from_scope
+        // (whose metadata lays the two ops' metadata back to back); the opcode picks the slow operation.
+        template <typename Op>
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_get_from_scopeGenerator(VM&);
+        template <typename Op>
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_resolve_scopeGenerator(VM&);
-        template <ResolveType>
+        template <ResolveType, typename Op>
         static MacroAssemblerCodeRef<JITThunkPtrTag> generateOpGetFromScopeThunk(VM&);
-        template <ResolveType>
+        template <ResolveType, typename Op>
         static MacroAssemblerCodeRef<JITThunkPtrTag> generateOpResolveScopeThunk(VM&);
+        template <typename Op>
+        void emitResolveScopeHalf(const Op&, VirtualRegister scope, ResolveType profiledResolveType);
+        template <typename Op>
+        void emitSlowResolveScopeHalf(const Op&, VirtualRegister scope, ResolveType profiledResolveType);
+        template <typename Op>
+        void emitGetFromScopeHalf(const Op&, std::optional<VirtualRegister> scope, ResolveType profiledResolveType);
+        template <typename Op>
+        void emitSlowGetFromScopeHalf(const Op&, std::optional<VirtualRegister> scope, ResolveType profiledResolveType);
         static MacroAssemblerCodeRef<JITThunkPtrTag> op_enter_handlerGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> valueIsTruthyGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> valueIsFalseyGenerator(VM&);
