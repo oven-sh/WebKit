@@ -816,7 +816,7 @@ public:
     static constexpr ptrdiff_t offsetOfShouldAlwaysBeInlined() { return OBJECT_OFFSETOF(CodeBlock, m_shouldAlwaysBeInlined); }
 
 #if ENABLE(JIT)
-    unsigned m_capabilityLevelState : 2; // DFG::CapabilityLevel
+    uint8_t m_capabilityLevelState : 2; // DFG::CapabilityLevel. Byte-typed so MSVC packs it with the bools below.
 #endif
 
     bool m_didFailJITCompilation : 1;
@@ -931,8 +931,10 @@ public:
     static Seconds timeToLive(JITType);
     // Start the execution-count aging lease from the counter's current value (call when a tier's code is installed).
     void snapshotExecutionCounterForAging(float count) { m_previousCounter = count; }
+#if USE(BUN_JSC_ADDITIONS)
     // Optimizing code with no execution counter to read liveness off (FTL; DFG without tier-up checks): it ages once the mutator goes quiet instead.
     bool agesByMutatorQuietness();
+#endif
 private:
     
     template<typename Visitor> void propagateTransitions(const ConcurrentJSLocker&, Visitor&);
