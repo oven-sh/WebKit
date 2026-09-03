@@ -1,6 +1,8 @@
-//@ runDefault("--useEagerCodeBlockJettisonTiming=1", "--useConcurrentJIT=0", "--optimizedCodeAgingQuietAllocationMB=0")
+//@ skip if !$isFTLPlatform
+//@ runDefault("--useEagerCodeBlockJettisonTiming=1", "--useConcurrentJIT=0", "--optimizedCodeAgingQuietAllocationMB=0", "--optimizedCodeAgingQuietSeconds=0.02")
 
-// With the option off, FTL code never ages out (the behaviour before optimizedCodeAgingQuietAllocationMB).
+// With optimizedCodeAgingQuietAllocationMB=0, FTL code never ages out (the previous behaviour), even across two
+// collections further apart than optimizedCodeAgingQuietSeconds with nothing allocated in between.
 
 function shouldBe(actual, expected, msg) {
     if (actual !== expected)
@@ -15,6 +17,6 @@ if (!reached)
     throw new Error("test needs f to reach FTL");
 fullGC();
 var start = preciseTime();
-while (preciseTime() - start < 0.2) { }
+while (preciseTime() - start < 0.04) { }
 fullGC();
 shouldBe(f(o)[1], true, "with the option off an FTL block never ages out;");

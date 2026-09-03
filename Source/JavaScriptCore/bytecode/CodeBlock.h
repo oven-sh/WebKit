@@ -825,8 +825,6 @@ public:
     bool m_isJettisoned : 1;
 
     bool m_visitChildrenSkippedDueToOldAge { false };
-    // m_previousCounter holds an execution-counter snapshot, or for agesByMutatorQuietness() code the heap's allocation total (MB) at the lease's start.
-    bool m_previousCounterHoldsAllocation { false };
 
     // Internal methods for use by validation code. It would be private if it wasn't
     // for the fact that we use it from anonymous namespaces.
@@ -932,11 +930,7 @@ private:
 public:
     static Seconds timeToLive(JITType);
     // Start the execution-count aging lease from the counter's current value (call when a tier's code is installed).
-    void snapshotExecutionCounterForAging(float count)
-    {
-        m_previousCounter = count;
-        m_previousCounterHoldsAllocation = false;
-    }
+    void snapshotExecutionCounterForAging(float count) { m_previousCounter = count; }
     // Optimizing code with no execution counter to read liveness off (FTL; DFG without tier-up checks): it ages once the mutator goes quiet instead.
     bool agesByMutatorQuietness();
 private:
@@ -1006,6 +1000,10 @@ private:
     uint16_t m_optimizationDelayCounter { 0 };
     uint16_t m_reoptimizationRetryCounter { 0 };
     float m_previousCounter { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    // For agesByMutatorQuietness() code: the heap's allocation total, in whole MB modulo 2^32, when the current lease started.
+    uint32_t m_leaseStartAllocatedMB { 0 };
+#endif
     StructureWatchpointMap m_llintGetByIdWatchpointMap;
     RefPtr<JSC::JITCode> m_jitCode;
 #if ENABLE(JIT)

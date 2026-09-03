@@ -863,7 +863,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         setBaselineJITData(WTF::move(baselineJITData));
 #if USE(BUN_JSC_ADDITIONS)
         m_previousCounter = static_cast<BaselineJITData*>(m_jitData)->executeCounter().count();
-        m_previousCounterHoldsAllocation = false;
 #endif
 
         // Set optimization thresholds only after instructions is initialized and JITData is initialized, since these
@@ -1384,16 +1383,18 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         unsigned quietMB = Options::optimizedCodeAgingQuietAllocationMB();
         if (!quietMB)
             return false;
-        // Whole megabytes so the float holds them exactly.
-        float allocatedMB = static_cast<float>(vm().heap.totalBytesAllocated() >> 20);
-        if (!m_previousCounterHoldsAllocation || allocatedMB - m_previousCounter > quietMB) {
-            // First look at this block in this regime, or the mutator has been allocating since its lease started: renew it from here.
-            m_previousCounter = allocatedMB;
-            m_previousCounterHoldsAllocation = true;
+        // Whole megabytes, wrapping: only the distance from the lease's start matters. The first check of a block (field
+        // still 0) and a block that just moved into this regime both see a large distance and renew.
+        uint32_t allocatedMB = static_cast<uint32_t>(vm().heap.totalBytesAllocated() >> 20);
+        if (static_cast<uint32_t>(allocatedMB - m_leaseStartAllocatedMB) > quietMB) {
+            // The mutator has been allocating since this block's lease started: renew it from here.
+            m_leaseStartAllocatedMB = allocatedMB;
             m_creationTime = ApproximateTime::now();
             return false;
         }
-        Seconds quietFor = Options::useEagerCodeBlockJettisonTiming() ? ttl : Seconds(Options::optimizedCodeAgingQuietSeconds());
+        Seconds quietFor = Seconds(Options::optimizedCodeAgingQuietSeconds());
+        if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]]
+            quietFor = std::min(quietFor, ttl);
         return timeSinceCreation() >= quietFor;
     }
 
@@ -1411,9 +1412,7 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         // reconcileWeakReferencesAtGCEnd also writes for UnlinkedCodeBlock aging when
         // VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the
         // same current count for the same tier, so they agree; outside that mode
-        // updateActivity() never touches the field. (For agesByMutatorQuietness() code
-        // the field holds an allocation total instead, tagged by m_previousCounterHoldsAllocation,
-        // and updateActivity() leaves it alone.)
+        // updateActivity() never touches the field.
         float currentCount = 0;
         bool hasCounter = false;
         switch (type) {
@@ -1438,9 +1437,8 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         default:
             break;
         }
-        if (hasCounter && (currentCount != m_previousCounter || m_previousCounterHoldsAllocation)) {
+        if (hasCounter && currentCount != m_previousCounter) {
             m_previousCounter = currentCount;
-            m_previousCounterHoldsAllocation = false;
             // Push the effective creation time forward so the block is not
             // considered for old-age jettison again until leaseMultiplier * ttl
             // has elapsed with no observed execution.

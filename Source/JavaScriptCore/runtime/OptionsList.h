@@ -87,7 +87,7 @@ bool hasCapacityToUseLargeGigacage();
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
     v(Bool, useExecutionCountForCodeBlockAging, true, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
     v(Unsigned, optimizedCodeAgingQuietAllocationMB, 1, Normal, "FTL code (and DFG code without a tier-up counter) past its TTL is jettisoned for old age by a full collection that finds at most this much was allocated since the previous one looked at it, i.e. the mutator has been idle. 0 = such code never ages out."_s) \
-    v(Double, optimizedCodeAgingQuietSeconds, 30, Normal, "How long the mutator must have been that quiet, measured from the last collection that saw it allocating, before such code is let go (the tier's eager TTL under useEagerCodeBlockJettisonTiming)."_s) \
+    v(Double, optimizedCodeAgingQuietSeconds, 30, Normal, "How long the mutator must have been that quiet, measured from the last collection that saw it allocating, before such code is let go (capped at the tier's TTL under useEagerCodeBlockJettisonTiming)."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \

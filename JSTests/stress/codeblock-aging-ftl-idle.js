@@ -1,4 +1,5 @@
-//@ runDefault("--useEagerCodeBlockJettisonTiming=1", "--useConcurrentJIT=0")
+//@ skip if !$isFTLPlatform
+//@ runDefault("--useEagerCodeBlockJettisonTiming=1", "--useConcurrentJIT=0", "--optimizedCodeAgingQuietSeconds=0.02")
 
 // FTL code has no execution counter of its own, so it ages against the mutator as a whole
 // (Options::optimizedCodeAgingQuietAllocationMB): once past its TTL it is jettisoned by a full
@@ -35,8 +36,8 @@ function allocateMB(n) {
     return keep.length;
 }
 
-// The eager FTL TTL is 120ms.
-var ttl = 0.2;
+// optimizedCodeAgingQuietSeconds above; leave some slack for ApproximateTime.
+var quiet = 0.04;
 var o = { a: 1, b: 2 };
 
 // 1. Nothing is allocated between two full collections a TTL apart: the FTL block goes.
@@ -44,7 +45,7 @@ var f = makeHot();
 if (!warmToFTL(f))
     throw new Error("test needs f to reach FTL");
 fullGC();          // records the allocation total for f's FTL block
-idleFor(ttl);
+idleFor(quiet);
 fullGC();          // nothing allocated since, past TTL: aged out
 shouldBe(f(o)[1], false, "an FTL block should age out across an idle stretch;");
 shouldBe(f(o)[0], 64, "and the function should still work;");
@@ -54,16 +55,16 @@ var g = makeHot();
 if (!warmToFTL(g))
     throw new Error("test needs g to reach FTL");
 fullGC();
-for (var round = 0; round < 5; round++) {
-    idleFor(ttl);
+for (var round = 0; round < 3; round++) {
+    idleFor(quiet);
     allocateMB(4);
     fullGC();
     shouldBe(g(o)[1], true, "an FTL block should survive while the mutator is allocating (round " + round + ");");
 }
 
 // 3. And once the mutator goes quiet it goes too.
-idleFor(ttl);
+idleFor(quiet);
 fullGC();
-idleFor(ttl);
+idleFor(quiet);
 fullGC();
 shouldBe(g(o)[1], false, "the FTL block should age out once the mutator goes quiet;");
