@@ -1372,6 +1372,8 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
 #if USE(BUN_JSC_ADDITIONS)
     JITType type = jitType();
     Seconds ttl = timeToLive(type);
+    // One clock read per collection (Heap), not one per block visited.
+    ApproximateTime now = vm().heap.currentGCStartApproximateTime();
 
     // Optimizing tiers: a DFG block ages like a baseline one, using the tier-up counter its code already decrements at
     // returns and loop back-edges as the sign of life. FTL code, and DFG code compiled without tier-up checks, has no
@@ -1390,7 +1392,7 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         Seconds quietFor = Seconds(Options::optimizedCodeAgingQuietSeconds());
         if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]]
             quietFor = std::min(quietFor, ttl);
-        return ApproximateTime::now() - std::max(m_creationTime, heap.lastActiveCollectionTime()) >= quietFor;
+        return now - std::max(m_creationTime, heap.lastActiveCollectionTime()) >= quietFor;
     }
 
     if (Options::useExecutionCountForCodeBlockAging()) {
@@ -1431,12 +1433,12 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         if (hasCounter && currentCount != m_previousCounter) {
             m_previousCounter = currentCount;
             // Ran since the last look: the lease runs leaseMultiplier * ttl from now with no observed execution.
-            m_creationTime = ApproximateTime::now() + ttl * (Options::codeBlockAgingLeaseMultiplier() - 1.0);
+            m_creationTime = now + ttl * (Options::codeBlockAgingLeaseMultiplier() - 1.0);
             return false;
         }
     }
 
-    if (timeSinceCreation() < ttl)
+    if (now - m_creationTime < ttl)
         return false;
 #else
     if (timeSinceCreation() < timeToLive(jitType()))

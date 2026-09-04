@@ -1574,12 +1574,13 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
         m_currentRequest = m_requests.first();
     }
 #if USE(BUN_JSC_ADDITIONS)
+    m_currentGCStartApproximateTime = ApproximateTime::now();
     // Accumulated across collections, so a mutator that works steadily but is collected often (each cycle small) still
     // reads as active; only a genuinely quiet stretch leaves the stamp to age.
     m_bytesAllocatedSinceLastActiveCollection += totalBytesAllocatedThisCycle();
     if (m_bytesAllocatedSinceLastActiveCollection > Options::optimizedCodeAgingQuietAllocationMB() * MB) {
         m_bytesAllocatedSinceLastActiveCollection = 0;
-        m_lastActiveCollectionTime = ApproximateTime::now();
+        m_lastActiveCollectionTime = m_currentGCStartApproximateTime;
     }
 #endif
 

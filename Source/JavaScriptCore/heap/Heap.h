@@ -730,6 +730,9 @@ private:
     // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
     // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge).
     ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime; }
+    // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
+    // clock for every block it visits.
+    ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
     // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
     bool isIdleCollection() const { return m_currentRequest.isIdle; }
 #endif
@@ -887,6 +890,7 @@ private:
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
 #if USE(BUN_JSC_ADDITIONS)
     ApproximateTime m_lastActiveCollectionTime;
+    ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
 #endif
     size_t m_sizeAfterLastCollect { 0 };
