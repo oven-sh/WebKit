@@ -1002,10 +1002,6 @@ private:
     uint16_t m_optimizationDelayCounter { 0 };
     uint16_t m_reoptimizationRetryCounter { 0 };
     float m_previousCounter { 0 };
-#if USE(BUN_JSC_ADDITIONS)
-    // For agesByMutatorQuietness() code: the heap's allocation total, in whole MB modulo 2^32, when the current lease started.
-    uint32_t m_leaseStartAllocatedMB { 0 };
-#endif
     StructureWatchpointMap m_llintGetByIdWatchpointMap;
     RefPtr<JSC::JITCode> m_jitCode;
 #if ENABLE(JIT)
