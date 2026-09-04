@@ -47,6 +47,7 @@
 #include "Synchronousness.h"
 #include "WeakHandleOwner.h"
 #include <JavaScriptCore/SubspaceAccess.h>
+#include <wtf/ApproximateTime.h>
 #include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
 #include <wtf/ConcurrentPtrHashSet.h>
@@ -726,8 +727,9 @@ private:
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
 #if USE(BUN_JSC_ADDITIONS)
-    // Monotonic; lets a full collection tell whether the mutator did anything since an earlier one (CodeBlock::shouldJettisonDueToOldAge).
-    uint64_t totalBytesAllocated() const { return m_totalBytesAllocated; }
+    // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
+    // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge).
+    ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime; }
     // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
     bool isIdleCollection() const { return m_currentRequest.isIdle; }
 #endif
@@ -884,7 +886,7 @@ private:
     const size_t m_minBytesPerCycle;
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
 #if USE(BUN_JSC_ADDITIONS)
-    uint64_t m_totalBytesAllocated { 0 };
+    ApproximateTime m_lastActiveCollectionTime;
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };

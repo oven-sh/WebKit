@@ -1375,31 +1375,20 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
     // returns and loop back-edges as the sign of life. FTL code, and DFG code compiled without tier-up checks, has no
     // counter of its own. It is expensive to rebuild, but it also pins its baseline alternative and every baseline
     // CodeBlock it inlined along with their metadata, so rather than never ageing it ages against the mutator as a
-    // whole: a full collection lets it go once it is past its TTL and (almost) nothing has been allocated since the
-    // previous full collection looked at it and the embedder says the application is idle, and renews it whenever the
-    // mutator has been allocating, keeping the code exactly as before.
+    // whole: only a collection the embedder tagged idle (GCRequest::isIdle) may let it go, and only once neither its
+    // own compilation nor a collection that saw the mutator allocating (Heap::lastActiveCollectionTime) has happened
+    // for optimizedCodeAgingQuietSeconds. Collections paced by allocation, forced by the program or triggered by
+    // memory pressure never drop it, and a busy mutator keeps the active-collection time fresh.
     if (agesByMutatorQuietness()) {
-        unsigned quietMB = Options::optimizedCodeAgingQuietAllocationMB();
-        if (!quietMB)
+        if (!Options::optimizedCodeAgingQuietAllocationMB())
             return false;
-        // Whole megabytes, wrapping: only the distance from the lease's start matters. The first check of a block (field
-        // still 0) and a block that just moved into this regime both see a large distance and renew.
-        uint32_t allocatedMB = static_cast<uint32_t>(vm().heap.totalBytesAllocated() >> 20);
-        if (static_cast<uint32_t>(allocatedMB - m_leaseStartAllocatedMB) > quietMB) {
-            // The mutator has been allocating since this block's lease started: renew it from here.
-            m_leaseStartAllocatedMB = allocatedMB;
-            m_creationTime = ApproximateTime::now();
-            return false;
-        }
-        // Any full collection may renew the lease, but only one the embedder requested because the application went idle
-        // (GCRequest::isIdle) lets the code go: never one paced by allocation, forced by the program (which may do so on
-        // a timer while hot code runs between the calls) or triggered by memory pressure.
-        if (!vm().heap.isIdleCollection())
+        Heap& heap = vm().heap;
+        if (!heap.isIdleCollection())
             return false;
         Seconds quietFor = Seconds(Options::optimizedCodeAgingQuietSeconds());
         if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]]
             quietFor = std::min(quietFor, ttl);
-        return timeSinceCreation() >= quietFor;
+        return ApproximateTime::now() - std::max(m_creationTime, heap.lastActiveCollectionTime()) >= quietFor;
     }
 
     if (timeSinceCreation() < ttl)

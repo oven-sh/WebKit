@@ -1574,6 +1574,10 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
         RELEASE_ASSERT(!m_requests.isEmpty());
         m_currentRequest = m_requests.first();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (totalBytesAllocatedThisCycle() > Options::optimizedCodeAgingQuietAllocationMB() * MB)
+        m_lastActiveCollectionTime = ApproximateTime::now();
+#endif
 
     dataLogIf(Options::logGC(), "[GC<", RawPointer(this), ">: START ", gcConductorShortName(conn), " ", capacity() / 1024, "kb ");
 
@@ -2754,9 +2758,6 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
 constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    m_totalBytesAllocated += bytes;
-#endif
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversidedAllocationThisCycle = bytes;

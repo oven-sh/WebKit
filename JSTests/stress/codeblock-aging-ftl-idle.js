@@ -1,12 +1,10 @@
 //@ skip if !$isFTLPlatform
 //@ runDefault("--useEagerCodeBlockJettisonTiming=1", "--useConcurrentJIT=0", "--optimizedCodeAgingQuietSeconds=0.02")
 
-// FTL code has no execution counter of its own, so it ages against the mutator as a whole
-// (Options::optimizedCodeAgingQuietAllocationMB): it is jettisoned by a full collection that the
-// embedder tagged as idle (idleFullGC() here, GCRequest::isIdle) once (almost) nothing was allocated
-// since the previous full collection looked at it for optimizedCodeAgingQuietSeconds, and kept -
-// together with the baseline code it pins - whenever the mutator has been allocating, and by every
-// collection that is not tagged idle.
+// FTL code has no execution counter of its own, so it ages against the mutator as a whole: it is
+// jettisoned only by a full collection the embedder tagged idle (idleFullGC() here, GCRequest::isIdle), and
+// only once no collection has seen the mutator allocating for optimizedCodeAgingQuietSeconds. Ordinary
+// collections never drop it; allocation keeps it (and the baseline code it pins) alive.
 
 function shouldBe(actual, expected, msg) {
     if (actual !== expected)
@@ -47,13 +45,18 @@ var o = { a: 1, b: 2 };
 var f = makeHot();
 if (!warmToFTL(f))
     throw new Error("test needs f to reach FTL");
-fullGC();          // records the allocation total for f's FTL block
+fullGC();
 idleFor(quiet);
 fullGC();          // quiet and past the window, but not an idle collection: kept
 idleFor(quiet);
 fullGC();
 shouldBe(f(o)[1], true, "an FTL block should survive full collections that are not tagged idle;");
-idleFullGC();      // the embedder says the application is idle: aged out
+allocateMB(4);
+fullGC();          // this collection saw the mutator allocating: the clock restarts here
+idleFullGC();      // idle, but the mutator was active a moment ago: kept
+shouldBe(f(o)[1], true, "an FTL block should survive an idle collection right after an active one;");
+idleFor(quiet);
+idleFullGC();      // idle and nothing has happened for the quiet window: aged out
 shouldBe(f(o)[1], false, "an FTL block should age out in an idle collection after a quiet stretch;");
 shouldBe(f(o)[0], 64, "and the function should still work;");
 
