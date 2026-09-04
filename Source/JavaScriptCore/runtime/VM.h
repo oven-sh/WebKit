@@ -944,6 +944,11 @@ public:
     Interpreter interpreter;
     VMEntryScope* entryScope { nullptr };
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSObject* stringRecursionCheckFirstObject { nullptr };
+    UncheckedKeyHashSet<JSObject*> stringRecursionCheckVisitedObjects;
+#endif // USE(BUN_JSC_ADDITIONS)
+
     DateCache dateCache;
 
     std::unique_ptr<Profiler::Database> m_perBytecodeProfiler;

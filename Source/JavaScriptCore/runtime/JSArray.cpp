@@ -30,6 +30,7 @@
 #include "PropertyNameArray.h"
 #include "ResourceExhaustion.h"
 #include "ScopedArguments.h"
+#include "StringRecursionChecker.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
 #include "VMInlines.h"
@@ -1056,6 +1057,12 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
 
     unsigned length = this->length();
 
+#if USE(BUN_JSC_ADDITIONS)
+    StringRecursionChecker checker(globalObject, this);
+    EXCEPTION_ASSERT(!scope.exception() || checker.earlyReturnValue());
+    if (JSValue earlyReturnValue = checker.earlyReturnValue())
+        return jsEmptyString(vm);
+#else
     // JSObject::toPrimitive and JSObject::toString call this directly instead of going through
     // Interpreter::executeCall, so an array nested in itself recurses here without ever crossing a
     // call frame that would perform the usual stack check.
@@ -1063,6 +1070,7 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
         throwStackOverflowError(globalObject, scope);
         return nullptr;
     }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     if (canUseFastArrayJoin(this)) [[likely]] {
         const Latin1Character comma = ',';
