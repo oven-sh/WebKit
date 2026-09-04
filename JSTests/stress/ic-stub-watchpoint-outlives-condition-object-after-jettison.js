@@ -1,13 +1,18 @@
-//@ requireOptions("--validateICWatchpointLiveness=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000")
+//@ requireOptions("--validateICWatchpointLiveness=true", "--useConcurrentJIT=false", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000")
 // An optimized CodeBlock that is jettisoned while one of its frames is live keeps its inline cache stub routines.
 // Their structure-transition watchpoints are keyed on the prototype objects the access cases were built for; those
 // objects must stay live (or the routine must be dropped) for as long as the watchpoints can fire.
 "use strict";
 
-let folded = 1; // constant-folded by the optimizing JIT; writing it jettisons hot()
+const konst = { folded: 1 }; // the optimizing JIT watches konst's structure; transitioning it jettisons hot()
+
+function getOnProto(o) {
+    return o.onProto;
+}
+noInline(getOnProto); // keeps hot()'s optimized graph free of references to the children's structures
 
 function hot(o, key, v, callback) {
-    o[key] = v + folded + o.onProto;
+    o[key] = v + konst.folded + getOnProto(o); // put_by_val IC whose cases carry conditions keyed on the prototypes
     if (callback)
         callback();
     return o;
@@ -44,14 +49,16 @@ noInline(drive);
 drive(3000, doomedProto);
 drive(2000, doomedProto); // fills the optimized hot()'s own ICs with cases whose conditions are keyed on doomedProto
 
-function scrub(n) { return n <= 0 ? 0 : 1 + scrub(n - 1); }
-noInline(scrub);
+function gcAtDepth(n) { return n <= 0 ? fullGC() : 1 + gcAtDepth(n - 1); }
+noInline(gcAtDepth);
 
 hot(makeChild(otherProto, 0), "a", 1, function () {
-    folded = 2;         // jettisons the optimized hot() while its frame is on the stack
+    konst.extra = 1;    // jettisons the optimized hot() while its frame is on the stack
     doomedProto = null; // last reference
-    scrub(3000);
-    fullGC();           // --validateICWatchpointLiveness crashes here if a live routine still watches doomedProto
-    fullGC();
+    // Collect from several stack depths so a stale copy of a pointer in a dead stack slot cannot keep the doomed
+    // objects alive in every one of them. --validateICWatchpointLiveness crashes at the end of whichever GC collects
+    // doomedProto if a live stub routine still watches it.
+    for (const depth of [0, 3000, 250, 1500, 700])
+        gcAtDepth(depth);
     twinProto.added = 1; // fires the shared Structure's transition watchpoints
 });
