@@ -420,6 +420,17 @@ String WebAutomationSession::effectiveHandleForWebFrameProxy(const WebFrameProxy
     return handleForWebFrameID(webFrameProxy.frameID());
 }
 
+// WebDriver allows running commands in a browsing context which has not done any loads yet, and
+// which is therefore displaying the initial empty document. FrameLoader::init() creates that
+// document with an empty URL, so PageLoadState::activeURL() is empty for it. WebDriver clients
+// need to see "about:blank" instead, which is also what Document::urlForBindings() reports to
+// script for the same state.
+static const URL& activeOrInitialURL(WebPageProxy& page)
+{
+    auto& activeURL = page.pageLoadState().activeURL();
+    return activeURL.isEmpty() ? aboutBlankURL() : activeURL;
+}
+
 Ref<Inspector::Protocol::Automation::BrowsingContext> WebAutomationSession::buildBrowsingContextForPage(WebPageProxy& page, WebCore::FloatRect windowFrame)
 {
     auto originObject = Inspector::Protocol::Automation::Point::create()
@@ -438,13 +449,13 @@ Ref<Inspector::Protocol::Automation::BrowsingContext> WebAutomationSession::buil
     return Inspector::Protocol::Automation::BrowsingContext::create()
         .setHandle(handle)
         .setActive(isActive)
-        .setUrl(page.pageLoadState().activeURL().string())
+        .setUrl(activeOrInitialURL(page).string())
         .setWindowOrigin(WTF::move(originObject))
         .setWindowSize(WTF::move(sizeObject))
         .release();
 }
 
-Expected<PageAndFrameHandle, AutomationCommandError> WebAutomationSession::extractBrowsingContextHandles(const String& handle)
+std::expected<PageAndFrameHandle, AutomationCommandError> WebAutomationSession::extractBrowsingContextHandles(const String& handle)
 {
     if (handle.isEmpty())
         return makeUnexpected(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(InvalidParameter, "Browsing context handles cannot be empty"_s));
@@ -2056,8 +2067,7 @@ void WebAutomationSession::addSingleCookie(const Inspector::Protocol::Automation
     auto page = webPageProxyForHandle(browsingContextHandle);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
-    auto& activeURL = page->pageLoadState().activeURL();
-    ASSERT(activeURL.isValid());
+    auto& activeURL = activeOrInitialURL(*page);
 
     WebCore::Cookie cookie;
 
@@ -2108,21 +2118,23 @@ void WebAutomationSession::addSingleCookie(const Inspector::Protocol::Automation
     });
 }
 
-CommandResult<void> WebAutomationSession::deleteAllCookies(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle)
+void WebAutomationSession::deleteAllCookies(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, CommandCallback<void>&& callback)
 {
     RefPtr page = webPageProxyForHandle(browsingContextHandle);
-    SYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
-    auto& activeURL = page->pageLoadState().activeURL();
-    ASSERT(activeURL.isValid());
+    auto& activeURL = activeOrInitialURL(*page);
 
     String host = activeURL.host().toString();
-    SYNC_FAIL_WITH_PREDEFINED_ERROR_IF(host.isNull(), WindowNotFound);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(host.isNull(), WindowNotFound);
 
+    // Wait for the cookies to actually be deleted before replying. Returning early
+    // lets a client proceed while the deletion is still in flight, so cookies can
+    // survive into whatever the client does next.
     Ref cookieStore = protect(page->websiteDataStore())->cookieStore();
-    cookieStore->deleteCookiesForHostnames({ host, domainByAddingDotPrefixIfNeeded(host) }, [] { });
-
-    return { };
+    cookieStore->deleteCookiesForHostnames({ host, domainByAddingDotPrefixIfNeeded(host) }, [callback = WTF::move(callback)]() {
+        callback({ });
+    });
 }
 
 CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::Automation::SessionPermissionData>>> WebAutomationSession::getSessionPermissions()
@@ -3214,8 +3226,10 @@ void WebAutomationSession::logEntryAdded(const JSC::MessageSource& messageSource
 }
 
 #if ENABLE(WEBDRIVER_BIDI)
-void WebAutomationSession::scriptRealmCreated(WebCore::FrameIdentifier frameID, RealmIdentifier realmIdentifier, const WebCore::SecurityOriginData& origin)
+void WebAutomationSession::scriptRealmCreated(WebCore::FrameIdentifier frameID, RealmIdentifier realmIdentifier, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin)
 {
+    auto origin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+
     RefPtr frame = WebFrameProxy::webFrame(frameID);
     if (!frame)
         return;

@@ -170,6 +170,18 @@ inline bool canUseMegamorphicPutById(VM& vm, UniquedStringImpl* uid)
     return !parseIndex(*uid) && uid != vm.propertyNames->underscoreProto;
 }
 
+inline bool NODELETE canUseMegamorphicPutFastPath(Structure* structure)
+{
+    while (true) {
+        if (structure->typeInfo().overridesGetPrototype() || structure->typeInfo().overridesPut() || structure->hasPolyProto())
+            return false;
+        JSValue prototype = structure->storedPrototype();
+        if (prototype.isNull())
+            return true;
+        structure = asObject(prototype)->structure();
+    }
+}
+
 bool NODELETE canBeViaGlobalProxy(AccessCase::AccessType);
 
 inline AccessGenerationResult::AccessGenerationResult(Kind kind, Ref<InlineCacheHandler>&& handler)
@@ -276,7 +288,7 @@ public:
     static void emitDataICPrepareForCall(CCallHelpers&);
     static void emitDataICRestoreAfterCall(CCallHelpers&);
     static CCallHelpers::Jump emitDataICCheckStructure(CCallHelpers&, GPRReg baseGPR, GPRReg scratchGPR);
-    static CCallHelpers::JumpList emitDataICCheckUid(CCallHelpers&, bool isSymbol, JSValueRegs, GPRReg scratchGPR);
+    static CCallHelpers::JumpList emitDataICCheckUid(CCallHelpers&, bool isSymbol, GPRReg, GPRReg scratchGPR);
     static void emitDataICJumpNextHandler(CCallHelpers&);
 
     bool NODELETE useHandlerIC() const;

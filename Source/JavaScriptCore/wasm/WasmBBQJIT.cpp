@@ -1850,11 +1850,32 @@ void BBQJIT::pushArrayNewFromSegment(ArraySegmentOperation operation, TypeSignat
 
 [[nodiscard]] PartialResult BBQJIT::addAnyConvertExtern(ExpressionType reference, ExpressionType& result)
 {
-    Vector<Value, 8> arguments = {
-        reference
-    };
+    GPRReg resultGPR;
+    {
+        ScratchScope<1, 0> scratches(*this);
+        resultGPR = scratches.gpr(0);
+        if (reference.isConst())
+            emitMoveConst(reference, Location::fromGPR(resultGPR));
+        else
+            emitMove(reference.type(), loadIfNecessary(reference), Location::fromGPR(resultGPR));
+
+        JumpList done;
+        done.append(m_jit.branchIfInt32(resultGPR, DoNotHaveTagRegisters));
+        done.append(m_jit.branchIfNotNumber(resultGPR, DoNotHaveTagRegisters));
+        JumpList slowPath;
+        slowPath.append(m_jit.jump());
+        MacroAssembler::Label doneLabel(m_jit);
+        done.link(m_jit);
+        m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(doneLabel), copyBindings(), [resultGPR](BBQJIT&, CCallHelpers& jit) {
+            jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
+            jit.setupArguments<decltype(operationWasmAnyConvertExtern)>(resultGPR);
+            jit.callOperation<OperationPtrTag>(operationWasmAnyConvertExtern);
+            jit.move(GPRInfo::returnValueGPR, resultGPR);
+        } });
+        consume(reference);
+    }
     result = topValue(TypeKind::Anyref);
-    emitCCall(&operationWasmAnyConvertExtern, arguments, result);
+    bind(result, Location::fromGPR(resultGPR));
 
     LOG_INSTRUCTION("AnyConvertExtern", reference, RESULT(result));
     return { };
@@ -5849,7 +5870,7 @@ void BBQJIT::emitArrayElementAddress(StorageType elementType, Value array, Value
 
 } // namespace JSC::Wasm::BBQJITImpl
 
-Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext& compilationContext, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, const RTT& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, Module& module, CalleeGroup& calleeGroup, const ModuleInformation& info, MemoryMode mode, FunctionCodeIndex functionIndex)
+std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(CompilationContext& compilationContext, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, const RTT& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, Module& module, CalleeGroup& calleeGroup, const ModuleInformation& info, MemoryMode mode, FunctionCodeIndex functionIndex)
 {
     CompilerTimingScope totalTime("BBQ"_s, "Total BBQ"_s);
 

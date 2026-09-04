@@ -351,28 +351,24 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     auto isReservedESMName = [](const Wasm::Name& name) {
         return startsWith(name.span(), "wasm:"_s) || startsWith(name.span(), "wasm-js:"_s);
     };
-
-    if (creationMode == CreationMode::FromModuleLoader) {
-        for (auto& exp : moduleInformation.exports) {
-            if (isReservedESMName(exp.field))
-                return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Export name '"_s, makeString(exp.field), "' is reserved"_s)));
-        }
-    }
+    const bool fromModuleLoader = creationMode == CreationMode::FromModuleLoader;
 
     // For each import i in module.imports:
     {
+        const auto importNames = jsModule->importNames(vm);
         IdentifierSet specifiers;
-        for (auto& import : moduleInformation.imports) {
-            auto moduleName = Identifier::fromString(vm, makeAtomString(import.module));
-            auto fieldName = Identifier::fromString(vm, makeAtomString(import.field));
-            if (creationMode == CreationMode::FromModuleLoader) {
-                if (isReservedESMName(import.field))
-                    return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import name '"_s, StringView(fieldName.impl()), "' is reserved"_s)));
+        for (size_t importIndex = 0; importIndex < moduleInformation.imports.size(); ++importIndex) {
+            const auto& import = moduleInformation.imports[importIndex];
+            const auto& moduleName = importNames[importIndex].module;
+            const auto& fieldName = importNames[importIndex].field;
+            bool skipRequestedModule = false;
+            if (fromModuleLoader) {
                 if (startsWith(import.module.span(), "wasm-js:"_s))
                     return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import module '"_s, StringView(moduleName.impl()), "' is reserved"_s)));
+                if (isReservedESMName(import.field))
+                    return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import name '"_s, StringView(fieldName.impl()), "' is reserved"_s)));
+                skipRequestedModule = moduleInformation.importedStringConstantsEquals(import.module) || moduleInformation.builtinSetsInclude(import.module);
             }
-            bool skipRequestedModule = creationMode == CreationMode::FromModuleLoader
-                && (moduleInformation.importedStringConstantsEquals(import.module) || moduleInformation.builtinSetsInclude(import.module));
             auto result = specifiers.add(moduleName.impl());
             if (result.isNewEntry && !skipRequestedModule)
                 moduleRecord->appendRequestedModule(moduleName, nullptr);
@@ -386,6 +382,13 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
             });
         }
         ASSERT(moduleRecord->importEntries().size() == moduleInformation.imports.size());
+    }
+
+    if (fromModuleLoader) {
+        for (auto& exp : moduleInformation.exports) {
+            if (isReservedESMName(exp.field))
+                return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Export name '"_s, makeString(exp.field), "' is reserved"_s)));
+        }
     }
 
     for (unsigned i = 0; i < moduleInformation.memoryCount(); i++) {
@@ -757,26 +760,26 @@ void JSWebAssemblyInstance::copyElementSegment(JSWebAssemblyArray* array, const 
     }
 }
 
-bool JSWebAssemblyInstance::evaluateConstantExpression(uint64_t index, Type expectedType, uint64_t& result)
+std::expected<uint64_t, String> JSWebAssemblyInstance::evaluateConstantExpression(uint64_t constantExpressionIndex)
 {
-    const auto& constantExpression = m_moduleInformation->constantExpressions[index];
-    auto evalResult = evaluateExtendedConstExpr(constantExpression, this, m_moduleInformation.get(), expectedType);
-    if (!evalResult.has_value()) [[unlikely]]
-        return false;
-
-    result = evalResult.value();
-    return true;
+    const auto& constantExpression = m_moduleInformation->constantExpressions[constantExpressionIndex];
+    return evaluateExtendedConstExpr(constantExpression, this, m_moduleInformation.get());
 }
 
 bool JSWebAssemblyInstance::ensureConstantExpressionValue(uint64_t constantExpressionIndex, Type expectedType, uint64_t& result)
 {
+    // The memo is scanned by the GC as a JSValue, so only reference-typed results may go in it.
+    ASSERT_UNUSED(expectedType, isRefType(expectedType));
+
     if (auto found = m_constantExpressionValues.getOptional(constantExpressionIndex)) {
         result = JSValue::encode(found.value().get());
         return true;
     }
 
-    if (!evaluateConstantExpression(constantExpressionIndex, expectedType, result)) [[unlikely]]
+    auto evalResult = evaluateConstantExpression(constantExpressionIndex);
+    if (!evalResult.has_value()) [[unlikely]]
         return false;
+    result = evalResult.value();
 
     Locker locker { cellLock() };
     m_constantExpressionValues.set(constantExpressionIndex, WriteBarrier<Unknown>(vm(), this, JSValue::decode(result)));

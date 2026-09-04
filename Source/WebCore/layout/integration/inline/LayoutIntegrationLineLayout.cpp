@@ -393,11 +393,41 @@ bool LineLayout::boxContentWillChange(const RenderBox& renderer)
     return Layout::InlineInvalidation { ensureLineDamage(), m_inlineContentCache.inlineItems().content(), m_inlineContent->displayContent() }.inlineLevelBoxContentWillChange(*renderer.layoutBox());
 }
 
-void LineLayout::updateOverflow()
+std::optional<LayoutRect> LineLayout::updateOverflow()
 {
     if (!m_inlineContent)
-        return;
-    InlineContentBuilder { flow() }.updateLineOverflow(*m_inlineContent);
+        return { };
+
+    auto& boxes = m_inlineContent->displayContent().boxes;
+    auto inkOverflowBefore = boxes.map([](auto& displayBox) {
+        return displayBox.inkOverflow();
+    });
+
+    // Forces the ink overflow recompute below.
+    m_inlineContent->setContentMayHaveInkOverflow(true);
+    InlineContentBuilder { flow() }.updateOverflow(*m_inlineContent, 0);
+
+    auto damage = std::optional<FloatRect> { };
+    auto uniteWithDamage = [&](const FloatRect& rect) {
+        // A box's ink overflow can be empty at a non-zero position, which unite() would drop, so this has to
+        // be uniteEvenIfEmpty -and damage can't start out as an empty rect at the origin.
+        if (!damage)
+            damage = rect;
+        else
+            damage->uniteEvenIfEmpty(rect);
+    };
+    for (size_t index = 0; index < boxes.size(); ++index) {
+        if (inkOverflowBefore[index] == boxes[index].inkOverflow())
+            continue;
+        uniteWithDamage(inkOverflowBefore[index]);
+        uniteWithDamage(boxes[index].inkOverflow());
+    }
+    if (!damage || damage->isEmpty())
+        return { };
+
+    auto damageRect = LayoutRect { *damage };
+    flow().flipForWritingMode(damageRect);
+    return damageRect;
 }
 
 std::pair<LayoutUnit, LayoutUnit> LineLayout::computeIntrinsicWidthConstraints()
@@ -861,18 +891,32 @@ void LineLayout::preparePlacedFloats()
             return LayoutRect { logicalLeft, logicalTop, logicalWidth, logicalHeight };
         }();
 
-        boxGeometry.setTopLeft(logicalRect.location());
-        boxGeometry.setContentBoxWidth(logicalRect.width());
-        boxGeometry.setContentBoxHeight(logicalRect.height());
+        auto logicalMargin = [&]() -> Layout::BoxGeometry::Edges {
+            auto borderBoxLogicalSize = floatingObject->renderer()->borderBoxSize();
+            if (!isHorizontalWritingMode)
+                borderBoxLogicalSize = borderBoxLogicalSize.transposedSize();
+            auto marginOffset = floatingObject->marginOffset();
+            auto marginBefore = isHorizontalWritingMode ? marginOffset.height() : marginOffset.width();
+            auto marginOnLogicalLeft = isHorizontalWritingMode ? marginOffset.width() : marginOffset.height();
+            auto marginOnLogicalRight = logicalRect.width() - marginOnLogicalLeft - borderBoxLogicalSize.width();
+            if (!placedFloatsIsLeftToRight)
+                std::swap(marginOnLogicalLeft, marginOnLogicalRight);
+            return { { marginOnLogicalLeft, marginOnLogicalRight }, { marginBefore, logicalRect.height() - marginBefore - borderBoxLogicalSize.height() } };
+        }();
+        auto borderBoxLogicalTopLeft = logicalRect.location() + LayoutSize { logicalMargin.horizontal.start, logicalMargin.vertical.before };
+
+        boxGeometry.setTopLeft(borderBoxLogicalTopLeft);
+        boxGeometry.setContentBoxWidth(logicalRect.width() - logicalMargin.width());
+        boxGeometry.setContentBoxHeight(logicalRect.height() - logicalMargin.height());
         boxGeometry.setBorder({ });
         boxGeometry.setPadding({ });
-        boxGeometry.setHorizontalMargin({ });
-        boxGeometry.setVerticalMargin({ });
+        boxGeometry.setHorizontalMargin(logicalMargin.horizontal);
+        boxGeometry.setVerticalMargin(logicalMargin.vertical);
 
         auto shapeOutsideInfo = floatingObject->renderer()->shapeOutsideInfo();
         RefPtr shape = shapeOutsideInfo ? &shapeOutsideInfo->computedShape() : nullptr;
 
-        placedFloats.add({ logicalPosition, boxGeometry, logicalRect.location(), WTF::move(shape) });
+        placedFloats.add({ logicalPosition, boxGeometry, borderBoxLogicalTopLeft, WTF::move(shape) });
     }
 }
 

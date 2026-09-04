@@ -71,7 +71,10 @@ public:
     //   bit 3:      isFirstResolvingFunctionCalled
     //   bits 4-5:   InlineReactionKind (4 values, 2 bits)
     //   bits 6-13:  InternalMicrotask (only when kind == InternalMicrotask)
-    //   bits 14-15: reserved
+    //   bit 14:     payload cell is the reaction's captured async context, not
+    //               the task's cell argument (only when kind == InternalMicrotask,
+    //               USE(BUN_JSC_ADDITIONS))
+    //   bit 15:     reserved
 
     enum class Status : uint16_t {
         Pending = 0, // Making this as 0, so that, we can change the status from Pending to others without masking.
@@ -91,6 +94,7 @@ public:
     static constexpr uint16_t isFirstResolvingFunctionCalledFlag = 0b0000000000001000;
     static constexpr uint16_t inlineReactionKindMask             = 0b0000000000110000;
     static constexpr uint16_t inlineReactionMicrotaskMask        = 0b0011111111000000;
+    static constexpr uint16_t inlineReactionAsyncContextFlag     = 0b0100000000000000;
     static constexpr unsigned inlineReactionKindShift = 4;
     static constexpr unsigned inlineReactionMicrotaskShift = 6;
 
@@ -167,11 +171,23 @@ public:
     void resolvePromise(JSGlobalObject*, VM&, JSValue);
 
     static void resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject*, VM&, JSValue resolution, InternalMicrotask, JSValue context);
+#if USE(BUN_JSC_ADDITIONS)
+    // asyncContext: the AsyncLocalStorage frame the task must run under (see
+    // AsyncContextSwapScope). It rides next to `context` - in the spare microtask
+    // argument, or in the reaction's unused cell slot - so capturing it costs no
+    // allocation; jsUndefined()/empty means "none".
+    static void resolveWithInternalMicrotask(JSGlobalObject*, VM&, JSValue resolution, InternalMicrotask, JSValue context, JSValue asyncContext = JSValue());
+    static void rejectWithInternalMicrotask(VM&, JSGlobalObject*, JSValue argument, InternalMicrotask, JSValue context, JSValue asyncContext = JSValue());
+    static void fulfillWithInternalMicrotask(VM&, JSGlobalObject*, JSValue argument, InternalMicrotask, JSValue context, JSValue asyncContext = JSValue());
+
+    void performPromiseThenWithInternalMicrotask(VM&, InternalMicrotask, JSCell*, JSValue context, JSValue asyncContext = JSValue());
+#else
     static void resolveWithInternalMicrotask(JSGlobalObject*, VM&, JSValue resolution, InternalMicrotask, JSValue context);
     static void rejectWithInternalMicrotask(VM&, JSGlobalObject*, JSValue argument, InternalMicrotask, JSValue context);
     static void fulfillWithInternalMicrotask(VM&, JSGlobalObject*, JSValue argument, InternalMicrotask, JSValue context);
 
     void performPromiseThenWithInternalMicrotask(VM&, InternalMicrotask, JSCell*, JSValue context);
+#endif
 
     bool isThenFastAndNonObservable();
 
@@ -179,7 +195,11 @@ public:
     std::tuple<JSFunction*, JSFunction*> createFirstResolvingFunctions(VM&, JSGlobalObject*);
     JSFunction* createFirstResolveFunction(VM&, JSGlobalObject*);
     JSFunction* createFirstRejectFunction(VM&, JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    static std::tuple<JSFunction*, JSFunction*> createResolvingFunctionsWithInternalMicrotask(VM&, JSGlobalObject*, InternalMicrotask, JSValue context, JSValue asyncContext = JSValue());
+#else
     static std::tuple<JSFunction*, JSFunction*> createResolvingFunctionsWithInternalMicrotask(VM&, JSGlobalObject*, InternalMicrotask, JSValue context);
+#endif
     static std::tuple<JSObject*, JSObject*, JSObject*> newPromiseCapability(JSGlobalObject*, JSValue constructor);
     static JSValue createPromiseCapability(VM&, JSGlobalObject*, JSObject* promise, JSObject* resolve, JSObject* reject);
     static JSObject* promiseResolve(JSGlobalObject*, JSObject* constructor, JSValue);
@@ -219,6 +239,9 @@ public:
         ASSERT(inlineReactionKind() == InlineReactionKind::InternalMicrotask);
         return m_slot.get();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    inline bool inlineReactionCarriesAsyncContext() const { return flags() & inlineReactionAsyncContextFlag; }
+#endif
     inline JSValue inlineHandlerHandler() const
     {
         ASSERT(hasInlineHandlerReaction());
@@ -244,7 +267,7 @@ public:
 private:
 #endif
 
-    void setInlineMicrotaskReaction(VM&, InternalMicrotask, JSCell*, JSValue context);
+    void setInlineMicrotaskReaction(VM&, InternalMicrotask, JSCell*, JSValue context, uint16_t extraFlags = 0);
     void setInlineHandlerReaction(VM&, InlineReactionKind, JSPromise*, JSValue handler);
     JSPromiseReaction* spillInlineReaction(VM&);
     JSPromiseReaction* reactionHead(VM&);

@@ -59,6 +59,18 @@ module WebKit_Internal [system] {
         export *
     }
 
+    module JavaScriptEvaluationResultCxxInteropSupport {
+        requires cplusplus23
+        header "../../Shared/JavaScriptEvaluationResultCxxInteropSupport.h"
+        export *
+    }
+
+    module RunJavaScriptParameters {
+        requires cplusplus23
+        header "../../Shared/RunJavaScriptParameters.h"
+        export *
+    }
+
     module RunJavaScriptResult {
         requires cplusplus20
         header "../../Shared/RunJavaScriptResult.h"
@@ -315,6 +327,12 @@ module WebKit_Internal [system] {
         requires objc
     }
 
+    module TransferString {
+        requires cplusplus23
+        header "../../Platform/IPC/TransferString.h"
+        export *
+    }
+
     module WKDeferringGestureRecognizer {
         header "../../UIProcess/Cocoa/WKDeferringGestureRecognizer.h"
         export *
@@ -408,6 +426,12 @@ module WebKit_Internal [system] {
     module WKAppKitGestureController {
         requires cplusplus20,objc
         header "../../UIProcess/mac/AppKitGestures/WKAppKitGestureController.h"
+        export *
+    }
+
+    module WKMouseTrackingGestureRecognizer {
+        requires objc
+        header "../../UIProcess/mac/AppKitGestures/WKMouseTrackingGestureRecognizer.h"
         export *
     }
 

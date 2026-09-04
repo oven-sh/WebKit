@@ -600,16 +600,6 @@ TextStream& operator<<(TextStream& ts, FlexDirection flexDirection)
     return ts;
 }
 
-TextStream& operator<<(TextStream& ts, FlexWrap flexWrap)
-{
-    switch (flexWrap) {
-    case FlexWrap::NoWrap: ts << "no-wrap"_s; break;
-    case FlexWrap::Wrap: ts << "wrap"_s; break;
-    case FlexWrap::Reverse: ts << "reverse"_s; break;
-    }
-    return ts;
-}
-
 TextStream& operator<<(TextStream& ts, Float floating)
 {
     switch (floating) {
@@ -1378,6 +1368,9 @@ TextStream& operator<<(TextStream& ts, OverflowContinue overflowContinue)
         break;
     case OverflowContinue::Discard:
         ts << "discard"_s;
+        break;
+    case OverflowContinue::WebkitLegacy:
+        ts << "-webkit-legacy"_s;
         break;
     }
     return ts;

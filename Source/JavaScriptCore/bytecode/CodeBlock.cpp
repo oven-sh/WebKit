@@ -1247,24 +1247,26 @@ DEFINE_VISIT_CHILDREN(CodeBlock);
 template<typename Visitor>
 void CodeBlock::visitChildren(Visitor& visitor)
 {
-    ConcurrentJSLocker locker(m_lock);
+    {
+        ConcurrentJSLocker locker(m_lock);
 
-    // In CodeBlock::shouldVisitStrongly() we may have decided to skip visiting this
-    // codeBlock. However, if we end up visiting it anyway due to other references,
-    // we can clear this flag and allow the verifier GC to visit it as well.
-    m_visitChildrenSkippedDueToOldAge = false;
-    if (CodeBlock* otherBlock = specialOSREntryBlockOrNull())
-        visitor.appendUnbarriered(otherBlock);
+        // In CodeBlock::shouldVisitStrongly() we may have decided to skip visiting this
+        // codeBlock. However, if we end up visiting it anyway due to other references,
+        // we can clear this flag and allow the verifier GC to visit it as well.
+        m_visitChildrenSkippedDueToOldAge = false;
+        if (CodeBlock* otherBlock = specialOSREntryBlockOrNull())
+            visitor.appendUnbarriered(otherBlock);
 
-    size_t extraMemory = 0;
-    if (m_metadata)
-        extraMemory += m_metadata->sizeInBytesForGC();
-    if (m_jitCode && !m_jitCode->isShared())
-        extraMemory += m_jitCode->size();
-    visitor.reportExtraMemoryVisited(extraMemory);
+        size_t extraMemory = 0;
+        if (m_metadata)
+            extraMemory += m_metadata->sizeInBytesForGC();
+        if (m_jitCode && !m_jitCode->isShared())
+            extraMemory += m_jitCode->size();
+        visitor.reportExtraMemoryVisited(extraMemory);
 
-    stronglyVisitStrongReferences(locker, visitor);
-    stronglyVisitWeakReferences(locker, visitor);
+        stronglyVisitStrongReferences(locker, visitor);
+        stronglyVisitWeakReferences(locker, visitor);
+    }
 
     // Update profiles from concurrent markers to reduce the cost of update at the GC end phase as its execution is serialized.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
@@ -1343,6 +1345,22 @@ Seconds CodeBlock::timeToLive(JITType jitType)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool CodeBlock::agesByMutatorQuietness()
+{
+    switch (jitType()) {
+    case JITType::FTLJIT:
+        return true;
+#if ENABLE(DFG_JIT)
+    case JITType::DFGJIT:
+        return !Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation;
+#endif
+    default:
+        return false;
+    }
+}
+#endif
+
 template<typename Visitor>
 ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker&, Visitor& visitor)
 {
@@ -1355,19 +1373,40 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
 #if USE(BUN_JSC_ADDITIONS)
     JITType type = jitType();
     Seconds ttl = timeToLive(type);
+
+    // Optimizing tiers: a DFG block ages like a baseline one, using the tier-up counter its code already decrements at
+    // returns and loop back-edges as the sign of life. FTL code, and DFG code compiled without tier-up checks, has no
+    // counter of its own. It is expensive to rebuild, but it also pins its baseline alternative and every baseline
+    // CodeBlock it inlined along with their metadata, so rather than never ageing it ages against the mutator as a
+    // whole: a full collection lets it go once it is past its TTL and (almost) nothing has been allocated since the
+    // previous full collection looked at it and the embedder says the application is idle, and renews it whenever the
+    // mutator has been allocating, keeping the code exactly as before.
+    if (agesByMutatorQuietness()) {
+        unsigned quietMB = Options::optimizedCodeAgingQuietAllocationMB();
+        if (!quietMB)
+            return false;
+        // Whole megabytes, wrapping: only the distance from the lease's start matters. The first check of a block (field
+        // still 0) and a block that just moved into this regime both see a large distance and renew.
+        uint32_t allocatedMB = static_cast<uint32_t>(vm().heap.totalBytesAllocated() >> 20);
+        if (static_cast<uint32_t>(allocatedMB - m_leaseStartAllocatedMB) > quietMB) {
+            // The mutator has been allocating since this block's lease started: renew it from here.
+            m_leaseStartAllocatedMB = allocatedMB;
+            m_creationTime = ApproximateTime::now();
+            return false;
+        }
+        // Any full collection may renew the lease, but only one the embedder requested because the application went idle
+        // (GCRequest::isIdle) lets the code go: never one paced by allocation, forced by the program (which may do so on
+        // a timer while hot code runs between the calls) or triggered by memory pressure.
+        if (!vm().heap.isIdleCollection())
+            return false;
+        Seconds quietFor = Seconds(Options::optimizedCodeAgingQuietSeconds());
+        if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]]
+            quietFor = std::min(quietFor, ttl);
+        return timeSinceCreation() >= quietFor;
+    }
+
     if (timeSinceCreation() < ttl)
         return false;
-
-    // Optimizing tiers: an FTL block is small and very expensive to rebuild, so it never ages out (it stays alive for as
-    // long as the structures it speculated on do, see determineLiveness()). A DFG block ages like a baseline one, using
-    // the tier-up counter its code already decrements at returns and loop back-edges as the sign of life; a DFG block
-    // compiled without tier-up checks has no such signal and is kept.
-    if (type == JITType::FTLJIT)
-        return false;
-#if ENABLE(DFG_JIT)
-    if (type == JITType::DFGJIT && (!Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation))
-        return false;
-#endif
 
     if (Options::useExecutionCountForCodeBlockAging()) {
         // LLInt and Baseline CodeBlocks already tick an execution counter on
@@ -1926,6 +1965,13 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     auto updateActivity = [&] {
         if (!VM::useUnlinkedCodeBlockJettisoning())
             return;
+#if USE(BUN_JSC_ADDITIONS)
+        if (agesByMutatorQuietness()) {
+            if (!m_visitChildrenSkippedDueToOldAge)
+                m_unlinkedCode->resetAge();
+            return;
+        }
+#endif
         auto* jitCode = m_jitCode.get();
         float count = 0;
         bool alwaysActive = false;

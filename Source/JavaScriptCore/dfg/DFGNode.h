@@ -1979,6 +1979,17 @@ public:
         return m_opInfo.as<Yarr::Flags>();
     }
 
+    bool hasUTC()
+    {
+        return op() == DateGetStorage;
+    }
+
+    bool isUTC()
+    {
+        ASSERT(hasUTC());
+        return m_opInfo.as<bool>();
+    }
+
     bool hasIntrinsic()
     {
         switch (op()) {
@@ -2208,6 +2219,7 @@ public:
         case DataViewGetInt:
         case DataViewGetFloat:
         case DateGetInt32OrNaN:
+        case DateGetMilliseconds:
         case NewArrayWithSpecies:
             return true;
         default:

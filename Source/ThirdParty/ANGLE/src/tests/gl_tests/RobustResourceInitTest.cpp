@@ -303,6 +303,10 @@ class RobustResourceInitTestES3 : public RobustResourceInitTest
                                 GLenum internalFormatRGBA,
                                 GLenum internalFormatRGB,
                                 GLenum type);
+    template <typename PixelT>
+    void testIntegerRenderbufferInit(GLenum internalFormat, GLenum type);
+    template <typename PixelT>
+    void testFloatRenderbufferInit(GLenum internalFormat, GLenum type);
 };
 
 class RobustResourceInitTestES31 : public RobustResourceInitTest
@@ -2225,6 +2229,93 @@ void RobustResourceInitTestES3::testIntegerTextureInit(const char *samplerType,
     EXPECT_EQ(0, incorrectPixels);
 }
 
+template <typename PixelT>
+void RobustResourceInitTestES3::testIntegerRenderbufferInit(GLenum internalFormat, GLenum type)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    GLRenderbuffer renderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, internalFormat, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
+    ASSERT_GL_NO_ERROR();
+
+    std::array<PixelT, kWidth * kHeight * 4> data;
+    glReadPixels(0, 0, kWidth, kHeight, GL_RGBA_INTEGER, type, data.data());
+    ASSERT_GL_NO_ERROR();
+
+    int incorrectPixels = 0;
+    for (int y = 0; y < kHeight; ++y)
+    {
+        for (int x = 0; x < kWidth; ++x)
+        {
+            int index    = (y * kWidth + x) * 4;
+            bool correct = (data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 0 &&
+                            data[index + 3] == 0);
+            incorrectPixels += (!correct ? 1 : 0);
+        }
+    }
+
+    EXPECT_EQ(0, incorrectPixels);
+}
+
+template <typename PixelT>
+void RobustResourceInitTestES3::testFloatRenderbufferInit(GLenum internalFormat, GLenum type)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    GLRenderbuffer renderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, internalFormat, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
+    ASSERT_GL_NO_ERROR();
+
+    std::array<PixelT, kWidth * kHeight * 4> data;
+    glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, type, data.data());
+    ASSERT_GL_NO_ERROR();
+
+    int incorrectPixels = 0;
+    for (int y = 0; y < kHeight; ++y)
+    {
+        for (int x = 0; x < kWidth; ++x)
+        {
+            int index    = (y * kWidth + x) * 4;
+            bool correct = (data[index] == 0.0f && data[index + 1] == 0.0f &&
+                            data[index + 2] == 0.0f && data[index + 3] == 0.0f);
+            incorrectPixels += (!correct ? 1 : 0);
+        }
+    }
+
+    EXPECT_EQ(0, incorrectPixels);
+}
+
+// Test that integer renderbuffers are initialized to zero.
+TEST_P(RobustResourceInitTestES3, RenderbufferInit_IntRGBA8)
+{
+    testIntegerRenderbufferInit<int32_t>(GL_RGBA8I, GL_INT);
+}
+
+// Test that unsigned integer renderbuffers are initialized to zero.
+TEST_P(RobustResourceInitTestES3, RenderbufferInit_UIntRGBA8)
+{
+    testIntegerRenderbufferInit<uint32_t>(GL_RGBA8UI, GL_UNSIGNED_INT);
+}
+
+// Test that floating point renderbuffers are initialized to zero.
+TEST_P(RobustResourceInitTestES3, RenderbufferInit_FloatRGBA32F)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_EXT_color_buffer_float"));
+    testFloatRenderbufferInit<GLfloat>(GL_RGBA32F, GL_FLOAT);
+}
+
 // Simple tests for integer formats that ANGLE must emulate on D3D11.
 TEST_P(RobustResourceInitTestES3, TextureInit_UIntRGB8)
 {
@@ -2762,6 +2853,85 @@ TEST_P(RobustResourceInitTestES3, MaskedDepthClearBufferfi)
     glDepthFunc(GL_EQUAL);
     drawQuad(drawRed, essl1_shaders::PositionAttrib(), 1.0f);  // 1.0f NDC maps to 1.0f depth
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red) << "depth should be initialized to 1.0f";
+}
+
+// Test that performing a partial clear on a packed depth-stencil resource does not bypass robust
+// init for the other aspect.
+TEST_P(RobustResourceInitTestES3, PackedDepthStencilPartialClearLeaking)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr int kSize = 16;
+
+    GLRenderbuffer rb;
+    glBindRenderbuffer(GL_RENDERBUFFER, rb);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kSize, kSize);
+
+    GLFramebuffer setupFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, setupFBO);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb);
+    ASSERT_GL_NO_ERROR();
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Poison stencil with 0x5A
+    glClearStencil(0x5A);
+    glClear(GL_STENCIL_BUFFER_BIT);
+    ASSERT_GL_NO_ERROR();
+
+    // Invalidate to force ANGLE to re-initialize it on next use.
+    const GLenum attachments[] = {GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT};
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments);
+    ASSERT_GL_NO_ERROR();
+
+    // Create a FBO with no color attachments, only depth-stencil.
+    GLFramebuffer dsOnlyFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, dsOnlyFBO);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb);
+    ASSERT_GL_NO_ERROR();
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Clear depth only.
+    // If bug is present, this clears depth natively, but marks both depth and stencil as
+    // initialized. Stencil is NOT cleared natively.
+    float depthClearValue = 1.0f;
+    glClearBufferfv(GL_DEPTH, 0, &depthClearValue);
+    ASSERT_GL_NO_ERROR();
+
+    // Bind to FBO with color attachment to verify stencil.
+    GLTexture colorBuffer;
+    glBindTexture(GL_TEXTURE_2D, colorBuffer);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer readFBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, readFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorBuffer, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb);
+    ASSERT_GL_NO_ERROR();
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Clear color to blue.
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ASSERT_GL_NO_ERROR();
+
+    glEnable(GL_STENCIL_TEST);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+
+    // Draw green if stencil is 0 (expected robust init value).
+    glStencilFunc(GL_EQUAL, 0, 0xFF);
+    ANGLE_GL_PROGRAM(drawGreen, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    drawQuad(drawGreen, essl1_shaders::PositionAttrib(), 0.0f);
+    ASSERT_GL_NO_ERROR();
+
+    // Draw red if stencil is 0x5A (poison value, indicates leak).
+    glStencilFunc(GL_EQUAL, 0x5A, 0xFF);
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.0f);
+    ASSERT_GL_NO_ERROR();
+
+    // We expect the stencil to be 0, so the final color should be green.
+    // If the bug is present, it might be red.
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
 template <int Size, typename InitializedTest>
@@ -4152,6 +4322,124 @@ TEST_P(RobustResourceInitTest, RedefineSiblingFace)
             EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::transparentBlack);
         }
     }
+    EXPECT_GL_NO_ERROR();
+}
+
+// Tests that partial clear of a packed depth-stencil attachment doesn't
+// incorrectly bypass robust initialization for the other aspect.
+TEST_P(RobustResourceInitTestES3, DepthClearWithStencilInit)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr int kSize = 16;
+
+    // Create a new FBO with a packed depth-stencil texture.
+    GLTexture dsTex;
+    glBindTexture(GL_TEXTURE_2D, dsTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, kSize, kSize);
+
+    GLTexture colorTex;
+    glBindTexture(GL_TEXTURE_2D, colorTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dsTex, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Clear only depth. This should leave the stencil aspect in MayNeedInit state,
+    // which shouldn't be overridden to Initialized.
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Then bind the stencil attachment here so that we can verify it was initialized:
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, dsTex, 0);
+
+    // Verify stencil is initialized to 0. We can do this by using the stencil side channel.
+    // robust-init mandates 0.
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_EQUAL, 0x00, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.95f, 1.0f, true);
+
+    // Read the color buffer to verify that stencil test passed for all pixels.
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::red);
+    EXPECT_GL_NO_ERROR();
+}
+
+// Tests that partial clear of a packed depth-stencil attachment (stencil-only) doesn't
+// incorrectly bypass robust initialization for the depth aspect.
+TEST_P(RobustResourceInitTestES3, StencilClearWithDepthInit)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr int kSize = 16;
+
+    // Create a new FBO with a packed depth-stencil texture.
+    GLTexture dsTex;
+    glBindTexture(GL_TEXTURE_2D, dsTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, kSize, kSize);
+
+    GLTexture colorTex;
+    glBindTexture(GL_TEXTURE_2D, colorTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, dsTex, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Clear only stencil. This should leave the depth aspect in MayNeedInit state,
+    // which shouldn't be overridden to Initialized.
+    glClear(GL_STENCIL_BUFFER_BIT);
+
+    // Unbind the depth-stencil texture from the FBO so we can sample it as a texture.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+
+    // Bind the texture to texture unit 0 and set filters.
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, dsTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Verify depth == 1.0 via shader sampling
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 aPosition;
+void main()
+{
+    gl_Position = aPosition;
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform highp sampler2D uDepthTex;
+out vec4 outColor;
+void main()
+{
+    float depth = texture(uDepthTex, vec2(0.5, 0.5)).r;
+    if (abs(depth - 1.0) < 0.001)
+    {
+        outColor = vec4(0.0, 1.0, 0.0, 1.0); // green
+    }
+    else
+    {
+        outColor = vec4(1.0, 0.0, 0.0, 1.0); // red
+    }
+})";
+
+    ANGLE_GL_PROGRAM(depthSampleProg, kVS, kFS);
+    glUseProgram(depthSampleProg);
+    GLint texLoc = glGetUniformLocation(depthSampleProg, "uDepthTex");
+    ASSERT_NE(texLoc, -1);
+    glUniform1i(texLoc, 0);
+
+    drawQuad(depthSampleProg, "aPosition", 0.0f);
+
+    // Read the color buffer to verify that depth was successfully initialized to 1.0f.
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
     EXPECT_GL_NO_ERROR();
 }
 

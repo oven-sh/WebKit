@@ -381,7 +381,7 @@ void HTMLVideoElement::mediaPlayerFirstVideoFrameAvailable()
     }
 }
 
-std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
+std::optional<ColorSpace> HTMLVideoElement::colorSpace() const
 {
     RefPtr player = this->player();
     if (!player)
@@ -390,7 +390,7 @@ std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
     return player->colorSpace();
 }
 
-RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     CheckedPtr view = document().view();
     CheckedPtr root = view ? view->root() : nullptr;
@@ -514,6 +514,10 @@ void HTMLVideoElement::didMoveToNewDocument(Document& oldDocument, Document& new
 {
     if (m_imageLoader)
         m_imageLoader->elementDidMoveToNewDocument(oldDocument);
+
+    LazyLoadVideoObserver::unobserve(*this, oldDocument);
+    LazyLoadVideoObserver::observe(*this);
+
     HTMLMediaElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 

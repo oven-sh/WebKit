@@ -85,11 +85,18 @@ public:
 
     static JSSlimPromiseReaction* create(VM&, JSValue promise, JSValue handler, bool isFulfill, JSPromiseReaction* next);
     static JSSlimPromiseReaction* create(VM&, JSValue promise, InternalMicrotask, JSValue context, JSPromiseReaction* next);
+#if USE(BUN_JSC_ADDITIONS)
+    // An internal-microtask reaction whose task takes no cell argument keeps its
+    // captured async context (see AsyncContextSwapScope) in the otherwise-unused
+    // promise slot.
+    static JSSlimPromiseReaction* createWithAsyncContext(VM&, JSValue asyncContext, InternalMicrotask, JSValue context, JSPromiseReaction* next);
+    bool promiseSlotIsAsyncContext() const { return internalMicrotask() != InternalMicrotask::None && perCellBit(); }
+#endif
 
     static JSSlimPromiseReaction* createAsyncGeneratorRequest(VM&, JSValue settlementTarget, JSValue value, uint8_t resumeMode, JSPromiseReaction* next);
     uint8_t asyncGeneratorResumeMode() const { return m_next.type(); }
 
-    bool isFulfillHandler() const { return perCellBit(); }
+    bool isFulfillHandler() const { ASSERT(internalMicrotask() == InternalMicrotask::None); return perCellBit(); }
 
     JSValue handlerOrContext() const { return m_handlerOrContext.get(); }
     void setHandlerOrContext(VM& vm, JSValue value) { m_handlerOrContext.set(vm, this, value); }
@@ -122,6 +129,12 @@ public:
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     static JSFullPromiseReaction* create(VM&, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next);
+#if USE(BUN_JSC_ADDITIONS)
+    // m_context is the async context captured by performPromiseThen (see
+    // AsyncContextSwapScope) rather than an embedder-supplied handler context.
+    static JSFullPromiseReaction* createWithAsyncContext(VM&, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue asyncContext, JSPromiseReaction* next);
+    bool contextIsAsyncContext() const { return perCellBit(); }
+#endif
 
     JSValue onFulfilled() const { return m_onFulfilled.get(); }
     JSValue onRejected() const { return m_onRejected.get(); }

@@ -33,7 +33,7 @@
 ]
 messages -> PlatformXRSystem {
     EnumerateImmersiveXRDevices() -> (Vector<WebKit::XRDeviceInfo> devicesInfos)
-    RequestPermissionOnSessionFeatures(WebCore::SecurityOriginData origin, PlatformXR::SessionMode mode, Vector<PlatformXR::SessionFeature> granted, Vector<PlatformXR::SessionFeature> consentRequired, Vector<PlatformXR::SessionFeature> consentOptional, Vector<PlatformXR::SessionFeature> requiredFeaturesRequested, Vector<PlatformXR::SessionFeature> optionalFeaturesRequested) -> (std::optional<Vector<PlatformXR::SessionFeature>> userGranted)
+    RequestPermissionOnSessionFeatures(IPC::Untrusted<WebCore::SecurityOriginData> origin, PlatformXR::SessionMode mode, Vector<PlatformXR::SessionFeature> granted, Vector<PlatformXR::SessionFeature> consentRequired, Vector<PlatformXR::SessionFeature> consentOptional, Vector<PlatformXR::SessionFeature> requiredFeaturesRequested, Vector<PlatformXR::SessionFeature> optionalFeaturesRequested) -> (std::optional<Vector<PlatformXR::SessionFeature>> userGranted)
     InitializeTrackingAndRendering(std::optional<WebCore::WebGPU::TextureFormat> colorFormat, std::optional<WebCore::WebGPU::TextureFormat> depthStencilFormat)
     ShutDownTrackingAndRendering()
     RequestFrame(struct std::optional<PlatformXR::RequestData> requestData) -> (struct PlatformXR::FrameData frameData)
@@ -48,9 +48,9 @@ messages -> PlatformXRSystem {
     SubmitFrame()
 #endif
 #if ENABLE(WEBXR_HIT_TEST)
-    RequestHitTestSource(PlatformXR::HitTestOptions hitTestOptions) -> (Expected<PlatformXR::HitTestSource, WebCore::ExceptionData> exceptionOrSource)
+    RequestHitTestSource(PlatformXR::HitTestOptions hitTestOptions) -> (std::expected<PlatformXR::HitTestSource, WebCore::ExceptionData> exceptionOrSource)
     DeleteHitTestSource(PlatformXR::HitTestSource source)
-    RequestTransientInputHitTestSource(PlatformXR::TransientInputHitTestOptions hitTestOptions) -> (Expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData> exceptionOrSource)
+    RequestTransientInputHitTestSource(PlatformXR::TransientInputHitTestOptions hitTestOptions) -> (std::expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData> exceptionOrSource)
     DeleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
 #endif
     DidCompleteShutdownTriggeredBySystem()

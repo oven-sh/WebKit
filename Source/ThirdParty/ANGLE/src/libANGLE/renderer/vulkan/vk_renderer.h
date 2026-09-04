@@ -385,9 +385,6 @@ class Renderer : angle::NonCopyable
     angle::Result mergeIntoPipelineCache(vk::ErrorContext *context,
                                          const vk::PipelineCache &pipelineCache);
 
-    void onNewValidationMessage(const std::string &message);
-    std::string getAndClearLastValidationMessage(uint32_t *countSinceLastClear);
-
     const std::vector<const char *> &getSkippedValidationMessages() const
     {
         return mSkippedValidationMessages;
@@ -410,12 +407,10 @@ class Renderer : angle::NonCopyable
 
     ANGLE_INLINE bool isCommandQueueBusy() { return mCommandQueue.isBusy(this); }
 
-    angle::VulkanPerfCounters getCommandQueuePerfCounters()
+    vk::CommandQueuePerfCounters getCommandQueuePerfCounters()
     {
         return mCommandQueue.getPerfCounters();
     }
-    void resetCommandQueuePerFrameCounters() { mCommandQueue.resetPerFramePerfCounters(); }
-
     vk::GlobalOps *getGlobalOps() const { return mGlobalOps; }
 
     bool enableDebugUtils() const { return mEnableDebugUtils; }
@@ -753,6 +748,10 @@ class Renderer : angle::NonCopyable
         const vk::ExtensionNameList &deviceExtensionNames,
         VkPhysicalDeviceFeatures2KHR *deviceFeatures,
         VkPhysicalDeviceProperties2 *deviceProperties);
+    void appendDeviceExtensionFeaturesPromotedTo14(
+        const vk::ExtensionNameList &deviceExtensionNames,
+        VkPhysicalDeviceFeatures2KHR *deviceFeatures,
+        VkPhysicalDeviceProperties2 *deviceProperties);
 
     angle::Result enableInstanceExtensions(vk::ErrorContext *context,
                                            const VulkanLayerVector &enabledInstanceLayerNames,
@@ -768,6 +767,7 @@ class Renderer : angle::NonCopyable
     void enableDeviceExtensionsPromotedTo11(const vk::ExtensionNameList &deviceExtensionNames);
     void enableDeviceExtensionsPromotedTo12(const vk::ExtensionNameList &deviceExtensionNames);
     void enableDeviceExtensionsPromotedTo13(const vk::ExtensionNameList &deviceExtensionNames);
+    void enableDeviceExtensionsPromotedTo14(const vk::ExtensionNameList &deviceExtensionNames);
 
     void initDeviceExtensionEntryPoints();
     // Initialize extension entry points from core ones if needed
@@ -859,12 +859,12 @@ class Renderer : angle::NonCopyable
 
     VkPhysicalDeviceIDProperties mPhysicalDeviceIDProperties;
     VkPhysicalDeviceFeatures mPhysicalDeviceFeatures;
-    VkPhysicalDeviceLineRasterizationFeaturesEXT mLineRasterizationFeatures;
+    VkPhysicalDeviceLineRasterizationFeatures mLineRasterizationFeatures;
     VkPhysicalDeviceProvokingVertexFeaturesEXT mProvokingVertexFeatures;
-    VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT mVertexAttributeDivisorFeatures;
-    VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT mVertexAttributeDivisorProperties;
+    VkPhysicalDeviceVertexAttributeDivisorFeatures mVertexAttributeDivisorFeatures;
+    VkPhysicalDeviceVertexAttributeDivisorProperties mVertexAttributeDivisorProperties;
     VkPhysicalDeviceTransformFeedbackFeaturesEXT mTransformFeedbackFeatures;
-    VkPhysicalDeviceIndexTypeUint8FeaturesEXT mIndexTypeUint8Features;
+    VkPhysicalDeviceIndexTypeUint8Features mIndexTypeUint8Features;
     VkPhysicalDeviceSubgroupProperties mSubgroupProperties;
     VkPhysicalDeviceShaderSubgroupExtendedTypesFeaturesKHR mSubgroupExtendedTypesFeatures;
     VkPhysicalDeviceDeviceMemoryReportFeaturesEXT mMemoryReportFeatures;
@@ -881,7 +881,7 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceCustomBorderColorFeaturesEXT mCustomBorderColorFeatures;
     VkPhysicalDeviceProtectedMemoryFeatures mProtectedMemoryFeatures;
     VkPhysicalDeviceHostQueryResetFeaturesEXT mHostQueryResetFeatures;
-    VkPhysicalDeviceDepthClampZeroOneFeaturesEXT mDepthClampZeroOneFeatures;
+    VkPhysicalDeviceDepthClampZeroOneFeaturesKHR mDepthClampZeroOneFeatures;
     VkPhysicalDeviceDepthClipControlFeaturesEXT mDepthClipControlFeatures;
     VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT mBlendOperationAdvancedFeatures;
     VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT mPrimitivesGeneratedQueryFeatures;
@@ -908,8 +908,8 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceLegacyDitheringFeaturesEXT mDitheringFeatures;
     VkPhysicalDeviceDrmPropertiesEXT mDrmProperties;
     VkPhysicalDeviceTimelineSemaphoreFeaturesKHR mTimelineSemaphoreFeatures;
-    VkPhysicalDeviceHostImageCopyFeaturesEXT mHostImageCopyFeatures;
-    VkPhysicalDeviceHostImageCopyPropertiesEXT mHostImageCopyProperties;
+    VkPhysicalDeviceHostImageCopyFeatures mHostImageCopyFeatures;
+    VkPhysicalDeviceHostImageCopyProperties mHostImageCopyProperties;
     VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT mTextureCompressionASTCHDRFeatures;
     std::vector<VkImageLayout> mHostImageCopySrcLayoutsStorage;
     std::vector<VkImageLayout> mHostImageCopyDstLayoutsStorage;
@@ -933,7 +933,7 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceShaderIntegerDotProductFeatures mShaderIntegerDotProductFeatures;
     VkPhysicalDeviceShaderIntegerDotProductProperties mShaderIntegerDotProductProperties;
     VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures mShaderDemoteToHelperInvocationFeatures;
-    VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT mPhysicalDeviceGlobalPriorityQueryFeatures;
+    VkPhysicalDeviceGlobalPriorityQueryFeatures mPhysicalDeviceGlobalPriorityQueryFeatures;
     VkPhysicalDeviceExternalMemoryHostPropertiesEXT mExternalMemoryHostProperties;
     VkPhysicalDeviceBufferDeviceAddressFeaturesKHR mBufferDeviceAddressFeatures;
     VkPhysicalDeviceShaderAtomicInt64Features mShaderAtomicInt64Features;
@@ -1010,10 +1010,6 @@ class Renderer : angle::NonCopyable
     uint32_t mPipelineCacheVkUpdateTimeout;
     size_t mPipelineCacheSizeAtLastSync;
     std::atomic<bool> mPipelineCacheInitialized;
-
-    // Latest validation data for debug overlay.
-    std::string mLastValidationMessage;
-    uint32_t mValidationMessageCount;
 
     // Skipped validation messages.  The exact contents of the list depends on the availability
     // of certain extensions.

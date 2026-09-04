@@ -86,6 +86,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
     v(Bool, useExecutionCountForCodeBlockAging, true, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
+    v(Unsigned, optimizedCodeAgingQuietAllocationMB, 1, Normal, "FTL code (and DFG code without a tier-up counter) past its TTL is jettisoned for old age by a full collection that finds at most this much was allocated since the previous one looked at it, i.e. the mutator has been idle. 0 = such code never ages out."_s) \
+    v(Double, optimizedCodeAgingQuietSeconds, 30, Normal, "How long the mutator must have been that quiet, measured from the last collection that saw it allocating, before such code is let go (capped at the tier's TTL under useEagerCodeBlockJettisonTiming)."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \
@@ -273,6 +275,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, gcIncrementScale, 0, Normal, nullptr) \
     v(Bool, useWarmUpMarkedBlocks, true, Normal, "hand MarkedBlock allocation pages that a helper thread already made resident"_s) \
     v(Unsigned, warmUpMarkedBlockCount, 32, Normal, "how many MarkedBlocks the helper thread keeps ready with their pages already resident; 0 turns it off"_s) \
+    v(Unsigned, warmUpMarkedBlockStartAfterBlocks, 64, Normal, "how many MarkedBlocks the process allocates before the helper thread starts; a program that stops before that never creates it"_s) \
     v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases what it is holding and shuts down"_s) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
     v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
@@ -367,7 +370,7 @@ bool hasCapacityToUseLargeGigacage();
     /* from super long compiles that take a lot of memory. */\
     v(Unsigned, maximumInliningCallerBytecodeCost, 10000, Normal, nullptr) \
     \
-    v(Bool, useGlobalInliningPlanner, false, Normal, "Survey and rank every inlining candidate before parsing and spend one compilation-wide budget on the best of them, instead of deciding each call site in bytecode order"_s) \
+    v(Bool, useGlobalInliningPlanner, true, Normal, "Survey and rank every inlining candidate before parsing and spend one compilation-wide budget on the best of them, instead of deciding each call site in bytecode order"_s) \
     v(Unsigned, globalInliningPlanBudgetForDFG, 2500, Normal, "Total callee bytecode cost the DFG may plan to inline in one compilation"_s) \
     v(Unsigned, globalInliningPlanBudgetForFTL, 12000, Normal, "Total callee bytecode cost the FTL may plan to inline in one compilation"_s) \
     v(Unsigned, maximumGlobalInliningPlanSites, 20000, Normal, "Cap on how many call sites one inlining plan will survey"_s) \

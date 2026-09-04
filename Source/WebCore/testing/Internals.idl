@@ -1137,6 +1137,7 @@ enum ContentsFormat {
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerEnabled(boolean enabled);
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerState(DOMString deviceName, DOMString deviceState);
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined mockMediaPlaybackTargetPickerDismissPopup();
+    [Conditional=WIRELESS_PLAYBACK_TARGET] Promise<DOMRect> mockMediaPlaybackTargetPickerRect();
     [Conditional=MEDIA_RECORDER] undefined setCustomPrivateRecorderCreator();
 
     readonly attribute boolean isMonitoringWirelessRoutes;
@@ -1156,6 +1157,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] undefined simulateSystemWake();
     [Conditional=VIDEO] boolean elementIsBlockingDisplaySleep(HTMLMediaElement element);
     [Conditional=VIDEO] boolean isPlayerVisibleInViewport(HTMLMediaElement element);
+    [Conditional=VIDEO] boolean isMediaElementIntersectingViewport(HTMLMediaElement element);
     [Conditional=VIDEO] boolean isPlayerMuted(HTMLMediaElement element);
     [Conditional=VIDEO] boolean isPlayerPaused(HTMLMediaElement element);
     [Conditional=VIDEO] double effectiveRate(HTMLMediaElement element);
@@ -1550,6 +1552,7 @@ enum ContentsFormat {
     undefined setPDFDisplayModeForTesting(Element element, DOMString mode);
     undefined unlockPDFDocumentForTesting(Element element, DOMString password);
     boolean sendEditingCommandToPDFForTesting(Element element, DOMString commandName, optional DOMString argument = "");
+    sequence<DOMString> pdfContextMenuItemTitlesForTesting(Element element, long x, long y);
 
     readonly attribute DOMString defaultSpatialTrackingLabel;
 

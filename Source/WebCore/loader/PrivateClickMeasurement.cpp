@@ -29,7 +29,6 @@
 #include "Logging.h"
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/CryptographicallyRandomNumber.h>
-#include <wtf/Expected.h>
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -38,9 +37,9 @@
 namespace WebCore {
 
 static constexpr auto privateClickMeasurementTriggerAttributionPath = "/.well-known/private-click-measurement/trigger-attribution/"_s;
-static const char privateClickMeasurementTokenSignaturePath[] = "/.well-known/private-click-measurement/sign-unlinkable-token/";
-static const char privateClickMeasurementTokenPublicKeyPath[] = "/.well-known/private-click-measurement/get-token-public-key/";
-static const char privateClickMeasurementReportAttributionPath[] = "/.well-known/private-click-measurement/report-attribution/";
+static constexpr auto privateClickMeasurementTokenSignaturePath = "/.well-known/private-click-measurement/sign-unlinkable-token/"_s;
+static constexpr auto privateClickMeasurementTokenPublicKeyPath = "/.well-known/private-click-measurement/get-token-public-key/"_s;
+static constexpr auto privateClickMeasurementReportAttributionPath = "/.well-known/private-click-measurement/report-attribution/"_s;
 static constexpr auto privateClickMeasurementToSKAdNetworkURLPrefix = "https://apps.apple.com/app/id"_s;
 const size_t privateClickMeasurementAttributionTriggerDataPathSegmentSize = 2;
 const size_t privateClickMeasurementPriorityPathSegmentSize = 2;
@@ -145,7 +144,7 @@ bool PrivateClickMeasurement::isNeitherSameSiteNorCrossSiteTriggeringEvent(const
     return !isCrossSiteTriggeringEvent;
 }
 
-Expected<PCM::AttributionTriggerData, String> PrivateClickMeasurement::parseAttributionRequestQuery(const URL& redirectURL)
+std::expected<PCM::AttributionTriggerData, String> PrivateClickMeasurement::parseAttributionRequestQuery(const URL& redirectURL)
 {
     if (!redirectURL.hasQuery())
         return PCM::AttributionTriggerData { };
@@ -194,7 +193,7 @@ Expected<PCM::AttributionTriggerData, String> PrivateClickMeasurement::parseAttr
     return { WTF::move(attributionTriggerData) };
 }
 
-Expected<PCM::AttributionTriggerData, String> PrivateClickMeasurement::parseAttributionRequest(const URL& redirectURL)
+std::expected<PCM::AttributionTriggerData, String> PrivateClickMeasurement::parseAttributionRequest(const URL& redirectURL)
 {
     auto path = StringView(redirectURL.string()).substring(redirectURL.pathStart(), redirectURL.pathEnd() - redirectURL.pathStart());
     if (path.isEmpty() || !path.startsWith(privateClickMeasurementTriggerAttributionPath))
@@ -280,9 +279,9 @@ bool PrivateClickMeasurement::hasHigherPriorityThan(const PrivateClickMeasuremen
     return m_attributionTriggerData->priority > other.m_attributionTriggerData->priority;
 }
 
-static URL makeValidURL(const RegistrableDomain& domain, const char* path)
+static URL makeValidURL(const RegistrableDomain& domain, ASCIILiteral path)
 {
-    URL validURL { makeString("https://"_s, domain.string(), unsafeSpan(path)) };
+    URL validURL { makeString("https://"_s, domain.string(), path) };
     return validURL.isValid() ? validURL : URL { };
 }
 
@@ -356,26 +355,26 @@ void PrivateClickMeasurement::setEphemeralSourceNonce(PCM::EphemeralNonce&& nonc
     m_ephemeralSourceNonce = WTF::move(nonce);
 }
 
-const std::optional<const URL> PrivateClickMeasurement::tokenPublicKeyURL(const RegistrableDomain& registrableDomain)
+std::optional<URL> PrivateClickMeasurement::tokenPublicKeyURL(const RegistrableDomain& registrableDomain)
 {
     if (registrableDomain.isEmpty())
         return std::nullopt;
     return makeValidURL(registrableDomain, privateClickMeasurementTokenPublicKeyPath);
 }
 
-const std::optional<const URL> PrivateClickMeasurement::tokenPublicKeyURL() const
+std::optional<URL> PrivateClickMeasurement::tokenPublicKeyURL() const
 {
     return tokenPublicKeyURL(m_sourceSite.registrableDomain);
 }
 
-const std::optional<const URL> PrivateClickMeasurement::tokenSignatureURL(const RegistrableDomain& registrableDomain)
+std::optional<URL> PrivateClickMeasurement::tokenSignatureURL(const RegistrableDomain& registrableDomain)
 {
     if (registrableDomain.isEmpty())
         return std::nullopt;
     return makeValidURL(registrableDomain, privateClickMeasurementTokenSignaturePath);
 }
 
-const std::optional<const URL> PrivateClickMeasurement::tokenSignatureURL() const
+std::optional<URL> PrivateClickMeasurement::tokenSignatureURL() const
 {
     if (!m_ephemeralSourceNonce || !m_ephemeralSourceNonce->isValid())
         return std::nullopt;

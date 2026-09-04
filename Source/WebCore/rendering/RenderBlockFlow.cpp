@@ -428,7 +428,7 @@ bool RenderBlockFlow::recomputeLogicalWidthAndColumnWidth()
 LayoutUnit RenderBlockFlow::columnGap() const
 {
     if (style().columnGap().isNormal())
-        return LayoutUnit(style().fontDescription().computedSize()); // "1em" is recommended as the normal gap setting. Matches <p> margins.
+        return LayoutUnit(style().fontDescription().usedSize()); // "1em" is recommended as the normal gap setting. Matches <p> margins.
     return Style::evaluate<LayoutUnit>(style().columnGap(), contentBoxLogicalWidth(), style().usedZoomForLength());
 }
 
@@ -1109,26 +1109,17 @@ void RenderBlockFlow::simplifiedNormalFlowLayout()
         return;
     }
 
-    bool shouldUpdateOverflow = false;
     for (InlineWalker walker(*this); !walker.atEnd(); walker.advance()) {
-        RenderObject& renderer = *walker.current();
-        if (auto* box = dynamicDowncast<RenderBox>(renderer)) {
-            if (!box->isOutOfFlowPositioned() && box->needsLayout()) {
-                box->layout();
-                shouldUpdateOverflow = true;
-            }
-            continue;
-        }
-        if (isAnyOf<RenderText, RenderInline>(renderer))
-            renderer.clearNeedsLayout();
+        CheckedPtr renderer = walker.current();
+        if (CheckedPtr box = dynamicDowncast<RenderBox>(renderer); box && box->needsLayout() && !box->isOutOfFlowPositioned())
+            box->layout();
+        else if (isAnyOf<RenderText, RenderInline, RenderLineBreak>(renderer))
+            renderer->clearNeedsLayout();
     }
 
-    if (!shouldUpdateOverflow)
-        return;
-
     if (auto* lineLayout = inlineLayout()) {
-        lineLayout->updateOverflow();
-        return;
+        if (auto damageRect = lineLayout->updateOverflow())
+            repaintRectangle(*damageRect);
     }
 }
 
@@ -4125,10 +4116,8 @@ void RenderBlockFlow::invalidateLineLayout(InvalidationReason invalidationReason
         setNeedsLayout();
     };
 
-    if (inlineLayout()) {
-        ASSERT(!m_previousInlineLayoutContentTopAndBottomIncludingInkOverflow);
+    if (inlineLayout() && !m_previousInlineLayoutContentTopAndBottomIncludingInkOverflow)
         m_previousInlineLayoutContentTopAndBottomIncludingInkOverflow = inlineContentTopAndBottomIncludingInkOverflow();
-    }
 
     switch (invalidationReason) {
     case InvalidationReason::InternalMove:
@@ -4615,21 +4604,21 @@ static bool NODELETE isNonBlocksOrNonFixedHeightListItems(const RenderObject& re
 
 // For now, we auto size single lines of text the same as multiple lines.
 // We've been experimenting with low values for single lines of text.
-static inline float oneLineTextMultiplier(RenderObject& renderer, float specifiedSize)
+static inline float oneLineTextMultiplier(RenderObject& renderer, float size)
 {
     const float coefficient = renderer.settings().oneLineTextMultiplierCoefficient();
-    return std::max((1.0f / log10f(specifiedSize) * coefficient), 1.0f);
+    return std::max((1.0f / log10f(size) * coefficient), 1.0f);
 }
 
-static inline float textMultiplier(RenderObject& renderer, float specifiedSize)
+static inline float textMultiplier(RenderObject& renderer, float size)
 {
     const float coefficient = renderer.settings().multiLineTextMultiplierCoefficient();
-    return std::max((1.0f / log10f(specifiedSize) * coefficient), 1.0f);
+    return std::max((1.0f / log10f(size) * coefficient), 1.0f);
 }
 
-void RenderBlockFlow::adjustComputedFontSizes(float size, float visibleWidth)
+void RenderBlockFlow::adjustFontSizes(float size, float visibleWidth)
 {
-    LOG(TextAutosizing, "RenderBlockFlow %p adjustComputedFontSizes, size=%f visibleWidth=%f, borderBoxWidth()=%f. Bailing: %d", this, size, visibleWidth, borderBoxWidth().toFloat(), visibleWidth >= borderBoxWidth());
+    LOG(TextAutosizing, "RenderBlockFlow %p adjustFontSizes, size=%f visibleWidth=%f, borderBoxWidth()=%f. Bailing: %d", this, size, visibleWidth, borderBoxWidth().toFloat(), visibleWidth >= borderBoxWidth());
 
     // Don't do any work if the block is smaller than the visible area.
     if (visibleWidth >= borderBoxWidth())
@@ -4683,8 +4672,8 @@ void RenderBlockFlow::adjustComputedFontSizes(float size, float visibleWidth)
         auto& text = downcast<RenderText>(*descendant);
         auto& oldStyle = text.style();
         auto& fontDescription = oldStyle.fontDescription();
-        float specifiedSize = fontDescription.specifiedSize();
-        float scaledSize = roundf(specifiedSize * scale);
+        float computedSize = fontDescription.computedSize();
+        float scaledSize = roundf(computedSize * scale);
         if (scaledSize > 0 && scaledSize < minFontSize) {
             // Record the width of the block and the line count the first time we resize text and use it from then on for text resizing.
             // This makes text resizing consistent even if the block's width or line count changes (which can be caused by text resizing itself 5159915).
@@ -4693,10 +4682,10 @@ void RenderBlockFlow::adjustComputedFontSizes(float size, float visibleWidth)
             if (m_widthForTextAutosizing == -1)
                 m_widthForTextAutosizing = actualWidth;
 
-            float lineTextMultiplier = lineCount == ONE_LINE ? oneLineTextMultiplier(text, specifiedSize) : textMultiplier(text, specifiedSize);
-            float candidateNewSize = roundf(std::min(minFontSize, specifiedSize * lineTextMultiplier));
+            float lineTextMultiplier = lineCount == ONE_LINE ? oneLineTextMultiplier(text, computedSize) : textMultiplier(text, computedSize);
+            float candidateNewSize = roundf(std::min(minFontSize, computedSize * lineTextMultiplier));
 
-            if (candidateNewSize > specifiedSize && candidateNewSize != fontDescription.computedSize() && text.textNode() && oldStyle.textSizeAdjust().isAuto())
+            if (candidateNewSize > computedSize && candidateNewSize != fontDescription.usedSize() && text.textNode() && oldStyle.textSizeAdjust().isAuto())
                 protect(document())->textAutoSizing().addTextNode(*protect(text.textNode()), candidateNewSize);
         }
 

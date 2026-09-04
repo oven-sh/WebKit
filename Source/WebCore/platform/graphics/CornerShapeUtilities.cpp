@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <utility>
@@ -147,9 +148,18 @@ static double normalizedSuperellipseHalfCorner(double superellipseParameter)
 {
     if (std::isinf(superellipseParameter))
         return superellipseParameter < 0.0 ? 0.0 : 1.0;
-    double exponent = std::pow(0.5, std::abs(superellipseParameter));
-    double convexHalfCorner = std::pow(0.5, exponent);
-    return superellipseParameter < 0.0 ? 1.0 - convexHalfCorner : convexHalfCorner;
+
+    double magnitude = std::abs(superellipseParameter);
+
+    static thread_local double lastMagnitude = std::numeric_limits<double>::quiet_NaN();
+    static thread_local double lastConvexHalfCorner = 0.0;
+    if (magnitude != lastMagnitude) {
+        double exponent = std::pow(0.5, magnitude);
+        lastConvexHalfCorner = std::pow(0.5, exponent);
+        lastMagnitude = magnitude;
+    }
+
+    return superellipseParameter < 0.0 ? 1.0 - lastConvexHalfCorner : lastConvexHalfCorner;
 }
 
 // Moves the corner's curve endpoints to where the offset contour needs them, and works out where the
@@ -292,6 +302,11 @@ struct SuperellipseBezierHandles {
 };
 static SuperellipseBezierHandles superellipseBezierHandles(double parameter)
 {
+    static thread_local double lastParameter = std::numeric_limits<double>::quiet_NaN();
+    static thread_local SuperellipseBezierHandles lastResult { };
+    if (parameter == lastParameter)
+        return lastResult;
+
     static constexpr std::array<double, 7> fitCoefficients {
         1.2430920942724248, 2.010479023614843, 0.32922901179443753,
         0.2823023142212073, 1.3473704261055421, 2.9149468637949814, 0.9106507102917086
@@ -302,7 +317,10 @@ static SuperellipseBezierHandles superellipseBezierHandles(double parameter)
     double handleA = (logistic - base) / (1.0 - base);
     double handleB = fitCoefficients[2] * std::exp(-fitCoefficients[3] * std::pow(parameter, fitCoefficients[4]));
     double halfCorner = normalizedSuperellipseHalfCorner(parameter);
-    return { handleA, handleB, halfCorner };
+
+    lastParameter = parameter;
+    lastResult = { handleA, handleB, halfCorner };
+    return lastResult;
 }
 
 static FloatPoint mapPointToCorner(const Corner& corner, FloatSize normalizedPoint)
@@ -327,6 +345,7 @@ static std::array<BezierSegment, 2> superellipseCornerBeziers(const Corner& corn
     BezierSegment secondHalf { midpoint, mapPointToCorner(corner, transpose(secondControl)), mapPointToCorner(corner, transpose(firstControl)), corner.end };
     return { firstHalf, secondHalf };
 }
+
 static BezierSegment shallowConcaveCornerBezier(const Corner& corner, const FloatPoint& tangentVertex)
 {
     constexpr float circleHandle = 0.5522847498307933f; // 4 / 3 * (sqrt(2) - 1): cubic approximation of a quarter circle
@@ -340,12 +359,14 @@ static BezierSegment shallowConcaveCornerBezier(const Corner& corner, const Floa
     };
 }
 
-static Vector<BezierSegment> cornerCurveBeziers(const ResolvedCorner& corner)
+using CornerCurves = Vector<BezierSegment, 2>;
+
+static CornerCurves cornerCurveBeziers(const ResolvedCorner& corner)
 {
     if (isShallowConcave(corner.adjusted) && corner.tangentVertex)
         return { shallowConcaveCornerBezier(corner.adjusted, *corner.tangentVertex) };
 
-    Vector<BezierSegment> curves;
+    CornerCurves curves;
     for (const auto& curve : superellipseCornerBeziers(corner.adjusted))
         curves.append(curve);
     return curves;
@@ -391,6 +412,7 @@ static void addCurvedCorner(Path& path, const ResolvedCorner& corner)
     // General superellipse: squircle (s=2) and superellipse(n)
     if (extendPathForSharpCorner(path, adjusted))
         return;
+
     for (const auto& curve : cornerCurveBeziers(corner))
         path.addBezierCurveTo(curve.controlPoint1, curve.controlPoint2, curve.end);
 }
@@ -406,8 +428,17 @@ static FloatPoint sharpInnerCornerPoint(const FloatRect& innerRect, BoxCorner or
     return { };
 }
 
-// rect ∩ corner-carve
-static void addTrimmedSuperellipseCorner(Path& path, const ResolvedCorner& corner, const FloatRect& innerRect, bool& started)
+static Vector<BezierSegment> trimmedSuperellipseCornerCurves(const ResolvedCorner& corner, const FloatRect& innerRect)
+{
+    Vector<BezierSegment> clippedCurves;
+    for (const auto& bezier : cornerCurveBeziers(corner)) {
+        for (const auto& curve : trimBezierToRect(bezier, innerRect))
+            clippedCurves.append(curve);
+    }
+    return clippedCurves;
+}
+
+static void addSuperellipseCornerCurves(Path& path, const Vector<BezierSegment>& curves, const FloatPoint& sharpCornerPoint, bool& started)
 {
     auto lineOrMoveTo = [&](FloatPoint point) {
         if (!started) {
@@ -417,17 +448,12 @@ static void addTrimmedSuperellipseCorner(Path& path, const ResolvedCorner& corne
             path.addLineTo(point);
     };
 
-    Vector<BezierSegment> clippedCurves;
-    for (const auto& bezier : cornerCurveBeziers(corner)) {
-        for (const auto& curve : trimBezierToRect(bezier, innerRect))
-            clippedCurves.append(curve);
-    }
-
-    if (clippedCurves.isEmpty()) {
-        lineOrMoveTo(sharpInnerCornerPoint(innerRect, corner.adjusted.orientation));
+    if (curves.isEmpty()) {
+        lineOrMoveTo(sharpCornerPoint);
         return;
     }
-    for (const auto& curve : clippedCurves) {
+
+    for (const auto& curve : curves) {
         lineOrMoveTo(curve.start);
         path.addBezierCurveTo(curve.controlPoint1, curve.controlPoint2, curve.end);
     }
@@ -475,16 +501,69 @@ void borderContourPath(Path& path, const RectCorners<CornerInput>& cornerRects, 
             path.addLineTo(point);
     };
 
-    for (auto key : { BoxCorner::TopRight, BoxCorner::BottomRight, BoxCorner::BottomLeft, BoxCorner::TopLeft }) {
+    static constexpr std::array<BoxCorner, 4> contourOrder { BoxCorner::TopRight, BoxCorner::BottomRight, BoxCorner::BottomLeft, BoxCorner::TopLeft };
+
+    struct PreparedCorner {
+        ResolvedCorner resolved;
+        bool insetToTargetRect { false };
+        bool usesCurves { false };
+        bool isSwallowed { false };
+        Vector<BezierSegment> curves;
+    };
+
+    Vector<PreparedCorner, 4> corners;
+    for (auto key : contourOrder) {
         const auto& input = cornerRects[key];
-        auto corner = resolveCorner(makeCorner(input), input.startInset, input.endInset);
+
+        auto resolved = resolveCorner(makeCorner(input), input.startInset, input.endInset);
+        bool insetToTargetRect = targetRect && input.startInset >= 0.0 && input.endInset >= 0.0
+            && !isEmpty(resolved.adjusted);
+        bool usesCurves = insetToTargetRect && std::isfinite(resolved.adjusted.curvature);
+
+        Vector<BezierSegment> curves;
+        if (usesCurves)
+            curves = trimmedSuperellipseCornerCurves(resolved, *targetRect);
+
+        corners.append(PreparedCorner { WTF::move(resolved), insetToTargetRect, usesCurves, false, WTF::move(curves) });
+    }
+
+    // Concave corners can intersect; trim them at the cusp. A corner's inset curve can also intersect with non-adjacent edges.
+    // Trim non-adjacent pairs come first
+    for (size_t gap = corners.size() / 2; gap; --gap) {
+        for (size_t index = 0; index < corners.size(); ++index) {
+            auto& first = corners[index];
+            auto& second = corners[(index + gap) % corners.size()];
+
+            if (!first.usesCurves || !second.usesCurves || first.isSwallowed || second.isSwallowed)
+                continue;
+
+            auto intersection = findMonotonicBezierCurvesIntersection(first.curves, second.curves);
+            if (!intersection)
+                continue;
+
+            // Corners sharing an edge are visited once, in contour order, so their ordering
+            // is already the right way round. A non-adjacent pair gets visited both ways, and only
+            // one of those describes the tail of the first running into the head of the second.
+            if (gap > 1 && !intersection->isTailToHead())
+                continue;
+
+            trimMonotonicBezierCurvesAtIntersection(first.curves, second.curves, *intersection);
+
+            for (size_t between = 1; between < gap; ++between)
+                corners[(index + between) % corners.size()].isSwallowed = true;
+        }
+    }
+
+    for (auto& prepared : corners) {
+        if (prepared.isSwallowed)
+            continue;
+
+        const auto& corner = prepared.resolved;
         const auto& adjusted = corner.adjusted;
 
-        bool insetToTargetRect = targetRect && input.startInset >= 0.0 && input.endInset >= 0.0
-            && !isEmpty(adjusted);
-        if (insetToTargetRect) {
-            if (std::isfinite(adjusted.curvature))
-                addTrimmedSuperellipseCorner(path, corner, *targetRect, started);
+        if (prepared.insetToTargetRect) {
+            if (prepared.usesCurves)
+                addSuperellipseCornerCurves(path, prepared.curves, sharpInnerCornerPoint(*targetRect, adjusted.orientation), started);
             else
                 addClampedSharpCorner(path, corner, *targetRect, started);
             continue;
@@ -499,6 +578,7 @@ void borderContourPath(Path& path, const RectCorners<CornerInput>& cornerRects, 
 
         if ((adjusted.start - corner.miterStart).diagonalLength() >= limit)
             path.addLineTo(adjusted.start);
+
         addCurvedCorner(path, corner);
         path.addLineTo(corner.miterEnd);
     }

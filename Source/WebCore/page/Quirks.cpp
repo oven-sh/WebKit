@@ -207,6 +207,11 @@ static inline String NODELETE standardUserAgentWithApplicationNameIncludingCompa
 #endif
 #endif
 
+static bool urlHasQuirk(const URL& url, SiteSpecificQuirk quirk)
+{
+    return resolveTopURLQuirks(url).quirkIsEnabled(quirk);
+}
+
 Quirks::Quirks(Document& document)
     : m_document(document)
 {
@@ -722,18 +727,17 @@ bool Quirks::needsYouTubeOverflowScrollQuirk() const
 #endif
 }
 
-// amazon.com rdar://128962002
-bool Quirks::needsPrimeVideoUserSelectNoneQuirk() const
+// webex.com rdar://143715630
+bool Quirks::needsWebExScrollabilityQuirk() const
 {
-#if PLATFORM(MAC)
+#if PLATFORM(IOS_FAMILY) && ENABLE(DESKTOP_CONTENT_MODE_QUIRKS)
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
 
-    return m_quirksData.quirkIsEnabled(SiteSpecificQuirk::NeedsPrimeVideoUserSelectNoneQuirk);
+    return m_quirksData.quirkIsEnabled(SiteSpecificQuirk::NeedsWebExScrollabilityQuirk);
 #else
     return false;
 #endif
 }
-
 // facebook.com https://webkit.org/b/295071
 // FIXME: https://webkit.org/b/295318
 bool Quirks::needsFacebookRemoveNotSupportedQuirk() const
@@ -959,21 +963,7 @@ bool Quirks::shouldUseLayoutViewportForClientRects() const
 // which do not support HEIC.
 bool Quirks::shouldTranscodeHeicImagesForURL(const URL& url)
 {
-    auto quirksDomain = RegistrableDomain(url);
-
-    // zillow.com rdar://79872092
-    if (quirksDomain.string() == "zillow.com"_s)
-        return true;
-
-    // canva.com https://webkit.org/b/293886
-    if (quirksDomain.string() == "canva.com"_s)
-        return true;
-
-    // uhc.com rdar://173206598
-    if (quirksDomain.string() == "uhc.com"_s)
-        return true;
-
-    return false;
+    return urlHasQuirk(url, SiteSpecificQuirk::ShouldTranscodeHeicImagesQuirk);
 }
 
 // att.com rdar://55185021
@@ -1355,7 +1345,7 @@ static bool isKinjaLoginAvatarElement(const Element& element)
 // teams.microsoft.com https://bugs.webkit.org/show_bug.cgi?id=219505
 bool Quirks::isMicrosoftTeamsRedirectURL(const URL& url)
 {
-    return url.host() == "teams.microsoft.com"_s && url.query().contains("Retried+3+times+without+success"_s);
+    return urlHasQuirk(url, SiteSpecificQuirk::IsMicrosoftTeamsRedirectURLQuirk);
 }
 
 static bool isStorageAccessQuirkDomainAndElement(const URL& url, const Element& element)
@@ -1551,6 +1541,18 @@ bool Quirks::requiresUserGestureToPauseInPictureInPicture() const
 #endif
 }
 
+// sports.yahoo.com: rdar://148284059
+bool Quirks::requiresUserGestureToPauseInFullscreenAfterOrientationChange() const
+{
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
+
+    return m_quirksData.quirkIsEnabled(SiteSpecificQuirk::RequiresUserGestureToPauseInFullscreenAfterOrientationChangeQuirk);
+#else
+    return false;
+#endif
+}
+
 // youtube.com: rdar://178769976
 bool Quirks::requiresUserGestureToPlayInFullscreen() const
 {
@@ -1638,7 +1640,9 @@ bool Quirks::shouldDisableEndFullscreenEventWhenEnteringPictureInPictureFromFull
 // teams.microsoft.com rdar://90434296
 bool Quirks::shouldAllowNavigationToCustomProtocolWithoutUserGesture(StringView protocol, const SecurityOriginData& requesterOrigin)
 {
-    return protocol == "msteams"_s && (requesterOrigin.host() == "teams.live.com"_s || requesterOrigin.host() == "teams.microsoft.com"_s);
+    if (protocol != "msteams"_s)
+        return false;
+    return urlHasQuirk(requesterOrigin.toURL(), SiteSpecificQuirk::ShouldAllowMSTeamsProtocolWithoutUserGestureQuirk);
 }
 
 #if PLATFORM(IOS) || PLATFORM(VISION)
@@ -1908,28 +1912,17 @@ bool Quirks::shouldAvoidProgrammaticScrollClamping() const
 // to deactivate them for testing.
 bool Quirks::needsIPadMiniUserAgent(const URL& url)
 {
-    auto host = url.host();
-
-    // FIXME: Remove this quirk when <rdar://problem/61733101> is complete.
-    if (host == "roblox.com"_s || host.endsWith(".roblox.com"_s))
-        return true;
-
-    // FIXME: Remove this quirk once <rdar://113978106> is no longer happening.
-    if (host == "www.indiatimes.com"_s)
-        return true;
-
-    return false;
+    return urlHasQuirk(url, SiteSpecificQuirk::NeedsIPadMiniUserAgentQuirk);
 }
 
 bool Quirks::needsIPhoneUserAgent(const URL& url)
 {
 #if PLATFORM(IOS_FAMILY)
-    if (url.host() == "shopee.sg"_s && url.path() == "/payment/account-linking/landing"_s)
-        return true;
+    return urlHasQuirk(url, SiteSpecificQuirk::NeedsIPhoneUserAgentQuirk);
 #else
     UNUSED_PARAM(url);
-#endif
     return false;
+#endif
 }
 
 std::optional<String> Quirks::needsCustomUserAgentOverride(const URL& url, const String& applicationNameForUserAgent, const String& currentUserAgent)
@@ -1995,7 +1988,7 @@ bool Quirks::needsPartitionedCookies(const ResourceRequest& request)
 {
     if (request.isTopSite())
         return false;
-    return request.url().protocolIsInHTTPFamily() && request.url().host().endsWith(".billpaysite.com"_s);
+    return urlHasQuirk(request.url(), SiteSpecificQuirk::NeedsPartitionedCookiesQuirk);
 }
 
 // premierleague.com: rdar://123721211
@@ -2021,15 +2014,6 @@ bool Quirks::needsPopupFromMicrosoftOfficeToOneDrive(const URL& targetURL) const
 }
 #endif
 
-// rdar://127398734
-bool Quirks::needsLaxSameSiteCookieQuirk(const URL& requestURL) const
-{
-    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
-
-    auto url = protect(m_document)->url();
-    return url.protocolIs("https"_s) && url.host() == "login.microsoftonline.com"_s && requestURL.protocolIs("https"_s) && requestURL.host() == "www.bing.com"_s;
-}
-
 bool Quirks::needsConsistentQueryParameterFilteringQuirk(const URL& url) const
 {
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
@@ -2038,20 +2022,20 @@ bool Quirks::needsConsistentQueryParameterFilteringQuirk(const URL& url) const
         return false;
 
     static bool wasLoggedOnce { false };
-    URL lowercaseURL { url.string().foldCase() };
 
-    if (lowercaseURL.host() == "bundle-file"_s || RegistrableDomain { lowercaseURL } == "consistentqueryparameterfiltering.internal"_s)
+    if (equalLettersIgnoringASCIICase(url.host(), "bundle-file"_s)
+        || equalLettersIgnoringASCIICase(RegistrableDomain { url }.string(), "consistentqueryparameterfiltering.internal"_s))
         return true;
 
     bool enableQuirk = m_document->settings().consistentQueryParameterFilteringInternalQuirkEnabled()
-        && needsConsistentQueryParameterFilteringInternal(lowercaseURL);
+        && needsConsistentQueryParameterFilteringInternal(URL { url.string().foldCase() });
 
     if (RefPtr page = m_document->page())
         enableQuirk |= page->requiresConsistentPrivacyQuirkForDomain(url);
 
     if (enableQuirk && !wasLoggedOnce) {
         RELEASE_LOG(Loading, "Quirks::needsConsistentQueryParameterFilteringQuirk: Enabling consistent privacy protections");
-        protect(m_document)->addConsoleMessage(MessageSource::Other, MessageLevel::Info, makeString("Enabling consistent privacy protections on \""_s, lowercaseURL.string(), "\""_s));
+        protect(m_document)->addConsoleMessage(MessageSource::Other, MessageLevel::Info, makeString("Enabling consistent privacy protections on \""_s, url.string(), "\""_s));
         wasLoggedOnce = true;
     }
 
@@ -2183,7 +2167,7 @@ bool Quirks::implicitMuteWhenVolumeSetToZero() const
 
 bool Quirks::shouldOmitTouchEventDOMAttributesForDesktopWebsite(const URL& requestURL)
 {
-    return requestURL.host() == "secure.chase.com"_s;
+    return urlHasQuirk(requestURL, SiteSpecificQuirk::ShouldOmitTouchEventDOMAttributesForDesktopWebsiteQuirk);
 }
 
 // netflix.com: rdar://155498882
@@ -2868,6 +2852,9 @@ void Quirks::logQuirksToConsoleIfNecessary() const
 {
     RefPtr document = m_document.get();
     if (!document)
+        return;
+
+    if (!needsQuirks())
         return;
 
     // FIXME: should we use log english sentences instead of the quirk enum names?

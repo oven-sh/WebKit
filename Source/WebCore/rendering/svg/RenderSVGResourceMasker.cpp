@@ -50,7 +50,7 @@ RenderSVGResourceMasker::RenderSVGResourceMasker(SVGMaskElement& element, Style:
 
 RenderSVGResourceMasker::~RenderSVGResourceMasker() = default;
 
-static RefPtr<ImageBuffer> createImageBuffer(const FloatRect& targetRect, const AffineTransform& absoluteTransform, const DestinationColorSpace& colorSpace, const GraphicsContext& context)
+static RefPtr<ImageBuffer> createImageBuffer(const FloatRect& targetRect, const AffineTransform& absoluteTransform, const ColorSpace& colorSpace, const GraphicsContext& context)
 {
     IntRect paintRect = enclosingIntRect(absoluteTransform.mapRect(targetRect));
     // Don't create empty ImageBuffers.
@@ -97,14 +97,14 @@ void RenderSVGResourceMasker::applyMask(PaintInfo& paintInfo, const RenderLayerM
     auto decoratedBounds = targetRenderer.decoratedBoundingBox();
     auto absoluteTransform = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
 
-    auto maskColorSpace = DestinationColorSpace::SRGB();
-    auto drawColorSpace = DestinationColorSpace::SRGB();
+    auto maskColorSpace = ColorSpace::SRGB();
+    auto drawColorSpace = ColorSpace::SRGB();
 
     if (style().colorInterpolation() == ColorInterpolation::LinearRGB) {
 #if USE(CG) || USE(SKIA)
-        maskColorSpace = DestinationColorSpace::LinearSRGB();
+        maskColorSpace = ColorSpace::LinearSRGB();
 #endif
-        drawColorSpace = DestinationColorSpace::LinearSRGB();
+        drawColorSpace = ColorSpace::LinearSRGB();
     }
 
     decoratedBounds.intersect(maskBoundsInLocalCoordinates(objectBoundingBox, RepaintRectCalculation::Accurate));
@@ -206,6 +206,8 @@ bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, c
 {
     GraphicsContextStateSaver stateSaver(context);
     context.setCompositeOperation(options.compositeOperator(), options.blendMode());
+    if (options.interpolationQuality() != InterpolationQuality::Default)
+        context.setImageInterpolationQuality(options.interpolationQuality());
     context.translate(destinationRect.location());
 
     if (destinationRect.size() != sourceRect.size())

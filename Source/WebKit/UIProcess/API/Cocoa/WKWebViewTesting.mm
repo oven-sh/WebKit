@@ -263,6 +263,16 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     return _page->pageScaleFactor();
 }
 
+- (CGFloat)_minMagnification
+{
+    return _page->minPageZoomFactor();
+}
+
+- (CGFloat)_maxMagnification
+{
+    return _page->maxPageZoomFactor();
+}
+
 - (void)_setContinuousSpellCheckingEnabledForTesting:(BOOL)enabled
 {
 #if PLATFORM(IOS_FAMILY)
@@ -565,6 +575,18 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         return playbackSessionManager->wirelessVideoPlaybackDisabled();
 #endif
     return false;
+}
+
+- (double)_maximumSeekableTime
+{
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    if (RefPtr playbackSessionManager = _page->playbackSessionManager()) {
+        auto ranges = playbackSessionManager->seekableRanges();
+        if (ranges.length())
+            return ranges.maximumBufferedTime().toDouble();
+    }
+#endif
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 - (void)_doAfterProcessingAllPendingMouseEvents:(dispatch_block_t)action

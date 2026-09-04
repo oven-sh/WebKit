@@ -27,12 +27,10 @@
 #include "GraphicsContextGL.h"
 
 #if ENABLE(WEBGL) && USE(SKIA)
-#include "BitmapImage.h"
 #include "GLContext.h"
 #include "GraphicsContextGLImageExtractor.h"
 #include "NativeImage.h"
 #include "NotImplemented.h"
-#include "PixelBuffer.h"
 #include "PlatformDisplay.h"
 #include "SharedBuffer.h"
 #include "SkiaSpanExtras.h"
@@ -60,24 +58,9 @@ static std::optional<GraphicsContextGL::DataFormat> dataFormatForColorType(SkCol
     return std::nullopt;
 }
 
-bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool ignoreGammaAndColorProfile, bool ignoreNativeImageAlphaPremultiplication)
+bool GraphicsContextGLImageExtractor::extractImage(AlphaPremultiplication sourceAlphaPremultiplication, bool premultiplyAlpha)
 {
-    RefPtr<NativeImage> nativeImage;
-    bool hasAlpha = !m_image->currentFrameKnownToBeOpaque();
-    if ((ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) && m_image->data()) {
-        auto image = BitmapImage::create(nullptr,  AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied);
-        image->setData(m_image->data(), true);
-        if (!image->frameCount())
-            return false;
-
-        nativeImage = image->currentNativeImage();
-    } else
-        nativeImage = m_image->currentNativeImage();
-
-    if (!nativeImage)
-        return false;
-
-    auto platformImage = nativeImage->platformImage();
+    auto platformImage = m_image->platformImage();
     if (!platformImage)
         return false;
 
@@ -87,20 +70,17 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         return false;
 
     const auto& imageInfo = platformImage->imageInfo();
+
+    // The SkImage records the premultiplication of its contents, but it may record it incorrectly,
+    // so only the presence of an alpha channel is taken from it and the premultiplication from the caller.
     m_alphaOp = AlphaOp::DoNothing;
     switch (imageInfo.alphaType()) {
     case kUnknown_SkAlphaType:
     case kOpaque_SkAlphaType:
         break;
     case kPremul_SkAlphaType:
-        if (!premultiplyAlpha)
-            m_alphaOp = AlphaOp::DoUnmultiply;
-        else if (ignoreNativeImageAlphaPremultiplication)
-            m_alphaOp = AlphaOp::DoPremultiply;
-        break;
     case kUnpremul_SkAlphaType:
-        if (premultiplyAlpha)
-            m_alphaOp = AlphaOp::DoPremultiply;
+        m_alphaOp = alphaOpForPremultiplication(sourceAlphaPremultiplication, premultiplyAlpha);
         break;
     }
 
@@ -117,7 +97,7 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         if (platformImage->isTextureBacked() && !PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent())
             return false;
 
-        auto* grContext = nativeImage->grContext();
+        auto* grContext = m_image->grContext();
         if (!platformImage->readPixels(grContext, readInfo, static_cast<uint8_t*>(data->writable_data()), bytesPerRow, 0, 0))
             return false;
 
@@ -145,25 +125,6 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
 
     m_imageSourceUnpackAlignment = srcUnpackAlignment;
     return true;
-}
-
-RefPtr<NativeImage> GraphicsContextGL::createNativeImageFromPixelBuffer(const GraphicsContextGLAttributes& sourceContextAttributes, Ref<PixelBuffer>&& pixelBuffer)
-{
-    ASSERT(!pixelBuffer->size().isEmpty());
-    auto imageSize = pixelBuffer->size();
-    SkAlphaType alphaType = kUnpremul_SkAlphaType;
-    if (!sourceContextAttributes.alpha)
-        alphaType = kOpaque_SkAlphaType;
-    else if (sourceContextAttributes.premultipliedAlpha)
-        alphaType = kPremul_SkAlphaType;
-    auto imageInfo = SkImageInfo::Make(imageSize.width(), imageSize.height(), kRGBA_8888_SkColorType, alphaType, SkColorSpace::MakeSRGB());
-
-    Ref protectedPixelBuffer = pixelBuffer;
-    SkPixmap pixmap(imageInfo, pixelBuffer->bytes().data(), imageInfo.minRowBytes());
-    auto image = SkImages::RasterFromPixmap(pixmap, [](const void*, void* context) {
-        static_cast<PixelBuffer*>(context)->deref();
-    }, &protectedPixelBuffer.leakRef());
-    return NativeImage::create(WTF::move(image));
 }
 
 } // namespace WebCore

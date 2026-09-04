@@ -469,7 +469,7 @@ public:
     inline static Ref<Document> create(const Settings&, const URL&);
     static Ref<Document> createNonRenderedPlaceholder(LocalFrame&, const URL&);
     static Ref<Document> create(Document&);
-    static Ref<Document> createCloned(ClonedDocumentType, const Settings&, const URL&, const URL& baseURL, const URL& baseURLOverride, const Variant<String, URL>& documentURI, DocumentCompatibilityMode, Document& contextDocument, SecurityOriginPolicy*, const String& contentType, TextResourceDecoder*);
+    static Ref<Document> createCloned(ClonedDocumentType, const Settings&, const URL&, const URL& baseURL, const URL& baseURLOverride, const Variant<String, URL>& documentURI, DocumentCompatibilityMode, OptionSet<ParserContentPolicy>, Document& contextDocument, SecurityOriginPolicy*, const String& contentType, TextResourceDecoder*);
 
     virtual ~Document();
 
@@ -815,10 +815,7 @@ public:
     inline CachedResourceLoader& cachedResourceLoader(); // Defined in DocumentResourceLoader.h
 
     WEBCORE_EXPORT void didBecomeCurrentDocumentInFrame();
-    enum class DocumentIsGoingAway : bool { No, Yes };
-    void destroyRenderTree(DocumentIsGoingAway);
     void destroyRenderTree();
-    void updateRenderTreeForOwnerElementBox();
     WEBCORE_EXPORT void willBeRemovedFromFrame();
 
     // Override ScriptExecutionContext methods to do additional work
@@ -1781,8 +1778,8 @@ public:
     unsigned numberOfIntersectionObservers() const { return m_localIntersectionObservers.size() + m_remoteIntersectionObservers.size(); }
 
     // Update ONLY remote intersection observers registered to this document.
-    // When the main frame updates its rendering, it sends an IPC message to request its child documents
-    // to update their remote observers, which ends up calling this.
+    // This is called when an ancestor frame in another process updates geometry that could affect
+    // IntersectionObservers in this document.
     WEBCORE_EXPORT void updateRemoteIntersectionObservers();
 
     // Update local and remote intersection observers that are registered to this document.
@@ -2192,8 +2189,6 @@ private:
     void setRenderer(RenderObject*) = delete;
 
     void createRenderTree();
-    void updateRenderTreesForDescendantFrames();
-    bool ownerElementGeneratesBox() const;
     void detachParser();
 
     DocumentEventTiming* documentEventTimingFromNavigationTiming();

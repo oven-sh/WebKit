@@ -111,7 +111,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace Wasm {
 
 using ErrorType = String;
-using PartialResult = Expected<void, ErrorType>;
+using PartialResult = std::expected<void, ErrorType>;
 using UnexpectedResult = std::unexpected<ErrorType>;
 struct IPIntValue { };
 
@@ -1306,20 +1306,22 @@ IPIntGenerator::ExpressionType IPIntGenerator::addSIMDConstant(v128_t)
     return { };
 }
 
-[[nodiscard]] PartialResult IPIntGenerator::addRefTest(ExpressionType, bool, int32_t heapType, bool, ExpressionType&)
+[[nodiscard]] PartialResult IPIntGenerator::addRefTest(ExpressionType, bool allowNull, int32_t heapType, bool, ExpressionType&)
 {
     m_metadata->appendMetadata<IPInt::RefTestCastMetadata>({
         heapType,
-        static_cast<uint8_t>(getCurrentInstructionLength())
+        static_cast<uint8_t>(getCurrentInstructionLength()),
+        static_cast<uint8_t>(allowNull),
     });
     return { };
 }
 
-[[nodiscard]] PartialResult IPIntGenerator::addRefCast(ExpressionType, bool, int32_t heapType, ExpressionType&)
+[[nodiscard]] PartialResult IPIntGenerator::addRefCast(ExpressionType, bool allowNull, int32_t heapType, ExpressionType&)
 {
     m_metadata->appendMetadata<IPInt::RefTestCastMetadata>({
         heapType,
-        static_cast<uint8_t>(getCurrentInstructionLength())
+        static_cast<uint8_t>(getCurrentInstructionLength()),
+        static_cast<uint8_t>(allowNull),
     });
     return { };
 }
@@ -2626,11 +2628,12 @@ void IPIntGenerator::convertTryToCatch(ControlType& tryBlock, CatchKind catchKin
     return { };
 }
 
-[[nodiscard]] PartialResult IPIntGenerator::addBranchCast(ControlType& block, ExpressionType, std::span<const TypedExpression>, bool, int32_t heapType, bool)
+[[nodiscard]] PartialResult IPIntGenerator::addBranchCast(ControlType& block, ExpressionType, std::span<const TypedExpression>, bool allowNull, int32_t heapType, bool)
 {
     m_metadata->appendMetadata<IPInt::RefTestCastMetadata>({
         heapType,
-        0
+        0,
+        static_cast<uint8_t>(allowNull),
     });
 
     IPIntLocation here = { curPC(), curMC() };
@@ -2988,7 +2991,7 @@ std::unique_ptr<FunctionIPIntMetadataGenerator> IPIntGenerator::finalize()
     return WTF::move(m_metadata);
 }
 
-Expected<std::unique_ptr<FunctionIPIntMetadataGenerator>, String> parseAndCompileMetadata(std::span<const uint8_t> function, const RTT& signature, ModuleInformation& info, FunctionCodeIndex functionIndex)
+std::expected<std::unique_ptr<FunctionIPIntMetadataGenerator>, String> parseAndCompileMetadata(std::span<const uint8_t> function, const RTT& signature, ModuleInformation& info, FunctionCodeIndex functionIndex)
 {
     IPIntGenerator generator(info, functionIndex, signature, function);
     FunctionParser<IPIntGenerator> parser(generator, function, signature, info);

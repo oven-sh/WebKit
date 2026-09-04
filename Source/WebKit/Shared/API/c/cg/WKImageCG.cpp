@@ -29,7 +29,7 @@
 #include "WKSharedAPICast.h"
 #include "WKString.h"
 #include "WebImage.h"
-#include <WebCore/ColorSpace.h>
+#include <WebCore/ColorSpaceName.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ImageUtilities.h>
 #include <WebCore/NativeImage.h>
@@ -57,7 +57,7 @@ WKImageRef WKImageCreateFromCGImage(CGImageRef imageRef, WKImageOptions options)
     
     RefPtr nativeImage = WebCore::NativeImage::create(imageRef);
     WebCore::IntSize imageSize = nativeImage->size();
-    Ref webImage = WebKit::WebImage::create(imageSize, WebKit::toImageOptions(options), WebCore::DestinationColorSpace::SRGB());
+    Ref webImage = WebKit::WebImage::create(imageSize, WebKit::toImageOptions(options), WebCore::ColorSpace::SRGB());
     if (!webImage->context())
         return nullptr;
     auto& graphicsContext = *webImage->context();

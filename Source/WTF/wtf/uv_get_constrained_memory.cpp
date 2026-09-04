@@ -194,7 +194,13 @@ static void uv__get_cgroup2_memory_limits(char buf[1024], uint64_t* high,
     p = buf + strlen("0::/");
     n = (int)strcspn(p, "\n");
 
-    snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
+    /* The root cgroup ("0::/", the usual case inside a container) is the mount
+     * point itself. A trailing slash would make the walk below read the root
+     * files twice: once as "/sys/fs/cgroup/" and again as "/sys/fs/cgroup". */
+    if (n > 0)
+        snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
+    else
+        snprintf(path, sizeof(path), "/sys/fs/cgroup");
 
     *high = UINT64_MAX;
     *max = UINT64_MAX;
@@ -334,7 +340,11 @@ static int uv__get_cgroup2_constrained_cpu(char buf[1024])
     char* p = buf + strlen("0::/");
     int n = (int)strcspn(p, "\n");
 
-    snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
+    /* See uv__get_cgroup2_memory_limits: no trailing slash for the root cgroup. */
+    if (n > 0)
+        snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
+    else
+        snprintf(path, sizeof(path), "/sys/fs/cgroup");
 
     while (strncmp(path, "/sys/fs/cgroup", sizeof("/sys/fs/cgroup") - 1) == 0) {
         snprintf(filename, sizeof(filename), "%s/cpu.max", path);

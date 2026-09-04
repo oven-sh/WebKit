@@ -39,9 +39,9 @@ public:
     int value() const;
     void updateValue();
 
-    WEBCORE_EXPORT String markerText(RenderListMarker::IncludeSuffix = RenderListMarker::IncludeSuffix::Yes) const;
+    WEBCORE_EXPORT String markerText(ListMarkerIncludeSuffix = ListMarkerIncludeSuffix::Yes) const;
 
-    void updateListMarkerNumbers();
+    Vector<CheckedRef<RenderListItem>> updateListMarkerNumbers();
 
     static void updateItemValuesForOrderedList(const HTMLOListElement&);
     static unsigned itemCountForOrderedList(const HTMLOListElement&);
@@ -51,6 +51,8 @@ public:
 
     RenderListMarker* markerRenderer() const { return m_marker.get(); }
     void setMarkerRenderer(RenderListMarker& marker) { m_marker = marker; }
+
+    void updateMarkerContent();
 
     bool isInReversedOrderedList() const;
 
@@ -77,8 +79,8 @@ private:
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
-    void computeIntrinsicLogicalWidthContributions() final;
 
+    void updateValueAndMarkerContent();
     void updateValueNow() const;
     void usedCounterDirectivesChanged();
 

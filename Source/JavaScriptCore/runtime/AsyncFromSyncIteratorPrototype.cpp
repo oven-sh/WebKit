@@ -27,6 +27,8 @@
 #include "config.h"
 #include "AsyncFromSyncIteratorPrototype.h"
 
+#include "AsyncContextSwapScope.h"
+
 #include "IteratorOperations.h"
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
@@ -270,7 +272,11 @@ void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject* globalObject, JSAsyncF
             JSValue error = catchScope.exception()->value();
             if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
                 return;
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise::rejectWithInternalMicrotask(vm, globalObject, error, InternalMicrotask::AsyncGeneratorDriverResume, driver, AsyncContextSwapScope::current(vm, globalObject));
+#else
             JSPromise::rejectWithInternalMicrotask(vm, globalObject, error, InternalMicrotask::AsyncGeneratorDriverResume, driver);
+#endif
             return;
         }
     }

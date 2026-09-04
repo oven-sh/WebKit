@@ -44,6 +44,7 @@
 #include "CrossTaskToken.h"
 #include "CustomGetterSetterInlines.h"
 #include "DOMAttributeGetterSetterInlines.h"
+#include "DateInstance.h"
 #include "Debugger.h"
 #include "DeferredWorkTimer.h"
 #include "Disassembler.h"
@@ -60,6 +61,7 @@
 #include "GigacageAlignedMemoryAllocator.h"
 #include "HasOwnPropertyCache.h"
 #include "Heap.h"
+#include "HeapIterationScope.h"
 #include "HeapProfiler.h"
 #include "IncrementalSweeper.h"
 #include "Interpreter.h"
@@ -333,7 +335,15 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     // it is still empty, so a thread that already has atoms keeps whatever it has grown to.
     if (m_atomStringTable->table().isEmpty()) {
         m_atomStringTable->table().clear();
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun's VM holds about 1250 atoms when it has started. HashTable sizes a reservation for
+        // 2048 keys at 8192 slots and shrinks any table that is less than a sixth full, so at 1250
+        // the first atom that a parser frees halved the table again: a rehash of every atom (70 us)
+        // on each start. A reservation for 1024 keys gets 4096 slots, which hold 1250 with no shrink.
+        m_atomStringTable->table().reserveInitialCapacity(1024);
+#else
         m_atomStringTable->table().reserveInitialCapacity(2048);
+#endif
     }
 
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
@@ -1877,6 +1887,13 @@ void VM::executeEntryScopeServicesOnEntry()
     if (dateCache.hasTimeZoneChange()) [[unlikely]] {
         intlCache().clearForTimeZoneChange();
         dateCache.clearForTimeZoneChange();
+        if (dateCache.takeMayHaveCachedLocalGregorianDateTime()) {
+            HeapIterationScope iterationScope(heap);
+            heap.dateInstanceSpace.forEachLiveCell([](HeapCell* cell, HeapCell::Kind) {
+                SUPPRESS_MEMORY_UNSAFE_CAST auto* date = static_cast<DateInstance*>(cell);
+                date->invalidateCachedLocalGregorianDateTime();
+            });
+        }
     }
 
     if (intlCache().hasLanguageChange()) [[unlikely]]
@@ -2010,6 +2027,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
             visitor.appendUnbarriered(t.arg0);
             visitor.appendUnbarriered(t.arg1);
             visitor.appendUnbarriered(t.arg2);
+            visitor.appendUnbarriered(t.arg3);
         }
     }
 #endif

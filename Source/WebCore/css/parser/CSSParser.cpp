@@ -1165,11 +1165,12 @@ RefPtr<StyleRuleFunction> CSSParser::consumeFunctionRule(CSSParserTokenRange pre
             if (parametersRange.peek().type() == ColonToken) {
                 parametersRange.consumeIncludingWhitespace();
                 // <default-value> = <declaration-value>
+                // A comma only separates parameters at the top level, so blocks are consumed whole.
                 auto defaultRangeStart = parametersRange;
                 while (!parametersRange.atEnd() && parametersRange.peek().type() != CommaToken) {
                     if (parametersRange.peek().type() == DelimiterToken && parametersRange.peek().delimiter() == '!')
                         return { };
-                    parametersRange.consumeIncludingWhitespace();
+                    parametersRange.consumeComponentValue();
                 }
 
                 auto defaultRange = defaultRangeStart.rangeUntil(parametersRange);
@@ -1810,6 +1811,11 @@ bool CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType rule
     auto didParseNewProperties = [&] {
         return topContext().m_parsedProperties.size() != oldPropertiesCount;
     };
+
+    // In @page, `size` aliases the always-exposed `page-size` descriptor; remap
+    // before the isExposed() check so gating the shorthand can't disable it.
+    if (ruleType == StyleRuleType::Page && propertyID == CSSPropertySize)
+        propertyID = CSSPropertyPageSize;
 
     if (!isExposed(propertyID, &m_context.propertySettings))
         propertyID = CSSPropertyInvalid;

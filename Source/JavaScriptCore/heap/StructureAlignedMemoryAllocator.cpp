@@ -144,7 +144,10 @@ public:
         if (!m_useSystemHeap) [[likely]] {
             void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
             size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
-            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, false, -1, true, &structureArena));
+            // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
+            // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
+            // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.
+            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena));
             structureHeap = mi_heap_new_in_arena(structureArena);
 #if OS(LINUX) && defined(MADV_DOFORK)
             // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores

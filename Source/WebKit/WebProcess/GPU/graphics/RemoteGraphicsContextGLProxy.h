@@ -100,7 +100,7 @@ public:
     GCGLErrorCodeSet getErrors() final;
 #if ENABLE(VIDEO)
     bool copyTextureFromVideoFrame(WebCore::VideoFrame&, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum format, GCGLenum type , bool premultiplyAlpha, bool flipY) final;
-    RefPtr<WebCore::Image> videoFrameToImage(WebCore::VideoFrame&) final;
+    RefPtr<WebCore::NativeImage> videoFrameToNativeImage(WebCore::VideoFrame&) final;
 #endif
 
     void simulateEventForTesting(WebCore::GraphicsContextGLSimulatedEventForTesting) final;
@@ -119,7 +119,7 @@ public:
 #if ENABLE(WEBXR)
     void framebufferDiscard(GCGLenum target, std::span<const GCGLenum> attachments) final;
 #endif
-    void setDrawingBufferColorSpace(const WebCore::DestinationColorSpace&) final;
+    void setDrawingBufferColorSpace(const WebCore::ColorSpace&) final;
 
     // Functions with a generated implementation. This list is used by generate-gpup-webgl script.
     void activeTexture(GCGLenum texture) final;
@@ -448,7 +448,7 @@ private:
     GCGLint m_maxArrayTextureLayers { 0 };
     std::optional<size_t> m_estimatedMemoryCost;
     uint32_t m_nextObjectName { 0 };
-    WebCore::DestinationColorSpace m_drawingBufferColorSpace { WebCore::DestinationColorSpace::SRGB() };
+    WebCore::ColorSpace m_drawingBufferColorSpace { WebCore::ColorSpace::SRGB() };
     WeakPtr<RemoteRenderingBackendProxy> m_renderingBackend;
     RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
 };

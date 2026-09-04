@@ -35,13 +35,17 @@
 
 namespace JSC {
 
-// RAII helper for Bun's AsyncLocalStorage: swaps an async context value into
-// JSGlobalObject::m_asyncContextData field 0 for the lifetime of the scope and
-// restores the previous value on destruction. A no-op when the supplied context
-// is empty or undefined, so the common path (no async context active) costs a
-// single branch. Also provides helpers for the snapshot side (capturing the
-// current context and wrapping it into an InternalFieldTuple alongside a user
-// context) and for unwrapping such a tuple on the restore side.
+// RAII helper for Bun's AsyncLocalStorage. A job (microtask, timer, ...)
+// captures the value of JSGlobalObject::m_asyncContextData field 0 when it is
+// scheduled; constructing this scope with that captured value installs it for
+// the lifetime of the scope and restores the previous value on destruction.
+//
+// A job that captured "no context" (undefined, or an empty JSValue for callers
+// that never capture) runs with no context: whatever an earlier job left in the
+// slot via AsyncLocalStorage.enterWith() is not inherited, and whatever the job
+// itself leaves there does not outlive it. Until the VM has enabled tracking
+// (VM::isAsyncContextTrackingEnabled) nothing can have been captured, so every
+// entry point here reduces to that flag test.
 class AsyncContextSwapScope {
     WTF_MAKE_NONCOPYABLE(AsyncContextSwapScope);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -49,13 +53,27 @@ public:
     ALWAYS_INLINE AsyncContextSwapScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
         : m_vm(vm)
     {
-        if (asyncContext.isEmpty() || asyncContext.isUndefined())
+        if (!vm.isAsyncContextTrackingEnabled())
             return;
-        m_asyncContextData = globalObject->m_asyncContextData.get();
-        if (!m_asyncContextData)
+        enter(globalObject, asyncContext);
+    }
+
+    // For internal microtasks: the captured context is in the dedicated argument
+    // when the fast paths filled it, otherwise in an InternalFieldTuple
+    // [context, asyncContext] that contextArg is unwrapped from (see wrap()).
+    ALWAYS_INLINE AsyncContextSwapScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContextArg, JSValue& contextArg)
+        : m_vm(vm)
+    {
+        if (!vm.isAsyncContextTrackingEnabled()) {
+            ASSERT(!isContextTuple(contextArg));
             return;
-        m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
-        m_asyncContextData->putInternalField(vm, 0, asyncContext);
+        }
+        JSValue asyncContext = asyncContextArg;
+        if (asyncContext.isEmpty() || asyncContext.isUndefined()) {
+            if (isContextTuple(contextArg)) [[unlikely]]
+                asyncContext = unwrapContextTuple(contextArg);
+        }
+        enter(globalObject, asyncContext);
     }
 
     ALWAYS_INLINE ~AsyncContextSwapScope()
@@ -75,43 +93,68 @@ public:
         }
     }
 
+    static ALWAYS_INLINE bool isContextTuple(JSValue contextArg)
+    {
+        // JSType test first: rejects the usual non-tuple cells (generators,
+        // iterators, module records) without the ClassInfo walk.
+        return !contextArg.isEmpty() && contextArg.isCell() && contextArg.asCell()->type() == InternalFieldTupleType && contextArg.asCell()->inherits<InternalFieldTuple>();
+    }
+
     // If contextArg is an InternalFieldTuple [userContext, asyncContext],
     // overwrite contextArg with field 0 and return field 1. Otherwise leave
     // contextArg untouched and return jsUndefined(). Empty contextArg is
-    // tolerated (dynamicDowncast<T>(JSValue) is not empty-safe on its own).
+    // tolerated.
     static ALWAYS_INLINE JSValue unwrapContextTuple(JSValue& contextArg)
     {
-        if (contextArg.isEmpty())
+        if (!isContextTuple(contextArg))
             return jsUndefined();
-        if (auto* tuple = dynamicDowncast<InternalFieldTuple>(contextArg)) {
-            contextArg = tuple->getInternalField(0);
-            return tuple->getInternalField(1);
-        }
-        return jsUndefined();
+        auto* tuple = uncheckedDowncast<InternalFieldTuple>(contextArg.asCell());
+        contextArg = tuple->getInternalField(0);
+        return tuple->getInternalField(1);
     }
 
-    // Read the current async context (field 0 of m_asyncContextData), or
-    // jsUndefined() when tracking has not been enabled on this global.
-    static ALWAYS_INLINE JSValue current(JSGlobalObject* globalObject)
+    // The async context to capture for a job being scheduled now: field 0 of
+    // m_asyncContextData, or jsUndefined() when there is none.
+    static ALWAYS_INLINE JSValue current(VM& vm, JSGlobalObject* globalObject)
     {
-        if (auto* asyncContextData = globalObject->m_asyncContextData.get())
-            return asyncContextData->getInternalField(0);
-        return jsUndefined();
+        if (!vm.isAsyncContextTrackingEnabled())
+            return jsUndefined();
+        ASSERT(globalObject->m_asyncContextData);
+        return globalObject->m_asyncContextData->getInternalField(0);
     }
 
-    // Snapshot the current async context alongside userContext in an
-    // InternalFieldTuple [userContext, asyncContext]. When no async context is
-    // active, returns userContext unchanged so the caller keeps using the
-    // allocation-free inline/slim reaction fast paths.
-    static ALWAYS_INLINE JSValue wrapWithCurrent(VM& vm, JSGlobalObject* globalObject, JSValue userContext)
+    // Pair userContext with asyncContext in an InternalFieldTuple
+    // [userContext, asyncContext] for the paths that only have one slot to
+    // carry both. When asyncContext is none, returns userContext unchanged.
+    static ALWAYS_INLINE JSValue wrap(VM& vm, JSGlobalObject* globalObject, JSValue userContext, JSValue asyncContext)
     {
-        JSValue asyncContext = current(globalObject);
-        if (asyncContext.isUndefined())
+        if (asyncContext.isEmpty() || asyncContext.isUndefined())
             return userContext;
+        ASSERT(vm.isAsyncContextTrackingEnabled());
         return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), userContext, asyncContext);
     }
 
+    static ALWAYS_INLINE JSValue wrapWithCurrent(VM& vm, JSGlobalObject* globalObject, JSValue userContext)
+    {
+        return wrap(vm, globalObject, userContext, current(vm, globalObject));
+    }
+
 private:
+    // The previous value is put back on exit even when nothing had to be
+    // installed, so whatever the job itself leaves in the slot (enterWith())
+    // ends with the job.
+    ALWAYS_INLINE void enter(JSGlobalObject* globalObject, JSValue asyncContext)
+    {
+        ASSERT(m_vm.isAsyncContextTrackingEnabled());
+        ASSERT(globalObject->m_asyncContextData);
+        if (asyncContext.isEmpty())
+            asyncContext = jsUndefined();
+        m_asyncContextData = globalObject->m_asyncContextData.get();
+        m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
+        if (m_restoreAsyncContext != asyncContext)
+            m_asyncContextData->putInternalField(m_vm, 0, asyncContext);
+    }
+
     VM& m_vm;
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;

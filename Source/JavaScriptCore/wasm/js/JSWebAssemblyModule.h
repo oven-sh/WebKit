@@ -35,7 +35,7 @@
 #include "MemoryMode.h"
 #include "WasmFormat.h"
 #include <wtf/Bag.h>
-#include <wtf/Expected.h>
+#include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/text/WTFString.h>
@@ -76,12 +76,20 @@ public:
 
     JS_EXPORT_PRIVATE Wasm::Module& NODELETE module();
 
+    struct ImportName {
+        Identifier module;
+        Identifier field;
+    };
+
+    std::span<const ImportName> importNames(VM&) LIFETIME_BOUND;
+
 private:
     JSWebAssemblyModule(VM&, Structure*, Ref<Wasm::Module>&&);
     void finishCreation(VM&);
 
     const Ref<Wasm::Module> m_module;
     WriteBarrier<SymbolTable> m_exportSymbolTable;
+    FixedVector<ImportName> m_importNames;
 };
 
 } // namespace JSC

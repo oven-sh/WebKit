@@ -1347,6 +1347,88 @@ TEST(TextExtractionTests, SkipNearlyTransparentContentByDefault)
     EXPECT_FALSE([defaultText containsString:@"unlabeled transparent field"]);
 }
 
+TEST(TextExtractionTests, ExtractTransparentCheckboxOverVisualProxy)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:^{
+        RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        [[configuration preferences] _setTextExtractionEnabled:YES];
+        return configuration.autorelease();
+    }()]);
+    [webView synchronouslyLoadHTMLString:@R"HTML(
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+        .control { position: relative; width: 40px; height: 40px; }
+        .control input { position: absolute; inset: 0; width: 40px; height: 40px; margin: 0; opacity: 0; }
+        .box { position: absolute; left: 11px; top: 11px; width: 18px; height: 18px; border: 2px solid #5f6368; border-radius: 2px; }
+        </style>
+        </head>
+        <body>
+            <div class="control">
+                <input type="checkbox" aria-label="Select photos" checked>
+                <div class="box"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14"><path d="M1 12 8 19 22 4"></path></svg></div>
+            </div>
+            <input type="checkbox" aria-label="Genuinely invisible" style="opacity: 0">
+        </body>
+        </html>
+    )HTML"];
+
+    RetainPtr defaultText = [webView synchronouslyGetDebugText:^{
+        RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+        [configuration setFilterOptions:_WKTextExtractionFilterNone];
+        return configuration.autorelease();
+    }()];
+
+    EXPECT_TRUE([defaultText containsString:@"Select photos"]);
+    EXPECT_TRUE([defaultText containsString:@"checkbox"]);
+    EXPECT_TRUE([defaultText containsString:@"checked"]);
+    EXPECT_FALSE([defaultText containsString:@"Genuinely invisible"]);
+    EXPECT_FALSE([defaultText containsString:@"image"]);
+}
+
+TEST(TextExtractionTests, ExtractTransparentOneTimeCodeFieldOverVisualProxies)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:^{
+        RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        [[configuration preferences] _setTextExtractionEnabled:YES];
+        return configuration.autorelease();
+    }()]);
+    [webView synchronouslyLoadHTMLString:@R"HTML(
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+        .otp { position: relative; width: 336px; height: 48px; }
+        .otp input { position: absolute; inset: 0; width: 336px; height: 48px; margin: 0; opacity: 0.02; color: transparent; }
+        .otp .box { position: absolute; top: 0; width: 46px; height: 48px; border: 1px solid #5f6368; background-color: #171920; }
+        </style>
+        </head>
+        <body>
+            <div class="otp">
+                <input type="text" autocomplete="one-time-code" aria-label="Security code">
+                <div class="box" aria-hidden="true" style="left: 0"></div>
+                <div class="box" aria-hidden="true" style="left: 58px"></div>
+                <div class="box" aria-hidden="true" style="left: 116px"></div>
+                <div class="box" aria-hidden="true" style="left: 174px"></div>
+                <div class="box" aria-hidden="true" style="left: 232px"></div>
+                <div class="box" aria-hidden="true" style="left: 290px"></div>
+            </div>
+            <input type="text" autocomplete="one-time-code" aria-label="Genuinely invisible code" style="opacity: 0.02">
+        </body>
+        </html>
+    )HTML"];
+
+    RetainPtr defaultText = [webView synchronouslyGetDebugText:^{
+        RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+        [configuration setFilterOptions:_WKTextExtractionFilterNone];
+        return configuration.autorelease();
+    }()];
+
+    EXPECT_TRUE([defaultText containsString:@"Security code"]);
+    EXPECT_FALSE([defaultText containsString:@"Genuinely invisible code"]);
+}
+
 TEST(TextExtractionTests, MinimalHTMLOutput)
 {
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:^{
@@ -3247,6 +3329,11 @@ static bool isSmallScreenDevice()
     return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
 }
 
+static bool matchesMediaQuery(TestWKWebView *webView, NSString *query)
+{
+    return [[webView objectByEvaluatingJavaScript:[NSString stringWithFormat:@"matchMedia('%@').matches", query]] boolValue];
+}
+
 static void expectDesktopClassHardwareEmulation(TestWKWebView *webView)
 {
 #if ENABLE(IOS_TOUCH_EVENTS)
@@ -3255,6 +3342,13 @@ static void expectDesktopClassHardwareEmulation(TestWKWebView *webView)
 #if ENABLE(TOUCH_EVENTS)
     EXPECT_FALSE(touchEventDOMAttributesAreExposed(webView));
 #endif
+
+    EXPECT_TRUE(matchesMediaQuery(webView, @"(pointer: fine)"));
+    EXPECT_TRUE(matchesMediaQuery(webView, @"(any-pointer: fine)"));
+    EXPECT_TRUE(matchesMediaQuery(webView, @"(hover: hover)"));
+    EXPECT_TRUE(matchesMediaQuery(webView, @"(any-hover: hover)"));
+    EXPECT_FALSE(matchesMediaQuery(webView, @"(pointer: coarse)"));
+    EXPECT_FALSE(matchesMediaQuery(webView, @"(hover: none)"));
 
     if (!isSmallScreenDevice())
         return;
@@ -3275,6 +3369,11 @@ static void expectNoDesktopClassHardwareEmulation(TestWKWebView *webView)
 #if ENABLE(TOUCH_EVENTS)
     EXPECT_TRUE(touchEventDOMAttributesAreExposed(webView));
 #endif
+
+    EXPECT_TRUE(matchesMediaQuery(webView, @"(pointer: coarse)"));
+    EXPECT_TRUE(matchesMediaQuery(webView, @"(hover: none)"));
+    EXPECT_FALSE(matchesMediaQuery(webView, @"(pointer: fine)"));
+    EXPECT_FALSE(matchesMediaQuery(webView, @"(hover: hover)"));
 
     if (!isSmallScreenDevice())
         return;

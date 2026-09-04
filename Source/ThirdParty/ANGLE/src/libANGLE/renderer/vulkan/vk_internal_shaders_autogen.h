@@ -58,16 +58,6 @@ enum flags
 constexpr size_t kArrayLen = 0x00000002;
 }  // namespace BlitResolveStencilNoExport_comp
 
-namespace ConvertIndex_comp
-{
-enum flags
-{
-    kIsPrimitiveRestartEnabled = 0x00000001,
-    kIsIndirect                = 0x00000002,
-};
-constexpr size_t kArrayLen = 0x00000004;
-}  // namespace ConvertIndex_comp
-
 namespace ConvertIndexIndirectLineLoop_comp
 {
 enum IndicesBitsWidth
@@ -216,16 +206,6 @@ enum SrcType
 constexpr size_t kArrayLen = 0x00000002;
 }  // namespace ImageCopyFloat_frag
 
-namespace OverlayDraw_frag
-{
-constexpr size_t kArrayLen = 0x00000001;
-}  // namespace OverlayDraw_frag
-
-namespace OverlayDraw_vert
-{
-constexpr size_t kArrayLen = 0x00000001;
-}  // namespace OverlayDraw_vert
-
 }  // namespace InternalShader
 
 class ShaderLibrary final : angle::NonCopyable
@@ -245,9 +225,6 @@ class ShaderLibrary final : angle::NonCopyable
     angle::Result getBlitResolveStencilNoExport_comp(ErrorContext *context,
                                                      uint32_t shaderFlags,
                                                      ShaderModulePtr *shaderOut);
-    angle::Result getConvertIndex_comp(ErrorContext *context,
-                                       uint32_t shaderFlags,
-                                       ShaderModulePtr *shaderOut);
     angle::Result getConvertIndexIndirectLineLoop_comp(ErrorContext *context,
                                                        uint32_t shaderFlags,
                                                        ShaderModulePtr *shaderOut);
@@ -284,19 +261,12 @@ class ShaderLibrary final : angle::NonCopyable
     angle::Result getImageCopyFloat_frag(ErrorContext *context,
                                          uint32_t shaderFlags,
                                          ShaderModulePtr *shaderOut);
-    angle::Result getOverlayDraw_frag(ErrorContext *context,
-                                      uint32_t shaderFlags,
-                                      ShaderModulePtr *shaderOut);
-    angle::Result getOverlayDraw_vert(ErrorContext *context,
-                                      uint32_t shaderFlags,
-                                      ShaderModulePtr *shaderOut);
 
   private:
     ShaderModulePtr mBlit3DSrc_frag_shaders[InternalShader::Blit3DSrc_frag::kArrayLen];
     ShaderModulePtr mBlitResolve_frag_shaders[InternalShader::BlitResolve_frag::kArrayLen];
     ShaderModulePtr mBlitResolveStencilNoExport_comp_shaders
         [InternalShader::BlitResolveStencilNoExport_comp::kArrayLen];
-    ShaderModulePtr mConvertIndex_comp_shaders[InternalShader::ConvertIndex_comp::kArrayLen];
     ShaderModulePtr mConvertIndexIndirectLineLoop_comp_shaders
         [InternalShader::ConvertIndexIndirectLineLoop_comp::kArrayLen];
     ShaderModulePtr mConvertIndirectLineLoop_comp_shaders
@@ -313,8 +283,6 @@ class ShaderLibrary final : angle::NonCopyable
     ShaderModulePtr mImageClear_frag_shaders[InternalShader::ImageClear_frag::kArrayLen];
     ShaderModulePtr mImageCopy_frag_shaders[InternalShader::ImageCopy_frag::kArrayLen];
     ShaderModulePtr mImageCopyFloat_frag_shaders[InternalShader::ImageCopyFloat_frag::kArrayLen];
-    ShaderModulePtr mOverlayDraw_frag_shaders[InternalShader::OverlayDraw_frag::kArrayLen];
-    ShaderModulePtr mOverlayDraw_vert_shaders[InternalShader::OverlayDraw_vert::kArrayLen];
 };
 }  // namespace vk
 }  // namespace rx

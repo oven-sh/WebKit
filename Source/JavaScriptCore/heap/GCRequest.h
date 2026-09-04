@@ -51,6 +51,12 @@ struct GCRequest {
     
     std::optional<CollectionScope> scope;
     RefPtr<SharedTask<void()>> didFinishEndPhase;
+#if USE(BUN_JSC_ADDITIONS)
+    // Set by an embedder on a collection it requests because the application has gone idle (as opposed to one paced by
+    // allocation, forced by the program, or by memory pressure). Only such a collection may let optimized code that has
+    // no execution counter of its own age out (CodeBlock::shouldJettisonDueToOldAge).
+    bool isIdle { false };
+#endif
 };
 
 } // namespace JSC

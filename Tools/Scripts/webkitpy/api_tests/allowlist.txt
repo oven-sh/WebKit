@@ -70,7 +70,6 @@ TestWTF.NativePromise
 TestWTF.OSObjectPtr
 TestWTF.OSObjectPtrCocoa
 TestWTF.OSObjectPtrCocoaARC
-TestWTF.RETAIN_PTR_TEST_NAME
 TestWTF.RedBlackTreeTest
 TestWTF.RetainPtr
 TestWTF.RetainPtrARC
@@ -370,6 +369,7 @@ TestWebKitAPI.MixedContentChecker
 TestWebKitAPI.MonospaceFontsTest
 TestWebKitAPI.NSResponderTests
 TestWebKitAPI.NSTextPlaceholder
+TestWebKitAPI.NativeImageTests/AnyPixelBufferFormatTest
 TestWebKitAPI.Navigation
 TestWebKitAPI.Notification
 TestWebKitAPI.NowPlayingInfoArtwork

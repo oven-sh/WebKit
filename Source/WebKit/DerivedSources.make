@@ -357,6 +357,7 @@ GENERATE_MESSAGE_RECEIVER_SCRIPTS = \
     $(WebKit2)/Scripts/webkit/parser.py \
     $(WebKit2)/Scripts/webkit/opaque_ipc_types.py \
     $(WebKit2)/Scripts/webkit/opaque_ipc_types.tracking.in \
+    $(WebKit2)/Scripts/webkit/untrusted_origins.py \
     $(WebKit2)/DerivedSources.make \
 #
 
@@ -1085,7 +1086,6 @@ EXTENSION_INTERFACES = \
     WebExtensionAPIOffscreen \
     WebExtensionAPIPermissions \
     WebExtensionAPIPort \
-    WebExtensionAPIRuntime \
     WebExtensionAPIScripting \
     WebExtensionAPISidePanel \
     WebExtensionAPISidebarAction \
@@ -1094,7 +1094,6 @@ EXTENSION_INTERFACES = \
     WebExtensionAPITabs \
     WebExtensionAPIWebNavigation \
     WebExtensionAPIWebNavigationEvent \
-    WebExtensionAPIWebPageRuntime \
     WebExtensionAPIWebRequest \
     WebExtensionAPIWebRequestEvent \
     WebExtensionAPIWindows \
@@ -1104,8 +1103,10 @@ EXTENSION_INTERFACES = \
 CPP_EXTENSION_INTERFACES = \
 	WebExtensionAPIAlarms \
 	WebExtensionAPINamespace \
+    WebExtensionAPIRuntime \
     WebExtensionAPITest \
 	WebExtensionAPIWebPageNamespace \
+    WebExtensionAPIWebPageRuntime \
 #
 
 $(IDL_FILE_NAMES_LIST) : $(EXTENSION_INTERFACES:%=%.idl)

@@ -705,7 +705,7 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
     if (shouldAddIntrinsicMarginToFormControls) {
         // Important: Intrinsic margins get added to controls before the theme has adjusted the style, since the theme will
         // alter fonts and heights/widths.
-        if (is<HTMLFormControlElement>(m_element) && style.computedFontSize() >= 11) {
+        if (is<HTMLFormControlElement>(m_element) && style.usedFontSize() >= 11) {
             // Don't apply intrinsic margins to image buttons. The designer knows how big the images are,
             // so we have to treat all image buttons as though they were explicitly sized.
             if (RefPtr input = dynamicDowncast<HTMLInputElement>(*m_element); !input || !input->isImageButton())
@@ -1003,8 +1003,8 @@ void Adjuster::adjustSVGElementStyle(Style::ComputedStyle& style, const SVGEleme
         // children inherit the correct (unzoomed) computed size. The SVG root transform handles
         // the zoom scaling, consistent with other SVG content.
         auto fontDescription = style.fontDescription();
-        auto computedFontSize = computedFontSizeFromSpecifiedSize(fontDescription.specifiedSize(), fontDescription.isAbsoluteSize(), /*useSVGZoomRules=*/true, style, protect(svgElement.document()));
-        fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
+        auto usedFontSize = usedFontSizeFromComputedSize(fontDescription.computedSize(), fontDescription.isAbsoluteSize(), /*useSVGZoomRules=*/true, style, protect(svgElement.document()));
+        fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
         style.setFontDescription(WTF::move(fontDescription));
     }
 
@@ -1088,6 +1088,24 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
             style.setOverflowY(Overflow::Auto);
     }
 
+    if (documentQuirks.needsWebExScrollabilityQuirk()) {
+        // Ignore overflow: hidden on the body and #wrapper so the page remains
+        // scrollable, and drop the width constraints on #wrapper so the desktop
+        // layout fits the viewport.
+        static MainThreadNeverDestroyed<const AtomString> wrapperID("wrapper"_s);
+        bool isWrapper = m_element->idForStyleResolution() == wrapperID;
+        if (m_element->hasTagName(bodyTag) || isWrapper) {
+            if (style.overflowX() == Overflow::Hidden)
+                style.setOverflowX(Overflow::Auto);
+            if (style.overflowY() == Overflow::Hidden)
+                style.setOverflowY(Overflow::Auto);
+        }
+        if (isWrapper) {
+            style.setMinWidth(CSS::Keyword::Auto { });
+            style.setMaxWidth(CSS::Keyword::None { });
+        }
+    }
+
     if (documentQuirks.needsGeforcenowWarningDisplayNoneQuirk()) {
         static MainThreadNeverDestroyed<const AtomString> overlayClassName("cdk-overlay-container"_s);
         static MainThreadNeverDestroyed<const AtomString> unsupportedClassName("unsupported-scenario-container"_s);
@@ -1135,15 +1153,6 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
         static MainThreadNeverDestroyed<const AtomString> className("new-trip-type-and-guest-selection-container"_s);
         if (m_element->hasClassName(className))
             style.setUsedZIndex(2);
-    }
-
-    if (documentQuirks.needsPrimeVideoUserSelectNoneQuirk()) {
-        static MainThreadNeverDestroyed<const AtomString> className("webPlayerSDKUiContainer"_s);
-        if (m_element->hasClassName(className)) {
-            // Not redundant: we don't know which one will be used:
-            style.setWebkitUserSelect(UserSelect::None);
-            style.setUserSelect(UserSelect::None);
-        }
     }
 
     if (auto tikTokOverflowingContentQuery = documentQuirks.needsTikTokOverflowingContentQuirk(protect(*m_element), m_parentStyle)) {
@@ -1371,14 +1380,14 @@ auto Adjuster::adjustmentForTextAutosizing(const Style::ComputedStyle& style, co
         return adjustmentForTextAutosizing;
 
     float initialScale = document->page() ? document->page()->initialScaleIgnoringContentSize() : 1;
-    auto adjustLineHeightIfNeeded = [&](auto computedFontSize) {
+    auto adjustLineHeightIfNeeded = [&](auto usedFontSize) {
         auto lineHeight = style.specifiedLineHeight();
         constexpr static unsigned eligibleFontSize = 12;
-        if (computedFontSize * initialScale >= eligibleFontSize)
+        if (usedFontSize * initialScale >= eligibleFontSize)
             return;
 
         constexpr static float boostFactor = 1.25;
-        auto minimumLineHeight = boostFactor * computedFontSize;
+        auto minimumLineHeight = boostFactor * usedFontSize;
         if (auto fixedLineHeight = lineHeight.tryFixed(); !fixedLineHeight || fixedLineHeight->resolveZoom(ZoomFactor { 1.0f }) >= minimumLineHeight)
             return;
 
@@ -1389,21 +1398,21 @@ auto Adjuster::adjustmentForTextAutosizing(const Style::ComputedStyle& style, co
     };
 
     auto& fontDescription = style.fontDescription();
-    auto initialComputedFontSize = fontDescription.computedSize();
-    auto specifiedFontSize = fontDescription.specifiedSize();
+    auto initialUsedFontSize = fontDescription.usedSize();
+    auto computedFontSize = fontDescription.computedSize();
 
     bool isCandidate = newStatus.isIdempotentTextAutosizingCandidate(style);
-    if (!isCandidate && WTF::areEssentiallyEqual(initialComputedFontSize, specifiedFontSize))
+    if (!isCandidate && WTF::areEssentiallyEqual(initialUsedFontSize, computedFontSize))
         return adjustmentForTextAutosizing;
 
-    auto adjustedFontSize = AutosizeStatus::idempotentTextSize(fontDescription.specifiedSize(), initialScale);
-    if (isCandidate && WTF::areEssentiallyEqual(initialComputedFontSize, adjustedFontSize))
+    auto adjustedFontSize = AutosizeStatus::idempotentTextSize(fontDescription.computedSize(), initialScale);
+    if (isCandidate && WTF::areEssentiallyEqual(initialUsedFontSize, adjustedFontSize))
         return adjustmentForTextAutosizing;
 
     if (!hasTextChild(element))
         return adjustmentForTextAutosizing;
 
-    adjustmentForTextAutosizing.newFontSize = isCandidate ? adjustedFontSize : specifiedFontSize;
+    adjustmentForTextAutosizing.newFontSize = isCandidate ? adjustedFontSize : computedFontSize;
 
     // FIXME: We should restore computed line height to its original value in the case where the element is not
     // an idempotent text autosizing candidate; otherwise, if an element that is a text autosizing candidate contains
@@ -1420,7 +1429,7 @@ bool Adjuster::adjustForTextAutosizing(Style::ComputedStyle& style, AdjustmentFo
 
     if (auto newFontSize = adjustment.newFontSize) {
         auto fontDescription = style.fontDescription();
-        fontDescription.setComputedSize(*newFontSize);
+        fontDescription.setUsedSize(*newFontSize);
         style.setFontDescription(WTF::move(fontDescription));
     }
     if (auto newLineHeight = adjustment.newLineHeight)

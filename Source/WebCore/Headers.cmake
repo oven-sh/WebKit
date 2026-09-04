@@ -712,6 +712,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/url-pattern/URLPatternComponent.h
     Modules/url-pattern/URLPatternInit.h
     Modules/url-pattern/URLPatternOptions.h
+    Modules/url-pattern/URLPatternPartListMatcher.h
     Modules/url-pattern/URLPatternResult.h
 
     Modules/web-locks/WebLock.h
@@ -1018,6 +1019,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     contentextensions/ContentExtensionStyleSheet.h
     contentextensions/ContentExtensionsBackend.h
     contentextensions/ContentExtensionsDebugging.h
+    contentextensions/ContentRuleListBlockedLoadInfo.h
     contentextensions/ContentRuleListMatchedRule.h
     contentextensions/ContentRuleListResults.h
     contentextensions/DFA.h
@@ -1199,6 +1201,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/values/color/CSSHexColor.h
     css/values/color/CSSKeywordColor.h
     css/values/color/CSSResolvedColor.h
+
+    css/values/flexbox/CSSFlexWrap.h
 
     css/values/grid/CSSGridAutoFlow.h
     css/values/grid/CSSGridLineNames.h
@@ -1777,6 +1781,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/formattingContexts/flex/FlexFormattingContext.h
     layout/formattingContexts/flex/FlexFormattingUtils.h
     layout/formattingContexts/flex/FlexLayoutState.h
+    layout/formattingContexts/flex/FlexLineBreaker.h
 
     layout/formattingContexts/grid/AxisConstraint.h
     layout/formattingContexts/grid/GridAreaLines.h
@@ -2497,6 +2502,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ColorNormalization.h
     platform/graphics/ColorSerialization.h
     platform/graphics/ColorSpace.h
+    platform/graphics/ColorSpaceName.h
     platform/graphics/ColorTransferFunctions.h
     platform/graphics/ColorTypes.h
     platform/graphics/ColorUtilities.h
@@ -2509,7 +2515,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/Damage.h
     platform/graphics/DashArray.h
     platform/graphics/DecodingOptions.h
-    platform/graphics/DestinationColorSpace.h
     platform/graphics/DisplayRefreshMonitor.h
     platform/graphics/DisplayRefreshMonitorClient.h
     platform/graphics/DisplayRefreshMonitorFactory.h
@@ -2598,6 +2603,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/Icon.h
     platform/graphics/Image.h
     platform/graphics/ImageAdapter.h
+    platform/graphics/ImageBackingStore.h
     platform/graphics/ImageBuffer.h
     platform/graphics/ImageBufferAllocator.h
     platform/graphics/ImageBufferBackend.h
@@ -3338,6 +3344,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/flexbox/StyleFlexBasis.h
     style/values/flexbox/StyleFlexGrow.h
     style/values/flexbox/StyleFlexShrink.h
+    style/values/flexbox/StyleFlexWrap.h
     style/values/flexbox/StyleWebKitBoxFlex.h
     style/values/flexbox/StyleWebKitBoxFlexGroup.h
     style/values/flexbox/StyleWebKitBoxOrdinalGroup.h

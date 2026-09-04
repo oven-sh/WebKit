@@ -214,15 +214,6 @@ struct TextRunWithUnderlyingString {
     operator const TextRun&() const { return textRun; }
 };
 
-static FontCascade disclosureMarkerFontCascade(const Style::ComputedStyle& style, Document& document)
-{
-    auto fontDescription = FontCascadeDescription { style.fontDescription() };
-    fontDescription.setFamilies({ { "system-ui"_s, FontFamilyKind::Generic } });
-    auto fontCascade = FontCascade(WTF::move(fontDescription));
-    fontCascade.update(&document.fontSelector());
-    return fontCascade;
-}
-
 static auto textRunForContent(ListMarkerTextContent textContent, const Style::ComputedStyle& style) -> TextRunWithUnderlyingString
 {
     ASSERT(!textContent.isEmpty());
@@ -230,14 +221,6 @@ static auto textRunForContent(ListMarkerTextContent textContent, const Style::Co
     auto textForRun = textContent.textWithSuffix;
     auto textRun = RenderBlock::constructTextRun(textForRun, style);
     return { WTF::move(textRun), WTF::move(textForRun) };
-}
-
-void RenderListMarker::paintDisclosureMarker(GraphicsContext& context, const FloatRect& markerRect)
-{
-    auto systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
-    auto textOrigin = FloatPoint { markerRect.x(), markerRect.y() + systemUIFontCascade.metricsOfPrimaryFont().ascent() };
-    textOrigin = roundPointToDevicePixels(LayoutPoint(textOrigin), protect(document())->deviceScaleFactor(), writingMode().isLogicalLeftInlineStart());
-    context.drawText(systemUIFontCascade, textRunForContent(m_textContent, style()), textOrigin);
 }
 
 void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -322,11 +305,6 @@ void RenderListMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffse
         context.translate(markerRect.x(), markerRect.maxY());
         context.rotate(static_cast<float>(deg2rad(90.)));
         context.translate(-markerRect.x(), -markerRect.maxY());
-    }
-
-    if (isDisclosureMarker()) {
-        paintDisclosureMarker(context, markerRect);
-        return;
     }
 
     if (writingMode().isHorizontal()) {
@@ -483,30 +461,7 @@ void RenderListMarker::updateContent()
         return;
     }
 
-    WTF::switchOn(style().listStyleType(),
-        [&](const CSS::Keyword::None&) {
-            m_textContent = {
-                .textWithSuffix = " "_s,
-                .textWithoutSuffixLength = 0,
-            };
-        },
-        [&](const Style::String& identifier) {
-            m_textContent = {
-                .textWithSuffix = identifier.value,
-                .textWithoutSuffixLength = identifier.value.length(),
-            };
-        },
-        [&](const Style::CounterStyle&) {
-            auto counter = counterStyle();
-            ASSERT(counter);
-
-            auto text = makeString(counter->prefix().text, counter->text(m_listItem->value(), writingMode()));
-            m_textContent = {
-                .textWithSuffix = makeString(text, counter->suffix().text),
-                .textWithoutSuffixLength = text.length(),
-            };
-        }
-    );
+    m_textContent = listMarkerTextContent(style(), *m_listItem);
 
     // The marker text is only known here (counter values resolve at layout), while the renderers
     // holding it were created from style. Push the text down so the inline formatting context has something to lay out.
@@ -563,12 +518,7 @@ void RenderListMarker::computeIntrinsicLogicalWidthContributions()
 
     ASSERT(!hasContentProperty());
 
-    std::optional<FontCascade> systemUIFontCascade;
-    // Use system-ui font for disclosure triangles
-    if (isDisclosureMarker())
-        systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
-
-    auto& font = systemUIFontCascade ? *systemUIFontCascade : style().fontCascade();
+    auto& font = style().fontCascade();
 
     LayoutUnit logicalWidth;
     if (!m_textContent.isEmpty())
@@ -584,7 +534,7 @@ void RenderListMarker::computeIntrinsicLogicalWidthContributions()
 
 void RenderListMarker::updateInlineMargins()
 {
-    constexpr int markerPadding = 7;
+    constexpr int markerPadding = listMarkerImagePadding;
     const FontMetrics& fontMetrics = style().metricsOfPrimaryFont();
 
     auto marginsForInsideMarker = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
@@ -612,25 +562,23 @@ void RenderListMarker::updateInlineMargins()
     };
 
     auto [marginStart, marginEnd] = isInside() ? marginsForInsideMarker() : marginsForOutsideMarker();
-    auto zoom = style().usedZoomForLength().value;
+    setListMarkerInlineMargins(mutableStyle(), m_listItem->writingMode(), marginStart, marginEnd);
+}
 
-    // Which side of the list item these hang the marker off follows the list item's directionality
-    // rather than the marker's own: with marker-side: match-self (its initial value) css-lists-3
-    // positions the marker box using the directionality of the ::marker's originating element.
-    // Write the edges of the parent's inline axis, which is where
-    // BoxGeometryUpdater::horizontalLogicalMargin reads them back from.
-    auto listItemWritingMode = m_listItem->writingMode();
+void setListMarkerInlineMargins(Style::ComputedStyle& markerStyle, WritingMode listItemWritingMode, LayoutUnit marginStart, LayoutUnit marginEnd)
+{
+    auto zoom = markerStyle.usedZoomForLength().value;
     auto startEdge = Style::MarginEdge::Fixed { marginStart / zoom };
     auto endEdge = Style::MarginEdge::Fixed { marginEnd / zoom };
     if (listItemWritingMode.isHorizontal()) {
         auto startIsLeft = listItemWritingMode.isInlineLeftToRight();
-        mutableStyle().setMarginLeft(startIsLeft ? startEdge : endEdge);
-        mutableStyle().setMarginRight(startIsLeft ? endEdge : startEdge);
+        markerStyle.setMarginLeft(startIsLeft ? startEdge : endEdge);
+        markerStyle.setMarginRight(startIsLeft ? endEdge : startEdge);
         return;
     }
     auto startIsTop = listItemWritingMode.isInlineTopToBottom();
-    mutableStyle().setMarginTop(startIsTop ? startEdge : endEdge);
-    mutableStyle().setMarginBottom(startIsTop ? endEdge : startEdge);
+    markerStyle.setMarginTop(startIsTop ? startEdge : endEdge);
+    markerStyle.setMarginBottom(startIsTop ? endEdge : startEdge);
 }
 
 bool RenderListMarker::isInside() const
@@ -640,12 +588,7 @@ bool RenderListMarker::isInside() const
 
 bool RenderListMarker::isDisclosureMarker() const
 {
-    auto counter = counterStyle();
-    if (!counter)
-        return false;
-    auto system = counter->system();
-    return system == CSSCounterStyleDescriptors::System::DisclosureClosed
-        || system == CSSCounterStyleDescriptors::System::DisclosureOpen;
+    return listMarkerIsDisclosure(style(), protect(document()));
 }
 
 RenderListItem* RenderListMarker::listItem() const
@@ -688,21 +631,8 @@ FloatRect RenderListMarker::relativeMarkerRect()
     if (m_textContent.isEmpty())
         return { };
 
-    FloatRect relativeRect;
-    if (isDisclosureMarker()) {
-        // Use system-ui font for disclosure triangles
-        auto systemUIFontCascade = disclosureMarkerFontCascade(style(), protect(document()));
-        auto& fontMetrics = style().metricsOfPrimaryFont();
-        auto& systemUIFontMetrics = systemUIFontCascade.metricsOfPrimaryFont();
-        auto width = systemUIFontCascade.width(textRunForContent(m_textContent, style()));
-        auto height = systemUIFontMetrics.height();
-        // Center vertically within the original font metrics
-        auto yOffset = (fontMetrics.height() - height) / 2.0f;
-        relativeRect = { 0.f, yOffset, width, height };
-    } else {
-        auto& font = style().fontCascade();
-        relativeRect = { 0.f, 0.f, font.width(textRunForContent(m_textContent, style())), font.metricsOfPrimaryFont().height() };
-    }
+    auto& font = style().fontCascade();
+    auto relativeRect = FloatRect { 0.f, 0.f, font.width(textRunForContent(m_textContent, style())), font.metricsOfPrimaryFont().height() };
 
     if (!writingMode().isHorizontal()) {
         relativeRect = relativeRect.transposedRect();
@@ -718,12 +648,61 @@ LayoutRect RenderListMarker::selectionRectForRepaint(const RenderLayerModelObjec
     return { };
 }
 
-RefPtr<CSSRegisteredCounterStyle> RenderListMarker::counterStyle() const
+static RefPtr<CSSRegisteredCounterStyle> counterStyleFor(const Style::ComputedStyle& markerStyle, Document& document)
 {
-    auto counterStyle = style().listStyleType().tryCounterStyle();
+    auto counterStyle = markerStyle.listStyleType().tryCounterStyle();
     if (!counterStyle)
         return nullptr;
-    return document().counterStyleRegistry().resolvedCounterStyle(*counterStyle);
+    return document.counterStyleRegistry().resolvedCounterStyle(*counterStyle);
+}
+
+RefPtr<CSSRegisteredCounterStyle> RenderListMarker::counterStyle() const
+{
+    return counterStyleFor(style(), protect(document()));
+}
+
+bool listMarkerIsDisclosure(const Style::ComputedStyle& markerStyle, Document& document)
+{
+    RefPtr counterStyle = counterStyleFor(markerStyle, document);
+    if (!counterStyle)
+        return false;
+    auto system = counterStyle->system();
+    return system == CSSCounterStyleDescriptors::System::DisclosureClosed || system == CSSCounterStyleDescriptors::System::DisclosureOpen;
+}
+
+bool listMarkerSynthesizesGlyph(const Style::ComputedStyle& markerStyle)
+{
+    // css-lists-3 §3.3: a non-normal `content` supersedes list-style-type, and a list-style-image draws in place of
+    // the glyph unless it failed to load, so neither leaves us a glyph to draw.
+    if (markerStyle.content().isData())
+        return false;
+    if (RefPtr image = markerStyle.listStyleImage().tryStyleImage(); image && !image->errorOccurred())
+        return false;
+
+    auto& listType = markerStyle.listStyleType();
+    return listType.isCircle() || listType.isDisc() || listType.isSquare();
+}
+
+ListMarkerTextContent listMarkerTextContent(const Style::ComputedStyle& markerStyle, RenderListItem& listItem)
+{
+    ListMarkerTextContent textContent;
+    WTF::switchOn(markerStyle.listStyleType(),
+        [&](const CSS::Keyword::None&) {
+            textContent = { .textWithSuffix = " "_s, .textWithoutSuffixLength = 0 };
+        },
+        [&](const Style::String& identifier) {
+            textContent = { .textWithSuffix = identifier.value, .textWithoutSuffixLength = identifier.value.length() };
+        },
+        [&](const Style::CounterStyle&) {
+            auto counter = counterStyleFor(markerStyle, protect(listItem.document()));
+            ASSERT(counter);
+            if (!counter)
+                return;
+            auto text = makeString(counter->prefix().text, counter->text(listItem.value(), markerStyle.writingMode()));
+            textContent = { .textWithSuffix = makeString(text, counter->suffix().text), .textWithoutSuffixLength = text.length() };
+        }
+    );
+    return textContent;
 }
 
 bool RenderListMarker::synthesizesGlyph() const

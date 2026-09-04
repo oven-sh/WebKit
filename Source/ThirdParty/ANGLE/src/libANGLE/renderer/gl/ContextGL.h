@@ -94,9 +94,6 @@ class ContextGL : public ContextImpl
     // Semaphore creation.
     SemaphoreImpl *createSemaphore() override;
 
-    // Overlay creation.
-    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
-
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
     angle::Result finish(const gl::Context *context) override;
@@ -289,8 +286,6 @@ class ContextGL : public ContextImpl
 
     void setMaxShaderCompilerThreads(GLuint count) override;
 
-    void validateState() const;
-
     void setNeedsFlushBeforeDeleteTextures();
     void flushIfNecessaryBeforeDeleteTextures();
 
@@ -307,6 +302,15 @@ class ContextGL : public ContextImpl
     void tickGC();
 
   private:
+    enum StateType
+    {
+        GlobalState,
+        VAOState,
+        Count,
+    };
+    using StateTypes = angle::BitSet<StateType::Count>;
+    void validateState(StateTypes statesToValidate);
+
     angle::Result setDrawArraysState(const gl::Context *context,
                                      GLint first,
                                      GLsizei count,

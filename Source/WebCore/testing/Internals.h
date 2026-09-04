@@ -951,6 +951,7 @@ public:
     void activeAudioRouteDidChange(bool shouldPause);
     bool NODELETE elementIsBlockingDisplaySleep(const HTMLMediaElement&) const;
     bool NODELETE isPlayerVisibleInViewport(const HTMLMediaElement&) const;
+    bool isMediaElementIntersectingViewport(const HTMLMediaElement&) const;
     bool isPlayerMuted(const HTMLMediaElement&) const;
     bool isPlayerPaused(const HTMLMediaElement&) const;
     double effectiveRate(const HTMLMediaElement&) const;
@@ -967,6 +968,7 @@ public:
     void setMockMediaPlaybackTargetPickerEnabled(bool);
     ExceptionOr<void> setMockMediaPlaybackTargetPickerState(const String& deviceName, const String& deviceState);
     void mockMediaPlaybackTargetPickerDismissPopup();
+    void mockMediaPlaybackTargetPickerRect(DOMPromiseDeferred<IDLInterface<DOMRect>>&&);
 #endif
 
     bool isMonitoringWirelessRoutes() const;
@@ -1671,6 +1673,7 @@ public:
     void setPDFDisplayModeForTesting(Element&, const String&) const;
     void unlockPDFDocumentForTesting(Element&, const String&) const;
     bool sendEditingCommandToPDFForTesting(Element&, const String& commandName, const String& argument) const;
+    Vector<String> pdfContextMenuItemTitlesForTesting(Element&, int x, int y) const;
     void registerPDFTest(Ref<VoidCallback>&&, Element&);
 
     String NODELETE defaultSpatialTrackingLabel() const;

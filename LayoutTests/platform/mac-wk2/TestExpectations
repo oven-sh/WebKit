@@ -32,6 +32,7 @@ fast/web-share [ Pass ]
 imported/w3c/web-platform-tests/web-share [ Pass ]
 media/modern-media-controls/overflow-support [ Pass ]
 http/tests/media/modern-media-controls/overflow-support [ Pass ]
+http/tests/media/media-controls-context-menu-anchor-in-iframe.html [ Pass ]
 http/tests/text-extraction [ Pass ]
 media/modern-media-controls/tracks-support [ Pass ]
 remote-layer-tree [ Pass ]
@@ -837,8 +838,6 @@ webkit.org/b/207141 [ Debug ] inspector/canvas/create-context-bitmaprenderer.htm
 
 webkit.org/b/207166 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavailable-gpuprocess.html [ Pass Failure ]
 
-webkit.org/b/228934 inspector/canvas/shaderProgram-add-remove-webgl2.html [ Pass Crash Timeout Failure ]
-
 webkit.org/b/207269 [ Debug ] http/tests/websocket/tests/hybi/server-close.html [ Pass Crash ]
 
 webkit.org/b/207465 [ Debug ] storage/indexeddb/intversion-long-queue.html [ Pass Failure ]
@@ -1075,8 +1074,6 @@ webkit.org/b/228248 fast/selectors/selection-window-inactive.html [ Pass ImageOn
 
 webkit.org/b/228256 inspector/canvas/create-context-webgl.html [ Pass Failure ]
 
-webkit.org/b/229043 inspector/canvas/recording-webgl-snapshots.html [ Pass Failure ]
-webkit.org/b/229043 inspector/canvas/recording-offscreen-webgl-snapshots.html [ Pass Failure ]
 webkit.org/b/229043 inspector/canvas/recording-bitmaprenderer-frameCount.html [ Pass Failure ]
 webkit.org/b/229043 inspector/canvas/recording-offscreen-bitmaprenderer-frameCount.html [ Pass Failure ]
 webkit.org/b/229043 inspector/canvas/recording-2d-full.html [ Pass Crash ]
@@ -1134,7 +1131,7 @@ webkit.org/b/240123 imported/w3c/web-platform-tests/webrtc/protocol/rtp-clockrat
 
 webkit.org/b/240670 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/image-loading-lazy-move-into-script-disabled-iframe.html [ Pass Crash ]
 
-webkit.org/b/240821 webgl/max-active-contexts-webglcontextlost-prevent-default.html [ Pass Failure Timeout ]
+webkit.org/b/240821 [ x86_64 ] webgl/max-active-contexts-webglcontextlost-prevent-default.html [ Pass Failure Timeout ]
 
 webkit.org/b/241265 [ Debug ] imported/w3c/web-platform-tests/html/rendering/replaced-elements/svg-embedded-sizing/svg-in-object-percentage.html [ Pass Crash ]
 
@@ -1717,10 +1714,6 @@ webkit.org/b/288603 imported/w3c/web-platform-tests/screen-orientation/hidden_do
 
 webkit.org/b/288613 [ Sonoma+ ] pdf/pdf-in-embed-with-root-page-zoom.html [ Pass Timeout Failure ]
 
-# webkit.org/b/288642 [Sonoma H Release x86_64 EWS ] webgl/1.0.x/conformance/glsl/bugs/sampler-array-using-loop-index.html and webgl/2.0.y/conformance/glsl/bugs/sampler-array-using-loop-index.html failure
-[ Sonoma Release x86_64 ] webgl/1.0.x/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Skip ]
-[ Sonoma Release x86_64 ] webgl/2.0.y/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Skip ]
-
 webkit.org/b/288660 [ Sonoma Release x86_64 ] media/media-hevc-video-as-img.html [ Skip ]
 
 # webkit.org/b/280189 [EWS] imported/w3c/web-platform-tests/webcodecs/videoFrame-construction.any.html is a constant failure on Ventura+ Intel EWS
@@ -1857,7 +1850,9 @@ webkit.org/b/295743 [ Debug ] media/video-display-aspect-ratio.html [ Pass Failu
 # FIXME: Needs bug.
 http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-with-unfiltered-link-decoration-before-short-deletion.html [ Failure ]
 
-webkit.org/b/295756 [ arm64 ] webgl/2.0.y/conformance2/rendering/texture-switch-performance.html  [ Pass Failure ]
+webkit.org/b/295756 webgl/1.0.x/conformance/rendering/texture-switch-performance.html [ Pass Failure ]
+webkit.org/b/295756 webgl/2.0.y/conformance/rendering/texture-switch-performance.html [ Pass Failure ]
+webkit.org/b/295756 webgl/2.0.y/conformance2/rendering/texture-switch-performance.html [ Pass Failure ]
 
 webkit.org/b/295814 [ arm64 ] scrollingcoordinator/mac/latching/horizontal-overflow-back-swipe.html [ Pass Timeout ]
 
@@ -1924,7 +1919,6 @@ apple-visual-effects/apple-visual-effect-automatic-vibrancy.html [ Slow ]
 applicationmanifest/developer-warnings.html [ Slow ]
 compositing/animation/animated-composited-inside-hidden.html [ Slow ]
 compositing/backface-visibility/backface-visibility-3d.html [ Slow ]
-fast/mediacapturefromelement/CanvasCaptureMediaStream-offscreencanvas.html [ Pass Timeout Failure ]
 http/tests/privateClickMeasurement/attribution-conversion-through-image-redirect-in-new-window.html [ Timeout ]
 http/tests/security/isolatedWorld/userGestureEvents.html [ Pass Timeout ]
 imported/w3c/web-platform-tests/digital-credentials/create.disabled-by-permissions-policy.https.sub.html [ Slow ]
@@ -2189,10 +2183,6 @@ webkit.org/b/310302 imported/w3c/web-platform-tests/uievents/mouse/mouse_boundar
 http/tests/site-isolation/inspector/debugger/scriptParsed-frame-target.html [ Skip ]
 http/tests/site-isolation/inspector/debugger/pause-in-cross-origin-iframe.html [ Skip ]
 http/tests/site-isolation/inspector/debugger/setBreakpoint-cross-origin-iframe.html [ Skip ]
-# These await a cross-origin FrameTarget (TargetAdded) that never fires with Site Isolation off, so
-# they time out on this bot. They run (expected Pass) on platform/mac-site-isolation.
-http/tests/site-isolation/inspector/storage/storage-get-cookies-cross-origin-iframe.html [ Skip ]
-http/tests/site-isolation/inspector/storage/storage-frontend-gate.html [ Skip ]
 http/tests/site-isolation/inspector/page/override-setting-cross-origin-iframe.html [ Pass Failure ]
 webkit.org/b/311836 http/tests/site-isolation/inspector/page/set-emulated-media-cross-origin-iframe.html [ Pass Failure ]
 
@@ -2471,21 +2461,21 @@ webkit.org/b/322051 [ Release ] media/picture-in-picture/picture-in-picture-inte
 [ Tahoe+ ] http/tests/storageAccess/request-and-grant-access-cross-origin-sandboxed-iframe-from-prevalent-domain-with-user-interaction-and-access-from-right-frame.https.html [ Failure ]
 [ Tahoe+ ] http/tests/storageAccess/request-and-grant-access-cross-origin-sandboxed-iframe-from-prevalent-domain-with-user-interaction-but-access-from-wrong-frame.https.html [ Failure ]
 
-webkit.org/b/321323 [ Tahoe+ ] http/tests/websocket/tests/hybi/inspector/before-load.html [ Failure ]
-
-# webkit.org/b/322840 REGRESSION(318498@main): [Tahoe] 11 imported/w3c/web-platform-tests/encrypted-media/drm-mp4 tests are a constant CRASH
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-encrypted-clear-sources.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-playduration.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-setMediaKeys-after-update.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-setMediaKeys-immediately.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-setMediaKeys-onencrypted.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-two-videos.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-waitingforkey.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-setmediakeys-again-after-playback.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-setmediakeys-again-after-resetting-src.https.html [ Failure Crash ]
-[ Tahoe Debug ] imported/w3c/web-platform-tests/encrypted-media/drm-mp4-waiting-for-a-key.https.html [ Failure Crash ]
+# webkit.org/b/323152 [Tahoe DEBUG arm64] 11x imported/w3c/web-platform-tests/encrypted-media/drm-mp4-* (layout-tests) are constant crashes.
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-encrypted-clear-sources.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-playduration.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-setMediaKeys-after-update.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-setMediaKeys-immediately.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-setMediaKeys-onencrypted.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-two-videos.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary-waitingforkey.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-playback-temporary.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-setmediakeys-again-after-playback.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-setmediakeys-again-after-resetting-src.https.html [ Failure Crash ]
+imported/w3c/web-platform-tests/encrypted-media/drm-mp4-waiting-for-a-key.https.html [ Failure Crash ]
 
 webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-001.html [ Crash ]
 webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-004.html [ Crash ]
 webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-005.html [ Crash ]
+
+webkit.org/b/323246 [ Debug x86_64 ] accessibility/isolated-tree/canvas-fallback-content-2.html [ Timeout Pass ]

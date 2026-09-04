@@ -1814,6 +1814,7 @@ fast/canvas/webgl/texImage2D-video-flipY-true.html [ Skip ]
 webgl/1.0.x/conformance/extensions/oes-texture-float-with-video.html [ Skip ]
 webgl/1.0.x/conformance/extensions/oes-texture-half-float-with-video.html [ Skip ]
 webgl/1.0.x/conformance/textures/image_bitmap_from_video [ Skip ]
+webkit.org/b/292182 webgl/1.0.x/conformance/textures/misc/tex-video-using-tex-unit-non-zero.html [ Failure Pass ]
 webgl/1.0.x/conformance/textures/misc/texture-npot-video.html [ Skip ]
 webgl/1.0.x/conformance/textures/misc/texture-upload-size.html [ Skip ]
 webgl/1.0.x/conformance/textures/misc/video-rotation.html [ Skip ]
@@ -4682,7 +4683,7 @@ imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getAttrib
 imported/w3c/web-platform-tests/trusted-types/set-event-handlers-content-attributes.tentative.html [ Failure ]
 
 # Expected localhost URLs but got web-platform.test URLs
-imported/w3c/web-platform-tests/css/css-mixins/function-attr.html [ Failure ]
+imported/w3c/web-platform-tests/css/css-mixins/functions/function-attr.html [ Failure ]
 
 # Flaky crash due to running out of commit space due to 4GB wasm memory
 webgl/2.0.y/conformance2/wasm/teximage2d-2gb-in-4gb-wasm-memory.html [ Skip ]

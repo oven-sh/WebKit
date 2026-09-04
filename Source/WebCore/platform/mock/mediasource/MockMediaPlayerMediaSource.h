@@ -68,6 +68,7 @@ public:
     MediaPlayer::ReadyState readyState() const override;
     void readyStateFromMediaSourceChanged() final;
     void characteristicsFromMediaSourceChanged() final;
+    void seekableRangesFromMediaSourceChanged() final;
     void setNetworkState(MediaPlayer::NetworkState);
 
 #if !RELEASE_LOG_DISABLED
@@ -100,7 +101,7 @@ private:
     void paint(GraphicsContext&, const FloatRect&) override;
     MediaTime duration() const override;
     std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() override;
-    DestinationColorSpace colorSpace() override;
+    ColorSpace colorSpace() override;
 
     ThreadSafeWeakPtr<MediaPlayer> m_player;
     RefPtr<MockMediaSourcePrivate> m_mediaSourcePrivate;

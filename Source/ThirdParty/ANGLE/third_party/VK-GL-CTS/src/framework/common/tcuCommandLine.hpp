@@ -373,6 +373,9 @@ public:
     //! Prefix for offline pipeline compiler input files
     const char *getPipelineCompilerFilePrefix(void) const;
 
+    //! TCP port used for main process<->subprocess IPC (0 if not set; assigned automatically by the main process)
+    int getIPCPort(void) const;
+
     // Print logs of video operations to stdout
     bool getVideoLogPrint(void) const;
 
@@ -387,9 +390,6 @@ public:
 
     //! File that provides a default set of application parameters
     const char *getAppParamsInputFilePath(void) const;
-
-    //! Perform tests for devices implementing compute-only functionality
-    bool isComputeOnly(void) const;
 
     //! Allows you to use vendor-specific configuration
     bool isVendorSpecific() const;

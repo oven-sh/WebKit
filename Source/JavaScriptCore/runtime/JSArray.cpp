@@ -30,6 +30,7 @@
 #include "PropertyNameArray.h"
 #include "ResourceExhaustion.h"
 #include "ScopedArguments.h"
+#include "StringRecursionChecker.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
 #include "VMInlines.h"
@@ -1056,6 +1057,12 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
 
     unsigned length = this->length();
 
+#if USE(BUN_JSC_ADDITIONS)
+    StringRecursionChecker checker(globalObject, this);
+    EXCEPTION_ASSERT(!scope.exception() || checker.earlyReturnValue());
+    if (JSValue earlyReturnValue = checker.earlyReturnValue())
+        return jsEmptyString(vm);
+#else
     // JSObject::toPrimitive and JSObject::toString call this directly instead of going through
     // Interpreter::executeCall, so an array nested in itself recurses here without ever crossing a
     // call frame that would perform the usual stack check.
@@ -1063,6 +1070,7 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
         throwStackOverflowError(globalObject, scope);
         return nullptr;
     }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     if (canUseFastArrayJoin(this)) [[likely]] {
         const Latin1Character comma = ',';
@@ -1974,29 +1982,32 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
 
 void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& args)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     unsigned i = 0;
     unsigned vectorEnd;
     WriteBarrier<Unknown>* vector;
 
     Butterfly* butterfly = this->butterfly();
-    
+
     switch (indexingType()) {
     case ArrayClass:
         return;
-        
+
     case ArrayWithUndecided: {
         vector = nullptr;
         vectorEnd = 0;
         break;
     }
-        
+
     case ArrayWithInt32:
     case ArrayWithContiguous: {
         vectorEnd = butterfly->publicLength();
         vector = butterfly->contiguous().data();
         break;
     }
-        
+
     case ArrayWithDouble: {
         vector = nullptr;
         vectorEnd = 0;
@@ -2008,15 +2019,15 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
         }
         break;
     }
-    
+
     case ARRAY_WITH_ARRAY_STORAGE_INDEXING_TYPES: {
         ArrayStorage* storage = butterfly->arrayStorage();
-        
+
         vector = storage->m_vector;
         vectorEnd = std::min(storage->length(), storage->vectorLength());
         break;
     }
-        
+
     default:
         CRASH();
 #if COMPILER_QUIRK(CONSIDERS_UNREACHABLE_CODE)
@@ -2025,7 +2036,7 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
         break;
 #endif
     }
-    
+
     for (; i < vectorEnd; ++i) {
         WriteBarrier<Unknown>& v = vector[i];
         if (!v)
@@ -2034,8 +2045,11 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
     }
 
     // FIXME: What prevents this from being called with a RuntimeArray? The length function will always return 0 in that case.
-    for (; i < length(); ++i)
-        args.append(get(globalObject, i));
+    for (; i < length(); ++i) {
+        JSValue value = get(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, void());
+        args.append(value);
+    }
 }
 
 void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElementDest, unsigned offset, unsigned length)

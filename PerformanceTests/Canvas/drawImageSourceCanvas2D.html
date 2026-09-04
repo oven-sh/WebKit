@@ -13,13 +13,13 @@ canvas {
 <script>
 source.width = 2000;
 source.height = 2000;
-var ctx1 = source.getContext("2d");
-ctx1.globalCompositeOperation = "copy";
+var ctx1 = source.getContext("2d", {willReadFrequently: false});
+//ctx1.globalCompositeOperation = "copy";
 
 target.width = source.width;
 target.height = source.height;
-var ctx2 = target.getContext("2d");
-ctx2.globalCompositeOperation = "copy";
+var ctx2 = target.getContext("2d", {willReadFrequently: false});
+//ctx2.globalCompositeOperation = "copy";
 var isDone = false;
 PerfTestRunner.prepareToMeasureValuesAsync({ done: done, unit: 'ms' });
 function done() {

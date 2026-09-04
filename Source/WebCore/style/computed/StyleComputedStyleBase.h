@@ -107,7 +107,6 @@ enum class FillAttachment : uint8_t;
 enum class FillBox : uint8_t;
 enum class FillSizeType : uint8_t;
 enum class FlexDirection : uint8_t;
-enum class FlexWrap : uint8_t;
 enum class Float : uint8_t;
 enum class FontOpticalSizing : bool;
 enum class FontOrientation : bool;
@@ -143,7 +142,7 @@ enum class Order : bool;
 enum class OutlineStyle : uint8_t;
 enum class Overflow : uint8_t;
 enum class OverflowAnchor : bool;
-enum class OverflowContinue : bool;
+enum class OverflowContinue : uint8_t;
 enum class OverflowWrap : uint8_t;
 enum class OverscrollBehavior : uint8_t;
 enum class PaginationMode : uint8_t;
@@ -256,6 +255,7 @@ struct DynamicRangeLimit;
 struct Filter;
 struct FitTolerance;
 struct FlexBasis;
+struct FlexWrap;
 struct FontFamilies;
 struct FontFamiliesView;
 struct FontFeatureSettings;
@@ -483,8 +483,8 @@ public:
     inline InsideLink insideLink() const;
     inline void setInsideLink(InsideLink);
 
-    inline bool colorIsCurrentColorForHighlight() const;
-    inline void setColorIsCurrentColorForHighlight(bool);
+    inline const Color& colorForHighlight() const;
+    inline void setColorForHighlight(Color&&);
 
     inline bool isLink() const;
     inline void setIsLink(bool);
@@ -655,7 +655,7 @@ public:
     WEBCORE_EXPORT const Font& primaryFont() const LIFETIME_BOUND;
     WEBCORE_EXPORT const FontMetrics& metricsOfPrimaryFont() const LIFETIME_BOUND;
     std::pair<FontOrientation, NonCJKGlyphOrientation> NODELETE fontAndGlyphOrientation();
-    float NODELETE computedFontSize() const;
+    float NODELETE usedFontSize() const;
     inline WebkitLocale computedLocale() const;
     const LineHeight& NODELETE specifiedLineHeight() const;
 #if ENABLE(TEXT_AUTOSIZING)

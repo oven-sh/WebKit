@@ -184,7 +184,7 @@ public:
     void setPresentationSize(const IntSize&) final { }
 
     void paint(GraphicsContext&, const FloatRect&) final { }
-    DestinationColorSpace colorSpace() final { return DestinationColorSpace::SRGB(); }
+    ColorSpace colorSpace() final { return ColorSpace::SRGB(); }
 private:
     explicit NullMediaPlayerPrivate(MediaPlayer&) { }
 };
@@ -247,7 +247,7 @@ public:
     ThreadSafeWeakPtrControlBlock& controlBlock() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::controlBlock(); }
     uint32_t weakRefCount() const final { return ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::weakRefCount(); }
 private:
-    void sendH2Ping(const URL&, CompletionHandler<void(Expected<Seconds, ResourceError>&&)>&& completionHandler) final
+    void sendH2Ping(const URL&, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&& completionHandler) final
     {
         completionHandler(makeUnexpected(ResourceError { }));
     }
@@ -1250,7 +1250,7 @@ Ref<MediaPlayer::BitmapImagePromise> MediaPlayer::bitmapImageForCurrentTime()
     return protect(m_private)->bitmapImageForCurrentTime();
 }
 
-DestinationColorSpace MediaPlayer::colorSpace()
+ColorSpace MediaPlayer::colorSpace()
 {
     return protect(m_private)->colorSpace();
 }
@@ -2039,6 +2039,11 @@ void MediaPlayer::audioOutputDeviceChanged()
 std::optional<MediaPlayerIdentifier> MediaPlayer::identifier() const
 {
     return protect(m_private)->identifier();
+}
+
+bool MediaPlayer::isHostedInGPUProcess() const
+{
+    return protect(m_private)->mediaPlayerType() == MediaPlayerType::Remote;
 }
 
 std::optional<VideoFrameMetadata> MediaPlayer::videoFrameMetadata()

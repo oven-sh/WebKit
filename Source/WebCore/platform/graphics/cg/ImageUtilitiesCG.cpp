@@ -175,7 +175,7 @@ String descriptionString(ImageDecodingError error)
     return "Unkown error"_s;
 }
 
-Expected<std::pair<String, Vector<IntSize>>, ImageDecodingError> utiAndAvailableSizesFromImageData(std::span<const uint8_t> data)
+std::expected<std::pair<String, Vector<IntSize>>, ImageDecodingError> utiAndAvailableSizesFromImageData(std::span<const uint8_t> data)
 {
     Ref buffer = SharedBuffer::create(data);
     Ref imageDecoder = ImageDecoderCG::create(buffer.get(), AlphaOption::Premultiplied, GammaAndColorProfileOption::Applied);
@@ -200,7 +200,7 @@ Expected<std::pair<String, Vector<IntSize>>, ImageDecodingError> utiAndAvailable
     return std::make_pair(WTF::move(uti), WTF::move(sizes));
 }
 
-Expected<Vector<std::pair<String, float>>, ImageDecodingError> imageMetadataFromImageData(std::span<const uint8_t> data)
+std::expected<Vector<std::pair<String, float>>, ImageDecodingError> imageMetadataFromImageData(std::span<const uint8_t> data)
 {
     Ref buffer = SharedBuffer::create(data);
     Ref bitmapImage = BitmapImage::create();
@@ -277,7 +277,7 @@ static Vector<Ref<ShareableBitmap>> createBitmapsFromNativeImage(NativeImage& im
     Vector<Ref<ShareableBitmap>> bitmaps;
     auto sourceColorSpace = image.colorSpace();
     // The conversion could lead to loss of HDR contents.
-    auto destinationColorSpace = sourceColorSpace.supportsOutput() ? sourceColorSpace : DestinationColorSpace::SRGB();
+    auto destinationColorSpace = sourceColorSpace.supportsOutput() ? sourceColorSpace : ColorSpace::SRGB();
     for (auto length : lengths) {
         RefPtr bitmap = ShareableBitmap::createFromImageDraw(image, destinationColorSpace, { (int)length, (int)length }, image.size());
         if (!bitmap)
@@ -291,11 +291,11 @@ static Vector<Ref<ShareableBitmap>> createBitmapsFromNativeImage(NativeImage& im
 
 static RefPtr<NativeImage> createNativeImageFromSVGImage(SVGImage& image, const IntSize& size)
 {
-    RefPtr buffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    RefPtr buffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!buffer)
         return nullptr;
 
-    Ref svgImageContainer = SVGImageForContainer::create(&image, size, 1, { });
+    Ref svgImageContainer = SVGImageForContainer::create(&image, { .containerSize = size });
     buffer->context().drawImage(svgImageContainer.get(), FloatPoint::zero());
 
     return ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
@@ -310,7 +310,7 @@ static Vector<Ref<ShareableBitmap>> createBitmapsFromSVGImage(SVGImage& image, s
         if (!nativeImage)
             return { };
 
-        RefPtr bitmap = ShareableBitmap::createFromImageDraw(*nativeImage, DestinationColorSpace::SRGB());
+        RefPtr bitmap = ShareableBitmap::createFromImageDraw(*nativeImage, ColorSpace::SRGB());
         if (!bitmap)
             return { };
 
@@ -373,7 +373,7 @@ void decodeImageWithSize(std::span<const uint8_t> data, std::optional<FloatSize>
         }
 
         auto sourceColorSpace = nativeImage->colorSpace();
-        auto destinationColorSpace = sourceColorSpace.supportsOutput() ? sourceColorSpace : DestinationColorSpace::SRGB();
+        auto destinationColorSpace = sourceColorSpace.supportsOutput() ? sourceColorSpace : ColorSpace::SRGB();
         RefPtr bitmap = ShareableBitmap::create({ nativeImage->size(), destinationColorSpace });
         if (!bitmap) {
             completionHandler(nullptr);

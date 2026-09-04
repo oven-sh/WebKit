@@ -753,7 +753,7 @@ bool consumePageDescriptor(CSSParserTokenRange& range, const CSSParserContext& c
             return false;
 
         // Portrait is the default and should not be serialized.
-        if (property == CSSPropertySize) {
+        if (property == CSSPropertyPageSize) {
             RefPtr pair = dynamicDowncast<CSSValuePair>(parsedValue);
             if (pair && valueID(pair->second()) == CSSValuePortrait)
                 parsedValue = &pair->first();
@@ -762,6 +762,10 @@ bool consumePageDescriptor(CSSParserTokenRange& range, const CSSParserContext& c
         result.addProperty(state, property, CSSPropertyInvalid, WTF::move(parsedValue), IsImportant::No);
         return true;
     }
+
+    // Don't fall back to parsing `size` as the width/height shorthand inside @page.
+    if (property == CSSPropertyPageSize)
+        return false;
 
     return consumeStyleProperty(range, context, property, important, StyleRuleType::Page, result);
 }

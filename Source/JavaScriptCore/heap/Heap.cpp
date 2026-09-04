@@ -375,7 +375,6 @@ Heap::Heap(VM& vm, HeapType heapType)
     , callbackObjectHeapCellType(IsoHeapCellType::Args<JSCallbackObject<JSNonFinalObject>>())
     , customGetterFunctionHeapCellType(IsoHeapCellType::Args<JSCustomGetterFunction>())
     , customSetterFunctionHeapCellType(IsoHeapCellType::Args<JSCustomSetterFunction>())
-    , dateInstanceHeapCellType(IsoHeapCellType::Args<DateInstance>())
     , errorInstanceHeapCellType(IsoHeapCellType::Args<ErrorInstance>())
     , finalizationRegistryCellType(IsoHeapCellType::Args<JSFinalizationRegistry>())
     , globalLexicalEnvironmentHeapCellType(IsoHeapCellType::Args<JSGlobalLexicalEnvironment>())
@@ -2755,6 +2754,9 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
 constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_totalBytesAllocated += bytes;
+#endif
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversidedAllocationThisCycle = bytes;
