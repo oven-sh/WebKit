@@ -88,9 +88,23 @@ JSCellButterfly* JSCellButterfly::createFromClonedArguments(JSGlobalObject* glob
 
     IndexingType indexingType = arguments->indexingType() & IndexingShapeMask;
     if (indexingType == ContiguousShape) {
+        Butterfly* butterfly;
+        if (Options::useJSThreads()) [[unlikely]] {
+            // Another thread can segment the storage at any time, and
+            // butterfly() must not decode a segmented word. So the elements
+            // are read through one load of the word, within that butterfly's
+            // own vectorLength, as in ClonedArguments::copyToArguments. A
+            // segmented or empty word takes the generic spread.
+            uint64_t word = arguments->taggedButterflyWord();
+            if (isSegmentedButterfly(word) || !(word & butterflyPointerMask))
+                return nullptr;
+            butterfly = untaggedButterfly(word);
+            vectorLength = butterfly->vectorLength();
+        } else
+            butterfly = arguments->butterfly();
         // Since |length| is not tightly coupled with butterfly, it is possible that |length| is larger than vectorLength.
         for (unsigned i = 0; i < std::min(length, vectorLength); i++) {
-            JSValue value = arguments->butterfly()->contiguous().at(arguments, i).get();
+            JSValue value = butterfly->contiguous().at(arguments, i).get();
             value = !!value ? value : jsUndefined();
             result->setIndex(vm, i, value);
         }

@@ -212,6 +212,8 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 slowCases.append(branchTest8(NonZero, Address(valueGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
                 loadPtr(Address(valueGPR, JSArrayBufferView::offsetOfVector()), scratchGPR);
                 slowCases.append(branchTestPtr(Zero, scratchGPR));
+                if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+                    slowCases.append(branchTest8(NonZero, Address(valueGPR, JSArrayBufferView::offsetOfDetachedKeepingVector())));
                 cageTypedArrayStorage(valueGPR, scratchGPR);
                 store64(scratchGPR, slotAddress);
             };

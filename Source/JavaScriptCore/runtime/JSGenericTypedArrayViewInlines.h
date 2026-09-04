@@ -331,11 +331,11 @@ bool JSGenericTypedArrayView<Adaptor>::setFromTypedArray(JSGlobalObject* globalO
         if (vm.gilOffWithProcessGate()) [[unlikely]] {
             // GIL-off, both ranges may be raced by other JS threads, so the bulk
             // memmove is replaced by relaxed lane copies in memmove order. A detach
-            // on another thread clears a view's base word with no stop, so a base
-            // loaded after the bounds proof can be null; skipping the copy is the
-            // lost write that race is allowed to produce. A base observed non-null
-            // stays mapped through the next stop, so a stale length is only a
-            // value race. Flag-off/GIL-on keeps the memmove.
+            // on another thread can land after the bounds proof. Then the base is
+            // null, and skipping the copy is the lost write that race is allowed to
+            // produce, or it is the old base, whose mapping stays until the next
+            // stop (JSArrayBufferView::detachKeepsVector()), so a stale length is
+            // only a value race. Flag-off/GIL-on keeps the memmove.
             if (!dstBase || !srcBase)
                 return true;
             typename Adaptor::Type* dst = dstBase + offset;
@@ -1079,12 +1079,12 @@ template<typename Adaptor> inline bool JSGenericTypedArrayView<Adaptor>::canSetI
 template<typename Adaptor> inline typename Adaptor::Type JSGenericTypedArrayView<Adaptor>::getIndexQuicklyAsNativeValue(size_t i) const
 {
     // GIL-off, the caller's bounds proof and this access are separate fetches of
-    // the view's {length, base} pair, and a detach on another thread clears the
-    // base word with no stop. The base is loaded once and is the only base
-    // dereferenced: null means a detach raced and reads as the zero element; a
-    // base observed non-null stays mapped through the next stop, so a stale
-    // length is only a value race. Flag-off/GIL-on pays one predicted-false
-    // Config-page byte test before the original load.
+    // the view's {length, base} pair, and a detach on another thread can land
+    // between them. The base is loaded once and is the only base dereferenced.
+    // Null means the detach won and reads as the zero element. The old base
+    // stays mapped until the next stop, so a stale length is only a value race.
+    // Flag-off/GIL-on pays one predicted-false Config-page byte test before the
+    // original load.
     const typename Adaptor::Type* vector = typedVector();
     if (g_jscConfig.gilOffProcess) [[unlikely]] {
         if (!vector || !inBounds(i)) [[unlikely]]
@@ -1195,9 +1195,10 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     // In-place std::sort needs lanes no other thread writes; GIL-off any view can
     // be reached from another mutator, so GIL-off always sorts a private copy
     // moved in and out with relaxed lane accesses. The span's base is the single
-    // base snapshot this function dereferences: GIL-off a detach on another
-    // thread clears the base word with no stop, so it can be null despite the
-    // detach check above, and the sort then fails as detached. Flag-off/GIL-on
+    // base snapshot this function dereferences. GIL-off, a detach on another
+    // thread can land after the detach check above. Then the base is null and
+    // the sort fails as detached, or it is the old base, whose mapping stays
+    // until the next stop. Flag-off/GIL-on
     // keeps the in-place sort and the bulk copies behind one predicted-false
     // Config-page byte test.
     bool mustCopyOut = isShared();
