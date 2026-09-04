@@ -374,11 +374,10 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JSGlobalO
 
         typename ViewClass::ElementType* array = thisObject->typedVector();
         if (vm.gilOffWithProcessGate()) [[unlikely]] {
-            // GIL-off, a detach on another thread clears the view's base word
-            // with no stop, so the base loaded after the length re-check can be
-            // null; dropping the copy is the lost write that race is allowed to
-            // produce. A base observed non-null stays mapped through the next
-            // stop, so its lanes may be raced but never unmapped: relaxed lane
+            // GIL-off, a detach on another thread can land after the length
+            // re-check. Then the base is null, and dropping the copy is the lost
+            // write that race is allowed to produce, or it is the old base, whose
+            // mapping stays until the next stop. The lanes may be raced but never unmapped: relaxed lane
             // copies in memmove order replace the bulk memmove. Flag-off/GIL-on
             // keeps the memmove behind one predicted-false Config-page test.
             if (!array)
@@ -562,9 +561,10 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGlobalObj
 
     scope.assertNoExceptionExceptTermination();
     // The base snapshot is null exactly when the view is detached, and it is the
-    // only base the search dereferences. GIL-off, a detach on another thread
-    // clears the base word with no stop, so it can be null despite the length
-    // re-check above; the search then finds nothing, as on a detached view.
+    // only base the search dereferences. GIL-off, a detach on another thread can
+    // land after the length re-check above. Then the search finds nothing, as on
+    // a detached view, or reads the old base, whose mapping stays until the next
+    // stop.
     if (!array) [[unlikely]]
         return JSValue::encode(jsBoolean(false));
 
@@ -737,11 +737,11 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobalObject*
     typename ViewClass::ElementType* underlyingVector = thisObject->typedVector();
     ASSERT_UNUSED(count, count <= length);
 
-    // GIL-off, a detach on another thread clears the view's base word with no
-    // stop, so the base loaded after the length re-check can be null; dropping
-    // the fill is the lost write that race is allowed to produce. A base observed
-    // non-null stays mapped through the next stop, so its lanes may be raced but
-    // never unmapped: relaxed lane stores replace the bulk memset/std::fill.
+    // GIL-off, a detach on another thread can land after the length re-check.
+    // Then the base is null, and dropping the fill is the lost write that race
+    // is allowed to produce, or it is the old base, whose mapping stays until the
+    // next stop. The lanes may be raced but never unmapped: relaxed lane stores
+    // replace the bulk memset/std::fill.
     // Flag-off/GIL-on keeps the bulk paths behind one predicted-false
     // Config-page test.
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
@@ -1663,11 +1663,11 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlobalObje
 
     typename ViewClass::ElementType* array = thisObject->typedVector();
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
-        // A detach on another thread clears the view's base word with no stop, so
-        // the base can be null despite the validation above; dropping the reverse
-        // is the lost write that race is allowed to produce. A base observed
-        // non-null stays mapped through the next stop, so its lanes may be raced
-        // but never unmapped: relaxed lane swaps replace the bulk std::reverse.
+        // A detach on another thread can land after the validation above. Then
+        // the base is null, and dropping the reverse is the lost write that race
+        // is allowed to produce, or it is the old base, whose mapping stays until
+        // the next stop. The lanes may be raced but never unmapped: relaxed lane
+        // swaps replace the bulk std::reverse.
         // Flag-off/GIL-on keeps std::reverse behind one predicted-false
         // Config-page test.
         if (!array)
@@ -1741,11 +1741,12 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
     if (length < 2)
         return JSValue::encode(thisObject);
 
-    // GIL-off, a detach on another thread clears the view's base word with no
-    // stop, so the span's base can be null despite the validation above; the sort
-    // then fails as detached, like the comparator-less sort(). A base observed
-    // non-null stays mapped through the next stop (the Vector below is malloc'd,
-    // not a GC allocation), so its lanes may be raced but never unmapped: relaxed
+    // GIL-off, a detach on another thread can land after the validation above.
+    // Then the span's base is null and the sort fails as detached, like the
+    // comparator-less sort(), or it is the old base, whose mapping stays until
+    // the next stop. Nothing below can stop the world before the copy-in (the
+    // Vector is malloc'd, not a GC allocation), so the lanes may be raced but
+    // never unmapped: relaxed
     // lane loads replace the bulk copy-in. Flag-off/GIL-on keeps the bulk copy
     // behind one predicted-false Config-page test.
     if (vm.gilOffWithProcessGate() && !originalSpan.data()) [[unlikely]]
@@ -1814,10 +1815,11 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
     // The comparator may trigger FastTypedArray -> WastefulTypedArray transition via .buffer access,
     // which relocates the backing store. Do not reuse originalSpan here.
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
-        // A detach on another thread can clear the base word after the check
-        // above, so the base loaded here is the only one written through: null
-        // drops the write-back, which is the lost write that race is allowed to
-        // produce. Relaxed lane stores replace the bulk copy-back.
+        // A detach on another thread can land after the check above. Then the
+        // base loaded here is null, and dropping the write-back is the lost
+        // write that race is allowed to produce, or it is the old base, whose
+        // mapping stays until the next stop. Relaxed lane stores replace the
+        // bulk copy-back.
         auto* destination = thisObject->typedVector();
         if (!destination)
             return JSValue::encode(thisObject);

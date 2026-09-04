@@ -1906,6 +1906,10 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
     // thread-local object on the fast path; world stopped on the shared path).
     const bool objectIsSegmented = Options::useJSThreads() && isSegmentedButterfly(object->taggedButterflyWord());
 
+    // The DeferGC precedes the cell lock (O1): the GCSafeConcurrentJSLocker
+    // below would otherwise end its own deferral under that lock, and the
+    // release can conduct a collection whose markers take the lock.
+    DeferGC deferGC(vm);
     Locker<JSCellLock> cellLocker(NoLockingNecessary);
 
     PropertyTable* table = nullptr;

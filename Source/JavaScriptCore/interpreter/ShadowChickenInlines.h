@@ -35,6 +35,20 @@ void ShadowChicken::iterate(VM& vm, CallFrame* callFrame, const Functor& functor
 {
     DeferGC deferGC(vm);
 
+    if (isSpawnedThreadGILOff(vm)) [[unlikely]] {
+        Vector<Frame> frames;
+        StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
+            if (!visitor->isInlinedDFGFrame() && !visitor->isNativeCalleeFrame())
+                frames.append(Frame(uncheckedDowncast<JSObject>(visitor->callee().asCell()), visitor->callFrame(), false));
+            return IterationStatus::Continue;
+        });
+        for (const Frame& frame : frames) {
+            if (!functor(frame))
+                break;
+        }
+        return;
+    }
+
     update(vm, callFrame);
     
     for (unsigned i = m_stack.size(); i--;) {

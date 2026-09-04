@@ -39,6 +39,12 @@
 #                                  normally. Annotate ONLY tests whose
 #                                  GIL-off failure is deterministic; a
 #                                  flaky race pin would flap XFAIL/XPASS.
+#   //@ threadsEnv("NAME=value", ...)
+#                                  set these environment variables for
+#                                  every run of the file (for example
+#                                  GIGACAGE_ENABLED=0, so that a wild
+#                                  access faults instead of landing in
+#                                  the cage)
 #   //@ threadsRequireGILOff
 #                                  the test waits for another thread by
 #                                  spinning on shared state. GIL-on, threads
@@ -465,6 +471,20 @@ file_expectfail_giloff() { # $1 = file
     return 1
 }
 
+# ---- threadsEnv support ----
+# Fills FILE_ENV with the NAME=value words of the file's threadsEnv directives.
+file_env() { # $1 = file
+    FILE_ENV=()
+    local line word
+    while IFS= read -r line; do
+        [[ "$line" == "//@"* ]] || return 0
+        [[ "$line" == '//@ threadsEnv('* ]] || continue
+        while IFS= read -r word; do
+            FILE_ENV+=("$word")
+        done < <(grep -o '"[^"]*"' <<<"$line" | tr -d '"')
+    done < "$1"
+}
+
 # ---- threadsRequireGILOff support ----
 file_requires_giloff() { # $1 = file
     local line
@@ -532,14 +552,14 @@ run_one() { # file, args...
         for opt in "$@"; do
             aargs+=(--jsc-arg "$opt")
         done
-        "$AMPLIFY_SH" ${aargs[@]+"${aargs[@]}"} "$JSC" "$file" >"$TMP_OUT" 2>&1
+        env ${FILE_ENV[@]+"${FILE_ENV[@]}"} "$AMPLIFY_SH" ${aargs[@]+"${aargs[@]}"} "$JSC" "$file" >"$TMP_OUT" 2>&1
         return $?
     fi
     if [[ "$AMPLIFY" -eq 1 && "$WARNED_NO_AMPLIFY" -eq 0 ]]; then
         echo "run-tests: warning: $AMPLIFY_SH not found/executable; running plain" >&2
         WARNED_NO_AMPLIFY=1
     fi
-    ${TIMEOUT_WRAP[@]+"${TIMEOUT_WRAP[@]}"} "$JSC" "$@" "$file" >"$TMP_OUT" 2>&1
+    ${TIMEOUT_WRAP[@]+"${TIMEOUT_WRAP[@]}"} env ${FILE_ENV[@]+"${FILE_ENV[@]}"} "$JSC" "$@" "$file" >"$TMP_OUT" 2>&1
     local status=$?
     if [[ ${#TIMEOUT_WRAP[@]} -gt 0 && ( $status -eq 124 || $status -eq 137 ) ]]; then
         echo "run-tests: TIMEOUT after ${TEST_TIMEOUT_SECS}s (hang): $file" >>"$TMP_OUT"
@@ -561,6 +581,7 @@ for file in "${FILES[@]}"; do
     if file_expectfail_giloff "$file"; then
         FILE_XFAIL_GILOFF=1
     fi
+    file_env "$file"
     FILE_REQUIRES_GILOFF=0
     if file_requires_giloff "$file"; then
         FILE_REQUIRES_GILOFF=1

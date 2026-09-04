@@ -1121,10 +1121,17 @@ bool Debugger::cancelPauseForSpecialBreakpoint(Breakpoint& breakpoint)
 
 void Debugger::breakProgram(RefPtr<Breakpoint>&& specialBreakpoint)
 {
+    // SD13: a spawned thread can reach this through console.assert, and the
+    // pause state is the carrier's.
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]]
+        return;
+
     if (m_isPaused)
         return;
 
-    if (!m_vm.topCallFrame)
+    // GIL-off, the VM-level top frames are not written. The carrier's are in its lite.
+    CallFrame* topCallFrame = m_vm.group3Primitives().topCallFrame;
+    if (!topCallFrame)
         return;
 
     if (specialBreakpoint) {
@@ -1134,7 +1141,7 @@ void Debugger::breakProgram(RefPtr<Breakpoint>&& specialBreakpoint)
         m_pauseAtNextOpportunity = true;
 
     setSteppingMode(SteppingModeEnabled);
-    m_currentCallFrame = m_vm.topCallFrame;
+    m_currentCallFrame = topCallFrame;
     pauseIfNeeded(m_currentCallFrame->lexicalGlobalObject(m_vm));
 }
 
@@ -1186,7 +1193,7 @@ void Debugger::stepOutOfFunction()
     if (!m_isPaused)
         return;
 
-    EntryFrame* topEntryFrame = m_vm.topEntryFrame;
+    EntryFrame* topEntryFrame = m_vm.group3Primitives().topEntryFrame;
     m_pauseOnCallFrame = m_currentCallFrame ? m_currentCallFrame->callerFrame(topEntryFrame) : nullptr;
     m_pauseOnStepOut = true;
     setSteppingMode(SteppingModeEnabled);
@@ -1611,7 +1618,7 @@ void Debugger::returnEvent(CallFrame* callFrame)
     if (!m_currentCallFrame)
         return;
 
-    EntryFrame* topEntryFrame = m_vm.topEntryFrame;
+    EntryFrame* topEntryFrame = m_vm.group3Primitives().topEntryFrame;
     CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
 
     // Returning from a call, there was at least one expression on the statement we are returning to.
@@ -1639,7 +1646,7 @@ void Debugger::unwindEvent(CallFrame* callFrame)
     if (!m_currentCallFrame)
         return;
 
-    EntryFrame* topEntryFrame = m_vm.topEntryFrame;
+    EntryFrame* topEntryFrame = m_vm.group3Primitives().topEntryFrame;
     CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
 
     // Treat stepping over an exception location like a step-out.
@@ -1675,7 +1682,7 @@ void Debugger::didExecuteProgram(CallFrame* callFrame)
     if (!m_currentCallFrame)
         return;
 
-    EntryFrame* topEntryFrame = m_vm.topEntryFrame;
+    EntryFrame* topEntryFrame = m_vm.group3Primitives().topEntryFrame;
     CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
 
     // Returning from a program, could be eval(), there was at least one expression on the statement we are returning to.

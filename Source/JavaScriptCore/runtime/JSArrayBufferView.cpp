@@ -266,9 +266,16 @@ void JSArrayBufferView::detachFromArrayBuffer()
         Locker locker { cellLock() };
         RELEASE_ASSERT(hasArrayBuffer());
         RELEASE_ASSERT(!isShared());
-        m_length = 0;
-        m_byteOffset = 0;
-        m_vector.clear();
+        if (detachKeepsVector()) [[unlikely]] {
+            m_detachedKeepingVector = true;
+            WTF::storeStoreFence();
+            m_length = 0;
+            m_byteOffset = 0;
+        } else {
+            m_length = 0;
+            m_byteOffset = 0;
+            m_vector.clear();
+        }
     }
     // With threads, the notification can fire a watchpoint under a
     // stop-the-world, and a thread must not hold a cell lock across a stop:
