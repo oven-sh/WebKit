@@ -434,6 +434,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationDebuggerWillCallNativeExecutable, vo
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationProcessTypeProfilerLog, void, (VM*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationProcessShadowChickenLog, void, (VM*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAcquireShadowChickenPacket, void*, (VM*));
 
 inline decltype(auto) selectNewFunctionOperation(auto* executable)
 {

@@ -4585,11 +4585,11 @@ void InlineCacheCompiler::emitIntrinsicGetter(IntrinsicGetterAccessCase& accessC
         CCallHelpers::JumpList failAndIgnore;
         if (isDataView) {
             ASSERT(type == TypeDataView);
-            failAndIgnore.append(jit.branchTestPtr(MacroAssembler::Zero, MacroAssembler::Address(baseGPR, JSArrayBufferView::offsetOfVector())));
+            failAndIgnore.append(jit.branchIfArrayBufferViewIsDetached(baseGPR));
         }
 
         if (isResizableOrGrowableSharedTypedArrayIncludingDataView(accessCase.structure()->classInfoForCells())) {
-            // The null-vector guard above was emitted before the push, so route it
+            // The detached guard above was emitted before the push, so route it
             // directly to m_failAndIgnore to avoid the post-push restore path.
             m_failAndIgnore.append(failAndIgnore);
 
@@ -7381,6 +7381,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> setPrivateBrandHandler()
     constexpr bool isSymbol = true;
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyJSR, scratch1GPR));
+
+    if (Options::useJSThreads()) [[unlikely]] {
+        // A private brand is a structure transition. Repatch does not create
+        // this case with threads, as for the delete handlers above.
+        fallThrough.append(jit.jump());
+    }
 
     jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()));
     InlineCacheCompiler::emitDataICEpilogue(jit);

@@ -886,6 +886,39 @@ private:
 
 } // anonymous namespace
 
+// SPEC-jit section 5.5: a store through a butterfly needs the write predicate.
+// A foreign store to a word that is not shared-written must take the generic
+// path, which sets the shared-write bit (F1) before it stores; otherwise the
+// owner keeps writing lock-free. These consumers store elements through their
+// storage child with no predicate of their own, so the GetButterfly that feeds
+// them runs it. PutByOffset, MultiPutByVal, EnumeratorPutByVal and
+// ArraySortCommit re-load the word with the write predicate themselves.
+// Marking runs after the last phase, so no CSE merges a read into a write.
+void Graph::markButterflyLoadsThatFeedElementWrites()
+{
+    ASSERT(Options::useJSThreads());
+    for (BasicBlock* block : blocksInNaturalOrder()) {
+        for (Node* node : *block) {
+            switch (node->op()) {
+            case PutByVal:
+            case PutByValDirect:
+            case PutByValDirectResolved:
+            case ArrayPush:
+            case ArrayUnshift:
+            case ArrayPop:
+            case ArrayShift:
+                doToChildren(node, [&](Edge& edge) {
+                    if (edge && edge->op() == GetButterfly)
+                        edge->setIsButterflyLoadForWrite();
+                });
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
 void Graph::computeRefCounts()
 {
     RefCountCalculator calculator(*this);

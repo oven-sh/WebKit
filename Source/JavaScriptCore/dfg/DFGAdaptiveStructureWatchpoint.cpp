@@ -58,8 +58,17 @@ void AdaptiveStructureWatchpoint::initialize(const ObjectPropertyCondition& key,
 
 bool AdaptiveStructureWatchpoint::install(VM&)
 {
-    RELEASE_ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges));
-    
+    // With the flag on, another thread can transition the watched object's
+    // structure between the caller's watchability check and this install, so
+    // the condition may no longer hold. A refused install is a failed
+    // adaptation the caller handles (reallyAdd fails the compile, or
+    // fireInternal jettisons), so return false instead of asserting.
+    if (Options::useJSThreads()) [[unlikely]] {
+        if (!m_key.isWatchable(PropertyCondition::MakeNoChanges, Concurrency::MainThread))
+            return false;
+    } else
+        RELEASE_ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges));
+
     return m_key.object()->structure()->addTransitionWatchpoint(this);
 }
 

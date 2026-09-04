@@ -491,7 +491,10 @@ ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyImpl(Visitor& visi
 size_t JSObject::estimatedSize(JSCell* cell, VM& vm)
 {
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
-    size_t butterflyOutOfLineSize = thisObject->butterfly() ? thisObject->structure()->outOfLineSize() : 0;
+    // With the flag on, butterfly() must not decode a segmented word. A spine
+    // counts as a butterfly here.
+    bool hasButterfly = Options::useJSThreads() ? !!(thisObject->taggedButterflyWord() & butterflyPointerMask) : !!thisObject->butterfly();
+    size_t butterflyOutOfLineSize = hasButterfly ? thisObject->structure()->outOfLineSize() : 0;
     return Base::estimatedSize(cell, vm) + butterflyOutOfLineSize;
 }
 
@@ -572,23 +575,14 @@ using TypedArrayElementRawWord = std::conditional_t<sizeof(Type) == 1, uint8_t,
     std::conditional_t<sizeof(Type) == 2, uint16_t,
     std::conditional_t<sizeof(Type) == 4, uint32_t, uint64_t>>>;
 
-// CVE-AUDIT A1 (MC-GROW S4/S8) / annex-N6 single-snapshot read protocol for
-// the concurrent TA fast paths. JSArrayBufferView::detachFromArrayBuffer()
-// (JSArrayBufferView.cpp:263-270) publishes m_length=0 then m_vector=nullptr
-// under cellLock; the previous shape here bounds-checked against a freshly
-// loaded length THEN re-loaded typedVector(), so a racing detach interleaved
-// {old length, null vector} -> SEGV at *(null + i) (ASAN evidence:
-// JSTests/threads/cve/mc-grow-buffer-storm.CRASH-{19,37,s4-nullvec}.log,
-// repro mc-grow-s4-detach-nullvec-repro.js). Annex-N6 PRINCIPLE: a racing
-// reader must NEVER pair a passing length with an unmapped-or-short base.
-// Reader discipline: load the vector word FIRST (single relaxed caged-word
-// load via vectorCagedConcurrently()); bail to the slow path on null; THEN
-// load length (acquire) and bounds-check; dereference the SNAPSHOTTED vector
-// only — never a re-load. Any non-null vector word ever observed names backing
-// storage that stays mapped through the next heap §10 stop (annex-N6 arm-1/2/3
-// quarantine), so {old vector, old length} is stale-but-safe and {*, 0}
-// bounds-fails. Reachable only via the *Concurrent accessors (assert
-// Options::useJSThreads()): flag-off codegen untouched.
+// The concurrent typed array fast paths (annex N6): load the base once, then
+// the length, and dereference only that base. A racing reader must never pair
+// a passing length with an unmapped or short base. GIL-off, the base is null
+// once a detach has won, and the old mapping stays until the next stop
+// (JSArrayBufferView::detachKeepsVector()), so {old base, old length} is stale
+// but safe, and {any base, 0} fails the bounds check. GIL-on, a detach cannot
+// race this thread. Reachable only through the *Concurrent accessors
+// (Options::useJSThreads()).
 template<typename Adaptor>
 static ALWAYS_INLINE const typename Adaptor::Type* snapshotTypedVectorAndBoundsCheckConcurrent(const JSGenericTypedArrayView<Adaptor>* view, unsigned i)
 {
@@ -596,7 +590,7 @@ static ALWAYS_INLINE const typename Adaptor::Type* snapshotTypedVectorAndBoundsC
         return nullptr;
     const typename Adaptor::Type* vector = view->typedVector(); // relaxed atomic m_vector load
     if (!vector) [[unlikely]]
-        return nullptr; // annex-N6 null-vector bail: detached/torn pair
+        return nullptr;
     if (i >= typedArrayLengthRawConcurrent(view))
         return nullptr;
     return vector;
@@ -1218,7 +1212,32 @@ void JSObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             analyzer.analyzePropertyNameEdge(thisObject, toValue.asCell(), entry.key());
     }
 
-    Butterfly* butterfly = thisObject->butterfly();
+    Butterfly* butterfly;
+    if (Options::useJSThreads()) [[unlikely]] {
+        // butterfly() must not decode a segmented word, and a stop does not
+        // make a segmented word flat. A segmented object's elements are in its
+        // spine.
+        uint64_t word = thisObject->taggedButterflyWord();
+        if (isSegmentedButterfly(word)) {
+            ButterflySpine* spine = butterflySpine(word);
+            switch (thisObject->indexingType()) {
+            case ALL_CONTIGUOUS_INDEXING_TYPES: {
+                uint32_t count = std::min(segmentedPublicLength(spine), segmentedVectorLength(spine)); // C4/I33 bound from the same spine.
+                for (uint32_t i = 0; i < count; ++i) {
+                    JSValue toValue = spine->indexedSlot(i)->get();
+                    if (toValue && toValue.isCell())
+                        analyzer.analyzeIndexEdge(thisObject, toValue.asCell(), i);
+                }
+                break;
+            }
+            default:
+                break;
+            }
+            return;
+        }
+        butterfly = untaggedButterfly(word);
+    } else
+        butterfly = thisObject->butterfly();
     if (butterfly) {
         WriteBarrier<Unknown>* data = nullptr;
         uint32_t count = 0;
@@ -4689,6 +4708,11 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
 
         if (structure->isUncacheableDictionary()) {
             // §6 L3/L4 + I19: dictionary deletes serialize on the cell lock.
+            // The DeferGC precedes the lock (O1). removePropertyWithoutTransition
+            // takes a GCSafeConcurrentJSLocker, and its DeferGC would otherwise
+            // end under this lock, where its release can conduct a pending
+            // collection whose markers wait for this lock.
+            DeferGC deferGC(vm);
             Locker cellLocker { thisObject->cellLock() };
             // I34: the acquisition above may park - re-validate before
             // trusting anything pre-lock. Dictionary structures are pinned to
@@ -4981,7 +5005,7 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
                 ButterflySpine* spine = butterflySpine(word);
                 if (WriteBarrierBase<Unknown>* valueSlot = segmentedIndexedSlotIfWithinVectorLength(spine, i)) {
                     if (hasDouble(mode))
-                        *std::bit_cast<double*>(valueSlot) = PNaN; // Raw 8B lane (§4.7); PNaN = hole, as today.
+                        WTF::atomicStore(std::bit_cast<double*>(valueSlot), PNaN, std::memory_order_relaxed); // Raw 8B lane (§4.7); PNaN = hole, as today. Readers on other threads load it relaxed.
                     else
                         valueSlot->clear(); // EMPTY = hole marker for Int32/Contiguous, as today.
                 }
@@ -5868,6 +5892,13 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
             SparseArrayValueMap* pendingMap = nullptr; // GC-visible via conservative stack scan.
             while (true) {
                 {
+                    // The map's add reports its new capacity to the heap, which
+                    // can collect. A collection under this lock waits for its
+                    // markers, which visit this object and take the lock. The
+                    // DeferGC precedes the lock (O1), as in
+                    // enterDictionaryIndexingModeWhenArrayStorageAlreadyExists,
+                    // so the collection runs after the unlock.
+                    DeferGC deferGC(vm);
                     Locker locker { cellLock() };
                     ArrayStorage* storage = this->butterfly()->arrayStorage();
                     SparseArrayValueMap* lockedMap = storage->m_sparseMap.get();
@@ -6289,6 +6320,20 @@ template bool JSObject::putByIndexBeyondVectorLengthWithoutAttributes<Int32Shape
 template bool JSObject::putByIndexBeyondVectorLengthWithoutAttributes<DoubleShape>(JSGlobalObject*, unsigned, JSValue);
 template bool JSObject::putByIndexBeyondVectorLengthWithoutAttributes<ContiguousShape>(JSGlobalObject*, unsigned, JSValue);
 
+// The count is only a density hint here. Flag-on, every C++ writer of it holds
+// the cell lock, so read it under the lock too. JIT code writes it inline only
+// on the owner thread while the storage is not shared-written (the ArrayStorage
+// write predicate in LowLevelInterpreter64.asm), and a foreign caller sets that
+// bit before it gets here (ensureSharedWriteBitForArrayStorageWrite).
+static ALWAYS_INLINE unsigned numValuesInVectorForDensityCheck(JSObject* object, ArrayStorage* storage)
+{
+    if (Options::useJSThreads()) [[unlikely]] {
+        Locker locker { object->cellLock() };
+        return storage->m_numValuesInVector;
+    }
+    return storage->m_numValuesInVector;
+}
+
 bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned i, JSValue value, bool shouldThrow, ArrayStorage* storage)
 {
     VM& vm = globalObject->vm();
@@ -6337,7 +6382,7 @@ bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* glob
 
         // Check that it is sensible to still be using a vector, and then try to grow the vector.
         if (!indexIsSufficientlyBeyondLengthForSparseMap(i, storage->vectorLength())
-            && isDenseEnoughForVector(i, storage->m_numValuesInVector)
+            && isDenseEnoughForVector(i, numValuesInVectorForDensityCheck(this, storage))
             && increaseVectorLength(vm, i + 1)) [[likely]] {
             // success! - reread m_storage since it has likely been reallocated, and store to the vector.
             if (Options::useJSThreads()) [[unlikely]] {
@@ -6405,7 +6450,7 @@ bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* glob
 
     // We are currently using a map - check whether we still want to be doing so.
     // We will continue  to use a sparse map if SparseMode is set, a vector would be too sparse, or if allocation fails.
-    unsigned numValuesInArray = storage->m_numValuesInVector + map->size();
+    unsigned numValuesInArray = numValuesInVectorForDensityCheck(this, storage) + map->size();
     if (map->sparseMode() || !isDenseEnoughForVector(length, numValuesInArray) || !increaseVectorLength(vm, length)) {
         if (Options::useJSThreads()) [[unlikely]] {
             // I21 (review round 1): see the fresh-map putEntry site above.
@@ -6637,7 +6682,7 @@ bool JSObject::putDirectIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* 
 
         // Check that it is sensible to still be using a vector, and then try to grow the vector.
         if (!attributes
-            && (isDenseEnoughForVector(i, storage->m_numValuesInVector))
+            && (isDenseEnoughForVector(i, numValuesInVectorForDensityCheck(this, storage)))
             && !indexIsSufficientlyBeyondLengthForSparseMap(i, storage->vectorLength()))  [[likely]] {
             if (increaseVectorLength(vm, i + 1)) {
                 // success! - reread m_storage since it has likely been reallocated, and store to the vector.
@@ -6709,7 +6754,7 @@ bool JSObject::putDirectIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* 
 
     // We are currently using a map - check whether we still want to be doing so.
     // We will continue  to use a sparse map if SparseMode is set, a vector would be too sparse, or if allocation fails.
-    unsigned numValuesInArray = storage->m_numValuesInVector + map->size();
+    unsigned numValuesInArray = numValuesInVectorForDensityCheck(this, storage) + map->size();
     if (map->sparseMode() || attributes || !isDenseEnoughForVector(length, numValuesInArray) || !increaseVectorLength(vm, length)) {
         if (Options::useJSThreads()) [[unlikely]] {
             // I21 (review round 1): see the fresh-map putDirect site above.
@@ -7011,7 +7056,12 @@ template<IndexingType indexingShape>
 unsigned JSObject::countElements(Butterfly* butterfly)
 {
     unsigned numValues = 0;
-    for (unsigned i = butterfly->publicLength(); i--;) {
+    unsigned length = butterfly->publicLength();
+    // With the flag on, publicLength is shared with a later spine (C4), so it
+    // can be past this butterfly's own vectorLength.
+    if (Options::useJSThreads()) [[unlikely]]
+        length = std::min(length, butterfly->vectorLength());
+    for (unsigned i = length; i--;) {
         switch (indexingShape) {
         case Int32Shape:
         case ContiguousShape:
@@ -7034,7 +7084,7 @@ unsigned JSObject::countElements(Butterfly* butterfly)
     return numValues;
 }
 
-unsigned JSObject::countElements()
+unsigned JSObject::countElementsIn(Butterfly* butterfly)
 {
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -7042,14 +7092,14 @@ unsigned JSObject::countElements()
         return 0;
         
     case ALL_INT32_INDEXING_TYPES:
-        return countElements<Int32Shape>(this->butterfly());
+        return countElements<Int32Shape>(butterfly);
         
     case ALL_DOUBLE_INDEXING_TYPES:
         ASSERT(Options::allowDoubleShape());
-        return countElements<DoubleShape>(this->butterfly());
+        return countElements<DoubleShape>(butterfly);
         
     case ALL_CONTIGUOUS_INDEXING_TYPES:
-        return countElements<ContiguousShape>(this->butterfly());
+        return countElements<ContiguousShape>(butterfly);
         
     default:
         CRASH();
@@ -7553,6 +7603,21 @@ void JSObject::shiftButterflyAfterFlattening(const GCSafeConcurrentJSLocker&, VM
 uint32_t JSObject::getEnumerableLength()
 {
     JSObject* object = this;
+    // With the flag on, the butterfly comes from one load of the word:
+    // butterfly() must not decode a segmented word. A segmented word, or a flat
+    // one whose length is past its own vectorLength, takes the generic
+    // enumeration (0), as a hole does.
+    auto flatButterfly = [&]() -> Butterfly* {
+        if (!Options::useJSThreads()) [[likely]]
+            return object->butterfly();
+        uint64_t word = object->taggedButterflyWord();
+        if (isSegmentedButterfly(word) || !(word & butterflyPointerMask))
+            return nullptr;
+        Butterfly* butterfly = untaggedButterfly(word);
+        if (butterfly->publicLength() > butterfly->vectorLength())
+            return nullptr;
+        return butterfly;
+    };
 
     switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -7562,7 +7627,9 @@ uint32_t JSObject::getEnumerableLength()
         
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
-        Butterfly* butterfly = object->butterfly();
+        Butterfly* butterfly = flatButterfly();
+        if (!butterfly)
+            return 0;
         unsigned enumerableLength = butterfly->publicLength();
         if (!enumerableLength)
             return 0;
@@ -7576,7 +7643,9 @@ uint32_t JSObject::getEnumerableLength()
     }
         
     case ALL_DOUBLE_INDEXING_TYPES: {
-        Butterfly* butterfly = object->butterfly();
+        Butterfly* butterfly = flatButterfly();
+        if (!butterfly)
+            return 0;
         unsigned enumerableLength = butterfly->publicLength();
         if (!enumerableLength)
             return 0;

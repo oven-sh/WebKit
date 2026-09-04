@@ -2931,11 +2931,11 @@ void Heap::stopThePeriphery(GCConductor conn)
 
     UNUSED_PARAM(conn);
     
-    // SharedGC (T9): conductor-context OK — runs world-stopped; the shadow
-    // chicken log and topCallFrame are state of the one main VM, quiescent
-    // while its mutator is parked (§10.4 barrier). Post-GIL topCallFrame
-    // moves to VMLite (per-thread); revisit with the deviation-8 charter.
-    if (auto* shadowChicken = vm().shadowChicken())
+    // This update only prunes the shadow stack: visitChildren marks the log
+    // and the stack either way. GIL-off, the VM-level topCallFrame is not
+    // written, so there is no stack to prune against here. The carrier prunes
+    // when its log fills and when it walks the stack (ShadowChicken::iterate).
+    if (auto* shadowChicken = vm().shadowChicken(); shadowChicken && !vm().gilOff())
         shadowChicken->update(vm(), vm().topCallFrame);
     
     m_objectSpace.stopAllocating();
@@ -7807,8 +7807,11 @@ void Heap::gcWillParkInStopTheWorld(VM& vm)
     // the owner since review round 1).
     ASSERT(client.m_accessOwner.load(std::memory_order_relaxed) == &Thread::currentSingleton()
         || !client.m_accessOwner.load(std::memory_order_relaxed));
+    // Written only inside notifyVMStop (§10A). The conductor reads it once this
+    // client has released access (updateAllocationLimits), so it is set first,
+    // and the release below publishes it.
+    client.m_releasedByGCPark = true;
     client.releaseHeapAccess(); // Signals the §10.4 barrier (GSP is set).
-    client.m_releasedByGCPark = true; // Written only inside notifyVMStop (§10A).
 }
 
 void Heap::gcDidResumeFromStopTheWorld(VM& vm)

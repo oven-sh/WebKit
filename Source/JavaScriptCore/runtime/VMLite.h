@@ -574,6 +574,17 @@ public:
     uint32_t orderedHashTableIterationEntry { 0 };
     JSValue orderedHashTableIterationKey;
     JSValue orderedHashTableIterationValue;
+
+    // GIL-off, a termination that only this thread services: the time limit
+    // of a call that this thread made (VM::addTerminationDeadline) or
+    // VM::notifyNeedTerminationForCurrentThread. It is set with this lite's
+    // NeedTermination bit, under VMLiteRegistry::lock, and it routes the bit
+    // when this thread services it (VMTraps::handleTraps).
+    std::atomic<bool> targetedTerminationRequested { false };
+    // Set when this thread services that termination. It stands in for the
+    // VM's termination request on this thread (VM::hasTerminationRequest),
+    // which handleTraps sets at the same point for a VM-wide termination.
+    std::atomic<bool> targetedTerminationHandled { false };
 };
 static_assert(OBJECT_OFFSETOF(VMLite, primitives) == 0);
 

@@ -2889,6 +2889,12 @@ end)
 
 # Returns the packet pointer in t0.
 macro acquireShadowChickenPacket(slow)
+    # GIL-off, the log belongs to the threads that are not spawned, and the
+    # slow path's ShadowChicken::log() checks the thread.
+    if GILOFF_TLS
+        leap _g_config, t1
+        bbneq JSCConfigOffset + JSC::Config::gilOffProcess[t1], 0, slow
+    end
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
     loadp VM::m_shadowChicken[t1], t2

@@ -7711,6 +7711,17 @@ void ByteCodeParser::handleDeleteById(
         return;
     }
 
+    // A hit is a structure transition, which the JIT tiers do not emit with
+    // threads (SPEC-jit section 5.5). Repatch does not record one either.
+    if (Options::useJSThreads()) [[unlikely]] {
+        for (const DeleteByVariant& variant : deleteByStatus.variants()) {
+            if (variant.newStructure()) {
+                set(destination, addToGraph(DeleteById, OpInfo(identifier), OpInfo(ecmaMode), base));
+                return;
+            }
+        }
+    }
+
     if (deleteByStatus.variants().size() > 1) {
         if (!m_graph.m_plan.isFTL()
             || !Options::usePolymorphicAccessInlining()
@@ -9588,7 +9599,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                     // FIXME: We should include a MultiSetPrivateBrand to handle polymorphic cases
                     // https://bugs.webkit.org/show_bug.cgi?id=221570
-                    if (setStatus.isSimple() && setStatus.variants().size() == 1 && Options::useAccessInlining()) {
+                    // A private brand is a structure transition, which the JIT
+                    // tiers do not emit with threads (SPEC-jit section 5.5).
+                    if (setStatus.isSimple() && setStatus.variants().size() == 1 && Options::useAccessInlining() && !Options::useJSThreads()) {
                         SetPrivateBrandVariant variant = setStatus.variants()[0];
 
                         addToGraph(FilterSetPrivateBrandStatus, OpInfo(m_graph.m_plan.recordedStatuses().addSetPrivateBrandStatus(currentCodeOrigin(), setStatus)), base);

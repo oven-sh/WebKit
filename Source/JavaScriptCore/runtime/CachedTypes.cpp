@@ -39,6 +39,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "JSThreadsSafepoint.h"
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
 #include "SourceProvider.h"
@@ -437,6 +438,9 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
 
 RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
 {
+    // atomFor() rewrites the table's slots. The decoder holds this lock, and an
+    // embedder that resolves module-info slots (audit row VM-12) takes it here.
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
     if (slot == VariableLengthObjectBase::emptySentinel)
         return emptyAtom().impl();
     switch (slot & VariableLengthObjectBase::inlineStringTagMask) {

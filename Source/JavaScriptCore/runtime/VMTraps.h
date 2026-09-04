@@ -294,6 +294,27 @@ public:
     // VM-level-instance-only contract.
     JS_EXPORT_PRIVATE CONCURRENT_SAFE bool clearTrapVMWide(Event);
 
+    // GIL-off, NeedTermination for one thread of this VM (VMLite::
+    // targetedTerminationRequested). That thread services it without the
+    // fan-out. The bit is set in the lite's word and in the VM word, which the
+    // other threads ignore while no VM-wide termination is raised
+    // (m_vmWideTerminationRaised). Returns false if the lite is not registered
+    // for this VM. Same VM-level-instance-only contract.
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE bool fireTargetedTermination(VMLite&);
+
+    // GIL-off, clearTrapVMWide(NeedTermination) for VM::cancelTermination,
+    // except that another thread's targeted termination stays pending.
+    CONCURRENT_SAFE bool clearTrapVMWideKeepingOtherThreadsTargetedTermination();
+
+    // A termination that the current thread must deliver again: the end of a
+    // DeferTermination scope, or a park that turns a delivered termination
+    // back into a request (LockObject). A termination that targets only this
+    // thread is raised for it alone. Otherwise this is
+    // fireTrapVMWide(NeedTermination). VM-level instance.
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE void fireTerminationAgainForCurrentThread();
+
+    bool vmWideTerminationRaised() const { return m_vmWideTerminationRaised.load(std::memory_order_relaxed); }
+
     // UNGIL annex W W1 terminate arm, interim single-shared-word form: raise
     // VM-wide termination (rule 3) on behalf of a carrier that has ALREADY
     // observed/serviced this termination itself (the §J.3-parked W1 servicer,
@@ -413,6 +434,10 @@ private:
     // thread's own bit was already taken, and re-setting it would make the
     // post-unwind re-entry spuriously terminate).
     void fanOutTerminationToSiblingLites();
+    // GIL-off, VM-level instance: the current thread serviced its targeted
+    // termination. Clears the VM word's NeedTermination unless a VM-wide
+    // termination is raised or another thread's targeted one is unserviced.
+    void retireTargetedTerminationBitInVMWord();
 
     CONCURRENT_SAFE void cancelThreadStopIfNeeded() WTF_REQUIRES_LOCK(m_trapSignalingLock);
     CONCURRENT_SAFE void requestThreadStopIfNeeded(Locker<Lock>&) WTF_REQUIRES_LOCK(m_trapSignalingLock);
@@ -507,6 +532,13 @@ private:
     // watchdog, the parked-carrier W1 verdict) raises through that form.
     // Load-bearing as long as generated-code trap polls read the VM word.
     std::atomic<bool> m_carrierTookSharedTermination { false };
+
+    // GIL-off, VM-level instance: a VM-wide termination is raised and not
+    // withdrawn. A targeted termination (fireTargetedTermination) also sets
+    // NeedTermination in the VM word, because call-free loops poll only that
+    // word, and this flag tells the other threads that the bit is not theirs.
+    // Written under VMLiteRegistry::lock.
+    std::atomic<bool> m_vmWideTerminationRaised { false };
 
     bool m_needToInvalidateCodeBlocks { false };
     bool m_isShuttingDown { false };

@@ -2708,7 +2708,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWithTimeLimit, (JSGlobalObject* globalObjec
     if (!std::isfinite(ms) || ms < 0)
         return throwVMRangeError(globalObject, scope, "expected a finite, non-negative number of milliseconds"_s);
 
-    auto& calls = vm.ensureSideData<TimeLimitedCalls>(&timeLimitedCallsKey, [] { return makeUnique<TimeLimitedCalls>(); });
+    // GIL-off, each thread has its own limited calls, and a limit terminates only its own thread.
+    static thread_local TimeLimitedCalls callsOnThisThread;
+    auto& calls = vm.gilOff() ? callsOnThisThread : vm.ensureSideData<TimeLimitedCalls>(&timeLimitedCallsKey, [] { return makeUnique<TimeLimitedCalls>(); });
     calls.active.append(vm.addTerminationDeadline(MonotonicTime::now() + Seconds::fromMilliseconds(ms)));
     JSValue result = call(globalObject, function, callData, jsUndefined(), ArgList());
     Ref deadline = calls.active.takeLast();
@@ -2723,7 +2725,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWithTimeLimit, (JSGlobalObject* globalObjec
     // An enclosing limited call whose limit has passed as well made the same request; make it again.
     for (auto& enclosing : calls.active) {
         if (enclosing->didFire()) {
-            vm.notifyNeedTermination();
+            vm.notifyNeedTerminationForCurrentThread();
             break;
         }
     }

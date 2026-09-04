@@ -171,6 +171,17 @@ public:
     ~ShadowChicken();
     
     void log(VM& vm, CallFrame*, const Packet&);
+
+    // GIL off, spawned threads run at the same time as the carrier, and one log
+    // and one shadow stack cannot describe two stacks. Both belong to the
+    // threads that are not spawned, like the debugger's pause state (SD13). A
+    // spawned thread logs nothing, and iterate() shows it its machine frames.
+    static bool isSpawnedThreadGILOff(VM&);
+
+    // GIL off, the LLInt and the JIT tiers write each packet here, and the cursor
+    // is already past it. The log is processed when it is full, as on their
+    // inline paths. A spawned thread gets a packet that nothing reads.
+    Packet* acquirePacketGILOff(VM&, CallFrame*);
     
     void update(VM&, CallFrame*);
     

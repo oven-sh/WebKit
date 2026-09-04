@@ -59,6 +59,23 @@ struct ThreadData {
 
 } // anonymous namespace
 
+// Under TSAN, an acquire load of the word takes a read lock on the word's
+// sync object in TSAN's runtime, and a CAS or a store takes the write lock.
+// That lock lets a reader in while a writer waits. With about twenty threads
+// spinning in the loops below, the thread that must store to the word, to
+// release the queue lock, never gets in, and the process stops making progress.
+// The loads in the spin loops only choose the next step, and the CAS after each
+// of them orders the memory, so under TSAN they are relaxed. Other builds keep
+// the default order.
+static ALWAYS_INLINE uintptr_t loadWordForSpin(const Atomic<uintptr_t>& word)
+{
+#if TSAN_ENABLED
+    return word.load(std::memory_order_relaxed);
+#else
+    return word.load();
+#endif
+}
+
 NEVER_INLINE void WordLock::lockSlow()
 {
     unsigned spinCount = 0;
@@ -67,7 +84,7 @@ NEVER_INLINE void WordLock::lockSlow()
     const unsigned spinLimit = 40;
     
     for (;;) {
-        uintptr_t currentWordValue = m_word.load();
+        uintptr_t currentWordValue = loadWordForSpin(m_word);
         
         if (!(currentWordValue & isLockedBit)) {
             // It's not possible for someone to hold the queue lock while the lock itself is no longer
@@ -93,7 +110,7 @@ NEVER_INLINE void WordLock::lockSlow()
         ThreadData me;
 
         // Reload the current word value, since some time may have passed.
-        currentWordValue = m_word.load();
+        currentWordValue = loadWordForSpin(m_word);
 
         // We proceed only if the queue lock is not held, the WordLock is held, and we succeed in
         // acquiring the queue lock.
@@ -166,7 +183,7 @@ NEVER_INLINE void WordLock::unlockSlow()
     // fast path's weak CAS spuriously failed and it handles queue lock acquisition if there is
     // actually something interesting on the queue.
     for (;;) {
-        uintptr_t currentWordValue = m_word.load();
+        uintptr_t currentWordValue = loadWordForSpin(m_word);
 
         ASSERT(currentWordValue & isLockedBit);
         

@@ -46,7 +46,7 @@ inline void JSArrayBufferView::refreshVector(void* newData)
     // We ensure that the vector is really there because these notifications are delivered to
     // incoming references of a buffer, and an incoming reference from a view to a buffer remains in
     // place even after a view detaches.
-    if (hasVector()) {
+    if (hasVector() && !(detachKeepsVector() && m_detachedKeepingVector)) {
         void* newVectorPtr = static_cast<uint8_t*>(newData) + byteOffsetRaw();
         m_vector.setWithoutBarrier(newVectorPtr);
     }

@@ -1816,11 +1816,68 @@ Ref<TerminationDeadline> VM::addTerminationDeadline(MonotonicTime deadline)
     return m_terminationDeadlines->add(deadline);
 }
 
+bool VM::hasTargetedTerminationRequestForCurrentThread() const
+{
+    VMLite* lite = VMLite::currentIfExists();
+    return lite && lite->vm == this && lite->targetedTerminationRequested.load(std::memory_order_relaxed);
+}
+
+bool VM::hasHandledTargetedTerminationForCurrentThread() const
+{
+    VMLite* lite = VMLite::currentIfExists();
+    return lite && lite->vm == this && lite->targetedTerminationHandled.load(std::memory_order_relaxed);
+}
+
+void VM::setHandledTargetedTerminationForCurrentThread()
+{
+    VMLite* lite = VMLite::currentIfExists();
+    if (lite && lite->vm == this)
+        lite->targetedTerminationHandled.store(true, std::memory_order_relaxed);
+}
+
+void VM::clearTargetedTerminationRequestForCurrentThread()
+{
+    VMLite* lite = VMLite::currentIfExists();
+    if (lite && lite->vm == this) {
+        lite->targetedTerminationRequested.store(false, std::memory_order_relaxed);
+        lite->targetedTerminationHandled.store(false, std::memory_order_relaxed);
+    }
+}
+
+void VM::notifyNeedTerminationForCurrentThread()
+{
+    if (m_gilOff) [[unlikely]] {
+        VMLite* lite = VMLite::currentIfExists();
+        if (lite && lite->vm == this && traps().fireTargetedTermination(*lite))
+            return;
+    }
+    notifyNeedTermination();
+}
+
 bool VM::cancelTermination()
 {
     ASSERT(currentThreadIsHoldingAPILock());
     ASSERT(!trapsForCurrentThread().isDeferringTermination());
     ASSERT(!m_executionForbiddenOnTermination);
+
+    // GIL-off, the VM-wide clear below also clears the words of the other
+    // threads, and a time limit of another thread can be pending there. Only
+    // this thread's request is withdrawn (clearHasTerminationRequest).
+    if (m_gilOff) [[unlikely]] {
+        bool wasPending = traps().clearTrapVMWideKeepingOtherThreadsTargetedTermination();
+        if (hasPendingTerminationException()) {
+            clearException();
+            wasPending = true;
+        }
+        if (hasTerminationRequest()) {
+            clearHasTerminationRequest();
+            wasPending = true;
+        }
+        // A targeted request that this thread has not handled yet is withdrawn too. Its bit went with the
+        // trap words above.
+        clearTargetedTerminationRequestForCurrentThread();
+        return wasPending;
+    }
     // notifyNeedTermination() raises VM-wide, so the withdrawal is VM-wide too.
     bool wasPending = traps().clearTrapVMWide(VMTraps::NeedTermination);
     if (hasPendingTerminationException()) {
@@ -3404,7 +3461,7 @@ void VM::executeEntryScopeServicesOnExit()
     // requested (after all, the request came from the client). However, this is how the
     // client code currently works. Changing that will take some significant effort to hunt
     // down all the places in client code that currently rely on this behavior.
-    if (!traps().needHandling(VMTraps::NeedTermination))
+    if (!hasTerminationTrapForCurrentThread())
         clearHasTerminationRequest();
 
     clearScratchBuffers();

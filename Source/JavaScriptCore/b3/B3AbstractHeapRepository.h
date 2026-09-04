@@ -91,6 +91,7 @@ namespace JSC::B3 {
     macro(GetterSetter_setter, GetterSetter::offsetOfSetter(), Mutability::Mutable) \
     macro(InlineWatchpointSet_data, InlineWatchpointSet::offsetOfData(), Mutability::Mutable) \
     macro(JSArrayBufferView_byteOffset, JSArrayBufferView::offsetOfByteOffset(), Mutability::Mutable) \
+    macro(JSArrayBufferView_detachedKeepingVector, JSArrayBufferView::offsetOfDetachedKeepingVector(), Mutability::Mutable) \
     macro(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutability::Mutable) \
     macro(JSArrayBufferView_mode, JSArrayBufferView::offsetOfMode(), Mutability::Mutable) \
     macro(JSArrayBufferView_vector, JSArrayBufferView::offsetOfVector(), Mutability::Mutable) \

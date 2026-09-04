@@ -3644,8 +3644,9 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
 
             bool skipMarkingOutOfBounds = false;
 
+            // With the flag on, the word may be segmented, which butterfly() must not decode.
             if (object->indexingType() == ArrayWithContiguous
-                && static_cast<uint32_t>(i) < object->butterfly()->publicLength()) {
+                && static_cast<uint32_t>(i) < (Options::useJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
@@ -3786,8 +3787,9 @@ ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, Call
 
             bool skipMarkingOutOfBounds = false;
 
+            // With the flag on, the word may be segmented, which butterfly() must not decode.
             if (object->indexingType() == ArrayWithContiguous
-                && static_cast<uint32_t>(i) < object->butterfly()->publicLength()) {
+                && static_cast<uint32_t>(i) < (Options::useJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
@@ -5470,6 +5472,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationProcessShadowChickenLog, void, (VM* v
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     RELEASE_ASSERT(vm.shadowChicken());
     vm.shadowChicken()->update(vm, callFrame);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAcquireShadowChickenPacket, void*, (VM* vmPointer))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    RELEASE_ASSERT(vm.shadowChicken());
+    return vm.shadowChicken()->acquirePacketGILOff(vm, callFrame);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable, JSCell*, (VM* vmPointer))

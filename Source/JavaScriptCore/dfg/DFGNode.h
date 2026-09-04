@@ -2330,6 +2330,21 @@ public:
     {
         return op() == ConstantStoragePointer;
     }
+
+    // GetButterfly, with threads: a consumer writes elements through the
+    // result, so the load runs the write predicate. Set by
+    // Graph::markButterflyLoadsThatFeedElementWrites().
+    bool isButterflyLoadForWrite()
+    {
+        ASSERT(op() == GetButterfly);
+        return m_opInfo.as<uint32_t>();
+    }
+
+    void setIsButterflyLoadForWrite()
+    {
+        ASSERT(op() == GetButterfly);
+        m_opInfo = static_cast<uint32_t>(1);
+    }
     
     void* storagePointer()
     {

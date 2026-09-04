@@ -2181,7 +2181,7 @@ void SpeculativeJIT::compileCheckDetached(Node* node)
 
     speculationCheck(
         BadIndexingType, JSValueSource::unboxedCell(baseReg), node->child1(), 
-        branchTestPtr(Zero, Address(baseReg, JSArrayBufferView::offsetOfVector())));
+        branchIfArrayBufferViewIsDetached(baseReg));
 
     noResult(node);
 }
@@ -2580,6 +2580,8 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
 void SpeculativeJIT::compileBody()
 {
     validateButterflyTagDisciplineForGraph(m_graph);
+    if (Options::useJSThreads()) [[unlikely]]
+        m_graph.markButterflyLoadsThatFeedElementWrites();
 
     checkArgumentTypes();
 
@@ -11823,7 +11825,15 @@ void SpeculativeJIT::compileGetButterfly(Node* node)
         GPRReg scratchGPR = scratch.gpr();
 
         ThreadedButterflyPlan plan = planThreadedButterflyAccess(node->child1());
-        JumpList slowCases = emitThreadedButterflyLoadForRead(baseGPR, resultGPR, scratchGPR, plan);
+        JumpList slowCases;
+        if (node->isButterflyLoadForWrite()) {
+            // A consumer stores elements through the result (audit row OM-9).
+            // A foreign store to a word that is not shared-written exits, and
+            // the generic path sets the bit, so the next run stays inline.
+            GPRTemporary indexingScratch(this);
+            slowCases = emitThreadedButterflyLoadForWrite(baseGPR, resultGPR, scratchGPR, indexingScratch.gpr(), plan);
+        } else
+            slowCases = emitThreadedButterflyLoadForRead(baseGPR, resultGPR, scratchGPR, plan);
 
         // "OSR-exit on segmented dispatch where profitable else slow path":
         // at GetButterfly OSR exit is the only sound dispatch - there is no
@@ -12760,6 +12770,8 @@ void SpeculativeJIT::emitNewTypedArrayWithSizeInRegister(Node* node, TypedArrayT
     store8(
         TrustedImm32(FastTypedArray),
         Address(resultGPR, JSArrayBufferView::offsetOfMode()));
+    if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+        store8(TrustedImm32(0), Address(resultGPR, JSArrayBufferView::offsetOfDetachedKeepingVector()));
     
     mutatorFence(vm());
     

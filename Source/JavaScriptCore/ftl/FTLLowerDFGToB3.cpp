@@ -230,6 +230,8 @@ public:
         // (I21(b)). Declared in DFGClobberize.h; defined in
         // DFGSpeculativeJIT.cpp; flag-off no-op.
         DFG::validateButterflyTagDisciplineForGraph(m_graph);
+        if (Options::useJSThreads()) [[unlikely]]
+            m_graph.markButterflyLoadsThatFeedElementWrites();
 
         State* state = &m_ftlState;
 
@@ -4655,6 +4657,8 @@ private:
 
     void compilePutStructure()
     {
+        // See the DFG's PutStructure: no creator emits it with threads.
+        RELEASE_ASSERT(!Options::useJSThreads());
         RegisteredStructure oldStructure = m_node->transition()->previous;
         RegisteredStructure newStructure = m_node->transition()->next;
         m_graph.m_plan.transitions().addLazily(m_node->origin.semantic.codeOriginOwner(), oldStructure.get(), newStructure.get());
@@ -6464,8 +6468,11 @@ private:
             // read a TID-tagged word. The useThreadedFTL kill switch therefore
             // disables the whole tier (Options::notifyOptionsChanged) rather
             // than this predicate.
-            ThreadedButterflyPlan plan = planThreadedButterflyAccess(m_node->child1(), ThreadedButterflyAccessKind::Read);
-            ThreadedButterflyAccess access = threadedButterflyLoadForRead(base, plan);
+            // A consumer that stores elements through the result needs the
+            // write predicate (audit row OM-9, Node::isButterflyLoadForWrite()).
+            bool forWrite = m_node->isButterflyLoadForWrite();
+            ThreadedButterflyPlan plan = planThreadedButterflyAccess(m_node->child1(), forWrite ? ThreadedButterflyAccessKind::Write : ThreadedButterflyAccessKind::Read);
+            ThreadedButterflyAccess access = forWrite ? threadedButterflyLoadForWrite(base, plan) : threadedButterflyLoadForRead(base, plan);
 
             // "OSR-exit on segmented dispatch where profitable else slow
             // path" (Task 9 rationale holds verbatim): at GetButterfly OSR
@@ -6573,9 +6580,10 @@ private:
         Edge edge = m_node->child1();
         LValue cell = lowCell(edge);
 
-        speculate(
-            BadIndexingType, jsValueValue(cell), edge.node(),
-            m_out.isNull(m_out.loadPtr(cell, m_heaps.JSArrayBufferView_vector)));
+        LValue detached = m_out.isNull(m_out.loadPtr(cell, m_heaps.JSArrayBufferView_vector));
+        if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+            detached = m_out.bitOr(detached, m_out.notZero32(m_out.load8ZeroExt32(cell, m_heaps.JSArrayBufferView_detachedKeepingVector)));
+        speculate(BadIndexingType, jsValueValue(cell), edge.node(), detached);
     }
 
     LValue emitGetTypedArrayByteOffsetExceptSettingResult()
@@ -12131,6 +12139,8 @@ IGNORE_CLANG_WARNINGS_END
         m_out.store32(m_out.int32Zero, fastResultValue, m_heaps.JSArrayBufferView_byteOffset);
 #endif
         m_out.store32As8(m_out.constInt32(FastTypedArray), fastResultValue, m_heaps.JSArrayBufferView_mode);
+        if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+            m_out.store32As8(m_out.int32Zero, fastResultValue, m_heaps.JSArrayBufferView_detachedKeepingVector);
 
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(fastResultValue);
@@ -16472,7 +16482,10 @@ IGNORE_CLANG_WARNINGS_END
                 LValue vector = m_out.loadPtr(value, m_heaps.JSArrayBufferView_vector);
                 LValue storage = caged(Gigacage::Primitive, vector, value);
                 LBasicBlock storeVector = m_out.newBlock();
-                m_out.branch(m_out.isNull(vector), rarely(slowCase), usually(storeVector));
+                LValue detached = m_out.isNull(vector);
+                if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+                    detached = m_out.bitOr(detached, m_out.notZero32(m_out.load8ZeroExt32(value, m_heaps.JSArrayBufferView_detachedKeepingVector)));
+                m_out.branch(detached, rarely(slowCase), usually(storeVector));
                 m_out.appendTo(storeVector, slowCase);
                 m_out.store64(storage, slot);
                 m_out.jump(done);
@@ -25528,6 +25541,10 @@ IGNORE_CLANG_WARNINGS_END
     {
         ShadowChicken* shadowChicken = vm().shadowChicken();
         RELEASE_ASSERT(shadowChicken);
+        if (vm().gilOff()) [[unlikely]] {
+            // The log is the carrier's. See ShadowChicken::isSpawnedThreadGILOff().
+            return vmCall(pointerType(), operationAcquireShadowChickenPacket, m_vmValue);
+        }
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 

@@ -669,3 +669,53 @@ Left open:
   race report: a typed array view's detach publishes a null base, and JIT code
   on another thread stores through it. TSAN builds use the system malloc, so
   there is no Gigacage to hide it. See LANDING-PLAN.md, "Open items".
+
+### Second round (2026-09-02)
+
+The same configuration, on the tree of each step of the second round
+(LANDING-PLAN.md, "Results, second round"). Report files, and failures that
+are not reports:
+
+| Step | Corpus, GIL on | Corpus, GIL off | CVE, GIL on | CVE, GIL off |
+|---|---|---|---|---|
+| Detach and shadow chicken fixes | 2 | 3 | 0 | 0 |
+| Object model and termination fixes | 0 | 0 | 0, and 1 timeout | 3 |
+| Tier-up and TSAN fixes | 0, and 1 timeout | 0, and 1 timeout | 0, and 1 timeout | 0 |
+| The final tree | 0 | 0 | 0 | 0 |
+
+In the first step, the reports are the two new tests for the
+`m_numValuesInVector` group and the raw double store, and
+`objectmodel/array-storage-beyond-vector-relock.js`, which reports the same
+group. The `mc-grow-buffer-storm.js` crash is gone. In the second step, the
+three CVE files are two reports of the property table's index vector and one
+of the park flag. In the third step, the three timeouts are the `WordLock`
+stall below. The final tree also has the object-model fixes that came after
+the third step.
+
+Fixed in this round:
+
+- **`ArrayStorage::m_numValuesInVector`.** Read under the cell lock, which
+  every C++ writer holds.
+- **The raw double store of a delete on a segmented butterfly.** A relaxed
+  atomic now. The other five raw double accesses in `JSObject.cpp` are safe:
+  a fragment before it is published, two flag-off paths, and two conversions
+  inside a stop.
+- **The property table's index vector.** A lookup reaches the vector through
+  the vector word, an address dependency. Under TSAN the word is an acquire
+  load and a release store, as the structure's table pointer is. Other builds
+  keep the relaxed accesses.
+- **`m_releasedByGCPark`.** Set before the heap access release that publishes
+  it, in every build.
+- **`WordLock` under TSAN.** The timeouts in the table were not slow tests. The
+  process stopped making progress, with 20 or more threads in
+  `WordLock::lockSlow` for one ParkingLot bucket. TSAN's runtime takes a read
+  lock on a word's sync object for an acquire load, and the write lock for a
+  CAS or a store, and its lock lets readers in while a writer waits. So the
+  threads that spin on the word keep out the thread that must store to it to
+  release the queue lock. Under TSAN, the loads in the spin loops are relaxed
+  now: they only choose the next step, and the CAS after each of them orders
+  the memory. Other builds are unchanged. `cve/mc-gc-thread-shell-finalizer-storm.js`
+  ran for more than 280 s before, GIL on, and runs in 3 s after. It had passed
+  in the first step by chance.
+
+Left open: none.

@@ -1632,7 +1632,7 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
             return true;
         if (newLength > MAX_STORAGE_VECTOR_LENGTH // This check ensures that we can do fast push.
             || (newLength >= MIN_SPARSE_ARRAY_INDEX
-                && !isDenseEnoughForVector(newLength, countElements()))) {
+                && !isDenseEnoughForVector(newLength, countElementsIn(butterfly)))) {
             RELEASE_AND_RETURN(scope, setLengthWithArrayStorage(
                 globalObject, newLength, throwException,
                 ensureArrayStorage(vm)));
@@ -3181,7 +3181,22 @@ JSArray* tryCloneArrayFromFast(JSGlobalObject* globalObject, JSValue arrayValue)
     if (shouldUseSlowPut(sourceType) || sourceType == ArrayClass) [[unlikely]]
         return nullptr;
 
-    Butterfly* butterfly= array->butterfly();
+    Butterfly* butterfly;
+    if (Options::useJSThreads()) [[unlikely]] {
+        // One load of the word, as in fastSlice: butterfly() must not decode a
+        // segmented word, and a re-load after the allocation below could
+        // decode one. The flat snapshot stays readable across the allocation
+        // (I7), and it is read within its own vectorLength. ArrayStorage
+        // reads are cell-locked (I31). Those cases take the caller's generic
+        // path.
+        uint64_t word = array->taggedButterflyWord();
+        if (isSegmentedButterfly(word) || !(word & butterflyPointerMask) || hasAnyArrayStorage(sourceType))
+            return nullptr;
+        butterfly = untaggedButterfly(word);
+        if (butterfly->publicLength() > butterfly->vectorLength())
+            return nullptr;
+    } else
+        butterfly = array->butterfly();
     unsigned resultSize = butterfly->publicLength();
     if (hasAnyArrayStorage(sourceType) || resultSize >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]] {
         JSArray* result = constructEmptyArray(globalObject, nullptr, resultSize);

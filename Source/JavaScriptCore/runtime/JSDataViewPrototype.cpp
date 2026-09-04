@@ -154,9 +154,9 @@ EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
     }
 
     // The base word is loaded once, before the length proof, and is the only base
-    // this function dereferences. GIL-off, a detach on another thread clears the
-    // view's base word with no stop, so a base re-read after a passing length check
-    // can be null; a base observed non-null stays mapped through the next stop.
+    // this function dereferences. GIL-off, a detach on another thread can land
+    // after this load. The old base stays mapped until the next stop, so a stale
+    // length is only a value race.
     uint8_t* base = static_cast<uint8_t*>(dataView->vector());
 
     IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;

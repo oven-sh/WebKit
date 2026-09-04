@@ -28,6 +28,7 @@
 
 #include "CodeBlock.h"
 #include "ShadowChickenInlines.h"
+#include "ThreadManager.h"
 #include "VMTrapsInlines.h"
 #include <wtf/ListDump.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -106,13 +107,35 @@ ShadowChicken::~ShadowChicken()
 
 void ShadowChicken::log(VM& vm, CallFrame* callFrame, const Packet& packet)
 {
+    if (isSpawnedThreadGILOff(vm)) [[unlikely]]
+        return;
+
     // This write is allowed because we construct the log with space for 1 additional packet.
     *m_logCursor++ = packet;
     update(vm, callFrame);
 }
 
+bool ShadowChicken::isSpawnedThreadGILOff(VM& vm)
+{
+    return vm.gilOff() && ThreadManager::isJSThreadCurrent();
+}
+
+auto ShadowChicken::acquirePacketGILOff(VM& vm, CallFrame* callFrame) -> Packet*
+{
+    if (isSpawnedThreadGILOff(vm)) {
+        static thread_local Packet discardedPacket;
+        return &discardedPacket;
+    }
+
+    if (m_logCursor >= m_logEnd)
+        update(vm, callFrame);
+    return m_logCursor++;
+}
+
 void ShadowChicken::update(VM& vm, CallFrame* callFrame)
 {
+    ASSERT(!isSpawnedThreadGILOff(vm));
+
     if (ShadowChickenInternal::verbose) {
         dataLog("Running update on: ", *this, "\n");
         WTFReportBacktrace();

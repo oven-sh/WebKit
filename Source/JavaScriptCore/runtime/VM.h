@@ -421,13 +421,29 @@ public:
     template<typename Type, typename Functor>
     Type& ensureSideData(void* key, const Functor&);
 
-    bool hasTerminationRequest() const { return m_hasTerminationRequest.load(std::memory_order_relaxed); }
+    // GIL-off, a termination that targets the current thread counts too, once that thread has handled it
+    // (VMLite::targetedTerminationHandled).
+    bool hasTerminationRequest() const
+    {
+        if (m_hasTerminationRequest.load(std::memory_order_relaxed))
+            return true;
+        if (gilOffWithProcessGate()) [[unlikely]]
+            return hasHandledTargetedTerminationForCurrentThread();
+        return false;
+    }
     void clearHasTerminationRequest()
     {
         m_hasTerminationRequest.store(false, std::memory_order_relaxed);
+        if (gilOffWithProcessGate()) [[unlikely]]
+            clearTargetedTerminationRequestForCurrentThread();
         clearEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
     }
     void NODELETE setHasTerminationRequest();
+    JS_EXPORT_PRIVATE bool hasTargetedTerminationRequestForCurrentThread() const;
+    JS_EXPORT_PRIVATE bool hasHandledTargetedTerminationForCurrentThread() const;
+    void setHandledTargetedTerminationForCurrentThread();
+    // Clears both the request and the handled flag of the current thread.
+    JS_EXPORT_PRIVATE void clearTargetedTerminationRequestForCurrentThread();
 
     // UNGIL review fix: GIL-off, executionForbidden() is read from spawned
     // threads (VM::drainMicrotasks' per-lite arm, completion drains) while
@@ -1781,17 +1797,32 @@ public:
     // raise must be fanned to every lite (fireTrapVMWide). GIL-on / flag-off
     // it is exactly the single-word fireTrap.
     CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrapVMWide(VMTraps::NeedTermination); }
+    // GIL-off, a termination for the current thread only, which it services
+    // without the fan-out (a time limit, see addTerminationDeadline). Other
+    // modes have one running thread, and this is notifyNeedTermination().
+    JS_EXPORT_PRIVATE void notifyNeedTerminationForCurrentThread();
     CONCURRENT_SAFE void notifyNeedWatchdogCheck() { traps().fireTrap(VMTraps::NeedWatchdogCheck); }
 
     // An embedder's wall-clock time limit on one bounded call: notifyNeedTermination() is called from a timer
     // thread once `deadline` passes unless the returned TerminationDeadline is cancelled first (dropping it does
     // not cancel it). See TerminationDeadline.h. API lock held; not for VMs that forbidExecutionOnTermination().
+    // GIL-off, the limit terminates only the thread that set it, and that thread cancels it before it leaves
+    // the VM.
     [[nodiscard]] JS_EXPORT_PRIVATE Ref<TerminationDeadline> addTerminationDeadline(MonotonicTime deadline);
 
     // A termination has been requested and not yet withdrawn, in whichever form it has reached: the unhandled
     // NeedTermination trap, the termination-request flag, or the TerminationException as the pending exception.
     // GIL-off a raise also sets the current thread's own word (fireTrapVMWide), which its trap checks read.
-    bool hasPendingTermination() const { return traps().needHandling(VMTraps::NeedTermination) || (gilOffWithProcessGate() && trapsForCurrentThread().needHandling(VMTraps::NeedTermination)) || hasTerminationRequest() || hasPendingTerminationException(); }
+    bool hasPendingTermination() const { return hasTerminationTrapForCurrentThread() || hasTerminationRequest() || hasPendingTerminationException(); }
+
+    // NeedTermination is raised for the current thread and not yet handled. GIL-off, the VM word's bit is
+    // another thread's targeted termination unless a VM-wide termination is raised (VMTraps::fireTargetedTermination).
+    bool hasTerminationTrapForCurrentThread() const
+    {
+        if (gilOffWithProcessGate()) [[unlikely]]
+            return (traps().vmWideTerminationRaised() && traps().needHandling(VMTraps::NeedTermination)) || trapsForCurrentThread().needHandling(VMTraps::NeedTermination);
+        return traps().needHandling(VMTraps::NeedTermination);
+    }
 
     // Withdraws whatever termination is pending on this VM (see hasPendingTermination()) — the counterpart of
     // notifyNeedTermination() for a time-limited scope that has ended: what ran under the request stays cut short,

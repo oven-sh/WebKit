@@ -63,6 +63,22 @@ namespace JSC {
 // is either a spawned Thread or a §J.3-parked carrier — both poll the shared
 // word (D9 quanta / park predicates) and both are owed the bit (TERM1.2:
 // terminating the VM terminates EVERY entered thread).
+// GIL-off: does a thread of this VM other than `except` have a targeted
+// termination (VMTraps::fireTargetedTermination) that it has not serviced yet?
+// Its NeedTermination bit is still in its own word then, and the VM word must
+// keep the bit for its call-free loops. Caller holds VMLiteRegistry::lock.
+static bool anyOtherUnservicedTargetedTermination(const AbstractLocker&, VM& vm, VMLite* except) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+{
+    for (VMLite* lite : VMLiteRegistry::singleton().lites) {
+        if (lite->vm != &vm || lite == except || !lite->targetedTerminationRequested.load(std::memory_order_relaxed))
+            continue;
+        VMTraps* liteTraps = perThreadTrapsIfExists(*lite);
+        if (liteTraps && liteTraps != &vm.traps() && liteTraps->needHandling(VMTraps::NeedTermination))
+            return true;
+    }
+    return false;
+}
+
 static bool anyOtherLiteOfVMEntered(const AbstractLocker&, VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     VMLite* currentLite = VMLite::currentIfExists();
@@ -642,6 +658,9 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
             BitField vmWideMask = AsyncEvents;
             if (m_liteOwnerIsSpawnedThread)
                 vmWideMask &= ~CarrierOnlyServicedEvents;
+            // The VM word's NeedTermination belongs to another thread unless a VM-wide termination is raised.
+            if (!m_liteOwnerVM->traps().vmWideTerminationRaised())
+                vmWideMask &= ~NeedTermination;
             shouldStop |= m_liteOwnerVM->traps().needHandling(vmWideMask);
         }
 
@@ -687,6 +706,15 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(onlyContainsAsyncEvents(mask));
     // No ASSERT(needHandling(mask)): cancelStop() from resumeTheWorld() can race with this call.
+
+    // Deferred traps are serviced after the deferral ends. This early return
+    // parks nowhere, so it must not run the on-stack jettison below either.
+    // The epoch also moves at the edges of another thread's request
+    // (ClassAStopWatchdogContext), with no park here, and a DeferTraps caller
+    // such as linkFor is about to link a call to a CodeBlock that can be on
+    // this stack.
+    if (vm.trapsForCurrentThread().m_trapsDeferred)
+        RELEASE_AND_RETURN(scope, false);
 
     // checktraps-dejank-invalidation-point (UNGIL §K.5 / SPEC-jit I21):
     // GIL-off, DFG/FTL CheckTraps no longer clobbers the abstract heap — it
@@ -750,8 +778,12 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     // exactly the services on this thread. GIL-on / flag-off:
     // trapsForCurrentThread() == vm.traps(), byte-identical.
     VMTraps& vmLevelTraps = vm.traps();
-    if (vm.trapsForCurrentThread().m_trapsDeferred)
-        RELEASE_AND_RETURN(scope, false); // We'll service them on the next opportunity after deferring has stopped.
+
+    // GIL-off, NeedTermination in the VM word is another thread's targeted
+    // termination unless a VM-wide termination is raised. Leave it for that
+    // thread, which retires the bit (fireTargetedTermination).
+    if (vm.gilOff() && this == &vmLevelTraps && !m_vmWideTerminationRaised.load(std::memory_order_relaxed)) [[unlikely]]
+        mask &= ~NeedTermination;
 
     if (vm.trapsForCurrentThread().isDeferringTermination())
         mask &= ~NeedTermination;
@@ -792,13 +824,19 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
                 // VM-level instance's job below. Serialized against a FRESH
                 // fireTrapVMWide raise by this registry lock (the raise
                 // clears the flag under it), so a new raise is never trimmed.
-                clearTrapWithoutCancellingThreadStop(NeedTermination);
-                mask &= ~NeedTermination;
+                // A termination that targets this thread is not an echo.
+                if (!vm.hasTargetedTerminationRequestForCurrentThread()) {
+                    clearTrapWithoutCancellingThreadStop(NeedTermination);
+                    mask &= ~NeedTermination;
+                }
             } else if (anyOtherLiteOfVMEntered(locker, vm))
                 mask &= ~NeedTermination; // Still being delivered to siblings.
             else {
                 vmLevelTraps.m_carrierTookSharedTermination.store(false);
-                clearTrapWithoutCancellingThreadStop(NeedTermination); // Retired; the scope exit below re-derives the stop request.
+                // Retired; the scope exit below re-derives the stop request.
+                // A targeted termination still unserviced keeps the bit.
+                if (!anyOtherUnservicedTargetedTermination(locker, vm, nullptr))
+                    clearTrapWithoutCancellingThreadStop(NeedTermination);
                 mask &= ~NeedTermination;
             }
         }
@@ -960,19 +998,32 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
             [[fallthrough]];
         }
 
-        case NeedTermination:
+        case NeedTermination: {
             // UNGIL TERM1.2: a termination decision is VM-wide. GIL-off,
             // propagate it to every OTHER entered thread's lite (rule-3
             // form, self excluded — this thread is about to throw). Covers
             // both the direct NeedTermination service and the watchdog
             // fall-through on an entered carrier (annex W shape (c)).
-            if (vm.gilOff()) [[unlikely]]
-                fanOutTerminationToSiblingLites();
-            vm.setHasTerminationRequest();
+            // A termination that targets only this thread (a time limit that
+            // it set) is not propagated, and the lite's handled flag stands in
+            // for the VM's request. A VM-wide request pending as well wins.
+            bool targetsOnlyThisThread = false;
+            if (vm.gilOff()) [[unlikely]] {
+                targetsOnlyThisThread = vm.hasTargetedTerminationRequestForCurrentThread() && !vmLevelTraps.vmWideTerminationRaised();
+                if (targetsOnlyThisThread)
+                    vmLevelTraps.retireTargetedTerminationBitInVMWord();
+                else
+                    fanOutTerminationToSiblingLites();
+            }
+            if (targetsOnlyThisThread)
+                vm.setHandledTargetedTerminationForCurrentThread();
+            else
+                vm.setHasTerminationRequest();
             scope.release();
             if (!vm.trapsForCurrentThread().isDeferringTermination()) // Per-thread deferral keying (DeferTermination.h).
                 vm.throwTerminationException();
             return true;
+        }
 
         case NeedStopTheWorld:
             VMManager::singleton().notifyVMStop(vm, StopTheWorldEvent::VMStopped);
@@ -1077,8 +1128,10 @@ CONCURRENT_SAFE void VMTraps::fireTrapVMWide(Event event)
         // pending consumed-by-carrier state (handleTraps' retire trim);
         // clearing the flag under the registry lock serializes against the
         // trim so the new raise is never swallowed.
-        if (event & NeedTermination)
+        if (event & NeedTermination) {
             m_carrierTookSharedTermination.store(false);
+            m_vmWideTerminationRaised.store(true, std::memory_order_relaxed);
+        }
     }
 
     // Poll sites + D9 park quanta are the delivery vehicle GIL-off (§A.2.5:
@@ -1119,8 +1172,99 @@ CONCURRENT_SAFE bool VMTraps::clearTrapVMWide(Event event)
             wasSet = true;
 
         // A withdrawn termination leaves no consumed raise to retire.
-        if (event & NeedTermination)
+        if (event & NeedTermination) {
             m_carrierTookSharedTermination.store(false);
+            m_vmWideTerminationRaised.store(false, std::memory_order_relaxed);
+        }
+    }
+
+    updateThreadStopRequestIfNeeded();
+    return wasSet;
+}
+
+CONCURRENT_SAFE bool VMTraps::fireTargetedTermination(VMLite& target)
+{
+    VM& vm = this->vm(); // Valid: VM-level instance only (see header contract).
+    ASSERT(vm.gilOff());
+
+    {
+        // Same walk and lock ranks as fireTrapVMWide.
+        assertNoPerLiteTrapSignalingLockHeldOnCurrentThread();
+        auto& registry = VMLiteRegistry::singleton();
+        Locker locker { registry.lock };
+        if (target.vm != &vm || !registry.lites.contains(&target))
+            return false;
+        VMTraps* liteTraps = perThreadTrapsIfExists(target);
+        if (!liteTraps || liteTraps == this)
+            return false;
+        target.targetedTerminationRequested.store(true, std::memory_order_relaxed);
+        liteTraps->m_trapBits.exchangeOr(NeedTermination);
+        liteTraps->updateThreadStopRequestIfNeeded();
+        // Call-free loops poll only the VM word. The other threads ignore
+        // this bit (handleTraps, updateThreadStopRequestIfNeeded), and the
+        // target retires it (retireTargetedTerminationBitInVMWord).
+        m_trapBits.exchangeOr(NeedTermination);
+    }
+    return true;
+}
+
+void VMTraps::retireTargetedTerminationBitInVMWord()
+{
+    VM& vm = this->vm(); // Valid: VM-level instance only.
+    ASSERT(vm.gilOff());
+    assertNoPerLiteTrapSignalingLockHeldOnCurrentThread();
+    auto& registry = VMLiteRegistry::singleton();
+    Locker locker { registry.lock };
+    if (m_vmWideTerminationRaised.load(std::memory_order_relaxed))
+        return;
+    if (anyOtherUnservicedTargetedTermination(locker, vm, VMLite::currentIfExists()))
+        return;
+    clearTrapWithoutCancellingThreadStop(NeedTermination);
+}
+
+CONCURRENT_SAFE void VMTraps::fireTerminationAgainForCurrentThread()
+{
+    VM& vm = this->vm(); // Valid: VM-level instance only.
+    if (vm.gilOff() && !vmWideTerminationRaised()) [[unlikely]] {
+        VMLite* lite = VMLite::currentIfExists();
+        if (lite && lite->vm == &vm && lite->targetedTerminationRequested.load(std::memory_order_relaxed) && fireTargetedTermination(*lite))
+            return;
+    }
+    fireTrapVMWide(NeedTermination);
+}
+
+CONCURRENT_SAFE bool VMTraps::clearTrapVMWideKeepingOtherThreadsTargetedTermination()
+{
+    VM& vm = this->vm(); // Valid: VM-level instance only (see header contract).
+    ASSERT(vm.gilOff());
+    VMLite* currentLite = VMLite::currentIfExists();
+
+    bool wasSet = false;
+    {
+        // Same walk and lock ranks as clearTrapVMWide. A lite whose targeted
+        // request stands keeps its bit, so nothing is cleared and re-raised.
+        assertNoPerLiteTrapSignalingLockHeldOnCurrentThread();
+        auto& registry = VMLiteRegistry::singleton();
+        Locker locker { registry.lock };
+        for (VMLite* lite : registry.lites) {
+            if (lite->vm != &vm)
+                continue;
+            if (lite != currentLite && lite->targetedTerminationRequested.load(std::memory_order_relaxed))
+                continue;
+            VMTraps* liteTraps = perThreadTrapsIfExists(*lite);
+            if (liteTraps && liteTraps != this) {
+                if (liteTraps->clearTrapWithoutCancellingThreadStop(NeedTermination) & NeedTermination)
+                    wasSet = true;
+                liteTraps->updateThreadStopRequestIfNeeded();
+            }
+        }
+        // The VM word keeps the bit for another thread's unserviced targeted termination.
+        if (!anyOtherUnservicedTargetedTermination(locker, vm, currentLite)) {
+            if (clearTrapWithoutCancellingThreadStop(NeedTermination) & NeedTermination)
+                wasSet = true;
+        }
+        m_carrierTookSharedTermination.store(false);
+        m_vmWideTerminationRaised.store(false, std::memory_order_relaxed);
     }
 
     updateThreadStopRequestIfNeeded();
@@ -1173,6 +1317,7 @@ void VMTraps::fanOutTerminationToSiblingLites()
     if (anyOtherEnteredSibling) {
         if (!ThreadManager::isJSThreadCurrent())
             vmLevelTraps.m_carrierTookSharedTermination.store(true);
+        vmLevelTraps.m_vmWideTerminationRaised.store(true, std::memory_order_relaxed);
         vmLevelTraps.m_trapBits.exchangeOr(NeedTermination);
     }
     }
@@ -1223,6 +1368,10 @@ void VMTraps::orVMWideTrapBitsIntoLite(VMLite& lite)
     Locker locker { registry.lock };
 
     BitField word = m_trapBits.loadRelaxed() & AsyncEvents;
+    // The VM word's NeedTermination is another thread's targeted termination
+    // unless a VM-wide termination is raised (fireTargetedTermination).
+    if (!m_vmWideTerminationRaised.load(std::memory_order_relaxed))
+        word &= ~NeedTermination;
     // W0/SD13: carrier-only bits never reach a spawned thread's lite. The
     // token acquisition runs on the lite's owner thread, so the thread-kind
     // probe identifies the lite's kind (TERM1.4: the C++ gate and the §I
@@ -1255,6 +1404,10 @@ void VMTraps::backfillVMWideTrapBitsAtLiteRegistration(VMLite& lite, const Abstr
     ASSERT(&liteTraps != this);
 
     BitField word = m_trapBits.loadRelaxed() & AsyncEvents;
+    // The VM word's NeedTermination is another thread's targeted termination
+    // unless a VM-wide termination is raised (fireTargetedTermination).
+    if (!m_vmWideTerminationRaised.load(std::memory_order_relaxed))
+        word &= ~NeedTermination;
     // W0/SD13: carrier-only bits never reach a spawned thread's lite.
     // Registration runs on the owner thread (all three registration paths),
     // so the thread-kind probe identifies the lite's kind (TERM1.4).
@@ -1318,8 +1471,14 @@ void VMTraps::undoDeferTerminationSlow(DeferAction deferAction)
     if (m_suspendedTerminationException || (deferAction == DeferAction::DeferUntilEndOfScope)) {
         vm.throwTerminationException();
         m_suspendedTerminationException = false;
-    } else if (deferAction == DeferAction::DeferForAWhile)
-        fireTrap(NeedTermination); // Let the next trap check handle it.
+    } else if (deferAction == DeferAction::DeferForAWhile) {
+        // A termination that targets only this thread has to reach the VM
+        // word too, which call-free loops poll.
+        if (vm.gilOff() && vm.hasTargetedTerminationRequestForCurrentThread() && !vm.traps().vmWideTerminationRaised()) [[unlikely]]
+            vm.traps().fireTerminationAgainForCurrentThread();
+        else
+            fireTrap(NeedTermination); // Let the next trap check handle it.
+    }
 }
 
 VMTraps::VMTraps()

@@ -5475,6 +5475,10 @@ void SpeculativeJIT::compile(Node* node)
     }
         
     case PutStructure: {
+        // A plain structure store. With threads, no creator emits it (SPEC-jit
+        // section 5.5): a published object needs the checked publication in
+        // JSObject::publishStructureOnlyTransitionConcurrently.
+        RELEASE_ASSERT(!Options::useJSThreads());
         RegisteredStructure oldStructure = node->transition()->previous;
         RegisteredStructure newStructure = node->transition()->next;
         m_graph.m_plan.transitions().addLazily(node->origin.semantic.codeOriginOwner(), oldStructure.get(), newStructure.get());

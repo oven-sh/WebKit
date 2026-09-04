@@ -465,6 +465,8 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
                     return false;
                 }
                 if (codeBlock->jitType() != JITType::BaselineJIT) {
+                    // Baseline code in place of optimized code would break every frame that runs it (functionEntryOSR).
+                    RELEASE_ASSERT(!JITCode::isOptimizingJIT(codeBlock->jitType()));
                     codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
                     codeBlock->ownerExecutable()->installCode(codeBlock);
                 }
@@ -566,6 +568,32 @@ static ALWAYS_INLINE void traceEntryFrameIfGILOff(CallFrame* callFrame)
     }
 }
 
+// The function prologues tier up the executable's current CodeBlock, as
+// upstream does. With the GIL off, a caller can enter the prologue through a
+// call link that another thread has just relinked: the frame runs the CodeBlock
+// the link named, and the executable's current one can be the new optimized
+// replacement. Tiering that one up would give it baseline code in place of its
+// optimized code. So the frame's CodeBlock is the one to tier up, and only when
+// it is still current, because tiering up installs it. A frame that runs an old
+// CodeBlock enters its baseline code if it has some, and stays in the LLInt
+// otherwise.
+static UGPRPair functionEntryOSR(CallFrame* callFrame, CodeBlock* executableCodeBlock, const char* name, EntryKind kind)
+{
+    CodeBlock* frameCodeBlock = callFrame->codeBlock();
+    if (callFrame->deprecatedVM().gilOff() && frameCodeBlock != executableCodeBlock) [[unlikely]] {
+#if ENABLE(JIT)
+        if (frameCodeBlock->jitType() == JITType::BaselineJIT) {
+            WTF::loadLoadFence(); // See jitCompileAndSetHeuristics: the type is the publication point.
+            if (kind == Prologue)
+                LLINT_RETURN_TWO(frameCodeBlock->jitCode()->executableAddress(), nullptr);
+            LLINT_RETURN_TWO(frameCodeBlock->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
+        }
+#endif
+        LLINT_RETURN_TWO(nullptr, nullptr);
+    }
+    return entryOSR(executableCodeBlock, name, kind);
+}
+
 LLINT_SLOW_PATH_DECL(entry_osr)
 {
     UNUSED_PARAM(pc);
@@ -577,28 +605,28 @@ LLINT_SLOW_PATH_DECL(entry_osr_function_for_call)
 {
     UNUSED_PARAM(pc);
     traceEntryFrameIfGILOff(callFrame);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
+    return functionEntryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct)
 {
     UNUSED_PARAM(pc);
     traceEntryFrameIfGILOff(callFrame);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
+    return functionEntryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call_arityCheck)
 {
     UNUSED_PARAM(pc);
     traceEntryFrameIfGILOff(callFrame);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
+    return functionEntryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct_arityCheck)
 {
     UNUSED_PARAM(pc);
     traceEntryFrameIfGILOff(callFrame);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
+    return functionEntryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(loop_osr)
@@ -1426,7 +1454,8 @@ static ALWAYS_INLINE JSValue getByVal(VM& vm, JSGlobalObject* globalObject, Code
 
             bool skipMarkingOutOfBounds = false;
 
-            if (object->indexingType() == ArrayWithContiguous && i < object->butterfly()->publicLength()) {
+            // With the flag on, the word may be segmented, which butterfly() must not decode.
+            if (object->indexingType() == ArrayWithContiguous && i < (Options::useJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
@@ -2749,7 +2778,11 @@ LLINT_SLOW_PATH_DECL(slow_path_log_shadow_chicken_prologue)
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
     ShadowChicken* shadowChicken = vm.shadowChicken();
     RELEASE_ASSERT(shadowChicken);
-    shadowChicken->log(vm, callFrame, ShadowChicken::Packet::prologue(callFrame->jsCallee(), callFrame, callFrame->callerFrame(), scope));
+    auto packet = ShadowChicken::Packet::prologue(callFrame->jsCallee(), callFrame, callFrame->callerFrame(), scope);
+    if (vm.gilOff()) [[unlikely]]
+        *shadowChicken->acquirePacketGILOff(vm, callFrame) = packet;
+    else
+        shadowChicken->log(vm, callFrame, packet);
     
     LLINT_END();
 }
@@ -2766,7 +2799,11 @@ LLINT_SLOW_PATH_DECL(slow_path_log_shadow_chicken_tail)
 
     ShadowChicken* shadowChicken = vm.shadowChicken();
     RELEASE_ASSERT(shadowChicken);
-    shadowChicken->log(vm, callFrame, ShadowChicken::Packet::tail(callFrame, thisValue, scope, codeBlock, callSiteIndex));
+    auto packet = ShadowChicken::Packet::tail(callFrame, thisValue, scope, codeBlock, callSiteIndex);
+    if (vm.gilOff()) [[unlikely]]
+        *shadowChicken->acquirePacketGILOff(vm, callFrame) = packet;
+    else
+        shadowChicken->log(vm, callFrame, packet);
     
     LLINT_END();
 }

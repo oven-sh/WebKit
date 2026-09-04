@@ -109,7 +109,7 @@ Paths are under `JSTests/threads/`.
 | OM-6, PRE-2 | Fixed. `flatButterflySnapshot` in both arms. | `objectmodel/json-stringify-array-race.js` | 10 of 10 |
 | OM-7 | Fixed. `flatButterflySnapshot`, bounded by its `vectorLength`. | `jit/dfg-array-join-segmented-race.js` | 10 of 10 |
 | OM-8 | Fixed. The flag-on arm uses `getVectorLength()` and `getArrayLength()`. | `objectmodel/direct-put-by-val-profile-race.js` | 10 of 10 |
-| OM-9 | Open. Same as the open DFG element-write gap. | none | |
+| OM-9 | Fixed, with the older DFG and FTL element-write gap (second round, LANDING-PLAN.md "Results, second round"). A `GetButterfly` that feeds an element store (`PutByVal`, `PutByValDirect`, `PutByValDirectResolved`, `ArrayPush`, `ArrayUnshift`, `ArrayPop`, `ArrayShift`) runs the write predicate, so a foreign store to a word that is not shared-written exits, and the generic path sets the bit. Before, the owner's copying resize lost the store. | `arrays/dfg-foreign-element-store-sets-shared-write.js` | 20 of 20 (Release) |
 | OM-10, PRE-1 | Fixed. Map and Set follow SPEC-ungil N.1: every operation on the current table holds the table's cell lock, and a rehash or a clear publishes a new table. The DFG and FTL do not inline Map and Set operations with the GIL off, and iteration takes the generic path. | `shared-objects/map-set-shared-writers.js` | 10 of 10 |
 | SW-1 | Fixed. The `seenModes` merges and reads use `mergeIterationModeSeenModesConcurrently` and `loadIterationModeSeenModesConcurrently`, and the value profile store uses `storeBucketConcurrently`, as the other iterator sites do. | none (TSAN, `semantics/async-generator-multithread-for-await.js`) | |
 | SW-2 | Fixed as a rule instead of a list: with the GIL off, every node for which `doesGCIgnoringClobberize` is true clobbers heap facts. `CheckTraps` stays out, by design. | none | |
@@ -123,10 +123,10 @@ Paths are under `JSTests/threads/`.
 | VM-6 | Fixed. The DateTimeFormat cache stays empty in a GIL-off process. A lock is not enough: the cached impl is `RefCounted`, and cells on any thread ref it. | `vmstate/intl-datetimeformat-cache-per-thread.js` | 10 of 10 |
 | VM-7 | Fixed. The collator is not cached with the GIL off. | `vmstate/intl-localecompare-cache-per-thread.js` | 7 of 10 Debug, 9 of 10 Release |
 | VM-8, OPT-1, OPT-2 | Fixed by refusal. With the GIL off, the FFI IC stub, the DFG and FTL call paths, and the direct call are off (`Options.cpp`), and a spawned thread that creates or calls an FFI function gets a TypeError (`throwIfFFIRefusedOnCurrentThread`). The full fix (a per-thread arena and UTF-8 cache, a CAS publish of the context, and per-thread state in the JIT paths) is not done. | none (the jsc shell has no `bun:ffi`) | |
-| VM-9 | The publish is fixed: a GIL-off VM creates the table eagerly. Open: a `node:vm` timeout terminates every thread (`fireTrapVMWide`), not only the one that timed out. | none | |
+| VM-9 | Fixed. The publish: a GIL-off VM creates the table eagerly. The scope (second round): a deadline terminates only the thread that added it (`VMTraps::fireTargetedTermination`). The bit is set in that thread's word and in the VM word, which call-free loops poll, and the other threads ignore the VM word's bit while no VM-wide termination is raised. `VM::cancelTermination` keeps another thread's pending one. | `giloff-time-limit-terminates-one-thread.js` | 10 of 10 (Release) |
 | VM-10 | Fixed by reading: a leaf lock in `link` and `unlink`. The test written for it never failed, so it was not kept. | none | |
 | VM-11, RB-2 | Fixed. | none | |
-| VM-12 | Fixed in JSC: a GIL-off VM creates the two-character atom table once, under a lock, and publishes it after a fence. Not traced: Bun's `JSC__IdentifierArray__setFromSlot`. | none | |
+| VM-12 | Fixed. A GIL-off VM creates the two-character atom table once, under a lock, and publishes it after a fence. Second round: `DecoderStringTable::atomForSlot`, which Bun's `JSC__IdentifierArray__setFromSlot` calls, takes the compilation lock. `atomFor` rewrites a slot with no lock of its own, and JSC's callers already hold that lock (it is recursive). | none (the jsc shell has no module-info path) | |
 | VM-13, VM-14 | Open. Semantic only. | none | |
 | VM-15 | Fixed. The one-line gate. | none | |
 | OPT-3 | Safe by reading, once HW-1 is fixed: the decommit uses the same liveness as the sweep, and HW-1 was the case where that liveness was wrong. | none | |
@@ -340,6 +340,15 @@ gets a wrong value.**
 - Fix: none for this node alone. When the gap is closed for `ArrayPop`, close
   it here too. The fix is the same: re-load the word and run
   `emitThreadedButterflyLoadForWrite` at the store.
+- Status (second round): fixed for every element store that takes a
+  `GetButterfly` storage child, in the DFG and the FTL. The write predicate
+  runs at the `GetButterfly` instead of at each store
+  (`Graph::markButterflyLoadsThatFeedElementWrites`). That is as strong as a
+  check at the store: no poll sits between the two, because a poll clobbers
+  `JSObject_butterfly` and the load runs again after it. The gap was not only
+  about the bit. The owner's resize copies the elements and publishes the copy
+  with a CAS that expects the word it read, and the CAS succeeds when the bit
+  is still clear, so a foreign store to the old butterfly was lost.
 
 ### OM-10: DFG/FTL Map and Set iteration reads storage with no lock
 
@@ -746,6 +755,19 @@ field.**
   only the one that set the deadline.
 - Fix: create the set in the VM constructor. Record the requesting VMLite in the
   deadline, and fire only its traps.
+- Status (second round): fixed as described. Firing only the lite's word was
+  not enough: the loop checks of every tier poll the VM word, so a call-free
+  loop did not see the request. `VMTraps::fireTargetedTermination` sets the bit
+  in the lite's word and in the VM word. `VMTraps::m_vmWideTerminationRaised`
+  says whether the VM word's bit is a VM-wide request. While it is not, the
+  other threads leave the bit alone: `handleTraps` masks it, the stop request
+  and the bits copied into a lite exclude it, and the target retires it when it
+  services the request. The target does not fan the request out.
+  `targetedTerminationRequested` routes the bit, and `targetedTerminationHandled`,
+  set when the thread services it, stands in for the VM's request flag on that
+  thread, as `setHasTerminationRequest` does for a VM-wide termination. A thread that polls while a targeted request of another thread is
+  pending takes the slow path until that thread services it. The watchdog stays
+  VM-wide.
 
 ### VM-10: `UnlinkedMetadataTable::link` and `unlink` can run at the same time
 
@@ -980,6 +1002,158 @@ block landing, but they are not upstream's doing.
   shared with a spine (C4), so a foreign grow can move it past this storage's
   `vectorLength`. The window is a few instructions.
 - Fix: also load `vectorLength` from the same butterfly, and take the minimum.
+
+### PRE-4: JIT-emitted structure transitions (second round)
+
+**Risk: none found. Four sites had no local check.**
+
+- The structure-store audit (LANDING-PLAN.md, section 1.3) covered the C++
+  transitions. The second round checked the transitions that JIT code emits:
+  the LLInt `put_by_id`, `put_private_name` and `set_private_brand` caches,
+  the IC and handler-IC `Transition`, `Delete` and `SetPrivateBrand` cases, the
+  megamorphic store, and the DFG and FTL `PutStructure`, `MultiPutByOffset`,
+  `MultiDeleteByOffset`, `NukeStructureAndSetButterfly` and property-storage
+  nodes.
+- None runs on a published object with the flag on, GIL on or off. The gates:
+  `Repatch.cpp` gives up on the Transition, Delete and SetPrivateBrand cases;
+  the LLInt fills its transition caches only for `useUnthreadedLLIntPropertyCaches()`;
+  `DFGByteCodeParser::handlePutById` routes a Transition variant to the generic
+  node; constant folding does not turn a transition into `PutByOffset`. The
+  storage nodes, the FTL `MultiPutByOffset` transition arm, and the IC
+  compiler `RELEASE_ASSERT` that the flag is off. So the E4 transition
+  predicate of SPEC-jit section 5.5 is not emitted anywhere, and every
+  transition goes through the object model. The structure stores that do run
+  flag-on are the stores into new cells (`emitAllocateJSCell`, the FTL
+  `allocateCell`).
+- Sites that relied on a gate elsewhere, now checked locally: the DFG and FTL
+  `PutStructure` assert that the flag is off; the DFG parser does not inline a
+  delete hit or a private brand with threads; the private-brand handler thunk
+  jumps to its slow path with threads, as the delete handlers do. The LLInt
+  `put_private_name` and `set_private_brand` paths still rely on the metadata
+  never being filled flag-on, so the cached StructureID stays 0 and never
+  matches.
+
+### PRE-5: a lower tier could replace a higher one, GIL off (second round)
+
+**Risk: confirmed by test. Fixed.**
+
+- `LLIntSlowPaths.cpp`, `entry_osr_function_for_call` and the three like it,
+  tiered up the executable's current CodeBlock, as upstream does. A caller
+  can enter the LLInt prologue through a call link that another thread
+  relinks a moment later, when it installs the optimized replacement. The
+  prologue then gave the optimized CodeBlock baseline code. Fix: tier up the
+  frame's CodeBlock, and only when it is current (`functionEntryOSR`).
+- `BaselineJITPlan::finalize`, and the LLInt's shortcut to shared baseline
+  code, publish the baseline code before `ScriptExecutable::installCode`
+  takes the compilation lock. Another thread can run that code, tier up, and
+  install the optimized replacement first. The late install then put the
+  baseline CodeBlock back. Fix: under the lock, `installCode` skips a
+  CodeBlock that is the alternative of the optimized one in the slot, unless
+  the install is a jettison.
+- Neither can happen with the GIL on. One thread runs JavaScript at a time,
+  and neither window gives up the GIL.
+- Test: `JSTests/threads/giloff-prologue-tiers-up-frame-code-block.js`. The
+  corpus flake `semantics/stack-overflow-per-thread.js` was this bug.
+
+### PRE-6: a collection under a cell lock, GIL off (second round)
+
+**Risk: confirmed by test. Fixed.**
+
+- `JSObject::defineOwnIndexedProperty` adds to the sparse map under the
+  object's cell lock, flag on. `SparseArrayValueMap::add` reports the map's new
+  capacity with `reportExtraMemoryAllocated`, which can start a collection.
+  With the GIL off, this thread conducts it and waits for the markers, and a
+  marker that visits the object waits for the cell lock. The process stops.
+- The comment at the site said the add only calls `fastMalloc`. The report is
+  the part it missed. `enterDictionaryIndexingModeWhenArrayStorageAlreadyExists`
+  already holds a `DeferGC` before its lock for the same reason.
+- Fix: a `DeferGC` before the lock. The other sparse-map calls in `JSObject.cpp`
+  run outside the object's lock.
+- A second shape, found by the same suite (`stress/redefine-property-writable.js`):
+  `deletePropertyNamedConcurrent` allocates nothing under the cell lock, but
+  `Structure::remove` takes a `GCSafeConcurrentJSLocker`, whose `DeferGC` ended
+  under the lock. `~DeferGC` calls `decrementDeferralDepthAndGCIfNeeded`, which
+  can conduct a pending collection. So a deferral scope that ends under the
+  lock is a collection point too, unless an outer scope is still live. Fix: a
+  `DeferGC` before the lock. Test:
+  `objectmodel/dictionary-delete-collects-outside-cell-lock.js`.
+- A marker takes a `JSObject`'s cell lock only for ArrayStorage shapes, while the
+  mutator runs (`JSObject.cpp`, `visitButterflyImpl`). Inside a GIL-off stop
+  window, the poll cannot conduct, because the window's conductor holds the
+  collector's conductor lock.
+- A search of the other cell-locked regions, for both shapes, found one more:
+  `flattenDictionaryStructureImpl` declares its `GCSafeConcurrentJSLocker` after
+  the cell locker. GIL off, it runs inside a stop. With the GIL on and a shared
+  heap, it may be reachable. It has the same fix. `FunctionRareData::initializeObjectAllocationProfile`
+  and `createInternalFunctionAllocationStructureFromBaseGILOff` allocate under
+  the rare data's lock on purpose: `visitChildren` does not take it, and the
+  waiters poll for stops.
+- Test: `JSTests/threads/objectmodel/sparse-define-collects-outside-cell-lock.js`.
+  Found by `stress/intl-having-a-bad-time.js` in the GIL-off JSC suite.
+
+### PRE-7: `butterfly()` on a word that can be segmented (second round)
+
+**Risk: confirmed by test. Fixed.**
+
+- `getByVal` in `jit/JITOperations.cpp` (two copies) and `LLInt::getByVal`
+  compared the index with `object->butterfly()->publicLength()` for a
+  contiguous array. `butterfly()` must not decode a segmented word
+  (`JSObject.h`), and another thread can segment the array at any time. Every
+  read past the end of a segmented array reaches these lines. With
+  `--verifyConcurrentButterfly` it fails an assertion. Without it, the length
+  comes from the memory just before the spine.
+- Fix: with the flag on, read the length through the word, with
+  `getArrayLength()`, as `directPutByVal` already does.
+- The same mistake, found by a search of `runtime/`, `jit/`, `dfg/`, `ftl/`,
+  `llint/`, `bytecode/`, `interpreter/`, `heap/` and `API/` for `butterfly()`
+  on an object with Int32, Double or Contiguous indexing. Reached by any use of
+  a segmented object:
+  - `JSObject::canHaveExistingOwnIndexedProperties()` and
+    `forEachOwnIndexedProperty()` (`JSObjectInlines.h`): the fast paths of
+    `Object.assign`, `Object.entries` and `Object.values`. With the verifier
+    off, `Object.assign` copied no indexed property.
+  - `JSCellButterfly::createFromClonedArguments`: the spread of an arguments
+    object.
+  - `tryCloneArrayFromFast` (`JSArray.cpp`): `Array.from`, `concat` and
+    `toSorted`. With the verifier off, `Array.from` returned an empty array,
+    and the copy read the spine's memory as elements.
+  - `JSObject::getEnumerableLength()`: the indexed length of a `for-in`.
+  - `JSObject::analyzeHeap` and `JSObject::estimatedSize`: the heap snapshot.
+    A stop does not make a segmented word flat.
+- Reached only through a race, between a check of the word and a second load:
+  `JSArray::setLength` counted the elements through `countElements()`, which
+  loaded the word again; `JSArray::pushInline` decoded a second load after its
+  owner check; DFG constant folding called `butterfly()` before its structure
+  check, which asserts under the verifier.
+- Fixes: read through one load of the word. A segmented word takes the generic
+  path (the clone, the spread, the `for-in`), or the spine (the snapshot). A
+  flat snapshot is read within its own `vectorLength`, because `publicLength`
+  is shared with a later spine (C4). `setLength` passes its snapshot to
+  `countElementsIn()`. `pushInline` starts the dispatch again on a segmented
+  word.
+- The other `butterfly()` reads that the search found are ArrayStorage (never
+  segmented), cells that are not yet published, conversions inside a stop,
+  code that already dispatches on the word, or flag-off branches.
+- Tests: `JSTests/threads/arrays/segmented-out-of-bounds-read.js`,
+  `segmented-out-of-bounds-read-llint.js`,
+  `objectmodel/segmented-indexed-copy-paths.js` and
+  `objectmodel/segmented-array-read-paths.js`.
+
+### PRE-8: adaptive watchpoint install after a foreign transition (second round)
+
+**Risk: confirmed under the amplifier. Fixed.**
+
+- `DFG::Plan::reallyAdd` checks `areStillValidOnMainThread` and then installs
+  the watchpoints. `AdaptiveStructureWatchpoint::install` did
+  `RELEASE_ASSERT(m_key.isWatchable(MakeNoChanges))`, which reads the watched
+  object's current structure. With the flag on, another thread can transition
+  that object between the check and the install.
+- Fix: with the flag on, `install` (and
+  `AdaptiveInferredPropertyValueWatchpointBase::install`) returns false when
+  the condition is no longer watchable. The callers handle a refused install:
+  `reallyAdd` fails the compile as invalidated, `fireInternal` jettisons.
+- Reproducer: `gc-stress/watchpoint-storm.js` under `amplify.sh`, GIL off, 5
+  of 400 runs before, 0 of 400 after.
 
 ## What this audit did not check
 

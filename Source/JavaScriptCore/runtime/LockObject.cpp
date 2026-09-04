@@ -395,8 +395,13 @@ GILDroppedSection::~GILDroppedSection()
         if (m_vm.hasPendingTerminationException()) [[unlikely]] {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
             topScope.clearException();
-            m_vm.setHasTerminationRequest();
-            m_vm.traps().fireTrapVMWide(VMTraps::NeedTermination); // Idempotent OR; guarantees the next handleTraps re-delivers.
+            // A termination that targets only this thread stays targeted.
+            if (m_vm.gilOff() && m_vm.hasTargetedTerminationRequestForCurrentThread() && !m_vm.traps().vmWideTerminationRaised()) [[unlikely]]
+                m_vm.traps().fireTerminationAgainForCurrentThread();
+            else {
+                m_vm.setHasTerminationRequest();
+                m_vm.traps().fireTrapVMWide(VMTraps::NeedTermination); // Idempotent OR; guarantees the next handleTraps re-delivers.
+            }
         }
         // Early return BEFORE the sp/lastStackTop restore below: for a
         // spawned thread mid-entry those are LIVE per-lite §A.1.4 slots

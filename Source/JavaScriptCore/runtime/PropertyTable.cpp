@@ -78,7 +78,7 @@ PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity)
     concurrentRelaxedStore(m_deletedCount, 0u);
     ASSERT(isPowerOfTwo(indexSize()));
     bool isCompact = tableCapacity() < UINT8_MAX;
-    concurrentRelaxedStore(m_indexVector, allocateZeroedIndexVector(isCompact, indexSize()));
+    publishIndexVector(allocateZeroedIndexVector(isCompact, indexSize()));
     ASSERT(isCompact == this->isCompact());
 }
 
@@ -92,7 +92,7 @@ PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
     // TSAN: see the first constructor — relaxed stores even during construction.
     concurrentRelaxedStore(m_indexSize, other.indexSize());
     concurrentRelaxedStore(m_indexMask, other.indexMask());
-    concurrentRelaxedStore(m_indexVector, allocateIndexVector(other.isCompact(), other.indexSize()));
+    publishIndexVector(allocateIndexVector(other.isCompact(), other.indexSize()));
     concurrentRelaxedStore(m_keyCount, other.keyCount());
     concurrentRelaxedStore(m_deletedCount, other.deletedCount());
     ASSERT(isPowerOfTwo(m_indexSize));
@@ -139,7 +139,7 @@ PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity, const PropertyTab
     ASSERT(isPowerOfTwo(indexSize()));
     ASSERT(initialCapacity >= other.keyCount());
     bool isCompact = other.isCompact() && tableCapacity() < UINT8_MAX;
-    concurrentRelaxedStore(m_indexVector, allocateZeroedIndexVector(isCompact, indexSize()));
+    publishIndexVector(allocateZeroedIndexVector(isCompact, indexSize()));
     ASSERT(this->isCompact() == isCompact);
 
     withIndexVector([&](auto* vector) {
