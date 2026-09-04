@@ -1064,6 +1064,7 @@ runtime/ScopeOffset.cpp
 runtime/ScopedArguments.cpp
 runtime/ScopedArgumentsTable.cpp
 runtime/ScriptExecutable.cpp
+runtime/ScriptFetchParameters.cpp
 runtime/SetConstructor.cpp
 runtime/SetIteratorPrototype.cpp
 runtime/SetPrototype.cpp
