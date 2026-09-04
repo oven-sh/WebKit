@@ -1402,8 +1402,10 @@ protected:
     template<IndexingType indexingShape>
     unsigned NODELETE countElements(Butterfly*);
         
-    // This is relevant to undecided, int32, double, and contiguous.
-    unsigned countElements();
+    // This is relevant to undecided, int32, double, and contiguous. The caller
+    // passes the butterfly it loaded: with the flag on, butterfly() must not
+    // decode a segmented word, and a re-load can find one.
+    unsigned countElementsIn(Butterfly*);
 
 private:
     friend class LLIntOffsetsExtractor;

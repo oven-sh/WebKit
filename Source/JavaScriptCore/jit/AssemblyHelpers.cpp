@@ -2109,6 +2109,15 @@ void AssemblyHelpers::getArityPadding(VM& vm, unsigned numberOfParameters, GPRRe
     stackOverflow.append(branchPtrAgainstSoftStackLimit(vm, GreaterThan, scratchGPR1));
 }
 
+AssemblyHelpers::JumpList AssemblyHelpers::branchIfArrayBufferViewIsDetached(GPRReg baseGPR)
+{
+    JumpList detached;
+    detached.append(branchTestPtr(MacroAssembler::Zero, MacroAssembler::Address(baseGPR, JSArrayBufferView::offsetOfVector())));
+    if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+        detached.append(branchTest8(MacroAssembler::NonZero, MacroAssembler::Address(baseGPR, JSArrayBufferView::offsetOfDetachedKeepingVector())));
+    return detached;
+}
+
 AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedTypedArrayIsOutOfBounds(GPRReg baseGPR, GPRReg scratchGPR, GPRReg scratch2GPR, std::optional<TypedArrayType> typedArrayType)
 {
     ASSERT(scratchGPR != scratch2GPR);
@@ -2116,7 +2125,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedType
 
     JumpList outOfBounds;
 
-    outOfBounds.append(branchTestPtr(MacroAssembler::Zero, MacroAssembler::Address(baseGPR, JSArrayBufferView::offsetOfVector())));
+    outOfBounds.append(branchIfArrayBufferViewIsDetached(baseGPR));
 
     load8(Address(baseGPR, JSArrayBufferView::offsetOfMode()), scratchGPR);
     and32(TrustedImm32(resizabilityAndAutoLengthMask), scratchGPR, scratch2GPR);

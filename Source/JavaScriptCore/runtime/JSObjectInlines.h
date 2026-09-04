@@ -1976,7 +1976,8 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, const Fun
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES: {
-        unsigned usedLength = butterfly()->publicLength();
+        // With the flag on, the word may be segmented, which butterfly() must not decode.
+        unsigned usedLength = Options::useJSThreads() ? getArrayLength() : butterfly()->publicLength();
         for (unsigned i = 0; i < usedLength; ++i) {
             JSValue value = getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, void());
@@ -2177,7 +2178,8 @@ inline unsigned JSObject::canHaveExistingOwnIndexedProperties() const
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
-        return butterfly()->publicLength();
+        // With the flag on, the word may be segmented, which butterfly() must not decode.
+        return Options::useJSThreads() ? getArrayLength() : butterfly()->publicLength();
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         auto* storage = butterfly()->arrayStorage();
         unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());

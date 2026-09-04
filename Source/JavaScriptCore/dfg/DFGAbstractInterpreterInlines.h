@@ -2843,7 +2843,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 if (arrayMode.arrayClass() == Array::OriginalCopyOnWriteArray) {
 
                     WTF::loadLoadFence();
-                    Butterfly* butterfly = array->butterfly();
+                    // With the flag on, the array can be segmented, and butterfly()
+                    // asserts on that under --verifyConcurrentButterfly. A copy-on-write
+                    // structure, which the check below requires, is never segmented (I35).
+                    Butterfly* butterfly = Options::useJSThreads() ? untaggedButterfly(array->taggedButterflyWord()) : array->butterfly();
 
                     WTF::loadLoadFence();
                     StructureID structureIDLate = array->structureID();
