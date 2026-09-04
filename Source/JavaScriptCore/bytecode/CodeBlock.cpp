@@ -2491,17 +2491,6 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
     RELEASE_ASSERT(reason != Profiler::NotJettisoned);
 
-#if ENABLE(JIT)
-    {
-        ConcurrentJSLocker locker(m_lock);
-        forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
-            propertyCache.deref();
-            return IterationStatus::Continue;
-        });
-    }
-#endif
-
-    
 #if ENABLE(DFG_JIT)
     if (DFG::shouldDumpDisassembly()) {
         dataLog("Jettisoning ", *this);
