@@ -62,6 +62,7 @@ public:
     void prepareForConservativeScan();
     
     void deleteUnmarkedJettisonedStubRoutines(VM&);
+    void validateWatchpointLiveness(VM&);
 
     template<typename Visitor> void traceMarkedStubRoutines(Visitor&);
     
@@ -92,6 +93,7 @@ public:
     void prepareForConservativeScan() { }
     void deleteUnmarkedJettisonedStubRoutines(VM&) { }
     template<typename Visitor> void traceMarkedStubRoutines(Visitor&) { }
+    void validateWatchpointLiveness(VM&) { }
 };
 
 #endif // !ENABLE(JIT)

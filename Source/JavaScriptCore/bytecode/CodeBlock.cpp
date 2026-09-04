@@ -2380,6 +2380,27 @@ void CodeBlock::shrinkToFit(const ConcurrentJSLocker&, ShrinkMode shrinkMode)
     m_constantRegisters.shrinkToFit();
 }
 
+void CodeBlock::forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>& func)
+{
+#if ENABLE(JIT)
+    if (!m_jitCode)
+        return;
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+        for (auto* handler = propertyCache.firstHandler(); handler; handler = handler->next()) {
+            if (auto* routine = handler->stubRoutine())
+                func(*routine);
+        }
+        if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(propertyCache)) {
+            if (handlerIC->m_inlinedHandler && handlerIC->m_inlinedHandler->stubRoutine())
+                func(*handlerIC->m_inlinedHandler->stubRoutine());
+        }
+        return IterationStatus::Continue;
+    });
+#else
+    UNUSED_PARAM(func);
+#endif
+}
+
 void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
 {
     if (caller)

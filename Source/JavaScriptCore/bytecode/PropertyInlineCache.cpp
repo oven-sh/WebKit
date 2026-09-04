@@ -855,8 +855,11 @@ void PropertyInlineCache::initializeWithUnitHandler(CodeBlock* codeBlock, Ref<In
         if (handlerIC->m_inlinedHandler)
             handlerIC->clearInlinedHandler(codeBlock);
         ASSERT(!handlerIC->m_inlinedHandler);
-        if (m_handler)
-            m_handler->removeOwner(codeBlock);
+        // Every handler in the chain registered codeBlock as an owner of its stub routine when it was prepended. A
+        // shared routine with a stale owner never sees ownerIsDead() and keeps firing its watchpoints after every IC
+        // that used it is gone.
+        for (auto* cursor = m_handler.get(); cursor; cursor = cursor->next())
+            cursor->removeOwner(codeBlock);
         m_handler = WTF::move(handler);
         m_handler->addOwner(codeBlock);
     } else {

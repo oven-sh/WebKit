@@ -39,6 +39,7 @@
 #include "Printer.h"
 #include "ScriptExecutable.h"
 #include "UnlinkedCodeBlock.h"
+#include <wtf/ScopedLambda.h>
 
 #if ENABLE(DFG_JIT)
 #include "DFGCodeOriginPool.h"
@@ -48,6 +49,8 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+class PolymorphicAccessJITStubRoutine;
 
 #if ENABLE(DFG_JIT)
 namespace DFG {
@@ -178,6 +181,8 @@ private:
 
 public:
     JS_EXPORT_PRIVATE ~CodeBlock();
+
+    void forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>&);
 
     UnlinkedCodeBlock* unlinkedCodeBlock() const LIFETIME_BOUND { return m_unlinkedCode.get(); }
 

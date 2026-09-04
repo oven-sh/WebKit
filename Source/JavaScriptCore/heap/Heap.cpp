@@ -1863,6 +1863,8 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
         reconcileWeakReferencesAtGCEnd(); // Must precede clearCurrentlyExecuting: CodeBlock::reconcileWeakReferencesAtGCEnd queries which CodeBlocks are currently executing.
         removeDeadCompilerWorklistEntries();
         deleteUnmarkedCompiledCode();
+        if (Options::validateICWatchpointLiveness()) [[unlikely]]
+            m_jitStubRoutines->validateWatchpointLiveness(vm());
         if (m_collectionScope == CollectionScope::Full)
             releaseUnusedSharedBaselineCode();
     }
