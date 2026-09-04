@@ -116,6 +116,16 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
     return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::AsyncModuleExecutionResume)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
 }
+
+// The module-loader pipeline steps a MicrotaskQueue::DrainScope keeps in the queue
+// when it admits loader jobs. AsyncModuleExecutionResume resumes user module code and
+// PromiseFulfillWithoutHandlerJob is a plain settlement; both wait like anything else.
+constexpr bool isDrainScopeLoaderJob(InternalMicrotask task)
+{
+    return task != InternalMicrotask::AsyncModuleExecutionResume
+        && task != InternalMicrotask::PromiseFulfillWithoutHandlerJob
+        && isModuleLoaderInternalMicrotask(task);
+}
 #else
 constexpr unsigned maxMicrotaskArguments = 3;
 #endif

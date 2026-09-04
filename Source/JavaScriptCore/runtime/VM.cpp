@@ -1579,6 +1579,21 @@ void VM::drainMicrotasks()
 
     if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue->clear();
+#if USE(BUN_JSC_ADDITIONS)
+    else if (m_defaultMicrotaskQueue->hasOpenDrainScope()) [[unlikely]] {
+        // See MicrotaskQueue::DrainScope: run what the scope has queued, but this is not
+        // the end of the outer frame's synchronous execution.
+        std::optional<VMEntryScope> entryScope;
+        if (!m_defaultMicrotaskQueue->isEmpty())
+            entryScope.emplace(*this, nullptr);
+        m_defaultMicrotaskQueue->performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(*this,
+            [&](JSGlobalObject*, JSGlobalObject* nextGlobalObject) {
+                if (entryScope && nextGlobalObject)
+                    entryScope->setGlobalObject(nextGlobalObject);
+            });
+        return;
+    }
+#endif
     else {
         std::optional<VMEntryScope> entryScope;
         if (!m_defaultMicrotaskQueue->isEmpty())
