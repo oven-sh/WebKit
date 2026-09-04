@@ -1304,10 +1304,8 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         if (indexingType() == ArrayWithDouble) {
             for (unsigned i = butterfly->publicLength(); i-- > newLength;)
                 butterfly->contiguousDouble().at(this, i) = PNaN;
-        } else {
-            for (unsigned i = butterfly->publicLength(); i-- > newLength;)
-                butterfly->contiguous().at(this, i).clear();
-        }
+        } else
+            gcSafeZeroMemory(butterfly->contiguous().data() + newLength, lengthToClear * sizeof(JSValue));
         butterfly->setPublicLength(newLength);
         return true;
     }
@@ -1730,8 +1728,7 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
             }
         }
 
-        for (unsigned i = end; i < oldLength; ++i)
-            butterfly->contiguous().at(this, i).clear();
+        gcSafeZeroMemory(butterfly->contiguous().data() + end, count * sizeof(JSValue));
 
         butterfly->setPublicLength(oldLength - count);
 
