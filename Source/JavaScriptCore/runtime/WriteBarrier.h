@@ -29,6 +29,7 @@
 #include "HandleTypes.h"
 #include "StructureID.h"
 #include <type_traits>
+#include <wtf/Atomics.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/RawPtrTraits.h>
 #include <wtf/RawValueTraits.h>
@@ -90,7 +91,7 @@ public:
     void copyFrom(const WriteBarrierBase& other)
     {
         // FIXME add version with different Traits once needed.
-        Traits::exchange(m_cell, other.m_cell);
+        storeConcurrently(other.m_cell);
     }
 
     void setMayBeNull(VM&, const JSCell* owner, T* value);
@@ -126,7 +127,7 @@ public:
         return unwrapped;
     }
 
-    void clear() { Traits::exchange(m_cell, nullptr); }
+    void clear() { storeConcurrently(nullptr); }
 
     // Slot cannot be used when pointers aren't stored as-is.
     template<typename BarrierT, typename BarrierTraits>
@@ -149,10 +150,21 @@ public:
 #if ENABLE(WRITE_BARRIER_PROFILING)
         WriteBarrierCounters::usesWithoutBarrierFromCpp.count();
 #endif
-        Traits::exchange(this->m_cell, value);
+        storeConcurrently(value);
     }
 
     T* unvalidatedGet() const { return Traits::unwrap(cell()); }
+
+protected:
+    // See updateEncodedJSValueConcurrent(): the concurrent marker may be reading this slot, so it is
+    // written with a single pointer-sized store that the compiler cannot split or turn into memset()/memcpy().
+    ALWAYS_INLINE void storeConcurrently(StorageType value)
+    {
+        if constexpr (std::is_same_v<Traits, RawPtrTraits<T>>)
+            WTF::atomicStore(&m_cell, value, std::memory_order_relaxed);
+        else
+            Traits::exchange(m_cell, value);
+    }
 
 private:
     StorageType cell() const { return m_cell; }
@@ -165,16 +177,16 @@ public:
     void set(VM&, const JSCell* owner, JSValue);
     void setWithoutWriteBarrier(JSValue value)
     {
-        m_value = JSValue::encode(value);
+        updateEncodedJSValueConcurrent(m_value, JSValue::encode(value));
     }
 
     JSValue get() const
     {
         return JSValue::decode(m_value);
     }
-    void clear() { m_value = JSValue::encode(JSValue()); }
-    void setUndefined() { m_value = JSValue::encode(jsUndefined()); }
-    void setStartingValue(JSValue value) { m_value = JSValue::encode(value); }
+    void clear() { clearEncodedJSValueConcurrent(m_value); }
+    void setUndefined() { updateEncodedJSValueConcurrent(m_value, JSValue::encode(jsUndefined())); }
+    void setStartingValue(JSValue value) { updateEncodedJSValueConcurrent(m_value, JSValue::encode(value)); }
     bool isNumber() const { return get().isNumber(); }
     bool isInt32() const { return get().isInt32(); }
     inline bool isObject() const; // Defined in WriteBarrierInlines.h

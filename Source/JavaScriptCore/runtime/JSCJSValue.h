@@ -27,6 +27,7 @@
 #include "PureNaN.h"
 #include <atomic>
 #include <cmath>
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/HashTraits.h>
@@ -991,14 +992,22 @@ ALWAYS_INLINE JSValue JSValue::decodeConcurrent(const EncodedJSValue* encodedJSV
     return JSValue::decode(*encodedJSValue);
 }
 
+// A slot that the concurrent marker may be reading has to be written with exactly one 64-bit store.
+// A relaxed atomic store compiles to a plain store, but unlike a plain assignment the compiler may
+// neither split it nor fuse a loop of them into memset()/memcpy(), whose implementations are free to
+// use narrower or unaligned stores that the marker would observe as a torn JSValue.
 ALWAYS_INLINE void updateEncodedJSValueConcurrent(EncodedJSValue& dest, EncodedJSValue value)
 {
+#if CPU(ADDRESS64)
+    WTF::atomicStore(&dest, value, std::memory_order_relaxed);
+#else
     dest = value;
+#endif
 }
 
 ALWAYS_INLINE void clearEncodedJSValueConcurrent(EncodedJSValue& dest)
 {
-    dest = JSValue::encode(JSValue());
+    updateEncodedJSValueConcurrent(dest, JSValue::encode(JSValue()));
 }
 
 #if USE(BIGINT32)
