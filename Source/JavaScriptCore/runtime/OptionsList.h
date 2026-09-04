@@ -240,6 +240,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, testTheFTL, false, Normal, nullptr) \
     v(Bool, verboseSanitizeStack, false, Normal, nullptr) \
     v(Bool, useGenerationalGC, true, Normal, nullptr) \
+    v(Bool, usePollingDeferredGCWorkAtVMEntry, true, Normal, "Honor a GC request left pending by a DeferGCForAWhile scope when the VM is next entered, instead of waiting for the next allocation slow path or ~DeferGC."_s) \
     v(Bool, useConcurrentGC, true, Normal, nullptr) \
     v(Bool, collectContinuously, false, Normal, nullptr) \
     v(Double, collectContinuouslyPeriodMS, 1, Normal, nullptr) \

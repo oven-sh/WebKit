@@ -450,6 +450,13 @@ public:
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
+    // A GC request raised while collection was deferred by DeferGCForAWhile (e.g. the extra-memory
+    // reports in ScriptExecutable::prepareForExecutionImpl) only sets m_didDeferGCWork; nothing acts on it
+    // until the next allocation slow path or ~DeferGC, which an embedder-driven loop may not reach for a
+    // long time. VM entry is a safe point to honor it.
+    bool hasPendingDeferredGCWork() const { return m_didDeferGCWork && !m_deferralDepth; }
+    JS_EXPORT_PRIVATE void performPendingDeferredGCWork();
+
     void completeAllJITPlans();
     
     // Note that:
