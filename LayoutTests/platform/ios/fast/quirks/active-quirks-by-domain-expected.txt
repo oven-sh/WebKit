@@ -80,7 +80,7 @@ https://www.ea.com/
     (none)
 https://www.espn.com/
     AllowLayeredFullscreenVideos
-    NeedsPauseBeforeFullscreenExitQuirk
+    NeedsSuppressedPauseEventOnFullscreenExitQuirk
     ShouldDisableEndFullscreenEventWhenEnteringPictureInPictureFromFullscreenQuirk
 https://www.facebook.com/
     NeedsFacebookRemoveNotSupportedQuirk
@@ -345,6 +345,7 @@ https://www.youtube-nocookie.com/
 https://www.zillow.com/
     ShouldAvoidScrollingWhenFocusedContentIsVisibleQuirk
     ShouldSilenceResizeObservers
+    ShouldTranscodeHeicImagesQuirk
 https://www.zomato.com/
     (none)
 https://zoom.us/

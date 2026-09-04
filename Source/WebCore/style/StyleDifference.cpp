@@ -249,6 +249,9 @@ public:
         if (a.usedCounterDirectives != b.usedCounterDirectives)
             return true;
 
+        if (a.linkParameters != b.linkParameters)
+            return true;
+
         if (a.scale != b.scale || a.rotate != b.rotate || a.translate != b.translate)
             changedContextSensitiveProperties.add(DifferenceContextSensitiveProperty::Transform);
 
@@ -458,10 +461,6 @@ public:
                 }
             }
         }
-
-        // FIXME: We should add an optimized form of layout that just recomputes visual overflow.
-        if (changeAffectsVisualOverflow(a, b))
-            return true;
 
         if (&a.nonInheritedData() != &b.nonInheritedData()) {
             SUPPRESS_UNCOUNTED_ARG if (a.nonInheritedData().miscData.ptr() != b.nonInheritedData().miscData.ptr()
@@ -1026,6 +1025,9 @@ public:
 
         if (changeRequiresLayout(a, b, changedContextSensitiveProperties))
             return { DifferenceResult::Layout, changedContextSensitiveProperties };
+
+        if (changeAffectsVisualOverflow(a, b))
+            return { DifferenceResult::Overflow, changedContextSensitiveProperties };
 
         if (changeRequiresOutOfFlowMovementLayoutOnly(a, b, changedContextSensitiveProperties))
             return { DifferenceResult::LayoutOutOfFlowMovementOnly, changedContextSensitiveProperties };

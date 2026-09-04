@@ -1245,6 +1245,20 @@ CSSFieldSizingEnabled:
     WebCore:
       default: true
 
+CSSFlexWrapBalanceEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS flex-wrap: balance"
+  humanReadableDescription: "Enable the balance value for flex-wrap"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSFontFaceMetricOverrideDescriptorsEnabled:
   type: bool
   status: stable
@@ -1642,6 +1656,20 @@ CSSSelectorJITCompilerEnabled:
       default: true
     WebCore:
       default: true
+
+CSSSizeShorthandEnabled:
+  type: bool
+  status: preview
+  category: css
+  humanReadableName: "CSS size shorthand"
+  humanReadableDescription: "Enable the size shorthand for the width and height properties"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 CSSTextDecorationInsetEnabled:
   type: bool
@@ -4423,9 +4451,11 @@ InputTypeColorEnhancementsEnabled:
       default: false
     WebKit:
       "PLATFORM(COCOA) && !PLATFORM(WATCHOS)": true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       "PLATFORM(COCOA) && !PLATFORM(WATCHOS)": true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
   sharedPreferenceForWebProcess: true
 
@@ -6256,7 +6286,7 @@ MouseEventsSimulationEnabled:
 
 MoveBeforeEnabled:
   type: bool
-  status: unstable
+  status: testable
   category: dom
   humanReadableName: "DOM moveBefore()"
   defaultValue:
@@ -8234,6 +8264,15 @@ ShouldPrintBackgrounds:
     WebCore:
       default: false
 
+ShouldReportDesktopClassPointingDevice:
+  type: bool
+  status: embedder
+  humanReadableName: "Report Desktop Class Pointing Device"
+  humanReadableDescription: "Report a mouse-like pointing device to the hover and pointer media features"
+  defaultValue:
+    WebCore:
+      default: false
+
 ShouldReportViewportSizeAsScreenSize:
   type: bool
   status: embedder
@@ -9366,7 +9405,7 @@ UseAVCaptureDeviceRotationCoordinatorAPI:
 
 UseAlternatePDFHUD:
   type: bool
-  status: internal
+  status: mature
   category: html
   humanReadableName: "Alternate PDF HUD"
   humanReadableDescription: "Use the alternate PDF HUD"
@@ -9375,7 +9414,7 @@ UseAlternatePDFHUD:
   condition: ENABLE(PDF_HUD)
   defaultValue:
     WebKit:
-      default: false
+      default: true
 
 UseAppKitGestures:
   type: bool
@@ -9583,20 +9622,6 @@ UsePreHTML5ParserQuirks:
       default: false
     WebKit:
       default: false
-    WebCore:
-      default: false
-
-UseSkiaForComposition:
-  type: bool
-  status: internal
-  humanReadableName: "Use Skia for composition"
-  humanReadableDescription: "Use Skia instead of TextureMapper for layer composition"
-  condition: PLATFORM(GTK) || PLATFORM(WPE)
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: true
     WebCore:
       default: false
 

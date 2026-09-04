@@ -672,7 +672,9 @@ namespace JSC { namespace DFG {
     macro(BufferWrite, NodeMustGenerate | NodeHasVarArgs) \
     /* Date access */ \
     macro(DateNow, NodeMustGenerate | NodeResultDouble) \
+    macro(DateGetStorage, NodeResultStorage) \
     macro(DateGetInt32OrNaN, NodeResultJS) \
+    macro(DateGetMilliseconds, NodeResultJS) \
     macro(DateGetTime, NodeResultDouble) \
     macro(DateSetTime, NodeMustGenerate | NodeResultDouble) \
     /* Promise */ \

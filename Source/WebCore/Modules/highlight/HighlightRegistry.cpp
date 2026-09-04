@@ -44,8 +44,10 @@ namespace WebCore {
     
 void HighlightRegistry::initializeMapLike(DOMMapAdapter& map)
 {
-    for (auto& keyValue : m_map)
-        map.set<IDLDOMString, IDLInterface<Highlight>>(keyValue.key, keyValue.value);
+    for (auto& name : m_highlightNames) {
+        if (RefPtr highlight = m_map.get(name))
+            map.set<IDLDOMString, IDLInterface<Highlight>>(name, *highlight);
+    }
 }
 
 Vector<HighlightHitResult> HighlightRegistry::highlightsFromPoint(Document& document, float x, float y, HighlightsFromPointOptions&& options)
@@ -127,7 +129,9 @@ void HighlightRegistry::setFromMapLike(AtomString&& key, Ref<Highlight>&& value)
         ASSERT(!m_highlightNames.contains(key));
         m_highlightNames.append(WTF::move(key));
     }
-    protect(addResult.iterator->value)->repaint();
+    Ref<Highlight> highlight = addResult.iterator->value;
+    highlight->setAllRangesNeedPositionUpdate();
+    highlight->repaint();
 }
 
 void HighlightRegistry::clear()

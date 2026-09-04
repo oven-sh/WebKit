@@ -44,7 +44,7 @@
 
 namespace WebCore {
 
-class DestinatationColorSpace;
+class ColorSpace;
 
 class IOSurfacePool : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<IOSurfacePool> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(IOSurfacePool, WEBCORE_EXPORT);
@@ -57,7 +57,7 @@ public:
 
     WEBCORE_EXPORT ~IOSurfacePool();
 
-    std::unique_ptr<IOSurface> takeSurface(IntSize, const DestinationColorSpace&, IOSurface::Format, UseLosslessCompression);
+    std::unique_ptr<IOSurface> takeSurface(IntSize, const ColorSpace&, IOSurface::Format, UseLosslessCompression);
     WEBCORE_EXPORT void addSurface(std::unique_ptr<IOSurface>&&);
 
     WEBCORE_EXPORT void discardAllSurfaces();

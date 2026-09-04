@@ -48,10 +48,6 @@ namespace
 #include "libANGLE/renderer/vulkan/shaders/gen/BlitResolve.frag.00000017.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/BlitResolveStencilNoExport.comp.00000000.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/BlitResolveStencilNoExport.comp.00000001.inc"
-#include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndex.comp.00000000.inc"
-#include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndex.comp.00000001.inc"
-#include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndex.comp.00000002.inc"
-#include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndex.comp.00000003.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndexIndirectLineLoop.comp.00000000.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndexIndirectLineLoop.comp.00000001.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/ConvertIndexIndirectLineLoop.comp.00000002.inc"
@@ -158,8 +154,6 @@ namespace
 #include "libANGLE/renderer/vulkan/shaders/gen/ImageCopy.frag.0000002A.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/ImageCopyFloat.frag.00000000.inc"
 #include "libANGLE/renderer/vulkan/shaders/gen/ImageCopyFloat.frag.00000001.inc"
-#include "libANGLE/renderer/vulkan/shaders/gen/OverlayDraw.frag.00000000.inc"
-#include "libANGLE/renderer/vulkan/shaders/gen/OverlayDraw.vert.00000000.inc"
 
 // This is compressed SPIR-V binary blob and size
 struct CompressedShaderBlob
@@ -202,12 +196,6 @@ constexpr CompressedShaderBlob kBlitResolve_frag_shaders[] = {
 constexpr CompressedShaderBlob kBlitResolveStencilNoExport_comp_shaders[] = {
     {kBlitResolveStencilNoExport_comp_00000000, sizeof(kBlitResolveStencilNoExport_comp_00000000)},
     {kBlitResolveStencilNoExport_comp_00000001, sizeof(kBlitResolveStencilNoExport_comp_00000001)},
-};
-constexpr CompressedShaderBlob kConvertIndex_comp_shaders[] = {
-    {kConvertIndex_comp_00000000, sizeof(kConvertIndex_comp_00000000)},
-    {kConvertIndex_comp_00000001, sizeof(kConvertIndex_comp_00000001)},
-    {kConvertIndex_comp_00000002, sizeof(kConvertIndex_comp_00000002)},
-    {kConvertIndex_comp_00000003, sizeof(kConvertIndex_comp_00000003)},
 };
 constexpr CompressedShaderBlob kConvertIndexIndirectLineLoop_comp_shaders[] = {
     {kConvertIndexIndirectLineLoop_comp_00000000,
@@ -359,12 +347,6 @@ constexpr CompressedShaderBlob kImageCopyFloat_frag_shaders[] = {
     {kImageCopyFloat_frag_00000000, sizeof(kImageCopyFloat_frag_00000000)},
     {kImageCopyFloat_frag_00000001, sizeof(kImageCopyFloat_frag_00000001)},
 };
-constexpr CompressedShaderBlob kOverlayDraw_frag_shaders[] = {
-    {kOverlayDraw_frag_00000000, sizeof(kOverlayDraw_frag_00000000)},
-};
-constexpr CompressedShaderBlob kOverlayDraw_vert_shaders[] = {
-    {kOverlayDraw_vert_00000000, sizeof(kOverlayDraw_vert_00000000)},
-};
 
 angle::Result GetShader(ErrorContext *context,
                         ShaderModulePtr shaders[],
@@ -415,9 +397,7 @@ ShaderLibrary::ShaderLibrary() {}
 
 ShaderLibrary::~ShaderLibrary() {}
 
-void ShaderLibrary::destroy(VkDevice device)
-{
-}
+void ShaderLibrary::destroy(VkDevice device) {}
 
 angle::Result ShaderLibrary::getBlit3DSrc_frag(ErrorContext *context,
                                                uint32_t shaderFlags,
@@ -442,14 +422,6 @@ angle::Result ShaderLibrary::getBlitResolveStencilNoExport_comp(ErrorContext *co
     return GetShader(context, mBlitResolveStencilNoExport_comp_shaders,
                      kBlitResolveStencilNoExport_comp_shaders,
                      ArraySize(kBlitResolveStencilNoExport_comp_shaders), shaderFlags, shaderOut);
-}
-
-angle::Result ShaderLibrary::getConvertIndex_comp(ErrorContext *context,
-                                                  uint32_t shaderFlags,
-                                                  ShaderModulePtr *shaderOut)
-{
-    return GetShader(context, mConvertIndex_comp_shaders, kConvertIndex_comp_shaders,
-                     ArraySize(kConvertIndex_comp_shaders), shaderFlags, shaderOut);
 }
 
 angle::Result ShaderLibrary::getConvertIndexIndirectLineLoop_comp(ErrorContext *context,
@@ -549,22 +521,6 @@ angle::Result ShaderLibrary::getImageCopyFloat_frag(ErrorContext *context,
 {
     return GetShader(context, mImageCopyFloat_frag_shaders, kImageCopyFloat_frag_shaders,
                      ArraySize(kImageCopyFloat_frag_shaders), shaderFlags, shaderOut);
-}
-
-angle::Result ShaderLibrary::getOverlayDraw_frag(ErrorContext *context,
-                                                 uint32_t shaderFlags,
-                                                 ShaderModulePtr *shaderOut)
-{
-    return GetShader(context, mOverlayDraw_frag_shaders, kOverlayDraw_frag_shaders,
-                     ArraySize(kOverlayDraw_frag_shaders), shaderFlags, shaderOut);
-}
-
-angle::Result ShaderLibrary::getOverlayDraw_vert(ErrorContext *context,
-                                                 uint32_t shaderFlags,
-                                                 ShaderModulePtr *shaderOut)
-{
-    return GetShader(context, mOverlayDraw_vert_shaders, kOverlayDraw_vert_shaders,
-                     ArraySize(kOverlayDraw_vert_shaders), shaderFlags, shaderOut);
 }
 
 }  // namespace vk

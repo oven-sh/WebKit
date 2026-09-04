@@ -52,8 +52,8 @@
 42262656 SWIFTSHADER : KHR-GLES3.shaders.indexing.matrix_subscript.mat4_static_write_dynamic_read_vertex = FAIL
 42262656 SWIFTSHADER : KHR-GLES3.shaders.indexing.matrix_subscript.mat4_static_write_static_loop_read_fragment = FAIL
 42262656 SWIFTSHADER : KHR-GLES3.shaders.indexing.matrix_subscript.mat4_static_write_static_loop_read_vertex = FAIL
-341780527 SWIFTSHADER : KHR-GLES3.clip_distance.coverage = FAIL
-341780527 SWIFTSHADER : KHR-GLES3.clip_distance.functional = FAIL
+341780527 SWIFTSHADER : KHR-GLES3.clip_distance.coverage = SKIP
+341780527 SWIFTSHADER : KHR-GLES3.clip_distance.functional = SKIP
 
 // https://gitlab.khronos.org/opengl/API/-/issues/180
 40096882 VULKAN NVIDIA : KHR-GLES3.packed_pixels.pbo_rectangle.r8_snorm = SKIP
@@ -112,3 +112,5 @@
 353358652 SWIFTSHADER : KHR-GLES3.cull_distance.functional_test_item_*_primitive_mode_points_max_culldist_* = FAIL
 
 355292302 : KHR-GLES3.api.coverage* = FAIL
+
+539554093 WIN VULKAN NVIDIA : KHR-GLES3.number_parsing.float_overflow* = FAIL

@@ -471,9 +471,11 @@ macro(_WEBKIT_TARGET_SETUP _target _logical_name)
     target_include_directories(${_target} SYSTEM PRIVATE "$<BUILD_INTERFACE:${${_logical_name}_SYSTEM_INCLUDE_DIRECTORIES}>")
     target_include_directories(${_target} PRIVATE "$<BUILD_INTERFACE:${${_logical_name}_PRIVATE_INCLUDE_DIRECTORIES}>")
 
-    if (DEVELOPER_MODE_CXX_FLAGS)
-        target_compile_options(${_target} PRIVATE
-            "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:${DEVELOPER_MODE_CXX_FLAGS}>")
+    # Non-Swift languages get warnings-as-errors from the global flags; swiftc
+    # spells them as diagnostic groups, so it needs its own set.
+    # FIXME: We should do this globally somehow and get rid of custom error group disablement.
+    # Right now SWIFT_ENABLED is calculated after WebKitCompilerFlags.cmake so we can't verify Swift flags.
+    if (DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
         target_compile_options(${_target} PRIVATE
             "$<$<COMPILE_LANGUAGE:Swift>:SHELL:${SWIFT_FATAL_DIAGNOSTIC_FLAGS}>")
     endif ()
@@ -1003,12 +1005,6 @@ function(WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS _target)
     endif ()
 endfunction()
 
-function(WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS _target)
-    if (ENABLE_THREAD_SAFETY_WARNING)
-        WEBKIT_ADD_TARGET_CXX_FLAGS(${_target} -Wthread-safety)
-    endif ()
-endfunction()
-
 macro(WEBKIT_POPULATE_LIBRARY_VERSION library_name)
     if (NOT DEFINED ${library_name}_VERSION_MAJOR)
         set(${library_name}_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
@@ -1136,14 +1132,8 @@ function(webkit_generate_platform_feature_defines_file _out_path_var)
         list(GET CMAKE_OSX_ARCHITECTURES 0 _arch)
         list(APPEND _clang_cmd "-arch" "${_arch}")
     endif ()
-    if (CMAKE_OSX_DEPLOYMENT_TARGET)
-        if (WEBKIT_SDK_IS_SIMULATOR)
-            list(APPEND _clang_cmd "-mios-simulator-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
-        elseif (WEBKIT_SDK_IS_IOS_FAMILY)
-            list(APPEND _clang_cmd "-miphoneos-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
-        else ()
-            list(APPEND _clang_cmd "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
-        endif ()
+    if (WEBKIT_SDK_MIN_VERSION_FLAG)
+        list(APPEND _clang_cmd "${WEBKIT_SDK_MIN_VERSION_FLAG}")
     endif ()
     if (WEBKIT_AVAILABILITY_VFS_OVERLAY_FILE)
         list(APPEND _clang_cmd "-ivfsoverlay" "${WEBKIT_AVAILABILITY_VFS_OVERLAY_FILE}")
@@ -1198,7 +1188,7 @@ function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
     )
     # iOS WebKit_Internal headers gate textual #imports behind this macro that
     # trip strict cross-module-import-visibility checks (bug 312083).
-    if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
         list(APPEND _flags -DWK_SUPPORTS_SWIFT_OBJCXX_INTEROP=1)
     endif ()
     if (APPLE)
@@ -1237,7 +1227,8 @@ function(_webkit_generate_platform_swift_args _target _resp_path)
     _webkit_platform_args_clang_prefix(_clang_cmd
         "${_depfile}" "${_resp_path}" "${WTF_FRAMEWORK_HEADERS_DIR}")
     if (CMAKE_OSX_SYSROOT)
-        list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}")
+        list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
+            "-iframework" "${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks")
     endif ()
     if (CMAKE_Swift_COMPILER_TARGET)
         list(APPEND _clang_cmd "-target" "${CMAKE_Swift_COMPILER_TARGET}")
@@ -1362,10 +1353,17 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # Ask swiftc where to find the header files which support C/C++ builds
         # Right now this macro is used only once; if it's used more often then
         # we should abstract this so it's executed only once.
+        # The target has to be named: without it swiftc answers for the platform
+        # it runs on, whose runtime library directory is macosx.
+        set(_swift_target_info_args "")
+        if (CMAKE_Swift_COMPILER_TARGET)
+            list(APPEND _swift_target_info_args -target ${CMAKE_Swift_COMPILER_TARGET})
+        endif ()
         execute_process(
-            COMMAND ${ORIGINAL_Swift_COMPILER} -print-target-info
+            COMMAND ${ORIGINAL_Swift_COMPILER} -print-target-info ${_swift_target_info_args}
             OUTPUT_VARIABLE _swift_target_info
         )
+        unset(_swift_target_info_args)
         string(JSON _swift_target_paths GET ${_swift_target_info} "paths")
         string(JSON _swift_runtime_resource_path GET ${_swift_target_paths} "runtimeResourcePath")
         target_include_directories(${_target} SYSTEM AFTER PRIVATE "${_swift_runtime_resource_path}")
@@ -1497,7 +1495,7 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         endforeach ()
         target_compile_options(${_target} PRIVATE ${_swift_only_options})
 
-        if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_OSX_SYSROOT)
+        if (WEBKIT_SDK_IS_IOS_FAMILY AND CMAKE_OSX_SYSROOT)
             target_compile_options(${_target} PRIVATE
                 # Our just-built frameworks must come before the SDK's
                 # PrivateFrameworks so `<WebCore/X.h>` etc. resolve to cmake-built
@@ -1555,26 +1553,54 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # target_compile_options via _swift_only_options earlier in the macro.
         _webkit_generate_platform_swift_args(${_target} "${_resp_path}")
 
-        # Trigger source whose mtime tracks the resp (and the emit-clang-header
-        # stamp / INTEROP_HEADERS when applicable). target_sources is how we
-        # plumb file-level deps in since CMake's Swift compile ignores
-        # OBJECT_DEPENDS. Created eagerly so the resp's add_custom_command
-        # has an in-graph consumer even when the typecheck path is skipped.
+        # Create a file whose mtime tracks various build changes that should
+        # cause swift's driver to rerun.
         set(_trigger_path "${CMAKE_CURRENT_BINARY_DIR}/${_target}_SwiftRebuildTrigger.swift")
         if (NOT EXISTS "${_trigger_path}")
             file(WRITE "${_trigger_path}" "// Auto-generated; mtime tracks ${_target}'s Swift inputs.\n")
         endif ()
-        set(_trigger_deps "${_resp_path}")
-        if (DEFINED ${_target}_SWIFT_INTEROP_SOURCES)
-            list(APPEND _trigger_deps ${${_target}_SWIFT_INTEROP_HEADERS})
-        elseif (NOT _skip_swift_cxx_header)
+
+        # Form a flat depfile for the whole module by merging per-object
+        # dependencies produced by the driver invocation. Refer to depfile
+        # logic in `swift-wrapper.py` for the merge implementation.
+        set(_swift_depfile "${CMAKE_CURRENT_BINARY_DIR}/${_target}.swift-deps.d")
+        # cmake_transform_depfile warns when the depfile is missing, so seed an
+        # empty one for the first build.
+        if (NOT EXISTS "${_swift_depfile}")
+            file(WRITE "${_swift_depfile}" "")
+        endif ()
+        target_compile_options(${_target} PRIVATE
+            # Used by swift-wrapper.py to merge per-object dependencies into a
+            # depfile for the whole driver.
+            "$<$<COMPILE_LANGUAGE:Swift>:-emit-dependencies>"
+            # Needed because WebKit's modules are marked [system].
+            "$<$<COMPILE_LANGUAGE:Swift>:-track-system-dependencies>"
+            # Controls for swift-wrapper.py's depfile merging logic. Namely,
+            # avoid listing metadata files in the depfile output that will
+            # always be invalidated.
+            "$<$<COMPILE_LANGUAGE:Swift>:--emit-ninja-depfile=${_swift_depfile}>"
+            "$<$<COMPILE_LANGUAGE:Swift>:--ninja-depfile-target=${_trigger_path}>"
+            "$<$<COMPILE_LANGUAGE:Swift>:--ninja-depfile-exclude=${_trigger_path}>"
+            "$<$<COMPILE_LANGUAGE:Swift>:--ninja-depfile-exclude=${_header_tmp_path}>"
+            "$<$<COMPILE_LANGUAGE:Swift>:--ninja-depfile-exclude=${_header_path}>"
+            "$<$<COMPILE_LANGUAGE:Swift>:--ninja-depfile-exclude=${CMAKE_CURRENT_BINARY_DIR}/${_module_name}.swiftmodule>")
+        # Trigger when the .resp file of platform flags changes.
+        #
+        # Also trigger when the depfile itself changes, which is needed to
+        # cause Ninja to ingest changes made to it. swiftc-wrapper.py only
+        # rewrites the file when it actually changes, so this settles instead
+        # of looping.
+        set(_trigger_deps "${_resp_path}" "${_swift_depfile}")
+        if (NOT (DEFINED ${_target}_SWIFT_INTEROP_SOURCES OR
+            _skip_swift_cxx_header))
             list(APPEND _trigger_deps "${_header_stamp_path}")
         endif ()
         add_custom_command(
             OUTPUT "${_trigger_path}"
             DEPENDS ${_trigger_deps}
+            DEPFILE "${_swift_depfile}"
             COMMAND ${CMAKE_COMMAND} -E touch "${_trigger_path}"
-            COMMENT "Refreshing ${_target} Swift rebuild trigger"
+            COMMENT "Propagating ${_target} Swift dependencies"
         )
         target_sources(${_target} PRIVATE "${_trigger_path}")
         add_custom_target(${_target}_SwiftRebuildTrigger DEPENDS "${_trigger_path}")

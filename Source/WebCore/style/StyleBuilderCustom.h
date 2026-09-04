@@ -320,9 +320,9 @@ inline void BuilderCustom::applyInitialLineHeight(BuilderState& builderState)
     builderState.style().setSpecifiedLineHeight(ComputedStyle::initialSpecifiedLineHeight());
 }
 
-static inline float computeBaseSpecifiedFontSize(const Document& document, const ComputedStyle& style)
+static inline float computeBaseComputedFontSize(const Document& document, const ComputedStyle& style)
 {
-    float result = style.specifiedFontSize();
+    float result = style.fontSize();
     auto* frame = document.frame();
     if (frame && style.textZoom() != TextZoom::Reset)
         result *= frame->textZoomFactor();
@@ -337,10 +337,10 @@ static inline float computeLineHeightMultiplierDueToFontSize(const Document& doc
     if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value); primitiveValue && primitiveValue->isLength()) {
         auto minimumFontSize = document.settings().minimumFontSize();
         if (minimumFontSize > 0) {
-            auto specifiedFontSize = computeBaseSpecifiedFontSize(document, style);
+            auto computedFontSize = computeBaseComputedFontSize(document, style);
             // Small font sizes cause a preposterously large (near infinity) line-height. Add a fuzz-factor of 1px which opts out of
             // boosted line-height.
-            if (specifiedFontSize < minimumFontSize && specifiedFontSize >= 1) {
+            if (computedFontSize < minimumFontSize && computedFontSize >= 1) {
                 // FIXME: There are two settings which are relevant here: minimum font size, and minimum logical font size (as
                 // well as things like the zoom property, text zoom on the page, and text autosizing). The minimum logical font
                 // size is nonzero by default, and already incorporated into the computed font size, so if we just use the ratio
@@ -351,7 +351,7 @@ static inline float computeLineHeightMultiplierDueToFontSize(const Document& doc
 
                 // This calculation matches the line-height computed size calculation in
                 // TextAutoSizing::Value::adjustTextNodeSizes().
-                auto scaleChange = minimumFontSize / specifiedFontSize;
+                auto scaleChange = minimumFontSize / computedFontSize;
                 return scaleChange;
             }
         }
@@ -469,7 +469,7 @@ inline void BuilderCustom::applyInitialFontSize(BuilderState& builderState)
 inline void BuilderCustom::applyInheritFontSize(BuilderState& builderState)
 {
     const auto& parentFontDescription = builderState.parentStyle().fontDescription();
-    float size = parentFontDescription.specifiedSize();
+    float size = parentFontDescription.computedSize();
 
     if (size < 0)
         return;
@@ -579,7 +579,7 @@ inline void BuilderCustom::applyValueFontSize(BuilderState& builderState, CSSVal
     auto& fontDescription = builderState.fontDescription();
     builderState.setFontDescriptionKeywordSizeFromIdentifier(CSSValueInvalid);
 
-    float parentSize = builderState.parentStyle().fontDescription().specifiedSize();
+    float parentSize = builderState.parentStyle().fontDescription().computedSize();
     bool parentIsAbsoluteSize = builderState.parentStyle().fontDescription().isAbsoluteSize();
 
     float size = 0;
@@ -706,32 +706,35 @@ inline void BuilderCustom::applyValueColor(BuilderState& builderState, CSSValue&
 inline void BuilderCustom::applyHighlightInitialColor(BuilderState& builderState)
 {
     applyInitialColor(builderState);
-    builderState.style().setColorIsCurrentColorForHighlight(false);
+
+    if (builderState.applyPropertyToRegularStyle())
+        builderState.style().setColorForHighlight(Color { builderState.style().color() });
 }
 
 // currentcolor in a highlight pseudo-element is the originating element's color, so the chain
-// inherits the keyword rather than the color it resolved to. At the start of the chain the inherited
-// value is currentColor. https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
-// FIXME: A value that only references currentcolor, like color-mix(in oklab, teal, currentcolor),
-// still propagates as the color it resolved to. Resolving those per element needs the unresolved
-// Style::Color, which the color property doesn't store, and no engine does it today.
+// inherits the unresolved value and each level resolves it against its own originating element.
+// At the start of the chain the inherited value is the initial one, currentcolor.
+// https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
 inline void BuilderCustom::applyHighlightInheritColor(BuilderState& builderState)
 {
     CheckedPtr parentHighlightStyle = builderState.parentHighlightStyle();
-    auto isCurrentColor = !parentHighlightStyle || parentHighlightStyle->colorIsCurrentColorForHighlight();
-    auto& sourceStyle = isCurrentColor ? builderState.parentStyle() : *parentHighlightStyle;
+    auto& inheritedColor = parentHighlightStyle ? parentHighlightStyle->colorForHighlight() : Color::currentColor();
 
     if (builderState.applyPropertyToRegularStyle()) {
-        builderState.style().setColor(forwardInheritedValue(sourceStyle.color()));
-        // FIXME: visitedLinkColor needs its own bit for this.
-        builderState.style().setColorIsCurrentColorForHighlight(isCurrentColor);
+        builderState.style().setColor(inheritedColor.resolveColor(builderState.parentStyle().color()));
+        builderState.style().setColorForHighlight(Color { inheritedColor });
     }
+    // FIXME: visitedLinkColor needs its own unresolved value for this.
     if (builderState.applyPropertyToVisitedLinkStyle())
-        builderState.style().setVisitedLinkColor(forwardInheritedValue(sourceStyle.color()));
+        builderState.style().setVisitedLinkColor(inheritedColor.resolveColor(builderState.parentStyle().visitedLinkColor()));
 
     builderState.style().setDisallowsFastPathInheritance();
-    // The seeding pass has no declaration to take the origin from, so it comes from the source.
-    // FIXME: When the source is the originating element, its own color counts as one the highlight set.
+    // Builder::applyHighlightInheritance() calls this with no declaration, so the origin comes from
+    // the source style instead.
+    // FIXME: At the start of the chain the source is the originating element, so a color set on the
+    // element makes the highlight look like it set one itself. Painting uses this bit to decide whether
+    // the highlight overrides the text color of the layers below it.
+    auto& sourceStyle = parentHighlightStyle ? *parentHighlightStyle : builderState.parentStyle();
     builderState.style().setHasExplicitlySetColor(builderState.isAuthorOrigin() || sourceStyle.hasExplicitlySetColor());
 }
 
@@ -740,7 +743,7 @@ inline void BuilderCustom::applyHighlightValueColor(BuilderState& builderState, 
     applyValueColor(builderState, value);
 
     if (builderState.applyPropertyToRegularStyle())
-        builderState.style().setColorIsCurrentColorForHighlight(valueID(value) == CSSValueCurrentcolor);
+        builderState.style().setColorForHighlight(toStyleFromCSSValue<Color>(builderState, value, ForVisitedLink::No));
 }
 
 } // namespace Style

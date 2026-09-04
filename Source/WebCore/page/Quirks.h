@@ -145,6 +145,7 @@ public:
 
     bool NODELETE needsGMailOverflowScrollQuirk() const;
     bool NODELETE needsYouTubeOverflowScrollQuirk() const;
+    bool NODELETE needsWebExScrollabilityQuirk() const;
     bool NODELETE needsFullscreenDisplayNoneQuirk() const;
     bool NODELETE needsFullscreenObjectFitQuirk() const;
     bool needsZomatoEmailLoginLabelQuirk() const;
@@ -154,8 +155,6 @@ public:
     bool needsGeforcenowWarningDisplayNoneQuirk() const;
 
     bool needsYahooVolumeSliderQuirk() const;
-
-    bool needsPrimeVideoUserSelectNoneQuirk() const;
 
     bool needsFacebookRemoveNotSupportedQuirk() const;
 
@@ -209,6 +208,7 @@ public:
     bool requiresUserGestureToPauseInPictureInPicture() const;
     bool requiresUserGestureToLoadInPictureInPicture() const;
     bool requiresUserGestureToPlayInFullscreen() const;
+    bool requiresUserGestureToPauseInFullscreenAfterOrientationChange() const;
 
     WEBCORE_EXPORT bool blocksReturnToFullscreenFromPictureInPictureQuirk() const;
     WEBCORE_EXPORT bool blocksEnteringStandardFullscreenFromPictureInPictureQuirk() const;
@@ -278,7 +278,6 @@ public:
     bool needsPopupFromMicrosoftOfficeToOneDrive(const URL& targetURL) const;
 #endif
 
-    bool needsLaxSameSiteCookieQuirk(const URL&) const;
     WEBCORE_EXPORT bool needsConsistentQueryParameterFilteringQuirk(const URL&) const;
     bool mayBenefitFromFingerprintingProtectionQuirk(const URL&) const;
     static String standardUserAgentWithApplicationNameIncludingCompatOverrides(const String&, const String&, UserAgentType);

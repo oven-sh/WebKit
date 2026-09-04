@@ -26,6 +26,7 @@
 
 #include "ContainerNodeInlines.h"
 #include "CSSFontSelector.h"
+#include "DocumentInlines.h"
 #include "ElementInlines.h"
 #include "ElementTraversal.h"
 #include "HTMLNames.h"
@@ -183,6 +184,15 @@ Style::ComputedStyle RenderListItem::computeMarkerStyle() const
         return markerStyle;
     }();
 
+    // A disclosure triangle is drawn from the system font rather than from the one the marker inherited, so that is the
+    // font the marker has: it is what the glyph is measured with too, the way it is for every other marker.
+    if (listMarkerIsDisclosure(markerStyle, protect(document()))) {
+        auto fontDescription = FontCascadeDescription { markerStyle.fontDescription() };
+        fontDescription.setFamilies({ { "system-ui"_s, FontFamilyKind::Generic } });
+        markerStyle.setFontDescription(WTF::move(fontDescription));
+        markerStyle.fontCascade().update(&protect(document())->fontSelector());
+    }
+
     // The marker box is a text-decoration boundary: the originating element's text-decoration must
     // not propagate into the marker's generated contents, matching list-style-type markers which are
     // never decorated by the list's text-decoration.
@@ -296,7 +306,7 @@ static RenderListItem* previousListItem(const Element& list, const RenderListIte
 void RenderListItem::updateItemValuesForOrderedList(const HTMLOListElement& list)
 {
     for (auto* listItem = firstListItem(list); listItem; listItem = nextListItem(list, *listItem))
-        listItem->updateValue();
+        listItem->updateValueAndMarkerContent();
 }
 
 unsigned RenderListItem::itemCountForOrderedList(const HTMLOListElement& list)
@@ -387,6 +397,20 @@ void RenderListItem::updateValue()
     }
 }
 
+void RenderListItem::updateMarkerContent()
+{
+    if (CheckedPtr marker = m_marker.get())
+        marker->updateInlineMarginsAndContent();
+}
+
+void RenderListItem::updateValueAndMarkerContent()
+{
+    updateValue();
+    // Nothing is changing the render tree here, so there is nothing to wait for: fill the marker's text in right away
+    // rather than leave it to layout (see RenderTreeBuilder::updateListMarkerContents()).
+    updateMarkerContent();
+}
+
 void RenderListItem::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderBlockFlow::styleDidChange(diff, oldStyle);
@@ -397,15 +421,6 @@ void RenderListItem::styleDidChange(Style::Difference diff, const Style::Compute
         if (m_marker && m_marker->excludedPosition())
             m_marker->invalidateExcludedMarkerContainer();
     }
-}
-
-void RenderListItem::computeIntrinsicLogicalWidthContributions()
-{
-    // FIXME: RenderListMarker::updateInlineMargins() mutates margin style which affects preferred widths.
-    if (m_marker && m_marker->hasInvalidContentLogicalWidths())
-        m_marker->updateInlineMarginsAndContent();
-
-    RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
 }
 
 RenderListMarker* RenderListItem::excludedMarker() const
@@ -455,19 +470,23 @@ void RenderListItem::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 
 void RenderListItem::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    // The marker box paints before our content, so content overlapping it (a negative margin pulling the first line
-    // over the marker) covers it rather than the other way around.
     if (CheckedPtr excludedMarker = this->excludedMarker(); excludedMarker && !excludedMarker->hasSelfPaintingLayer())
         excludedMarker->paintAsInlineBlock(paintInfo, flipForWritingModeForChild(*excludedMarker, paintOffset));
 
     RenderBlockFlow::paintObject(paintInfo, paintOffset);
 }
 
-String RenderListItem::markerText(RenderListMarker::IncludeSuffix includeSuffix) const
+String RenderListItem::markerText(ListMarkerIncludeSuffix includeSuffix) const
 {
-    if (!m_marker)
+    CheckedPtr marker = m_marker.get();
+    if (!marker)
         return { };
-    return m_marker->textContent(includeSuffix);
+
+    if (marker->style().content().isData())
+        return { };
+
+    auto textContent = listMarkerTextContent(marker->style(), const_cast<RenderListItem&>(*this));
+    return includeSuffix == ListMarkerIncludeSuffix::Yes ? textContent.textWithSuffix : textContent.textWithoutSuffix().toString();
 }
 
 void RenderListItem::usedCounterDirectivesChanged()
@@ -475,20 +494,20 @@ void RenderListItem::usedCounterDirectivesChanged()
     if (m_marker)
         m_marker->setNeedsLayoutAndInvalidateContentLogicalWidths();
 
-    updateValue();
+    updateValueAndMarkerContent();
     RefPtr list = enclosingList(*this);
     if (!list)
         return;
     auto* item = this;
     while ((item = nextListItem(*list, *item)))
-        item->updateValue();
+        item->updateValueAndMarkerContent();
 }
 
-void RenderListItem::updateListMarkerNumbers()
+Vector<CheckedRef<RenderListItem>> RenderListItem::updateListMarkerNumbers()
 {
     RefPtr list = enclosingList(*this);
     if (!list)
-        return;
+        return { };
 
     bool isInReversedOrderedList = false;
     if (auto* orderedList = dynamicDowncast<HTMLOListElement>(*list)) {
@@ -498,10 +517,14 @@ void RenderListItem::updateListMarkerNumbers()
 
     // If an item has been marked for update before, we know that all following items have, too.
     // This gives us the opportunity to stop and avoid marking the same nodes again.
+    Vector<CheckedRef<RenderListItem>> itemsNeedingMarkerUpdate;
     auto* item = this;
     auto subsequentListItem = isInReversedOrderedList ? previousListItem : nextListItem;
-    while ((item = subsequentListItem(*list, *item)) && item->m_value)
+    while ((item = subsequentListItem(*list, *item)) && item->m_value) {
         item->updateValue();
+        itemsNeedingMarkerUpdate.append(*item);
+    }
+    return itemsNeedingMarkerUpdate;
 }
 
 bool RenderListItem::isInReversedOrderedList() const

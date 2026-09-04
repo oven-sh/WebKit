@@ -252,23 +252,25 @@ enum class WebCore::ScrollGranularity : uint8_t {
     Pixel
 };
 
-[AdditionalEncoder=StreamConnectionEncoder] class WebCore::TransformationMatrix {
-    double m11()
-    double m12()
-    double m13()
-    double m14()
-    double m21()
-    double m22()
-    double m23()
-    double m24()
-    double m31()
-    double m32()
-    double m33()
-    double m34()
-    double m41()
-    double m42()
-    double m43()
-    double m44()
+webkit_platform_headers: <WebCore/TransformationMatrix.h>
+
+[CustomHeader, Nested, AdditionalEncoder=StreamConnectionEncoder, WebKitPlatform] struct WebCore::TransformationMatrix::Translation2DIPCData {
+    double m41;
+    double m42;
+};
+
+[CustomHeader, Nested, AdditionalEncoder=StreamConnectionEncoder, WebKitPlatform] struct WebCore::TransformationMatrix::Translation3DIPCData {
+    double m41;
+    double m42;
+    double m43;
+};
+
+[CustomHeader, Nested, AdditionalEncoder=StreamConnectionEncoder, WebKitPlatform] struct WebCore::TransformationMatrix::FullIPCData {
+    std::array<double, 16> values;
+};
+
+[AdditionalEncoder=StreamConnectionEncoder, CreateUsing=fromIPCData, WebKitPlatform] class WebCore::TransformationMatrix {
+    Variant<std::monostate, WebCore::TransformationMatrix::Translation2DIPCData, WebCore::TransformationMatrix::Translation3DIPCData, WebCore::AffineTransform, WebCore::TransformationMatrix::FullIPCData> ipcData();
 }
 
 struct WebCore::CacheQueryOptions {
@@ -282,7 +284,9 @@ struct WebCore::CharacterRange {
     [Validator='!(CheckedUint64 { *location } + *length).hasOverflowed()'] uint64_t length
 }
 
-[AdditionalEncoder=StreamConnectionEncoder] class WebCore::AffineTransform {
+webkit_platform_headers: <WebCore/AffineTransform.h>
+
+[AdditionalEncoder=StreamConnectionEncoder, WebKitPlatform] class WebCore::AffineTransform {
     std::span<const double, 6> span();
 }
 
@@ -1215,11 +1219,11 @@ using WebCore::PlatformColorSpace = sk_sp<SkColorSpace>;
 #endif
 
 #if USE(CG) || USE(SKIA)
-[AdditionalEncoder=StreamConnectionEncoder] class WebCore::DestinationColorSpace {
+[AdditionalEncoder=StreamConnectionEncoder] class WebCore::ColorSpace {
     [Validator='*serializableColorSpace'] WebCore::PlatformColorSpace serializableColorSpace();
 };
 #else
-[AdditionalEncoder=StreamConnectionEncoder] class WebCore::DestinationColorSpace {
+[AdditionalEncoder=StreamConnectionEncoder] class WebCore::ColorSpace {
     WebCore::PlatformColorSpace serializableColorSpace();
 };
 #endif
@@ -1367,7 +1371,7 @@ class WebCore::BlobPart {
     Variant<Vector<uint8_t>, Ref<WebCore::SharedBuffer>, URL> m_dataOrURL;
 };
 
-[WebKitPlatform] enum class WebCore::ColorSpace : uint8_t {
+[WebKitPlatform] enum class WebCore::ColorSpaceName : uint8_t {
     A98RGB,
     DisplayP3,
     ExtendedA98RGB,
@@ -1399,7 +1403,7 @@ header: <WebCore/ColorTypes.h>
 
 header: <WebCore/Color.h>
 [CustomHeader, AdditionalEncoder=StreamConnectionEncoder, WebKitPlatform] struct WebCore::OutOfLineColorDataForIPC {
-    WebCore::ColorSpace colorSpace;
+    WebCore::ColorSpaceName colorSpace;
     float c1;
     float c2;
     float c3;
@@ -1505,7 +1509,7 @@ header: <WebCore/ScreenProperties.h>
 [CustomHeader] struct WebCore::ScreenData {
     WebCore::FloatRect screenAvailableRect;
     WebCore::FloatRect screenRect;
-    WebCore::DestinationColorSpace colorSpace;
+    WebCore::ColorSpace colorSpace;
     int screenDepth;
     int screenDepthPerComponent;
     bool screenSupportsExtendedColor;
@@ -1644,7 +1648,7 @@ enum class WebCore::UseLosslessCompression : bool;
 [AdditionalEncoder=StreamConnectionEncoder] struct WebCore::PixelBufferFormat {
     WebCore::AlphaPremultiplication alphaFormat;
     WebCore::PixelFormat pixelFormat;
-    [Validator='colorSpace->usesRGBColorModel()'] WebCore::DestinationColorSpace colorSpace;
+    [Validator='colorSpace->usesRGBColorModel()'] WebCore::ColorSpace colorSpace;
 };
 
 [RefCounted] class WebCore::TextIndicator {
@@ -2447,14 +2451,14 @@ header: <WebCore/SwitchPart.h>
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEBlend {
     WebCore::BlendMode blendMode();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEColorMatrix {
     WebCore::ColorMatrixType type();
     [Validator='WebCore::FEColorMatrix::areValuesValidForType(*type, *values)'] Vector<float> values();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 header: <WebCore/FEComponentTransfer.h>
@@ -2474,7 +2478,7 @@ header: <WebCore/FEComponentTransfer.h>
     WebCore::ComponentTransferFunction blueFunction();
     WebCore::ComponentTransferFunction alphaFunction();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEComposite {
@@ -2484,7 +2488,7 @@ header: <WebCore/FEComponentTransfer.h>
     float k3();
     float k4();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEConvolveMatrix {
@@ -2497,7 +2501,7 @@ header: <WebCore/FEComponentTransfer.h>
     bool preserveAlpha();
     [Validator='kernelSize->unclampedArea() == kernel->size()'] Vector<float> kernel();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEDiffuseLighting {
@@ -2508,7 +2512,7 @@ header: <WebCore/FEComponentTransfer.h>
     float kernelUnitLengthY();
     WebCore::LightSource lightSource();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEDisplacementMap {
@@ -2516,7 +2520,7 @@ header: <WebCore/FEComponentTransfer.h>
     WebCore::ChannelSelectorType yChannelSelector();
     float scale();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
     bool in2IsTainted();
 };
 
@@ -2528,14 +2532,14 @@ header: <WebCore/FEComponentTransfer.h>
     WebCore::Color shadowColor();
     float shadowOpacity()
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEFlood {
     WebCore::Color floodColor();
     float floodOpacity();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEGaussianBlur {
@@ -2543,7 +2547,7 @@ header: <WebCore/FEComponentTransfer.h>
     float stdDeviationY();
     WebCore::EdgeModeType edgeMode();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEImage {
@@ -2555,7 +2559,7 @@ header: <WebCore/FEComponentTransfer.h>
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEMerge {
     unsigned numberOfEffectInputs();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEMorphology {
@@ -2563,18 +2567,18 @@ header: <WebCore/FEComponentTransfer.h>
     float radiusX();
     float radiusY();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEOffset {
     float dx();
     float dy();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FETile {
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 }
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FESpecularLighting {
@@ -2586,7 +2590,7 @@ header: <WebCore/FEComponentTransfer.h>
     float kernelUnitLengthY();
     WebCore::LightSource lightSource();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FETurbulence {
@@ -2597,15 +2601,15 @@ header: <WebCore/FEComponentTransfer.h>
     float seed();
     bool stitchTiles();
 
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::SourceAlpha {
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 }
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::SourceGraphic {
-    WebCore::DestinationColorSpace operatingColorSpace();
+    WebCore::ColorSpace operatingColorSpace();
 }
 
 [Nested, OptionSet] enum class WebCore::FilterEffectGeometry::Flags : uint8_t {
@@ -3273,7 +3277,7 @@ header: <WebCore/ImageBuffer.h>
 [CustomHeader] struct WebCore::ImageBufferParameters {
     WebCore::FloatSize logicalSize;
     float resolutionScale;
-    WebCore::DestinationColorSpace colorSpace
+    WebCore::ColorSpace colorSpace
     WebCore::ImageBufferFormat bufferFormat;
     WebCore::RenderingPurpose purpose;
 };
@@ -3944,6 +3948,17 @@ struct WebCore::ContentRuleListMatchedRule {
     std::optional<String> extensionId;
 };
 
+#endif
+
+#if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(CONTENT_EXTENSIONS)
+struct WebKit::WebExtensionContentRuleListBlockedLoadInfo {
+    std::optional<WebCore::FrameIdentifier> frameID;
+    std::optional<WebCore::FrameIdentifier> parentFrameID;
+    URL url;
+    String httpMethod;
+    WebKit::ResourceLoadInfo::Type type;
+    Vector<String> blockingContentRuleListIdentifiers;
+};
 #endif
 
 enum class WebCore::PolicyAction : uint8_t {
@@ -6489,7 +6504,7 @@ header: <WebCore/ShareableGainMap.h>
 [CreateUsing=create] class WebCore::ShareableGainMap {
     RetainPtr<CFDataRef> m_metadata;
     Ref<WebCore::ShareableCVPixelBuffer> m_gainMapShareablePixelBuffer;
-    std::optional<WebCore::DestinationColorSpace> m_colorSpace;
+    std::optional<WebCore::ColorSpace> m_colorSpace;
 }
 
 #endif
@@ -6497,7 +6512,7 @@ header: <WebCore/ShareableGainMap.h>
 header: <WebCore/ShareableBitmap.h>
 [CustomHeader] class WebCore::ShareableBitmapConfiguration {
     [Validator='m_size->width() > 0 && m_size->height() > 0'] WebCore::IntSize m_size;
-    WebCore::DestinationColorSpace m_colorSpace;
+    WebCore::ColorSpace m_colorSpace;
     WebCore::PixelFormat m_pixelFormat;
     WebCore::Headroom m_baseImageHeadroom;
     bool m_isOpaque;

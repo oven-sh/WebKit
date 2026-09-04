@@ -674,9 +674,9 @@ std::unique_ptr<Style::ComputedStyle> Resolver::defaultStyleForElement(const Ele
     fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
 
     auto size = fontSizeForKeyword(CSSValueMedium, false, protect(document()));
-    fontDescription.setSpecifiedSize(size);
-    auto computedFontSize = computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), *style, protect(document()));
-    fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
+    fontDescription.setComputedSize(size);
+    auto usedFontSize = usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), *style, protect(document()));
+    fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
 
     fontDescription.setShouldAllowUserInstalledFonts(settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
     style->setFontDescription(WTF::move(fontDescription));
@@ -804,15 +804,18 @@ void Resolver::setGlobalStateAfterApplyingProperties(const BuilderState& builder
     // FIXME: This stuff should be somewhere else.
     auto* currentScope = builderState.element() ? &Scope::forNode(*builderState.element()) : nullptr;
     for (auto& entry : builderState.registeredSubstitutionAttributes()) {
-        ruleSets().mutableFeatures().registerSubstitutionAttribute(entry.name);
-        // For attr() applied to a pseudo-element, the originating element's scope may be
-        // different from this resolver's (e.g. ::placeholder styled in a UA shadow scope, with
-        // the originating <input> in the document scope). Register there too so attribute
-        // changes on the originating element trigger AttributeChangeInvalidation; mark the entry
-        // as shadow-tree-affecting on the originating scope so we only invalidate the host's
-        // shadow subtree when a shadow-piercing rule is the source of the dependency.
-        if (CheckedPtr targetScope = entry.targetScope.get(); targetScope && targetScope.get() != currentScope)
-            const_cast<Scope&>(*targetScope).resolver().ruleSets().mutableFeatures().registerSubstitutionAttribute(entry.name, RuleFeatureSet::AffectsShadowTree::Yes);
+        // Register on the scope of the element the attribute is read from, which is where
+        // AttributeChangeInvalidation looks when that attribute changes. For attr() applied to a
+        // pseudo-element that may differ from the scope being styled (e.g. ::placeholder styled in
+        // a UA shadow scope, with the originating <input> in the document scope); remember that so
+        // we only invalidate the host's shadow subtree when a shadow-piercing rule is the source of
+        // the dependency.
+        CheckedPtr targetScope = entry.targetScope.get();
+        auto* scope = targetScope ? targetScope.get() : currentScope;
+        if (!scope)
+            continue;
+        auto affectsShadowTree = scope != currentScope ? AttributeAffectsShadowTree::Yes : AttributeAffectsShadowTree::No;
+        scope->registerSubstitutionAttribute(entry.name, affectsShadowTree);
     }
     if (builderState.style().usesViewportUnits())
         document().setHasStyleWithViewportUnits();

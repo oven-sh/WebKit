@@ -64,6 +64,7 @@
 #include "SIMDShuffle.h"
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 
 // On Windows, there's macros for these which interfere with the opcodes. The
@@ -656,12 +657,11 @@ private:
             if (!Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
-            // FIXME: We should support ARM64 LDR 32-bit addressing, which will
-            // allow us to fuse a Shl ptr, 2 into the address. Additionally, and
-            // perhaps more importantly, it would allow us to avoid a truncating
-            // move. See: https://bugs.webkit.org/show_bug.cgi?id=163465
+            Tmp base = Tmp(wasmAddress->pinnedGPR());
+            if (std::optional<unsigned> scale = scaleForShl(pointer, offset, width))
+                return indexArg(base, pointer->child(0), *scale, offset);
 
-            return indexArg(Tmp(wasmAddress->pinnedGPR()), pointer, 1, offset);
+            return indexArg(base, pointer, 1, offset);
         }
 
         default:
@@ -1845,6 +1845,11 @@ private:
                 break;
             }
             case ValueRep::LateRegister:
+                // A LateRegister input becomes an Arg::LateUse, whose live range covers both the
+                // early and the late point, so it interferes with either clobber set. Register
+                // becomes an early Arg::Use, which only reaches the early one.
+                stackmap->lateClobbered().remove(value.rep().reg());
+                [[fallthrough]];
             case ValueRep::Register: {
                 stackmap->earlyClobbered().remove(value.rep().reg());
                 Tmp dstTmp = Tmp(value.rep().reg());
@@ -2443,6 +2448,7 @@ private:
     };
 
 #if CPU(ARM64)
+
     static bool NODELETE isComparisonOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
@@ -2560,11 +2566,19 @@ private:
         }
     }
 
-    CompareChainNode* findCompareChain(Value* value, SegmentedVector<CompareChainNode>& nodes, Vector<CompareChainNode*, 16>& logicalNodes, Vector<Value*, 16> usedValues)
+    CompareChainNode* findCompareChain(Value* value, SegmentedVector<CompareChainNode>& nodes, Vector<CompareChainNode*, 16>& logicalNodes, Vector<Value*, 16>& usedValues)
     {
         dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: nodes.size()=", nodes.size(), ", value=", pointerDump(value));
         if (!value)
             return nullptr;
+
+        // Roll back logicalNodes/usedValues unless rollback.release() is reached.
+        size_t savedLogicalSize = logicalNodes.size();
+        size_t savedUsedSize = usedValues.size();
+        auto rollback = makeScopeExit([&] {
+            logicalNodes.shrink(savedLogicalSize);
+            usedValues.shrink(savedUsedSize);
+        });
 
         B3::Opcode opcode = value->opcode();
         dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: opcode=", opcode);
@@ -2605,6 +2619,7 @@ private:
                     dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: applying negation to chain");
                     negatedChain->markRequiresNegation();
                     usedValues.append(value);
+                    rollback.release();
                     return negatedChain;
                 }
             }
@@ -2617,6 +2632,7 @@ private:
                 : relationalConditionForOpcode(opcode);
             dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: created comparison node");
             usedValues.append(value);
+            rollback.release();
             return node;
         }
 
@@ -2634,6 +2650,9 @@ private:
 
             // Negation handling: detect (chain) == 0 pattern
             // This optimizes patterns like !(a && b) which become (a && b) == 0
+            //
+            // FIXME: is this guard reachable? value's children must have the same type, child(0) must be integral,
+            // unclear whether the recursive call to findCompareChain can return int64
             if (value->type() != Int32 && value->child(1)->isInt(1)) {
                 dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: detected == 0 pattern, checking for negation");
                 CompareChainNode* negatedChain = findCompareChain(value->child(0), nodes, logicalNodes, usedValues);
@@ -2641,9 +2660,11 @@ private:
                     dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: applying negation to chain");
                     negatedChain->markRequiresNegation();
                     usedValues.append(value);
+                    rollback.release();
                     return negatedChain;
                 }
             }
+            return nullptr;
         }
 
         // Check if this is a BitAnd or BitOr
@@ -2677,7 +2698,6 @@ private:
             // We don't allow combining two logic operations
             if (!leftNode->isComparison() && !rightNode->isComparison()) {
                 dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: both children are logic ops, rejecting");
-                logicalNodes.clear();
                 return nullptr;
             }
 
@@ -2697,6 +2717,7 @@ private:
             logicalNodes.append(node);
             usedValues.append(value);
             dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: created logic op node (", (opcode == BitAnd ? "AND" : "OR"), ")");
+            rollback.release();
             return node;
         }
 

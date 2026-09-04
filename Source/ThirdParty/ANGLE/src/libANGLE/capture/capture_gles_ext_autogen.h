@@ -916,11 +916,6 @@ angle::CallCapture CaptureCopySubTextureCHROMIUM(const State &glState,
                                                  GLboolean unpackPremultiplyAlpha,
                                                  GLboolean unpackUnmultiplyAlpha);
 
-// GL_CHROMIUM_framebuffer_mixed_samples
-angle::CallCapture CaptureCoverageModulationCHROMIUM(const State &glState,
-                                                     bool isCallValid,
-                                                     GLenum components);
-
 // GL_CHROMIUM_lose_context
 angle::CallCapture CaptureLoseContextCHROMIUM(const State &glState,
                                               bool isCallValid,
@@ -2512,6 +2507,8 @@ angle::CallCapture CaptureMinSampleShadingOES(const State &glState,
 // GL_OES_shader_multisample_interpolation
 
 // GL_OES_standard_derivatives
+
+// GL_OES_stencil8
 
 // GL_OES_surfaceless_context
 

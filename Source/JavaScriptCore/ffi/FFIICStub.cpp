@@ -247,10 +247,10 @@ void emitConvertArgument(CCallHelpers& jit, Type type, CCallHelpers::Address arg
 
 void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject, Type type, CCallHelpers::Address returnSlot, CCallHelpers::JumpList& exceptionChecks)
 {
-    JSValueRegs resultRegs { GPRInfo::returnValueGPR };
+    GPRReg resultGPR = GPRInfo::returnValueGPR;
     switch (type) {
     case Type::Void:
-        jit.moveTrustedValue(jsUndefined(), resultRegs);
+        jit.moveTrustedValue(jsUndefined(), resultGPR);
         return;
 
     case Type::Char:
@@ -260,17 +260,17 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
     case Type::Uint16:
     case Type::Int32:
         jit.load32(returnSlot, GPRInfo::returnValueGPR);
-        jit.boxInt32(GPRInfo::returnValueGPR, resultRegs);
+        jit.boxInt32(GPRInfo::returnValueGPR, resultGPR);
         return;
 
     case Type::Uint32: {
         jit.load64(returnSlot, GPRInfo::returnValueGPR);
         auto fitsInInt32 = jit.branch32(CCallHelpers::GreaterThanOrEqual, GPRInfo::returnValueGPR, CCallHelpers::TrustedImm32(0));
         jit.convertInt64ToDouble(GPRInfo::returnValueGPR, valueFPR);
-        jit.boxDouble(valueFPR, resultRegs);
+        jit.boxDouble(valueFPR, resultGPR);
         auto done = jit.jump();
         fitsInInt32.link(&jit);
-        jit.boxInt32(GPRInfo::returnValueGPR, resultRegs);
+        jit.boxInt32(GPRInfo::returnValueGPR, resultGPR);
         done.link(&jit);
         return;
     }
@@ -283,14 +283,14 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
     case Type::Double:
         jit.loadDouble(returnSlot, valueFPR);
         jit.purifyNaN(valueFPR, valueFPR); // a native NaN payload must never forge a boxed JSValue.
-        jit.boxDouble(valueFPR, resultRegs);
+        jit.boxDouble(valueFPR, resultGPR);
         return;
 
     case Type::Float:
         jit.loadFloat(returnSlot, valueFPR);
         jit.convertFloatToDouble(valueFPR, valueFPR);
         jit.purifyNaN(valueFPR, valueFPR);
-        jit.boxDouble(valueFPR, resultRegs);
+        jit.boxDouble(valueFPR, resultGPR);
         return;
 
     case Type::JSValue:

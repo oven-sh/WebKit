@@ -323,7 +323,6 @@
 #include <JavaScriptCore/DFGDoesGCCheck.h>
 #include <JavaScriptCore/DOMAnnotation.h>
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
-#include <JavaScriptCore/DateInstanceCache.h>
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/DefinePropertyAttributes.h>
 #include <JavaScriptCore/DeleteAllCodeEffort.h>
@@ -610,6 +609,7 @@
 #include "CharacterData.h"
 #include "ClipboardAccessPolicy.h"
 #include "ColorInterpolationMethod.h"
+#include "ColorSpace.h"
 #include "CommonAtomStrings.h"
 #include "CompositeOperation.h"
 #include "ComputedStyleDependencies.h"
@@ -628,7 +628,6 @@
 #include "DataDetectorType.h"
 #endif
 #include "DecodingOptions.h"
-#include "DestinationColorSpace.h"
 #include "Document.h"
 #include "DocumentClasses.h"
 #include "DocumentEnums.h"

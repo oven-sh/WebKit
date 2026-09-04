@@ -3819,12 +3819,6 @@ void GL_APIENTRY glCopySubTextureCHROMIUM(GLuint sourceId,
                                      unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
 }
 
-// GL_CHROMIUM_framebuffer_mixed_samples
-void GL_APIENTRY glCoverageModulationCHROMIUM(GLenum components)
-{
-    return GL_CoverageModulationCHROMIUM(components);
-}
-
 // GL_CHROMIUM_lose_context
 void GL_APIENTRY glLoseContextCHROMIUM(GLenum current, GLenum other)
 {
@@ -5625,6 +5619,8 @@ void GL_APIENTRY glMinSampleShadingOES(GLfloat value)
 // GL_OES_shader_multisample_interpolation
 
 // GL_OES_standard_derivatives
+
+// GL_OES_stencil8
 
 // GL_OES_surfaceless_context
 

@@ -119,6 +119,7 @@ void PlaybackSessionModelMediaElement::setMediaElement(HTMLMediaElement* mediaEl
     }
 
     m_mediaElement = newMediaElement;
+    m_lastSeekableRanges.reset();
 
     if (newMediaElement) {
         newMediaElement->addClient(*this);
@@ -210,12 +211,8 @@ void PlaybackSessionModelMediaElement::updateForEventName(const WTF::AtomString&
     if (all
         || eventName == eventNames().progressEvent) {
         auto bufferedTime = this->bufferedTime();
-        auto seekableTimeRangesLastModifiedTime = this->seekableTimeRangesLastModifiedTime();
-        auto liveUpdateInterval = this->liveUpdateInterval();
-        for (auto& client : m_clients) {
+        for (auto& client : m_clients)
             client->bufferedTimeChanged(bufferedTime);
-            client->seekableRangesChanged(seekableRanges(), seekableTimeRangesLastModifiedTime, liveUpdateInterval);
-        }
     }
 
     if (all
@@ -228,11 +225,12 @@ void PlaybackSessionModelMediaElement::updateForEventName(const WTF::AtomString&
         bool enabled = externalPlaybackEnabled();
         ExternalPlaybackTargetType targetType = externalPlaybackTargetType();
         String localizedDeviceName = externalPlaybackLocalizedDeviceName();
+        String localizedRouteName = externalPlaybackLocalizedRouteName();
 
         bool wirelessVideoPlaybackDisabled = this->wirelessVideoPlaybackDisabled();
 
         for (auto& client : m_clients) {
-            client->externalPlaybackChanged(enabled, targetType, localizedDeviceName);
+            client->externalPlaybackChanged(enabled, targetType, localizedDeviceName, localizedRouteName);
             client->wirelessVideoPlaybackDisabledChanged(wirelessVideoPlaybackDisabled);
         }
     }
@@ -272,6 +270,8 @@ void PlaybackSessionModelMediaElement::addClient(PlaybackSessionModelClient& cli
 {
     ASSERT(!m_clients.contains(&client));
     m_clients.add(&client);
+    // The new client has not been told anything yet; let the next update through.
+    m_lastSeekableRanges.reset();
 }
 
 void PlaybackSessionModelMediaElement::removeClient(PlaybackSessionModelClient& client)
@@ -845,6 +845,13 @@ String PlaybackSessionModelMediaElement::externalPlaybackLocalizedDeviceName() c
     return emptyString();
 }
 
+String PlaybackSessionModelMediaElement::externalPlaybackLocalizedRouteName() const
+{
+    if (RefPtr mediaElement = m_mediaElement; mediaElement && mediaElement->mediaControlsHost())
+        return mediaElement->mediaControlsHost()->externalDeviceRouteName();
+    return emptyString();
+}
+
 bool PlaybackSessionModelMediaElement::wirelessVideoPlaybackDisabled() const
 {
     if (RefPtr mediaElement = m_mediaElement)
@@ -899,6 +906,36 @@ void PlaybackSessionModelMediaElement::captionTracksChanged()
 void PlaybackSessionModelMediaElement::captionsEnabledChanged()
 {
     updateMediaSelectionOptions();
+}
+
+void PlaybackSessionModelMediaElement::seekableRangesChanged()
+{
+    updateSeekableRanges();
+}
+
+void PlaybackSessionModelMediaElement::updateSeekableRanges()
+{
+    if (m_clients.isEmpty())
+        return;
+
+    auto timeRanges = seekableRanges();
+    auto seekableTimeRangesLastModifiedTime = this->seekableTimeRangesLastModifiedTime();
+    auto liveUpdateInterval = this->liveUpdateInterval();
+
+    // The media source reports a buffered change on every append; only tell the clients when the
+    // seekable range they would show actually moved.
+    if (m_lastSeekableRanges
+        && *m_lastSeekableRanges == timeRanges
+        && m_lastSeekableTimeRangesLastModifiedTime == seekableTimeRangesLastModifiedTime
+        && m_lastLiveUpdateInterval == liveUpdateInterval)
+        return;
+
+    m_lastSeekableRanges = timeRanges;
+    m_lastSeekableTimeRangesLastModifiedTime = seekableTimeRangesLastModifiedTime;
+    m_lastLiveUpdateInterval = liveUpdateInterval;
+
+    for (auto& client : m_clients)
+        client->seekableRangesChanged(timeRanges, seekableTimeRangesLastModifiedTime, liveUpdateInterval);
 }
 
 #if !RELEASE_LOG_DISABLED

@@ -1985,9 +1985,17 @@ private:
         case DateNow:
             compileDateNow();
             break;
+        case DateGetStorage:
+            compileDateGetStorage();
+            break;
         case DateGetInt32OrNaN:
+            compileDateGetInt32OrNaN();
+            break;
+        case DateGetMilliseconds:
+            compileDateGetMilliseconds();
+            break;
         case DateGetTime:
-            compileDateGet();
+            compileDateGetTime();
             break;
         case DateSetTime:
             compileDateSet();
@@ -2219,7 +2227,7 @@ private:
         State* state = &m_ftlState;
         patchpoint->setGenerator(
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
-                value.emit(jit, JSValueRegs(params[0].gpr()), state->graph.m_plan);
+                value.emit(jit, params[0].gpr(), state->graph.m_plan);
             });
         patchpoint->effects = Effects::none();
         setJSValue(patchpoint);
@@ -2942,7 +2950,7 @@ private:
 
                 Box<MathICGenerationState> mathICGenerationState = Box<MathICGenerationState>::create();
                 JITUnaryMathIC<Generator>* mathIC = addMathIC<Generator>(state->jitCode->common, arithProfile);
-                mathIC->m_generator = Generator(JSValueRegs(params[0].gpr()), JSValueRegs(params[1].gpr()), params.gpScratch(0));
+                mathIC->m_generator = Generator(params[0].gpr(), params[1].gpr(), params.gpScratch(0));
 
                 bool shouldEmitProfiling = false;
                 bool generatedInline = mathIC->generateInline(jit, *mathICGenerationState, shouldEmitProfiling);
@@ -3050,8 +3058,8 @@ private:
 
                 Box<MathICGenerationState> mathICGenerationState = Box<MathICGenerationState>::create();
                 JITBinaryMathIC<Generator>* mathIC = addMathIC<Generator>(state->jitCode->common, arithProfile);
-                mathIC->m_generator = Generator(leftOperand, rightOperand, JSValueRegs(params[0].gpr()),
-                    JSValueRegs(params[1].gpr()), JSValueRegs(params[2].gpr()), params.fpScratch(0),
+                mathIC->m_generator = Generator(leftOperand, rightOperand, params[0].gpr(),
+                    params[1].gpr(), params[2].gpr(), params.fpScratch(0),
                     params.fpScratch(1), params.gpScratch(0));
 
                 bool shouldEmitProfiling = false;
@@ -4349,7 +4357,6 @@ private:
         patchpoint->setGenerator(
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
                 JIT_COMMENT(jit, "AssertNotEmpty");
-                AllowMacroScratchRegisterUsage allowScratch(jit);
                 GPRReg input = params[0].gpr();
                 CCallHelpers::Jump done = jit.branchIfNotEmpty(input);
                 jit.breakpoint();
@@ -4814,7 +4821,7 @@ private:
             auto* propertyCache = state->addPropertyInlineCache();
             auto generator = Box<JITGetByValWithThisGenerator>::create(
                 jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, AccessType::GetByValWithThis,
-                params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(thisValueGPR), JSValueRegs(resultGPR), InvalidGPRReg, propertyCacheGPR);
+                params.unavailableRegisters(), baseGPR, propertyGPR, thisValueGPR, resultGPR, InvalidGPRReg, propertyCacheGPR);
 
             generator->propertyCache()->propertyIsString = propertyIsString;
             generator->propertyCache()->propertyIsInt32 = propertyIsInt32;
@@ -4970,7 +4977,7 @@ private:
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITGetByValGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, AccessType::GetPrivateName,
-                    params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(resultGPR), InvalidGPRReg, propertyCacheGPR);
+                    params.unavailableRegisters(), baseGPR, propertyGPR, resultGPR, InvalidGPRReg, propertyCacheGPR);
 
                 CCallHelpers::Jump notCell;
                 if (!baseIsCell)
@@ -5113,7 +5120,7 @@ private:
             auto* propertyCache = state->addPropertyInlineCache();
             auto generator = Box<JITPrivateBrandAccessGenerator>::create(
                 jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, accessType,
-                params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(brandGPR), propertyCacheGPR);
+                params.unavailableRegisters(), baseGPR, brandGPR, propertyCacheGPR);
 
             CCallHelpers::Jump notCell;
             if (!baseIsCell)
@@ -5360,7 +5367,7 @@ private:
             auto* propertyCache = state->addPropertyInlineCache();
             auto generator = Box<JITPutByValGenerator>::create(
                 jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, privateFieldPutKind.isDefine() ? AccessType::DefinePrivateNameByVal : AccessType::SetPrivateNameByVal,
-                params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(valueGPR), InvalidGPRReg, propertyCacheGPR);
+                params.unavailableRegisters(), baseGPR, propertyGPR, valueGPR, InvalidGPRReg, propertyCacheGPR);
 
             generator->propertyCache()->propertyIsSymbol = true;
 
@@ -5700,8 +5707,8 @@ private:
         PatchpointValue* patchpoint = m_out.patchpoint(Void);
         patchpoint->appendSomeRegister(base);
         patchpoint->appendSomeRegister(value);
-        patchpoint->append(m_notCellMask, ValueRep::reg(GPRInfo::notCellMaskRegister));
-        patchpoint->append(m_numberTag, ValueRep::reg(GPRInfo::numberTagRegister));
+        patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
+        patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->numGPScratchRegisters = Options::useHandlerICInFTL() ? 3 : 0;
 
@@ -5742,8 +5749,8 @@ private:
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITPutByIdGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex,
-                    params.unavailableRegisters(), identifier, JSValueRegs(params[0].gpr()),
-                    JSValueRegs(params[1].gpr()), propertyCacheGPR, GPRInfo::patchpointScratchRegister,
+                    params.unavailableRegisters(), identifier, params[0].gpr(),
+                    params[1].gpr(), propertyCacheGPR, GPRInfo::patchpointScratchRegister,
                     accessType);
 
                 generator->generateFastPath(jit);
@@ -6695,7 +6702,7 @@ IGNORE_CLANG_WARNINGS_END
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITGetByValGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, AccessType::GetByVal,
-                    params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(resultGPR), InvalidGPRReg, propertyCacheGPR);
+                    params.unavailableRegisters(), baseGPR, propertyGPR, resultGPR, InvalidGPRReg, propertyCacheGPR);
 
                 generator->propertyCache()->propertyIsString = propertyIsString;
                 generator->propertyCache()->propertyIsInt32 = propertyIsInt32;
@@ -7427,7 +7434,7 @@ IGNORE_CLANG_WARNINGS_END
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITPutByValGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, isDirect ? (ecmaMode.isStrict() ? AccessType::PutByValDirectStrict : AccessType::PutByValDirectSloppy) : (ecmaMode.isStrict() ? AccessType::PutByValStrict : AccessType::PutByValSloppy),
-                    params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(valueGPR), InvalidGPRReg, propertyCacheGPR);
+                    params.unavailableRegisters(), baseGPR, propertyGPR, valueGPR, InvalidGPRReg, propertyCacheGPR);
 
                 generator->propertyCache()->propertyIsString = propertyIsString;
                 generator->propertyCache()->propertyIsInt32 = propertyIsInt32;
@@ -8052,10 +8059,10 @@ IGNORE_CLANG_WARNINGS_END
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
                 CCallHelpers::JumpList slowCases;
 
-                auto base = JSValueRegs(params[1].gpr());
+                auto base = params[1].gpr();
                 auto returnGPR = params[0].gpr();
                 GPRReg propertyCacheGPR = Options::useHandlerICInFTL() ? params.gpScratch(0) : InvalidGPRReg;
-                ASSERT(base.gpr() != returnGPR);
+                ASSERT(base != returnGPR);
 
                 if (child1UseKind)
                     slowCases.append(jit.branchIfNotCell(base));
@@ -8076,8 +8083,8 @@ IGNORE_CLANG_WARNINGS_END
                         return CCallHelpers::TrustedImmPtr(subscriptValue.rawBits());
                     else {
                         if (child2UseKind == UntypedUse)
-                            slowCases.append(jit.branchIfNotCell(JSValueRegs(params[2].gpr())));
-                        return JSValueRegs(params[2].gpr());
+                            slowCases.append(jit.branchIfNotCell(params[2].gpr()));
+                        return params[2].gpr();
                     }
                 }();
 
@@ -8088,14 +8095,14 @@ IGNORE_CLANG_WARNINGS_END
                             jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex,
                             kind == DelByKind::ByIdSloppy ? AccessType::DeleteByIdSloppy : AccessType::DeleteByIdStrict,
                             params.unavailableRegisters(), subscriptValue, base,
-                            JSValueRegs(returnGPR), propertyCacheGPR);
+                            returnGPR, propertyCacheGPR);
                     } else {
                         auto* propertyCache = state->addPropertyInlineCache();
                         return Box<JITDelByValGenerator>::create(
                             jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex,
                             kind == DelByKind::ByValSloppy ? AccessType::DeleteByValSloppy : AccessType::DeleteByValStrict,
                             params.unavailableRegisters(), base,
-                            subscript, JSValueRegs(returnGPR), propertyCacheGPR);
+                            subscript, returnGPR, propertyCacheGPR);
                     }
                 }();
 
@@ -14292,7 +14299,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 CallLinkInfo::emitTailCallFastPath(jit, callLinkInfo, [&] {
                     CallFrameShuffler shuffler { jit, shuffleData };
-                    shuffler.setCalleeJSValueRegs(BaselineJITRegisters::Call::calleeJSR);
+                    shuffler.setCalleeGPR(BaselineJITRegisters::Call::calleeGPR);
                     shuffler.prepareForTailCall();
                 });
                 jit.abortWithReason(JITDidReturnFromTailCall);
@@ -15021,7 +15028,7 @@ IGNORE_CLANG_WARNINGS_END
                 if (isStack)
                     arguments.append(ConstrainedValue(lowInt32(m_graph.varArgChild(node, 2 + i)), ValueRep::stackArgument(safeCast<int32_t>(wasmCallInfo.params[i].location.offsetFromSP()))));
                 else
-                    arguments.append(ConstrainedValue(m_out.zeroExtPtr(lowInt32(m_graph.varArgChild(node, 2 + i))), ValueRep::reg(wasmCallInfo.params[i].location.jsr().payloadGPR())));
+                    arguments.append(ConstrainedValue(m_out.zeroExtPtr(lowInt32(m_graph.varArgChild(node, 2 + i))), ValueRep::reg(wasmCallInfo.params[i].location.gpr())));
                 break;
             case Wasm::TypeKind::I64: {
                 // FIXME: We are handling BigInt extraction here. But once BigInt Int64 value is natively represented in DFG / FTL pipeline, we should extract this as a DFG node,
@@ -15038,7 +15045,7 @@ IGNORE_CLANG_WARNINGS_END
                 if (isStack)
                     arguments.append(ConstrainedValue(patchpoint, ValueRep::stackArgument(safeCast<Value::OffsetType>(wasmCallInfo.params[i].location.offsetFromSP()))));
                 else
-                    arguments.append(ConstrainedValue(patchpoint, ValueRep::reg(wasmCallInfo.params[i].location.jsr().payloadGPR())));
+                    arguments.append(ConstrainedValue(patchpoint, ValueRep::reg(wasmCallInfo.params[i].location.gpr())));
                 break;
             }
             case Wasm::TypeKind::Ref:
@@ -15049,7 +15056,7 @@ IGNORE_CLANG_WARNINGS_END
                 if (isStack)
                     arguments.append(ConstrainedValue(lowJSValue(m_graph.varArgChild(node, 2 + i)), ValueRep::stackArgument(safeCast<Value::OffsetType>(wasmCallInfo.params[i].location.offsetFromSP()))));
                 else
-                    arguments.append(ConstrainedValue(lowJSValue(m_graph.varArgChild(node, 2 + i)), ValueRep::reg(wasmCallInfo.params[i].location.jsr().payloadGPR())));
+                    arguments.append(ConstrainedValue(lowJSValue(m_graph.varArgChild(node, 2 + i)), ValueRep::reg(wasmCallInfo.params[i].location.gpr())));
                 break;
             case Wasm::TypeKind::F32:
                 if (isStack)
@@ -15094,12 +15101,12 @@ IGNORE_CLANG_WARNINGS_END
             switch (signature->returnType(0).kind()) {
             case Wasm::TypeKind::I32: {
                 patchpoint = m_out.patchpoint(Int32);
-                patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.jsr().payloadGPR()) };
+                patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.gpr()) };
                 break;
             }
             case Wasm::TypeKind::I64: {
                 patchpoint = m_out.patchpoint(Int64);
-                patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.jsr().payloadGPR()) };
+                patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.gpr()) };
                 break;
             }
             case Wasm::TypeKind::Ref:
@@ -15107,7 +15114,7 @@ IGNORE_CLANG_WARNINGS_END
             case Wasm::TypeKind::Funcref:
             case Wasm::TypeKind::Externref: {
                 patchpoint = m_out.patchpoint(Int64);
-                patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.jsr().payloadGPR()) };
+                patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.gpr()) };
                 break;
             }
             case Wasm::TypeKind::F32: {
@@ -17734,7 +17741,7 @@ IGNORE_CLANG_WARNINGS_END
                 UNUSED_PARAM(propertyCacheGPR);
                 UNUSED_PARAM(scratchGPR);
                 auto returnGPR = params[0].gpr();
-                auto base = JSValueRegs(params[1].gpr());
+                auto base = params[1].gpr();
 
                 constexpr auto optimizationFunction = [&] () {
                     if constexpr (type == AccessType::InById)
@@ -17753,7 +17760,7 @@ IGNORE_CLANG_WARNINGS_END
                     if constexpr (type == AccessType::InById)
                         return CCallHelpers::TrustedImmPtr(subscriptValue.rawBits());
                     else
-                        return JSValueRegs(params[2].gpr());
+                        return params[2].gpr();
                 }();
 
                 const auto generator = [&] {
@@ -17762,13 +17769,13 @@ IGNORE_CLANG_WARNINGS_END
                         return Box<JITInByIdGenerator>::create(
                             jit.codeBlock(), propertyCache, JITType::FTLJIT, semanticNodeOrigin, callSiteIndex,
                             params.unavailableRegisters(), subscriptValue, base,
-                            JSValueRegs(returnGPR), propertyCacheGPR);
+                            returnGPR, propertyCacheGPR);
                     } else {
                         auto* propertyCache = state->addPropertyInlineCache();
                         return Box<JITInByValGenerator>::create(
                             jit.codeBlock(), propertyCache, JITType::FTLJIT, semanticNodeOrigin, callSiteIndex,
                             type, params.unavailableRegisters(), base, subscript,
-                            JSValueRegs(returnGPR), InvalidGPRReg, propertyCacheGPR);
+                            returnGPR, InvalidGPRReg, propertyCacheGPR);
                     }
                 }();
 
@@ -18319,7 +18326,7 @@ IGNORE_CLANG_WARNINGS_END
                 CCallHelpers::Jump doneJump;
                 if (!valueIsCell) {
                     CCallHelpers::Jump isCell = jit.branchIfCell(valueGPR);
-                    jit.boxBooleanPayload(false, resultGPR);
+                    jit.boxBoolean(false, resultGPR);
                     doneJump = jit.jump();
                     isCell.link(&jit);
                 }
@@ -19235,7 +19242,7 @@ IGNORE_CLANG_WARNINGS_END
             auto* propertyCache = state->addPropertyInlineCache();
             auto generator = Box<JITPutByValGenerator>::create(
                 jit.codeBlock(), propertyCache, JITType::FTLJIT, nodeSemanticOrigin, callSiteIndex, ecmaMode.isStrict() ? AccessType::PutByValStrict : AccessType::PutByValSloppy,
-                params.unavailableRegisters(), JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(valueGPR), InvalidGPRReg, propertyCacheGPR);
+                params.unavailableRegisters(), baseGPR, propertyGPR, valueGPR, InvalidGPRReg, propertyCacheGPR);
 
             generator->generateFastPath(jit);
             CCallHelpers::Label done = jit.label();
@@ -21118,8 +21125,8 @@ IGNORE_CLANG_WARNINGS_END
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITGetByIdGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, semanticNodeOrigin, callSiteIndex,
-                    params.unavailableRegisters(), identifier, JSValueRegs(params[1].gpr()),
-                    JSValueRegs(params[0].gpr()), propertyCacheGPR, type, CacheType::GetByIdSelf);
+                    params.unavailableRegisters(), identifier, params[1].gpr(),
+                    params[0].gpr(), propertyCacheGPR, type, CacheType::GetByIdSelf);
 
                 generator->generateFastPath(jit);
                 CCallHelpers::Label done = jit.label();
@@ -21208,8 +21215,8 @@ IGNORE_CLANG_WARNINGS_END
                 auto* propertyCache = state->addPropertyInlineCache();
                 auto generator = Box<JITGetByIdWithThisGenerator>::create(
                     jit.codeBlock(), propertyCache, JITType::FTLJIT, semanticNodeOrigin, callSiteIndex,
-                    params.unavailableRegisters(), identifier, JSValueRegs(params[0].gpr()),
-                    JSValueRegs(params[1].gpr()), JSValueRegs(params[2].gpr()), propertyCacheGPR);
+                    params.unavailableRegisters(), identifier, params[0].gpr(),
+                    params[1].gpr(), params[2].gpr(), propertyCacheGPR);
 
                 generator->generateFastPath(jit);
                 CCallHelpers::Label done = jit.label();
@@ -21583,26 +21590,21 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LBasicBlock notRope = m_out.newBlock();
         LBasicBlock is8Bit = m_out.newBlock();
-        LBasicBlock loopTop = m_out.newBlock();
-        LBasicBlock loopBody = m_out.newBlock();
+        LBasicBlock loop8Top = m_out.newBlock();
+        LBasicBlock loop8Body = m_out.newBlock();
+        LBasicBlock is16Bit = m_out.newBlock();
+        LBasicBlock loop16Top = m_out.newBlock();
+        LBasicBlock loop16Body = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
         LValue string = lowString(m_node->child1());
-        ValueFromBlock startIndex = m_out.anchor(m_out.constInt32(0));
         ValueFromBlock startIndexForCall = m_out.anchor(m_out.constInt32(0));
         m_out.branch(isRopeString(string, m_node->child1()),
             rarely(slowPath), usually(notRope));
 
         LBasicBlock lastNext = m_out.appendTo(notRope, is8Bit);
         LValue impl = m_out.loadPtr(string, m_heaps.JSString_value);
-        m_out.branch(
-            m_out.testIsZero32(
-                m_out.load32(impl, m_heaps.StringImpl_hashAndFlags),
-                m_out.constInt32(StringImpl::flagIs8Bit())),
-            unsure(slowPath), unsure(is8Bit));
-
-        m_out.appendTo(is8Bit, loopTop);
         LValue length;
         if (auto stringLength = tryGetConstantStringLength(m_node->child1()))
             length = m_out.constInt32(*stringLength);
@@ -21610,27 +21612,45 @@ IGNORE_CLANG_WARNINGS_END
             length = m_out.load32(impl, m_heaps.StringImpl_length);
         LValue buffer = m_out.loadPtr(impl, m_heaps.StringImpl_data);
         ValueFromBlock fastResult = m_out.anchor(string);
-        m_out.jump(loopTop);
+        m_out.branch(
+            m_out.testIsZero32(
+                m_out.load32(impl, m_heaps.StringImpl_hashAndFlags),
+                m_out.constInt32(StringImpl::flagIs8Bit())),
+            unsure(is16Bit), unsure(is8Bit));
 
-        m_out.appendTo(loopTop, loopBody);
-        LValue index = m_out.phi(Int32, startIndex);
-        ValueFromBlock indexFromBlock = m_out.anchor(index);
-        m_out.branch(m_out.below(index, length),
-            unsure(loopBody), unsure(continuation));
+        Vector<ValueFromBlock, 3> slowPathIndices;
+        slowPathIndices.append(startIndexForCall);
 
-        m_out.appendTo(loopBody, slowPath);
+        // 16-bit strings need this scan as much as 8-bit ones: one non-Latin1 character anywhere in
+        // a document makes every string derived from it 16 bit, ASCII content and all.
+        auto emitScanForCharacterNeedingConversion = [&](LBasicBlock entry, LBasicBlock top, LBasicBlock body, LBasicBlock nextBlock, bool is8BitString) {
+            m_out.appendTo(entry, top);
+            ValueFromBlock startIndex = m_out.anchor(m_out.constInt32(0));
+            m_out.jump(top);
 
-        // FIXME: Strings needs to be caged.
-        // https://bugs.webkit.org/show_bug.cgi?id=174924
-        LValue byte = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, buffer, m_out.zeroExtPtr(index)));
-        LValue isInvalidAsciiRange = m_out.bitAnd(byte, m_out.constInt32(~0x7F));
-        LValue isLowerCase = m_out.belowOrEqual(m_out.sub(byte, m_out.constInt32('a')), m_out.constInt32('z' - 'a'));
-        LValue isBadCharacter = m_out.bitOr(isInvalidAsciiRange, isLowerCase);
-        m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.int32One)));
-        m_out.branch(isBadCharacter, unsure(slowPath), unsure(loopTop));
+            m_out.appendTo(top, body);
+            LValue index = m_out.phi(Int32, startIndex);
+            slowPathIndices.append(m_out.anchor(index));
+            m_out.branch(m_out.below(index, length),
+                unsure(body), unsure(continuation));
+
+            m_out.appendTo(body, nextBlock);
+            LValue offset = m_out.zeroExtPtr(index);
+            LValue character = is8BitString
+                ? m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, buffer, offset))
+                : m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, buffer, offset));
+            LValue isInvalidAsciiRange = m_out.bitAnd(character, m_out.constInt32(~0x7F));
+            LValue isLowerCase = m_out.belowOrEqual(m_out.sub(character, m_out.constInt32('a')), m_out.constInt32('z' - 'a'));
+            LValue isBadCharacter = m_out.bitOr(isInvalidAsciiRange, isLowerCase);
+            m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.int32One)));
+            m_out.branch(isBadCharacter, unsure(slowPath), unsure(top));
+        };
+
+        emitScanForCharacterNeedingConversion(is8Bit, loop8Top, loop8Body, is16Bit, true);
+        emitScanForCharacterNeedingConversion(is16Bit, loop16Top, loop16Body, slowPath, false);
 
         m_out.appendTo(slowPath, continuation);
-        LValue slowPathIndex = m_out.phi(Int32, startIndexForCall, indexFromBlock);
+        LValue slowPathIndex = m_out.phi(Int32, slowPathIndices);
         ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationToUpperCase, weakPointer(globalObject), string, slowPathIndex));
         m_out.jump(continuation);
 
@@ -21643,26 +21663,21 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LBasicBlock notRope = m_out.newBlock();
         LBasicBlock is8Bit = m_out.newBlock();
-        LBasicBlock loopTop = m_out.newBlock();
-        LBasicBlock loopBody = m_out.newBlock();
+        LBasicBlock loop8Top = m_out.newBlock();
+        LBasicBlock loop8Body = m_out.newBlock();
+        LBasicBlock is16Bit = m_out.newBlock();
+        LBasicBlock loop16Top = m_out.newBlock();
+        LBasicBlock loop16Body = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
         LValue string = lowString(m_node->child1());
-        ValueFromBlock startIndex = m_out.anchor(m_out.constInt32(0));
         ValueFromBlock startIndexForCall = m_out.anchor(m_out.constInt32(0));
         m_out.branch(isRopeString(string, m_node->child1()),
             rarely(slowPath), usually(notRope));
 
         LBasicBlock lastNext = m_out.appendTo(notRope, is8Bit);
         LValue impl = m_out.loadPtr(string, m_heaps.JSString_value);
-        m_out.branch(
-            m_out.testIsZero32(
-                m_out.load32(impl, m_heaps.StringImpl_hashAndFlags),
-                m_out.constInt32(StringImpl::flagIs8Bit())),
-            unsure(slowPath), unsure(is8Bit));
-
-        m_out.appendTo(is8Bit, loopTop);
         LValue length;
         if (auto stringLength = tryGetConstantStringLength(m_node->child1()))
             length = m_out.constInt32(*stringLength);
@@ -21670,27 +21685,45 @@ IGNORE_CLANG_WARNINGS_END
             length = m_out.load32(impl, m_heaps.StringImpl_length);
         LValue buffer = m_out.loadPtr(impl, m_heaps.StringImpl_data);
         ValueFromBlock fastResult = m_out.anchor(string);
-        m_out.jump(loopTop);
+        m_out.branch(
+            m_out.testIsZero32(
+                m_out.load32(impl, m_heaps.StringImpl_hashAndFlags),
+                m_out.constInt32(StringImpl::flagIs8Bit())),
+            unsure(is16Bit), unsure(is8Bit));
 
-        m_out.appendTo(loopTop, loopBody);
-        LValue index = m_out.phi(Int32, startIndex);
-        ValueFromBlock indexFromBlock = m_out.anchor(index);
-        m_out.branch(m_out.below(index, length),
-            unsure(loopBody), unsure(continuation));
+        Vector<ValueFromBlock, 3> slowPathIndices;
+        slowPathIndices.append(startIndexForCall);
 
-        m_out.appendTo(loopBody, slowPath);
+        // 16-bit strings need this scan as much as 8-bit ones: one non-Latin1 character anywhere in
+        // a document makes every string derived from it 16 bit, ASCII content and all.
+        auto emitScanForCharacterNeedingConversion = [&](LBasicBlock entry, LBasicBlock top, LBasicBlock body, LBasicBlock nextBlock, bool is8BitString) {
+            m_out.appendTo(entry, top);
+            ValueFromBlock startIndex = m_out.anchor(m_out.constInt32(0));
+            m_out.jump(top);
 
-        // FIXME: Strings needs to be caged.
-        // https://bugs.webkit.org/show_bug.cgi?id=174924
-        LValue byte = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, buffer, m_out.zeroExtPtr(index)));
-        LValue isInvalidAsciiRange = m_out.bitAnd(byte, m_out.constInt32(~0x7F));
-        LValue isUpperCase = m_out.belowOrEqual(m_out.sub(byte, m_out.constInt32('A')), m_out.constInt32('Z' - 'A'));
-        LValue isBadCharacter = m_out.bitOr(isInvalidAsciiRange, isUpperCase);
-        m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.int32One)));
-        m_out.branch(isBadCharacter, unsure(slowPath), unsure(loopTop));
+            m_out.appendTo(top, body);
+            LValue index = m_out.phi(Int32, startIndex);
+            slowPathIndices.append(m_out.anchor(index));
+            m_out.branch(m_out.below(index, length),
+                unsure(body), unsure(continuation));
+
+            m_out.appendTo(body, nextBlock);
+            LValue offset = m_out.zeroExtPtr(index);
+            LValue character = is8BitString
+                ? m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, buffer, offset))
+                : m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, buffer, offset));
+            LValue isInvalidAsciiRange = m_out.bitAnd(character, m_out.constInt32(~0x7F));
+            LValue isUpperCase = m_out.belowOrEqual(m_out.sub(character, m_out.constInt32('A')), m_out.constInt32('Z' - 'A'));
+            LValue isBadCharacter = m_out.bitOr(isInvalidAsciiRange, isUpperCase);
+            m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.int32One)));
+            m_out.branch(isBadCharacter, unsure(slowPath), unsure(top));
+        };
+
+        emitScanForCharacterNeedingConversion(is8Bit, loop8Top, loop8Body, is16Bit, true);
+        emitScanForCharacterNeedingConversion(is16Bit, loop16Top, loop16Body, slowPath, false);
 
         m_out.appendTo(slowPath, continuation);
-        LValue slowPathIndex = m_out.phi(Int32, startIndexForCall, indexFromBlock);
+        LValue slowPathIndex = m_out.phi(Int32, slowPathIndices);
         ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationToLowerCase, weakPointer(globalObject), string, slowPathIndex));
         m_out.jump(continuation);
 
@@ -22130,7 +22163,7 @@ IGNORE_CLANG_WARNINGS_END
                 Vector<FPRReg> fpScratch;
                 Vector<SnippetParams::Value> regs;
 
-                regs.append(JSValueRegs(params[0].gpr()));
+                regs.append(params[0].gpr());
                 regs.append(SnippetParams::Value(params[1].gpr(), baseConstant));
                 if (domJIT->requireGlobalObject)
                     regs.append(SnippetParams::Value(params[2].gpr(), globalObjectConstant));
@@ -22845,106 +22878,79 @@ IGNORE_CLANG_WARNINGS_END
         setDouble(vmCall(Double, operationDateNow, weakPointer(globalObject)));
     }
 
-    void compileDateGet()
+    void compileDateGetStorage()
     {
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
         LValue base = lowDateObject(m_node->child1());
+        LValue data = m_out.load64(base, m_node->isUTC() ? m_heaps.DateInstance_cachedGregorianDateTimeUTC : m_heaps.DateInstance_cachedGregorianDateTime);
+        ValueFromBlock fastResult = m_out.anchor(data);
+        m_out.branch(m_out.notZero64(m_out.bitAnd(data, m_out.constInt64(PlainGregorianDateTime::validityMask))), usually(continuation), rarely(slowCase));
 
-        auto emitGetCodeWithCallback = [&] (const AbstractHeap& cachedDoubleOffset, const AbstractHeap& cachedDataOffset, auto* operation, auto callback) {
-            LBasicBlock dataExistsCase = m_out.newBlock();
-            LBasicBlock fastCase = m_out.newBlock();
-            LBasicBlock slowCase = m_out.newBlock();
-            LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, m_node->isUTC() ? operationDateGetStorageUTC : operationDateGetStorage, m_vmValue, base));
+        m_out.jump(continuation);
 
-            LValue data = m_out.loadPtr(base, m_heaps.DateInstance_data);
-            m_out.branch(m_out.notZero64(data), unsure(dataExistsCase), unsure(slowCase));
+        m_out.appendTo(continuation, lastNext);
+        setStorage(m_out.phi(Int64, fastResult, slowResult));
+    }
 
-            LBasicBlock lastNext = m_out.appendTo(dataExistsCase, fastCase);
-            LValue milliseconds = m_out.loadDouble(base, m_heaps.DateInstance_internalNumber);
-            LValue cachedMilliseconds = m_out.loadDouble(data, cachedDoubleOffset);
-            m_out.branch(m_out.doubleNotEqualOrUnordered(milliseconds, cachedMilliseconds), unsure(slowCase), unsure(fastCase));
+    void compileDateGetInt32OrNaN()
+    {
+        LValue data = lowStorage(m_node->child1());
 
-            m_out.appendTo(fastCase, slowCase);
-            ValueFromBlock fastResult = m_out.anchor(boxInt32(callback(m_out.load32(data, cachedDataOffset))));
-            m_out.jump(continuation);
-
-            m_out.appendTo(slowCase, continuation);
-            ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operation, m_vmValue, base));
-            m_out.jump(continuation);
-
-            m_out.appendTo(continuation, lastNext);
-            setJSValue(m_out.phi(Int64, fastResult, slowResult));
+        auto emitGetCodeWithCallback = [&] (unsigned fieldOffset, uint64_t fieldMask, unsigned fieldWidth, bool isSigned, auto callback) {
+            LValue field = nullptr;
+            if (isSigned)
+                field = m_out.castToInt32(m_out.aShr(m_out.shl(data, m_out.constInt32(64 - fieldWidth - fieldOffset)), m_out.constInt32(64 - fieldWidth)));
+            else
+                field = m_out.castToInt32(m_out.bitAnd(m_out.lShr(data, m_out.constInt32(fieldOffset)), m_out.constInt64(fieldMask)));
+            setJSValue(m_out.select(m_out.isZero64(data), m_out.constInt64(JSValue::encode(jsNaN())), boxInt32(callback(field))));
         };
 
-        auto emitGetCode = [&] (const AbstractHeap& cachedDoubleOffset, const AbstractHeap& cachedDataOffset, auto* operation) {
-            emitGetCodeWithCallback(cachedDoubleOffset, cachedDataOffset, operation, [] (LValue value) { return value; });
+        auto emitGetCode = [&] (unsigned fieldOffset, uint64_t fieldMask, unsigned fieldWidth, bool isSigned) {
+            emitGetCodeWithCallback(fieldOffset, fieldMask, fieldWidth, isSigned, [] (LValue value) { return value; });
         };
 
         switch (m_node->intrinsic()) {
-        case DatePrototypeGetTimeIntrinsic:
-            setDouble(m_out.loadDouble(base, m_heaps.DateInstance_internalNumber));
-            break;
-
-        case DatePrototypeGetMillisecondsIntrinsic:
-        case DatePrototypeGetUTCMillisecondsIntrinsic: {
-            LValue milliseconds = m_out.loadDouble(base, m_heaps.DateInstance_internalNumber);
-            LValue msPerSecondConstant = m_out.constDouble(msPerSecond);
-            LValue seconds = m_out.doubleFloor(m_out.doubleDiv(milliseconds, msPerSecondConstant));
-            LValue result = m_out.doubleToInt32(m_out.doubleSub(milliseconds, m_out.doubleMul(seconds, msPerSecondConstant)));
-            setJSValue(m_out.select(m_out.doubleNotEqualOrUnordered(milliseconds, milliseconds), m_out.constInt64(JSValue::encode(jsNaN())), boxInt32(result)));
-            break;
-        }
-
         case DatePrototypeGetFullYearIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_year, operationDateGetFullYear);
-            break;
         case DatePrototypeGetUTCFullYearIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_year, operationDateGetUTCFullYear);
+            emitGetCode(PlainGregorianDateTime::yearOffset, PlainGregorianDateTime::yearMask, PlainGregorianDateTime::yearWidth, /* isSigned */ true);
             break;
         case DatePrototypeGetMonthIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_month, operationDateGetMonth);
-            break;
         case DatePrototypeGetUTCMonthIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_month, operationDateGetUTCMonth);
+            emitGetCode(PlainGregorianDateTime::monthOffset, PlainGregorianDateTime::monthMask, PlainGregorianDateTime::monthWidth, /* isSigned */ false);
             break;
         case DatePrototypeGetDateIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_monthDay, operationDateGetDate);
-            break;
         case DatePrototypeGetUTCDateIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_monthDay, operationDateGetUTCDate);
+            emitGetCode(PlainGregorianDateTime::monthDayOffset, PlainGregorianDateTime::monthDayMask, PlainGregorianDateTime::monthDayWidth, /* isSigned */ false);
             break;
         case DatePrototypeGetDayIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_weekDay, operationDateGetDay);
-            break;
         case DatePrototypeGetUTCDayIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_weekDay, operationDateGetUTCDay);
+            emitGetCode(PlainGregorianDateTime::weekDayOffset, PlainGregorianDateTime::weekDayMask, PlainGregorianDateTime::weekDayWidth, /* isSigned */ false);
             break;
         case DatePrototypeGetHoursIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_hour, operationDateGetHours);
-            break;
         case DatePrototypeGetUTCHoursIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_hour, operationDateGetUTCHours);
+            emitGetCode(PlainGregorianDateTime::hourOffset, PlainGregorianDateTime::hourMask, PlainGregorianDateTime::hourWidth, /* isSigned */ false);
             break;
         case DatePrototypeGetMinutesIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_minute, operationDateGetMinutes);
-            break;
         case DatePrototypeGetUTCMinutesIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_minute, operationDateGetUTCMinutes);
+            emitGetCode(PlainGregorianDateTime::minuteOffset, PlainGregorianDateTime::minuteMask, PlainGregorianDateTime::minuteWidth, /* isSigned */ false);
             break;
         case DatePrototypeGetSecondsIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_second, operationDateGetSeconds);
-            break;
         case DatePrototypeGetUTCSecondsIntrinsic:
-            emitGetCode(m_heaps.DateInstanceData_gregorianDateTimeUTCCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTimeUTC_second, operationDateGetUTCSeconds);
+            emitGetCode(PlainGregorianDateTime::secondOffset, PlainGregorianDateTime::secondMask, PlainGregorianDateTime::secondWidth, /* isSigned */ false);
             break;
 
         case DatePrototypeGetTimezoneOffsetIntrinsic:
-            emitGetCodeWithCallback(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_utcOffsetInMinute, operationDateGetTimezoneOffset, [&] (LValue offset) {
+            emitGetCodeWithCallback(PlainGregorianDateTime::utcOffsetInMinuteOffset, PlainGregorianDateTime::utcOffsetInMinuteMask, PlainGregorianDateTime::utcOffsetInMinuteWidth, /* isSigned */ true, [&] (LValue offset) {
                 return m_out.neg(offset);
             });
             break;
 
         case DatePrototypeGetYearIntrinsic:
-            emitGetCodeWithCallback(m_heaps.DateInstanceData_gregorianDateTimeCachedForMS, m_heaps.DateInstanceData_cachedGregorianDateTime_year, operationDateGetYear, [&] (LValue year) {
+            emitGetCodeWithCallback(PlainGregorianDateTime::yearOffset, PlainGregorianDateTime::yearMask, PlainGregorianDateTime::yearWidth, /* isSigned */ true, [&] (LValue year) {
                 return m_out.sub(year, m_out.constInt32(1900));
             });
             break;
@@ -22954,6 +22960,23 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
+    // No time zone offset is ever a sub-second amount, so the local and UTC forms agree.
+    void compileDateGetMilliseconds()
+    {
+        LValue base = lowDateObject(m_node->child1());
+        LValue milliseconds = m_out.loadDouble(base, m_heaps.DateInstance_internalNumber);
+        LValue msPerSecondConstant = m_out.constDouble(msPerSecond);
+        LValue seconds = m_out.doubleFloor(m_out.doubleDiv(milliseconds, msPerSecondConstant));
+        LValue result = m_out.doubleToInt32(m_out.doubleSub(milliseconds, m_out.doubleMul(seconds, msPerSecondConstant)));
+        setJSValue(m_out.select(m_out.doubleNotEqualOrUnordered(milliseconds, milliseconds), m_out.constInt64(JSValue::encode(jsNaN())), boxInt32(result)));
+    }
+
+    void compileDateGetTime()
+    {
+        LValue base = lowDateObject(m_node->child1());
+        setDouble(m_out.loadDouble(base, m_heaps.DateInstance_internalNumber));
+    }
+
     void compileDateSet()
     {
         LValue base = lowDateObject(m_node->child1());
@@ -22961,6 +22984,8 @@ IGNORE_CLANG_WARNINGS_END
         LValue time = m_out.add(m_out.doubleTrunc(arg), m_out.constDouble(0));
         LValue result = m_out.select(m_out.doubleGreaterThanOrUnordered(m_out.doubleAbs(arg), m_out.constDouble(WTF::maxECMAScriptTime)), m_out.constDouble(PNaN), time);
         m_out.storeDouble(result, base, m_heaps.DateInstance_internalNumber);
+        m_out.store64(m_out.constInt64(PlainGregorianDateTime::staleMarker().payload()), base, m_heaps.DateInstance_cachedGregorianDateTime);
+        m_out.store64(m_out.constInt64(PlainGregorianDateTime::staleMarker().payload()), base, m_heaps.DateInstance_cachedGregorianDateTimeUTC);
         setDouble(result);
     }
 
@@ -23167,7 +23192,7 @@ IGNORE_CLANG_WARNINGS_END
                 }
             }
             restore();
-            jit.moveValue(baselineCodeBlock->globalObject(), JSValueRegs { GPRInfo::returnValueGPR });
+            jit.moveValue(baselineCodeBlock->globalObject(), GPRInfo::returnValueGPR);
             jit.loadPtr(CCallHelpers::Address(GPRInfo::returnValueGPR, JSGlobalObject::offsetOfGlobalThis()), GPRInfo::returnValueGPR);
             params.code().emitEpilogue(jit);
 
@@ -23498,8 +23523,8 @@ IGNORE_CLANG_WARNINGS_END
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
                 auto generator = Box<BinaryArithOpGenerator>::create(
-                    leftOperand, rightOperand, JSValueRegs(params[0].gpr()),
-                    JSValueRegs(params[1].gpr()), JSValueRegs(params[2].gpr()),
+                    leftOperand, rightOperand, params[0].gpr(),
+                    params[1].gpr(), params[2].gpr(),
                     params.fpScratch(0), params.fpScratch(1), params.gpScratch(0),
                     scratchFPRUsage == NeedScratchFPR ? params.fpScratch(2) : InvalidFPRReg);
 
@@ -23568,12 +23593,12 @@ IGNORE_CLANG_WARNINGS_END
                 auto generator = [&] {
                     if constexpr (BinaryBitOpGenerator::needsScratchGPR) {
                         return Box<BinaryBitOpGenerator>::create(
-                            leftOperand, rightOperand, JSValueRegs(params[0].gpr()),
-                            JSValueRegs(params[1].gpr()), JSValueRegs(params[2].gpr()), params.gpScratch(0));
+                            leftOperand, rightOperand, params[0].gpr(),
+                            params[1].gpr(), params[2].gpr(), params.gpScratch(0));
                     } else {
                         return Box<BinaryBitOpGenerator>::create(
-                            leftOperand, rightOperand, JSValueRegs(params[0].gpr()),
-                            JSValueRegs(params[1].gpr()), JSValueRegs(params[2].gpr()));
+                            leftOperand, rightOperand, params[0].gpr(),
+                            params[1].gpr(), params[2].gpr());
                     }
                 }();
 
@@ -23632,8 +23657,8 @@ IGNORE_CLANG_WARNINGS_END
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
 
                 auto generator = Box<JITRightShiftGenerator>::create(
-                    leftOperand, rightOperand, JSValueRegs(params[0].gpr()),
-                    JSValueRegs(params[1].gpr()), JSValueRegs(params[2].gpr()),
+                    leftOperand, rightOperand, params[0].gpr(),
+                    params[1].gpr(), params[2].gpr(),
                     params.fpScratch(0), params.gpScratch(0), shiftType);
 
                 generator->generateFastPath(jit);
@@ -28495,7 +28520,10 @@ IGNORE_CLANG_WARNINGS_END
         unsigned nodeIndex = node ? node->index() : UINT_MAX;
 #if !ASSERT_ENABLED
         auto nodeOp = node ? node->op() : LastNodeType;
-        m_out.patchpoint(Void)->setGenerator(
+        PatchpointValue* patchpoint = m_out.patchpoint(Void);
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->clobber(RegisterSet { GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2 });
+        patchpoint->setGenerator(
             [=] (CCallHelpers& jit, const StackmapGenerationParams&) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
 

@@ -106,7 +106,7 @@ bool StringView::endsWithIgnoringASCIICase(StringView suffix) const
     return ::WTF::endsWithIgnoringASCIICase(*this, suffix);
 }
 
-Expected<CString, UTF8ConversionError> StringView::tryGetUTF8(ConversionMode mode) const
+std::expected<CString, UTF8ConversionError> StringView::tryGetUTF8(ConversionMode mode) const
 {
     if (isNull())
         return CString { ""_span };
@@ -137,6 +137,9 @@ SUPPRESS_NODELETE size_t StringView::find(AdaptiveStringSearcherTables& tables, 
 
     if (!matchLength)
         return start;
+
+    if (matchLength > subjectLength - start)
+        return notFound;
 
     if (subjectLength > INT32_MAX || matchLength > INT32_MAX) [[unlikely]]
         return find(matchString, start);

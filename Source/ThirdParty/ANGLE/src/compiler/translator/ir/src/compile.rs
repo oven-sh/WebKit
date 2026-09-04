@@ -12,6 +12,18 @@ mod ffi {
     // TODO(http://anglebug.com/349994211): equivalent enums to the options in ShaderLang.h, eventually all options need to be
     // passed to IR: add them as the translator is converted to IR.
 
+    // Matching ShShaderSpec
+    #[derive(Copy, Clone)]
+    #[repr(u32)]
+    enum ShaderSpec {
+        GLES2,
+        WEBGL,
+        GLES3,
+        WEBGL2,
+        GLES3_1,
+        GLES3_2,
+    }
+
     // Matching ShShaderOutput
     #[derive(Copy, Clone)]
     #[repr(u32)]
@@ -150,6 +162,8 @@ mod ffi {
     struct CompileOptions {
         // Input shader and device properties:
 
+        // The API version in which the shader is being compiled
+        shader_spec: ShaderSpec,
         // The version of the input version
         shader_version: i32,
         // Extensions that were enabled, mostly useful for the GLSL/ESSL output to replicate them.
@@ -344,7 +358,7 @@ mod ffi {
         storage_blocks: Vec<InterfaceBlock>,
     }
 
-    extern "C++" {
+    unsafe extern "C++" {
         include!("compiler/translator/ir/src/output/legacy.h");
 
         #[namespace = "sh"]
@@ -363,11 +377,13 @@ mod ffi {
         type IR = crate::ir::IR;
 
         include!("compiler/translator/ir/src/pool_alloc.h");
-        unsafe fn initialize_global_pool_index();
-        unsafe fn free_global_pool_index();
+        fn initialize_global_pool_index();
+        fn free_global_pool_index();
+        // SAFETY: Pointer must be obtained from C++ and passed back unmodified.
         unsafe fn set_global_pool_allocator(allocator: *mut PoolAllocator);
     }
     extern "Rust" {
+        // SAFETY: Pointers must be obtained from C++ and passed back unmodified.
         unsafe fn generate_ast(
             mut ir: Box<IR>,
             compiler: *mut TCompiler,
@@ -389,6 +405,7 @@ pub use ffi::OutputLanguage;
 pub use ffi::PixelLocalStorageImpl;
 pub use ffi::PixelLocalStorageOptions;
 pub use ffi::PixelLocalStorageSync;
+pub use ffi::ShaderSpec;
 pub use ffi::ShaderVariable;
 
 unsafe fn generate_ast(
@@ -397,6 +414,7 @@ unsafe fn generate_ast(
     allocator: *mut ffi::PoolAllocator,
     options: &Options,
 ) -> ffi::Output {
+    // SAFETY: Pointer is obtained from C++ and passed back to it.
     unsafe { ffi::set_global_pool_allocator(allocator) };
 
     // Apply transforms shared by multiple generators:
@@ -552,6 +570,9 @@ fn common_pre_variable_collection_transforms(ir: &mut IR, options: &Options) {
         && options.extensions.EXT_draw_buffers
         && options.limits.max_draw_buffers > 1
     {
+        // In WebGL2, gl_FragData has only one element.  But in WebGL2, EXT_draw_buffers is not a
+        // supported extension.
+        debug_assert!(options.shader_spec != ShaderSpec::WEBGL2);
         let transform_options = transform::broadcast_fragcolor::Options {
             max_draw_buffers: options.limits.max_draw_buffers,
             max_dual_source_draw_buffers: options.limits.max_dual_source_draw_buffers,
@@ -658,8 +679,8 @@ fn common_post_variable_collection_transforms(ir: &mut IR, options: &Options) {
 }
 
 fn initialize_global_pool_index_workaround() {
-    unsafe { ffi::initialize_global_pool_index() };
+    ffi::initialize_global_pool_index();
 }
 fn free_global_pool_index_workaround() {
-    unsafe { ffi::free_global_pool_index() };
+    ffi::free_global_pool_index();
 }

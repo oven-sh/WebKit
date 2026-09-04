@@ -415,7 +415,7 @@ String CanvasRenderingContext2DBase::State::fontString() const
         serializedFont.append("bold "_s);
     else if (weight != normalWeightValue())
         serializedFont.append(weight, " "_s);
-    serializedFont.append(font.computedSize(), "px"_s);
+    serializedFont.append(font.usedSize(), "px"_s);
 
     for (unsigned i = 0; i < font.familyCount(); ++i) {
         auto fontFamily = font.familyAt(i);
@@ -694,7 +694,7 @@ void CanvasRenderingContext2DBase::setLineCap(const String& stringValue)
         cap = CanvasLineCap::Square;
     else
         return;
-    
+
     setLineCap(cap);
 }
 
@@ -1844,35 +1844,48 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanv
     Ref protectedCanvas { sourceCanvas };
     checkOrigin(&sourceCanvas);
 
+    RefPtr<ImageBuffer> copy;
     RefPtr image = sourceCanvas.copyNativeImage();
     if (!image)
         return { };
+
+    auto normalizedImageSrcRect = normalizedSrcRect;
+    if (&sourceCanvas == &canvasBase() && c->renderingMode() == RenderingMode::Accelerated) {
+        // Currently sourcing the draw target, i.e. draw from self, is slow. Draw to a copy, source
+        // the copy.
+        copy = createCompatibleImageBuffer(*c, normalizedSrcRect.size());
+        if (!copy)
+            return { };
+        copy->context().drawNativeImage(*image, { -normalizedSrcRect.location(), FloatSize { image->size() } }, { { }, FloatSize { image->size() } });
+        image = copy->copyNativeImage();
+        if (!image)
+            return { };
+        // The copy holds only normalizedSrcRect, so source it from the origin.
+        normalizedImageSrcRect = { { }, normalizedSrcRect.size() };
+    }
 
     auto shouldUseDrawOptionsWithoutPostProcessing = sourceCanvas.renderingContext() && sourceCanvas.renderingContext()->is2d() && !sourceCanvas.havePendingCanvasNoiseInjection();
     auto willUpdateContentsOptions = shouldUseDrawOptionsWithoutPostProcessing ? defaultWillUpdateContentsOptionsWithoutPostProcessing() : defaultWillUpdateContentsOptions();
 
     if (rectContainsCanvas(normalizedDstRect)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
+        c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
     } else if (isFullCanvasCompositeMode(state().globalComposite)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedSrcRect, state().globalComposite);
+        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedImageSrcRect, state().globalComposite);
     } else if (state().globalComposite == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        if (&sourceCanvas == &canvasBase()) {
-            if (auto copy = createCompatibleImageBuffer(*c, normalizedSrcRect.size())) {
-                copy->context().drawNativeImage(*image, { -normalizedSrcRect.location(), FloatSize { image->size() } }, { { }, FloatSize { image->size() } });
-                clearCanvas();
-                if (RefPtr copyImage = ImageBuffer::sinkIntoNativeImage(copy.releaseNonNull()))
-                    c->drawNativeImage(*copyImage, normalizedDstRect, { { }, normalizedSrcRect.size() }, { state().globalComposite, state().globalBlend });
-            }
-        } else {
-            clearCanvas();
-            c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
-        }
+        clearCanvas();
+        c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
     } else {
         willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, willUpdateContentsOptions);
-        c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
+        c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
+    }
+
+    if (copy) {
+        // Avoid pending image copies when copy gets destroyed.
+        if (RefPtr targetBuffer = buffer())
+            targetBuffer->flushDrawingContextAsync();
     }
 
     return { };
@@ -2268,7 +2281,7 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(C
 ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(HTMLImageElement& imageElement, bool repeatX, bool repeatY)
 {
     RefPtr cachedImage = imageElement.cachedImage();
-    
+
     // If the image loading hasn't started or the image is not complete, it is not fully decodable.
     if (!cachedImage || !imageElement.complete())
         return nullptr;
@@ -2320,25 +2333,21 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(C
 {
     if (!canvas.width() || !canvas.height())
         return Exception { ExceptionCode::InvalidStateError };
-    RefPtr copiedImage = canvas.copiedImage();
 
-    if (!copiedImage)
-        return Exception { ExceptionCode::InvalidStateError };
-    
-    auto nativeImage = copiedImage->nativeImage();
+    RefPtr nativeImage = canvas.copyNativeImage();
     if (!nativeImage)
         return Exception { ExceptionCode::InvalidStateError };
 
     return RefPtr<CanvasPattern> { CanvasPattern::create({ nativeImage.releaseNonNull() }, repeatX, repeatY, canvas.originClean()) };
 }
-    
+
 #if ENABLE(VIDEO)
 
 ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(HTMLVideoElement& videoElement, bool repeatX, bool repeatY)
 {
     if (videoElement.readyState() < HTMLMediaElement::HAVE_CURRENT_DATA)
         return nullptr;
-    
+
     checkOrigin(&videoElement);
     bool originClean = canvasBase().originClean();
 
@@ -2353,7 +2362,7 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(H
         return nullptr;
 
     videoElement.paintCurrentFrameInContext(imageBuffer->context(), FloatRect(FloatPoint(), size(videoElement)));
-    
+
     return RefPtr<CanvasPattern> { CanvasPattern::create({ imageBuffer.releaseNonNull() }, repeatX, repeatY, originClean) };
 }
 
@@ -2558,7 +2567,7 @@ RefPtr<ArrayPixelBuffer> CanvasRenderingContext2DBase::cacheImageDataIfPossible(
     // This computation can be used for cache retrieval as well as the real putImageData.
     // We're not doing RGBA -> BGRA swizzle here, as that is not needed for cache retrieval and
     // the swizzle copy can be made at the putImageData copy site.
-    auto colorSpace = toDestinationColorSpace(imageData.colorSpace());
+    auto colorSpace = toColorSpace(imageData.colorSpace());
     auto pixelFormat = toPixelFormat(imageData.pixelFormat());
     unsigned bytesPerRow = static_cast<unsigned>(size.width()) * PixelBuffer::bytesPerPixel(pixelFormat);
     PixelBufferFormat cachedFormat { AlphaPremultiplication::Premultiplied, pixelFormat, colorSpace };
@@ -2671,7 +2680,7 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
     if (!buffer)
         return ImageData::create(imageDataRect.width(), imageDataRect.height(), m_settings.colorSpace, settings);
 
-    PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, toDestinationColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)) };
+    PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, toColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)) };
     RefPtr pixelBuffer = buffer->getPixelBuffer(format, imageDataRect);
     if (!pixelBuffer) {
         scriptContext->addConsoleMessage(MessageSource::Rendering, MessageLevel::Error,
@@ -2679,7 +2688,7 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
         return Exception { ExceptionCode::InvalidStateError };
     }
 
-    ASSERT(pixelBuffer->format().colorSpace == toDestinationColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)));
+    ASSERT(pixelBuffer->format().colorSpace == toColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)));
 
     if (RefPtr imageData = ImageData::create(pixelBuffer.releaseNonNull(), outputImageDataPixelFormat))
         return { { imageData.releaseNonNull() } };
@@ -3192,9 +3201,9 @@ static constexpr AllowExtendedColorSpace allowExtendedColorSpace(CanvasRendering
     return AllowExtendedColorSpace::No;
 }
 
-DestinationColorSpace CanvasRenderingContext2DBase::colorSpace() const
+ColorSpace CanvasRenderingContext2DBase::colorSpace() const
 {
-    return toDestinationColorSpace(m_settings.colorSpace, allowExtendedColorSpace(m_settings.colorType));
+    return toColorSpace(m_settings.colorSpace, allowExtendedColorSpace(m_settings.colorType));
 }
 
 bool CanvasRenderingContext2DBase::willReadFrequently() const

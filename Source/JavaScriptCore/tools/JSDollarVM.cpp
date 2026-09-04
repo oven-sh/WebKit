@@ -1161,7 +1161,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 params.addSlowPathCall(jit.jump(), jit, domJITGetterSlowCall, results, globalObjectGPR, domGPR);
@@ -1268,7 +1268,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 params.addSlowPathCall(jit.jump(), jit, domJITGetterNoEffectSlowCall, results, globalObjectGPR, domGPR);
@@ -1371,7 +1371,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 for (unsigned i = 0; i < numGPScratchRegisters; ++i)
@@ -1637,7 +1637,7 @@ public:
             snippet->requireGlobalObject = true;
             snippet->setGenerator([=] (CCallHelpers& jit, SnippetParams& params) {
                 DollarVMAssertScope assertScope;
-                JSValueRegs results = params[0].jsValueRegs();
+                GPRReg results = params[0].gpr();
                 GPRReg domGPR = params[1].gpr();
                 GPRReg globalObjectGPR = params[2].gpr();
                 params.addSlowPathCall(jit.jump(), jit, domJITGetterBaseJSObjectSlowCall, results, globalObjectGPR, domGPR);

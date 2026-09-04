@@ -2966,6 +2966,9 @@ media/airplay-allows-buffering.html
 media/airplay-autoplay.html
 media/airplay-target-availability.html
 media/airplay-target-availability-disableremoteplayback.html
+http/tests/media/airplay-target-availability-in-cross-origin-iframe.html
+http/tests/media/airplay-select-target-in-cross-origin-iframe.html
+http/tests/media/airplay-picker-rect-in-cross-origin-iframe.html
 
 # needs enhanced eventSender.contextMenu() return value
 webkit.org/b/116651 media/context-menu-actions.html
@@ -7655,7 +7658,7 @@ webkit.org/b/276005 webgl/2.0.y/conformance2/textures/canvas/tex-2d-rgba16f-rgba
 webkit.org/b/276006 [ x86_64 ] imported/w3c/web-platform-tests/css/motion/offset-path-shape-inset-002.html [ ImageOnlyFailure ]
 webkit.org/b/276006 [ x86_64 ] imported/w3c/web-platform-tests/css/motion/offset-path-shape-polygon-002.html [ ImageOnlyFailure ]
 webkit.org/b/276006 [ x86_64 ] imported/w3c/web-platform-tests/css/motion/offset-path-shape-xywh-002.html [ ImageOnlyFailure ]
-webkit.org/b/276013 webgl/1.0.x/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Failure ]
+webkit.org/b/276013 [ x86_64 ] webgl/1.0.x/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Failure ]
 webkit.org/b/276013 [ x86_64 ] webgl/2.0.y/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Failure ]
 # these specifically are baselined to pass on arm64, so we expect failure on x86_64
 webkit.org/b/275963 [ x86_64 ] svg/W3C-SVG-1.1/metadata-example-01-b.svg [ Failure ]
@@ -8652,6 +8655,8 @@ imported/w3c/web-platform-tests/css/css-highlight-api/highlight-text-across-elem
 pdf/annotations [ Skip ]
 pdf/pdf-in-iframe-with-text-annotation.html [ Skip ]
 
+pdf/mac [ Skip ]
+
 webkit.org/b/312496 fast/forms/select/base/select-pagedown-pageup-vertical.html [ Pass Failure Timeout ] # rdar://178158648
 
 webkit.org/b/312499 imported/w3c/web-platform-tests/shadow-dom/reference-target/tentative/form.html [ Pass Failure ]
@@ -8826,7 +8831,6 @@ media/video-webm-seek-multi-audio-tracks.html [ Timeout ] # rdar://180007922
 quicklook/word-legacy.html [ Failure ] # rdar://174850780
 quicklook/word.html [ Failure ] # rdar://174850780
 svg/filters/feMorphology-negative-radius.html [ Pass Crash ] # rdar://178675229
-webgl/1.0.x/conformance/textures/misc/texture-srgb-upload.html [ Timeout ] # rdar://176399952
 workers/worker-set-delete-terminate-crash.html [ Timeout ] # rdar://178590046
 svg/transforms/nested-svg-transform-attribute-creates-layer.html [ Failure ] # rdar://180457293
 svg/compositing/segment-removed-after-anchor-decomposited-layer-tree.html [ Failure ] # rdar://180457293

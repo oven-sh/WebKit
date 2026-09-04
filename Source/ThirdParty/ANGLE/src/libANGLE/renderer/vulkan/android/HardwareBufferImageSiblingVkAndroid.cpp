@@ -250,8 +250,8 @@ egl::Error HardwareBufferImageSiblingVkAndroid::ValidateHardwareBuffer(
     bufferProperties.pNext = &bufferFormatProperties;
 
     VkDevice device = renderer->getDevice();
-    VkResult result =
-        vkGetAndroidHardwareBufferPropertiesANDROID(device, hardwareBuffer, &bufferProperties);
+    VkResult result = VK_CALL(vkGetAndroidHardwareBufferPropertiesANDROID, device, hardwareBuffer,
+                              &bufferProperties);
     if (result != VK_SUCCESS)
     {
         return egl::Error(EGL_BAD_PARAMETER, "Failed to query AHardwareBuffer properties");
@@ -350,8 +350,8 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
     }
 
     VkDevice device = renderer->getDevice();
-    ANGLE_VK_TRY(displayVk, vkGetAndroidHardwareBufferPropertiesANDROID(device, hardwareBuffer,
-                                                                        &bufferProperties));
+    ANGLE_VK_TRY(displayVk, VK_CALL(vkGetAndroidHardwareBufferPropertiesANDROID, device,
+                                    hardwareBuffer, &bufferProperties));
 
     bool externalFormatHasNecessaryFormatSupport;
     bool formatHasNecessaryFormatSupport;
@@ -455,14 +455,12 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
     VkExtent3D vkExtents;
     gl_vk::GetExtent(mSize, &vkExtents);
 
-    // Setup level count
-    mLevelCount = ((ahbDescription.usage & AHARDWAREBUFFER_USAGE_GPU_MIPMAP_COMPLETE) != 0)
-                      ? static_cast<uint32_t>(log2(std::max(mSize.width, mSize.height))) + 1
-                      : 1;
-
-    // No support for rendering to external YUV AHB with multiple miplevels
-    ANGLE_VK_CHECK(displayVk, (!externalRenderTargetSupported || mLevelCount == 1),
-                   VK_ERROR_INITIALIZATION_FAILED);
+    // Setup level count.  Per VUID-VkImageCreateInfo-pNext-02396, if the pNext chain includes a
+    // VkExternalFormatANDROID structure whose externalFormat member is not 0, mipLevels must be 1.
+    mLevelCount =
+        (!isExternal && (ahbDescription.usage & AHARDWAREBUFFER_USAGE_GPU_MIPMAP_COMPLETE) != 0)
+            ? static_cast<uint32_t>(log2(std::max(mSize.width, mSize.height))) + 1
+            : 1;
 
     // Setup layer count
     const uint32_t layerCount = mSize.depth;
@@ -568,7 +566,7 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
     ANGLE_TRY(mImage->initExternal(
         displayVk, textureType, vkExtents, intendedFormatID, actualRenderableFormatID, 1, usage,
         imageCreateFlags, vk::ImageAccess::ExternalPreInitialized, imageCreateInfoPNext,
-        gl::LevelIndex(0), mLevelCount, layerCount, robustInitEnabled, hasProtectedContent(),
+        gl::OwnerLevel(0), mLevelCount, layerCount, robustInitEnabled, hasProtectedContent(),
         vk::TileMemory::Prohibited, conversionDesc, nullptr, formatReinterpretability));
 
     VkImportAndroidHardwareBufferInfoANDROID importHardwareBufferInfo = {};

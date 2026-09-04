@@ -94,9 +94,9 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AcceleratedSurface);
 
-Ref<AcceleratedSurface> AcceleratedSurface::create(WebPage& webPage, Function<void()>&& frameCompleteHandler, RenderingPurpose renderingPurpose, bool useSkia)
+Ref<AcceleratedSurface> AcceleratedSurface::create(WebPage& webPage, Function<void()>&& frameCompleteHandler, RenderingPurpose renderingPurpose)
 {
-    return adoptRef(*new AcceleratedSurface(webPage, WTF::move(frameCompleteHandler), renderingPurpose, useSkia));
+    return adoptRef(*new AcceleratedSurface(webPage, WTF::move(frameCompleteHandler), renderingPurpose));
 }
 
 static uint64_t generateID()
@@ -112,10 +112,14 @@ static bool useExplicitSync()
     return extensions.ANDROID_native_fence_sync && (display.eglCheckVersion(1, 5) || extensions.KHR_fence_sync);
 }
 
-AcceleratedSurface::AcceleratedSurface(WebPage& webPage, Function<void()>&& frameCompleteHandler, RenderingPurpose renderingPurpose, bool useSkia)
+AcceleratedSurface::AcceleratedSurface(WebPage& webPage, Function<void()>&& frameCompleteHandler, RenderingPurpose renderingPurpose)
     : m_webPage(webPage)
     , m_frameCompleteHandler(WTF::move(frameCompleteHandler))
-    , m_useSkia(useSkia)
+#if USE(TEXTURE_MAPPER)
+    , m_useSkia(renderingPurpose == RenderingPurpose::NonComposited)
+#else
+    , m_useSkia(true)
+#endif
     , m_id(generateID())
     , m_renderingPurpose(renderingPurpose)
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
@@ -920,6 +924,33 @@ void AcceleratedSurface::SwapChainDamageTracker::didPresent(RenderTarget& target
 }
 #endif
 
+bool AcceleratedSurface::shouldPaintMirrored() const
+{
+    switch (m_swapChain.type()) {
+    case SwapChain::Type::Invalid:
+        return false;
+#if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
+    case SwapChain::Type::Texture:
+#if USE(GBM) || OS(ANDROID)
+    case SwapChain::Type::EGLImage:
+#endif
+#if PLATFORM(GTK) && !USE(GTK4)
+        return true;
+#else
+        return false;
+#endif
+    case SwapChain::Type::SharedMemory:
+        return false;
+#endif
+#if USE(WPE_RENDERER)
+    case SwapChain::Type::WPEBackend:
+        return true;
+#endif
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 #if PLATFORM(WPE) && ENABLE(WPE_PLATFORM) && (USE(GBM) || OS(ANDROID))
 void AcceleratedSurface::preferredBufferFormatsDidChange()
 {
@@ -1107,7 +1138,7 @@ void AcceleratedSurface::clear(const OptionSet<WebCore::CompositionReason>& reas
 
     if (reasons.contains(CompositionReason::AsyncScrolling)) {
         if (backgroundColor) {
-            auto [r, g, b, a] = backgroundColor->toResolvedColorComponentsInColorSpace(WebCore::ColorSpace::SRGB);
+            auto [r, g, b, a] = backgroundColor->toResolvedColorComponentsInColorSpace(WebCore::ColorSpaceName::SRGB);
             glClearColor(r, g, b, a);
         } else
             glClearColor(1, 1, 1, 1);

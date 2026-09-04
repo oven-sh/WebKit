@@ -114,6 +114,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/css/values/counter-styles"
     "${WEBCORE_DIR}/css/values/easing"
     "${WEBCORE_DIR}/css/values/filter-effects"
+    "${WEBCORE_DIR}/css/values/flexbox"
     "${WEBCORE_DIR}/css/values/fonts"
     "${WEBCORE_DIR}/css/values/grid"
     "${WEBCORE_DIR}/css/values/images"
@@ -2859,8 +2860,10 @@ if (ENABLE_WEBCORE_TEST_SUPPORT)
     WEBKIT_LIBRARY_DECLARE(WebCoreTestSupport)
 endif ()
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
-WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(WebCore)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebCore)
+if (ENABLE_WEBCORE_TEST_SUPPORT)
+    WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebCoreTestSupport)
+endif ()
 
 if (ENABLE_MALLOC_HEAP_BREAKDOWN)
     list(APPEND WebCore_LIBRARIES ${MALLOC_HEAP_BREAKDOWN_LIBRARIES})
@@ -3329,6 +3332,7 @@ if (APPLE)
         "LINKER:-allowable_client,InjectedBundleTestWebKitAPI"
         "LINKER:-allowable_client,TestWebCore"
         "LINKER:-allowable_client,TestWebKitAPI"
+        "LINKER:-allowable_client,TestWebKitAPIPlugIn"
         "LINKER:-allowable_client,TestWebKitLegacy"
     )
 endif ()

@@ -33,12 +33,16 @@
 #include "DMABufBuffer.h"
 #include "GLContext.h"
 #include "PlatformDisplay.h"
-#include "TextureMapper.h"
 #include <drm_fourcc.h>
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/ThreadSafeRefCounted.h>
+
+#if USE(TEXTURE_MAPPER)
+#include "TextureMapper.h"
+#endif
 
 #if USE(SKIA)
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
@@ -54,6 +58,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
+#if USE(TEXTURE_MAPPER)
 std::unique_ptr<CoordinatedPlatformLayerBufferDMABuf> CoordinatedPlatformLayerBufferDMABuf::create(Ref<DMABufBuffer>&& dmabuf, OptionSet<TextureMapperFlags> flags, std::unique_ptr<GLFence>&& fence)
 {
     return makeUnique<CoordinatedPlatformLayerBufferDMABuf>(WTF::move(dmabuf), flags, WTF::move(fence));
@@ -77,7 +82,8 @@ CoordinatedPlatformLayerBufferDMABuf::CoordinatedPlatformLayerBufferDMABuf(Ref<D
 {
 }
 
-#if USE(SKIA)
+#else
+
 std::unique_ptr<CoordinatedPlatformLayerBufferDMABuf> CoordinatedPlatformLayerBufferDMABuf::create(Ref<DMABufBuffer>&& dmabuf, OptionSet<TextureMapperFlags> flags, std::unique_ptr<GLFence>&& fence, const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext)
 {
     return makeUnique<CoordinatedPlatformLayerBufferDMABuf>(WTF::move(dmabuf), flags, WTF::move(fence), threadSafeGrContext);
@@ -300,6 +306,7 @@ std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferDM
     return texture ? CoordinatedPlatformLayerBufferRGB::create(texture.releaseNonNull(), m_flags, nullptr) : nullptr;
 }
 
+#if USE(TEXTURE_MAPPER)
 void CoordinatedPlatformLayerBufferDMABuf::paintToTextureMapper(TextureMapper& textureMapper, const FloatRect& targetRect, const TransformationMatrix& modelViewMatrix, float opacity)
 {
     waitForContentsIfNeeded();
@@ -316,8 +323,9 @@ void CoordinatedPlatformLayerBufferDMABuf::paintToTextureMapper(TextureMapper& t
         buffer->paintToTextureMapper(textureMapper, targetRect, modelViewMatrix, opacity);
 }
 
-#if USE(SKIA)
-class PromiseDMABufImageContext final : public RefCounted<PromiseDMABufImageContext> {
+#else
+
+class PromiseDMABufImageContext final : public ThreadSafeRefCounted<PromiseDMABufImageContext> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(PromiseDMABufImageContext);
 public:
     static Ref<PromiseDMABufImageContext> create(Ref<DMABufBuffer>&& buffer, OptionSet<TextureMapperFlags> flags, std::unique_ptr<GLFence>&& glFence, WTF::UnixFileDescriptor&& fd)
@@ -432,9 +440,6 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(PromiseDMABufYUVPlaneContext);
 
 void CoordinatedPlatformLayerBufferDMABuf::createSkiaImageIfNeeded(const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext)
 {
-    if (!threadSafeGrContext)
-        return;
-
     auto backendFormat = threadSafeGrContext->defaultBackendFormat(kRGBA_8888_SkColorType, GrRenderable::kYes);
     ASSERT(backendFormat.isValid());
 

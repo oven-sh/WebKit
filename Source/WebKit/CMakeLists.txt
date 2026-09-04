@@ -161,7 +161,6 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIOffscreen
     WebProcess/Extensions/Interfaces/WebExtensionAPIPermissions
     WebProcess/Extensions/Interfaces/WebExtensionAPIPort
-    WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPIScripting
     WebProcess/Extensions/Interfaces/WebExtensionAPISidePanel
     WebProcess/Extensions/Interfaces/WebExtensionAPISidebarAction
@@ -170,7 +169,6 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPITabs
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigationEvent
-    WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequest
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequestEvent
     WebProcess/Extensions/Interfaces/WebExtensionAPIWindows
@@ -180,8 +178,10 @@ set(WebKit_BINDINGS_IN_FILES
 set(WebKit_CPP_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
     WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
+    WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
     WebProcess/Extensions/Interfaces/WebExtensionAPITest
     WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageNamespace
+    WebProcess/Extensions/Interfaces/WebExtensionAPIWebPageRuntime
 )
 
 set(WebKit_MESSAGES_IN_FILES
@@ -875,7 +875,6 @@ endif ()
 
 WEBKIT_FRAMEWORK_DECLARE(WebKit)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
-WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(WebKit)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebKit)
 
 # The full WebKit_Internal C++ module pulls in WebPageProxy.h and friends, which
@@ -985,15 +984,6 @@ if (SWIFT_REQUIRED)
         cmake_path(GET _f FILENAME _fn)
         list(APPEND WebKit_UNIFIED_SOURCE_EXCLUDES "(^|[/\\\\])${_fn}( |$)")
     endforeach ()
-
-    # FIXME(rdar://177840132): swiftc -emit-dependencies records imported
-    # clang modulemaps, but sometimes skips individual C++ headers.
-    file(STRINGS "${WebKit_SWIFT_INTEROP_MODULE_PATH}/module.modulemap" _mm_lines REGEX "header \"")
-    foreach (_l IN LISTS _mm_lines)
-        string(REGEX REPLACE ".*header \"(.*)\".*" "\\1" _h "${_l}")
-        cmake_path(ABSOLUTE_PATH _h BASE_DIRECTORY "${WebKit_SWIFT_INTEROP_MODULE_PATH}" NORMALIZE)
-        list(APPEND WebKit_SWIFT_INTEROP_HEADERS "${_h}")
-    endforeach ()
 endif ()
 
 WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
@@ -1081,7 +1071,10 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
             ${WEBKIT_DIR}/Scripts/webkit/__init__.py
             ${WEBKIT_DIR}/Scripts/webkit/messages.py
             ${WEBKIT_DIR}/Scripts/webkit/model.py
+            ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
+            ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.tracking.in
             ${WEBKIT_DIR}/Scripts/webkit/parser.py
+            ${WEBKIT_DIR}/Scripts/webkit/untrusted_origins.py
             ${_input_files}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_messages_stage_dir}
         COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-message-receiver.py --preserve-subdirs ${WEBKIT_DIR} ${_inputs} --output-dir ${_messages_stage_dir}
@@ -1464,6 +1457,7 @@ if (SWIFT_REQUIRED)
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/Shared/Foundation+Extras.swift
         ${WEBKIT_DIR}/Shared/IPCTesterReceiver.swift
+        ${WEBKIT_DIR}/Shared/RunJavaScriptResult.swift
         ${WEBKIT_DIR}/Shared/WTFCompletionHandler+Extras.swift
         ${WEBKIT_DIR}/Shared/WTFExpected+Extras.swift
         ${WebKit_DERIVED_SOURCES_DIR}/IPCTesterReceiverMessageReceiver.swift

@@ -29,7 +29,9 @@ import sys
 import time
 import urllib.parse
 
-from dataclasses import dataclass, field
+from collections.abc import Callable, Generator, Iterable
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
 
 from .twisted_additions import TwistedAdditions
 from .utils import load_password, get_custom_suffix
@@ -63,6 +65,85 @@ class FlakyVerdict:
         }
 
 
+@dataclass
+class EWSRowDetails:
+    """A row's `details` blob: build provenance the results database stores but cannot be queried on."""
+    worker: Optional[str] = None
+    remote: Optional[str] = None
+    pr_number: Optional[int] = None
+    commit_hash: Optional[str] = None
+    retry_count: int = 0
+    authors: list[str] = field(default_factory=list)
+    build_url: Optional[str] = None
+    stage: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, data: Optional[dict]) -> 'EWSRowDetails':
+        data = data or {}
+        return cls(
+            worker=data.get('worker'),
+            remote=data.get('remote'),
+            pr_number=data.get('pr_number'),
+            commit_hash=data.get('commit_hash'),
+            retry_count=data.get('retry_count') or 0,
+            authors=[author for author in (data.get('authors') or []) if author],
+            build_url=data.get('build_url'),
+            stage=data.get('stage'),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class EWSRow:
+    """One row the results database has recorded for one test in one configuration."""
+    uuid: int = 0
+    start_time: int = 0
+    # Whatever the suite that ran the test reports, which differs per suite.
+    result: dict[str, Any] = field(default_factory=dict)
+    flaky_type: Optional[str] = None
+    details: EWSRowDetails = field(default_factory=EWSRowDetails)
+
+    @classmethod
+    def from_json(cls, data: dict) -> 'EWSRow':
+        return cls(
+            uuid=data.get('uuid') or 0,
+            start_time=data.get('start_time') or 0,
+            result=data.get('result') or {},
+            flaky_type=data.get('flaky_type'),
+            details=EWSRowDetails.from_json(data.get('details')),
+        )
+
+
+@dataclass
+class EWSPayload:
+    """What EWS uploads about one run. The api_key is deliberately absent: this object is logged, and
+    a field would put the live key in every __repr__ and asdict of it."""
+    suite: str
+    configuration: dict
+    commits: list[dict]
+    results: dict
+    timestamp: int
+    details: EWSRowDetails
+    flaky_type: Optional[str] = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            'suite': self.suite,
+            'flaky_type': self.flaky_type,
+            'configuration': self.configuration,
+            'commits': self.commits,
+            'test_results': {'results': self.results},
+            'timestamp': self.timestamp,
+            'details': self.details.to_json(),
+        }
+
+
+EWSRowByTest = dict[str, list[EWSRow]]
+EWSRowByType = dict[str, list[EWSRow]]
+
+
 class ResultsDatabase(object):
     # Default to dev if not prod since resultsDB doesn't have a uat instance
     custom_suffix = '' if get_custom_suffix() == '' else '-dev'
@@ -87,6 +168,7 @@ class ResultsDatabase(object):
 
     PRS_FOR_DIRTY_TREE_FLAKE = 2
     AUTHORS_FOR_DIRTY_TREE_FLAKE = 2
+    BUILDS_FOR_CLEAN_TREE_FLAKE = 2
     PRS_FOR_BETWEEN_BUILD_FLAKE = 3
     AUTHORS_FOR_BETWEEN_BUILD_FLAKE = 2
 
@@ -95,10 +177,11 @@ class ResultsDatabase(object):
     FLAKY_QUERY_TIMEOUT_SECONDS = 30
     FLAKY_WINDOW_SECONDS = 3 * 24 * 60 * 60
 
-    # What EWS records in the flaky_type column, which the reporting side writes.
     WITHIN_STEP_CLEAN_TREE = 'WithinStepCleanTree'
     WITHIN_STEP_DIRTY_TREE = 'WithinStepDirtyTree'
     BETWEEN_STEPS_DIRTY_TREE = 'BetweenStepsDirtyTree'
+    FAILED_ROWS = 'Failed'
+    WITHIN_BUILD_ROWS = (WITHIN_STEP_CLEAN_TREE, WITHIN_STEP_DIRTY_TREE, BETWEEN_STEPS_DIRTY_TREE)
 
     # What the read path concludes, which is what a caller decides to act on.
     CLEAN_TREE_VERDICT = 'CleanTree'
@@ -232,29 +315,21 @@ class ResultsDatabase(object):
 
     @classmethod
     @defer.inlineCallbacks
-    def report_ews(cls, suite, results, configuration, commits, timestamp, details, flaky_type=None, logger=lambda _: None):
-        if not results:
+    def report_ews(cls, payload: EWSPayload, logger: Callable[[str], None] = lambda _: None) -> Generator[Any, Any, bool]:
+        if not payload.results:
             return False
 
-        payload = {
-            'suite': suite,
-            'flaky_type': flaky_type,
-            'configuration': configuration,
-            'commits': commits,
-            'test_results': {'results': results},
-            'timestamp': timestamp,
-            'details': details,
-            'api_key': os.environ.get('RESULTS_SERVER_API_KEY', ''),
-        }
+        document = payload.to_json()
+        body = {**document, 'api_key': os.environ.get('RESULTS_SERVER_API_KEY', '')}
 
         url = f'{cls.HOSTNAME}/api/upload/ews'
-        label = f'{flaky_type} flaky tests' if flaky_type else 'failed tests'
-        logger(f"Reporting {label} to {url}: {', '.join(sorted(results))}\n")
+        label = f'{payload.flaky_type} flaky tests' if payload.flaky_type else 'failed tests'
+        logger(f"Reporting {label} to {url}: {', '.join(sorted(payload.results))}\n")
         # FIXME: Remove the request and response dumps once reporting has been validated against a
-        # deployed results database. api_key must stay redacted, build logs are not private.
-        logger(f"Request:\n{json.dumps({**payload, 'api_key': '<redacted>'}, indent=2, sort_keys=True)}\n")
+        # deployed results database.
+        logger(f'Request:\n{json.dumps(document, indent=2, sort_keys=True)}\n')
 
-        response = yield TwistedAdditions.request(url, type=b'POST', json=payload, logger=logger)
+        response = yield TwistedAdditions.request(url, type=b'POST', json=body, logger=logger)
         if not response:
             logger(f'No response from {url}, so {label} were not reported\n')
             return False
@@ -275,52 +350,91 @@ class ResultsDatabase(object):
             return True
 
         logger(f"Reported {label}: {', '.join(sorted(stored))}\n")
-        dropped = sorted(set(results) - set(stored))
+        dropped = sorted(set(payload.results) - set(stored))
         if dropped:
             logger(f"{url} did not store {', '.join(dropped)}\n")
             return False
         return True
 
     @classmethod
-    def _evidence_in(cls, rows):
+    def _evidence_in(cls, rows: list[EWSRow]) -> FlakyVerdict:
         """Who was building across these rows, as a verdict with no type decided yet."""
         evidence = FlakyVerdict()
         for row in rows:
-            details = row.get('details') or {}
-            if build_url := details.get('build_url'):
+            if build_url := row.details.build_url:
                 evidence.build_urls.add(build_url)
-            if pr_number := details.get('pr_number'):
+            if pr_number := row.details.pr_number:
                 evidence.pr_numbers.add(pr_number)
-            evidence.authors |= {author for author in (details.get('authors') or []) if author}
+            evidence.authors |= set(row.details.authors)
         return evidence
 
     @classmethod
-    def _convict(cls, evidence, flaky_type, prs_needed, authors_needed):
-        if len(evidence.pr_numbers) >= prs_needed and len(evidence.authors) >= authors_needed:
+    def _convict(
+        cls, evidence: FlakyVerdict, flaky_type: str,
+        prs_needed: int = 0, authors_needed: int = 0, builds_needed: int = 0,
+    ) -> Optional[FlakyVerdict]:
+        if (
+            len(evidence.pr_numbers) >= prs_needed
+            and len(evidence.authors) >= authors_needed
+            and len(evidence.build_urls) >= builds_needed
+        ):
             evidence.flaky_type = flaky_type
             return evidence
 
     @classmethod
-    def _rows_by_flaky_type(cls, entries):
-        rows = {}
-        for entry in entries:
-            for row in entry.get('results', []):
-                rows.setdefault(row.get('flaky_type'), []).append(row)
-        return rows
+    def _rows_by_type(
+        cls, rows: list[EWSRow], curr_authors: Optional[Iterable[str]],
+        curr_pr: Optional[int], logger: Callable[[str], None],
+    ) -> EWSRowByType:
+        """Rows grouped by `flaky_type`, dropping those attributable to the change being judged."""
+        curr = {author for author in (curr_authors or []) if author}
+
+        def independent_of_this_pull_request(row: EWSRow) -> bool:
+            return not curr_pr or row.details.pr_number != curr_pr
+
+        def independent_of_this_changes_authors(row: EWSRow) -> bool:
+            recorded = set(row.details.authors)
+            return not recorded or bool(recorded - curr)
+
+        by_type: EWSRowByType = {}
+        same_pull_request: EWSRowByType = {}
+        same_authors: EWSRowByType = {}
+        for row in rows:
+            flaky_type = row.flaky_type or cls.FAILED_ROWS
+            # A clean-tree row is recorded with the change reverted; its pr_number and authors name the build.
+            if flaky_type == cls.WITHIN_STEP_CLEAN_TREE:
+                bucket = by_type
+            elif not independent_of_this_pull_request(row):
+                bucket = same_pull_request
+            elif not independent_of_this_changes_authors(row):
+                bucket = same_authors
+            else:
+                bucket = by_type
+            bucket.setdefault(flaky_type, []).append(row)
+
+        for flaky_type, dropped in sorted(same_pull_request.items()):
+            logger(f"Ignored {len(dropped)} {flaky_type} row(s) recorded by this change's own pull request (#{curr_pr})\n")
+        for flaky_type, dropped in sorted(same_authors.items()):
+            logger(f"Ignored {len(dropped)} {flaky_type} row(s) recorded by this change's own author(s)\n")
+        return by_type
 
     @classmethod
-    def _is_intra_build_flake(cls, entries, logger):
-        rows = cls._rows_by_flaky_type(entries)
-        recognized = (cls.WITHIN_STEP_CLEAN_TREE, cls.WITHIN_STEP_DIRTY_TREE, cls.BETWEEN_STEPS_DIRTY_TREE)
-
-        if unrecognized := {name for name in rows if name and name not in recognized}:
+    def _is_intra_build_flake(cls, rows: EWSRowByType, logger: Callable[[str], None]) -> Optional[FlakyVerdict]:
+        if failed_with_no_flaky_type := rows.get(cls.FAILED_ROWS, []):
+            logger(f'Ignored {len(failed_with_no_flaky_type)} flake row(s) that carried no flaky_type\n')
+        if unrecognized := {name for name in rows if name not in cls.WITHIN_BUILD_ROWS and name != cls.FAILED_ROWS}:
             logger(f"Ignored flakiness recorded as {', '.join(sorted(unrecognized))}\n")
 
-        if clean_tree := rows.get(cls.WITHIN_STEP_CLEAN_TREE):
+        if clean_tree := rows.get(cls.WITHIN_STEP_CLEAN_TREE, []):
             evidence = cls._evidence_in(clean_tree)
-            evidence.flaky_type = cls.CLEAN_TREE_VERDICT
-            return evidence
+            if verdict := cls._convict(evidence, cls.CLEAN_TREE_VERDICT, builds_needed=cls.BUILDS_FOR_CLEAN_TREE_FLAKE):
+                return verdict
+            logger(
+                f'{len(clean_tree)} clean-tree row(s) come from {len(evidence.build_urls)} build(s), '
+                f'fewer than the {cls.BUILDS_FOR_CLEAN_TREE_FLAKE} the clean-tree rule needs\n'
+            )
 
+        # Folding a below-threshold clean-tree row here would let the change's own rows fill these quotas.
         with_change = rows.get(cls.WITHIN_STEP_DIRTY_TREE, []) + rows.get(cls.BETWEEN_STEPS_DIRTY_TREE, [])
         return cls._convict(
             cls._evidence_in(with_change), cls.DIRTY_TREE_VERDICT,
@@ -328,9 +442,9 @@ class ResultsDatabase(object):
         )
 
     @classmethod
-    def _is_inter_build_flake(cls, entries, logger):
-        rows = [row for entry in entries for row in entry.get('results', [])]
-        evidence = cls._evidence_in(rows)
+    def _is_inter_build_flake(cls, rows: EWSRowByType, logger: Callable[[str], None]) -> Optional[FlakyVerdict]:
+        failed = rows.get(cls.FAILED_ROWS, [])
+        evidence = cls._evidence_in(failed)
 
         if verdict := cls._convict(
             evidence, cls.BETWEEN_BUILDS_VERDICT,
@@ -338,9 +452,7 @@ class ResultsDatabase(object):
         ):
             return verdict
 
-        rows_without_an_author = sum(
-            1 for row in rows if not {a for a in ((row.get('details') or {}).get('authors') or []) if a}
-        )
+        rows_without_an_author = sum(1 for row in failed if not row.details.authors)
         if rows_without_an_author and len(evidence.authors) < cls.AUTHORS_FOR_BETWEEN_BUILD_FLAKE:
             logger(
                 f'{rows_without_an_author} row(s) record no author, so the between-builds rule saw '
@@ -349,7 +461,7 @@ class ResultsDatabase(object):
             )
 
     @classmethod
-    def _parse_results_ews_response(cls, response, logger):
+    def _parse_results_ews_response(cls, response: 'TwistedAdditions.Response', logger: Callable[[str], None]) -> Optional[list[dict]]:
         """The response body as a list of per-test entries, or None if it is not one."""
         try:
             entries = response.json()
@@ -366,7 +478,10 @@ class ResultsDatabase(object):
 
     @classmethod
     @defer.inlineCallbacks
-    def _query_flaky(cls, tests, flaky, configuration, suite, logger):
+    def _query_flaky(
+        cls, tests: Iterable[str], flaky: bool, configuration: Optional[dict],
+        suite: Optional[str], logger: Callable[[str], None],
+    ) -> Generator[Any, Any, Optional[EWSRowByTest]]:
         """Every test named, in chunks small enough to survive the request line, or None if any
         chunk failed: a partial answer would read as an absence of history for the rest."""
         base_params = {key: value for key, value in (configuration or {}).items() if key in cls.CONFIGURATION_KEYS}
@@ -377,7 +492,7 @@ class ResultsDatabase(object):
 
         url = f'{cls.HOSTNAME}/api/results-ews'
         tests = list(tests)
-        by_test = {}
+        by_test: EWSRowByTest = {}
 
         # Chunked because the names ride in the query string: a whole step's worth of long WPT
         # paths overflows nginx's 8k request line, and a 414 fails every test in the batch.
@@ -400,21 +515,25 @@ class ResultsDatabase(object):
                 return None
 
             for entry in entries:
-                by_test.setdefault(entry['test'], []).append(entry)
+                rows = [EWSRow.from_json(row) for row in (entry.get('results') or [])]
+                by_test.setdefault(entry['test'], []).extend(rows)
 
         return by_test
 
     @classmethod
     @defer.inlineCallbacks
-    def flaky_verdicts_for(cls, tests, configuration=None, suite=None):
+    def flaky_verdicts_for(
+        cls, tests: Iterable[str], configuration: Optional[dict] = None, suite: Optional[str] = None,
+        authors: Optional[Iterable[str]] = None, pr_number: Optional[int] = None,
+    ) -> Generator[Any, Any, tuple[dict[str, FlakyVerdict], str]]:
         logs = []
 
         def logger(log):
             logs.append(log)
 
-        verdicts = {}
+        verdicts: dict[str, FlakyVerdict] = {}
         remaining = list(tests)
-        intra_build_rows = {}
+        intra_build_rows: dict[str, EWSRowByType] = {}
         for flaky, classify in ((True, cls._is_intra_build_flake), (False, cls._is_inter_build_flake)):
             if not remaining:
                 break
@@ -424,13 +543,16 @@ class ResultsDatabase(object):
                 for test in remaining:
                     verdicts[test] = FlakyVerdict(request_failed=True)
                 return verdicts, ''.join(logs)
-            if flaky:
-                intra_build_rows = result
 
             still_unexplained = []
             for test in remaining:
-                if found := classify(result.get(test, []), logger):
-                    found.intra_build_evidence = bool(intra_build_rows.get(test))
+                rows = cls._rows_by_type(result.get(test, []), authors, pr_number, logger)
+                if flaky:
+                    intra_build_rows[test] = rows
+                if found := classify(rows, logger):
+                    found.intra_build_evidence = any(
+                        intra_build_rows.get(test, {}).get(name) for name in cls.WITHIN_BUILD_ROWS
+                    )
                     verdicts[test] = found
                 else:
                     still_unexplained.append(test)
@@ -441,7 +563,7 @@ class ResultsDatabase(object):
 
         if unsupported := sorted(
             test for test, verdict in verdicts.items()
-            if verdict.flaky_type == 'BetweenBuilds' and not verdict.intra_build_evidence
+            if verdict.flaky_type == cls.BETWEEN_BUILDS_VERDICT and not verdict.intra_build_evidence
         ):
             logger(f"BetweenBuilds with no within-build flakiness recorded: {', '.join(unsupported)}\n")
         return verdicts, ''.join(logs)

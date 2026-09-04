@@ -32,7 +32,7 @@
 
 #include "CCallHelpers.h"
 #include "JITOperations.h"
-#include "SnippetReg.h"
+#include "Reg.h"
 #include "SnippetSlowPathCalls.h"
 
 namespace JSC {
@@ -44,12 +44,12 @@ public:
 
     class Value {
     public:
-        Value(SnippetReg reg)
+        Value(Reg reg)
             : m_reg(reg)
         {
         }
 
-        Value(SnippetReg reg, JSValue value)
+        Value(Reg reg, JSValue value)
             : m_reg(reg)
             , m_value(value)
         {
@@ -57,12 +57,10 @@ public:
 
         bool isGPR() const { return m_reg.isGPR(); }
         bool isFPR() const { return m_reg.isFPR(); }
-        bool isJSValueRegs() const { return m_reg.isJSValueRegs(); }
         GPRReg gpr() const { return m_reg.gpr(); }
         FPRReg fpr() const { return m_reg.fpr(); }
-        JSValueRegs jsValueRegs() const { return m_reg.jsValueRegs(); }
 
-        SnippetReg reg() const
+        Reg reg() const
         {
             return m_reg;
         }
@@ -73,7 +71,7 @@ public:
         }
 
     private:
-        SnippetReg m_reg;
+        Reg m_reg;
         JSValue m_value;
     };
 

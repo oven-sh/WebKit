@@ -26,7 +26,6 @@
 #pragma once
 
 #include <unicode/uidna.h>
-#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/URL.h>
 
@@ -140,7 +139,7 @@ private:
     using IPv4Address = uint32_t;
     void serializeIPv4(IPv4Address);
     enum class IPv4ParsingError;
-    template<typename CharacterTypeForSyntaxViolation, typename CharacterType> Expected<IPv4Address, IPv4ParsingError> parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>&, std::span<const CharacterType>);
+    template<typename CharacterTypeForSyntaxViolation, typename CharacterType> std::expected<IPv4Address, IPv4ParsingError> parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>&, std::span<const CharacterType>);
     using IPv6Address = std::array<uint16_t, 8>;
     template<typename CharacterType> std::optional<IPv6Address> parseIPv6Host(CodePointIterator<CharacterType> hostBeginForSyntaxViolation, std::span<const CharacterType> address);
     template<typename CharacterType> std::optional<uint32_t> NODELETE parseIPv4PieceInsideIPv6(std::span<const CharacterType>&);

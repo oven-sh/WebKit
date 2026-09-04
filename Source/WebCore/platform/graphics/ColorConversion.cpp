@@ -29,7 +29,7 @@
 #include "Color.h"
 #include "ColorNormalization.h"
 #include "ColorSpace.h"
-#include "DestinationColorSpace.h"
+#include "ColorSpaceName.h"
 #include <numeric>
 #include <wtf/MathExtras.h>
 
@@ -355,7 +355,7 @@ OKLab<float> ColorConversion<OKLab<float>, OKLCHA<float>>::convert(const OKLCHA<
 
 // MARK: Conversion functions for raw color components with associated color spaces.
 
-ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpace outputColorSpace)
+ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpaceName outputColorSpace)
 {
     return callWithColorType<float>(inputColorSpace, [&]<typename InputColorType>() {
         auto inputColor = makeFromComponents<InputColorType>(inputColorComponents);
@@ -365,20 +365,20 @@ ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColor
     });
 }
 
-ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpace inputColorSpace, ColorComponents<float, 4> inputColorComponents, const DestinationColorSpace& outputColorSpace)
+ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, const ColorSpace& outputColorSpace)
 {
 #if USE(CG)
     return platformConvertColorComponents(inputColorSpace, inputColorComponents, outputColorSpace);
 #else
     return callWithColorType(inputColorComponents, inputColorSpace, [outputColorSpace] (const auto& inputColor) {
-        if (outputColorSpace == DestinationColorSpace::SRGB())
+        if (outputColorSpace == ColorSpace::SRGB())
             return asColorComponents(convertColor<SRGBA<float>>(inputColor).resolved());
-        if (outputColorSpace == DestinationColorSpace::LinearSRGB())
+        if (outputColorSpace == ColorSpace::LinearSRGB())
             return asColorComponents(convertColor<LinearSRGBA<float>>(inputColor).resolved());
 #if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
-        if (outputColorSpace == DestinationColorSpace::DisplayP3())
+        if (outputColorSpace == ColorSpace::DisplayP3())
             return asColorComponents(convertColor<DisplayP3<float>>(inputColor).resolved());
-        if (outputColorSpace == DestinationColorSpace::LinearDisplayP3())
+        if (outputColorSpace == ColorSpace::LinearDisplayP3())
             return asColorComponents(convertColor<LinearDisplayP3<float>>(inputColor).resolved());
 #endif
 

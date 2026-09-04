@@ -40,6 +40,7 @@
 #import "WKPreferences.h"
 #import "WKPreferencesPrivate.h"
 #import "WKWebViewConfigurationPrivate.h"
+#import "WebExtensionContentRuleListBlockedLoadInfo.h"
 #import "WebExtensionContext.h"
 #import "WebExtensionDataRecord.h"
 #import "WebPageProxy.h"
@@ -147,7 +148,7 @@ void WebExtensionController::getDataRecords(OptionSet<WebExtensionDataType> data
                 continue;
             }
 
-            calculateStorageSize(*storage, dataType, makeBlockPtr([recordHolder, aggregator, uniqueIdentifier, displayName, dataType, record = Ref { record }](Expected<size_t, WebExtensionError>&& result) mutable {
+            calculateStorageSize(*storage, dataType, makeBlockPtr([recordHolder, aggregator, uniqueIdentifier, displayName, dataType, record = Ref { record }](std::expected<size_t, WebExtensionError>&& result) mutable {
                 if (!result)
                     record->addError(result.error().createNSString().get(), dataType);
                 else
@@ -197,7 +198,7 @@ void WebExtensionController::getDataRecord(OptionSet<WebExtensionDataType> dataT
             continue;
         }
 
-        calculateStorageSize(*storage, dataType, makeBlockPtr([recordHolder, aggregator, matchingUniqueIdentifier, displayName, dataType, record = Ref { record }](Expected<size_t, WebExtensionError>&& result) mutable {
+        calculateStorageSize(*storage, dataType, makeBlockPtr([recordHolder, aggregator, matchingUniqueIdentifier, displayName, dataType, record = Ref { record }](std::expected<size_t, WebExtensionError>&& result) mutable {
             if (!result)
                 record->addError(result.error().createNSString().get(), dataType);
             else
@@ -228,7 +229,7 @@ void WebExtensionController::removeData(OptionSet<WebExtensionDataType> dataType
                 continue;
             }
 
-            removeStorage(*storage, dataType, makeBlockPtr([aggregator, uniqueIdentifier, dataType, record = Ref { record }](Expected<void, WebExtensionError>&& result) mutable {
+            removeStorage(*storage, dataType, makeBlockPtr([aggregator, uniqueIdentifier, dataType, record = Ref { record }](std::expected<void, WebExtensionError>&& result) mutable {
                 if (!result)
                     record->addError(result.error().createNSString().get(), dataType);
                 else {
@@ -381,6 +382,20 @@ void WebExtensionController::resourceLoadDidCompleteWithError(WebPageProxyIdenti
     for (Ref context : m_extensionContexts)
         context->resourceLoadDidCompleteWithError(pageID, loadInfo, response, error);
 }
+
+#if ENABLE(CONTENT_EXTENSIONS)
+void WebExtensionController::resourceLoadWasBlockedByContentRuleList(WebPageProxyIdentifier pageID, const WebExtensionContentRuleListBlockedLoadInfo& info)
+{
+    for (auto& identifier : info.blockingContentRuleListIdentifiers) {
+        for (Ref context : m_extensionContexts) {
+            if (context->uniqueIdentifier() == identifier) {
+                context->resourceLoadWasBlockedByDeclarativeNetRequest(pageID, info);
+                break;
+            }
+        }
+    }
+}
+#endif
 
 // MARK: Inspector
 

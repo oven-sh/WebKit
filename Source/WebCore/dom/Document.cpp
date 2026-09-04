@@ -1244,6 +1244,8 @@ ExceptionOr<Ref<Document>> Document::parseHTMLUnsafe(Document& context, Variant<
         return stringValueHolder.releaseException();
 
     Ref document = HTMLDocument::create(nullptr, context.settings(), URL { });
+    document->setContextDocument(protect(context.contextDocument()));
+    document->setSecurityOriginPolicy(context.securityOriginPolicy());
     document->setMarkupUnsafe(stringValueHolder.releaseReturnValue(), { ParserContentPolicy::AllowDeclarativeShadowRoots });
     return { document };
 }
@@ -3028,9 +3030,6 @@ bool Document::updateStyleIfNeeded()
     }
 
     resolveStyle();
-
-    updateRenderTreesForDescendantFrames();
-
     return true;
 }
 
@@ -3469,74 +3468,12 @@ bool Document::isInStyleInterleavedLayoutForSelfOrAncestor() const
     return false;
 }
 
-bool Document::ownerElementGeneratesBox() const
-{
-    CheckedPtr ownerElement = this->ownerElement();
-    if (!ownerElement) {
-        ASSERT_NOT_REACHED();
-        return false;
-    }
-
-    if (ownerElement->renderer())
-        return true;
-
-    if (ownerElement->needsStyleRecalc())
-        return true;
-
-    Ref ownerElementDocument = ownerElement->document();
-
-    if (ownerElementDocument->renderTreeState() != RenderTreeState::Built)
-        return !ownerElementDocument->ownerElement() || ownerElementDocument->ownerElementGeneratesBox();
-
-    return false;
-}
-
-void Document::updateRenderTreeForOwnerElementBox()
-{
-    if (!ownerElement())
-        return;
-
-    auto needsRenderTree = ownerElementGeneratesBox() || printing() || isPluginDocument();
-    if (needsRenderTree && renderTreeState() == RenderTreeState::NotBuilt) {
-        createRenderTree();
-        return;
-    }
-
-    if (!needsRenderTree && renderTreeState() == RenderTreeState::Built)
-        destroyRenderTree(DocumentIsGoingAway::No);
-}
-
-void Document::updateRenderTreesForDescendantFrames()
-{
-    RefPtr frame = m_frame.get();
-    if (!frame) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    Vector<Ref<Document>> contentDocuments;
-    for (RefPtr descendant = frame->tree().firstChild(); descendant; descendant = descendant->tree().traverseNext(frame.get())) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(descendant.get());
-        if (RefPtr contentDocument = localFrame ? localFrame->document() : nullptr)
-            contentDocuments.append(contentDocument.releaseNonNull());
-    }
-
-    for (auto& contentDocument : contentDocuments) {
-        if (contentDocument->frame() && contentDocument->frame()->document() == contentDocument.ptr())
-            contentDocument->updateRenderTreeForOwnerElementBox();
-    }
-}
-
 void Document::createRenderTree()
 {
     ASSERT(!renderView());
     ASSERT(m_backForwardCacheState != InBackForwardCache);
 
     if (m_isNonRenderedPlaceholder)
-        return;
-
-    auto needsRenderTree = !ownerElement() || ownerElementGeneratesBox() || printing() || isPluginDocument();
-    if (!needsRenderTree)
         return;
 
     // FIXME: It would be better if we could pass the resolved document style directly here.
@@ -3646,29 +3583,20 @@ void Document::detachFromCachedFrame(CachedFrameBase& cachedFrame)
 
 void Document::destroyRenderTree()
 {
+    ASSERT(renderTreeState() == RenderTreeState::Built);
     ASSERT(frame());
     ASSERT(frame()->document() == this);
     ASSERT(page());
-
-    destroyRenderTree(DocumentIsGoingAway::Yes);
-}
-
-void Document::destroyRenderTree(DocumentIsGoingAway documentIsGoingAway)
-{
-    ASSERT(renderTreeState() == RenderTreeState::Built);
 
     // Prevent Widget tree changes from committing until the RenderView is dead and gone.
     WidgetHierarchyUpdatesSuspensionScope suspendWidgetHierarchyUpdates;
 
     auto scope = SetForScope { m_renderTreeState, RenderTreeState::BeingDestroyed, RenderTreeState::NotBuilt };
 
-    if (documentIsGoingAway == DocumentIsGoingAway::Yes) {
-        if (isTopDocument())
-            clearAXObjectCache();
+    if (isTopDocument())
+        clearAXObjectCache();
 
-        documentWillBecomeInactive();
-    } else
-        m_renderView->setIsInWindow(false);
+    documentWillBecomeInactive();
 
     if (RefPtr view = this->view())
         view->willDestroyRenderTree();
@@ -3676,12 +3604,8 @@ void Document::destroyRenderTree(DocumentIsGoingAway documentIsGoingAway)
     m_pendingRenderTreeUpdate = { };
     m_initialContainingBlockStyle = { };
 
-    if (RefPtr documentElement = m_documentElement) {
-        if (documentIsGoingAway == DocumentIsGoingAway::Yes)
-            RenderTreeUpdater::tearDownRenderers(*documentElement);
-        else
-            RenderTreeUpdater::tearDownRenderersForDisplayNoneFrame(*documentElement);
-    }
+    if (RefPtr documentElement = m_documentElement)
+        RenderTreeUpdater::tearDownRenderers(*documentElement);
 
     clearChildNeedsStyleRecalc();
 
@@ -4059,7 +3983,7 @@ void Document::collectHighlightRangesFromRegister(Vector<WeakPtr<HighlightRange>
             if (highlightRange->startPosition().isNotNull() && highlightRange->endPosition().isNotNull() && !highlightRange->range().isLiveRange())
                 continue;
 
-            if (auto* liveRange = dynamicDowncast<Range>(highlightRange->range()); liveRange && !liveRange->didChangeForHighlight())
+            if (auto* liveRange = dynamicDowncast<Range>(highlightRange->range()); liveRange && !liveRange->didChangeForHighlight() && !highlightRange->needsPositionUpdate())
                 continue;
 
             auto simpleRange = makeSimpleRange(highlightRange->range());
@@ -4109,6 +4033,7 @@ void Document::updateHighlightPositions()
                 highlightRange->setStartPosition(WTF::move(startPosition));
             if (!endPosition.isNull())
                 highlightRange->setEndPosition(WTF::move(endPosition));
+            highlightRange->didUpdatePositions();
 
             Highlight::repaintRange(highlightRange->range());
         }
@@ -4228,6 +4153,7 @@ ExceptionOr<void> Document::open(Document* entryDocument)
 }
 
 // https://html.spec.whatwg.org/#fully-active
+// FIXME (webkit.org/b/323253): cache the result and invalidate when frame tree changes.
 bool Document::isFullyActive() const
 {
     RefPtr frame = this->frame();
@@ -4569,9 +4495,6 @@ void Document::enqueuePaintTimingEntryIfNeeded()
         return;
 
     if (!window() || !view())
-        return;
-
-    if (renderTreeState() != RenderTreeState::Built)
         return;
 
     // To make sure we don't report paint while the layer tree is still frozen.
@@ -5876,7 +5799,7 @@ ClonedDocumentType Document::clonedDocumentType() const
 
 Ref<Node> Document::cloneNodeInternal(Document&, CloningOperation type, CustomElementRegistry* registry) const
 {
-    Ref clone = createCloned(clonedDocumentType(), settings(), url(), baseURL(), baseURLOverride(), m_documentURI, m_compatibilityMode, protect(contextDocument()), securityOriginPolicy(), contentType(), protect(decoder()).get());
+    Ref clone = createCloned(clonedDocumentType(), settings(), url(), baseURL(), baseURLOverride(), m_documentURI, m_compatibilityMode, m_parserContentPolicy, protect(contextDocument()), securityOriginPolicy(), contentType(), protect(decoder()).get());
     switch (type) {
     case CloningOperation::SelfOnly:
     case CloningOperation::SelfWithTemplateContent:
@@ -5911,7 +5834,7 @@ SerializedNode Document::serializeNode(CloningOperation type) const
     };
 }
 
-Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, const Settings& settings, const URL& url, const URL& baseURL, const URL& baseURLOverride, const Variant<String, URL>& documentURI, DocumentCompatibilityMode compatibilityMode, Document& contextDocument, SecurityOriginPolicy* securityOriginPolicy, const String& contentType, TextResourceDecoder* decoder)
+Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, const Settings& settings, const URL& url, const URL& baseURL, const URL& baseURLOverride, const Variant<String, URL>& documentURI, DocumentCompatibilityMode compatibilityMode, OptionSet<ParserContentPolicy> parserContentPolicy, Document& contextDocument, SecurityOriginPolicy* securityOriginPolicy, const String& contentType, TextResourceDecoder* decoder)
 {
     Ref clone = [&] -> Ref<Document> {
         switch (clonedDocumentType) {
@@ -5934,6 +5857,7 @@ Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, cons
     clone->m_baseURLOverride = baseURLOverride;
     clone->m_documentURI = documentURI;
     clone->setCompatibilityMode(compatibilityMode);
+    clone->setParserContentPolicy(parserContentPolicy);
     clone->setContextDocument(contextDocument);
     clone->setSecurityOriginPolicy(securityOriginPolicy);
     clone->overrideMIMEType(contentType);
@@ -7983,7 +7907,7 @@ ExceptionOr<bool> Document::execCommand(const String& commandName, bool userInte
 
     auto stringValueHolder = WTF::switchOn(value,
         [&commandName, this](const String& str) -> ExceptionOr<String> {
-            if (commandName != "insertHTML"_s)
+            if (!equalIgnoringASCIICase(commandName, "insertHTML"_s))
                 return String(str);
             return trustedTypeCompliantString(TrustedType::TrustedHTML, protect(contextDocument()), str, "Document execCommand"_s);
         },
@@ -10384,9 +10308,12 @@ void Document::showPlaybackTargetPicker(MediaPlaybackTargetClient& client, bool 
     if (it == m_clientToIDMap.end())
         return;
 
-    // FIXME: This is probably wrong for subframes.
-    auto position = flooredIntPoint(frame()->eventHandler().lastKnownMousePosition());
-    page->showPlaybackTargetPicker(it->value, position, isVideo, routeSharingPolicy, routingContextUID);
+    RefPtr localRootView = frame()->rootFrame().view();
+    if (!localRootView)
+        return;
+
+    auto position = localRootView->contentsToRootView(localRootView->windowToContents(flooredIntPoint(frame()->eventHandler().lastKnownMousePosition())));
+    page->showPlaybackTargetPicker(it->value, frame()->rootFrame().frameID(), position, isVideo, routeSharingPolicy, routingContextUID);
 }
 
 void Document::playbackTargetPickerClientStateDidChange(MediaPlaybackTargetClient& client, MediaProducerMediaStateFlags state)
@@ -10622,6 +10549,8 @@ void Document::updateRemoteIntersectionObservers()
     if (!page)
         return;
 
+    ASSERT(page->hasRemoteFrames());
+
     RefPtr mainFrame = this->page()->mainFrame();
     if (!mainFrame)
         return;
@@ -10664,9 +10593,6 @@ void Document::updateIntersectionObservers()
 
     updateAndNotifyIntersectionObservers(m_localIntersectionObservers, *frame);
     updateRemoteIntersectionObservers();
-
-    if (page->hasRemoteFrames())
-        page->chrome().client().updateRemoteIntersectionObserversInOtherWebProcesses();
 }
 
 void Document::scheduleInitialIntersectionObservationUpdate()
@@ -11747,16 +11673,16 @@ const Style::ComputedStyle& Document::initialStyle() const
         m_cachedInitialStyle->setZoom(zoom);
 
         auto initialFontFamily = FontFamily { standardFamily, FontFamilyKind::Generic };
-        auto initialSpecifiedFontSize = Style::fontSizeForKeyword(CSSValueMedium, false, settingsValues(), inQuirksMode());
-        auto initialComputedFontSize = Style::computedFontSizeFromSpecifiedSize(initialSpecifiedFontSize, false, zoomForFontDescription, Style::MinimumFontSizeRule::AbsoluteAndRelative, settingsValues());
+        auto initialComputedFontSize = Style::fontSizeForKeyword(CSSValueMedium, false, settingsValues(), inQuirksMode());
+        auto initialUsedFontSize = Style::usedFontSizeFromComputedSize(initialComputedFontSize, false, zoomForFontDescription, Style::MinimumFontSizeRule::AbsoluteAndRelative, settingsValues());
         auto allowUserInstalledFonts = settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
 
         FontCascadeDescription fontDescription;
         fontDescription.setSpecifiedLocale(contentLanguage());
         fontDescription.setOneFamily(WTF::move(initialFontFamily));
         fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
-        fontDescription.setSpecifiedSize(initialSpecifiedFontSize);
-        fontDescription.setComputedSize(initialComputedFontSize, zoomForFontDescription);
+        fontDescription.setComputedSize(initialComputedFontSize);
+        fontDescription.setUsedSize(initialUsedFontSize, zoomForFontDescription);
         fontDescription.setShouldAllowUserInstalledFonts(allowUserInstalledFonts);
 
         m_cachedInitialStyle->setFontDescription(WTF::move(fontDescription));
@@ -11817,7 +11743,7 @@ bool Document::hitTest(const HitTestRequest& request, const HitTestLocation& loc
 {
     Ref protectedThis { *this };
 
-    if (renderTreeState() != RenderTreeState::Built)
+    if (!renderView())
         return false;
 
     Ref frameView = renderView()->frameView();
@@ -11828,9 +11754,6 @@ bool Document::hitTest(const HitTestRequest& request, const HitTestLocation& loc
         frameView->updateLayoutAndStyleIfNeededRecursive();
     else
         updateLayout();
-
-    if (renderTreeState() != RenderTreeState::Built)
-        return false;
 
 #if ASSERT_ENABLED
     SetForScope hitTestRestorer { m_inHitTesting, true };

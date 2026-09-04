@@ -107,6 +107,7 @@ constexpr int AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM    = 3;
 constexpr int AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM    = 4;
 constexpr int AHARDWAREBUFFER_FORMAT_R16_UINT        = 0x39;
 constexpr int AHARDWAREBUFFER_FORMAT_R16G16_UINT     = 0x3a;
+constexpr int AHARDWAREBUFFER_FORMAT_R10G10B10A10_UNORM = 0x3b;
 constexpr int AHARDWAREBUFFER_FORMAT_D24_UNORM       = 0x31;
 constexpr int AHARDWAREBUFFER_FORMAT_Y8Cr8Cb8_420_SP = 0x11;
 constexpr int AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420    = 0x23;
@@ -4519,7 +4520,7 @@ TEST_P(ImageTestES3, SourceAHBTargetExternalESSL3)
 }
 
 // Test sampling from a YUV texture using GL_ANGLE_yuv_internal_format as external texture and then
-// switching to raw YUV sampling using EXT_yuv_target
+// switching to raw YUV sampling using EXT_YUV_target
 TEST_P(ImageTestES3, SourceYUVTextureTargetExternalRGBSampleYUVSample)
 {
     ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt() ||
@@ -4634,7 +4635,7 @@ void main()
     eglDestroyImageKHR(window->getDisplay(), image);
 }
 
-// Test interaction between GL_ANGLE_yuv_internal_format and EXT_yuv_target when a program has
+// Test interaction between GL_ANGLE_yuv_internal_format and EXT_YUV_target when a program has
 // both __samplerExternal2DY2YEXT and samplerExternalOES samplers.
 TEST_P(ImageTestES3, ProgramWithBothExternalY2YAndExternalOESSampler)
 {
@@ -4769,6 +4770,268 @@ void main()
     eglDestroyImageKHR(window->getDisplay(), image1);
 }
 
+// Test sampling from two YUV textures using GL_ANGLE_yuv_internal_format as external texture.
+TEST_P(ImageTestES3, SourceYUVTextureTargetExternalRGBSample)
+{
+    ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt() ||
+                       !hasYUVInternalFormatExt() || !hasExternalESSL3Ext());
+
+    // YUV color data for Red: 4 Y bytes + 2 CbCr bytes for a 2x2 NV12 image
+    constexpr GLubyte kYuv2PlaneColor[6] = {40, 40, 40, 40, 240, 109};
+    // YUV color data for Green : 4 Y bytes + 2 CbCr bytes for a 2x2 YV12 image
+    constexpr GLubyte kYuv3PlaneColor[6] = {144, 144, 144, 144, 54, 34};
+    constexpr size_t kWidth              = 2;
+    constexpr size_t kHeight             = 2;
+
+    // Create first 2-plane YUV texture
+    GLTexture yuvTexture0;
+    glBindTexture(GL_TEXTURE_2D, yuvTexture0);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_G8_B8R8_2PLANE_420_UNORM_ANGLE, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_G8_B8R8_2PLANE_420_UNORM_ANGLE,
+                    GL_UNSIGNED_BYTE, kYuv2PlaneColor);
+    ASSERT_GL_NO_ERROR();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Create second 2-plane YUV texture with a different format
+    GLTexture yuvTexture1;
+    glBindTexture(GL_TEXTURE_2D, yuvTexture1);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE,
+                    GL_UNSIGNED_BYTE, kYuv3PlaneColor);
+    ASSERT_GL_NO_ERROR();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Create EGL images from the YUV textures
+    EGLWindow *window = getEGLWindow();
+    EGLImageKHR image0 =
+        eglCreateImageKHR(window->getDisplay(), window->getContext(), EGL_GL_TEXTURE_2D_KHR,
+                          reinterpretHelper<EGLClientBuffer>(yuvTexture0), kDefaultAttribs);
+    ASSERT_EGL_SUCCESS();
+
+    EGLImageKHR image1 =
+        eglCreateImageKHR(window->getDisplay(), window->getContext(), EGL_GL_TEXTURE_2D_KHR,
+                          reinterpretHelper<EGLClientBuffer>(yuvTexture1), kDefaultAttribs);
+    ASSERT_EGL_SUCCESS();
+
+    // Create external texture targets bound to the EGL images
+    GLTexture target0;
+    createEGLImageTargetTextureExternal(image0, target0);
+
+    GLTexture target1;
+    createEGLImageTargetTextureExternal(image1, target1);
+
+    // Use two samplerExternalOESs.
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 position;
+out vec2 texcoord;
+void main()
+{
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    texcoord = (position.xy * 0.5) + 0.5;
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OES_EGL_image_external_essl3 : require
+precision highp float;
+uniform sampler2D otherSampler;
+uniform samplerExternalOES texture0;
+uniform samplerExternalOES texture1;
+out vec4 fragColor;
+in vec2 texcoord;
+void main()
+{
+    fragColor = texture(otherSampler, texcoord) * 0.001
+              + max(texture(texture0, texcoord), vec4(0))
+              + max(texture(texture1, texcoord), vec4(0));
+})";
+
+    ANGLE_GL_PROGRAM(arrayProgram, kVS, kFS);
+    glUseProgram(arrayProgram);
+
+    // Create a separate RGBA texture for the regular sampler2D binding
+    const std::array<GLColor, kWidth * kHeight> kRGBAInitData = {
+        GLColor::red,
+        GLColor::red,
+        GLColor::red,
+        GLColor::red,
+    };
+    GLTexture rgbaTexture;
+    glBindTexture(GL_TEXTURE_2D, rgbaTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 kRGBAInitData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    GLint rgbaLoc = glGetUniformLocation(arrayProgram, "otherSampler");
+    ASSERT_NE(-1, rgbaLoc);
+    GLint tex0Loc = glGetUniformLocation(arrayProgram, "texture0");
+    ASSERT_NE(-1, tex0Loc);
+    GLint tex1Loc = glGetUniformLocation(arrayProgram, "texture1");
+    ASSERT_NE(-1, tex1Loc);
+
+    // Bind the RGBA texture to unit 2
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, rgbaTexture);
+
+    // Bind YUV external textures to units 0 and 1
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, target0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, target1);
+    ASSERT_GL_NO_ERROR();
+
+    glUniform1i(rgbaLoc, 2);
+    glUniform1i(tex0Loc, 0);
+    glUniform1i(tex1Loc, 1);
+
+    drawQuad(arrayProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor::cyan, 1);
+
+    // Clean up
+    eglDestroyImageKHR(window->getDisplay(), image0);
+    eglDestroyImageKHR(window->getDisplay(), image1);
+}
+
+// Test sampling from two YUV textures using GL_ANGLE_yuv_internal_format as external texture, when
+// the shader uses an array samplerExternalOES declaration.
+TEST_P(ImageTestES3, SourceYUVTextureTargetExternalRGBSampleArray)
+{
+    ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt() ||
+                       !hasYUVInternalFormatExt() || !hasExternalESSL3Ext());
+
+    // YUV color data for Red: 4 Y bytes + 2 CbCr bytes for a 2x2 NV12 image
+    constexpr GLubyte kYuv2PlaneColor[6] = {40, 40, 40, 40, 240, 109};
+    // YUV color data for Green : 4 Y bytes + 2 CbCr bytes for a 2x2 YV12 image
+    constexpr GLubyte kYuv3PlaneColor[6] = {144, 144, 144, 144, 54, 34};
+    constexpr size_t kWidth              = 2;
+    constexpr size_t kHeight             = 2;
+
+    // Create first 2-plane YUV texture
+    GLTexture yuvTexture0;
+    glBindTexture(GL_TEXTURE_2D, yuvTexture0);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_G8_B8R8_2PLANE_420_UNORM_ANGLE, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_G8_B8R8_2PLANE_420_UNORM_ANGLE,
+                    GL_UNSIGNED_BYTE, kYuv2PlaneColor);
+    ASSERT_GL_NO_ERROR();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Create second 2-plane YUV texture with a different format
+    GLTexture yuvTexture1;
+    glBindTexture(GL_TEXTURE_2D, yuvTexture1);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE,
+                    GL_UNSIGNED_BYTE, kYuv3PlaneColor);
+    ASSERT_GL_NO_ERROR();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Create EGL images from the YUV textures
+    EGLWindow *window = getEGLWindow();
+    EGLImageKHR image0 =
+        eglCreateImageKHR(window->getDisplay(), window->getContext(), EGL_GL_TEXTURE_2D_KHR,
+                          reinterpretHelper<EGLClientBuffer>(yuvTexture0), kDefaultAttribs);
+    ASSERT_EGL_SUCCESS();
+
+    EGLImageKHR image1 =
+        eglCreateImageKHR(window->getDisplay(), window->getContext(), EGL_GL_TEXTURE_2D_KHR,
+                          reinterpretHelper<EGLClientBuffer>(yuvTexture1), kDefaultAttribs);
+    ASSERT_EGL_SUCCESS();
+
+    // Create external texture targets bound to the EGL images
+    GLTexture target0;
+    createEGLImageTargetTextureExternal(image0, target0);
+
+    GLTexture target1;
+    createEGLImageTargetTextureExternal(image1, target1);
+
+    // Use a samplerExternalOES *array*.
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 position;
+out vec2 texcoord;
+void main()
+{
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    texcoord = (position.xy * 0.5) + 0.5;
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OES_EGL_image_external_essl3 : require
+precision highp float;
+uniform sampler2D otherSampler;
+uniform samplerExternalOES textures[2];
+out vec4 fragColor;
+in vec2 texcoord;
+void main()
+{
+    fragColor = texture(otherSampler, texcoord) * 0.001
+              + max(texture(textures[0], texcoord), vec4(0))
+              + max(texture(textures[1], texcoord), vec4(0));
+})";
+
+    ANGLE_GL_PROGRAM(arrayProgram, kVS, kFS);
+    glUseProgram(arrayProgram);
+
+    // Create a separate RGBA texture for the regular sampler2D binding
+    const std::array<GLColor, kWidth * kHeight> kRGBAInitData = {
+        GLColor::red,
+        GLColor::red,
+        GLColor::red,
+        GLColor::red,
+    };
+    GLTexture rgbaTexture;
+    glBindTexture(GL_TEXTURE_2D, rgbaTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 kRGBAInitData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    GLint rgbaLoc = glGetUniformLocation(arrayProgram, "otherSampler");
+    ASSERT_NE(-1, rgbaLoc);
+    GLint tex0Loc = glGetUniformLocation(arrayProgram, "textures[0]");
+    ASSERT_NE(-1, tex0Loc);
+    GLint tex1Loc = glGetUniformLocation(arrayProgram, "textures[1]");
+    ASSERT_NE(-1, tex1Loc);
+
+    // Bind the RGBA texture to unit 2
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, rgbaTexture);
+
+    // Bind YUV external textures to units 0 and 1
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, target0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, target1);
+    ASSERT_GL_NO_ERROR();
+
+    glUniform1i(rgbaLoc, 2);
+    glUniform1i(tex0Loc, 0);
+    glUniform1i(tex1Loc, 1);
+
+    drawQuad(arrayProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor::cyan, 1);
+
+    // Clean up
+    eglDestroyImageKHR(window->getDisplay(), image0);
+    eglDestroyImageKHR(window->getDisplay(), image1);
+}
+
 // Test sampling from a YUV AHB with a regular external sampler and pre-initialized data
 TEST_P(ImageTest, SourceYUVAHBTargetExternalRGBSampleInitData)
 {
@@ -4837,7 +5100,46 @@ TEST_P(ImageTest, SourceYUVAHBTargetExternalRGBSampleNoData)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test sampling from a YUV AHB using EXT_yuv_target
+// Test creating an EGLImage out of a YUV AHB allocated with the mipmap-complete usage flag and
+// sampling from it.
+TEST_P(ImageTest, SourceYUVAHBMipTargetExternalRGBSampleNoData)
+{
+    EGLWindow *window = getEGLWindow();
+
+    ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt());
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+
+    ANGLE_SKIP_TEST_IF(!isAndroidHardwareBufferConfigurationSupported(
+        4, 4, 1, AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420,
+        kDefaultAHBYUVUsage | kAHBUsageGPUMipMapComplete));
+
+    // Create the Image without data so we don't need ANGLE_AHARDWARE_BUFFER_LOCK_PLANES_SUPPORT
+    AHardwareBuffer *source;
+    EGLImageKHR image;
+    createEGLImageAndroidHardwareBufferSource(4, 4, 1, AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420,
+                                              kDefaultAHBYUVUsage | kAHBUsageGPUMipMapComplete,
+                                              kDefaultAttribs, {}, &source, &image);
+    ASSERT_NE(image, EGL_NO_IMAGE_KHR);
+
+    // Create a texture target to bind the egl image
+    GLTexture target;
+    createEGLImageTargetTextureExternal(image, target);
+
+    glUseProgram(mTextureExternalProgram);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, target);
+    glUniform1i(mTextureExternalUniformLocation, 0);
+
+    // Sample from the YUV texture with a nearest sampler
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    drawQuad(mTextureExternalProgram, "position", 0.5f);
+
+    // Clean up
+    eglDestroyImageKHR(window->getDisplay(), image);
+    destroyAndroidHardwareBuffer(source);
+}
+
+// Test sampling from a YUV AHB using EXT_YUV_target
 TEST_P(ImageTestES3, SourceYUVAHBTargetExternalYUVSample)
 {
     EGLWindow *window = getEGLWindow();
@@ -4865,7 +5167,7 @@ TEST_P(ImageTestES3, SourceYUVAHBTargetExternalYUVSample)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test sampling from a YUV AHB using EXT_yuv_target in the vertex shader
+// Test sampling from a YUV AHB using EXT_YUV_target in the vertex shader
 TEST_P(ImageTestES3, SourceYUVAHBTargetExternalYUVSampleVS)
 {
     EGLWindow *window = getEGLWindow();
@@ -5005,6 +5307,65 @@ TEST_P(ImageTestES3, SourceYUVAHBTargetExternalCopySrc)
     destroyAndroidHardwareBuffer(source);
 }
 
+// Test using glCopySubTextureCHROMIUM with R10X6G10X6B10X6A10X6 as the source
+TEST_P(ImageTestES3, SourceR10X6G10X6B10X6A10X6AHBTargetExternalCopySrc)
+{
+    EGLWindow *window = getEGLWindow();
+
+    ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt());
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_CHROMIUM_copy_texture"));
+
+    // Sampled bit is excluded to avoid using drawing instead of the copy path.
+    constexpr size_t kWidth  = 256;
+    constexpr size_t kHeight = 256;
+    ANGLE_SKIP_TEST_IF(!isAndroidHardwareBufferConfigurationSupported(
+        kWidth, kHeight, 1, AHARDWAREBUFFER_FORMAT_R10G10B10A10_UNORM, kAHBUsageGPUFramebuffer));
+
+    // Initialize R10X6G10X6B10X6A10X6 data (8 bytes).
+    std::vector<uint16_t> srcData(kWidth * kHeight * 4, 0);
+    for (size_t i = 0; i < kHeight; i++)
+    {
+        srcData[i * kWidth + 0] = 0xFFC0;
+        srcData[i * kWidth + 1] = 0;
+        srcData[i * kWidth + 2] = 0xFFC0;
+        srcData[i * kWidth + 3] = 0xFFC0;
+    }
+
+    // Create the image
+    AHardwareBuffer *source;
+    EGLImageKHR image;
+    createEGLImageAndroidHardwareBufferSource(
+        kWidth, kHeight, 1, AHARDWAREBUFFER_FORMAT_R10G10B10A10_UNORM, kAHBUsageGPUFramebuffer,
+        kDefaultAttribs, {{reinterpret_cast<const GLubyte *>(srcData.data()), 8}}, &source, &image);
+    ASSERT_NE(image, EGL_NO_IMAGE_KHR);
+
+    // Create a texture target to bind the egl image
+    GLTexture srcTex;
+    createEGLImageTargetTexture2D(image, srcTex);
+
+    // Create a texture to be the destination of copy
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_2D, dstTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kWidth, kHeight);
+    glCopySubTextureCHROMIUM(srcTex, 0, GL_TEXTURE_2D, dstTex, 0, 0, 0, 0, 0, kWidth, kHeight,
+                             GL_FALSE, GL_FALSE, GL_FALSE);
+    ASSERT_GL_NO_ERROR();
+
+    // Verify the results
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    EXPECT_PIXEL_RECT_EQ(0, 0, 1, kHeight, GLColor::magenta);
+    ASSERT_GL_NO_ERROR();
+
+    // Clean up
+    eglDestroyImageKHR(window->getDisplay(), image);
+    destroyAndroidHardwareBuffer(source);
+}
+
 TEST_P(ImageTestES3, SourceYUVAHBTargetExternalYUVSampleLinearFiltering)
 {
     EGLWindow *window = getEGLWindow();
@@ -5117,7 +5478,7 @@ TEST_P(ImageTestES3, SourceYUVAHBTargetExternal2DY2YSample)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test rendering to a YUV AHB using EXT_yuv_target
+// Test rendering to a YUV AHB using EXT_YUV_target
 TEST_P(ImageTestES3, RenderToYUVAHB)
 {
     EGLWindow *window = getEGLWindow();
@@ -5151,6 +5512,73 @@ TEST_P(ImageTestES3, RenderToYUVAHB)
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_EXTERNAL_OES, target,
                            0);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glUseProgram(mRenderYUVProgram2);
+    glUniform4f(mRenderYUVUniformLocation, kYUVColorRedY[0] / 255.0f, kYUVColorRedCb[0] / 255.0f,
+                kYUVColorRedCr[0] / 255.0f, 1.0f);
+
+    drawQuad(mRenderYUVProgram2, "position", 0.0f);
+    ASSERT_GL_NO_ERROR();
+
+    // ReadPixels returns the RGB converted color
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor::red, 1.0);
+
+    // Finish before reading back AHB data
+    glFinish();
+
+    verifyResultAHB(source, {{kYUVColorRedY, 1}, {kYUVColorRedCb, 1}, {kYUVColorRedCr, 1}});
+
+    // Clean up
+    eglDestroyImageKHR(window->getDisplay(), image);
+    destroyAndroidHardwareBuffer(source);
+}
+
+// Test rendering to a YUV AHB using EXT_YUV_target and glFramebufferTexture.
+TEST_P(ImageTestES31, RenderToYUVAHBFramebufferTexture)
+{
+    EGLWindow *window = getEGLWindow();
+
+    ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt() || !hasYUVTargetExt());
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+    ANGLE_SKIP_TEST_IF(!hasAhbLockPlanesSupport());
+
+    const bool hasOES = IsGLExtensionEnabled("GL_OES_geometry_shader");
+    const bool hasEXT = IsGLExtensionEnabled("GL_EXT_geometry_shader");
+    ANGLE_SKIP_TEST_IF(!hasOES && !hasEXT);
+
+    // 3 planes of data, initialize to all zeroes
+    GLubyte dataY[4]  = {0, 0, 0, 0};
+    GLubyte dataCb[1] = {
+        0,
+    };
+    GLubyte dataCr[1] = {
+        0,
+    };
+
+    // Create the Image
+    AHardwareBuffer *source;
+    EGLImageKHR image;
+    createEGLImageAndroidHardwareBufferSource(
+        2, 2, 1, AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420, kDefaultAHBUsage, kDefaultAttribs,
+        {{dataY, 1}, {dataCb, 1}, {dataCr, 1}}, &source, &image);
+
+    // Create a texture target to bind the egl image
+    GLTexture target;
+    createEGLImageTargetTextureExternal(image, target);
+
+    // Set up a framebuffer to render into the AHB
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    if (hasOES)
+    {
+        glFramebufferTextureOES(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, 0);
+    }
+    else
+    {
+        glFramebufferTextureEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, 0);
+    }
     ASSERT_GL_NO_ERROR();
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
@@ -5240,7 +5668,7 @@ TEST_P(ImageTestES3, RenderToYUVAHBIndexedBlendValidationBypass)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test rendering to a YUV AHB using EXT_yuv_target with a normal depth attachment
+// Test rendering to a YUV AHB using EXT_YUV_target with a normal depth attachment
 TEST_P(ImageTestES3, RenderToYUVAHBWithDepth)
 {
     EGLWindow *window = getEGLWindow();
@@ -5305,7 +5733,7 @@ TEST_P(ImageTestES3, RenderToYUVAHBWithDepth)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test clearing to a YUV AHB using EXT_yuv_target
+// Test clearing to a YUV AHB using EXT_YUV_target
 TEST_P(ImageTestES3, ClearYUVAHB)
 {
     EGLWindow *window = getEGLWindow();
@@ -5347,7 +5775,7 @@ TEST_P(ImageTestES3, ClearYUVAHB)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test clearing to a YUV AHB using EXT_yuv_target with a normal depth attachment
+// Test clearing to a YUV AHB using EXT_YUV_target with a normal depth attachment
 TEST_P(ImageTestES3, ClearYUVAHBWithDepth)
 {
     EGLWindow *window = getEGLWindow();
@@ -5397,7 +5825,7 @@ TEST_P(ImageTestES3, ClearYUVAHBWithDepth)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test partial clearing to a YUV AHB using EXT_yuv_target
+// Test partial clearing to a YUV AHB using EXT_YUV_target
 TEST_P(ImageTestES3, PartialClearYUVAHB)
 {
     EGLWindow *window = getEGLWindow();
@@ -5537,7 +5965,7 @@ TEST_P(ImageTestES3, PartialRenderToYUVAHB)
     destroyAndroidHardwareBuffer(source);
 }
 
-// Test rendering to a YUV AHB using EXT_yuv_target then reading back the pixels into PBO.
+// Test rendering to a YUV AHB using EXT_YUV_target then reading back the pixels into PBO.
 TEST_P(ImageTestES3, RenderToYUVAHBThenReadPixels)
 {
     EGLWindow *window = getEGLWindow();
@@ -6964,7 +7392,7 @@ TEST_P(ImageTestES3, AHBImportReleaseStress)
               initialPendingSubmissionGarbageObjects + 10);
 }
 
-// Test validation of using EXT_yuv_target
+// Test validation of using EXT_YUV_target
 TEST_P(ImageTestES3, YUVValidation)
 {
     EGLWindow *window = getEGLWindow();
@@ -6984,6 +7412,16 @@ TEST_P(ImageTestES3, YUVValidation)
 
     GLFramebuffer yuvFbo;
     glBindFramebuffer(GL_FRAMEBUFFER, yuvFbo);
+
+    // Invalid to attach to any attachment other than 0:
+    //
+    // > If textarget is TEXTURE_EXTERNAL_OES and attachment is other than COLOR_ATTACHMENT0, an
+    // > INVALID_OPERATION error is generated
+    ASSERT_GL_NO_ERROR();
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_EXTERNAL_OES,
+                           yuvTexture, 0);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_EXTERNAL_OES,
                            yuvTexture, 0);
     ASSERT_GL_NO_ERROR();
@@ -7097,6 +7535,51 @@ TEST_P(ImageTestES3, YUVValidation)
 
     eglDestroyImageKHR(window->getDisplay(), rgbaImage);
     destroyAndroidHardwareBuffer(rgbaSource);
+}
+
+// Test validation of using EXT_YUV_target
+TEST_P(ImageTestES31, YUVValidation)
+{
+    EGLWindow *window = getEGLWindow();
+
+    ANGLE_SKIP_TEST_IF(!hasOESExt() || !hasBaseExt() || !has2DTextureExt() || !hasYUVTargetExt());
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+
+    // Create the Image without data so we don't need ANGLE_AHARDWARE_BUFFER_LOCK_PLANES_SUPPORT
+    AHardwareBuffer *yuvSource;
+    EGLImageKHR yuvImage;
+    createEGLImageAndroidHardwareBufferSource(2, 2, 1, AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420,
+                                              kDefaultAHBUsage, kDefaultAttribs, {}, &yuvSource,
+                                              &yuvImage);
+
+    GLTexture yuvTexture;
+    createEGLImageTargetTextureExternal(yuvImage, yuvTexture);
+
+    GLFramebuffer yuvFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, yuvFbo);
+
+    // Invalid to attach to any attachment other than 0:
+    //
+    // > If textarget is TEXTURE_EXTERNAL_OES and attachment is other than COLOR_ATTACHMENT0, an
+    // > INVALID_OPERATION error is generated
+    ASSERT_GL_NO_ERROR();
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_EXTERNAL_OES,
+                           yuvTexture, 0);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    if (IsGLExtensionEnabled("GL_OES_geometry_shader"))
+    {
+        glFramebufferTextureOES(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, yuvTexture, 0);
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
+    if (IsGLExtensionEnabled("GL_EXT_geometry_shader"))
+    {
+        glFramebufferTextureEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, yuvTexture, 0);
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
+
+    // Clean up
+    eglDestroyImageKHR(window->getDisplay(), yuvImage);
+    destroyAndroidHardwareBuffer(yuvSource);
 }
 
 // Testing source AHB EGL image with colorspace, target external ESSL3 texture

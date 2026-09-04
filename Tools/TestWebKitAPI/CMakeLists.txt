@@ -1,6 +1,18 @@
 set(TESTWEBKITAPI_DIR "${TOOLS_DIR}/TestWebKitAPI")
+
+# Cocoa uses a single TestWebKitAPI binary combining WebCore, WebKitLegacy,
+# JavaScriptCore and Misc tests into one executable. The other ports produce
+# multiple executables. run-api-tests expects this discrepancy; see
+# API_TEST_BINARY_NAMES in webkitpy/port/glib.py and webkitpy/port/win.py.
+if (APPLE AND ENABLE_WEBKIT)
+    set(TESTWEBKITAPI_MERGED_BINARY ON)
+else ()
+    set(TESTWEBKITAPI_MERGED_BINARY OFF)
+endif ()
+
 set(TestWebKitAPI_DISABLED_WARNINGS
     -Wno-dangling-else
+    -Wno-deprecated-declarations
     -Wno-sign-compare
     -Wno-undef
     -Wno-unused-parameter
@@ -34,6 +46,7 @@ set(TestWTF_SOURCES
     Runner/TestsController.cpp
     Helpers/Utilities.cpp
 
+    Tests/WTF/ASCIILiteral.cpp
     Tests/WTF/AtomString.cpp
     Tests/WTF/Base64.cpp
     Tests/WTF/BitSet.cpp
@@ -52,6 +65,7 @@ set(TestWTF_SOURCES
     Tests/WTF/CompactRefPtr.cpp
     Tests/WTF/CompactRefPtrTuple.cpp
     Tests/WTF/CompactUniquePtrTuple.cpp
+    Tests/WTF/CompactVariant.cpp
     Tests/WTF/CompletionHandlerTests.cpp
     Tests/WTF/ConcurrentPtrHashSet.cpp
     Tests/WTF/Condition.cpp
@@ -62,9 +76,10 @@ set(TestWTF_SOURCES
     Tests/WTF/Deque.cpp
     Tests/WTF/DragonBoxTest.cpp
     Tests/WTF/EmbeddedFixedVector.cpp
+    Tests/WTF/EnumSet.cpp
     Tests/WTF/EnumTraits.cpp
+    Tests/WTF/EnumeratedArray.cpp
     Tests/WTF/EscapableByteSpan.cpp
-    Tests/WTF/Expected.cpp
     Tests/WTF/FileSystem.cpp
     Tests/WTF/FormattedLogging.cpp
     Tests/WTF/FixedBitVector.cpp
@@ -101,6 +116,7 @@ set(TestWTF_SOURCES
     Tests/WTF/NakedPtr.cpp
     Tests/WTF/NativePromise.cpp
     Tests/WTF/NeverDestroyed.cpp
+    Tests/WTF/Observer.cpp
     Tests/WTF/OptionCountedSet.cpp
     Tests/WTF/OptionSet.cpp
     Tests/WTF/OrderedHashMap.cpp
@@ -130,8 +146,11 @@ set(TestWTF_SOURCES
     Tests/WTF/ScopedLambda.cpp
     Tests/WTF/SegmentedVector.cpp
     Tests/WTF/SentinelLinkedList.cpp
+    Tests/WTF/SequenceLockedTest.cpp
     Tests/WTF/SetForScope.cpp
     Tests/WTF/Signals.cpp
+    Tests/WTF/SmallSet.cpp
+    Tests/WTF/SortedArrayMap.cpp
     Tests/WTF/SparseBitVector.cpp
     Tests/WTF/StackTraceTest.cpp
     Tests/WTF/StdLibExtrasTests.cpp
@@ -145,20 +164,24 @@ set(TestWTF_SOURCES
     Tests/WTF/StringSearch.cpp
     Tests/WTF/StringToIntegerConversion.cpp
     Tests/WTF/StringView.cpp
+    Tests/WTF/SuspendableWorkQueueTests.cpp
     Tests/WTF/SynchronizedFixedQueue.cpp
     Tests/WTF/TextBreakIterator.cpp
-    Tests/WTF/TinyLRUCache.cpp
+    Tests/WTF/ThreadAssertionsTest.cpp
     Tests/WTF/ThreadGroup.cpp
     Tests/WTF/ThreadMessages.cpp
     Tests/WTF/Threading.cpp
     Tests/WTF/Time.cpp
+    Tests/WTF/TinyLRUCache.cpp
     Tests/WTF/TruncateFloat.cpp
     Tests/WTF/URL.cpp
     Tests/WTF/URLParser.cpp
     Tests/WTF/UTF8Conversion.cpp
+    Tests/WTF/UUID.cpp
     Tests/WTF/UniqueArray.cpp
     Tests/WTF/UniqueRef.cpp
     Tests/WTF/UniqueRefVector.cpp
+    Tests/WTF/VariantList.cpp
     Tests/WTF/Vector.cpp
     Tests/WTF/VectorBorrow.cpp
     Tests/WTF/WTFString.cpp
@@ -166,6 +189,12 @@ set(TestWTF_SOURCES
     Tests/WTF/WorkQueue.cpp
     Tests/WTF/WorkerPool.cpp
 )
+
+# These tests check conversions that copy elision would otherwise remove.
+if (COMPILER_IS_GCC_OR_CLANG)
+    set_source_files_properties(Tests/WTF/ScopedLambda.cpp PROPERTIES
+        COMPILE_OPTIONS -fno-elide-constructors)
+endif ()
 
 set(TestWTF_PRIVATE_INCLUDE_DIRECTORIES
     ${CMAKE_BINARY_DIR}
@@ -211,7 +240,9 @@ if (ENABLE_JAVASCRIPTCORE)
         ${TESTWEBKITAPI_DIR}
     )
 
-    WEBKIT_EXECUTABLE_DECLARE(TestJavaScriptCore)
+    if (NOT TESTWEBKITAPI_MERGED_BINARY)
+        WEBKIT_EXECUTABLE_DECLARE(TestJavaScriptCore)
+    endif ()
 endif ()
 
 # TestWebCore definitions
@@ -223,9 +254,17 @@ if (ENABLE_WEBCORE)
         Helpers/WebCoreTestUtilities.cpp
 
         Tests/WebCore/AffineTransform.cpp
+        Tests/WebCore/AnimationFrameRate.cpp
+        Tests/WebCore/ApduTest.cpp
+        Tests/WebCore/ApplicationManifestParser.cpp
         Tests/WebCore/AudioSampleFormat.cpp
         Tests/WebCore/BezierUtilitiesTests.cpp
+        Tests/WebCore/CARingBufferTest.cpp
+        Tests/WebCore/CBORReaderTest.cpp
+        Tests/WebCore/CBORValueTest.cpp
+        Tests/WebCore/CBORWriterTest.cpp
         Tests/WebCore/CSSParser.cpp
+        Tests/WebCore/CSSParserFastPaths.cpp
         Tests/WebCore/CSSTokenizerTests.cpp
         Tests/WebCore/CachedMatchFinder.cpp
         Tests/WebCore/ColorTests.cpp
@@ -233,7 +272,15 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/ContextMenuAction.cpp
         Tests/WebCore/CookieJar.cpp
         Tests/WebCore/CryptoDigest.cpp
+        Tests/WebCore/CtapPinTest.cpp
+        Tests/WebCore/CtapRequestTest.cpp
+        Tests/WebCore/CtapResponseTest.cpp
+        Tests/WebCore/DFACombiner.cpp
+        Tests/WebCore/DFAMinimizer.cpp
         Tests/WebCore/Decimal.cpp
+        Tests/WebCore/DisplayListRecorderTests.cpp
+        Tests/WebCore/DocumentOrder.cpp
+        Tests/WebCore/FidoHidMessageTest.cpp
         Tests/WebCore/FileMonitor.cpp
         Tests/WebCore/FloatPointTests.cpp
         Tests/WebCore/FloatQuadTests.cpp
@@ -241,12 +288,18 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/FloatSegmentTest.cpp
         Tests/WebCore/FloatSizeTests.cpp
         Tests/WebCore/FlowModeTests.cpp
+        Tests/WebCore/FontCascade.cpp
+        Tests/WebCore/FontShadowTests.cpp
         Tests/WebCore/GridPosition.cpp
         Tests/WebCore/HTMLParserIdioms.cpp
+        Tests/WebCore/HTTPHeaderField.cpp
+        Tests/WebCore/HTTPHeaderMap.cpp
         Tests/WebCore/HTTPParsers.cpp
         Tests/WebCore/IDBKeyData.cpp
         Tests/WebCore/IDBSerializationTest.cpp
         Tests/WebCore/IPAddressSpaceTests.cpp
+        Tests/WebCore/IPAddressTests.cpp
+        Tests/WebCore/ImageBackingStoreTests.cpp
         Tests/WebCore/ImageBufferTests.cpp
         Tests/WebCore/IntPointTests.cpp
         Tests/WebCore/IntRectTests.cpp
@@ -254,34 +307,54 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/KeyedCoding.cpp
         Tests/WebCore/LayoutRoundedRectTests.cpp
         Tests/WebCore/LayoutUnitTests.cpp
+        Tests/WebCore/LoginStatus.cpp
         Tests/WebCore/MIMESniffer.cpp
         Tests/WebCore/MIMETypeRegistry.cpp
         Tests/WebCore/MediaConstraintsTests.cpp
         Tests/WebCore/MediaReorderQueue.cpp
         Tests/WebCore/MixedContentChecker.cpp
         Tests/WebCore/MonospaceFontTests.cpp
+        Tests/WebCore/NativeImageTests.cpp
         Tests/WebCore/NowPlayingInfoTests.cpp
         Tests/WebCore/PODIntervalTree.cpp
         Tests/WebCore/ParsedContentRange.cpp
+        Tests/WebCore/ParsedContentType.cpp
         Tests/WebCore/PathTests.cpp
         Tests/WebCore/PixelBufferConversionTests.cpp
         Tests/WebCore/PlatformDynamicRangeLimitTests.cpp
         Tests/WebCore/PlatformMediaSessionManagerTests.cpp
+        Tests/WebCore/PrivateClickMeasurement.cpp
         Tests/WebCore/PublicSuffix.cpp
+        Tests/WebCore/PushDatabase.cpp
         Tests/WebCore/PushMessageCrypto.cpp
+        Tests/WebCore/Quirks.cpp
         Tests/WebCore/RegionTests.cpp
+        Tests/WebCore/RegistrableDomain.cpp
         Tests/WebCore/RenderStyleChange.cpp
+        Tests/WebCore/STUNMessageParsingTest.cpp
+        Tests/WebCore/SVGImageCasts.cpp
+        Tests/WebCore/SampleMap.cpp
         Tests/WebCore/SecurityOrigin.cpp
+        Tests/WebCore/SerializedScriptValue.cpp
+        Tests/WebCore/ServiceWorkerRoutines.cpp
         Tests/WebCore/ShareableBitmap.cpp
         Tests/WebCore/SharedBuffer.cpp
         Tests/WebCore/SharedBufferTest.cpp
+        Tests/WebCore/SharedMemoryTests.cpp
+        Tests/WebCore/SharedTimebaseTests.cpp
+        Tests/WebCore/StaticRangeValidity.cpp
+        Tests/WebCore/StringWithDirection.cpp
         Tests/WebCore/StyleGradient.cpp
         Tests/WebCore/TestPlatformStrategies.cpp
+        Tests/WebCore/TextCodec.cpp
         Tests/WebCore/TextIterator.cpp
         Tests/WebCore/TimeRanges.cpp
         Tests/WebCore/TransformationMatrix.cpp
+        Tests/WebCore/U2fCommandConstructorTest.cpp
+        Tests/WebCore/URLMatch.cpp
         Tests/WebCore/URLParserTextEncoding.cpp
         Tests/WebCore/URLPatternTests.cpp
+        Tests/WebCore/WebGPUFramePacer.cpp
         Tests/WebCore/WebTransportHeaderValidation.cpp
         Tests/WebCore/WellKnownOriginList.cpp
         Tests/WebCore/WritingModeTests.cpp
@@ -311,10 +384,11 @@ if (ENABLE_WEBCORE)
         ${TESTWEBKITAPI_DIR}
     )
 
-    WEBKIT_EXECUTABLE_DECLARE(TestWebCore)
-    # TestWebCore gains Swift sources via WEBKIT_TEST_ENABLE_SWIFT.
-    webkit_target_compile_definitions(TestWebCore PUBLIC
-        "WEBKIT_SRC_DIR=\"${CMAKE_SOURCE_DIR}\"")
+    if (NOT TESTWEBKITAPI_MERGED_BINARY)
+        WEBKIT_EXECUTABLE_DECLARE(TestWebCore)
+        webkit_target_compile_definitions(TestWebCore PUBLIC
+            "WEBKIT_SRC_DIR=\"${CMAKE_SOURCE_DIR}\"")
+    endif ()
 endif ()
 
 # TestWebKitLegacy definitions
@@ -343,7 +417,9 @@ if (ENABLE_WEBKIT_LEGACY)
         ${TESTWEBKITAPI_DIR}
     )
 
-    WEBKIT_EXECUTABLE_DECLARE(TestWebKitLegacy)
+    if (NOT TESTWEBKITAPI_MERGED_BINARY)
+        WEBKIT_EXECUTABLE_DECLARE(TestWebKitLegacy)
+    endif ()
 endif ()
 
 # TestWebKit definitions
@@ -351,17 +427,19 @@ if (ENABLE_WEBKIT)
     set(TestWebKit_SOURCES
         Helpers/Utilities.cpp
 
-        Tests/WebCore/Quirks.cpp
-        Tests/WebCore/URLMatch.cpp
-
         Tests/WebKit/WKPage/AboutBlankLoad.cpp
         Tests/WebKit/WKPage/CanHandleRequest.cpp
+        Tests/WebKit/WKPage/CloseFromWithinCreatePage.cpp
+        Tests/WebKit/WKPage/CloseThenTerminate.cpp
         Tests/WebKit/WKPage/DOMWindowExtensionBasic.cpp
         Tests/WebKit/WKPage/DOMWindowExtensionNoCache.cpp
+        Tests/WebKit/WKPage/DidAssociateFormControls.cpp
         Tests/WebKit/WKPage/DidNotHandleKeyDown.cpp
         Tests/WebKit/WKPage/DocumentStartUserScriptAlertCrash.cpp
         Tests/WebKit/WKPage/DownloadDecideDestinationCrash.cpp
+        Tests/WebKit/WKPage/EphemeralSessionPushStateNoHistoryCallback.cpp
         Tests/WebKit/WKPage/EvaluateJavaScript.cpp
+        Tests/WebKit/WKPage/EventModifiers.cpp
         Tests/WebKit/WKPage/FailedLoad.cpp
         Tests/WebKit/WKPage/Find.cpp
         Tests/WebKit/WKPage/FirstMeaningfulPaintMilestone.cpp
@@ -372,8 +450,11 @@ if (ENABLE_WEBKIT)
         Tests/WebKit/WKPage/GetInjectedBundleInitializationUserDataCallback.cpp
         Tests/WebKit/WKPage/HitTestResultNodeHandle.cpp
         Tests/WebKit/WKPage/InjectedBundleBasic.cpp
+        Tests/WebKit/WKPage/InjectedBundleDisableOverrideBuiltinsBehavior.cpp
         Tests/WebKit/WKPage/InjectedBundleFrameHitTest.cpp
         Tests/WebKit/WKPage/InjectedBundleInitializationUserDataCallbackWins.cpp
+        Tests/WebKit/WKPage/InjectedBundleMakeAllShadowRootsOpen.cpp
+        Tests/WebKit/WKPage/LayoutMilestonesWithAllContentInFrame.cpp
         Tests/WebKit/WKPage/LoadAlternateHTMLStringWithNonDirectoryURL.cpp
         Tests/WebKit/WKPage/LoadCanceledNoServerRedirectCallback.cpp
         Tests/WebKit/WKPage/LoadPageOnCrash.cpp
@@ -390,20 +471,27 @@ if (ENABLE_WEBKIT)
         Tests/WebKit/WKPage/PendingAPIRequestURL.cpp
         Tests/WebKit/WKPage/PreventEmptyUserAgent.cpp
         Tests/WebKit/WKPage/PrivateBrowsingPushStateNoHistoryCallback.cpp
+        Tests/WebKit/WKPage/ProcessDidTerminate.cpp
         Tests/WebKit/WKPage/ProvisionalURLAfterWillSendRequestCallback.cpp
         Tests/WebKit/WKPage/ReloadPageAfterCrash.cpp
+        Tests/WebKit/WKPage/ResizeReversePaginatedWebView.cpp
         Tests/WebKit/WKPage/ResizeWindowAfterCrash.cpp
         Tests/WebKit/WKPage/RestoreSessionStateContainingFormData.cpp
+        Tests/WebKit/WKPage/SpacebarScrolling.cpp
+        Tests/WebKit/WKPage/TerminateTwice.cpp
         Tests/WebKit/WKPage/TextFieldDidBeginAndEndEditing.cpp
         Tests/WebKit/WKPage/UserMedia.cpp
         Tests/WebKit/WKPage/UserMessage.cpp
+        Tests/WebKit/WKPage/WKPageConfiguration.cpp
         Tests/WebKit/WKPage/WKPageCopySessionStateWithFiltering.cpp
         Tests/WebKit/WKPage/WKPageGetScaleFactorNotZero.cpp
         Tests/WebKit/WKPage/WKPreferences.cpp
         Tests/WebKit/WKPage/WKRetainPtr.cpp
+        Tests/WebKit/WKPage/WKSecurityOrigin.cpp
         Tests/WebKit/WKPage/WKString.cpp
         Tests/WebKit/WKPage/WKStringJSString.cpp
         Tests/WebKit/WKPage/WKURL.cpp
+        Tests/WebKit/WKPage/WillLoad.cpp
         Tests/WebKit/WKPage/WillSendSubmitEvent.cpp
     )
 
@@ -459,8 +547,10 @@ if (ENABLE_WEBKIT)
         Tests/WebKit/WKPage/GetInjectedBundleInitializationUserDataCallback_Bundle.cpp
         Tests/WebKit/WKPage/HitTestResultNodeHandle_Bundle.cpp
         Tests/WebKit/WKPage/InjectedBundleBasic_Bundle.cpp
+        Tests/WebKit/WKPage/InjectedBundleDisableOverrideBuiltinsBehavior_Bundle.cpp
         Tests/WebKit/WKPage/InjectedBundleFrameHitTest_Bundle.cpp
         Tests/WebKit/WKPage/InjectedBundleInitializationUserDataCallbackWins_Bundle.cpp
+        Tests/WebKit/WKPage/InjectedBundleMakeAllShadowRootsOpen_Bundle.cpp
         Tests/WebKit/WKPage/LoadCanceledNoServerRedirectCallback_Bundle.cpp
         Tests/WebKit/WKPage/MouseMoveAfterCrash_Bundle.cpp
         Tests/WebKit/WKPage/NewFirstVisuallyNonEmptyLayoutFails_Bundle.cpp
@@ -473,6 +563,7 @@ if (ENABLE_WEBKIT)
         Tests/WebKit/WKPage/ResponsivenessTimerDoesntFireEarly_Bundle.cpp
         Tests/WebKit/WKPage/TextFieldDidBeginAndEndEditing_Bundle.cpp
         Tests/WebKit/WKPage/UserMessage_Bundle.cpp
+        Tests/WebKit/WKPage/WebArchive_Bundle.cpp
         Tests/WebKit/WKPage/WillLoad_Bundle.cpp
         Tests/WebKit/WKPage/WillSendSubmitEvent_Bundle.cpp
     )
@@ -483,7 +574,7 @@ if (ENABLE_WEBKIT)
             Helpers/cocoa/UtilitiesCocoa.mm
             InjectedBundle/mac/InjectedBundleControllerMac.mm
         )
-        if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
             list(APPEND TestWebKitAPIInjectedBundle_SOURCES
                 Helpers/mac/PlatformUtilitiesMac.mm
             )
@@ -598,21 +689,54 @@ endif ()
 # Include platform specific files
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
 
+if (TESTWEBKITAPI_MERGED_BINARY)
+    list(APPEND TestWebKit_SOURCES
+        ${TestWebCore_SOURCES}
+        ${TestJavaScriptCore_SOURCES}
+        ${TestWebKitLegacy_SOURCES}
+    )
+    list(REMOVE_DUPLICATES TestWebKit_SOURCES)
+
+    # Already in the TestWebKitAPIBase static library that TestWebKit links.
+    list(REMOVE_ITEM TestWebKit_SOURCES Runner/TestsController.cpp)
+
+    list(APPEND TestWebKit_FRAMEWORKS
+        ${TestWebCore_FRAMEWORKS}
+        ${TestJavaScriptCore_FRAMEWORKS}
+        ${TestWebKitLegacy_FRAMEWORKS}
+    )
+    list(REMOVE_DUPLICATES TestWebKit_FRAMEWORKS)
+
+    list(APPEND TestWebKit_LIBRARIES
+        ${TestWebCore_LIBRARIES}
+        ${TestJavaScriptCore_LIBRARIES}
+        ${TestWebKitLegacy_LIBRARIES}
+    )
+    list(REMOVE_DUPLICATES TestWebKit_LIBRARIES)
+
+    list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
+        ${TestWebCore_PRIVATE_INCLUDE_DIRECTORIES}
+        ${TestJavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES}
+        ${TestWebKitLegacy_PRIVATE_INCLUDE_DIRECTORIES}
+    )
+    list(REMOVE_DUPLICATES TestWebKit_PRIVATE_INCLUDE_DIRECTORIES)
+endif ()
+
 # TestWTF target
 WEBKIT_TEST(TestWTF)
 
 # TestJavaScriptCore target
-if (ENABLE_JAVASCRIPTCORE)
+if (ENABLE_JAVASCRIPTCORE AND NOT TESTWEBKITAPI_MERGED_BINARY)
     WEBKIT_TEST(TestJavaScriptCore)
 endif ()
 
 # TestWebCore target
-if (ENABLE_WEBCORE)
+if (ENABLE_WEBCORE AND NOT TESTWEBKITAPI_MERGED_BINARY)
     WEBKIT_TEST(TestWebCore)
 endif ()
 
 # TestWebKitLegacy target
-if (ENABLE_WEBKIT_LEGACY)
+if (ENABLE_WEBKIT_LEGACY AND NOT TESTWEBKITAPI_MERGED_BINARY)
     WEBKIT_TEST(TestWebKitLegacy)
 endif ()
 

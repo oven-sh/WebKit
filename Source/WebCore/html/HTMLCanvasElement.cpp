@@ -597,7 +597,7 @@ std::optional<FloatRect> HTMLCanvasElement::computeDirtyRectangleIfNeeded(const 
 
 void HTMLCanvasElement::willUpdateContents(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
 {
-    clearCopiedImage();
+    m_copiedImage = nullptr;
     if (CheckedPtr renderer = renderBox()) {
         const std::optional<FloatRect> dirtyRect = computeDirtyRectangleIfNeeded(rect);
         if (usesContentsAsLayerContents())
@@ -620,7 +620,7 @@ void HTMLCanvasElement::didUpdateSizeProperties()
     IntSize newSize(w, h);
     bool sizeChanged = oldSize != newSize;
     CanvasBase::setSize(newSize);
-    clearCopiedImage();
+    m_copiedImage = nullptr;
     if (m_context)
         m_context->didUpdateCanvasSizeProperties(sizeChanged);
     if (CheckedPtr canvasRenderer = dynamicDowncast<RenderHTMLCanvas>(renderer())) {
@@ -820,7 +820,7 @@ RefPtr<VideoFrame> HTMLCanvasElement::toVideoFrame()
     // FIXME: This can likely be optimized quite a bit, especially in the cases where
     // the ImageBuffer is backed by GPU memory already and/or is in the GPU process by
     // specializing toVideoFrame() in ImageBufferBackend to not use getPixelBuffer().
-    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, DestinationColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
+    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, ColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
     if (!pixelBuffer)
         return nullptr;
 
@@ -865,11 +865,6 @@ Image* HTMLCanvasElement::copiedImage() const
     if (RefPtr image = copyNativeImage())
         m_copiedImage = BitmapImage::create(WTF::move(image));
     return m_copiedImage.get();
-}
-
-void HTMLCanvasElement::clearCopiedImage() const
-{
-    m_copiedImage = nullptr;
 }
 
 bool HTMLCanvasElement::virtualHasPendingActivity() const

@@ -27,7 +27,7 @@
 #include "config.h"
 #include "GraphicsContextGLTextureMapperANGLE.h"
 
-#if ENABLE(WEBGL) && USE(TEXTURE_MAPPER)
+#if ENABLE(WEBGL) && (USE(GRAPHICS_LAYER_WC) || USE(COORDINATED_GRAPHICS))
 
 #include "ANGLEHeaders.h"
 #include "ANGLEUtilities.h"
@@ -145,6 +145,10 @@ bool GraphicsContextGLANGLE::makeContextCurrent()
 
 void GraphicsContextGLANGLE::checkGPUStatus()
 {
+    if (m_failNextStatusCheck) {
+        m_failNextStatusCheck = false;
+        forceContextLost();
+    }
 }
 
 void GraphicsContextGLANGLE::platformReleaseThreadResources()
@@ -521,4 +525,4 @@ bool GraphicsContextGLTextureMapperANGLE::enableRequiredWebXRExtensions()
 
 } // namespace WebCore
 
-#endif // ENABLE(WEBGL) && USE(TEXTURE_MAPPER)
+#endif // ENABLE(WEBGL) && (USE(GRAPHICS_LAYER_WC) || USE(COORDINATED_GRAPHICS))

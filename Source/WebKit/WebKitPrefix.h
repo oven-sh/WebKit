@@ -281,6 +281,7 @@
 #include <WebCore/ColorMatrix.h>
 #include <WebCore/ColorModels.h>
 #include <WebCore/ColorSpace.h>
+#include <WebCore/ColorSpaceName.h>
 #include <WebCore/ColorTransferFunctions.h>
 #include <WebCore/ColorTypes.h>
 #include <WebCore/ColorUtilities.h>
@@ -298,7 +299,6 @@
 #include <WebCore/CrossOriginOpenerPolicy.h>
 #include <WebCore/DOMPasteAccess.h>
 #include <WebCore/DecodingOptions.h>
-#include <WebCore/DestinationColorSpace.h>
 #include <WebCore/DocumentSecurityPolicy.h>
 #include <WebCore/DoublePoint.h>
 #include <WebCore/DoubleSize.h>

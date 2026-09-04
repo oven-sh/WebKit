@@ -30,15 +30,16 @@
 #include <WebCore/FloatSize.h>
 #include <WebCore/Image.h>
 #include <WebCore/SVGImage.h>
+#include <WebCore/StyleLinkParameters.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
 
 class SVGImageForContainer final : public Image {
 public:
-    static Ref<SVGImageForContainer> create(SVGImage* image, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL)
+    static Ref<SVGImageForContainer> create(SVGImage* image, SVGImage::ContainerContext&& containerContext)
     {
-        return adoptRef(*new SVGImageForContainer(image, containerSize, containerZoom, initialFragmentURL));
+        return adoptRef(*new SVGImageForContainer(image, WTF::move(containerContext)));
     }
 
     bool NODELETE isSVGImageForContainer() const final { return true; }
@@ -64,12 +65,10 @@ public:
     RefPtr<NativeImage> currentNativeImage() final;
 
 private:
-    WEBCORE_EXPORT SVGImageForContainer(SVGImage*, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL);
+    WEBCORE_EXPORT SVGImageForContainer(SVGImage*, SVGImage::ContainerContext&&);
 
     WeakPtr<SVGImage> m_image;
-    const FloatSize m_containerSize;
-    const float m_containerZoom;
-    const URL m_initialFragmentURL;
+    const SVGImage::ContainerContext m_containerContext;
 };
 
 } // namespace WebCore

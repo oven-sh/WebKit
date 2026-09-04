@@ -245,12 +245,12 @@ const aliases = {
     'CGColorSpaceRef': 'WebKit::CoreIPCCGColorSpace'
 }
 
-// A DestinationColorSpace holding sRGB. Under USE(CG) it is a structured variant; under
+// A ColorSpace holding sRGB. Under USE(CG) it is a structured variant; under
 // USE(SKIA) sk_sp<SkColorSpace> crosses IPC as the bytes SkColorSpace::serialize() produces,
 // which IPC.serializedSRGBColorSpace() obtains from the real serializer.
 export function sRGBColorSpace() {
     if ('WebKit::CoreIPCCGColorSpace' in CoreIPC.typeInfo)
-        return { serializableColorSpace: { alias: { optionalValue: { m_cgColorSpace: { alias: { variantType: 'WebCore::ColorSpace', variant: 19 } } } } } }; // WebCore::ColorSpace::SRGB
+        return { serializableColorSpace: { alias: { optionalValue: { m_cgColorSpace: { alias: { variantType: 'WebCore::ColorSpaceName', variant: 19 } } } } } }; // WebCore::ColorSpaceName::SRGB
 
     if ('sk_sp<SkColorSpace>' in CoreIPC.typeInfo)
         return { serializableColorSpace: { alias: { dataReference: IPC.serializedSRGBColorSpace() } } };
@@ -595,6 +595,7 @@ export class ArgumentSerializer {
                     return ArgumentSerializer.serializeHashMap(innerType, argument);
                 case 'Ref':
                 case 'UniqueRef':
+                case 'IPC::Untrusted':
                     return ArgumentSerializer.serializeArgument({type: innerType, name: argumentDefinition.name}, argument);
                 default:
                     // A wrapper class such as sk_sp<SkColorSpace> is a template, but the
@@ -1123,7 +1124,8 @@ export class ArgumentParser {
                     return [newPosition, {parsedType: argumentDefinition.type, parsedValue: value}]
                 }
                 case 'Ref':
-                case 'UniqueRef': {
+                case 'UniqueRef':
+                case 'IPC::Untrusted': {
                     return ArgumentParser.parseArgument(buffer, position, {type: innerType, name: argumentDefinition.name});
                 }
                 case 'HashMap':

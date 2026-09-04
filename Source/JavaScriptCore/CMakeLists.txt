@@ -197,6 +197,17 @@ set(JavaScriptCore_SCRIPTS_SOURCES_PATHS
     ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/wkbuiltins.py
 )
 
+# JavaScriptCore_SCRIPTS_DIR is the framework's PrivateHeaders here, which is where
+# clients above WebKit look for the inspector protocol generator.
+if (USE_FRAMEWORK_BUNDLES)
+    list(APPEND JavaScriptCore_SCRIPTS_SOURCES_PATHS
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/generate*.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate*.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/*generator*.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/models.py
+    )
+endif ()
+
 # The directory flattening performed below mirrors what the Mac port does with private headers.
 file(GLOB JavaScriptCore_SCRIPTS_SOURCES ${JavaScriptCore_SCRIPTS_SOURCES_PATHS})
 
@@ -1063,7 +1074,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/ScratchRegisterAllocator.h
     jit/Snippet.h
     jit/SnippetParams.h
-    jit/SnippetReg.h
     jit/SnippetSlowPathCalls.h
     jit/SpillRegistersMode.h
     jit/TagRegistersMode.h
@@ -1238,7 +1248,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DateConstructorInlines.h
     runtime/DateConversion.h
     runtime/DateInstance.h
-    runtime/DateInstanceCache.h
     runtime/DateInstanceInlines.h
     runtime/DatePrototype.h
     runtime/DatePrototypeInlines.h
@@ -1629,6 +1638,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/PageCount.h
     runtime/ParseInt.h
     runtime/PinballCompletion.h
+    runtime/PlainGregorianDateTime.h
     runtime/PrivateFieldPutKind.h
     runtime/PrivateName.h
     runtime/ProfilerSupport.h
@@ -2241,7 +2251,6 @@ endif ()
 
 WEBKIT_FRAMEWORK_DECLARE(JavaScriptCore)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
-WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(JavaScriptCore)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(JavaScriptCore)
 
 if (COMPILER_IS_GCC_OR_CLANG)

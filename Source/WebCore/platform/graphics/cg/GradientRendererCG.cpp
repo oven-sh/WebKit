@@ -28,8 +28,8 @@
 
 #include "ColorConversion.h"
 #include "ColorHash.h"
+#include "ColorSpace.h"
 #include "ColorSpaceCG.h"
-#include "DestinationColorSpace.h"
 #include "GradientColorStops.h"
 #include "SampledGradientBuilder.h"
 #include <pal/spi/cg/CoreGraphicsSPI.h>
@@ -43,7 +43,7 @@ using namespace WebCore;
 struct SampledGradientCacheKey {
     ColorInterpolationMethod interpolationMethod;
     GradientColorStops::StopVector colorStops;
-    std::optional<DestinationColorSpace> destinationColorSpace;
+    std::optional<ColorSpace> destinationColorSpace;
 
     friend bool operator==(const SampledGradientCacheKey&, const SampledGradientCacheKey&) = default;
 };
@@ -66,7 +66,7 @@ namespace WebCore {
 
 // MARK: - Constructor.
 
-GradientRendererCG::GradientRendererCG(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops, std::optional<DestinationColorSpace> colorSpace)
+GradientRendererCG::GradientRendererCG(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops& stops, std::optional<ColorSpace> colorSpace)
     : m_colorSpace { WTF::move(colorSpace) }
     , m_gradient { makeGradient(colorInterpolationMethod, stops) }
 {
@@ -125,7 +125,7 @@ GradientRendererCG::Gradient GradientRendererCG::makeGradient(ColorInterpolation
 
     auto hasOnlyBoundedSRGBColorStops = [] (const auto& stops) {
         for (const auto& stop : stops) {
-            if (stop.color.colorSpace() != ColorSpace::SRGB)
+            if (stop.color.colorSpace() != ColorSpaceName::SRGB)
                 return false;
         }
         return true;
@@ -164,7 +164,7 @@ GradientRendererCG::Gradient GradientRendererCG::makeGradient(ColorInterpolation
             return cachedCGColorSpaceSingleton<ColorSpaceFor<SRGBA<float>>>();
         }
 
-        using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpace::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
+        using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpaceName::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
         for (const auto& stop : stops) {
             auto [r, g, b, a] = stop.color.toColorTypeLossy<OutputSpaceColorType>().resolved();
             colorComponents.appendList({ r, g, b, a });
@@ -210,9 +210,9 @@ GradientRendererCG::Gradient GradientRendererCG::makeGradientBySampling(ColorInt
     return Gradient { WTF::move(gradient) };
 }
 
-RetainPtr<CGGradientRef> GradientRendererCG::createGradientBySampling(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops::StopVector& stops, const std::optional<DestinationColorSpace>& destinationColorSpace)
+RetainPtr<CGGradientRef> GradientRendererCG::createGradientBySampling(ColorInterpolationMethod colorInterpolationMethod, const GradientColorStops::StopVector& stops, const std::optional<ColorSpace>& destinationColorSpace)
 {
-    using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpace::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
+    using OutputSpaceColorType = std::conditional_t<HasCGColorSpaceMapping<ColorSpaceName::ExtendedSRGB>, ExtendedSRGBA<float>, SRGBA<float>>;
 
     auto sampled = sampleGradientStops<OutputSpaceColorType>(colorInterpolationMethod, stops);
 

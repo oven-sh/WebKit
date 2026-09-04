@@ -129,7 +129,7 @@ class Heap;
     v(calleeSpace, cellHeapCellType, JSCallee) \
     v(clonedArgumentsSpace, cellHeapCellType, ClonedArguments) \
     v(customGetterSetterSpace, cellHeapCellType, CustomGetterSetter) \
-    v(dateInstanceSpace, dateInstanceHeapCellType, DateInstance) \
+    v(dateInstanceSpace, cellHeapCellType, DateInstance) \
     v(domAttributeGetterSetterSpace, cellHeapCellType, DOMAttributeGetterSetter) \
     v(exceptionSpace, destructibleCellHeapCellType, Exception) \
     v(functionSpace, cellHeapCellType, JSFunction) \
@@ -1104,7 +1104,6 @@ public:
     IsoHeapCellType callbackObjectHeapCellType;
     IsoHeapCellType customGetterFunctionHeapCellType;
     IsoHeapCellType customSetterFunctionHeapCellType;
-    IsoHeapCellType dateInstanceHeapCellType;
     IsoHeapCellType errorInstanceHeapCellType;
     IsoHeapCellType finalizationRegistryCellType;
     IsoHeapCellType globalLexicalEnvironmentHeapCellType;

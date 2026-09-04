@@ -45,6 +45,8 @@ public:
 
     constexpr const QuirkBitSet& bits() const LIFETIME_BOUND { return m_bits; }
 
+    constexpr void exclude(const QuirkBitSet& quirks) { m_bits.exclude(quirks); }
+
 private:
     QuirkBitSet m_bits;
 };
@@ -90,10 +92,14 @@ struct Quirk {
     QuirkURLMatch match;
     QuirkBehaviors behaviors { };
     std::optional<QuirkSite> site { };
+    bool availableWhen { true };
 
     void apply(QuirksData&) const;
 };
 
 WEBCORE_EXPORT QuirksData resolveSiteSpecificQuirks(const URL& topURL, const URL& documentURL, IsTopDocument);
+
+// For callers with no Document, which therefore only see top-URL quirks.
+WEBCORE_EXPORT QuirksData resolveTopURLQuirks(const URL&);
 
 } // namespace WebCore

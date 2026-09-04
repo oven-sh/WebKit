@@ -41,6 +41,7 @@
 #import "TextRecognitionUpdateResult.h"
 #import "ViewGestureController.h"
 #import "WKDeferringGestureRecognizer.h"
+#import "WKMouseTrackingGestureRecognizer.h"
 #import "WKWebView.h"
 #import "WKWebViewInternal.h"
 #import "WebEventFactory.h"
@@ -793,7 +794,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     case NSGestureRecognizerStateBegan:
         _activeMouseTrackingGestureRecognizer = mouseTrackingGesture.get();
         if (_mouseTrackingHasSentMouseDown)
-            [mouseTrackingGesture beginTrackingMouseInheritedFromLocationInWindow:_mouseTrackingStartLocationInWindow];
+            [mouseTrackingGesture beginTrackingMouseInheritedFromWindowLocation:_mouseTrackingStartLocationInWindow];
         else
             [mouseTrackingGesture beginTrackingMouse];
         break;
@@ -1328,6 +1329,14 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     RetainPtr webView = _view.get();
     if (!webView)
         return;
+
+    // Equivalent to acceptsFirstMouse, but here because the potentialClick asynchrony
+    // means that the window can get focus from this click before we complete the click.
+    bool commandKeyIsDown = [gesture modifierFlags] & NSEventModifierFlagCommand;
+    if (![[webView window] isKeyWindow] && !commandKeyIsDown) {
+        WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG([webView _protectedPage]->logIdentifier(), "Single-click began in an inactive window; suppressing");
+        return;
+    }
 
     if (_isSuppressingSingleClickGestureForTextSelection)
         return;

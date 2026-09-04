@@ -137,6 +137,11 @@ String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigne
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
 }
 
+String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
+}
+
 String String::convertToUppercaseWithoutLocale() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
@@ -160,6 +165,11 @@ String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigne
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
 }
 
+String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
+}
+
 String String::trim(CodeUnitMatchFunction predicate) const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
@@ -178,7 +188,7 @@ String String::foldCase() const
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->foldCase() : String { };
 }
 
-Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTermination() const
+std::expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTermination() const
 {
     Vector<char16_t> result;
     if (!m_impl)
@@ -195,7 +205,7 @@ Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithoutNullTer
     return result;
 }
 
-Expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithNullTermination() const
+std::expected<Vector<char16_t>, UTF8ConversionError> String::charactersWithNullTermination() const
 {
     auto result = charactersWithoutNullTermination();
     if (result)
@@ -438,19 +448,19 @@ CString String::latin1() const
     return result;
 }
 
-Expected<CString, UTF8ConversionError> String::tryGetUTF8(ConversionMode mode) const
+std::expected<CString, UTF8ConversionError> String::tryGetUTF8(ConversionMode mode) const
 {
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryGetUTF8(mode) : CString { ""_span };
 }
 
-Expected<CString, UTF8ConversionError> String::tryGetUTF8() const
+std::expected<CString, UTF8ConversionError> String::tryGetUTF8() const
 {
     return tryGetUTF8(LenientConversion);
 }
 
 CString String::utf8(ConversionMode mode) const
 {
-    Expected<CString, UTF8ConversionError> expectedString = tryGetUTF8(mode);
+    std::expected<CString, UTF8ConversionError> expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);
     return expectedString.value();
 }

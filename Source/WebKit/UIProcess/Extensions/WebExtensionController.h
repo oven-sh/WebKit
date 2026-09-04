@@ -72,6 +72,7 @@ class WebExtensionDataRecord;
 class WebPageProxy;
 class WebProcessPool;
 class WebsiteDataStore;
+struct WebExtensionContentRuleListBlockedLoadInfo;
 struct WebExtensionControllerParameters;
 struct WebExtensionFrameParameters;
 
@@ -125,14 +126,14 @@ public:
     void getDataRecord(OptionSet<WebExtensionDataType>, WebExtensionContext&, CompletionHandler<void(RefPtr<WebExtensionDataRecord>)>&&);
     void removeData(OptionSet<WebExtensionDataType>, const Vector<Ref<WebExtensionDataRecord>>&, CompletionHandler<void()>&&);
 
-    void calculateStorageSize(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(Expected<size_t, WebExtensionError>&&)>&&);
-    void removeStorage(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void calculateStorageSize(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(std::expected<size_t, WebExtensionError>&&)>&&);
+    void removeStorage(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
     bool hasLoadedContexts() const { return !m_extensionContexts.isEmpty(); }
     bool isFreshlyCreated() const { return m_freshlyCreated; }
 
-    Expected<bool, RefPtr<API::Error>> load(WebExtensionContext&);
-    Expected<bool, RefPtr<API::Error>> unload(WebExtensionContext&);
+    std::expected<bool, RefPtr<API::Error>> load(WebExtensionContext&);
+    std::expected<bool, RefPtr<API::Error>> unload(WebExtensionContext&);
 
     void unloadAll();
 
@@ -190,6 +191,10 @@ public:
     void resourceLoadDidReceiveChallenge(WebPageProxyIdentifier, const ResourceLoadInfo&, const WebCore::AuthenticationChallenge&);
     void resourceLoadDidReceiveResponse(WebPageProxyIdentifier, const ResourceLoadInfo&, const WebCore::ResourceResponse&);
     void resourceLoadDidCompleteWithError(WebPageProxyIdentifier, const ResourceLoadInfo&, const WebCore::ResourceResponse&, const WebCore::ResourceError&);
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    void resourceLoadWasBlockedByContentRuleList(WebPageProxyIdentifier, const WebExtensionContentRuleListBlockedLoadInfo&);
+#endif
 
     bool isShowingActionPopup() { return m_showingActionPopup; };
     void setShowingActionPopup(bool isOpen) { m_showingActionPopup = isOpen; };

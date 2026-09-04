@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,80 +26,244 @@
 #include "config.h"
 #include "ColorSpace.h"
 
+#include "NotImplemented.h"
+
+#include <wtf/NeverDestroyed.h>
 #include <wtf/text/TextStream.h>
+
+#if USE(CG)
+#include "ColorSpaceCG.h"
+#include <pal/spi/cg/CoreGraphicsSPI.h>
+#elif USE(SKIA)
+#include "ColorSpaceSkia.h"
+#endif
 
 namespace WebCore {
 
-TextStream& operator<<(TextStream& ts, ColorSpace colorSpace)
+#if USE(CG) || USE(SKIA)
+#if USE(CG)
+using KnownColorSpaceAccessor = CGColorSpaceRef();
+#elif USE(SKIA)
+using KnownColorSpaceAccessor = sk_sp<SkColorSpace>();
+#endif
+template<KnownColorSpaceAccessor accessor> static const ColorSpace& knownColorSpace()
 {
-    switch (colorSpace) {
-    case ColorSpace::A98RGB:
-        ts << "A98-RGB"_s;
-        break;
-    case ColorSpace::DisplayP3:
-        ts << "DisplayP3"_s;
-        break;
-    case ColorSpace::ExtendedA98RGB:
-        ts << "Extended A98-RGB"_s;
-        break;
-    case ColorSpace::ExtendedDisplayP3:
-        ts << "Extended DisplayP3"_s;
-        break;
-    case ColorSpace::ExtendedLinearDisplayP3:
-        ts << "Extended Linear DisplayP3"_s;
-        break;
-    case ColorSpace::ExtendedLinearSRGB:
-        ts << "Extended Linear sRGB"_s;
-        break;
-    case ColorSpace::ExtendedProPhotoRGB:
-        ts << "Extended ProPhotoRGB"_s;
-        break;
-    case ColorSpace::ExtendedRec2020:
-        ts << "Extended Rec2020"_s;
-        break;
-    case ColorSpace::ExtendedSRGB:
-        ts << "Extended sRGB"_s;
-        break;
-    case ColorSpace::HSL:
-        ts << "HSL"_s;
-        break;
-    case ColorSpace::HWB:
-        ts << "HWB"_s;
-        break;
-    case ColorSpace::LCH:
-        ts << "LCH"_s;
-        break;
-    case ColorSpace::Lab:
-        ts << "Lab"_s;
-        break;
-    case ColorSpace::LinearDisplayP3:
-        ts << "Linear DisplayP3"_s;
-        break;
-    case ColorSpace::LinearSRGB:
-        ts << "Linear sRGB"_s;
-        break;
-    case ColorSpace::OKLCH:
-        ts << "OKLCH"_s;
-        break;
-    case ColorSpace::OKLab:
-        ts << "OKLab"_s;
-        break;
-    case ColorSpace::ProPhotoRGB:
-        ts << "ProPhotoRGB"_s;
-        break;
-    case ColorSpace::Rec2020:
-        ts << "Rec2020"_s;
-        break;
-    case ColorSpace::SRGB:
+    static NeverDestroyed<ColorSpace> colorSpace { accessor() };
+    return colorSpace.get();
+}
+#else
+template<PlatformColorSpace::Name name> static const ColorSpace& knownColorSpace()
+{
+    static NeverDestroyed<ColorSpace> colorSpace { name };
+    return colorSpace.get();
+}
+#endif
+
+const ColorSpace& ColorSpace::SRGB()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<sRGBColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::SRGB>();
+#endif
+}
+
+const ColorSpace& ColorSpace::LinearSRGB()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<linearSRGBColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::LinearSRGB>();
+#endif
+}
+
+#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+const ColorSpace& ColorSpace::DisplayP3()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<displayP3ColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::DisplayP3>();
+#endif
+}
+
+const ColorSpace& ColorSpace::ExtendedDisplayP3()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<extendedDisplayP3ColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::ExtendedDisplayP3>();
+#endif
+}
+
+const ColorSpace& ColorSpace::LinearDisplayP3()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<linearDisplayP3ColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::LinearDisplayP3>();
+#endif
+}
+
+const ColorSpace& ColorSpace::ExtendedLinearDisplayP3()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<extendedLinearDisplayP3ColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::ExtendedLinearDisplayP3>();
+#endif
+}
+#endif
+
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_SRGB)
+const ColorSpace& ColorSpace::ExtendedSRGB()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<extendedSRGBColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::ExtendedSRGB>();
+#endif
+}
+
+const ColorSpace& ColorSpace::ExtendedLinearSRGB()
+{
+#if USE(CG) || USE(SKIA)
+    return knownColorSpace<extendedLinearSRGBColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::ExtendedLinearSRGB>();
+#endif
+}
+#endif
+
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_REC_2020)
+const ColorSpace& ColorSpace::ExtendedRec2020()
+{
+#if USE(CG)
+    return knownColorSpace<ITUR_2020ColorSpaceSingleton>();
+#else
+    return knownColorSpace<PlatformColorSpace::Name::ExtendedRec2020>();
+#endif
+}
+#endif
+
+bool operator==(const ColorSpace& a, const ColorSpace& b)
+{
+#if USE(CG)
+    // Do not protect the platformColorSpace here as it is not strictly required for safety and
+    // this code is performance sensitive.
+    SUPPRESS_UNRETAINED_ARG return CGColorSpaceEqualToColorSpace(a.platformColorSpace(), b.platformColorSpace());
+#elif USE(SKIA)
+    return SkColorSpace::Equals(a.platformColorSpace().get(), b.platformColorSpace().get());
+#else
+    return a.platformColorSpace() == b.platformColorSpace();
+#endif
+}
+
+std::optional<ColorSpace> ColorSpace::asRGB() const
+{
+#if USE(CG)
+    // Avoid refing colorSpace here as this is performance-sensitive code.
+    SUPPRESS_UNRETAINED_LOCAL CGColorSpaceRef colorSpace = platformColorSpace();
+    if (CGColorSpaceGetModel(colorSpace) == kCGColorSpaceModelIndexed)
+        colorSpace = CGColorSpaceGetBaseColorSpace(colorSpace);
+
+    if (CGColorSpaceGetModel(colorSpace) != kCGColorSpaceModelRGB)
+        return std::nullopt;
+
+    if (usesExtendedRange())
+        return std::nullopt;
+
+    return ColorSpace(colorSpace);
+
+#elif USE(SKIA)
+    // When using skia, we're not using color spaces consisting of custom lookup tables, so we either yield SRGB or nothing.
+    if (platformColorSpace()->isSRGB())
+        return SRGB();
+    return std::nullopt;
+
+#else
+    return *this;
+#endif
+}
+
+std::optional<ColorSpace> ColorSpace::asExtended() const
+{
+    if (usesExtendedRange())
+        return *this;
+#if USE(CG)
+    // Avoid refing color space here as this is performance-sensitive.
+    SUPPRESS_UNRETAINED_ARG if (RetainPtr colorSpace = adoptCF(CGColorSpaceCreateExtended(platformColorSpace())))
+        return ColorSpace(WTF::move(colorSpace));
+#endif
+    return std::nullopt;
+}
+
+bool ColorSpace::supportsOutput() const
+{
+#if USE(CG)
+    // Avoid refing color space here as this is performance-sensitive.
+    SUPPRESS_UNRETAINED_ARG return CGColorSpaceSupportsOutput(platformColorSpace());
+#else
+    notImplemented();
+    return true;
+#endif
+}
+
+bool ColorSpace::usesRGBColorModel() const
+{
+#if USE(CG)
+    // Avoid refing color space here as this is performance-sensitive.
+    SUPPRESS_UNRETAINED_ARG return CGColorSpaceGetModel(platformColorSpace()) == kCGColorSpaceModelRGB;
+#else
+    return true;
+#endif
+}
+
+bool ColorSpace::usesExtendedRange() const
+{
+#if USE(CG)
+    // Avoid refing color space here as this is performance-sensitive.
+    SUPPRESS_UNRETAINED_ARG return CGColorSpaceUsesExtendedRange(platformColorSpace());
+#else
+    notImplemented();
+    return false;
+#endif
+}
+
+bool ColorSpace::usesITUR_2100TF() const
+{
+#if USE(CG)
+    // Avoid refing color space here as this is performance-sensitive.
+    SUPPRESS_UNRETAINED_ARG return CGColorSpaceUsesITUR_2100TF(platformColorSpace());
+#else
+    notImplemented();
+    return false;
+#endif
+}
+
+TextStream& operator<<(TextStream& ts, const ColorSpace& colorSpace)
+{
+    if (colorSpace == ColorSpace::SRGB())
         ts << "sRGB"_s;
-        break;
-    case ColorSpace::XYZ_D50:
-        ts << "XYZ-D50"_s;
-        break;
-    case ColorSpace::XYZ_D65:
-        ts << "XYZ-D65"_s;
-        break;
-    }
+    else if (colorSpace == ColorSpace::LinearSRGB())
+        ts << "LinearSRGB"_s;
+#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+    else if (colorSpace == ColorSpace::DisplayP3())
+        ts << "DisplayP3"_s;
+#endif
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_SRGB)
+    else if (colorSpace == ColorSpace::ExtendedSRGB())
+        ts << "ExtendedSRGB"_s;
+#endif
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_REC_2020)
+    else if (colorSpace == ColorSpace::ExtendedRec2020())
+        ts << "ExtendedRec2020"_s;
+#endif
+#if USE(CG)
+    else if (RetainPtr description = adoptCF(CGColorSpaceCopyICCProfileDescription(protect(colorSpace.platformColorSpace()).get())))
+        ts << String(description.get());
+#endif
+
     return ts;
 }
 

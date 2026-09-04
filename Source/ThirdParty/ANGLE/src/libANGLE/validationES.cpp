@@ -180,6 +180,10 @@ bool ValidReadPixelsFormatType(const Context *context,
             return (format == GL_RGBA_INTEGER && type == GL_INT);
 
         case GL_UNSIGNED_INT:
+            if (format == GL_STENCIL_INDEX)
+            {
+                return context->getExtensions().readStencilNV && (type == GL_UNSIGNED_BYTE);
+            }
             return (format == GL_RGBA_INTEGER && type == GL_UNSIGNED_INT);
 
         case GL_FLOAT:
@@ -429,7 +433,7 @@ bool ValidateTextureMaxAnisotropyValue(const Context *context,
 
     GLfloat largest = context->getCaps().maxTextureAnisotropy;
 
-    if (paramValue < 1 || paramValue > largest)
+    if (isOutsideOfBounds(paramValue, 1.0f, largest))
     {
         ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kOutsideOfBounds);
         return false;
@@ -4157,8 +4161,8 @@ const char *ValidateDrawStates(const Context *context, GLenum *outErrorCode)
             return kSamplerFormatMismatch;
         }
 
-        // Do some additional WebGL-specific validation
-        if (ANGLE_UNLIKELY(context->isWebGL()))
+        // Do some additional WebGL/hardened-specific validation
+        if (ANGLE_UNLIKELY(context->isWebGL() || context->isHardenedContext()))
         {
             const TransformFeedback *transformFeedbackObject = state.getCurrentTransformFeedback();
             if (state.isTransformFeedbackActive() &&
@@ -7460,7 +7464,7 @@ bool ValidateTexParameterBase(const Context *context,
                 ANGLE_VALIDATION_ERROR(GL_INVALID_ENUM, kFoveatedTextureQcomExtensionRequired);
                 return false;
             }
-            if (static_cast<GLfloat>(params[0]) < 0.0 || static_cast<GLfloat>(params[0]) > 1.0)
+            if (isOutsideOfBounds(static_cast<GLfloat>(params[0]), 0.0f, 1.0f))
             {
                 ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kFoveatedTextureInvalidPixelDensity);
                 return false;

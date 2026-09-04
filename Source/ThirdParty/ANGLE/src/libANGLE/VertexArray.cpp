@@ -29,6 +29,9 @@ VertexArrayState::VertexArrayState(VertexArrayID vertexArrayID,
     {
         mVertexAttributes.emplace_back(static_cast<GLuint>(i));
         mVertexBindings.emplace_back(static_cast<GLuint>(i));
+        // The default vertex attribute format is R32G32B32A32_FLOAT. Keep mVertexAttributesTypeMask
+        // in sync so attributes that keep their default format are treated as float.
+        SetComponentTypeMask(ComponentType::Float, i, &mVertexAttributesTypeMask);
     }
 
     // Initially all attributes start as "client" with no buffer bound.
@@ -542,11 +545,6 @@ ANGLE_INLINE VertexArray::DirtyBindingBits VertexArray::bindVertexBufferImpl(con
     binding->setOffset(offset);
     binding->setStride(stride);
 
-    if (mRobustBufferAccessEnabled)
-    {
-        updateCachedElementLimit(*binding, mCachedBufferSize[bindingIndex]);
-    }
-
     return dirtyBindingBits;
 }
 
@@ -574,6 +572,10 @@ void VertexArray::bindVertexBuffer(const Context *context,
     {
         mDirtyBits.set(DIRTY_BIT_BINDING_0 + bindingIndex);
         mDirtyBindingBits[bindingIndex] |= dirtyBindingBits;
+        if (mRobustBufferAccessEnabled)
+        {
+            updateCachedElementLimit(mState.mVertexBindings[bindingIndex], mCachedBufferSize[bindingIndex]);
+        }
     }
 }
 
@@ -642,6 +644,10 @@ ANGLE_INLINE void VertexArray::setVertexAttribPointerImpl(const Context *context
     {
         setDirtyAttribBit(attribIndex, DIRTY_ATTRIB_POINTER_BUFFER);
         *isVertexAttribDirtyOut = true;
+    }
+    if (mRobustBufferAccessEnabled && (attribDirty || dirtyBindingBits.any()))
+    {
+        updateCachedElementLimit(mState.mVertexBindings[attribIndex], mCachedBufferSize[attribIndex]);
     }
 
     mState.mNullPointerClientMemoryAttribsMask.set(attribIndex,

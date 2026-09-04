@@ -143,6 +143,7 @@ void RenderTreeUpdater::commit(std::unique_ptr<Style::Update> styleUpdate)
 
     generatedContent().updateRemainingQuotes();
     generatedContent().updateCounters();
+    generatedContent().updateListMarkers();
 
     m_builder.updateAfterDescendants(renderView());
 
@@ -741,11 +742,6 @@ void RenderTreeUpdater::tearDownRenderers(Element& root)
     tearDownRenderers(root, TeardownType::Full);
 }
 
-void RenderTreeUpdater::tearDownRenderersForDisplayNoneFrame(Element& root)
-{
-    tearDownRenderers(root, TeardownType::RendererUpdate);
-}
-
 void RenderTreeUpdater::tearDownRenderersForShadowRootInsertion(Element& host)
 {
     ASSERT(!host.shadowRoot());
@@ -840,7 +836,7 @@ static std::optional<DidRepaintAndMarkContainingBlock> repaintAndMarkContainingB
             auto cachedRepaintRect = layer->cachedClippedOverflowRect();
             if (!cachedRepaintRect)
                 return false;
-            destroyRoot.repaintUsingContainer(layer->repaintContainer(), *cachedRepaintRect, false);
+            destroyRoot.repaintUsingContainer(layer->repaintContainer(), *cachedRepaintRect, RenderObject::ClipRepaintToLayer::No);
             return true;
         };
         if (repaintUsingCachedRectIfNeeded())

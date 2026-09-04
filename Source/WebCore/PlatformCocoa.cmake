@@ -1,5 +1,5 @@
 set(MACOSX_FRAMEWORK_IDENTIFIER com.apple.WebCore)
-if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if (WebCore_INSTALL_NAME_DIR)
     set_target_properties(WebCore PROPERTIES
         INSTALL_NAME_DIR "${WebCore_INSTALL_NAME_DIR}"
     )
@@ -74,7 +74,7 @@ list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
     "SourcesCocoa.txt"
 )
 # FIXME: Test building on iOS and then enable on iOS.
-if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
     list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
         "SourcesCMakeCocoa.txt"
     )
@@ -169,7 +169,7 @@ if (ENABLE_AV1)
 endif ()
 
 if (NOT ENABLE_WEBGPU)
-    if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
         target_link_options(WebCore PRIVATE "LINKER:-undefined,dynamic_lookup")
     endif ()
 else ()
@@ -565,8 +565,6 @@ list(APPEND WebCore_SOURCES
     testing/MockContentFilterManager.cpp
     testing/MockContentFilterSettings.cpp
     testing/MockParentalControlsURLFilter.mm
-
-    workers/service/ServiceWorkerRoute.mm
 )
 
 if (WEBKIT_SDK_IS_MACOS)
@@ -610,7 +608,7 @@ list(APPEND WebCore_SOURCES
     platform/mac/PlatformEventFactoryMac.mm
     platform/mac/PlatformPasteboardMac.mm
     platform/mac/PlatformScreenMac.mm
-    platform/mac/PowerObserverMac.cpp
+    platform/mac/PowerObserverMac.mm
     platform/mac/RevealUtilities.mm
     platform/mac/ScrollAnimatorMac.mm
     platform/mac/ScrollViewMac.mm
@@ -1359,6 +1357,8 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cg/ImageDecoderCG.h
     platform/graphics/cg/PDFDocumentImage.h
     platform/graphics/cg/PathCG.h
+    platform/graphics/cg/ShareableSpatialImage.h
+    platform/graphics/cg/SpatialImageTypes.h
     platform/graphics/cg/UTIRegistry.h
 
     platform/graphics/cocoa/AV1UtilitiesCocoa.h

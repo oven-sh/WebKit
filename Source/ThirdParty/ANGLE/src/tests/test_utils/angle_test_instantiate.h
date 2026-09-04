@@ -131,6 +131,7 @@ struct CombinedPrintToStringParamName
         ES2_VULKAN()                                                                   \
             .enable(Feature::EnableParallelCompileAndLink)                             \
             .enable(Feature::VaryingsRequireMatchingPrecisionInSpirv),                 \
+        ES2_VULKAN().disable(Feature::EnableCreateContextBackwardsCompatible),         \
         ES2_VULKAN_SWIFTSHADER()                                                       \
             .enable(Feature::EnableParallelCompileAndLink)                             \
             .disable(Feature::SupportsGraphicsPipelineLibrary)
@@ -141,20 +142,22 @@ struct CombinedPrintToStringParamName
         ES3_VULKAN()                                                                   \
             .enable(Feature::EnableParallelCompileAndLink)                             \
             .enable(Feature::VaryingsRequireMatchingPrecisionInSpirv),                 \
+        ES3_VULKAN().disable(Feature::EnableCreateContextBackwardsCompatible),         \
         ES3_VULKAN_SWIFTSHADER()                                                       \
             .enable(Feature::EnableParallelCompileAndLink)                             \
             .disable(Feature::SupportsGraphicsPipelineLibrary)                         \
             .enable(Feature::VaryingsRequireMatchingPrecisionInSpirv)                  \
             .enable(Feature::SimulateTileMemoryForTesting)
 
-#define ANGLE_ALL_TEST_PLATFORMS_ES31                                         \
-    ES31_OPENGL(), ES31_OPENGLES(), ES31_VULKAN(), ES31_VULKAN_SWIFTSHADER(), \
-        ES31_VULKAN()                                                         \
-            .enable(Feature::EnableParallelCompileAndLink)                    \
-            .enable(Feature::VaryingsRequireMatchingPrecisionInSpirv),        \
-        ES31_VULKAN_SWIFTSHADER()                                             \
-            .enable(Feature::EnableParallelCompileAndLink)                    \
-            .disable(Feature::SupportsGraphicsPipelineLibrary)                \
+#define ANGLE_ALL_TEST_PLATFORMS_ES31                                           \
+    ES31_OPENGL(), ES31_OPENGLES(), ES31_VULKAN(), ES31_VULKAN_SWIFTSHADER(),   \
+        ES31_VULKAN()                                                           \
+            .enable(Feature::EnableParallelCompileAndLink)                      \
+            .enable(Feature::VaryingsRequireMatchingPrecisionInSpirv),          \
+        ES31_VULKAN().disable(Feature::EnableCreateContextBackwardsCompatible), \
+        ES31_VULKAN_SWIFTSHADER()                                               \
+            .enable(Feature::EnableParallelCompileAndLink)                      \
+            .disable(Feature::SupportsGraphicsPipelineLibrary)                  \
             .enable(Feature::VaryingsRequireMatchingPrecisionInSpirv)
 
 #define ANGLE_ALL_TEST_PLATFORMS_ES32                                 \
@@ -168,6 +171,11 @@ struct CombinedPrintToStringParamName
 #define ANGLE_INSTANTIATE_TEST_ES1(testName)                                         \
     const PlatformParameters testName##params[] = {ANGLE_ALL_TEST_PLATFORMS_ES1};    \
     INSTANTIATE_TEST_SUITE_P(, testName, ANGLE_INSTANTIATE_TEST_PLATFORMS(testName), \
+                             testing::PrintToStringParamName())
+
+#define ANGLE_INSTANTIATE_TEST_ES1_AND(testName, ...)                                          \
+    const PlatformParameters testName##params[] = {ANGLE_ALL_TEST_PLATFORMS_ES1, __VA_ARGS__}; \
+    INSTANTIATE_TEST_SUITE_P(, testName, ANGLE_INSTANTIATE_TEST_PLATFORMS(testName),           \
                              testing::PrintToStringParamName())
 
 // Instantiate the test once for each GLES2 platform

@@ -127,10 +127,8 @@
 
 #if PLATFORM(COCOA)
 #include <crt_externs.h>
-#include <wtf/OSObjectPtr.h>
 #include <wtf/cocoa/CrashReporter.h>
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
-#include <wtf/darwin/DispatchExtras.h>
 #endif
 
 #if PLATFORM(GTK)
@@ -1619,7 +1617,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 
 #endif // ENABLE(FUZZILLI)
 
-static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, Expected<CString, UTF8ConversionError> expectedString)
+static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<CString, UTF8ConversionError> expectedString)
 {
     if (expectedString)
         return expectedString.value();
@@ -4066,7 +4064,7 @@ static void dumpException(GlobalObject* globalObject, JSValue exception)
 
     auto exceptionString = exception.toWTFString(globalObject);
     CHECK_EXCEPTION();
-    Expected<CString, UTF8ConversionError> expectedCString = exceptionString.tryGetUTF8();
+    std::expected<CString, UTF8ConversionError> expectedCString = exceptionString.tryGetUTF8();
     if (expectedCString)
         printf("Exception: %s\n", expectedCString.value().data());
     else
@@ -4345,7 +4343,7 @@ static void runInteractive(GlobalObject* globalObject)
         if (evaluationException && vm.isTerminationException(evaluationException.get()))
             vm.setExecutionForbidden();
 
-        Expected<CString, UTF8ConversionError> utf8;
+        std::expected<CString, UTF8ConversionError> utf8;
         if (evaluationException) {
             fputs("Exception: ", stdout);
             utf8 = evaluationException->value().toWTFString(globalObject).tryGetUTF8();
@@ -4917,6 +4915,9 @@ int jscmain(int argc, char** argv)
 
     WTF::initializeMainThread();
 
+    // Match the QoS of the WebKit WebContent process.
+    WTF::Thread::setCurrentThreadIsUserInteractive(-1);
+
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
     mainCommandLine.construct(argc, argv);
@@ -4965,11 +4966,7 @@ int jscmain(int argc, char** argv)
 
 #if PLATFORM(COCOA)
     auto& memoryPressureHandler = MemoryPressureHandler::singleton();
-    {
-        // FIXME: This is a false positive. rdar://160931336
-        SUPPRESS_RETAINPTR_CTOR_ADOPT OSObjectPtr queue = adoptOSObject(dispatch_queue_create("jsc shell memory pressure handler", serialQueueWithAutoreleasePoolAttrSingleton()));
-        memoryPressureHandler.setDispatchQueue(WTF::move(queue));
-    }
+    memoryPressureHandler.setDispatchQueueWithLabel("jsc shell memory pressure handler"_s);
     Box<Critical> memoryPressureCriticalState = Box<Critical>::create(Critical::No);
     Box<Synchronous> memoryPressureSynchronousState = Box<Synchronous>::create(Synchronous::No);
     memoryPressureHandler.setLowMemoryHandler([=] (Critical critical, Synchronous synchronous) {

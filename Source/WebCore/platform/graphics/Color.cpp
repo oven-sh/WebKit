@@ -174,23 +174,23 @@ Color Color::semanticColor() const
     return { asInline(), flagsExcludingPrivate() | Flags::Semantic };
 }
 
-ColorComponents<float, 4> Color::toResolvedColorComponentsInColorSpace(ColorSpace outputColorSpace) const
+ColorComponents<float, 4> Color::toResolvedColorComponentsInColorSpace(ColorSpaceName outputColorSpace) const
 {
     auto [inputColorSpace, components] = colorSpaceAndResolvedColorComponents();
     return convertAndResolveColorComponents(inputColorSpace, components, outputColorSpace);
 }
 
-ColorComponents<float, 4> Color::toResolvedColorComponentsInColorSpace(const DestinationColorSpace& outputColorSpace) const
+ColorComponents<float, 4> Color::toResolvedColorComponentsInColorSpace(const ColorSpace& outputColorSpace) const
 {
     auto [inputColorSpace, components] = colorSpaceAndResolvedColorComponents();
     return convertAndResolveColorComponents(inputColorSpace, components, outputColorSpace);
 }
 
-std::pair<ColorSpace, ColorComponents<float, 4>> Color::colorSpaceAndResolvedColorComponents() const
+std::pair<ColorSpaceName, ColorComponents<float, 4>> Color::colorSpaceAndResolvedColorComponents() const
 {
     if (isOutOfLine())
         return { colorSpace(), resolveColorComponents(protect(asOutOfLine())->resolvedComponents()) };
-    return { ColorSpace::SRGB, asColorComponents(convertColor<SRGBA<float>>(asInline()).resolved()) };
+    return { ColorSpaceName::SRGB, asColorComponents(convertColor<SRGBA<float>>(asInline()).resolved()) };
 }
 
 bool Color::isBlackColor(const Color& color)

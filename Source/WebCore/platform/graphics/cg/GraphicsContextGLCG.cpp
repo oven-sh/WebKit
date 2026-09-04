@@ -28,12 +28,10 @@
 
 #if ENABLE(WEBGL)
 
-#include "BitmapImage.h"
 #include "GraphicsContextCG.h"
 #include "GraphicsContextGLImageExtractor.h"
 #include "Image.h"
-#include "ImageUtilities.h"
-#include "PixelBuffer.h"
+#include "NativeImage.h"
 
 #if HAVE(ARM_NEON_INTRINSICS)
 #include "GraphicsContextGLNEON.h"
@@ -321,21 +319,9 @@ void NODELETE convert16BitFormatToRGBA8(GraphicsContextGL::DataFormat srcFormat,
 
 GraphicsContextGLImageExtractor::~GraphicsContextGLImageExtractor() = default;
 
-bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool ignoreGammaAndColorProfile, bool ignoreNativeImageAlphaPremultiplication)
+bool GraphicsContextGLImageExtractor::extractImage(AlphaPremultiplication sourceAlphaPremultiplication, bool premultiplyAlpha)
 {
-    RefPtr<NativeImage> decodedImage;
-    bool hasAlpha = !m_image->currentFrameKnownToBeOpaque();
-
-    if ((ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) && m_image->data()) {
-        auto image = BitmapImage::create(nullptr, AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied);
-        image->setData(m_image->data(), true);
-        decodedImage = image->primaryNativeImage();
-    } else
-        decodedImage = m_image->currentNativeImage();
-
-    if (!decodedImage)
-        return false;
-
+    RefPtr decodedImage = m_image.ptr();
     m_imageWidth = CGImageGetWidth(decodedImage->platformImage().get());
     m_imageHeight = CGImageGetHeight(decodedImage->platformImage().get());
     if (!m_imageWidth || !m_imageHeight)
@@ -363,6 +349,8 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         CGContextDrawImage(bitmapContext.get(), CGRectMake(0, 0, m_imageWidth, m_imageHeight), decodedImage->platformImage().get());
 
         // Now discard the original CG image and replace it with a copy from the bitmap context.
+        // The bitmap context premultiplied the alpha, whatever the original contents held.
+        sourceAlphaPremultiplication = AlphaPremultiplication::Premultiplied;
         decodedImage = NativeImage::create(adoptCF(CGBitmapContextCreateImage(bitmapContext.get())));
     }
 
@@ -417,37 +405,24 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         }
     }
 
-    m_alphaOp = AlphaOp::DoNothing;
+    // The CGImage records the premultiplication of its contents, but it may record it incorrectly,
+    // so only the alpha channel position is taken from it and the premultiplication from the caller.
     AlphaFormat alphaFormat = AlphaFormatNone;
+    bool hasAlpha = false;
     switch (CGImageGetAlphaInfo(decodedImage->platformImage().get())) {
     case kCGImageAlphaPremultipliedFirst:
-        if (!premultiplyAlpha)
-            m_alphaOp = AlphaOp::DoUnmultiply;
-        else if (ignoreNativeImageAlphaPremultiplication)
-            m_alphaOp = AlphaOp::DoPremultiply;
-        alphaFormat = AlphaFormatFirst;
-        break;
     case kCGImageAlphaFirst:
-        // This path is only accessible for MacOS earlier than 10.6.4.
-        if (premultiplyAlpha)
-            m_alphaOp = AlphaOp::DoPremultiply;
         alphaFormat = AlphaFormatFirst;
-        break;
-    case kCGImageAlphaNoneSkipFirst:
-        // This path is only accessible for MacOS earlier than 10.6.4.
-        alphaFormat = AlphaFormatFirst;
+        hasAlpha = true;
         break;
     case kCGImageAlphaPremultipliedLast:
-        if (!premultiplyAlpha)
-            m_alphaOp = AlphaOp::DoUnmultiply;
-        else if (ignoreNativeImageAlphaPremultiplication)
-            m_alphaOp = AlphaOp::DoPremultiply;
-        alphaFormat = AlphaFormatLast;
-        break;
     case kCGImageAlphaLast:
-        if (premultiplyAlpha)
-            m_alphaOp = AlphaOp::DoPremultiply;
         alphaFormat = AlphaFormatLast;
+        hasAlpha = true;
+        break;
+    case kCGImageAlphaNoneSkipFirst:
+        // The skipped channel holds undefined values, so it must not take part in an alpha op.
+        alphaFormat = AlphaFormatFirst;
         break;
     case kCGImageAlphaNoneSkipLast:
         alphaFormat = AlphaFormatLast;
@@ -458,6 +433,7 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
     default:
         return false;
     }
+    m_alphaOp = hasAlpha ? alphaOpForPremultiplication(sourceAlphaPremultiplication, premultiplyAlpha) : AlphaOp::DoNothing;
 
     m_imageSourceFormat = getSourceDataFormat(componentsPerPixel, alphaFormat, bitsPerComponent == 16, bigEndianSource);
     if (m_imageSourceFormat == DataFormat::NumFormats)
@@ -498,32 +474,6 @@ bool GraphicsContextGLImageExtractor::extractImage(bool premultiplyAlpha, bool i
         m_imageSourceUnpackAlignment = 1;
     }
     return true;
-}
-
-RefPtr<NativeImage> GraphicsContextGL::createNativeImageFromPixelBuffer(const GraphicsContextGLAttributes& sourceContextAttributes, Ref<PixelBuffer>&& pixelBuffer)
-{
-    ASSERT(!pixelBuffer->size().isEmpty());
-    // Input is GL_RGBA == kCGBitmapByteOrder32Big | kCGImageAlpha*Last.
-    // GL_BGRA would be kCGBitmapByteOrder32Little | kCGImageAlpha*First.
-    CGBitmapInfo bitmapInfo = kCGBitmapByteOrder32Big;
-    if (!sourceContextAttributes.alpha)
-        bitmapInfo |= kCGImageAlphaNoneSkipLast;
-    else if (sourceContextAttributes.premultipliedAlpha)
-        bitmapInfo |= kCGImageAlphaPremultipliedLast;
-    else
-        bitmapInfo |= kCGImageAlphaLast;
-
-    Ref protectedPixelBuffer = pixelBuffer;
-    auto data = pixelBuffer->bytes();
-
-    verifyImageBufferIsBigEnough(data);
-
-    auto dataProvider = adoptCF(CGDataProviderCreateWithData(&protectedPixelBuffer.leakRef(), data.data(), data.size(), [] (void* context, const void*, size_t) {
-        static_cast<PixelBuffer*>(context)->deref();
-    }));
-
-    auto imageSize = pixelBuffer->size();
-    return NativeImage::create(adoptCF(CGImageCreate(imageSize.width(), imageSize.height(), 8, 32, 4 * imageSize.width(), pixelBuffer->format().colorSpace.platformColorSpace(), bitmapInfo, dataProvider.get(), 0, false, kCGRenderingIntentDefault)));
 }
 
 } // namespace WebCore

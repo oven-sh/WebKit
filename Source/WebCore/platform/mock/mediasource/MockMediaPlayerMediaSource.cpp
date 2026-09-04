@@ -28,7 +28,7 @@
 
 #if ENABLE(MEDIA_SOURCE)
 
-#include "DestinationColorSpace.h"
+#include "ColorSpace.h"
 #include "MediaPlayer.h"
 #include "MediaSourcePrivate.h"
 #include "MediaSourcePrivateClient.h"
@@ -164,6 +164,13 @@ void MockMediaPlayerMediaSource::characteristicsFromMediaSourceChanged()
     assertIsMainThread();
     if (RefPtr player = m_player.get())
         player->characteristicChanged();
+}
+
+void MockMediaPlayerMediaSource::seekableRangesFromMediaSourceChanged()
+{
+    assertIsMainThread();
+    if (RefPtr player = m_player.get())
+        player->seekableTimeRangesChanged();
 }
 
 void MockMediaPlayerMediaSource::setPageIsVisible(bool)
@@ -327,9 +334,9 @@ std::optional<VideoPlaybackQualityMetrics> MockMediaPlayerMediaSource::videoPlay
     return mediaSourcePrivate ? mediaSourcePrivate->videoPlaybackQualityMetrics() : std::nullopt;
 }
 
-DestinationColorSpace MockMediaPlayerMediaSource::colorSpace()
+ColorSpace MockMediaPlayerMediaSource::colorSpace()
 {
-    return DestinationColorSpace::SRGB();
+    return ColorSpace::SRGB();
 }
 
 }

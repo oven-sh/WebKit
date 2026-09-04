@@ -62,6 +62,10 @@
 #include "Settings.h"
 #include "SocketProvider.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StyleDocumentScope.h"
+#include "StyleEnvironmentVariables.h"
+#include "StyleLinkParameters.h"
+#include "StyleScope.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSLock.h>
@@ -75,6 +79,7 @@ namespace WebCore {
 
 SVGImage::SVGImage(ImageObserver* observer)
     : Image(observer)
+    , m_appliedLinkParameters(CSS::Keyword::None { })
     , m_startAnimationTimer(*this, &SVGImage::startAnimationTimerFired)
 {
 }
@@ -219,7 +224,7 @@ IntSize SVGImage::containerSize() const
     return IntSize(currentSize);
 }
 
-ImageDrawResult SVGImage::drawForContainer(GraphicsContext& context, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
+ImageDrawResult SVGImage::drawForContainer(GraphicsContext& context, const ContainerContext& containerContext, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
     if (!m_page)
         return ImageDrawResult::DidNothing;
@@ -227,20 +232,37 @@ ImageDrawResult SVGImage::drawForContainer(GraphicsContext& context, const Float
     // Temporarily reset image observer, we don't want to receive any changeInRect() calls due to this relayout.
     ImageObserverDisableScope imageObserverDisabler(*this);
 
+    auto containerSize = containerContext.containerSize;
     IntSize roundedContainerSize = roundedIntSize(containerSize);
     setContainerSize(roundedContainerSize);
 
     FloatRect scaledSrc = srcRect;
-    scaledSrc.scale(1 / containerZoom);
+    scaledSrc.scale(1 / containerContext.containerZoom);
 
     // Compensate for the container size rounding by adjusting the source rect.
     FloatSize adjustedSrcSize = scaledSrc.size();
     adjustedSrcSize.scale(roundedContainerSize.width() / containerSize.width(), roundedContainerSize.height() / containerSize.height());
     scaledSrc.setSize(adjustedSrcSize);
 
-    protect(frameView())->scrollToFragment(initialFragmentURL);
+    applyLinkParameters(containerContext.linkParameters);
+    protect(frameView())->scrollToFragment(containerContext.initialFragmentURL);
 
     return draw(context, dstRect, scaledSrc, options);
+}
+
+void SVGImage::applyLinkParameters(const Style::LinkParameters& parameters)
+{
+    // FIXME: webkit.org/b/322833 - the resource document holds one container's parameters at a time,
+    // so this restyles it once per draw in the container.
+    if (m_appliedLinkParameters == parameters)
+        return;
+
+    RefPtr document = protect(frameView())->frame().document();
+    if (!document)
+        return;
+
+    document->styleScope().environmentVariables().setLinkParameters(parameters);
+    m_appliedLinkParameters = parameters;
 }
 
 bool SVGImage::hasHDRContent() const
@@ -255,12 +277,12 @@ bool SVGImage::hasHDRContent() const
     return false;
 }
 
-RefPtr<NativeImage> SVGImage::nativeImage(const DestinationColorSpace& colorSpace)
+RefPtr<NativeImage> SVGImage::nativeImage(const ColorSpace& colorSpace)
 {
     return nativeImage(size(), colorSpace);
 }
 
-RefPtr<NativeImage> SVGImage::nativeImage(const FloatSize& size, const DestinationColorSpace& colorSpace)
+RefPtr<NativeImage> SVGImage::nativeImage(const FloatSize& size, const ColorSpace& colorSpace)
 {
     if (!m_page)
         return nullptr;
@@ -283,11 +305,11 @@ RefPtr<NativeImage> SVGImage::nativeImage(const FloatSize& size, const Destinati
     return ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
 }
 
-void SVGImage::drawPatternForContainer(GraphicsContext& context, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& srcRect,
+void SVGImage::drawPatternForContainer(GraphicsContext& context, const ContainerContext& containerContext, const FloatRect& srcRect,
     const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, const FloatRect& dstRect, ImagePaintingOptions options)
 {
-    FloatRect zoomedContainerRect = FloatRect(FloatPoint(), containerSize);
-    zoomedContainerRect.scale(containerZoom);
+    FloatRect zoomedContainerRect = FloatRect(FloatPoint(), containerContext.containerSize);
+    zoomedContainerRect.scale(containerContext.containerZoom);
 
     // The ImageBuffer size needs to be scaled to match the final resolution.
     AffineTransform transform = context.getCTM();
@@ -302,7 +324,7 @@ void SVGImage::drawPatternForContainer(GraphicsContext& context, const FloatSize
     if (!buffer)
         return;
 
-    drawForContainer(buffer->context(), containerSize, containerZoom, initialFragmentURL, imageBufferSize, zoomedContainerRect);
+    drawForContainer(buffer->context(), containerContext, imageBufferSize, zoomedContainerRect);
     if (context.drawLuminanceMask())
         buffer->convertToLuminanceMask();
 
@@ -326,6 +348,8 @@ ImageDrawResult SVGImage::draw(GraphicsContext& context, const FloatRect& dstRec
 
     GraphicsContextStateSaver stateSaver(context);
     context.setCompositeOperation(options.compositeOperator(), options.blendMode());
+    if (options.interpolationQuality() != InterpolationQuality::Default)
+        context.setImageInterpolationQuality(options.interpolationQuality());
     context.clip(enclosingIntRect(dstRect));
 
     float alpha = context.alpha();
