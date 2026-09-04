@@ -87,7 +87,10 @@ enum CapabilityLevel : uint8_t;
 }
 #endif
 
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+// Bun is a JSCOnly port, so PLATFORM(MAC) is false even on macOS. The checker costs one word per
+// CodeBlock and turns a CodeBlock destroyed twice, or destroyed with somebody else's MetadataTable or
+// JITData, into a crash in ~CodeBlock instead of a later crash in whatever those structures still link to.
+#if PLATFORM(MAC) || PLATFORM(MACCATALYST) || USE(BUN_JSC_ADDITIONS)
 #define ENABLE_CODEBLOCK_CRASH_ANALYSIS 1 // FIXME: rdar://149223818
 #else
 #define ENABLE_CODEBLOCK_CRASH_ANALYSIS 0
@@ -1045,7 +1048,14 @@ private:
 };
 /* This check is for normal Release builds; ASSERT_ENABLED changes the size. */
 #if !ASSERT_ENABLED
+#if USE(BUN_JSC_ADDITIONS) && OS(WINDOWS)
+// The MSVC ABI lays the bitfields out less densely, so CodeBlock is 224 bytes here before the
+// ENABLE(CODEBLOCK_CRASH_ANALYSIS) word and 232 with it. Elsewhere it goes from 216 to 224, which
+// stays inside the same 224-byte cell.
+static_assert(sizeof(CodeBlock) <= 232, "Keep it small for memory saving");
+#else
 static_assert(sizeof(CodeBlock) <= 224, "Keep it small for memory saving");
+#endif
 #endif
 
 template <typename ExecutableType>

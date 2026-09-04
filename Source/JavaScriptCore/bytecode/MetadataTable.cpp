@@ -63,6 +63,12 @@ MetadataTable::~MetadataTable()
 
 void MetadataTable::destroy(MetadataTable* table)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Upstream survives a second destroy() of the same table (webkit.org/b/272787) by leaking it. A second
+    // destroy() means some CodeBlock dropped a reference it no longer owned, and the caller of this second
+    // drop is the only evidence of which CodeBlock that was, so crash here while it is still on the stack.
+    RELEASE_ASSERT(!table->isDestroyed(), table);
+#endif
     // FIXME: This check should really not be necessary, see https://webkit.org/b/272787
     if (table->isDestroyed()) {
         ASSERT_NOT_REACHED();
