@@ -2075,6 +2075,22 @@ void CodeBlock::getICStatusMap(ICStatusMap& result)
 }
 
 #if ENABLE(JIT)
+void CodeBlock::forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>& func)
+{
+    ASSERT(vm().heap.worldIsStopped());
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+        if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(propertyCache)) {
+            if (handlerIC->m_inlinedHandler && handlerIC->m_inlinedHandler->stubRoutine())
+                func(*handlerIC->m_inlinedHandler->stubRoutine());
+        }
+        for (auto* handler = propertyCache.firstHandler(); handler; handler = handler->next()) {
+            if (auto* routine = handler->stubRoutine())
+                func(*routine);
+        }
+        return IterationStatus::Continue;
+    });
+}
+
 PropertyInlineCache* CodeBlock::findPropertyCache(CodeOrigin codeOrigin)
 {
     ConcurrentJSLocker locker(m_lock);
