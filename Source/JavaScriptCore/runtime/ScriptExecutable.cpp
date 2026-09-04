@@ -158,6 +158,23 @@ static CodeBlock* publishCodeBlock(VM& vm, ScriptExecutable* owner, WriteBarrier
     return oldCodeBlock;
 }
 
+CodeBlock* ScriptExecutable::installedCodeBlock(CodeType codeType, CodeSpecializationKind kind)
+{
+    switch (codeType) {
+    case GlobalCode:
+        return uncheckedDowncast<ProgramExecutable>(this)->m_codeBlock.get();
+    case ModuleCode:
+        return uncheckedDowncast<ModuleProgramExecutable>(this)->m_codeBlock.get();
+    case EvalCode:
+        return uncheckedDowncast<EvalExecutable>(this)->m_codeBlock.get();
+    case FunctionCode: {
+        FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
+        return kind == CodeSpecializationKind::CodeForCall ? executable->m_codeBlockForCall.get() : executable->m_codeBlockForConstruct.get();
+    }
+    }
+    return nullptr;
+}
+
 void ScriptExecutable::installCode(CodeBlock* codeBlock)
 {
     installCode(codeBlock->vm(), codeBlock, codeBlock->codeType(), codeBlock->specializationKind(), Profiler::JettisonReason::NotJettisoned);
@@ -211,6 +228,17 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
         default:
             break;
         }
+    }
+
+    // GIL off, a CodeBlock is published as baseline code (its JIT type) before
+    // the install that follows takes this lock. In between, another thread can
+    // run the baseline code, tier up, and install the optimized replacement.
+    // The late install must not put the baseline block back over it. A
+    // jettison installs the alternative on purpose, with a reason.
+    if (vm.gilOffWithProcessGate() && genericCodeBlock && reason == Profiler::JettisonReason::NotJettisoned) [[unlikely]] {
+        if (CodeBlock* current = installedCodeBlock(codeType, kind); current && current != genericCodeBlock
+            && current->alternative() == genericCodeBlock && JITCode::isOptimizingJIT(current->jitType()))
+            return;
     }
 
     // UNGIL IT-8 (R1c, clear direction): the lock-free fast gate

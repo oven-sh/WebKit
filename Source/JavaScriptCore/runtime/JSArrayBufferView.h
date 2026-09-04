@@ -317,7 +317,23 @@ public:
     JSArrayBuffer* possiblySharedJSBuffer(JSGlobalObject* globalObject);
     inline RefPtr<ArrayBufferView> unsharedImpl();
     JS_EXPORT_PRIVATE RefPtr<ArrayBufferView> possiblySharedImpl();
-    bool isDetached() const { return hasArrayBuffer() && !hasVector(); }
+    bool isDetached() const
+    {
+        if (!hasArrayBuffer())
+            return false;
+        if (detachKeepsVector()) [[unlikely]]
+            return m_detachedKeepingVector || !hasVector();
+        return !hasVector();
+    }
+
+    // GIL off, a detach keeps the view's base word, and m_detachedKeepingVector
+    // says that the view is detached. JIT code on another thread can load the
+    // length before the detach and the base after it, and that base must still
+    // be the mapping that the length describes. ArrayBuffer's quarantine keeps
+    // the mapping until the next stop, and no access runs across a stop. C++
+    // reads the base through vector(), which is null for a detached view in
+    // every mode.
+    static bool detachKeepsVector() { return g_jscConfig.gilOffProcess; }
     bool isResizableOrGrowableShared() const { return JSC::isResizableOrGrowableShared(m_mode); }
     bool isGrowableShared() const { return JSC::isGrowableShared(m_mode); };
     bool isResizableNonShared() const { return JSC::isResizableNonShared(m_mode); };
@@ -347,7 +363,12 @@ public:
 
     bool hasVector() const { return !!vectorCagedConcurrently().getUnsafe(); }
     // CagedPtr loads its word relaxed, so these are the same single load as vectorCagedConcurrently().
-    void* vector() const LIFETIME_BOUND { return m_vector.getMayBeNull(); }
+    void* vector() const LIFETIME_BOUND
+    {
+        if (detachKeepsVector() && m_detachedKeepingVector) [[unlikely]]
+            return nullptr;
+        return m_vector.getMayBeNull();
+    }
     void* vectorWithoutPACValidation() const LIFETIME_BOUND { return m_vector.getUnsafe(); }
 
     std::span<const uint8_t> span() const LIFETIME_BOUND { return { static_cast<const uint8_t*>(vector()), byteLength() }; }
@@ -417,6 +438,7 @@ public:
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(JSArrayBufferView, m_length); }
     static constexpr ptrdiff_t offsetOfByteOffset() { return OBJECT_OFFSETOF(JSArrayBufferView, m_byteOffset); }
     static constexpr ptrdiff_t offsetOfMode() { return OBJECT_OFFSETOF(JSArrayBufferView, m_mode); }
+    static constexpr ptrdiff_t offsetOfDetachedKeepingVector() { return OBJECT_OFFSETOF(JSArrayBufferView, m_detachedKeepingVector); }
 
     static inline RefPtr<ArrayBufferView> toWrapped(VM&, JSValue);
     static inline RefPtr<ArrayBufferView> toWrappedAllowResizable(VM&, JSValue);
@@ -442,6 +464,7 @@ protected:
     RacyArrayBufferViewField<size_t> m_length;
     RacyArrayBufferViewField<size_t> m_byteOffset { 0 };
     RacyArrayBufferViewField<TypedArrayMode> m_mode;
+    RacyArrayBufferViewField<bool> m_detachedKeepingVector { false };
 };
 
 inline JSArrayBufferView* validateTypedArray(JSGlobalObject*, JSValue);

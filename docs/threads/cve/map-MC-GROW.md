@@ -364,7 +364,24 @@ the old length (4096) with the null base and wrote to address 4095. The
 `ArrayBuffer` arm keeps its base word until the stop, as the quarantine rule
 says; the view arm does not. With the Gigacage on, the null base is caged to
 the start of the primitive cage, so the store lands there instead of
-faulting. Open: LANDING-PLAN.md, "Open items".
+faulting.
+
+**Fixed (second round).** GIL off, `detachFromArrayBuffer` keeps `m_vector`
+and sets `JSArrayBufferView::m_detachedKeepingVector` before it publishes the
+zero length. The mapping stays until the next stop (the `ArrayBuffer`
+quarantine), so a racing reader pairs the old length with the old base, or
+any base with length 0. The predicate moved with it. `isDetached()` is "the
+byte is set, or the base is null", and so are the JIT tests that used a null
+base: the resizable-view bounds check
+(`AssemblyHelpers::branchIfArrayBufferViewIsDetached`), `CheckDetached` in the
+DFG and the FTL, the `DataView` `byteLength` IC, and the FFI argument paths.
+C++ keeps the old contract: `vector()` is null for a detached view, so JSC,
+Bun and N-API callers that test the base for null are unchanged. The
+hoisting half of S8 was already closed: with the GIL off, a `CheckTraps`
+clobbers `MiscFields`, so a view's length and base are loaded again after every
+poll, and no hoisted pair survives a stop. Test:
+`JSTests/threads/arrays/typed-array-detach-keeps-base-gil-off.js` (it runs with
+`GIGACAGE_ENABLED=0`).
 
 ---
 

@@ -645,6 +645,9 @@ public:
     void resetReachability();
     
     void computeRefCounts();
+
+    // With threads, before code generation. See Node::isButterflyLoadForWrite().
+    void markButterflyLoadsThatFeedElementWrites();
     
     unsigned varArgNumChildren(Node* node)
     {

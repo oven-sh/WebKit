@@ -55,6 +55,15 @@ void CCallHelpers::ensureShadowChickenPacket(VM& vm, GPRReg shadowPacket, GPRReg
     ShadowChicken* shadowChicken = vm.shadowChicken();
     RELEASE_ASSERT(shadowChicken);
     ASSERT(!RegisterSet::argumentGPRs().contains(scratch1NonArgGPR, IgnoreVectors));
+    if (vm.gilOff()) [[unlikely]] {
+        // The log is the carrier's. See ShadowChicken::isSpawnedThreadGILOff().
+        setupArguments<decltype(operationAcquireShadowChickenPacket)>(TrustedImmPtr(&vm));
+        prepareCallOperation(vm);
+        move(TrustedImmPtr(tagCFunction<OperationPtrTag>(operationAcquireShadowChickenPacket)), scratch1NonArgGPR);
+        call(scratch1NonArgGPR, OperationPtrTag);
+        move(GPRInfo::returnValueGPR, shadowPacket);
+        return;
+    }
     move(TrustedImmPtr(shadowChicken->addressOfLogCursor()), scratch1NonArgGPR);
     loadPtr(Address(scratch1NonArgGPR), shadowPacket);
     Jump ok = branchPtr(Below, shadowPacket, TrustedImmPtr(shadowChicken->logEnd()));

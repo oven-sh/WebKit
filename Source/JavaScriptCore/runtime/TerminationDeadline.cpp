@@ -27,6 +27,7 @@
 #include "TerminationDeadline.h"
 
 #include "VM.h"
+#include "VMLite.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
@@ -43,9 +44,15 @@ void TerminationDeadline::cancel(VM& vm)
 
 Ref<TerminationDeadline> TerminationDeadlineSet::add(MonotonicTime at)
 {
-    Ref deadline = adoptRef(*new TerminationDeadline(at));
     Locker locker { m_lock };
     ASSERT(m_vm);
+    VMLite* lite = nullptr;
+    if (m_vm->gilOff()) [[unlikely]] {
+        lite = VMLite::currentIfExists();
+        if (lite && lite->vm != m_vm)
+            lite = nullptr;
+    }
+    Ref deadline = adoptRef(*new TerminationDeadline(at, lite));
     size_t index = 0;
     while (index < m_deadlines.size() && m_deadlines[index]->m_deadline <= at)
         ++index;
@@ -88,14 +95,21 @@ void TerminationDeadlineSet::timerFired(MonotonicTime armedFor)
     if (!m_vm)
         return;
     MonotonicTime now = MonotonicTime::now();
-    bool due = false;
+    bool dueForVM = false;
+    Vector<VMLite*, 2> dueForThreads;
     while (!m_deadlines.isEmpty() && m_deadlines.first()->m_deadline <= now) {
         m_deadlines.first()->m_fired.store(true, std::memory_order_release);
+        if (VMLite* lite = m_deadlines.first()->m_lite)
+            dueForThreads.append(lite);
+        else
+            dueForVM = true;
         m_deadlines.removeAt(0);
-        due = true;
     }
-    if (due)
+    if (dueForVM)
         m_vm->notifyNeedTermination();
+    // A lite that is no longer registered left the VM without cancelling, and there is nothing to stop.
+    for (VMLite* lite : dueForThreads)
+        m_vm->traps().fireTargetedTermination(*lite);
     armTimerIfNeeded();
 }
 

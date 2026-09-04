@@ -34,12 +34,15 @@
 namespace JSC {
 
 class VM;
+class VMLite;
 
 // A request that a VM terminate its current execution once a wall-clock deadline passes: an embedder's
 // time limit on one bounded call (see VM::addTerminationDeadline). Not the Watchdog, which is a CPU-time
 // budget for a whole VM entry, one per VM, that every later VM entry keeps paying for. When the deadline
 // passes, VM::notifyNeedTermination() is called from a timer thread — unless the deadline was cancelled
-// first — and that is safe against the VM having been destroyed by then.
+// first — and that is safe against the VM having been destroyed by then. GIL-off, the deadline terminates
+// only the thread that added it (VMTraps::fireTargetedTermination), and that thread cancels it before it
+// leaves the VM.
 class TerminationDeadline final : public ThreadSafeRefCounted<TerminationDeadline> {
     WTF_MAKE_TZONE_ALLOCATED(TerminationDeadline);
 public:
@@ -51,12 +54,14 @@ public:
 
 private:
     friend class TerminationDeadlineSet;
-    explicit TerminationDeadline(MonotonicTime deadline)
+    TerminationDeadline(MonotonicTime deadline, VMLite* lite)
         : m_deadline(deadline)
+        , m_lite(lite)
     {
     }
 
     const MonotonicTime m_deadline;
+    VMLite* const m_lite; // GIL-off: the thread that added it. Null otherwise.
     std::atomic<bool> m_fired { false };
 };
 

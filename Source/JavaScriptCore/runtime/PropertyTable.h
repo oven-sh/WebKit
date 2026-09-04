@@ -491,7 +491,12 @@ private:
 
     ALWAYS_INLINE unsigned indexSize() const { return concurrentRelaxedLoad(m_indexSize); }
     ALWAYS_INLINE unsigned indexMask() const { return concurrentRelaxedLoad(m_indexMask); }
-    ALWAYS_INLINE uintptr_t indexVector() const { return concurrentRelaxedLoad(m_indexVector); }
+    // The lock-free probes reach the vector's header and slots through an
+    // address dependency on this word, which TSAN cannot see. Under TSAN the
+    // word is loaded with acquire and published with release, so that TSAN
+    // pairs the two. Other builds keep the relaxed accesses.
+    ALWAYS_INLINE uintptr_t indexVector() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_indexVector), TSAN_ENABLED ? std::memory_order_acquire : std::memory_order_relaxed); }
+    ALWAYS_INLINE void publishIndexVector(uintptr_t indexVector) { WTF::atomicStore(&m_indexVector, indexVector, TSAN_ENABLED ? std::memory_order_release : std::memory_order_relaxed); }
     ALWAYS_INLINE unsigned keyCount() const { return concurrentRelaxedLoad(m_keyCount); }
     ALWAYS_INLINE unsigned deletedCount() const { return concurrentRelaxedLoad(m_deletedCount); }
     // Relaxed mirror of the number of deleted offsets still occupying property
@@ -1031,7 +1036,7 @@ inline void PropertyTable::rehash(VM& vm, unsigned newCapacity, bool canStayComp
     // Once table gets non-compact, we do not change it back to compact again.
     // This is because some of property offset can be larger than UINT8_MAX already.
     bool isCompact = canStayCompact && oldIsCompact && tableCapacity() < UINT8_MAX;
-    concurrentRelaxedStore(m_indexVector, allocateZeroedIndexVector(isCompact, indexSize()));
+    publishIndexVector(allocateZeroedIndexVector(isCompact, indexSize()));
     withIndexVector([&](auto* vector) {
         auto* table = tableFromIndexVector(vector);
         withIndexVector(oldIndexVector, [&](const auto* oldVector) {

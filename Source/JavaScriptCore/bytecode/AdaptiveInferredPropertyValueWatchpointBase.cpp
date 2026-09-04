@@ -49,7 +49,15 @@ void AdaptiveInferredPropertyValueWatchpointBase::initialize(const ObjectPropert
 
 bool AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
 {
-    ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges)); // This is really costly.
+    // With the flag on, another thread can transition the watched object's
+    // structure between the caller's watchability check and this install
+    // (DFGAdaptiveStructureWatchpoint.cpp). A refused install is handled by
+    // the caller, so return false instead of asserting.
+    if (Options::useJSThreads()) [[unlikely]] {
+        if (!m_key.isWatchable(PropertyCondition::MakeNoChanges, Concurrency::MainThread))
+            return false;
+    } else
+        ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges)); // This is really costly.
 
     Structure* structure = m_key.object()->structure();
 

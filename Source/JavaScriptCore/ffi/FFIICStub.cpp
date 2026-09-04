@@ -221,6 +221,8 @@ void emitConvertArgument(CCallHelpers& jit, Type type, CCallHelpers::Address arg
         slowPath.append(jit.branchIfNotType(valueGPR, JSTypeRange { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayType) }));
         jit.loadPtr(CCallHelpers::Address(valueGPR, JSArrayBufferView::offsetOfVector()), scratchGPR);
         slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, scratchGPR)); // null / detached vector: keep those semantics in C++.
+        if (JSArrayBufferView::detachKeepsVector()) [[unlikely]]
+            slowPath.append(jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(valueGPR, JSArrayBufferView::offsetOfDetachedKeepingVector())));
         jit.load64(CCallHelpers::Address(valueGPR, JSArrayBufferView::offsetOfLength()), scratch2GPR);
         jit.cageConditionally(Gigacage::Primitive, scratchGPR, scratch2GPR, scratch3GPR);
         jit.store64(scratchGPR, slot);

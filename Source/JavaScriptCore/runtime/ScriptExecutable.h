@@ -144,6 +144,9 @@ public:
     JSArray* createTemplateObject(JSGlobalObject*, JSTemplateObjectDescriptor*);
 
 private:
+    // The CodeBlock in the slot that installCode(codeType, kind) writes.
+    CodeBlock* installedCodeBlock(CodeType, CodeSpecializationKind);
+
     friend class ExecutableBase;
     void prepareForExecutionImpl(VM&, JSFunction*, JSScope*, CodeSpecializationKind, CodeBlock*&);
 

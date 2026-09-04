@@ -373,7 +373,23 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         }
     }
 
-    Butterfly* butterfly = this->butterfly();
+    Butterfly* butterfly;
+    if (Options::useJSThreads()) [[unlikely]] {
+        // The block above saw a flat word that this thread owns, or a null
+        // word. butterfly() must not decode a segmented word, and a foreign
+        // conversion can land between the two loads. So this load is decoded
+        // only if it is not segmented, and a segmented word starts the
+        // dispatch again. It stays segmented, so the retry takes the block
+        // above.
+        uint64_t word = taggedButterflyWord();
+        if (isSegmentedButterfly(word)) [[unlikely]] {
+            scope.release();
+            push(globalObject, value);
+            return;
+        }
+        butterfly = untaggedButterfly(word);
+    } else
+        butterfly = this->butterfly();
 
     switch (indexingMode()) {
     case ArrayClass: {
