@@ -50,8 +50,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-class PolymorphicAccessJITStubRoutine;
-
 #if ENABLE(DFG_JIT)
 namespace DFG {
 class JITData;
@@ -69,6 +67,7 @@ class JSModuleEnvironment;
 class LLIntOffsetsExtractor;
 class LLIntPrototypeLoadAdaptiveStructureWatchpoint;
 class MetadataTable;
+class PolymorphicAccessJITStubRoutine;
 class PropertyInlineCache;
 class RegisterAtOffsetList;
 class ScriptExecutable;
@@ -181,8 +180,6 @@ private:
 
 public:
     JS_EXPORT_PRIVATE ~CodeBlock();
-
-    void forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>&);
 
     UnlinkedCodeBlock* unlinkedCodeBlock() const LIFETIME_BOUND { return m_unlinkedCode.get(); }
 
@@ -308,6 +305,7 @@ public:
 
     // O(n) operation. Use getICStatusMap() unless you really only intend to get one stub info.
     PropertyInlineCache* findPropertyCache(CodeOrigin);
+    void forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>&);
 
     const JITCodeMap& jitCodeMap();
 

@@ -30,11 +30,7 @@
 
 #if ENABLE(JIT)
 
-#include "CodeBlockSetInlines.h"
 #include "GCAwareJITStubRoutine.h"
-#include "InlineCacheHandler.h"
-#include "PropertyInlineCache.h"
-#include "PropertyInlineCacheClearingWatchpoint.h"
 #include "HeapInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -187,51 +183,6 @@ void JITStubRoutineSet::traceMarkedStubRoutines(Visitor& visitor)
 
 template void JITStubRoutineSet::traceMarkedStubRoutines(AbstractSlotVisitor&);
 template void JITStubRoutineSet::traceMarkedStubRoutines(SlotVisitor&);
-
-void JITStubRoutineSet::validateWatchpointLiveness(VM& vm)
-{
-    ASSERT(vm.heap.isInPhase(CollectorPhase::End));
-
-    // A routine that no inline cache reaches anymore can be kept alive across this GC by a reference on the stack
-    // (an AccessGenerationResult that is about to be dropped); its watchpoints go away with it before they can fire.
-    UncheckedKeyHashSet<PolymorphicAccessJITStubRoutine*> reachable;
-    vm.heap.codeBlockSet().iterate([&](CodeBlock* codeBlock) {
-        codeBlock->forEachICStubRoutine([&](PolymorphicAccessJITStubRoutine& routine) {
-            reachable.add(&routine);
-        });
-    });
-
-    auto validate = [&](GCAwareJITStubRoutine* stub) {
-        if (stub->m_isJettisoned || stub->m_ownerIsDead)
-            return;
-        switch (stub->m_type) {
-        case JITStubRoutine::Type::PolymorphicAccessJITStubRoutineType:
-        case JITStubRoutine::Type::MarkingGCAwareJITStubRoutineType:
-        case JITStubRoutine::Type::GCAwareJITStubRoutineWithExceptionHandlerType:
-            break;
-        default:
-            return;
-        }
-        auto* routine = static_cast<PolymorphicAccessJITStubRoutine*>(stub);
-        bool inUse = reachable.contains(routine) || (routine->m_isInSharedJITStubSet && !routine->m_owners.isEmpty());
-        if (!inUse)
-            return;
-        for (auto* watchpoint : routine->watchpoints()) {
-            const ObjectPropertyCondition& key = WTF::switchOn(*watchpoint,
-                [](StructureTransitionPropertyInlineCacheClearingWatchpoint& w) -> const ObjectPropertyCondition& { return w.key(); },
-                [](AdaptiveValuePropertyInlineCacheClearingWatchpoint& w) -> const ObjectPropertyCondition& { return w.key(); });
-            if (!key)
-                continue;
-            key.forEachDependentCell([&](JSCell* cell) {
-                RELEASE_ASSERT(vm.heap.isMarked(cell), routine, cell, routine->m_owner, routine->m_isInSharedJITStubSet);
-            });
-        }
-    };
-    for (auto& entry : m_routines)
-        validate(entry.routine);
-    for (auto* routine : m_immutableCodeRoutines)
-        validate(routine);
-}
 
 } // namespace JSC
 

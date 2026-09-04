@@ -855,9 +855,6 @@ void PropertyInlineCache::initializeWithUnitHandler(CodeBlock* codeBlock, Ref<In
         if (handlerIC->m_inlinedHandler)
             handlerIC->clearInlinedHandler(codeBlock);
         ASSERT(!handlerIC->m_inlinedHandler);
-        // Every handler in the chain registered codeBlock as an owner of its stub routine when it was prepended. A
-        // shared routine with a stale owner never sees ownerIsDead() and keeps firing its watchpoints after every IC
-        // that used it is gone.
         for (auto* cursor = m_handler.get(); cursor; cursor = cursor->next())
             cursor->removeOwner(codeBlock);
         m_handler = WTF::move(handler);
@@ -897,15 +894,8 @@ void PropertyInlineCache::rewireStubAsJumpInAccess(CodeBlock* codeBlock, Ref<Inl
 
 void PropertyInlineCache::resetStubAsJumpInAccess(CodeBlock* codeBlock)
 {
-    if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*this)) {
-        if (handlerIC->m_inlinedHandler)
-            handlerIC->clearInlinedHandler(codeBlock);
-        auto* cursor = m_handler.get();
-        while (cursor) {
-            cursor->removeOwner(codeBlock);
-            cursor = cursor->next();
-        }
-        m_handler = InlineCacheCompiler::generateSlowPathHandler(codeBlock->vm(), accessType);
+    if (isHandlerIC()) {
+        initializeWithUnitHandler(codeBlock, InlineCacheCompiler::generateSlowPathHandler(codeBlock->vm(), accessType));
         return;
     }
 

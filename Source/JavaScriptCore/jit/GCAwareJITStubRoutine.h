@@ -98,7 +98,6 @@ public:
     using Base = GCAwareJITStubRoutine;
     friend class JITStubRoutine;
     friend class GCAwareJITStubRoutine;
-    friend class JITStubRoutineSet;
 
     using Watchpoints = Bag<Variant<StructureTransitionPropertyInlineCacheClearingWatchpoint, AdaptiveValuePropertyInlineCacheClearingWatchpoint>>;
 

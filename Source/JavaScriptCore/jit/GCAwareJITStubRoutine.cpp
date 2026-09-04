@@ -169,12 +169,13 @@ bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
     bool isValid = true;
     for (StructureID weakReference : m_weakStructures)
         isValid &= vm.heap.isMarked(weakReference.decode());
-    // m_watchpoints are keyed on the cells these cases depend on and stay registered for as long as this routine
-    // lives, so the routine is only valid while every one of those cells is. The IC cannot be relied on to check
-    // them: CodeBlock::jettison() drops a repatching IC's PolymorphicAccess (PropertyInlineCache::deref()) while
-    // this routine stays installed, and a handler only tracks the first case of its routine.
-    for (auto& accessCase : m_cases)
-        isValid &= accessCase->isStillLive(vm);
+    // These watchpoints stay armed for as long as the routine lives and dereference their key when they fire.
+    for (auto* watchpoint : m_watchpoints) {
+        isValid &= WTF::switchOn(*watchpoint, [&](auto& watchpoint) {
+            const ObjectPropertyCondition& key = watchpoint.key();
+            return !key || key.isStillLive(vm);
+        });
+    }
     isValid &= Base::reconcileWeakReferencesAtGCEndImpl(vm);
     return isValid;
 }

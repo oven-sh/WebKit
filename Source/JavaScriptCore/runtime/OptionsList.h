@@ -488,7 +488,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpHeapStatisticsAtVMDestruction, false, Normal, nullptr) \
     v(Bool, enableStrongRefTracker, false, Normal, "Enable logging of live Strong<*> values. Use alongside $vm.triggerMemoryPressure() and dumpHeapOnLowMemory."_s) \
     v(Bool, dumpHeapOnLowMemory, false, Normal, "Dump a heap dump when the memory handler is triggered. Use alongside $vm.triggerMemoryPressure() and enableStrongRefTracker."_s) \
-    v(Bool, validateICWatchpointLiveness, false, Normal, "At the end of each GC, crash if an inline cache stub routine that is still in use has a watchpoint keyed on a dead cell"_s) \
     v(Bool, forceCodeBlockToJettisonDueToOldAge, false, Normal, "If true, this means that anytime we can jettison a CodeBlock due to old age, we do."_s) \
     v(Bool, useEagerCodeBlockJettisonTiming, false, Normal, "If true, the time slices for jettisoning a CodeBlock due to old age are shrunk significantly."_s) \
     FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
@@ -509,6 +508,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, alwaysGeneratePCToCodeOriginMap, false, Normal, "This will make sure we always generate a PCToCodeOriginMap for JITed code."_s) \
     \
     v(Double, randomIntegrityAuditRate, 0.05, Normal, "Probability of random integrity audits [0.0 - 1.0]"_s) \
+    v(Bool, validateICWatchpointLiveness, false, Normal, "At the end of each GC, crash if an inline cache stub routine that is still in use has a watchpoint keyed on a dead cell"_s) \
     v(Bool, verifyGC, false, Normal, nullptr) \
     v(Bool, verboseVerifyGC, false, Normal, nullptr) \
     v(Bool, verifyHeap, false, Normal, nullptr) \

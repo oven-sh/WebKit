@@ -74,8 +74,9 @@ public:
     {
     }
 
-    void fireInternal(VM&, const FireDetail&);
     const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
+
+    void fireInternal(VM&, const FireDetail&);
 
 private:
     PolymorphicAccessJITStubRoutine* m_owner;

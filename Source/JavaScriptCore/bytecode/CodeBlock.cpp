@@ -2075,6 +2075,22 @@ void CodeBlock::getICStatusMap(ICStatusMap& result)
 }
 
 #if ENABLE(JIT)
+void CodeBlock::forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>& func)
+{
+    ASSERT(vm().heap.worldIsStopped());
+    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
+        if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(propertyCache)) {
+            if (handlerIC->m_inlinedHandler && handlerIC->m_inlinedHandler->stubRoutine())
+                func(*handlerIC->m_inlinedHandler->stubRoutine());
+        }
+        for (auto* handler = propertyCache.firstHandler(); handler; handler = handler->next()) {
+            if (auto* routine = handler->stubRoutine())
+                func(*routine);
+        }
+        return IterationStatus::Continue;
+    });
+}
+
 PropertyInlineCache* CodeBlock::findPropertyCache(CodeOrigin codeOrigin)
 {
     ConcurrentJSLocker locker(m_lock);
@@ -2380,27 +2396,6 @@ void CodeBlock::shrinkToFit(const ConcurrentJSLocker&, ShrinkMode shrinkMode)
     m_constantRegisters.shrinkToFit();
 }
 
-void CodeBlock::forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>& func)
-{
-#if ENABLE(JIT)
-    if (!m_jitCode)
-        return;
-    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
-        for (auto* handler = propertyCache.firstHandler(); handler; handler = handler->next()) {
-            if (auto* routine = handler->stubRoutine())
-                func(*routine);
-        }
-        if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(propertyCache)) {
-            if (handlerIC->m_inlinedHandler && handlerIC->m_inlinedHandler->stubRoutine())
-                func(*handlerIC->m_inlinedHandler->stubRoutine());
-        }
-        return IterationStatus::Continue;
-    });
-#else
-    UNUSED_PARAM(func);
-#endif
-}
-
 void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
 {
     if (caller)
@@ -2512,17 +2507,6 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
     RELEASE_ASSERT(reason != Profiler::NotJettisoned);
 
-#if ENABLE(JIT)
-    {
-        ConcurrentJSLocker locker(m_lock);
-        forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
-            propertyCache.deref();
-            return IterationStatus::Continue;
-        });
-    }
-#endif
-
-    
 #if ENABLE(DFG_JIT)
     if (DFG::shouldDumpDisassembly()) {
         dataLog("Jettisoning ", *this);

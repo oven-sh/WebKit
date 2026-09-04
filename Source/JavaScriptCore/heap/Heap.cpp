@@ -83,6 +83,7 @@
 #include "PinballCompletion.h"
 #include "PreventCollectionScope.h"
 #include "ProgramExecutable.h"
+#include "PropertyInlineCacheClearingWatchpoint.h"
 #include "ProxyObject.h"
 #include "SamplingProfiler.h"
 #include "ShadowChicken.h"
@@ -1864,7 +1865,7 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
         removeDeadCompilerWorklistEntries();
         deleteUnmarkedCompiledCode();
         if (Options::validateICWatchpointLiveness()) [[unlikely]]
-            m_jitStubRoutines->validateWatchpointLiveness(vm());
+            validateICWatchpointLiveness(); // Must follow deleteUnmarkedCompiledCode (it computes ownerIsDead()) and precede removing dead CodeBlocks from the set.
         if (m_collectionScope == CollectionScope::Full)
             releaseUnusedSharedBaselineCode();
     }
@@ -3578,6 +3579,29 @@ void Heap::dumpVerifierMarkerData(HeapCell* cell)
 
     dataLogLn("\n" "GC Verifier: Found marked cell ", RawPointer(cell), " with MarkerData:");
     visitor.dumpMarkerData(cell);
+}
+
+void Heap::validateICWatchpointLiveness()
+{
+#if ENABLE(JIT)
+    // Walk the routines from the inline caches rather than from m_jitStubRoutines: a routine that no inline cache
+    // reaches anymore can still be alive here through a reference on the stack, and its watchpoints go away with it
+    // before they can fire.
+    m_codeBlocks->iterate([&](CodeBlock* codeBlock) {
+        codeBlock->forEachICStubRoutine([&](PolymorphicAccessJITStubRoutine& routine) {
+            if (routine.ownerIsDead())
+                return;
+            for (auto* watchpoint : routine.watchpoints()) {
+                const ObjectPropertyCondition& key = WTF::switchOn(*watchpoint, [](auto& watchpoint) -> const ObjectPropertyCondition& { return watchpoint.key(); });
+                if (!key)
+                    continue;
+                key.forEachDependentCell([&](JSCell* cell) {
+                    RELEASE_ASSERT(isMarked(cell), &routine, cell, routine.owner(), codeBlock);
+                });
+            }
+        });
+    });
+#endif
 }
 
 void Heap::verifyGC()
