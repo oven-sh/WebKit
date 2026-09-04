@@ -461,9 +461,9 @@ bool JSArray::unshiftCountSlowCase(const AbstractLocker&, VM& vm, DeferGC&, bool
         } else if ((newAllocBase != butterfly->base(structure)) || (preCapacity != storage->m_indexBias)) {
             gcSafeMemmove(newButterfly->propertyStorage() - propertyCapacity, butterfly->propertyStorage() - propertyCapacity, sizeof(JSValue) * propertyCapacity + sizeof(IndexingHeader) + ArrayStorage::sizeFor(0));
             gcSafeMemmove(newButterfly->arrayStorage()->m_vector, storage->m_vector, sizeof(JSValue) * usedVectorLength);
-
-            // This may be the existing allocation, so the marker can be scanning it.
-            gcSafeZeroMemory(newButterfly->arrayStorage()->m_vector + requiredVectorLength, (newVectorLength - requiredVectorLength) * sizeof(JSValue));
+            
+            for (unsigned i = requiredVectorLength; i < newVectorLength; i++)
+                newButterfly->arrayStorage()->m_vector[i].clear();
         }
 
         newButterfly->arrayStorage()->setVectorLength(newVectorLength);
@@ -1666,7 +1666,8 @@ bool JSArray::shiftCountWithArrayStorage(VM& vm, unsigned startIndex, unsigned c
 
         // Clear the slots of the elements we just moved.
         unsigned startOfEmptyVectorTail = usedVectorLength - count;
-        gcSafeZeroMemory(storage->m_vector + startOfEmptyVectorTail, count * sizeof(JSValue));
+        for (unsigned i = startOfEmptyVectorTail; i < usedVectorLength; ++i)
+            storage->m_vector[i].clear();
         // We don't modify the index bias or the Butterfly pointer in this case because we're not changing 
         // the start of the Butterfly, which needs to point at the first indexed property in the used 
         // portion of the vector. We also don't modify the vector length because we're not actually changing
@@ -1840,8 +1841,9 @@ bool JSArray::unshiftCountWithArrayStorage(JSGlobalObject* globalObject, unsigne
             gcSafeMemmove(vector + startIndex + count, vector + startIndex, (length - startIndex) * sizeof(JSValue));
     }
 
-    gcSafeZeroMemory(vector + startIndex, count * sizeof(JSValue));
-
+    for (unsigned i = 0; i < count; i++)
+        vector[i + startIndex].clear();
+    
     return true;
 }
 

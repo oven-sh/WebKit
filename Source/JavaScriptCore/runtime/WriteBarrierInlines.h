@@ -51,7 +51,7 @@ inline void WriteBarrierBase<T, Traits>::setMayBeNull(VM& vm, const JSCell* owne
 template <typename T, typename Traits>
 inline void WriteBarrierBase<T, Traits>::setEarlyValue(VM& vm, const JSCell* owner, T* value)
 {
-    storeConcurrently(value);
+    Traits::exchange(this->m_cell, value);
     vm.writeBarrier(owner, static_cast<JSCell*>(value));
 }
 
