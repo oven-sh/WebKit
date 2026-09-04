@@ -2792,6 +2792,13 @@ void SpeculativeJIT::compileValueToInt32(Node* node)
             convertDoubleToInt32UsingJavaScriptSemantics(fpr, gpr);
         else
 #endif
+#if CPU(X86_64)
+        if (hasSensibleDoubleToInt()) {
+            Jump notTruncatedToInteger = branchTruncateDoubleToInt32ViaInt64(fpr, gpr);
+            addSlowPathGenerator(slowPathCall(notTruncatedToInteger, this,
+                operationToInt32SensibleSlow, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, gpr, fpr));
+        } else
+#endif
         {
             Jump notTruncatedToInteger = branchTruncateDoubleToInt32(fpr, gpr, BranchIfTruncateFailed);
             addSlowPathGenerator(slowPathCall(notTruncatedToInteger, this,
@@ -2850,6 +2857,13 @@ void SpeculativeJIT::compileValueToInt32(Node* node)
             if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
                 convertDoubleToInt32UsingJavaScriptSemantics(fpr, resultGpr);
             else
+#endif
+#if CPU(X86_64)
+            if (hasSensibleDoubleToInt()) {
+                Jump notTruncatedToInteger = branchTruncateDoubleToInt32ViaInt64(fpr, resultGpr);
+                addSlowPathGenerator(slowPathCall(notTruncatedToInteger, this,
+                    operationToInt32SensibleSlow, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGpr, fpr));
+            } else
 #endif
             {
                 silentSpillAllRegisters(resultGpr);
