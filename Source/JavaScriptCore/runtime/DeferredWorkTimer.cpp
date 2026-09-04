@@ -205,18 +205,42 @@ DeferredWorkTimer::WeakTicket DeferredWorkTimer::addPendingWork(WorkType type, V
     WeakTicket weakTicket { ticket.get() };
 
     dataLogLnIf(DeferredWorkTimerInternal::verbose, "Adding new pending ticket: ", RawPointer(ticket.ptr()));
-    if (onAddPendingWork) {
-        onAddPendingWork(WTF::move(ticket), type);
-    } else {
-        auto result = m_pendingTickets.add(WTF::move(ticket));
+    {
+        Locker locker { m_taskLock };
+        auto result = m_pendingTickets.add(ticket.copyRef());
         RELEASE_ASSERT(result.isNewEntry);
     }
+    if (onAddPendingWork)
+        onAddPendingWork(ticket.get());
 
     return weakTicket;
 }
 
+RefPtr<DeferredWorkTimer::Ticket> DeferredWorkTimer::takePendingTicket(Ticket& ticket)
+{
+    Locker locker { m_taskLock };
+    auto it = m_pendingTickets.find(&ticket);
+    if (it == m_pendingTickets.end())
+        return nullptr;
+    RefPtr<Ticket> taken = it->ptr();
+    m_pendingTickets.remove(it);
+    return taken;
+}
+
+bool DeferredWorkTimer::takePendingWork(Ticket& ticket)
+{
+    ASSERT(onScheduleWorkSoon);
+    if (!takePendingTicket(ticket))
+        return false;
+    // Cancelling removes a ticket from the set before it flags it, so a ticket that was still in the set is live.
+    ASSERT(!ticket.isCancelled());
+    ASSERT(ticket.vm().currentThreadIsHoldingAPILock());
+    return true;
+}
+
 bool DeferredWorkTimer::hasPendingWork(Ticket& ticket)
 {
+    Locker locker { m_taskLock };
     auto result = m_pendingTickets.find(&ticket);
     if (result == m_pendingTickets.end() || ticket.isCancelled())
         return false;
@@ -226,6 +250,7 @@ bool DeferredWorkTimer::hasPendingWork(Ticket& ticket)
 
 bool DeferredWorkTimer::hasDependencyInPendingWork(Ticket& ticket, JSCell* dependency)
 {
+    Locker locker { m_taskLock };
     auto result = m_pendingTickets.find(&ticket);
     if (result == m_pendingTickets.end() || ticket.isCancelled())
         return false;
@@ -254,35 +279,38 @@ bool DeferredWorkTimer::scheduleWorkSoonIfActive(const WeakTicket& weakTicket, T
 // https://bugs.webkit.org/show_bug.cgi?id=276538
 bool DeferredWorkTimer::cancelPendingWork(Ticket& ticket)
 {
-#if ASSERT_ENABLED
-    if (!onCancelPendingWork) {
-        ASSERT(m_pendingTickets.contains(&ticket));
-    }
-#endif
-
+    ASSERT(onCancelPendingWork || m_pendingTickets.contains(&ticket));
     ASSERT(ticket.isCancelled() || ticket.vm().currentThreadIsHoldingAPILock() || (Thread::mayBeGCThread() && ticket.vm().heap.worldIsStopped()));
 
-    bool result = false;
-    if (!ticket.isCancelled()) {
-        ticket.cancel();
-        result = true;
+    if (ticket.isCancelled())
+        return false;
 
-        // Script execution context is cleared in ->cancel().
-        // But, onCancelPendingWork may dereference the ticket.
-        // So your WTF::Function has to be careful about the ticket.
-        if (onCancelPendingWork) {
-            onCancelPendingWork(ticket);
-        }
+    if (onCancelPendingWork) {
+        // doWork does not run, so nothing would purge the ticket from the set later: it leaves here. A ticket
+        // the embedder has already taken is no longer pending. It is only flagged, and the embedder is not told.
+        RefPtr<Ticket> pending = takePendingTicket(ticket);
+        ticket.cancel();
+        if (pending)
+            onCancelPendingWork(*pending);
+        return true;
     }
 
-    return result;
+    ticket.cancel();
+    return true;
 }
 
 void DeferredWorkTimer::cancelPendingWorkSafe(JSGlobalObject* globalObject)
 {
-    Locker locker { m_taskLock };
-
     dataLogLnIf(DeferredWorkTimerInternal::verbose, "Cancel pending work for globalObject ", RawPointer(globalObject));
+
+    if (onCancelPendingWork) {
+        // cancelPendingWork takes m_taskLock itself, and there is no timer to fire.
+        for (Ref<Ticket> ticket : *globalObject->m_weakTickets)
+            cancelPendingWork(ticket.get());
+        return;
+    }
+
+    Locker locker { m_taskLock };
     for (Ref<Ticket> ticket : *globalObject->m_weakTickets) {
         if (!ticket->isCancelled())
             cancelPendingWork(ticket.get());
@@ -308,6 +336,23 @@ void DeferredWorkTimer::cancelPendingWork(VM& vm)
         return isTargetGlobalObjectLive && vm.heap.isMarked(ticket->scriptExecutionOwner());
     };
 
+    if (onCancelPendingWork) {
+        // Same as below, except that the dead tickets leave the set here instead of in doWork. Whatever the
+        // embedder has queued for them is dropped when it calls takePendingWork.
+        Vector<Ref<Ticket>> deadTickets;
+        m_pendingTickets.removeIf([&](auto& ticket) {
+            if (!ticket->isCancelled() && isValid(ticket))
+                return false;
+            ticket->cancelAndClear();
+            deadTickets.append(ticket.copyRef());
+            return true;
+        });
+        locker.unlockEarly();
+        for (auto& ticket : deadTickets)
+            onCancelPendingWork(ticket.get());
+        return;
+    }
+
     bool needToFire = false;
     for (auto& ticket : m_pendingTickets) {
         if (ticket->isCancelled() || !isValid(ticket)) {
@@ -315,15 +360,7 @@ void DeferredWorkTimer::cancelPendingWork(VM& vm)
             // So, they are safe to clear here for better debugging and testing.
             ticket->cancelAndClear();
             needToFire = true;
-
-            if (onCancelPendingWork) {
-                onCancelPendingWork(ticket.get());
-            }
         }
-    }
-
-    if (onCancelPendingWork) {
-        return;
     }
 
     // GC can be triggered before an invalid and scheduled ticket is fired. In that case,
@@ -344,12 +381,14 @@ void DeferredWorkTimer::didResumeScriptExecutionOwner()
 bool DeferredWorkTimer::hasAnyPendingWork() const
 {
     ASSERT(m_apiLock->vm()->currentThreadIsHoldingAPILock() || (Thread::mayBeGCThread() && m_apiLock->vm()->heap.worldIsStopped()));
+    Locker locker { m_taskLock };
     return !m_pendingTickets.isEmpty();
 }
 
 bool DeferredWorkTimer::hasImminentlyScheduledWork() const
 {
     ASSERT(m_apiLock->vm()->currentThreadIsHoldingAPILock() || (Thread::mayBeGCThread() && m_apiLock->vm()->heap.worldIsStopped()));
+    Locker locker { m_taskLock };
     for (auto& ticket : m_pendingTickets) {
         if (ticket->isCancelled())
             continue;
