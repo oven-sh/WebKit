@@ -887,6 +887,7 @@ private:
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
 #if USE(BUN_JSC_ADDITIONS)
     ApproximateTime m_lastActiveCollectionTime;
+    size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };

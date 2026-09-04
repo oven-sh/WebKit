@@ -86,7 +86,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
     v(Bool, useExecutionCountForCodeBlockAging, true, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
-    v(Unsigned, optimizedCodeAgingQuietAllocationMB, 1, Normal, "A collection that finds more than this much allocated since the previous one marks the mutator as active for the aging of FTL code (and DFG code without a tier-up counter); an embedder-tagged idle collection lets such code go once nothing has been active for optimizedCodeAgingQuietSeconds. 0 = such code never ages out."_s) \
+    v(Unsigned, optimizedCodeAgingQuietAllocationMB, 1, Normal, "A collection that finds more than this much allocated since the last one that did marks the mutator as active for the aging of FTL code (and DFG code without a tier-up counter); an embedder-tagged idle collection lets such code go once nothing has been active for optimizedCodeAgingQuietSeconds. 0 = such code never ages out."_s) \
     v(Double, optimizedCodeAgingQuietSeconds, 30, Normal, "How long since the last active collection (and since the code was installed) before an idle collection lets such code go (capped at the tier's TTL under useEagerCodeBlockJettisonTiming)."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \

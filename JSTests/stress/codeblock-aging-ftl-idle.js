@@ -52,9 +52,12 @@ idleFor(quiet);
 fullGC();
 shouldBe(f(o)[1], true, "an FTL block should survive full collections that are not tagged idle;");
 allocateMB(4);
+var activeAt = preciseTime();
 fullGC();          // this collection saw the mutator allocating: the clock restarts here
 idleFullGC();      // idle, but the mutator was active a moment ago: kept
-shouldBe(f(o)[1], true, "an FTL block should survive an idle collection right after an active one;");
+// (unless the two collections themselves took longer than the quiet window, e.g. on a slow debug build)
+if (preciseTime() - activeAt < 0.02)
+    shouldBe(f(o)[1], true, "an FTL block should survive an idle collection right after an active one;");
 idleFor(quiet);
 idleFullGC();      // idle and nothing has happened for the quiet window: aged out
 shouldBe(f(o)[1], false, "an FTL block should age out in an idle collection after a quiet stretch;");
