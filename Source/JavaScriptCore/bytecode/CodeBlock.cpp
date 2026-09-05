@@ -1372,6 +1372,8 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
 #if USE(BUN_JSC_ADDITIONS)
     JITType type = jitType();
     Seconds ttl = timeToLive(type);
+    // One clock read per collection (Heap), not one per block visited.
+    ApproximateTime now = vm().heap.currentGCStartApproximateTime();
 
     // Optimizing tiers: a DFG block ages like a baseline one, using the tier-up counter its code already decrements at
     // returns and loop back-edges as the sign of life. FTL code, and DFG code compiled without tier-up checks, has no
@@ -1390,24 +1392,20 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         Seconds quietFor = Seconds(Options::optimizedCodeAgingQuietSeconds());
         if (Options::useEagerCodeBlockJettisonTiming()) [[unlikely]]
             quietFor = std::min(quietFor, ttl);
-        return ApproximateTime::now() - std::max(m_creationTime, heap.lastActiveCollectionTime()) >= quietFor;
+        return now - std::max(m_creationTime, heap.lastActiveCollectionTime()) >= quietFor;
     }
 
-    if (timeSinceCreation() < ttl)
-        return false;
-
     if (Options::useExecutionCountForCodeBlockAging()) {
-        // LLInt and Baseline CodeBlocks already tick an execution counter on
-        // function entry and loop back-edges. If that counter has moved since we
-        // last sampled it, the block is demonstrably still running regardless of
-        // wall-clock age, so renew its lease instead of throwing away a warm block
-        // that the next iteration will immediately relink, re-profile and re-JIT.
+        // LLInt and Baseline CodeBlocks already tick an execution counter on function entry and loop back-edges (a DFG
+        // block, its tier-up counter). If it has moved since the last collection that looked, the block ran in between:
+        // renew its lease. The snapshot is refreshed on every look - including while the block is still inside its
+        // lease - so "moved" always means "since the previous collection", never "since some collection before the
+        // last burst of work" (which kept idle code alive for one extra lease every time, and forever when the
+        // embedder's idle collections come in pairs).
         //
-        // The snapshot lives in m_previousCounter, which updateActivity() in
-        // reconcileWeakReferencesAtGCEnd also writes for UnlinkedCodeBlock aging when
-        // VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the
-        // same current count for the same tier, so they agree; outside that mode
-        // updateActivity() never touches the field.
+        // The snapshot lives in m_previousCounter, which updateActivity() in reconcileWeakReferencesAtGCEnd also writes
+        // for UnlinkedCodeBlock aging when VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the same
+        // current count for the same tier, so they agree; outside that mode updateActivity() never touches the field.
         float currentCount = 0;
         bool hasCounter = false;
         switch (type) {
@@ -1434,13 +1432,14 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         }
         if (hasCounter && currentCount != m_previousCounter) {
             m_previousCounter = currentCount;
-            // Push the effective creation time forward so the block is not
-            // considered for old-age jettison again until leaseMultiplier * ttl
-            // has elapsed with no observed execution.
-            m_creationTime = ApproximateTime::now() + ttl * (Options::codeBlockAgingLeaseMultiplier() - 1.0);
+            // Ran since the last look: the lease runs leaseMultiplier * ttl from now with no observed execution.
+            m_creationTime = now + ttl * (Options::codeBlockAgingLeaseMultiplier() - 1.0);
             return false;
         }
     }
+
+    if (now - m_creationTime < ttl)
+        return false;
 #else
     if (timeSinceCreation() < timeToLive(jitType()))
         return false;
