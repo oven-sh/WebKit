@@ -123,7 +123,7 @@ public:
         return m_callee.get();
     }
 
-    bool overrodeThings() const { return m_overrodeThings; }
+    bool overrodeThings() const { return WTF::atomicLoad(const_cast<bool*>(&m_overrodeThings), std::memory_order_acquire); } // THREADS: see overrideThings(); a plain byte load on every target.
     void overrideThings(JSGlobalObject*);
     void overrideThingsIfNecessary(JSGlobalObject*);
     void unmapArgument(JSGlobalObject*, uint32_t index);

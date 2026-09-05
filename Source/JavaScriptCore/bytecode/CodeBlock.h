@@ -1056,6 +1056,16 @@ public:
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RareData, CodeBlockRareData);
     public:
         Vector<HandlerInfo> m_exceptionHandlers;
+        // With threads, an optimizing-JIT CodeBlock's handler table grows when
+        // an inline cache that makes calls is linked inside a try block
+        // (appendExceptionHandler) and shrinks when that stub dies, while
+        // another thread may be unwinding through the same CodeBlock
+        // (Interpreter.cpp, findExceptionHandler); the append can reallocate
+        // the table under the lookup. Those three hold this lock when the flag
+        // is on. A baseline table is built at link and never changes, and the
+        // compiler threads read only baseline tables. Nothing under it
+        // allocates or parks.
+        Lock m_exceptionHandlersLock;
 
         DirectEvalCodeCache m_directEvalCodeCache;
     };
@@ -1069,7 +1079,19 @@ public:
     void appendExceptionHandler(const HandlerInfo& handler)
     {
         createRareDataIfNecessary(); // We may be handling the exception of an inlined call frame.
+        std::optional<Locker<Lock>> locker;
+        if (Options::useJSThreads()) [[unlikely]]
+            locker.emplace(m_rareData->m_exceptionHandlersLock);
         m_rareData->m_exceptionHandlers.append(handler);
+    }
+
+    // For a lookup that outlives handlerForIndex (the unwinder copies the
+    // HandlerInfo it found): the lock to hold across both, or null.
+    Lock* exceptionHandlersLockForConcurrentLookup()
+    {
+        if (Options::useJSThreads() && m_rareData) [[unlikely]]
+            return &m_rareData->m_exceptionHandlersLock;
+        return nullptr;
     }
 
     DisposableCallSiteIndex newExceptionHandlingCallSiteIndex(CallSiteIndex originalCallSite);

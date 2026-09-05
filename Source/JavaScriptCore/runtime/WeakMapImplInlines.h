@@ -67,6 +67,14 @@ ALWAYS_INLINE void WeakMapImpl<WeakMapBucket>::add(VM& vm, JSCell* key, JSValue 
 template <typename WeakMapBucket>
 ALWAYS_INLINE void WeakMapImpl<WeakMapBucket>::add(VM& vm, JSCell* key, JSValue value, uint32_t hash)
 {
+    withLockIfGILOff([&] {
+        addHoldingLockIfGILOff(vm, key, value, hash);
+    });
+}
+
+template <typename WeakMapBucket>
+ALWAYS_INLINE void WeakMapImpl<WeakMapBucket>::addHoldingLockIfGILOff(VM& vm, JSCell* key, JSValue value, uint32_t hash)
+{
     AssertNoGC assertNoGC;
     ASSERT_WITH_MESSAGE(jsWeakMapHash(key) == hash, "We expect hash value is what we expect.");
 
@@ -84,7 +92,7 @@ ALWAYS_INLINE void WeakMapImpl<WeakMapBucket>::addBucket(VM& vm, JSCell* key, JS
     if (m_buffer == emptyBuffer()) [[unlikely]] {
         // index was computed against the shared empty buffer, so it is meaningless for a real
         // buffer. Fall back to add(), which allocates and re-probes from scratch.
-        add(vm, key, value, hash);
+        addHoldingLockIfGILOff(vm, key, value, hash);
         return;
     }
 

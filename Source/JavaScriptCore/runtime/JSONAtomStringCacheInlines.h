@@ -34,8 +34,15 @@
 
 namespace JSC {
 
+ALWAYS_INLINE JSONAtomStringCache& JSONAtomStringCache::live(VM& vm)
+{
+    if (vm.gilOffWithProcessGate()) [[unlikely]]
+        return gilOffPerThreadCache();
+    return vm.jsonAtomStringCache;
+}
+
 template<typename CharacterType>
-ALWAYS_INLINE Ref<AtomStringImpl> JSONAtomStringCache::makeIdentifier(std::span<const CharacterType> characters)
+ALWAYS_INLINE Ref<AtomStringImpl> JSONAtomStringCache::makeIdentifier(VM& vm, std::span<const CharacterType> characters)
 {
     if (characters.empty())
         return *emptyAtom().impl();
@@ -43,7 +50,7 @@ ALWAYS_INLINE Ref<AtomStringImpl> JSONAtomStringCache::makeIdentifier(std::span<
     auto firstCharacter = characters.front();
     if (characters.size() == 1) {
         if (firstCharacter <= maxSingleCharacterString)
-            return vm().smallStrings.singleCharacterStringRep(firstCharacter);
+            return vm.smallStrings.singleCharacterStringRep(firstCharacter);
     } else if (characters.size() > maxStringLengthForCache) [[unlikely]]
         return AtomStringImpl::add(characters).releaseNonNull();
 
@@ -63,7 +70,7 @@ ALWAYS_INLINE Ref<AtomStringImpl> JSONAtomStringCache::makeIdentifier(std::span<
 }
 
 template<typename CharacterType>
-ALWAYS_INLINE AtomStringImpl* JSONAtomStringCache::existingIdentifier(std::span<const CharacterType> characters)
+ALWAYS_INLINE AtomStringImpl* JSONAtomStringCache::existingIdentifier(VM& vm, std::span<const CharacterType> characters)
 {
     if (characters.empty())
         return emptyAtom().impl();
@@ -71,7 +78,7 @@ ALWAYS_INLINE AtomStringImpl* JSONAtomStringCache::existingIdentifier(std::span<
     auto firstCharacter = characters.front();
     if (characters.size() == 1) {
         if (firstCharacter <= maxSingleCharacterString)
-            return vm().smallStrings.existingSingleCharacterStringRep(firstCharacter);
+            return vm.smallStrings.existingSingleCharacterStringRep(firstCharacter);
     } else if (characters.size() > maxStringLengthForCache) [[unlikely]]
         return nullptr;
 
@@ -84,9 +91,8 @@ ALWAYS_INLINE AtomStringImpl* JSONAtomStringCache::existingIdentifier(std::span<
 }
 
 template<typename CharacterType>
-ALWAYS_INLINE JSString* JSONAtomStringCache::tryMakeJSString(std::span<const CharacterType> characters)
+ALWAYS_INLINE JSString* JSONAtomStringCache::tryMakeJSString(VM& vm, std::span<const CharacterType> characters)
 {
-    VM& vm = this->vm();
     if (characters.empty())
         return jsEmptyString(vm);
 
@@ -108,10 +114,11 @@ ALWAYS_INLINE JSString* JSONAtomStringCache::tryMakeJSString(std::span<const Cha
     unsigned index = cacheIndex(firstCharacter, lastCharacter, characters.size());
     auto& slot = m_cache[index];
     if (slot.m_length == characters.size() && equal(slot.m_buffer, characters)) [[likely]] {
-        if (JSString* cached = m_jsStrings[index])
+        if (JSString* cached = m_jsStringCachingDisabled ? nullptr : m_jsStrings[index])
             return cached;
         JSString* result = jsString(vm, String { slot.m_impl.get() });
-        m_jsStrings[index] = result;
+        if (!m_jsStringCachingDisabled)
+            m_jsStrings[index] = result;
         return result;
     }
 
@@ -120,13 +127,10 @@ ALWAYS_INLINE JSString* JSONAtomStringCache::tryMakeJSString(std::span<const Cha
     slot.m_length = characters.size();
     WTF::copyElements(std::span<char16_t> { slot.m_buffer }, characters);
     JSString* result = jsString(vm, String { WTF::move(impl) });
-    m_jsStrings[index] = result;
+    if (!m_jsStringCachingDisabled)
+        m_jsStrings[index] = result;
     return result;
 }
 
-ALWAYS_INLINE VM& JSONAtomStringCache::vm() const
-{
-    return *std::bit_cast<VM*>(std::bit_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, jsonAtomStringCache));
-}
 
 } // namespace JSC

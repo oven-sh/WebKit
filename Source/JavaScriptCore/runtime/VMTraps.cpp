@@ -722,6 +722,7 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     // the stop never completes. Holders keep cell-locked regions free of trap checks
     // (RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED inside them); this catches one that does not.
     ASSERT(!vm.gilOff() || !GCCellLockDepth::current());
+    ASSERT(!vm.gilOff() || !ConcurrentJSLockDepth::current());
 #endif
 
     // checktraps-dejank-invalidation-point (UNGIL §K.5 / SPEC-jit I21):

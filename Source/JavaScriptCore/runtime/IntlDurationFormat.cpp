@@ -293,9 +293,7 @@ void IntlDurationFormat::initializeDurationFormat(JSGlobalObject* globalObject, 
 
 const String& IntlDurationFormat::numberingSystem() const
 {
-    if (m_numberingSystem.isNull())
-        m_numberingSystem = defaultNumberingSystemForLocale(m_dataLocale);
-    return m_numberingSystem;
+    return intlLazyString(*this, m_numberingSystem, [&] { return defaultNumberingSystemForLocale(m_dataLocale); });
 }
 
 static String retrieveSeparator(const CString& locale, const String& numberingSystem)
@@ -664,27 +662,24 @@ UNumberFormatter* IntlDurationFormat::createNumberFormatterIfNecessary(JSGlobalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_formatterCache) {
+    auto* cache = intlLazyObject(*this, m_formatterCache, [&] {
         auto cache = makeUnique<FormatterCache>();
         WTF::storeStoreFence(); // Expose valid struct for concurrent threads including the concurrent GC marker.
-        m_formatterCache = WTF::move(cache);
-    }
+        return cache;
+    });
 
-    auto& formatter = m_formatterCache->m_formatters[static_cast<unsigned>(unit)];
-    if (formatter)
-        return formatter.get();
-
-    StringView skeletonView(skeleton);
-    auto upconverted = skeletonView.upconvertedCharacters();
-    UErrorCode status = U_ZERO_ERROR;
-    formatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), m_dataLocaleWithExtensions.data(), &status));
-    if (U_FAILURE(status)) [[unlikely]] {
-        formatter = nullptr;
-        throwTypeError(globalObject, scope, "Failed to initialize NumberFormat"_s);
-        return nullptr;
-    }
-    vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberFormatterSize);
-    return formatter.get();
+    return intlLazyObject(*this, cache->m_formatters[static_cast<unsigned>(unit)], [&]() -> std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> {
+        StringView skeletonView(skeleton);
+        auto upconverted = skeletonView.upconvertedCharacters();
+        UErrorCode status = U_ZERO_ERROR;
+        auto formatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), m_dataLocaleWithExtensions.data(), &status));
+        if (U_FAILURE(status)) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Failed to initialize NumberFormat"_s);
+            return nullptr;
+        }
+        vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberFormatterSize);
+        return formatter;
+    });
 }
 
 // https://tc39.es/proposal-intl-duration-format/#sec-Intl.DurationFormat.prototype.format

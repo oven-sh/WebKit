@@ -481,7 +481,8 @@ void IntlLocale::initializeLocale(JSGlobalObject* globalObject, const String& ta
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.maximize
 const String& IntlLocale::maximal()
 {
-    if (m_maximal.isNull()) {
+    return intlLazyString(*this, m_maximal, [&]() -> String {
+        String result;
         // Always maximize only the base name (without keywords/extensions), then
         // merge extensions back. This avoids ICU issues with long locale IDs
         // (ULOC_FULLNAME_CAPACITY limitation) and also works around uloc_toLanguageTag
@@ -509,23 +510,23 @@ const String& IntlLocale::maximal()
             uloc_addLikelySubtags(baseNameID.span().data(), maxBase.mutableSpan().data(), maxBase.size(), &status);
         }
         if (U_FAILURE(status)) {
-            m_maximal = toString();
-            return m_maximal;
+            result = toString();
+            return result;
         }
 
         // If base name didn't change, return original unchanged.
         if (equalSpans(baseNameID.span().first(baseLen), maxBase.span().first(maxLen))) {
-            m_maximal = toString();
-            return m_maximal;
+            result = toString();
+            return result;
         }
 
         // If no keywords, just convert maximized base to BCP 47.
         auto keywordSepPos = WTF::find(m_localeID.span(), ULOC_KEYWORD_SEPARATOR);
         if (keywordSepPos == notFound) {
-            m_maximal = languageTagForLocaleID(maxBase.span().data());
-            if (m_maximal.isNull())
-                m_maximal = toString();
-            return m_maximal;
+            result = languageTagForLocaleID(maxBase.span().data());
+            if (result.isNull())
+                result = toString();
+            return result;
         }
 
         // Has keywords — merge maximized base with original keywords.
@@ -535,28 +536,29 @@ const String& IntlLocale::maximal()
         merged.append(keywords);
         merged.append('\0');
 
-        m_maximal = languageTagForLocaleID(merged.span().data());
-        if (m_maximal.isNull()) {
+        result = languageTagForLocaleID(merged.span().data());
+        if (result.isNull()) {
             // uloc_toLanguageTag failed — non-Unicode keywords caused the failure.
             // Strip non-Unicode (single-char) keywords, convert to BCP 47 (preserving
             // Unicode extensions like -u-), then append stored non-Unicode extensions.
             auto cleanID = buildLocaleIDWithUnicodeKeywords(merged.span().data());
-            m_maximal = languageTagForLocaleID(cleanID.span().data());
-            if (m_maximal.isNull())
-                m_maximal = languageTagForLocaleID(maxBase.span().data());
-            if (m_maximal.isNull())
-                m_maximal = baseName();
+            result = languageTagForLocaleID(cleanID.span().data());
+            if (result.isNull())
+                result = languageTagForLocaleID(maxBase.span().data());
+            if (result.isNull())
+                result = baseName();
             if (!m_nonUnicodeExtensions.isNull())
-                m_maximal = makeString(m_maximal, m_nonUnicodeExtensions);
+                result = makeString(result, m_nonUnicodeExtensions);
         }
-    }
-    return m_maximal;
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.minimize
 const String& IntlLocale::minimal()
 {
-    if (m_minimal.isNull()) {
+    return intlLazyString(*this, m_minimal, [&]() -> String {
+        String result;
         // Same approach as maximal(): minimize only the base name, then merge extensions.
         // FIXME: ICU tracking bug https://unicode-org.atlassian.net/browse/ICU-21639.
 
@@ -579,21 +581,21 @@ const String& IntlLocale::minimal()
             uloc_minimizeSubtags(baseNameID.span().data(), minBase.mutableSpan().data(), minBase.size(), &status);
         }
         if (U_FAILURE(status)) {
-            m_minimal = toString();
-            return m_minimal;
+            result = toString();
+            return result;
         }
 
         if (equalSpans(baseNameID.span().first(baseLen), minBase.span().first(minLen))) {
-            m_minimal = toString();
-            return m_minimal;
+            result = toString();
+            return result;
         }
 
         auto keywordSepPos = WTF::find(m_localeID.span(), ULOC_KEYWORD_SEPARATOR);
         if (keywordSepPos == notFound) {
-            m_minimal = languageTagForLocaleID(minBase.span().data());
-            if (m_minimal.isNull())
-                m_minimal = toString();
-            return m_minimal;
+            result = languageTagForLocaleID(minBase.span().data());
+            if (result.isNull())
+                result = toString();
+            return result;
         }
 
         auto keywords = m_localeID.span().subspan(keywordSepPos);
@@ -602,44 +604,46 @@ const String& IntlLocale::minimal()
         merged.append(keywords);
         merged.append('\0');
 
-        m_minimal = languageTagForLocaleID(merged.span().data());
-        if (m_minimal.isNull()) {
+        result = languageTagForLocaleID(merged.span().data());
+        if (result.isNull()) {
             auto cleanID = buildLocaleIDWithUnicodeKeywords(merged.span().data());
-            m_minimal = languageTagForLocaleID(cleanID.span().data());
-            if (m_minimal.isNull())
-                m_minimal = languageTagForLocaleID(minBase.span().data());
-            if (m_minimal.isNull())
-                m_minimal = baseName();
+            result = languageTagForLocaleID(cleanID.span().data());
+            if (result.isNull())
+                result = languageTagForLocaleID(minBase.span().data());
+            if (result.isNull())
+                result = baseName();
             if (!m_nonUnicodeExtensions.isNull())
-                m_minimal = makeString(m_minimal, m_nonUnicodeExtensions);
+                result = makeString(result, m_nonUnicodeExtensions);
         }
-    }
-    return m_minimal;
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.toString
 const String& IntlLocale::toString()
 {
-    if (m_fullString.isNull()) {
-        m_fullString = languageTagForLocaleID(m_localeID.data());
-        if (m_fullString.isNull()) {
+    return intlLazyString(*this, m_fullString, [&]() -> String {
+        String result;
+        result = languageTagForLocaleID(m_localeID.data());
+        if (result.isNull()) {
             // uloc_toLanguageTag failed — strip non-Unicode keywords and retry,
             // then append stored non-Unicode BCP 47 extensions.
             auto cleanID = buildLocaleIDWithUnicodeKeywords(m_localeID.data());
-            m_fullString = languageTagForLocaleID(cleanID.span().data());
-            if (m_fullString.isNull())
-                m_fullString = baseName();
+            result = languageTagForLocaleID(cleanID.span().data());
+            if (result.isNull())
+                result = baseName();
             if (!m_nonUnicodeExtensions.isNull())
-                m_fullString = makeString(m_fullString, m_nonUnicodeExtensions);
+                result = makeString(result, m_nonUnicodeExtensions);
         }
-    }
-    return m_fullString;
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.baseName
 const String& IntlLocale::baseName()
 {
-    if (m_baseName.isNull()) {
+    return intlLazyString(*this, m_baseName, [&]() -> String {
+        String result;
         UErrorCode status = U_ZERO_ERROR;
         Vector<char, 32> buffer(32);
         auto bufferLength = uloc_getBaseName(m_localeID.data(), buffer.mutableSpan().data(), buffer.size(), &status);
@@ -650,54 +654,58 @@ const String& IntlLocale::baseName()
         }
         ASSERT(U_SUCCESS(status));
 
-        m_baseName = languageTagForLocaleID(buffer.span().data());
-    }
-    return m_baseName;
+        result = languageTagForLocaleID(buffer.span().data());
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.language
 const String& IntlLocale::language()
 {
-    if (m_language.isNull()) {
+    return intlLazyString(*this, m_language, [&]() -> String {
+        String result;
         Vector<char, 8> buffer;
         auto status = callBufferProducingFunction(uloc_getLanguage, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
         if (!buffer.size())
-            m_language = "und"_s;
+            result = "und"_s;
         else
-            m_language = buffer.span();
-    }
-    return m_language;
+            result = buffer.span();
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.script
 const String& IntlLocale::script()
 {
-    if (m_script.isNull()) {
+    return intlLazyString(*this, m_script, [&]() -> String {
+        String result;
         Vector<char, 4> buffer;
         auto status = callBufferProducingFunction(uloc_getScript, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
-        m_script = buffer.span();
-    }
-    return m_script;
+        result = buffer.span();
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.region
 const String& IntlLocale::region()
 {
-    if (m_region.isNull()) {
+    return intlLazyString(*this, m_region, [&]() -> String {
+        String result;
         Vector<char, 3> buffer;
         auto status = callBufferProducingFunction(uloc_getCountry, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
-        m_region = buffer.span();
-    }
-    return m_region;
+        result = buffer.span();
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.variants
 const String& IntlLocale::variants()
 {
-    if (m_variants.isNull()) {
+    return intlLazyString(*this, m_variants, [&]() -> String {
+        String result;
         const String& baseNameValue = baseName();
         Vector<String> variantParts;
         if (!baseNameValue.isEmpty()) {
@@ -717,68 +725,56 @@ const String& IntlLocale::variants()
                 builder.append(variant);
                 first = false;
             }
-            m_variants = builder.toString();
+            result = builder.toString();
         } else
-            m_variants = emptyString();
-    }
-    return m_variants;
+            result = emptyString();
+        return result;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.calendar
 const String& IntlLocale::calendar()
 {
-    if (!m_calendar)
-        m_calendar = keywordValue("calendar"_s);
-    return m_calendar.value();
+    return intlLazyString(*this, m_calendar, [&] { return keywordValue("calendar"_s); });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.caseFirst
 const String& IntlLocale::caseFirst()
 {
-    if (!m_caseFirst)
-        m_caseFirst = keywordValue("colcasefirst"_s);
-    return m_caseFirst.value();
+    return intlLazyString(*this, m_caseFirst, [&] { return keywordValue("colcasefirst"_s); });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.collation
 const String& IntlLocale::collation()
 {
-    if (!m_collation)
-        m_collation = keywordValue("collation"_s);
-    return m_collation.value();
+    return intlLazyString(*this, m_collation, [&] { return keywordValue("collation"_s); });
 }
 
 // https://tc39.es/proposal-intl-locale-info/#sec-Intl.Locale.prototype.firstDayOfWeek
 const String& IntlLocale::firstDayOfWeek()
 {
-    if (!m_firstDayOfWeek)
-        m_firstDayOfWeek = keywordValue("fw"_s);
-    return m_firstDayOfWeek.value();
+    return intlLazyString(*this, m_firstDayOfWeek, [&] { return keywordValue("fw"_s); });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.hourCycle
 const String& IntlLocale::hourCycle()
 {
-    if (!m_hourCycle)
-        m_hourCycle = keywordValue("hours"_s);
-    return m_hourCycle.value();
+    return intlLazyString(*this, m_hourCycle, [&] { return keywordValue("hours"_s); });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.numberingSystem
 const String& IntlLocale::numberingSystem()
 {
-    if (!m_numberingSystem)
-        m_numberingSystem = keywordValue("numbers"_s);
-    return m_numberingSystem.value();
+    return intlLazyString(*this, m_numberingSystem, [&] { return keywordValue("numbers"_s); });
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale.prototype.numeric
 TriState IntlLocale::numeric()
 {
     constexpr bool isBoolean = true;
-    if (m_numeric == TriState::Indeterminate)
-        m_numeric = triState(keywordValue("colnumeric"_s, isBoolean) == "yes"_s);
-    return m_numeric;
+    return intlLazyField(*this, m_numeric, [](TriState state) { return state == TriState::Indeterminate; }, [&] {
+        return triState(keywordValue("colnumeric"_s, isBoolean) == "yes"_s);
+    });
 }
 
 JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)

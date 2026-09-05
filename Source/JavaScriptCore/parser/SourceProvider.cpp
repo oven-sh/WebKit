@@ -69,13 +69,16 @@ void SourceProvider::lockUnderlyingBufferImpl() { }
 
 void SourceProvider::unlockUnderlyingBufferImpl() { }
 
-void SourceProvider::getID()
+SourceID SourceProvider::getID()
 {
-    if (!m_id) {
-        static std::atomic<SourceID> nextProviderID = nullID;
-        m_id = ++nextProviderID;
-        RELEASE_ASSERT(m_id);
-    }
+    // Two threads (a GIL-off VM building two stack traces, say) can ask for the
+    // ID first at once; the compare-and-swap keeps the first one, so a provider
+    // never answers with two IDs.
+    static std::atomic<SourceID> nextProviderID = nullID;
+    SourceID id = ++nextProviderID;
+    RELEASE_ASSERT(id);
+    SourceID observed = WTF::atomicCompareExchangeStrong(&m_id, static_cast<SourceID>(0), id);
+    return observed ? observed : id;
 }
 
 const String& SourceProvider::sourceURLStripped()

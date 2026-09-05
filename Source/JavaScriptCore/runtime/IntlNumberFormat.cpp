@@ -559,22 +559,20 @@ UNumberRangeFormatter* IntlNumberFormat::createNumberRangeFormatterIfNecessary(J
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(m_numberFormatter);
-    if (m_numberRangeFormatter)
-        return m_numberRangeFormatter.get();
+    return intlLazyObject(*this, m_numberRangeFormatter, [&]() -> std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> {
+        StringView skeletonView(m_numberFormatterSkeleton);
+        auto upconverted = skeletonView.upconvertedCharacters();
 
-    StringView skeletonView(m_numberFormatterSkeleton);
-    auto upconverted = skeletonView.upconvertedCharacters();
+        UErrorCode status = U_ZERO_ERROR;
+        auto formatter = std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter>(unumrf_openForSkeletonWithCollapseAndIdentityFallback(upconverted.get(), skeletonView.length(), UNUM_RANGE_COLLAPSE_AUTO, UNUM_IDENTITY_FALLBACK_APPROXIMATELY, m_dataLocaleWithExtensions.data(), nullptr, &status));
+        if (U_FAILURE(status)) {
+            throwTypeError(globalObject, scope, "failed to initialize NumberFormat"_s);
+            return nullptr;
+        }
 
-    UErrorCode status = U_ZERO_ERROR;
-    m_numberRangeFormatter = std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter>(unumrf_openForSkeletonWithCollapseAndIdentityFallback(upconverted.get(), skeletonView.length(), UNUM_RANGE_COLLAPSE_AUTO, UNUM_IDENTITY_FALLBACK_APPROXIMATELY, m_dataLocaleWithExtensions.data(), nullptr, &status));
-    if (U_FAILURE(status)) {
-        throwTypeError(globalObject, scope, "failed to initialize NumberFormat"_s);
-        return nullptr;
-    }
-
-    vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberRangeFormatterSize);
-
-    return m_numberRangeFormatter.get();
+        vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberRangeFormatterSize);
+        return formatter;
+    });
 }
 
 // https://tc39.es/ecma402/#sec-formatnumber
@@ -1223,11 +1221,10 @@ JSValue IntlNumberFormat::useGroupingValue(VM& vm, UseGrouping useGrouping)
 JSObject* IntlNumberFormat::resolvedOptions(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
-    if (m_numberingSystem.isNull())
-        m_numberingSystem = defaultNumberingSystemForLocale(m_dataLocale);
+    const String& numberingSystem = intlLazyString(*this, m_numberingSystem, [&] { return defaultNumberingSystemForLocale(m_dataLocale); });
     JSObject* options = constructEmptyObject(globalObject);
     options->putDirect(vm, vm.propertyNames->locale, jsString(vm, m_locale));
-    options->putDirect(vm, vm.propertyNames->numberingSystem, jsString(vm, m_numberingSystem));
+    options->putDirect(vm, vm.propertyNames->numberingSystem, jsString(vm, numberingSystem));
     options->putDirect(vm, vm.propertyNames->style, jsNontrivialString(vm, styleString(m_style)));
     switch (m_style) {
     case Style::Decimal:

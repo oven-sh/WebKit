@@ -172,31 +172,34 @@ ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::equalIdentifier(Uniqued
 template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE AtomStringImpl* LiteralParser<CharType, reviverMode>::existingIdentifier(VM& vm, typename Lexer::LiteralParserTokenPtr token)
 {
+    auto& cache = JSONAtomStringCache::live(vm);
     if (token->type == TokIdentifier)
-        return vm.jsonAtomStringCache.existingIdentifier(token->identifier());
+        return cache.existingIdentifier(vm, token->identifier());
     ASSERT(token->type == TokString);
     if (token->stringIs8Bit)
-        return vm.jsonAtomStringCache.existingIdentifier(token->string8());
-    return vm.jsonAtomStringCache.existingIdentifier(token->string16());
+        return cache.existingIdentifier(vm, token->string8());
+    return cache.existingIdentifier(vm, token->string16());
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE Identifier LiteralParser<CharType, reviverMode>::makeIdentifier(VM& vm, typename Lexer::LiteralParserTokenPtr token)
 {
+    auto& cache = JSONAtomStringCache::live(vm);
     if (token->type == TokIdentifier)
-        return Identifier::fromString(vm, vm.jsonAtomStringCache.makeIdentifier(token->identifier()));
+        return Identifier::fromString(vm, cache.makeIdentifier(vm, token->identifier()));
     ASSERT(token->type == TokString);
     if (token->stringIs8Bit)
-        return Identifier::fromString(vm, vm.jsonAtomStringCache.makeIdentifier(token->string8()));
-    return Identifier::fromString(vm, vm.jsonAtomStringCache.makeIdentifier(token->string16()));
+        return Identifier::fromString(vm, cache.makeIdentifier(vm, token->string8()));
+    return Identifier::fromString(vm, cache.makeIdentifier(vm, token->string16()));
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
 ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, typename Lexer::LiteralParserTokenPtr token)
 {
+    auto& cache = JSONAtomStringCache::live(vm);
     if (token->stringIs8Bit)
-        return vm.jsonAtomStringCache.tryMakeJSString(token->string8());
-    return vm.jsonAtomStringCache.tryMakeJSString(token->string16());
+        return cache.tryMakeJSString(vm, token->string8());
+    return cache.tryMakeJSString(vm, token->string16());
 }
 
 [[maybe_unused]] static ALWAYS_INLINE bool NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)

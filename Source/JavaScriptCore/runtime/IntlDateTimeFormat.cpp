@@ -158,18 +158,16 @@ IntlDateTimeFormat::DateTimeStyle IntlDateTimeFormat::dateStyle() const { return
 IntlDateTimeFormat::DateTimeStyle IntlDateTimeFormat::timeStyle() const { return m_impl->m_timeStyle; }
 IntlDateTimeFormat::TimeZoneName IntlDateTimeFormat::timeZoneName() const { return m_impl->m_timeZoneName; }
 
+// GIL-off, m_impl is this object's own (IntlCache shares impls only with the
+// GIL on), so this cell's lock is the lock for its lazily filled members.
 const String& IntlDateTimeFormat::ensureCalendar() const
 {
-    if (m_impl->m_calendar.isNull())
-        m_impl->m_calendar = defaultCalendarForLocale(m_impl->m_dataLocale);
-    return m_impl->m_calendar;
+    return intlLazyString(*this, m_impl->m_calendar, [&] { return defaultCalendarForLocale(m_impl->m_dataLocale); });
 }
 
 const String& IntlDateTimeFormat::ensureNumberingSystem() const
 {
-    if (m_impl->m_numberingSystem.isNull())
-        m_impl->m_numberingSystem = defaultNumberingSystemForLocale(m_impl->m_dataLocale);
-    return m_impl->m_numberingSystem;
+    return intlLazyString(*this, m_impl->m_numberingSystem, [&] { return defaultNumberingSystemForLocale(m_impl->m_dataLocale); });
 }
 
 bool IntlDateTimeFormat::calendarMatchesICU(StringView temporalId, const String& icuCalId)
@@ -1315,15 +1313,13 @@ JSObject* IntlDateTimeFormat::resolvedOptions(JSGlobalObject* globalObject) cons
 {
     VM& vm = globalObject->vm();
 
-    if (m_impl->m_calendar.isNull())
-        m_impl->m_calendar = defaultCalendarForLocale(m_impl->m_dataLocale);
-    if (m_impl->m_numberingSystem.isNull())
-        m_impl->m_numberingSystem = defaultNumberingSystemForLocale(m_impl->m_dataLocale);
+    const String& calendar = ensureCalendar();
+    const String& numberingSystem = ensureNumberingSystem();
 
     JSObject* options = constructEmptyObject(globalObject);
     options->putDirect(vm, vm.propertyNames->locale, jsNontrivialString(vm, m_impl->m_locale));
-    options->putDirect(vm, vm.propertyNames->calendar, jsNontrivialString(vm, m_impl->m_calendar));
-    options->putDirect(vm, vm.propertyNames->numberingSystem, jsNontrivialString(vm, m_impl->m_numberingSystem));
+    options->putDirect(vm, vm.propertyNames->calendar, jsNontrivialString(vm, calendar));
+    options->putDirect(vm, vm.propertyNames->numberingSystem, jsNontrivialString(vm, numberingSystem));
     options->putDirect(vm, vm.propertyNames->timeZone, jsNontrivialString(vm, m_impl->m_timeZoneForResolvedOptions));
 
     if (m_impl->m_hourCycle != HourCycle::None) {
@@ -1716,56 +1712,57 @@ UDateIntervalFormat* IntlDateTimeFormat::createDateIntervalFormatIfNecessary(JSG
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_dateIntervalFormat)
-        return m_dateIntervalFormat.get();
+    return intlLazyObject(*this, m_dateIntervalFormat, [&]() -> std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter> {
+        Vector<char16_t, 32> pattern;
+        {
+            auto status = callBufferProducingFunction(udat_toPattern, m_impl->m_dateFormat.get(), false, pattern);
+            if (U_FAILURE(status)) [[unlikely]] {
+                throwTypeError(globalObject, scope, "failed to initialize DateIntervalFormat"_s);
+                return nullptr;
+            }
+        }
 
-    Vector<char16_t, 32> pattern;
-    {
-        auto status = callBufferProducingFunction(udat_toPattern, m_impl->m_dateFormat.get(), false, pattern);
+        Vector<char16_t, 32> skeleton;
+        {
+            auto status = callBufferProducingFunction(udatpg_getSkeleton, nullptr, pattern.span().data(), pattern.size(), skeleton);
+            if (U_FAILURE(status)) [[unlikely]] {
+                throwTypeError(globalObject, scope, "failed to initialize DateIntervalFormat"_s);
+                return nullptr;
+            }
+        }
+
+        dataLogLnIf(IntlDateTimeFormatInternal::verbose, "interval format pattern:(", String(pattern), "),skeleton:(", String(skeleton), ")");
+
+        // While the pattern is including right HourCycle patterns, UDateIntervalFormat does not follow.
+        // We need to enforce HourCycle by setting "hc" extension if it is specified.
+        StringBuilder localeBuilder;
+        localeBuilder.append(m_impl->m_dataLocale);
+        // Another thread may be publishing these two (ensureCalendar()).
+        String calendar = intlLazyFieldSnapshot(*this, m_impl->m_calendar);
+        String numberingSystem = intlLazyFieldSnapshot(*this, m_impl->m_numberingSystem);
+        if (!calendar.isNull() || !numberingSystem.isNull() || m_impl->m_hourCycle != HourCycle::None) {
+            localeBuilder.append("-u"_s);
+            if (!calendar.isNull())
+                localeBuilder.append("-ca-"_s, calendar);
+            if (!numberingSystem.isNull())
+                localeBuilder.append("-nu-"_s, numberingSystem);
+            if (m_impl->m_hourCycle != HourCycle::None)
+                localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
+        }
+        CString dataLocaleWithExtensions = localeBuilder.toString().utf8();
+
+        UErrorCode status = U_ZERO_ERROR;
+        String timeZoneForICU = m_impl->m_timeZone.toICUString();
+        StringView timeZoneView(timeZoneForICU);
+        auto dateIntervalFormat = std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter>(udtitvfmt_open(dataLocaleWithExtensions.data(), skeleton.span().data(), skeleton.size(), timeZoneView.upconvertedCharacters(), timeZoneView.length(), &status));
         if (U_FAILURE(status)) [[unlikely]] {
             throwTypeError(globalObject, scope, "failed to initialize DateIntervalFormat"_s);
             return nullptr;
         }
-    }
 
-    Vector<char16_t, 32> skeleton;
-    {
-        auto status = callBufferProducingFunction(udatpg_getSkeleton, nullptr, pattern.span().data(), pattern.size(), skeleton);
-        if (U_FAILURE(status)) [[unlikely]] {
-            throwTypeError(globalObject, scope, "failed to initialize DateIntervalFormat"_s);
-            return nullptr;
-        }
-    }
-
-    dataLogLnIf(IntlDateTimeFormatInternal::verbose, "interval format pattern:(", String(pattern), "),skeleton:(", String(skeleton), ")");
-
-    // While the pattern is including right HourCycle patterns, UDateIntervalFormat does not follow.
-    // We need to enforce HourCycle by setting "hc" extension if it is specified.
-    StringBuilder localeBuilder;
-    localeBuilder.append(m_impl->m_dataLocale);
-    if (!m_impl->m_calendar.isNull() || !m_impl->m_numberingSystem.isNull() || m_impl->m_hourCycle != HourCycle::None) {
-        localeBuilder.append("-u"_s);
-        if (!m_impl->m_calendar.isNull())
-            localeBuilder.append("-ca-"_s, m_impl->m_calendar);
-        if (!m_impl->m_numberingSystem.isNull())
-            localeBuilder.append("-nu-"_s, m_impl->m_numberingSystem);
-        if (m_impl->m_hourCycle != HourCycle::None)
-            localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
-    }
-    CString dataLocaleWithExtensions = localeBuilder.toString().utf8();
-
-    UErrorCode status = U_ZERO_ERROR;
-    String timeZoneForICU = m_impl->m_timeZone.toICUString();
-    StringView timeZoneView(timeZoneForICU);
-    m_dateIntervalFormat = std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter>(udtitvfmt_open(dataLocaleWithExtensions.data(), skeleton.span().data(), skeleton.size(), timeZoneView.upconvertedCharacters(), timeZoneView.length(), &status));
-    if (U_FAILURE(status)) [[unlikely]] {
-        throwTypeError(globalObject, scope, "failed to initialize DateIntervalFormat"_s);
-        return nullptr;
-    }
-
-    vm.heap.reportExtraMemoryAllocated(this, estimatedUDateIntervalFormatSize);
-
-    return m_dateIntervalFormat.get();
+        vm.heap.reportExtraMemoryAllocated(this, estimatedUDateIntervalFormatSize);
+        return dateIntervalFormat;
+    });
 }
 
 static std::unique_ptr<UFormattedDateInterval, UFormattedDateIntervalDeleter> formattedValueFromDateRange(UDateIntervalFormat& dateIntervalFormat, const UDateFormat& dateFormat, double startDate, double endDate, UErrorCode& status)
@@ -2294,18 +2291,17 @@ UDateFormat* IntlDateTimeFormat::getTemporalFormatter(VM& vm, TemporalFieldKind 
     if (kind == TemporalFieldKind::Instant
         && (m_impl->m_dateStyle != DateTimeStyle::None || m_impl->m_timeStyle != DateTimeStyle::None))
         return m_impl->m_dateFormat.get();
-    if (!m_impl->m_temporalFormatterCache) {
+    auto* cache = intlLazyObject(*this, m_impl->m_temporalFormatterCache, [&] {
         auto cache = makeUnique<IntlDateTimeFormatTemporalFormatterCache>();
         WTF::storeStoreFence(); // Publish cache contents before the pointer.
-        m_impl->m_temporalFormatterCache = WTF::move(cache);
-    }
-    auto& cached = m_impl->m_temporalFormatterCache->m_formatters[static_cast<size_t>(kind)];
-    if (!cached) {
-        cached = computeTemporalFormatter(vm, kind);
-        if (cached)
+        return cache;
+    });
+    return intlLazyObject(*this, cache->m_formatters[static_cast<size_t>(kind)], [&] {
+        auto formatter = computeTemporalFormatter(vm, kind);
+        if (formatter)
             vm.heap.reportExtraMemoryAllocated(this, estimatedUDateFormatSize);
-    }
-    return cached.get();
+        return formatter;
+    });
 }
 
 

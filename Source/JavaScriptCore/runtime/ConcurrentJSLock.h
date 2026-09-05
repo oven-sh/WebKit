@@ -36,17 +36,43 @@ using ConcurrentJSLockerImpl = Locker<Lock>;
 
 static_assert(sizeof(ConcurrentJSLock) == 1, "Regardless of status of concurrent JS flag, size of ConurrentJSLock is always one byte.");
 
+#if ASSERT_ENABLED
+// Debug builds count the ConcurrentJSLocks the current thread holds through
+// these lockers (Structure::m_lock, CodeBlock::m_lock, SymbolTable's, ...). A
+// thread that waits for one of them waits without a safepoint, so with the GIL
+// off a holder must not park for a stop, request one, or check traps under it,
+// or the stop never completes; the park sites assert this count is zero, as
+// they do for cell locks (GCCellLockDepth). Plain Locker<Lock> holds of the
+// same locks are not counted.
+class ConcurrentJSLockDepth {
+public:
+    static void increment() { ++t_depth; }
+    static void decrement()
+    {
+        ASSERT(t_depth);
+        --t_depth;
+    }
+    static unsigned current() { return t_depth; }
+
+private:
+    static inline thread_local unsigned t_depth { 0 };
+};
+#endif
+
 class ConcurrentJSLockerBase : public AbstractLocker {
     WTF_MAKE_NONCOPYABLE(ConcurrentJSLockerBase);
 public:
     explicit ConcurrentJSLockerBase(ConcurrentJSLock& lockable)
     {
         m_locker.emplace(lockable);
+        didLock();
     }
     explicit ConcurrentJSLockerBase(ConcurrentJSLock* lockable)
     {
-        if (lockable)
+        if (lockable) {
             m_locker.emplace(*lockable);
+            didLock();
+        }
     }
 
     explicit ConcurrentJSLockerBase(NoLockingNecessaryTag)
@@ -56,15 +82,32 @@ public:
 
     ~ConcurrentJSLockerBase()
     {
+        unlockEarly();
     }
     
     void unlockEarly() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
-        if (m_locker)
+        if (m_locker) {
             m_locker->unlockEarly();
+            m_locker = std::nullopt;
+            willUnlock();
+        }
     }
 
 private:
+    void didLock()
+    {
+#if ASSERT_ENABLED
+        ConcurrentJSLockDepth::increment();
+#endif
+    }
+    void willUnlock()
+    {
+#if ASSERT_ENABLED
+        ConcurrentJSLockDepth::decrement();
+#endif
+    }
+
     std::optional<ConcurrentJSLockerImpl> m_locker;
 };
 

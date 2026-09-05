@@ -31,6 +31,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RecursiveLockAdapter.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/Threading.h>
 
 namespace JSC {
 
@@ -339,6 +340,40 @@ public:
     }
 
 private:
+    bool m_shouldLock;
+};
+
+// The same gated, polling acquisition for a plain lock that serializes a
+// first-use initialization GIL-off (state that a cell builds on first use with
+// a check and a store, which two threads can otherwise both run). The holder
+// may allocate and so may park or request a stop inside the section, so a
+// waiter polls the stop word instead of blocking in lock(). Callers re-check
+// their "already made" condition after acquiring. Each site keeps one
+// process-wide static Lock; only one VM per process runs GIL-off.
+class GILOffFirstUseLocker {
+    WTF_MAKE_NONCOPYABLE(GILOffFirstUseLocker);
+public:
+    GILOffFirstUseLocker(Lock& lock, VM& vm, bool shouldLock)
+        : m_lock(lock)
+        , m_shouldLock(shouldLock)
+    {
+        if (!m_shouldLock) [[likely]]
+            return;
+        while (!m_lock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+                continue;
+            Thread::yield();
+        }
+    }
+
+    ~GILOffFirstUseLocker()
+    {
+        if (m_shouldLock) [[unlikely]]
+            m_lock.unlock();
+    }
+
+private:
+    Lock& m_lock;
     bool m_shouldLock;
 };
 

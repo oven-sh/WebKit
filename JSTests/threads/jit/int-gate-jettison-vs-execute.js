@@ -33,6 +33,7 @@ function makeHot(seed) {
 }
 
 const stop = { value: false };
+const gate = { running: 0 };
 const shapes = [{ f: 1, g: 2 }, { f: 3 }];
 const arr = [1, 2, 3, 4, 5, 6, 7, 8];
 const hot = [];
@@ -56,11 +57,19 @@ const workers = spawnN(THREADS, function (slot) {
             throw new Error("worker " + slot + " observed torn execution: " + got + " != " + s);
         sum += got;
         ++iterations;
+        if (iterations === 1)
+            Atomics.add(gate, "running", 1);
         if (!(iterations % 64))
             sleepMs(0); // poll/park point under the cooperative GIL
     }
     return iterations;
 });
+
+// Jettison only once every worker has run once. Thread start-up can take
+// longer than all the rounds below when the machine is loaded, and a worker
+// that first runs after `stop` is set does nothing, so nothing raced and the
+// progress check at the end fails.
+waitUntil(() => Atomics.load(gate, "running") === THREADS);
 
 for (let round = 0; round < ROUNDS; ++round) {
     // 1. OSR-exit storm: feed a type surprise to each hot function.

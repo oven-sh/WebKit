@@ -117,17 +117,21 @@ void WeakMapImpl<WeakMapBucket>::takeSnapshotInternal(unsigned limit, Appender a
 template <>
 void WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::takeSnapshot(MarkedArgumentBuffer& buffer, unsigned limit)
 {
-    takeSnapshotInternal(limit, [&](JSCell* key, JSValue) {
-        buffer.append(key);
+    withLockIfGILOff([&] {
+        takeSnapshotInternal(limit, [&](JSCell* key, JSValue) {
+            buffer.append(key);
+        });
     });
 }
 
 template <>
 void WeakMapImpl<WeakMapBucket<WeakMapBucketDataKeyValue>>::takeSnapshot(MarkedArgumentBuffer& buffer, unsigned limit)
 {
-    takeSnapshotInternal(limit, [&](JSCell* key, JSValue value) {
-        buffer.append(key);
-        buffer.append(value);
+    withLockIfGILOff([&] {
+        takeSnapshotInternal(limit, [&](JSCell* key, JSValue value) {
+            buffer.append(key);
+            buffer.append(value);
+        });
     });
 }
 
