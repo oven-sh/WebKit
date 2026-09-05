@@ -244,14 +244,32 @@ public:
     // WeakMap operations must not cause GC. We model operations in DFG based on this guarantee.
     // This guarantee is ensured by AssertNoGC.
 
+    // With the GIL off several threads use one table at once, and an add or a
+    // remove can rehash it, which frees the buffer the others are probing. In a
+    // GIL-off process every operation on the table holds the cell lock; nothing
+    // under it allocates in the GC heap or parks (a rehash uses fastMalloc), and
+    // the DFG does not inline these operations then (DFGByteCodeParser.cpp,
+    // isHashTableIntrinsic). Flag off and GIL on: one predicted-false byte test.
+    template<typename Func>
+    ALWAYS_INLINE decltype(auto) withLockIfGILOff(const Func& func)
+    {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            Locker locker { cellLock() };
+            return func();
+        }
+        return func();
+    }
+
     template<typename T = WeakMapBucketType>
         requires std::same_as<T, WeakMapBucket<WeakMapBucketDataKeyValue>>
     ALWAYS_INLINE JSValue get(JSCell* key)
     {
-        AssertNoGC assertNoGC;
-        if (WeakMapBucketType* bucket = findBucket(key))
-            return bucket->value();
-        return jsUndefined();
+        return withLockIfGILOff([&]() -> JSValue {
+            AssertNoGC assertNoGC;
+            if (WeakMapBucketType* bucket = findBucket(key))
+                return bucket->value();
+            return jsUndefined();
+        });
     }
 
     template<typename T = WeakMapBucketType>
@@ -283,31 +301,38 @@ public:
 
     ALWAYS_INLINE bool has(JSCell* key)
     {
-        AssertNoGC assertNoGC;
-        return !!findBucket(key);
+        return withLockIfGILOff([&] {
+            AssertNoGC assertNoGC;
+            return !!findBucket(key);
+        });
     }
 
+    // add() takes the lock itself; addBucket(), findBucketIndex() and
+    // getBucket() are steps of one operation and run inside the caller's
+    // withLockIfGILOff.
     ALWAYS_INLINE void add(VM&, JSCell* key, JSValue = JSValue());
     ALWAYS_INLINE void add(VM&, JSCell* key, JSValue, uint32_t hash);
     ALWAYS_INLINE void addBucket(VM&, JSCell* key, JSValue, uint32_t hash, size_t index);
 
     ALWAYS_INLINE bool remove(JSCell* key)
     {
-        AssertNoGC assertNoGC;
-        WeakMapBucketType* bucket = findBucket(key);
-        if (!bucket)
-            return false;
+        return withLockIfGILOff([&] {
+            AssertNoGC assertNoGC;
+            WeakMapBucketType* bucket = findBucket(key);
+            if (!bucket)
+                return false;
 
-        bucket->makeDeleted();
+            bucket->makeDeleted();
 
-        ++m_deleteCount;
-        RELEASE_ASSERT(m_keyCount > 0);
-        --m_keyCount;
+            ++m_deleteCount;
+            RELEASE_ASSERT(m_keyCount > 0);
+            --m_keyCount;
 
-        if (shouldShrink())
-            rehash();
+            if (shouldShrink())
+                rehash();
 
-        return true;
+            return true;
+        });
     }
 
     ALWAYS_INLINE uint32_t size() const
@@ -397,6 +422,8 @@ private:
     {
         return !bucket->isDeleted() && key == bucket->key();
     }
+
+    ALWAYS_INLINE void addHoldingLockIfGILOff(VM&, JSCell* key, JSValue, uint32_t hash);
 
     ALWAYS_INLINE void addInternal(VM& vm, JSCell* key, JSValue value, uint32_t hash)
     {

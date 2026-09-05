@@ -1218,7 +1218,9 @@ With the GIL on the check and the store never interleave. Four sites:
   lazy `length` and `name` store equal primitive values, so a double store is
   harmless; `LazyProperty` has its own GIL-off protocol
   (`LazyPropertyInlines.h`); `Structure` property tables are materialized under
-  the structure's lock.
+  the structure's lock. (Fourth round: the `length`/`name` reading was wrong —
+  the flag is set before the put, and a reader that trusts it misses the
+  property — and `getID()` is now a compare-and-swap anyway; see PRE-14.)
 
 ### PRE-11: a trap check under a cell lock, GIL off (third round)
 
@@ -1282,6 +1284,134 @@ With the GIL on the check and the store never interleave. Four sites:
   before the length, which on x86-64 cannot pair a null base with a stale
   length (the detach publishes the flag before the zero length); noted for
   arm64, where `vector()` would want a load-load fence for the same argument.
+
+### PRE-14: lazy first-use state, the full search (fourth round)
+
+**Risk: confirmed by test (seven sites). Fixed.**
+
+The third round's PRE-10 fixed four first-use races and did not search for the
+rest. This round went through the branch's own audit tables — every K4 row
+(VM-level state) and every N7 row (per-cell state) — and checked each ruling
+against the code, then through the lazily filled members of the runtime classes
+the tables do not name (`mutable` members, `ensure*` and `m_cached*` members,
+check-then-store patterns under `runtime/`, `bytecode/`, `parser/`). Rulings
+that had not been implemented, or had been implemented for one class of a
+pair:
+
+- N7 R2, `WeakMapImpl` ("COVERED §N.1"): nothing locked. Fix: cell lock
+  around every table operation in a GIL-off process, `getOrInsert`'s
+  find-and-add as one hold, no DFG inlining of the five intrinsics
+  (`isHashTableIntrinsic`). Test: `shared-objects/weakmap-weakset-shared-writers.js`.
+- N7 RESOLVED-4, `ScopedArguments::overrideThings`: the `DirectArguments` half
+  (RESOLVED-3) had its lock, this half kept `RELEASE_ASSERT(!m_overrodeThings)`.
+  Fix: the same polling first-use lock (`GILOffFirstUseLocker`, now a shared
+  helper in `JSThreadsSafepoint.h`), re-check, release-publish of the flag,
+  and the lock around `unmapArgument`'s table copy. Test:
+  `semantics/scoped-arguments-override-race.js`.
+- N7 RESOLVED-6, the Intl cells: nothing done. Fix: `intlLazyField` /
+  `intlLazyString` / `intlLazyObject` in `IntlObjectInlines.h` (compute
+  outside, publish once under the cell lock, GIL-off process only) for
+  `IntlLocale`'s fifteen lazy members, the `numberingSystem`/`calendar` of
+  `IntlNumberFormat`, `IntlDateTimeFormat`, `IntlRelativeTimeFormat`,
+  `IntlDurationFormat`, the lazily opened `UDateIntervalFormat`,
+  `UNumberRangeFormatter`, Temporal and per-unit formatters; per-call scratch
+  in `IntlRelativeTimeFormat::formatToParts`; a per-call break-iterator clone
+  in `IntlSegments::containing`; the step of `IntlSegmentIterator::next` under
+  the cell lock. The ICU handles that stay shared are used through `const` ICU
+  calls only. Test: `semantics/intl-lazy-fields-race.js`.
+- K4.II.4, `jsonAtomStringCache` ("per-lite"): still the VM's. Fix:
+  `JSONAtomStringCache::live(vm)` routes a GIL-off thread to a thread-local
+  table that caches atoms only. Test: `vmstate/json-parse-key-cache-per-thread.js`.
+- K4.II.1, `numericStrings`: routed everywhere but `String.raw`
+  (`StringConstructor.cpp`). Fix: `liveNumericStrings()`. Test:
+  `vmstate/string-raw-number-cache-per-thread.js`.
+- PRE-10's "read and left" `JSFunction` `length`/`name`: wrong, see the plan's
+  fourth-round entry (flag before put; inline cache then serves the prototype's
+  value; bit-field lost updates). Fix: atomic flag byte set after the put,
+  first reification under a first-use lock. Test:
+  `semantics/lazy-length-name-first-use-race.js`.
+- PRE-10's "read and left" `SourceProvider::getID()`: now a compare-and-swap.
+  No test (an ID is not observable from script in the shell).
+- `VM::emptyPropertyNameEnumeratorSlow` and the four promise-function
+  executable slow paths: compare-and-swap publish flag on. No test.
+- `CodeBlock::RareData::m_exceptionHandlers` on optimizing-JIT code blocks:
+  grown by `appendExceptionHandler` at IC link time and shrunk when the stub
+  dies, walked by the unwinder on any thread. Fix: a lock in the rare data,
+  held by those three flag on; the unwinder copies the `HandlerInfo` under it.
+  `jit/ic-exception-handler-table-vs-unwind.js` exercises the shape but does
+  not fail without the fix.
+
+Verified as implemented or safe, and why (the ones a reader would ask about):
+`lastCachedString` (one GC-pointer word; a value in use is a conservative
+root), `lastAtomizedIdentifier` (bypassed GIL off), `stringSplitCache` /
+`stringSplitIndice` / `stringReplaceCache` (skipped GIL off), sort scratch
+(per-lite), the BigInt divisor cache (skipped), `dateCache` (every entry
+point through `live()`), `DateInstance::m_data` (never written GIL off),
+`adaptiveStringSearcherTables` (per-thread), `hasOwnPropertyCache` (skipped),
+the megamorphic cache (fills off), `RegExp` compile state (cell-locked GIL
+off) and `m_cachedGroupsStructureID` (one word, either value valid),
+`Structure` rare data and its enumerator / special-property caches (CAS
+install, fills under `m_lock`), the module resolution cache (cell-locked),
+`DirectArguments` / `GenericArguments` (CAS-publish), `JSArrayBufferView`'s
+slow-down path (CAS), `TypedArrayController`'s wrapper (CAS), `JSFunction`
+rare data (CAS) and allocation profile (its own lock), `CodeBlock` rare data
+(CAS), catch liveness (release-publish), `DirectEvalCodeCache` (locked flag
+on), `CodeBlock::hash()` (idempotent word), template objects (made at link,
+under the GIL-off compilation lock, as is everything the parser, the code
+cache, `sourceProviderCacheMap`, the TDZ environment map and the symbol
+table cache touch), `StructureCache` (locking map, first-wins), `Symbol` and
+atom-string maps (locking `WeakGCMap` flag on), `InlineWatchpointSet::inflate`
+(double-checked under the membership lock), `LazyProperty` (its own protocol,
+for any owner, which covers the Temporal calendars), `WeakRef` (a version
+word), `FinalizationRegistry` (locked), `DeferredWorkTimer` (locked),
+`WaiterListManager` (locked; allocation and heap-access release outside its
+locks), `VM::ensureWatchpointSetForImpureProperty` (unlocked but unreachable:
+no class sets `NewImpurePropertyFiresWatchpoints`).
+
+Left as they are, recorded: `Math.random`'s state on the global object is one
+xorshift pair advanced by every thread (and by DFG code inline), so two
+threads can draw the same number; not memory-unsafe, and `Math.random` makes
+no promise it breaks. `JSGlobalObject::createRareDataIfNeeded` and the C API's
+`JSCallbackObject` private-property map are embedder-only paths (K4.IV.9,
+N7 R30). `IntlCollator`'s and `IntlNumberFormat`'s bound `compare`/`format`
+are one word each; two threads may make two bound functions (identity only).
+
+### PRE-15: an error object made under a symbol table lock, GIL off (fourth round)
+
+**Risk: confirmed by test (a stop-the-world deadlock). Fixed.**
+
+- `symbolTablePut` (`JSSymbolTableObject.h`, both the `JSLexicalEnvironment`
+  and the `JSGlobalObject` instantiations) threw the read-only `TypeError`
+  inside its `GCSafeConcurrentJSLocker` on the scope's `SymbolTable::m_lock`.
+  Making the error object adds properties (`ErrorInstance::finishCreation` →
+  `putDirect`), and a GIL-off property add polls for a pending stop-the-world
+  (`parkSitePollAndParkForStopTheWorld`) and parks for it; a thread blocked on
+  the same symbol table lock waits with no safepoint, so a stop requested by a
+  third thread never completed (30 s watchdog).
+- Found by the new Debug assertion at the poll site (PRE-11's rule extended to
+  ConcurrentJSLocks and checked whether or not a stop is pending), in 22 files
+  of a GIL-off run of `JSTests/stress` on the Debug build; nowhere else.
+- Fix: note the read-only entry under the lock, throw after releasing it.
+- Test: `semantics/const-assign-throw-vs-scope-access-under-stops.js` (10 of 10
+  watchdog aborts before, 0 after).
+
+### PRE-16: the window-liveness constraint retained the conductor's own blocks (fourth round)
+
+**Risk: over-retention, not unsoundness. Changed.**
+
+- `Heap::addCoreConstraints`, "Wlr": walked every attached client's
+  `m_lastActiveBlock`s, the conducting client's too. The constraint executes
+  on the conductor (`ConstraintConcurrency::Sequential`; shared collections are
+  mutator-conducted), whose stack and registers are captured in
+  `m_currentThreadState` and scanned by `gatherStackRoots` as in the
+  single-mutator protocol, so the conductor's window cells are rooted,
+  heap-reachable or dead, exactly the argument the `size() <= 1` gate makes.
+  The resume sweep, the empty-block judgement and `shrink()` treat the
+  conductor's block as they treat the lone mutator's in the legacy protocol
+  (all clients resume in-window before any mutator runs; `inUse` excludes the
+  block from steal and shrink after).
+- Change: skip `GCClient::Heap::currentThreadClient()` in the client walk.
+- Test: `gc-stress/gc-reclaims-conductor-garbage-with-thread-attached.js`.
 
 ## What this audit did not check
 

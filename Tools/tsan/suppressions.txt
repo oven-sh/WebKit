@@ -338,6 +338,13 @@ race:WTF::StringImplShape::hashAndFlags
 # WatchpointSet state byte: monotonic, fired-only-in-STW (JIT §5.6 ruling);
 # state() is the blessed racy read.
 race:JSC::WatchpointSet::state
+
+# Structure's TypeInfoBlob word, read through its relaxed accessor (the JSCell
+# constructor copies it from the structure). Seen once against HeapCell::zap
+# in a sweep on another thread: the Structure's cell had been swept and handed
+# out again, and the object was then made with it on a third thread, so the
+# real edge is the cell hand-out and the structure's publication, as above.
+race:JSC::TypeInfoBlob::tsanRelaxedLoad
 race:JSC::InlineWatchpointSet::state
 
 # Typed-array view metadata words (typedarray-sab family rulings §3.24):
@@ -604,3 +611,18 @@ race:JSC::DirectCallLinkInfo::loadCallTypeAndDataIC
 # - A string's fields are written by its constructor before it is published.
 race:JSC::MarkedBlock::Handle::didAddToDirectory
 race:JSC::JSString::JSString
+# ICU is not instrumented. An ICU formatter shared by several threads (one
+# Intl object used from several threads, GIL off) compiles its fast path on
+# the N-th call (LocalizedNumberFormatter::computeCompiled, behind
+# RelativeDateTimeFormatter and the number formatters too) and publishes it
+# with ICU's own atomics (umtx_loadAcquire / umtx_storeRelease), which TSAN
+# cannot see inside the library; it then reports the compiled object's
+# allocation on one thread against its first use (a memcpy) on another. The
+# ICU calls made on shared objects are const member functions, which ICU
+# documents as safe for concurrent use. Matched on the module, since the
+# system library has no symbols; a race whose other side is in JSC still has
+# a JSC frame to report. (Not called_from_lib: that also hides ICU's mutex
+# acquisitions from TSAN and turns its condition waits into false "unlock of
+# an unlocked mutex" reports.)
+race:libicui18n.so
+race:libicuuc.so

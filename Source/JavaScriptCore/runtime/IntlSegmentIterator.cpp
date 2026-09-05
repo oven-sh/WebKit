@@ -26,6 +26,8 @@
 #include "config.h"
 #include "IntlSegmentIterator.h"
 
+#include "IntlObjectInlines.h"
+
 #include "IntlSegmentDataObject.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
@@ -71,11 +73,24 @@ JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t startIndex = ubrk_current(m_segmenter.get());
-    int32_t endIndex = ubrk_next(m_segmenter.get());
+    // The step moves the break iterator. With the GIL off two threads can call
+    // next() on one iterator at once; each step is then taken whole under the
+    // cell lock (nothing under it allocates), and the objects are made after.
+    int32_t startIndex;
+    int32_t endIndex;
+    int32_t ruleStatus = 0;
+    {
+        std::optional<Locker<JSCellLock>> locker;
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            locker.emplace(cellLock());
+        startIndex = ubrk_current(m_segmenter.get());
+        endIndex = ubrk_next(m_segmenter.get());
+        if (endIndex != UBRK_DONE && m_granularity == IntlSegmenter::Granularity::Word)
+            ruleStatus = ubrk_getRuleStatus(m_segmenter.get());
+    }
     if (endIndex == UBRK_DONE)
         return createIteratorResultObject(globalObject, jsUndefined(), true);
-    JSObject* object = createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);
+    JSObject* object = createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, ruleStatus, m_granularity);
     RETURN_IF_EXCEPTION(scope, { });
     return createIteratorResultObject(globalObject, object, false);
 }

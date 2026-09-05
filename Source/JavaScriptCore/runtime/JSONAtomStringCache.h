@@ -48,13 +48,23 @@ public:
     using JSStringCache = std::array<JSString*, capacity>;
 
     template<typename CharacterType>
-    ALWAYS_INLINE Ref<AtomStringImpl> makeIdentifier(std::span<const CharacterType> characters);
+    ALWAYS_INLINE Ref<AtomStringImpl> makeIdentifier(VM&, std::span<const CharacterType> characters);
 
     template<typename CharacterType>
-    ALWAYS_INLINE AtomStringImpl* existingIdentifier(std::span<const CharacterType> characters);
+    ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, std::span<const CharacterType> characters);
 
     template<typename CharacterType>
-    ALWAYS_INLINE JSString* tryMakeJSString(std::span<const CharacterType> characters);
+    ALWAYS_INLINE JSString* tryMakeJSString(VM&, std::span<const CharacterType> characters);
+
+    // The cache on the VM has no lock, and with the GIL off every thread of the
+    // VM parses at once: a slot written by two threads pairs one thread's
+    // characters with another's atom (a wrong property name) and races the
+    // RefPtr assignment. GIL-off, each thread uses a cache of its own, which
+    // holds atoms only: a JSString it cached could not be cleared or visited by
+    // the collector (Heap::finalize clears the VM's), so that half is off.
+    // Flag off and GIL on: one predicted-false byte test in live().
+    static ALWAYS_INLINE JSONAtomStringCache& live(VM&);
+    JS_EXPORT_PRIVATE static JSONAtomStringCache& gilOffPerThreadCache();
 
     ALWAYS_INLINE void clear()
     {
@@ -66,8 +76,6 @@ public:
     {
         m_jsStrings.fill(nullptr);
     }
-
-    VM& vm() const;
 
 private:
     ALWAYS_INLINE unsigned cacheIndex(char16_t firstCharacter, char16_t lastCharacter, char16_t length)
@@ -85,6 +93,7 @@ private:
 
     Cache m_cache { };
     JSStringCache m_jsStrings { };
+    bool m_jsStringCachingDisabled { false };
 };
 
 } // namespace JSC

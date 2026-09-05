@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "GCMemoryOperations.h"
 #include "IndexingHeader.h"
 #include "IndexingType.h"
 #include "PropertyStorage.h"
@@ -423,6 +424,33 @@ ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size
         WTF::atomicStore(&to[i], WTF::atomicLoad(const_cast<uint64_t*>(&from[i]), std::memory_order_relaxed), std::memory_order_relaxed);
 #else
     memcpy(dst, src, bytes);
+#endif
+}
+
+// The in-place element move of an array this thread owns (fastShift, shift and
+// unshift on flat storage, copyWithin): another thread's FIRST store to the
+// array can land during the move (the window before that store publishes
+// SW=1), so slots are moved whole: gcSafeMemmove in production (64-bit units;
+// a plain memmove promises no unit), relaxed word atomics under TSAN so the
+// pairing with that store is defined and visible. Overlap in either direction.
+template<typename T>
+ALWAYS_INLINE void butterflyConcurrentMoveWords(T* dst, const T* src, size_t bytes)
+{
+    static_assert(sizeof(T) == sizeof(uint64_t));
+#if TSAN_ENABLED
+    ASSERT(!(bytes % sizeof(uint64_t)));
+    uint64_t* to = std::bit_cast<uint64_t*>(dst);
+    uint64_t* from = std::bit_cast<uint64_t*>(const_cast<T*>(src));
+    size_t count = bytes / sizeof(uint64_t);
+    if (to <= from) {
+        for (size_t i = 0; i < count; ++i)
+            WTF::atomicStore(&to[i], WTF::atomicLoad(&from[i], std::memory_order_relaxed), std::memory_order_relaxed);
+    } else {
+        for (size_t i = count; i--;)
+            WTF::atomicStore(&to[i], WTF::atomicLoad(&from[i], std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+#else
+    gcSafeMemmove(dst, src, bytes);
 #endif
 }
 

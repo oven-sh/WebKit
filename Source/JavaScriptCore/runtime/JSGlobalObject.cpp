@@ -4602,6 +4602,14 @@ void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Excepti
 
 void JSGlobalObject::setConsoleClient(WeakPtr<ConsoleClient>&& consoleClient)
 {
+    // With JS threads every thread of the VM uses this global's console, so the
+    // pointer is read on threads other than the one that made it; the client
+    // lives as long as the embedder keeps it, on any thread. Drop the WeakPtr's
+    // single-thread assertion in that configuration.
+    if (Options::useJSThreads() && consoleClient) [[unlikely]] {
+        m_consoleClient = WeakPtr<ConsoleClient>(consoleClient.get(), EnableWeakPtrThreadingAssertions::No);
+        return;
+    }
     m_consoleClient = WTF::move(consoleClient);
 }
 

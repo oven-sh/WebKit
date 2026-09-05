@@ -131,21 +131,20 @@ public:
 
     ExecutableBase* executable() const LIFETIME_BOUND { return m_executable.get(); }
 
-    bool hasReifiedLength() const { return m_hasReifiedLength; }
-    void setHasReifiedLength() { m_hasReifiedLength = true; }
-    bool hasReifiedName() const { return m_hasReifiedName; }
-    void setHasReifiedName() { m_hasReifiedName = true; }
+    // The four flags share one byte. With the GIL off two threads can set two
+    // of them at once (one thread reifies `length` while another reifies
+    // `name`), so a set is an atomic or then, and a reified flag is published
+    // after the property it stands for (JSFunction::reifyLength/reifyName) and
+    // read with acquire. Flag off: a plain byte or and a plain byte load.
+    bool hasReifiedLength() const { return hasLazyFlag(HasReifiedLength); }
+    void setHasReifiedLength() { setLazyFlag(HasReifiedLength); }
+    bool hasReifiedName() const { return hasLazyFlag(HasReifiedName); }
+    void setHasReifiedName() { setLazyFlag(HasReifiedName); }
 
-    bool hasModifiedLengthForBoundOrNonHostFunction() const { return m_hasModifiedLengthForBoundOrNonHostFunction; }
-    void setHasModifiedLengthForBoundOrNonHostFunction()
-    {
-        m_hasModifiedLengthForBoundOrNonHostFunction = true;
-    }
-    bool hasModifiedNameForBoundOrNonHostFunction() const { return m_hasModifiedNameForBoundOrNonHostFunction; }
-    void setHasModifiedNameForBoundOrNonHostFunction()
-    {
-        m_hasModifiedNameForBoundOrNonHostFunction = true;
-    }
+    bool hasModifiedLengthForBoundOrNonHostFunction() const { return hasLazyFlag(HasModifiedLengthForBoundOrNonHostFunction); }
+    void setHasModifiedLengthForBoundOrNonHostFunction() { setLazyFlag(HasModifiedLengthForBoundOrNonHostFunction); }
+    bool hasModifiedNameForBoundOrNonHostFunction() const { return hasLazyFlag(HasModifiedNameForBoundOrNonHostFunction); }
+    void setHasModifiedNameForBoundOrNonHostFunction() { setLazyFlag(HasModifiedNameForBoundOrNonHostFunction); }
 
     bool hasAllocationProfileClearingWatchpoint() const { return !!m_allocationProfileClearingWatchpoint; }
     Watchpoint* createAllocationProfileClearingWatchpoint();
@@ -176,10 +175,21 @@ private:
     WriteBarrierStructureID m_boundFunctionStructureID;
     WriteBarrier<ExecutableBase> m_executable;
     std::unique_ptr<AllocationProfileClearingWatchpoint> m_allocationProfileClearingWatchpoint;
-    bool m_hasReifiedLength : 1;
-    bool m_hasReifiedName : 1;
-    bool m_hasModifiedLengthForBoundOrNonHostFunction : 1;
-    bool m_hasModifiedNameForBoundOrNonHostFunction : 1;
+    enum LazyFlag : uint8_t {
+        HasReifiedLength = 1 << 0,
+        HasReifiedName = 1 << 1,
+        HasModifiedLengthForBoundOrNonHostFunction = 1 << 2,
+        HasModifiedNameForBoundOrNonHostFunction = 1 << 3,
+    };
+    bool hasLazyFlag(LazyFlag flag) const { return WTF::atomicLoad(const_cast<uint8_t*>(&m_lazyFlags), std::memory_order_acquire) & flag; }
+    void setLazyFlag(LazyFlag flag)
+    {
+        if (Options::useJSThreads()) [[unlikely]]
+            WTF::atomicExchangeOr(&m_lazyFlags, static_cast<uint8_t>(flag), std::memory_order_release);
+        else
+            m_lazyFlags |= flag;
+    }
+    uint8_t m_lazyFlags { 0 };
     // GIL-off: serializes the fills and clears of the two allocation profiles
     // (FunctionRareData.cpp). Held across an allocation and a park, which a cell
     // lock must not be, and taken only with tryLock. Fits in the tail padding.

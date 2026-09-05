@@ -29,6 +29,8 @@
 #include "BuiltinNames.h"
 #include "ExceptionHelpers.h"
 #include "IntlObject.h"
+#include "JSCConfig.h"
+#include "JSCellInlines.h"
 #include "JSArray.h"
 #include "JSBoundFunction.h"
 #include "JSObject.h"
@@ -43,6 +45,70 @@ template<typename StringType>
 static constexpr uint32_t computeTwoCharacters16Code(const StringType& string)
 {
     return static_cast<uint16_t>(string.codeUnitAt(0)) | (static_cast<uint32_t>(static_cast<uint16_t>(string.codeUnitAt(1))) << 16);
+}
+
+// Several Intl cells compute a member on first use (a Locale's subtags, the
+// numbering system resolvedOptions() reports, the ICU formatter behind
+// formatRange(), ...) with a check and a store. With the GIL off two threads can
+// do that on one shared cell together, and a String or unique_ptr assigned
+// twice frees what the other thread returned. In a GIL-off process the value
+// is computed outside any lock (it may call other such members, and creating
+// an ICU object may throw) and then published once under the cell lock; a
+// thread that finds it published uses it, and a loser drops its own. Nothing
+// under the lock allocates in the GC heap or parks. Flag off and GIL on the
+// helpers reduce to the plain check and store: one predicted-false byte test.
+// (The owner is const because the members are `mutable` caches of const
+// methods; its cell lock is not part of its value.)
+template<typename Slot, typename IsUnset, typename Compute>
+ALWAYS_INLINE Slot& intlLazyField(const JSCell& owner, Slot& slot, const IsUnset& isUnset, const Compute& compute)
+{
+    if (!g_jscConfig.gilOffProcess) [[likely]] {
+        if (isUnset(slot))
+            slot = compute();
+        return slot;
+    }
+    JSCellLock& lock = const_cast<JSCell&>(owner).cellLock();
+    {
+        Locker locker { lock };
+        if (!isUnset(slot))
+            return slot;
+    }
+    auto value = compute();
+    Locker locker { lock };
+    if (isUnset(slot))
+        slot = WTF::move(value);
+    return slot;
+}
+
+template<typename Compute>
+ALWAYS_INLINE const String& intlLazyString(const JSCell& owner, String& slot, const Compute& compute)
+{
+    return intlLazyField(owner, slot, [](const String& string) { return string.isNull(); }, compute);
+}
+
+template<typename Compute>
+ALWAYS_INLINE const String& intlLazyString(const JSCell& owner, std::optional<String>& slot, const Compute& compute)
+{
+    return intlLazyField(owner, slot, [](const std::optional<String>& string) { return !string; }, [&]() -> std::optional<String> { return compute(); }).value();
+}
+
+// For a lazily created ICU object: the slot is a unique_ptr, and compute() may
+// return null after throwing a JS exception, in which case nothing is stored.
+template<typename Pointer, typename Compute>
+ALWAYS_INLINE typename Pointer::element_type* intlLazyObject(const JSCell& owner, Pointer& slot, const Compute& compute)
+{
+    return intlLazyField(owner, slot, [](const Pointer& pointer) { return !pointer; }, compute).get();
+}
+
+// A snapshot of a member that another thread may be publishing through the
+// helpers above (for a reader that only wants its current value).
+template<typename Slot>
+ALWAYS_INLINE Slot intlLazyFieldSnapshot(const JSCell& owner, const Slot& slot)
+{
+    if (!g_jscConfig.gilOffProcess) [[likely]]
+        return slot;
+    Locker locker { const_cast<JSCell&>(owner).cellLock() };
+    return slot;
 }
 
 template<typename Predicate> String bestAvailableLocale(const String& locale, Predicate predicate)

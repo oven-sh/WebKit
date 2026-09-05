@@ -250,14 +250,14 @@ JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* ca
                 if (index < butterfly->publicLength()) {
                     JSValue value = butterfly->contiguous().at(rawArray, index).get();
                     if (value) [[likely]]
-                        segment = jsString(vm, vm.numericStrings.add(value.asInt32()));
+                        segment = jsString(vm, vm.liveNumericStrings().add(value.asInt32()));
                 }
                 break;
             case ALL_DOUBLE_INDEXING_TYPES:
                 if (index < butterfly->publicLength()) {
                     double value = butterfly->contiguousDouble().at(rawArray, index);
                     if (value == value) [[likely]]
-                        segment = jsString(vm, vm.numericStrings.add(value));
+                        segment = jsString(vm, vm.liveNumericStrings().add(value));
                 }
                 break;
             case ALL_CONTIGUOUS_INDEXING_TYPES:

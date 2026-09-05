@@ -27,6 +27,7 @@
 #include "BuiltinExecutables.h"
 #include "CachedTypes.h"
 #include "CodeBlock.h"
+#include "ConcurrentJSLock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
 #include "ConservativeRoots.h"
@@ -5233,7 +5234,24 @@ void Heap::addCoreConstraints()
                 // campaign-1 forEachBlock body, both taken inside
                 // clientSet().forEach() at step-8 already (resumeAllocating
                 // -> sweep), so no new lock-order edge.
+                // The conducting thread's own blocks are left to the ordinary
+                // scan, by the argument the single-mutator gate above makes
+                // for one client: this constraint runs on the conductor
+                // (Sequential; a shared collection is always conducted by a
+                // mutator, checkConn), whose stack and registers are in
+                // m_currentThreadState and are scanned as in the
+                // single-mutator protocol, so each of its window cells is
+                // rooted, heap-reachable, or dead, and its resume sweep may
+                // free the dead ones as it always has. Only the PARKED
+                // clients' blocks carry the witness obligation. Without this a
+                // gc() on a thread kept that thread's newest garbage for a
+                // cycle whenever any other thread was attached
+                // (gc-stress/gc-reclaims-conductor-garbage-with-thread-attached.js).
+                ASSERT(m_currentThread == &Thread::currentSingleton());
+                GCClient::Heap* conductorClient = GCClient::Heap::currentThreadClient();
                 clientSet().forEach([&](GCClient::Heap& client) {
+                    if (&client == conductorClient)
+                        return;
                     client.threadLocalCache().forEachLocalAllocator([&](LocalAllocator* allocator) {
                         if (MarkedBlock::Handle* handle = allocator->lastActiveBlock())
                             visitWindowBlock(handle);
@@ -5738,8 +5756,15 @@ void Heap::setMutatorShouldBeFenced(bool value)
         // republish loop stamps every client's m_fenceEpochSeen with it.
         m_barrierFenceEpoch.exchangeAdd(1, std::memory_order_release);
     }
-    m_mutatorShouldBeFenced = value;
-    m_barrierThreshold = value ? tautologicalThreshold : blackThreshold;
+    // Relaxed atomics (plain moves): the sticky flip (noteSharedServerSticky)
+    // raises the fence after it publishes ISS, under the thread lock only, so a
+    // client attaching on another thread at that moment snapshots this pair
+    // concurrently (HeapClientSet::snapshotBarrierFenceStateForAttach). A
+    // snapshot that misses the raise is harmless — no marking consults the
+    // per-client copies before the first shared window, whose close
+    // republishes the master pair to every client — but the accesses overlap.
+    WTF::atomicStore(&m_mutatorShouldBeFenced, value, std::memory_order_relaxed);
+    WTF::atomicStore(&m_barrierThreshold, value ? tautologicalThreshold : blackThreshold, std::memory_order_relaxed);
 }
 
 void Heap::performIncrement(size_t bytes)
@@ -7477,8 +7502,11 @@ void Heap::stopIfNecessaryForAllClients()
     // ANNEX CGN1 N3 termination argument (IN-WINDOW every 10a lock must be
     // free so the visitor's tryLock retries succeed). Stage-gated so
     // flag-off debug behavior is unchanged; the bookkeeping itself
-    // (GCCellLockDepth, GCThreadLocalCache.h) is inert.
-    ASSERT(!Options::useConcurrentSharedGCMarking() || !GCCellLockDepth::current());
+    // (GCCellLockDepth, GCThreadLocalCache.h) is inert. In a GIL-off process
+    // the same holds without concurrent marking: a thread blocked on the
+    // holder's lock has no safepoint, so a holder that stops or parks here
+    // never sees the stop complete; and for a held ConcurrentJSLock likewise.
+    ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
 #endif
 
     if (!isSharedServer()) {
@@ -8007,8 +8035,8 @@ void HeapClientSet::snapshotBarrierFenceStateForAttach(GCClient::Heap& client)
     ASSERT(!client.isOnList()); // BEFORE the insert publishes the client.
     if (!server.sharedGCBarrierStateIsPerClient()) [[likely]]
         return; // !C1R no-op: the copies are unrouted, unread state (F33/CGD4.4; CG-I0 byte-for-byte).
-    client.m_mutatorShouldBeFenced = server.m_mutatorShouldBeFenced;
-    client.m_barrierThreshold = server.m_barrierThreshold;
+    client.m_mutatorShouldBeFenced = WTF::atomicLoad(&server.m_mutatorShouldBeFenced, std::memory_order_relaxed); // See setMutatorShouldBeFenced().
+    client.m_barrierThreshold = WTF::atomicLoad(&server.m_barrierThreshold, std::memory_order_relaxed);
     client.m_fenceEpochSeen = server.m_barrierFenceEpoch.load(std::memory_order_acquire); // FEP stamp (§5.3(2)).
 }
 
@@ -8355,7 +8383,7 @@ void Heap::acquireHeapAccess()
             // CGN1 N3 in-window tryLock-termination argument). Stage-gated
             // so flag-off debug behavior is unchanged (CG-T5's CG-I18 storm
             // arm runs with the C1 flag on).
-            ASSERT(!Options::useConcurrentSharedGCMarking() || !GCCellLockDepth::current());
+            ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
 #endif
             uint8_t reverted = m_accessState.exchange(noAccessState, std::memory_order_seq_cst);
             ASSERT_UNUSED(reverted, reverted == hasAccessState);
@@ -8401,7 +8429,7 @@ void Heap::acquireHeapAccess()
             }
             jsThreadsNotifyMutatorQuiesced();
 #if ASSERT_ENABLED
-            ASSERT(!Options::useConcurrentSharedGCMarking() || !GCCellLockDepth::current()); // CG-I18 (CG-3c): no 10a hold across an §A.3 park.
+            ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current())); // CG-I18 (CG-3c): no 10a hold across an §A.3 park.
 #endif
             jsThreadsParkForStopWindow(*serverVM);
             continue; // Retry from step 1 (a GC stop may have arrived meanwhile; GSP re-polls).
@@ -8441,7 +8469,7 @@ void Heap::acquireHeapAccess()
             }
             jsThreadsNotifyMutatorQuiesced();
 #if ASSERT_ENABLED
-            ASSERT(!Options::useConcurrentSharedGCMarking() || !GCCellLockDepth::current()); // CG-I18 (CG-3c): no 10a hold across a Mode-machine park.
+            ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current())); // CG-I18 (CG-3c): no 10a hold across a Mode-machine park.
 #endif
             jsThreadsParkForModeStop(*serverVM);
             continue; // Retry from step 1 (GSP and the §A.3 word re-poll).
@@ -8480,6 +8508,11 @@ void Heap::releaseHeapAccess()
     // — the flip thread holds the API lock whenever the legacy bit is set).
     ASSERT(m_accessOwner.load(std::memory_order_relaxed) == &Thread::currentSingleton()
         || !m_accessOwner.load(std::memory_order_relaxed));
+    // GIL off, a thread that gives up heap access lets stops complete without
+    // it, so it must not hold a lock that another mutator can block on with no
+    // safepoint (a cell lock, a ConcurrentJSLock): that mutator would keep the
+    // stop open and this thread could not re-acquire. Deterministic in Debug.
+    ASSERT(!g_jscConfig.gilOffProcess || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
     m_accessOwner.store(nullptr, std::memory_order_relaxed);
 
     // §10A RHA: seq_cst exchange -> NoAccess publishes all prior heap writes

@@ -202,9 +202,8 @@ JSObject* IntlRelativeTimeFormat::resolvedOptions(JSGlobalObject* globalObject) 
     options->putDirect(vm, vm.propertyNames->locale, jsNontrivialString(vm, m_locale));
     options->putDirect(vm, vm.propertyNames->style, jsNontrivialString(vm, styleString(m_style)));
     options->putDirect(vm, vm.propertyNames->numeric, jsNontrivialString(vm, m_numeric ? "always"_s : "auto"_s));
-    if (m_numberingSystem.isNull())
-        m_numberingSystem = defaultNumberingSystemForLocale(m_dataLocale);
-    options->putDirect(vm, vm.propertyNames->numberingSystem, jsNontrivialString(vm, m_numberingSystem));
+    const String& numberingSystem = intlLazyString(*this, m_numberingSystem, [&] { return defaultNumberingSystemForLocale(m_dataLocale); });
+    options->putDirect(vm, vm.propertyNames->numberingSystem, jsNontrivialString(vm, numberingSystem));
     return options;
 }
 
@@ -305,14 +304,29 @@ JSValue IntlRelativeTimeFormat::formatToParts(JSGlobalObject* globalObject, doub
     UErrorCode status = U_ZERO_ERROR;
 
     // Reuse cached UFormattedRelativeDateTime to avoid per-call heap allocation.
+    // With the GIL off other threads may be in here on the same object, so each
+    // call opens its own scratch objects instead.
+    UFormattedRelativeDateTime* formattedResult = m_formattedResult.get();
+    UConstrainedFieldPosition* cfpos = m_cfpos.get();
+    std::unique_ptr<UFormattedRelativeDateTime, ICUDeleter<ureldatefmt_closeResult>> ownFormattedResult;
+    std::unique_ptr<UConstrainedFieldPosition, ICUDeleter<ucfpos_close>> ownCfpos;
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        ownFormattedResult = std::unique_ptr<UFormattedRelativeDateTime, ICUDeleter<ureldatefmt_closeResult>>(ureldatefmt_openResult(&status));
+        if (U_SUCCESS(status))
+            ownCfpos = std::unique_ptr<UConstrainedFieldPosition, ICUDeleter<ucfpos_close>>(ucfpos_open(&status));
+        if (U_FAILURE(status)) [[unlikely]]
+            return throwTypeError(globalObject, scope, "failed to format relative time"_s);
+        formattedResult = ownFormattedResult.get();
+        cfpos = ownCfpos.get();
+    }
     if (m_numeric)
-        ureldatefmt_formatNumericToResult(m_relativeDateTimeFormatter.get(), value, unitType.value(), m_formattedResult.get(), &status);
+        ureldatefmt_formatNumericToResult(m_relativeDateTimeFormatter.get(), value, unitType.value(), formattedResult, &status);
     else
-        ureldatefmt_formatToResult(m_relativeDateTimeFormatter.get(), value, unitType.value(), m_formattedResult.get(), &status);
+        ureldatefmt_formatToResult(m_relativeDateTimeFormatter.get(), value, unitType.value(), formattedResult, &status);
     if (U_FAILURE(status)) [[unlikely]]
         return throwTypeError(globalObject, scope, "failed to format relative time"_s);
 
-    auto formattedValue = ureldatefmt_resultAsValue(m_formattedResult.get(), &status);
+    auto formattedValue = ureldatefmt_resultAsValue(formattedResult, &status);
     if (U_FAILURE(status)) [[unlikely]]
         return throwTypeError(globalObject, scope, "failed to format relative time"_s);
 
@@ -328,7 +342,7 @@ JSValue IntlRelativeTimeFormat::formatToParts(JSGlobalObject* globalObject, doub
     // UFIELD_CATEGORY_RELATIVE_DATETIME fields delimit literal vs numeric regions.
     // UFIELD_CATEGORY_NUMBER fields provide number sub-part details (integer, fraction, etc.)
     // within the numeric region, eliminating the need for a separate unum_formatDoubleForFields call.
-    ucfpos_reset(m_cfpos.get(), &status);
+    ucfpos_reset(cfpos, &status);
     if (U_FAILURE(status)) [[unlikely]]
         return throwTypeError(globalObject, scope, "failed to format relative time"_s);
 
@@ -336,15 +350,15 @@ JSValue IntlRelativeTimeFormat::formatToParts(JSGlobalObject* globalObject, doub
     int32_t numberEnd = -1;
     Vector<IntlNumberFormatField> numberFields;
 
-    while (ufmtval_nextPosition(formattedValue, m_cfpos.get(), &status)) {
+    while (ufmtval_nextPosition(formattedValue, cfpos, &status)) {
         if (U_FAILURE(status)) [[unlikely]]
             return throwTypeError(globalObject, scope, "failed to format relative time"_s);
 
-        int32_t category = ucfpos_getCategory(m_cfpos.get(), &status);
-        int32_t fieldType = ucfpos_getField(m_cfpos.get(), &status);
+        int32_t category = ucfpos_getCategory(cfpos, &status);
+        int32_t fieldType = ucfpos_getField(cfpos, &status);
         int32_t beginIndex = 0;
         int32_t endIndex = 0;
-        ucfpos_getIndexes(m_cfpos.get(), &beginIndex, &endIndex, &status);
+        ucfpos_getIndexes(cfpos, &beginIndex, &endIndex, &status);
         if (U_FAILURE(status)) [[unlikely]]
             return throwTypeError(globalObject, scope, "failed to format relative time"_s);
 

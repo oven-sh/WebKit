@@ -2905,12 +2905,18 @@ static bool calleeMayBeCrossRealm(CallVariant variant, JSGlobalObject* globalObj
     return function->realmMayBeNull() != globalObject;
 }
 
-// With the GIL off, the inline Map and Set code would read and write a hash
-// table that other threads change under its lock (JSOrderedHashTableHelper),
-// so these calls stay calls to the native functions, which take the lock.
-static bool isOrderedHashTableIntrinsic(Intrinsic intrinsic)
+// With the GIL off, the inline Map, Set, WeakMap and WeakSet code would read
+// and write a hash table that other threads change under its lock
+// (JSOrderedHashTableHelper, WeakMapImpl::withLockIfGILOff), so these calls
+// stay calls to the native functions, which take the lock.
+static bool isHashTableIntrinsic(Intrinsic intrinsic)
 {
     switch (intrinsic) {
+    case JSWeakMapGetIntrinsic:
+    case JSWeakMapHasIntrinsic:
+    case JSWeakMapSetIntrinsic:
+    case JSWeakSetHasIntrinsic:
+    case JSWeakSetAddIntrinsic:
     case JSMapGetIntrinsic:
     case JSMapHasIntrinsic:
     case JSMapSetIntrinsic:
@@ -2955,8 +2961,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         return CallOptimizationResult::DidNothing;
     }
 
-    if (m_vm->gilOff() && isOrderedHashTableIntrinsic(intrinsic)) [[unlikely]] {
-        VERBOSE_LOG("    Failing because Map and Set operations are not inlined with the GIL off.\n");
+    if (m_vm->gilOff() && isHashTableIntrinsic(intrinsic)) [[unlikely]] {
+        VERBOSE_LOG("    Failing because hash table operations are not inlined with the GIL off.\n");
         return CallOptimizationResult::DidNothing;
     }
 
@@ -6099,7 +6105,7 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
     if (thisNode != unwrapped)
         return false;
 
-    if (m_vm->gilOff() && isOrderedHashTableIntrinsic(variant.intrinsic())) [[unlikely]]
+    if (m_vm->gilOff() && isHashTableIntrinsic(variant.intrinsic())) [[unlikely]]
         return false;
 
     switch (variant.intrinsic()) {

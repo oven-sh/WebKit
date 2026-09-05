@@ -1790,6 +1790,23 @@ public:
 
     JS_EXPORT_PRIVATE bool hasExceptionsAfterHandlingTraps();
 
+    // Debug, GIL off: a trap check handles traps, and a handled trap can park
+    // for a stop or request one, so no trap check may sit under a lock that
+    // other mutators wait for without a safepoint (a cell lock, a
+    // ConcurrentJSLock). RETURN_IF_EXCEPTION calls this on every expansion, so
+    // the Debug corpus finds such a site whether or not a trap is pending
+    // there; a DeferTraps scope exempts it (no trap is handled under one).
+#if ASSERT_ENABLED
+    JS_EXPORT_PRIVATE void assertNoLockHeldAtTrapCheckSlow();
+    void assertNoLockHeldAtTrapCheck()
+    {
+        if (m_gilOff) [[unlikely]]
+            assertNoLockHeldAtTrapCheckSlow();
+    }
+#else
+    void assertNoLockHeldAtTrapCheck() { }
+#endif
+
     CONCURRENT_SAFE void notifyNeedDebuggerBreak() { traps().fireTrap(VMTraps::NeedDebuggerBreak); }
     CONCURRENT_SAFE void notifyNeedShellTimeoutCheck() { traps().fireTrap(VMTraps::NeedShellTimeoutCheck); }
     // Termination is VM-wide: GIL-off, parked threads poll only their own

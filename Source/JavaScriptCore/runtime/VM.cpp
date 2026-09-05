@@ -1787,6 +1787,16 @@ void VM::clearSourceProviderCaches()
     sourceProviderCacheMap.clear();
 }
 
+#if ASSERT_ENABLED
+void VM::assertNoLockHeldAtTrapCheckSlow()
+{
+    if (trapsForCurrentThread().trapsDeferred())
+        return;
+    ASSERT(!GCCellLockDepth::current());
+    ASSERT(!ConcurrentJSLockDepth::current());
+}
+#endif
+
 bool VM::hasExceptionsAfterHandlingTraps()
 {
     // UNGIL §A.2.2 item 3b (AB-17): GIL-off dispatch services the current
@@ -3144,45 +3154,53 @@ JSValue VM::checkVMEntryPermission()
     return jsUndefined();
 }
 
+// With the GIL off two threads can reach one of these slow paths together on
+// their first use. The cell is then published with a compare-and-swap and the
+// loser uses the winner's, so the VM hands out one enumerator and one
+// executable of each kind (getHostFunction interns, so the executables were
+// already the same cell; the enumerator was not).
+template<typename T>
+static T* publishVMLazyCell(VM& vm, WriteBarrier<T>& slot, T* cell)
+{
+    if (!Options::useJSThreads()) [[likely]] {
+        ASSERT(!slot);
+        slot.setWithoutWriteBarrier(cell);
+        return cell;
+    }
+    T* observed = WTF::atomicCompareExchangeStrong(slot.slot(), static_cast<T*>(nullptr), cell);
+    UNUSED_PARAM(vm);
+    return observed ? observed : cell;
+}
+
 JSPropertyNameEnumerator* VM::emptyPropertyNameEnumeratorSlow()
 {
-    ASSERT(!m_emptyPropertyNameEnumerator);
     PropertyNameArrayBuilder propertyNames(*this, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     auto* enumerator = JSPropertyNameEnumerator::create(*this, nullptr, 0, 0, WTF::move(propertyNames));
-    m_emptyPropertyNameEnumerator.setWithoutWriteBarrier(enumerator);
-    return enumerator;
+    return publishVMLazyCell(*this, m_emptyPropertyNameEnumerator, enumerator);
 }
 
 NativeExecutable* VM::promiseResolvingFunctionResolveExecutableSlow()
 {
-    ASSERT(!m_promiseResolvingFunctionResolveExecutable);
     auto* executable = getHostFunction(promiseResolvingFunctionResolve, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, emptyString());
-    m_promiseResolvingFunctionResolveExecutable.setWithoutWriteBarrier(executable);
-    return executable;
+    return publishVMLazyCell(*this, m_promiseResolvingFunctionResolveExecutable, executable);
 }
 
 NativeExecutable* VM::promiseResolvingFunctionRejectExecutableSlow()
 {
-    ASSERT(!m_promiseResolvingFunctionRejectExecutable);
     auto* executable = getHostFunction(promiseResolvingFunctionReject, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, emptyString());
-    m_promiseResolvingFunctionRejectExecutable.setWithoutWriteBarrier(executable);
-    return executable;
+    return publishVMLazyCell(*this, m_promiseResolvingFunctionRejectExecutable, executable);
 }
 
 NativeExecutable* VM::promiseFirstResolvingFunctionResolveExecutableSlow()
 {
-    ASSERT(!m_promiseFirstResolvingFunctionResolveExecutable);
     auto* executable = getHostFunction(promiseFirstResolvingFunctionResolve, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, emptyString());
-    m_promiseFirstResolvingFunctionResolveExecutable.setWithoutWriteBarrier(executable);
-    return executable;
+    return publishVMLazyCell(*this, m_promiseFirstResolvingFunctionResolveExecutable, executable);
 }
 
 NativeExecutable* VM::promiseFirstResolvingFunctionRejectExecutableSlow()
 {
-    ASSERT(!m_promiseFirstResolvingFunctionRejectExecutable);
     auto* executable = getHostFunction(promiseFirstResolvingFunctionReject, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, emptyString());
-    m_promiseFirstResolvingFunctionRejectExecutable.setWithoutWriteBarrier(executable);
-    return executable;
+    return publishVMLazyCell(*this, m_promiseFirstResolvingFunctionRejectExecutable, executable);
 }
 
 NativeExecutable* VM::promiseResolvingFunctionResolveWithInternalMicrotaskExecutableSlow()
@@ -3904,6 +3922,17 @@ NumericStrings& VM::gilOffPerThreadNumericStrings()
         strings->disableJSStringCaching();
     }
     return *strings;
+}
+
+// The same for JSON.parse's key cache (JSONAtomStringCache::live()).
+JSONAtomStringCache& JSONAtomStringCache::gilOffPerThreadCache()
+{
+    static thread_local std::unique_ptr<JSONAtomStringCache> cache;
+    if (!cache) [[unlikely]] {
+        cache = makeUniqueWithoutFastMallocCheck<JSONAtomStringCache>();
+        cache->m_jsStringCachingDisabled = true;
+    }
+    return *cache;
 }
 
 // GIL-off per-thread VM-entry disallowance count — see the slot accessor

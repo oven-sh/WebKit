@@ -106,7 +106,13 @@ asyncTestStart(3);
 // ---- join(): TypeError on a Running thread; asyncJoin succeeds; the
 // spawned thread is G11-false too (per-VM gate) ----
 {
+    // GIL-off, t could otherwise finish before the main thread's join() check
+    // below (join of a finished thread does not block, so it would not throw);
+    // it starts its work only once that check is done. Under the GIL t cannot
+    // run before the main thread yields, and the flag is set before that.
+    const tMayStart = { v: 0 };
     const t = new Thread(() => {
+        while (Atomics.load(tMayStart, "v") === 0) { }
         const inner = new Thread(() => 5);
         if (!gilOn) {
             // GIL-off a spawned thread may block: the gate does not apply.
@@ -123,9 +129,10 @@ asyncTestStart(3);
             "Thread.prototype.join cannot block the current thread");
         return inner.asyncJoin(); // await it instead (4.6.3 convention)
     });
-    // t has not run yet (main holds the GIL): Running => gated.
+    // t has not finished (it waits for tMayStart): Running => gated.
     shouldThrow(TypeError, () => t.join(),
         "Thread.prototype.join cannot block the current thread");
+    Atomics.store(tMayStart, "v", 1);
     t.asyncJoin().then(innerPromise => innerPromise).then(v => {
         shouldBe(v, 5);
         // join of a FINISHED thread never blocks: allowed even when
