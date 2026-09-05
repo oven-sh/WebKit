@@ -716,6 +716,14 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     if (vm.trapsForCurrentThread().m_trapsDeferred)
         RELEASE_AND_RETURN(scope, false);
 
+#if ASSERT_ENABLED
+    // A trap handled with a cell lock held can park for a stop, or request one (the on-stack
+    // jettison below), and a thread that waits for that cell lock waits without a safepoint, so
+    // the stop never completes. Holders keep cell-locked regions free of trap checks
+    // (RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED inside them); this catches one that does not.
+    ASSERT(!vm.gilOff() || !GCCellLockDepth::current());
+#endif
+
     // checktraps-dejank-invalidation-point (UNGIL §K.5 / SPEC-jit I21):
     // GIL-off, DFG/FTL CheckTraps no longer clobbers the abstract heap — it
     // is an invalidation point, and THIS function is the park whose overlap
