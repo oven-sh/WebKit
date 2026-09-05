@@ -2587,6 +2587,9 @@ ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedFo
 void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSiteIndex)
 {
     RELEASE_ASSERT(m_rareData);
+    std::optional<Locker<Lock>> locker;
+    if (Options::useJSThreads()) [[unlikely]]
+        locker.emplace(m_rareData->m_exceptionHandlersLock);
     Vector<HandlerInfo>& exceptionHandlers = m_rareData->m_exceptionHandlers;
     unsigned index = callSiteIndex.bits();
     for (size_t i = 0; i < exceptionHandlers.size(); ++i) {

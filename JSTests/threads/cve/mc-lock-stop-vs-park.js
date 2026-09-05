@@ -25,7 +25,7 @@ load("../harness.js", "caller relative");
 
 const WAITERS = 3;
 const STOP_ROUNDS = 400;
-const gate = { go: 0, started: 0, stop: 0, req: 0, ack: 0 };
+const gate = { go: 0, started: 0, lockerStarted: 0, stop: 0, req: 0, ack: 0 };
 const channel = { obj: null };
 const contended = { v: 0 };
 
@@ -56,6 +56,8 @@ const locker = new Thread(() => {
         shared["k" + (ops & 63)] = ops;
         delete shared["k" + (ops & 63)];
         ops++;
+        if (ops === 1)
+            Atomics.store(gate, "lockerStarted", 1);
     }
     return ops;
 });
@@ -87,6 +89,10 @@ const stopper = new Thread(() => {
 });
 
 waitUntil(() => Atomics.load(gate, "started") === WAITERS);
+// And until the locker has run once: under load its start-up can take longer
+// than all the rounds below, and the progress check at the end would then
+// fail with nothing having raced.
+waitUntil(() => Atomics.load(gate, "lockerStarted") === 1);
 
 for (let r = 1; r <= STOP_ROUNDS; ++r) {
     // Fresh shape every round so the TTL sets are valid and each foreign

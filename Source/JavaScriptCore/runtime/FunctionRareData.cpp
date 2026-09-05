@@ -80,10 +80,6 @@ FunctionRareData::FunctionRareData(VM& vm, ExecutableBase* executable)
     // function is unlikely to allocate a rare data until the first allocation anyway.
     , m_allocationProfileWatchpointSet(ClearWatchpoint)
     , m_executable(executable, WriteBarrierEarlyInit)
-    , m_hasReifiedLength(false)
-    , m_hasReifiedName(false)
-    , m_hasModifiedLengthForBoundOrNonHostFunction(false)
-    , m_hasModifiedNameForBoundOrNonHostFunction(false)
 {
 }
 

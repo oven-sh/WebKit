@@ -40,7 +40,9 @@ static constexpr PropertyOffset segmentDataObjectIsWordLikePropertyOffset = 3;
 Structure* createSegmentDataObjectStructure(VM&, JSGlobalObject&);
 Structure* createSegmentDataObjectWithIsWordLikeStructure(VM&, JSGlobalObject&);
 
-ALWAYS_INLINE JSObject* createSegmentDataObject(JSGlobalObject* globalObject, JSString* string, int32_t startIndex, int32_t endIndex, UBreakIterator& segmenter, IntlSegmenter::Granularity granularity)
+// The rule status is what ubrk_getRuleStatus() gave for the segment; it is
+// read only for word granularity.
+ALWAYS_INLINE JSObject* createSegmentDataObject(JSGlobalObject* globalObject, JSString* string, int32_t startIndex, int32_t endIndex, int32_t ruleStatus, IntlSegmenter::Granularity granularity)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -58,12 +60,17 @@ ALWAYS_INLINE JSObject* createSegmentDataObject(JSGlobalObject* globalObject, JS
     result->putDirectOffset(vm, segmentDataObjectInputPropertyOffset, string);
 
     if (granularity == IntlSegmenter::Granularity::Word) {
-        int32_t ruleStatus = ubrk_getRuleStatus(&segmenter);
         result->putDirectOffset(vm, segmentDataObjectIsWordLikePropertyOffset,
             jsBoolean(!(ruleStatus >= UBRK_WORD_NONE && ruleStatus < UBRK_WORD_NONE_LIMIT)));
     }
 
     return result;
+}
+
+ALWAYS_INLINE JSObject* createSegmentDataObject(JSGlobalObject* globalObject, JSString* string, int32_t startIndex, int32_t endIndex, UBreakIterator& segmenter, IntlSegmenter::Granularity granularity)
+{
+    int32_t ruleStatus = granularity == IntlSegmenter::Granularity::Word ? ubrk_getRuleStatus(&segmenter) : 0;
+    return createSegmentDataObject(globalObject, string, startIndex, endIndex, ruleStatus, granularity);
 }
 
 } // namespace JSC

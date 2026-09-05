@@ -136,7 +136,8 @@ inline bool symbolTablePut(SymbolTableObjectType* object, JSGlobalObject* global
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     InlineWatchpointSet* set = nullptr;
-    WriteBarrierBase<Unknown>* reg;
+    WriteBarrierBase<Unknown>* reg = nullptr;
+    bool isReadOnly = false;
     {
         SymbolTable& symbolTable = *object->symbolTable();
         // FIXME: This is very suspicious. We shouldn't need a GC-safe lock here.
@@ -148,21 +149,26 @@ inline bool symbolTablePut(SymbolTableObjectType* object, JSGlobalObject* global
         bool wasFat;
         SymbolTableEntry::Fast fastEntry = iter->value.getFast(wasFat);
         ASSERT(!fastEntry.isNull());
-        if (fastEntry.isReadOnly() && !ignoreReadOnlyErrors) {
-            if (shouldThrowReadOnlyError)
-                throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
-            putResult = false;
-            return true;
+        isReadOnly = fastEntry.isReadOnly() && !ignoreReadOnlyErrors;
+        if (!isReadOnly) {
+            ScopeOffset offset = fastEntry.scopeOffset();
+
+            // Defend against the inspector asking for a var after it has been optimized out.
+            if (!object->isValidScopeOffset(offset))
+                return false;
+
+            set = iter->value.watchpointSet();
+            reg = &object->variableAt(offset);
         }
-
-        ScopeOffset offset = fastEntry.scopeOffset();
-
-        // Defend against the inspector asking for a var after it has been optimized out.
-        if (!object->isValidScopeOffset(offset))
-            return false;
-
-        set = iter->value.watchpointSet();
-        reg = &object->variableAt(offset);
+    }
+    // The error object is made outside the symbol table's lock: making it adds
+    // properties to it, which with the GIL off can wait for a stop-the-world,
+    // and a thread blocked on this lock has no safepoint.
+    if (isReadOnly) {
+        if (shouldThrowReadOnlyError)
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        putResult = false;
+        return true;
     }
     // I'd prefer we not hold lock while executing barriers, since I prefer to reserve
     // the right for barriers to be able to trigger GC. And I don't want to hold VM

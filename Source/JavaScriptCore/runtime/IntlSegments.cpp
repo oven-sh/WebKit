@@ -71,18 +71,33 @@ JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValu
         return jsUndefined();
     int32_t index = toInt32(value);
 
+    // The scan moves the break iterator. With the GIL off other threads may be
+    // in here on the same object, so each call scans with a clone of its own
+    // and m_segmenter itself never moves.
+    UBreakIterator* segmenter = m_segmenter.get();
+    std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> ownSegmenter;
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        UErrorCode status = U_ZERO_ERROR;
+        ownSegmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(cloneUBreakIterator(m_segmenter.get(), &status));
+        if (U_FAILURE(status)) [[unlikely]] {
+            throwTypeError(globalObject, scope, "failed to initialize Segments"_s);
+            return { };
+        }
+        segmenter = ownSegmenter.get();
+    }
+
     // The result of ubrk_preceding is always *smaller* than offset, or UBRK_DONE. In this case, we should set scan position with `index + 1`.
     // Even if index + 1 exceeds length of string by 1, this is desirable if we want to scan the last segment.
-    int32_t startIndex = ubrk_preceding(m_segmenter.get(), index + 1);
+    int32_t startIndex = ubrk_preceding(segmenter, index + 1);
     if (startIndex == UBRK_DONE)
         startIndex = 0;
     // The result of ubrk_following is always greater than offset, or UBRK_DONE. Scan position should be `index`.
-    int32_t endIndex = ubrk_following(m_segmenter.get(), index);
+    int32_t endIndex = ubrk_following(segmenter, index);
     if (endIndex == UBRK_DONE)
         endIndex = m_buffer->size();
 
     scope.release();
-    return createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);
+    return createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *segmenter, m_granularity);
 }
 
 // https://tc39.es/proposal-intl-segmenter/#sec-%segmentsprototype%-@@iterator
