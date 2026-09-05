@@ -125,6 +125,22 @@ void scavengeThisThread(bool force)
 #endif
 }
 
+#if BUSE(EXTERNAL_MIMALLOC)
+// oven-sh/mimalloc's idle hook: collects the thread's heap, discards the free runs inside the pages
+// it still uses, and hands the arena purge to mimalloc's scavenger thread. The vendored mimalloc
+// does not have it, so it is declared here and not in mimalloc.h.
+extern "C" void mi_on_thread_idle(void) noexcept;
+#endif
+
+void scavengeThisThreadOnIdle()
+{
+#if BUSE(EXTERNAL_MIMALLOC)
+    mi_on_thread_idle();
+#else
+    scavengeThisThread(/* force */ true);
+#endif
+}
+
 void scavenge()
 {
 #if BENABLE(LIBPAS)
