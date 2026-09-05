@@ -68,10 +68,16 @@ function makeMutex() {
 
 // ---- Strict ping-pong: main vs a fresh worker each round ----
 // Main flips the turn marker and parks in an untimed Atomics.wait; the
-// worker — which, with no preemption, only starts once main is parked —
-// appends, flips the marker back, notifies (waking exactly main), and
-// exits without ever blocking. Any missed or extra wakeup breaks the
-// strict alternation or the per-round woken counts.
+// worker waits for its turn, appends, flips the marker back, notifies, and
+// exits without ever blocking. Any missed wakeup hangs main; any extra or
+// early hand-over breaks the strict alternation.
+//
+// With the GIL the worker only starts once main is parked, so the wait
+// returns "ok" and the notify wakes exactly one. Without it the worker can
+// run before main has handed over (so it spins for its turn rather than
+// failing) or finish before main has parked (so main's wait may return
+// "not-equal" and the notify may wake nobody); the alternation holds either
+// way, and that is what is checked.
 //
 // (Two WORKERS ping-ponging is not expressible under the current stub: each
 // would eventually park while its peer is mid-wakeup, and the GIL's LIFO
@@ -86,16 +92,17 @@ function makeMutex() {
         shouldBe(Atomics.load(turn, "v"), "main", "round " + r + " starts with main's turn");
         box.log += "m";
         const worker = new Thread(round => {
-            // Main is parked on turn.v === "worker" by the time this runs.
-            if (Atomics.load(turn, "v") !== "worker")
-                throw new Error("worker ran out of turn in round " + round);
+            while (Atomics.load(turn, "v") !== "worker") { }
             box.log += "w";
             Atomics.store(turn, "v", "main");
             return Atomics.notify(turn, "v");
         }, r);
         Atomics.store(turn, "v", "worker");
-        shouldBe(Atomics.wait(turn, "v", "worker"), "ok", "main woken by round-" + r + " worker");
-        shouldBe(worker.join(), 1, "the notify woke exactly the parked main thread");
+        while (Atomics.load(turn, "v") === "worker") {
+            const woke = Atomics.wait(turn, "v", "worker");
+            shouldBeTrue(woke === "ok" || woke === "not-equal", "main woken by round-" + r + " worker, got " + woke);
+        }
+        shouldBeTrue(worker.join() <= 1, "the notify woke at most the parked main thread");
     }
 
     let expected = "";
