@@ -27,9 +27,11 @@
 #include "IntegrityInlines.h"
 #include "Interpreter.h"
 #include "JSCInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "ParseInt.h"
 #include "StackFrame.h"
 #include "VM.h"
+#include <wtf/Threading.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -430,6 +432,35 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
 }
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
+{
+    if (vm.gilOff()) [[unlikely]]
+        return materializeErrorInfoIfNeededGILOff(vm);
+    return materializeErrorInfoIfNeededImpl(vm);
+}
+
+// GIL-off, two threads can ask one error for its lazy properties at the same time, and the
+// materialization frees the captured stack trace while the other thread may still be reading it. So
+// one thread claims the work and the others wait for it: they poll for stops, because the worker
+// allocates and may park, and they read the state byte, not the bit-field flag the worker writes.
+// A materialization that stores nothing (no stack was captured) leaves the error unclaimed again, as
+// the flag stays clear then in the other modes.
+bool ErrorInstance::materializeErrorInfoIfNeededGILOff(VM& vm)
+{
+    while (true) {
+        uint8_t state = m_errorInfoMaterializationGILOff.load(std::memory_order_acquire);
+        if (state == ErrorInfoMaterialized)
+            return false;
+        if (state == ErrorInfoNotMaterialized && m_errorInfoMaterializationGILOff.compareExchangeStrong(ErrorInfoNotMaterialized, ErrorInfoMaterializing) == ErrorInfoNotMaterialized)
+            break;
+        if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            Thread::yield();
+    }
+    bool result = materializeErrorInfoIfNeededImpl(vm);
+    m_errorInfoMaterializationGILOff.store(m_errorInfoMaterialized ? ErrorInfoMaterialized : ErrorInfoNotMaterialized, std::memory_order_release);
+    return result;
+}
+
+bool ErrorInstance::materializeErrorInfoIfNeededImpl(VM& vm)
 {
     if (m_errorInfoMaterialized)
         return false;

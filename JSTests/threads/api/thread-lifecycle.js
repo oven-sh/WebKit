@@ -24,14 +24,17 @@ new Thread(() => "kept-alive").asyncJoin().then(v => {
     const lock = new Lock();
     const sideEffects = { ran: 0 };
     let promiseFromThread;
-    const t = new Thread(() => lock.asyncHold(() => {
-        sideEffects.ran++;
-        return 7;
-    }));
     lock.hold(() => {
-        // Joining inside the hold yields the GIL; t runs, fails tryLock
-        // (we hold m_lock), queues its ticket (5.5a A-failure), returns the
-        // promise, and completes — its ticket now has a dead registrant.
+        // The thread is created while the lock is already held, so in every
+        // mode its asyncHold fails tryLock (we hold m_lock), queues its ticket
+        // (5.5a A-failure), returns the promise, and completes — its ticket
+        // now has a dead registrant. (Created before the hold, a GIL-off
+        // thread could take the lock first and run the continuation at once.)
+        // GIL-on, joining inside the hold is what yields the GIL to it.
+        const t = new Thread(() => lock.asyncHold(() => {
+            sideEffects.ran++;
+            return 7;
+        }));
         promiseFromThread = t.join();
         shouldBeTrue(promiseFromThread instanceof Promise);
         shouldBe(sideEffects.ran, 0, "continuation cannot run while the lock is held");

@@ -82,9 +82,17 @@ const String& SourceProvider::sourceURLStripped()
 {
     if (m_sourceURL.isNull()) [[unlikely]]
         return m_sourceURLStripped;
-    if (!m_sourceURLStripped.isNull()) [[likely]]
+    // Computed once and then only read. Stack traces ask for it, and with JS
+    // threads several threads can build stack traces of one provider at once, so
+    // the first computation is published under a lock and behind a flag that the
+    // readers test first: a String must not be assigned while it is read.
+    if (m_sourceURLStrippedComputed.load(std::memory_order_acquire)) [[likely]]
         return m_sourceURLStripped;
-    m_sourceURLStripped = URL(m_sourceURL).strippedForUseAsReport();
+    Locker locker { m_sourceCodeDumpLock };
+    if (!m_sourceURLStrippedComputed.load(std::memory_order_relaxed)) {
+        m_sourceURLStripped = URL(m_sourceURL).strippedForUseAsReport();
+        m_sourceURLStrippedComputed.store(true, std::memory_order_release);
+    }
     return m_sourceURLStripped;
 }
 

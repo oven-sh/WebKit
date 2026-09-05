@@ -39,6 +39,7 @@ for (let i = 0; i < 8; ++i) {
 
 const published = { generation: 0 };
 const stop = { value: false };
+const gate = { reading: 0 };
 
 function readThroughProto(o) { return o.f; }
 noInline(readThroughProto);
@@ -61,11 +62,19 @@ const workers = spawnN(THREADS, function (slot) {
             throw new Error("worker " + slot + " observed non-monotonic generations " + v + " < " + maxSeen);
         maxSeen = v;
         ++reads;
+        if (reads === 1)
+            Atomics.add(gate, "reading", 1);
         if (!(reads % 64))
             sleepMs(0);
     }
     return reads;
 });
+
+// Fire only once every worker has made its first read. Thread start-up can
+// take longer than all the rounds below (a few milliseconds when the machine
+// is loaded), and a worker that first runs after `stop` is set makes no read,
+// so nothing raced and the progress check at the end fails.
+waitUntil(() => Atomics.load(gate, "reading") === THREADS);
 
 for (let round = 1; round <= ROUNDS; ++round) {
     // Publish the floor FIRST: any read that starts after this line may

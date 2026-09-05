@@ -157,6 +157,7 @@ private:
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
 
+    std::atomic<bool> m_sourceURLStrippedComputed { false };
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;
     CString m_sourceCodeDumpFilePath WTF_GUARDED_BY_LOCK(m_sourceCodeDumpLock);

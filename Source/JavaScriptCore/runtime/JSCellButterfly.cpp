@@ -261,15 +261,19 @@ JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JS
     if (vm.gilOff()) [[unlikely]] {
         // Another thread can add to the set between size() and the copy below,
         // which writes one element per entry it finds. Collect the entries
-        // first, and size the result from them.
+        // first, and size the result from them. The walk goes on from the
+        // table it reached, as an iterator does: another thread can rehash or
+        // clear the set during the walk, and an entry of the new table is not
+        // an entry of the first one.
         MarkedArgumentBuffer keys;
         if (set->storage()) {
-            auto& storage = set->storageRef();
+            JSSet::Storage* storage = &set->storageRef();
             for (JSSet::Helper::Entry entry = 0;; ++entry) {
-                auto transitionResult = JSSet::Helper::transitAndNext(vm, storage, entry);
+                auto transitionResult = JSSet::Helper::transitAndNext(vm, *storage, entry);
                 if (!transitionResult.storage)
                     break;
                 keys.append(transitionResult.key);
+                storage = transitionResult.storage;
                 entry = transitionResult.entry;
             }
         }

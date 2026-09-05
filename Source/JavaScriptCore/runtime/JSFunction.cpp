@@ -36,6 +36,7 @@
 #include "JSCInlines.h"
 #include "JSGlobalObject.h"
 #include "JSRemoteFunction.h"
+#include "JSThreadsSafepoint.h"
 #include "ObjectConstructor.h"
 #include "ObjectPrototype.h"
 #include "PropertyNameArray.h"
@@ -46,7 +47,9 @@
 #if ENABLE(WEBASSEMBLY)
 #include "WebAssemblyFunction.h"
 #endif
+#include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include <wtf/Threading.h>
 
 namespace JSC {
 
@@ -331,6 +334,35 @@ static inline JSObject* constructPrototypeObject(JSGlobalObject* globalObject, J
     return prototype;
 }
 
+// GIL-off, two threads can both find the lazy `prototype` missing. Each would create its own object
+// and putDirect it, and the second putDirect replaces the first, so what the first thread already
+// built on its object (an allocation profile, instances) would no longer agree with `F.prototype`.
+// So the check and the store are one step, serialized on a process-wide lock: `storeIfMissing` runs
+// with the lock held, only if the property is still missing. The holder allocates and may park for a
+// stop under the lock, so a waiter polls for stops instead of blocking (as FunctionRareData's fills
+// do), and leaves as soon as the property appears. Returns whether this call stored it.
+static Lock s_lazyPrototypeLock; // One lock, not one per instantiation of the template below.
+
+template<typename StoreIfMissing>
+static bool storeLazyPrototypeIfMissingGILOff(VM& vm, JSFunction* function, const StoreIfMissing& storeIfMissing)
+{
+    ASSERT(vm.gilOff());
+    auto isMissing = [&] {
+        return !isValidOffset(function->getDirectOffset(vm, vm.propertyNames->prototype));
+    };
+    while (!s_lazyPrototypeLock.tryLock()) {
+        if (!isMissing())
+            return false;
+        if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            Thread::yield();
+    }
+    Locker locker { AdoptLock, s_lazyPrototypeLock };
+    if (!isMissing())
+        return false;
+    storeIfMissing();
+    return true;
+}
+
 bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -345,7 +377,12 @@ bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObje
             if (!isValidOffset(offset)) {
                 // For class constructors, prototype object is initialized from bytecode via defineOwnProperty().
                 ASSERT(!thisObject->jsExecutable()->isClassConstructorFunction());
-                thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
+                if (vm.gilOff()) [[unlikely]] {
+                    storeLazyPrototypeIfMissingGILOff(vm, thisObject, [&] {
+                        thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
+                    });
+                } else
+                    thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
                 offset = thisObject->getDirectOffset(vm, vm.propertyNames->prototype, attributes);
                 ASSERT(isValidOffset(offset));
             }
@@ -436,8 +473,18 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
                 ASSERT(!thisObject->jsExecutable()->isClassConstructorFunction());
                 if (slot.thisValue() != thisObject) [[unlikely]]
                     RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
-                thisObject->putDirect(vm, propertyName, value, prototypeAttributesForNonClass);
-                return true;
+                if (vm.gilOff()) [[unlikely]] {
+                    // Another thread may create the lazy prototype right now; if it got there first, this
+                    // store replaces it below, as a store after a read does.
+                    bool stored = storeLazyPrototypeIfMissingGILOff(vm, thisObject, [&] {
+                        thisObject->putDirect(vm, propertyName, value, prototypeAttributesForNonClass);
+                    });
+                    if (stored)
+                        return true;
+                } else {
+                    thisObject->putDirect(vm, propertyName, value, prototypeAttributesForNonClass);
+                    return true;
+                }
             }
             RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
         }
@@ -488,7 +535,12 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
                 thisObject->putDirect(vm, propertyName, descriptor.value(), descriptor.attributes());
                 return true;
             }
-            thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
+            if (vm.gilOff()) [[unlikely]] {
+                storeLazyPrototypeIfMissingGILOff(vm, thisObject, [&] {
+                    thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
+                });
+            } else
+                thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
         }
     } else {
         thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
@@ -660,6 +712,12 @@ JSFunction::PropertyStatus JSFunction::reifyLazyPrototypeIfNeeded(VM& vm, JSGlob
         if (!getDirect(vm, propertyName)) {
             // For class constructors, prototype object is initialized from bytecode via defineOwnProperty().
             ASSERT(!jsExecutable()->isClassConstructorFunction());
+            if (vm.gilOff()) [[unlikely]] {
+                bool stored = storeLazyPrototypeIfMissingGILOff(vm, this, [&] {
+                    putDirect(vm, propertyName, constructPrototypeObject(globalObject, this), prototypeAttributesForNonClass);
+                });
+                return stored ? PropertyStatus::Reified : PropertyStatus::Lazy;
+            }
             putDirect(vm, propertyName, constructPrototypeObject(globalObject, this), prototypeAttributesForNonClass);
             return PropertyStatus::Reified;
         }

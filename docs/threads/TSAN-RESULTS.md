@@ -719,3 +719,53 @@ Fixed in this round:
   in the first step by chance.
 
 Left open: none.
+
+### Third round (2026-09-04)
+
+The same configuration, on the third round's trees (LANDING-PLAN.md,
+"Results, third round"). Report files, and failures that are not reports:
+
+| Step | Corpus, GIL on | Corpus, GIL off | CVE, GIL on | CVE, GIL off |
+|---|---|---|---|---|
+| The `createFromSet` fix | 0 | 0 | 0 | 0 |
+| With the `FunctionRareData` lock and its test | 0 | 0, and 1 timeout | 0 | 0 |
+| The final tree | 0 | 0 | 0 | 0 |
+
+Also on the final tree: `races/` under the amplifier (`run-tests.sh --amplify
+--filter=/races/`, ten seeds per test), both GIL modes: 7 of 7 pass, 0 reports.
+
+The timeout in the second step was the new
+`objectmodel/allocation-profile-init-lock-not-a-cell-lock.js`, GIL off: the
+shared collector's access barrier waited 900 s for a client that held heap
+access. Run alone under TSAN, the same test aborted in 1 of 40 runs with
+"Invalid value for lock: 0" from a cell-lock unlock in `trySegmentedTransition`.
+Both come from one cause, which is not a race in the tree:
+
+- **TSAN's 16-byte compare-and-swap.** TSAN builds lowered the `__sync`
+  builtin in `dcasHeaderAndButterfly` to `__tsan_atomic128_compare_exchange`,
+  and TSAN's runtime implements 16-byte atomics with an internal lock around a
+  plain load and store. The 1-, 4- and 8-byte atomics that other threads apply
+  to the same 16 bytes (the cell lock bits, the structure ID lane, the
+  butterfly word) do not take that lock, so a lock bit that changed between the
+  load and the store was written back stale: cleared while its holder still
+  held it (the abort), or set again after its holder released it (a phantom
+  holder, so the next locker blocked for ever with heap access held, and the
+  collector's barrier waited for it: the timeout). The test makes several
+  threads add the first out-of-line property of the same objects while the
+  collector runs continuously, which is why it was the first to show it. Under
+  `TSAN_ENABLED` on x86-64 the DCAS is now `lock cmpxchg16b` by inline
+  assembly, after two no-op read-modify-writes on the header and the butterfly
+  word that give TSAN the release edge of the publish; TSAN sees the words as
+  atomically written and the hardware provides the atomicity. Other builds are
+  unchanged (the builtin already inlines the instruction there). The test
+  passed 40 of 40 under TSAN after, and the corpus and CVE suite were rerun on
+  that build (the final row above). arm64 TSAN builds, which nobody runs yet,
+  would need the same treatment.
+- **`SourceProvider::sourceURLStripped()`**, a `String` assigned on first call
+  from the stack-trace path, reported in 5 of 10 runs of the new
+  `semantics/error-stack-first-access-race.js` (GIL off). Published once behind
+  an acquire/release flag now; 0 of 20 after. (LANDING-PLAN.md, third round,
+  lists it with the `ExpressionInfo` line/column cache, which the Debug build
+  found on the same test.)
+
+Left open: none.
