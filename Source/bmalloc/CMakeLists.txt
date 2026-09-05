@@ -695,6 +695,10 @@ if (USE_MIMALLOC)
     add_definitions(-DUSE_MIMALLOC=1)
 endif ()
 
+if (USE_EXTERNAL_MIMALLOC)
+    add_definitions(-DUSE_EXTERNAL_MIMALLOC=1)
+endif ()
+
 if (USE_SYSTEM_MALLOC)
     add_definitions(-DUSE_SYSTEM_MALLOC=1)
 endif ()
