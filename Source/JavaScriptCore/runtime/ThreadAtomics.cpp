@@ -646,7 +646,11 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
                         return "lost indexed-add race (became non-extensible)"_s;
                     }
                     bool ok = map->putDirect(globalObject, this, i, value, 0, PutDirectIndexLikePutDirect);
-                    RETURN_IF_EXCEPTION(scope, ASCIILiteral { });
+                    // Not RETURN_IF_EXCEPTION: that handles traps, and a trap handled here parks for a
+                    // stop, or requests one (the on-stack jettison after a conductor's window), with this
+                    // cell lock held, while a thread that waits for the lock (a define of the same index)
+                    // waits without a safepoint. The traps are serviced at the caller's next check.
+                    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, ASCIILiteral { });
                     if (!ok) [[unlikely]]
                         return "lost indexed-publish race"_s; // Entry went ReadOnly/removed under the map lock.
                     // I21 map-identity revalidation, same discipline as the

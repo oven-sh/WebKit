@@ -29,6 +29,11 @@
 // a window "too small").
 load("../harness.js", "caller relative");
 
+// An assertion that fails inside a promise callback rejects a promise that
+// nothing handles, and the shell then only exits with status 3. Print the
+// reason, so that the failure names the arm.
+setUnhandledRejectionCallback((promise, reason) => print("FAIL (async): " + String(reason)));
+
 asyncTestStart(3);
 
 // ---- Arm 1: deep deque on few keys, exact notify accounting ----
@@ -100,12 +105,17 @@ asyncTestStart(3);
 
 // ---- Arm 3: reclamation probe (the MC-DOS assertion) ----
 //
-// WeakRef-based, polled across MICROTASK turns: WeakRef keepDuringJob
-// re-protects a target only until the end of the job that called deref(),
-// so a later turn's gc() can still collect it. We never park synchronously
-// here (a sync park would stop the run loop and starve nothing we need —
-// but it also proves nothing), and we never rely on FinalizationRegistry
-// callback scheduling.
+// WeakRef-based, polled across microtask turns. Two engine facts shape the
+// poll. A target that deref() returned stays alive until the kept objects
+// are cleared, and JSC clears them when the microtask queue drains, not at
+// the end of each job; the poll's own continuations keep the queue full, so
+// each turn clears them itself (releaseWeakRefs) before its gc(). And with
+// the shared heap, one gc() is not always enough: while another thread is
+// still attached (arm 2's threads may be), a collection retains the new
+// cells of the blocks the main thread is allocating from, dead or not, and
+// frees them in a later cycle. We never park synchronously here (a sync park
+// would stop the run loop and starve nothing we need — but it also proves
+// nothing), and we never rely on FinalizationRegistry callback scheduling.
 {
     const K = 128;
     const weakRefs = [];
@@ -148,10 +158,11 @@ asyncTestStart(3);
         // entry removed, so the cells are garbage now. Conservative stack
         // scanning may pin a few; a MAJORITY must be collectable. Zero
         // collected after sustained gc() = leaked Strong roots = the S4
-        // hole. Each loop iteration is a separate job (await), so
-        // keepDuringJob protection from the previous deref poll expires.
+        // hole. releaseWeakRefs() drops what the previous turn's deref()
+        // kept alive (see the note above this arm).
         let cleared = 0;
         for (let turn = 0; turn < 2000 && cleared < K / 2; ++turn) {
+            releaseWeakRefs();
             gc();
             await Promise.resolve();
             cleared = countCleared();

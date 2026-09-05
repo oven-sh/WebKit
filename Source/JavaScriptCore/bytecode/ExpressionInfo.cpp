@@ -26,9 +26,12 @@
 #include "config.h"
 #include "ExpressionInfo.h"
 
+#include "Options.h"
 #include "VM.h"
 #include <numeric>
 #include <wtf/DataLog.h>
+#include <wtf/Lock.h>
+#include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -932,8 +935,24 @@ size_t ExpressionInfo::byteSizeForGCPacing() const
     return totalSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
 }
 
+// With JS threads, several threads compute stack traces (an error's lazy
+// `stack`, for one) through the same code block's ExpressionInfo, and the
+// line/column cache is a plain HashMap. One process-wide lock serializes its
+// use then; the decode it saves is a binary search, so the lock is not held
+// long. Flag off, one option test.
+static Lock s_lineColumnCacheLockForJSThreads;
+
+WTF_IGNORES_THREAD_SAFETY_ANALYSIS // The lock below is taken conditionally, by hand.
 auto ExpressionInfo::lineColumnForInstPC(InstPC instPC) -> LineColumn
 {
+    bool locked = Options::useJSThreads();
+    if (locked) [[unlikely]]
+        s_lineColumnCacheLockForJSThreads.lock();
+    auto unlocker = makeScopeExit([&] {
+        if (locked) [[unlikely]]
+            s_lineColumnCacheLockForJSThreads.unlock();
+    });
+
     auto iter = m_cachedLineColumns.find(instPC);
     if (iter != m_cachedLineColumns.end())
         return iter->value;

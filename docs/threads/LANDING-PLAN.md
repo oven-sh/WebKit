@@ -18,8 +18,8 @@ rebased onto `main` at `491b5cc236e9`, plus the review fixes from
 oven-sh/WebKit#549 and the fixes the rebase needed.
 
 The table below is the state before the safety round of 2026-09-02. For the
-state after it, see "Results (2026-09-02)" and "Results, second round" at the
-end of Part 1.
+state after it, see "Results (2026-09-02)", "Results, second round" and
+"Results, third round" at the end of Part 1.
 
 The results in this table come from one configuration: Linux x86-64, Debug,
 ASAN, `-DPORT=JSCOnly`, the `build.ts` flags. Nothing had been measured in
@@ -806,10 +806,400 @@ directories as in the first round ran with the flag off and on.
   a Release `jsc`, GIL on or off. Stores to existing properties do not change.
   This is a performance item (Part 2).
 
+### Results, third round (2026-09-04)
+
+The third round took the three amplifier findings that the second round left
+open, ran the corpus and the GIL-off JSC suite with
+`--verifyConcurrentButterfly=1`, ran Bun's test directories with the GIL off,
+ran longer amplifier campaigns, and did the smaller entries of "Open items".
+The new tests it wrote found five more engine bugs and the campaigns found two;
+seven tests were wrong. Each engine fix has a test in `JSTests/threads/` that
+fails on a build without the fix and passes with it, or, where only the
+amplifier reaches it, an amplified count; the counts are from Release, GIL
+off, unless the entry says otherwise. All runs are on Linux x86-64. The corpus, TSAN, the three JSC
+suites, the amplifier campaign and Bun ran on the final tree; the
+`--verifyConcurrentButterfly` runs and a first amplifier campaign ran on
+earlier trees of the round, as noted.
+
+**Fixes.**
+
+- **A `Set` spread never ended after a rehash, GIL off.** This was the
+  stop-the-world watchdog abort of `shared-objects/map-set-shared-writers.js`
+  ("OM transition stop", one lite with heap access and no owner thread). A
+  backtrace of a stalled run showed a spawned thread in
+  `JSCellButterfly::createFromSet` and the main thread waiting for it to
+  stop. `[...set]` copies the keys in C++, and the GIL-off branch, which
+  collects the keys first because the size can change under it, called
+  `transitAndNext` with the set's first table on every step and gave it the
+  entry it had reached in the newest one. Once another thread had rehashed the
+  set, each step moved that entry back by the deleted entries of the obsolete
+  table (a clear moved it to 0), so the walk returned one entry for ever,
+  appended its key to a `MarkedArgumentBuffer`, and never reached a safepoint;
+  the next stop request then ran into the watchdog after 30 s. The walk now
+  goes on from the table it reached, as `JSSetIterator` and the other C++
+  loops over these tables do. `shared-objects/set-spread-vs-rehash.js` (two
+  threads spread a set while two others delete and re-add keys) failed 20 of
+  20 before and passes 100 of 100; `map-set-shared-writers.js` under the
+  amplifier, 48 runs at a time, aborted in 22 of 960 runs before and in 0 of
+  960 after.
+- **`cve/mc-dos-waiter-table-storm.js` was wrong.** No wake-up is lost: every
+  `waitAsync` promise settles. The reclamation arm's assertion failed inside an
+  `async` callback whose rejection nothing handled, so the shell printed
+  nothing and exited with status 3. That arm expects a `gc()` to collect most
+  of 128 cells once their waiters are drained, and retries across `await`
+  turns, and two things defeat it. JSC releases the objects that
+  `WeakRef.prototype.deref` kept alive when the microtask queue drains, not at
+  the end of each job, and the retries' own continuations keep the queue full,
+  so once the first turn had called `deref()` no later `gc()` could collect the
+  cells: only the first one counted. And with the shared heap the first `gc()`
+  keeps them whenever another thread is still attached to the heap, which arm
+  2's threads sometimes are under load: the window-liveness constraint (`Wlr`
+  in `Heap::addCoreConstraints`) retains the newly allocated cells of every
+  attached client's active blocks for that cycle, the conductor's own blocks
+  included, and the cells sit in the main thread's active block. A heap
+  snapshot taken at that point lists the cells with no incoming edge and no
+  root, which is how that constraint marks, and a build that logged the
+  constraint's appends showed them in exactly the failing runs. The test now
+  clears the kept objects (`releaseWeakRefs()`) before each `gc()`, and prints
+  unhandled rejections. It failed in 20 of 1,700 amplified runs, 64 at a time,
+  before, and in 0 of 1,500 after.
+- **`jit/int-gate-fire-vs-execute.js` was wrong**, and so was
+  `cve/mc-jit-double-relabel-stale-shape.js`, which this round's campaign
+  flagged the same way (exit 3, "expected relabeled but got idle", 2 of about
+  250 amplified GIL-off runs). No wake-up is lost. Both start a worker and then run a
+  fixed number of rounds on the main thread, which takes a millisecond or two,
+  and under load the worker takes longer than that to start; a worker whose
+  first look at the stop flag came after the rounds did nothing, and both
+  tests demand that it did something. `int-gate-fire-vs-execute.js` failed in
+  both GIL modes (38 and 73 of 800 amplified runs, 128 at a time). The main
+  thread now waits for the worker's first step before its rounds: 0 of 800 in
+  each mode after.
+- **The allocation-profile lock of `FunctionRareData` was a cell lock, GIL
+  off.** The open item asked whether the Debug cell-lock check could fire in
+  the `FunctionRareData` tryLock loops. It does, with
+  `--useConcurrentSharedGCMarking` (off by default): the holder fills the
+  profile under the rare data's cell lock, and the fill allocates structures
+  and property tables, ends deferral scopes, and parks for stops
+  (`didBecomePrototype`), each of which reaches the check that no cell lock is
+  held at a collection point or a park (`Heap::stopIfNecessaryForAllClients`,
+  `GCClient::Heap::acquireHeapAccess`). A `DeferGC` does not help, because the
+  park is not a collection. Nothing deadlocks, since no marker takes that lock,
+  so the rule is right and the lock was wrong: the fills and clears now
+  serialize on a plain `Lock` in the rare data, taken with the same tryLock
+  polls, which fits in the object's tail padding (its size is unchanged).
+  `objectmodel/allocation-profile-init-lock-not-a-cell-lock.js` (four threads
+  construct 150 fresh functions, derived classes and bound functions together
+  while the collector runs continuously) aborted 10 of 10 in Debug before and
+  passes 10 of 10; Release has no check and passed before. Under TSAN this test
+  then found the next entry.
+- **TSAN's 16-byte compare-and-swap tore the cell header.** Found by the test
+  above under TSAN, GIL off, in 1 of 40 runs: "Invalid value for lock: 0" from
+  `JSCellLock::unlock` in `trySegmentedTransition`, on a `JSFunction` whose
+  `prototype` was being created on two threads. TSAN builds lower the
+  `__sync` builtin in `dcasHeaderAndButterfly` to
+  `__tsan_atomic128_compare_exchange`, and TSAN's runtime implements 16-byte
+  atomics with a lock of its own around a plain load and a plain store, which
+  is not atomic against the 1-, 4- and 8-byte atomics that other threads apply
+  to the same 16 bytes; a cell-lock bit set between that load and that store
+  was lost, and the holder's unlock found the lock free. Only TSAN builds are
+  affected (the instruction is atomic), but every TSAN result depends on it.
+  Under `TSAN_ENABLED` on x86-64 the DCAS is now the `lock cmpxchg16b`
+  instruction itself, preceded by two no-op read-modify-writes that give TSAN
+  the release edge of the publish on both words. Other builds are unchanged.
+  The test above passed 40 of 40 under TSAN after; the whole TSAN corpus was
+  rerun (below).
+- **Two threads that first used one function as a constructor got two
+  prototype objects, GIL off.** Seen in the backtrace of the TSAN failure
+  above (two threads filling one allocation profile with different
+  prototypes) and then reproduced directly: a function's `prototype` is created
+  on first use, and `JSFunction::getOwnPropertySlot`, `put`,
+  `defineOwnProperty` and `reifyLazyPrototypeIfNeeded` each created and stored
+  one when they found it missing, so with two threads the second store replaced
+  the first, and objects the first thread had already made were not
+  `instanceof` the function (about 1 in 100 objects in the test). A store to
+  `F.prototype` that raced with the first read could be replaced by a fresh
+  default object the same way. GIL off, the check and the store are now one
+  step under a process-wide lock (`storeLazyPrototypeIfMissingGILOff`), whose
+  waiters poll for stops because the holder allocates and may park; a later
+  arrival finds the property and uses it, and a user store that lost the race
+  replaces the value as a store after a read does.
+  `semantics/lazy-prototype-first-use-race.js` (four threads construct with
+  1,500 fresh functions; then three threads read `F.prototype` while one
+  stores it) failed 3 of 3 before and passes 40 of 40, and 6 of 6 in Debug.
+  (The first version of the fix declared the lock inside the function template
+  and so had one lock per call site; the test's second half caught that.)
+- **Two threads that first read one error's `stack` freed the trace under each
+  other, GIL off.** Checked because it is the same shape as the previous entry:
+  `ErrorInstance` keeps the captured stack trace until `stack`, `line`, `column`
+  or `sourceURL` is first read, and that read (`materializeErrorInfoIfNeeded`)
+  builds the strings and frees the trace. Two threads doing it on one shared
+  error crashed every time, in Release and Debug (a null `Vector` in
+  `computeErrorInfo`). GIL off, one thread now claims the materialization
+  through a state byte on the error and the others wait for it, polling for
+  stops, and read the properties it made; the state byte, not the bit-field
+  flag the worker writes, is what they read. The collector's own use of the
+  trace (`finalizeUnconditionally`) is unchanged: the worker holds
+  `DeferGCForAWhile` as before. `semantics/error-stack-first-access-race.js`
+  (four threads read `stack` of 1,500 shared errors) crashed 3 of 3 before and passes 40 of 40, 16 of 16
+  in Debug and 20 of 20 under TSAN. Its Debug and TSAN runs found the next two
+  entries first.
+- **Two caches on the stack-trace path were filled with no lock.**
+  `ExpressionInfo::lineColumnForInstPC` keeps a `HashMap` from instruction to
+  line and column per code block, and `SourceProvider::sourceURLStripped()`
+  computes and assigns a `String` on first call; both run whenever a stack
+  trace is built, so with the GIL off two threads reading `stack` of errors
+  thrown from the same code raced on them (a Debug hash-table iterator check
+  crashed in 1 of 8 runs of the test above; TSAN reported the `String`
+  assignment in 5 of 10). The line/column cache now takes one process-wide
+  lock when the flag is on, and the stripped URL is published once, under the
+  provider's existing lock and behind an acquire/release flag. After: the
+  counts in the previous entry.
+- **`Atomics.store` of a missing indexed property handled traps under a cell
+  lock, GIL off.** Found by this round's amplifier campaign:
+  `cve/mc-reent-store-missing-indexed-define-race.js` hit the 30 s
+  stop-the-world watchdog ("CodeBlock jettison" pending, the main thread holding
+  heap access) in 1 of about 1,300 amplified runs. A backtrace of a stalled
+  run: the storing thread, in `JSObject::putDirectIndexForAtomicsMissingAdd`
+  with the object's cell lock held, had reached the `RETURN_IF_EXCEPTION` that
+  follows the sparse-map store, which handles traps; it parked there for the
+  main thread's stop, and when that window had moved the heap-fact epoch it
+  asked for a stop of its own to jettison its optimized code, still holding
+  the lock. The main thread was by then blocked on that cell lock in
+  `Object.defineProperty` of the same index, and a cell-lock wait has no
+  safepoint (holders must not stop under one), so nothing moved until the
+  watchdog fired. That check is now `RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED`;
+  the traps are serviced at the caller's next check. A brace-aware search
+  found no other trap check inside a cell-locked block, and `VMTraps::handleTraps`
+  now asserts in Debug, GIL off, that no cell lock is held, so the Debug corpus
+  catches the next one. Reachable only under the amplifier: the CVE test, 64
+  amplified runs at a time, hit the watchdog in 35 of 3,000 runs before and in
+  0 of 3,000 after. A test written to force it (a third thread requesting stops
+  while the storer and the definer contend) did not fail without the fix and
+  was not kept.
+- **`Atomics` operations on a typed array read the base after the detach
+  check, GIL off.** Found by the final amplifier campaign:
+  `cve/mc-prim-arraybuffer-transfer-vs-atomics.js` (one thread hammers
+  `Atomics.add`/`load` and `fill` on an `Int32Array` while the main thread
+  transfers its buffer) crashed with signal 11 in 2 of about 270 amplified
+  GIL-off runs, and in Debug, 64 amplified runs at a time, in 17 of 600: a
+  write to address 0 to 12 in `atomicReadModifyWriteCase`. GIL off, a detach
+  keeps the view's base word for JIT code and makes the C++ accessor
+  `vector()` return null instead (`JSArrayBufferView::detachKeepsVector`), and
+  every C++ path that touches the elements loads the base once, before or with
+  its bounds proof, and treats null as detached: the element accessors, `set`,
+  `fill`, `copyWithin`, the searches, `reverse`, `sort`, `DataView`. The two
+  `Atomics` templates (`atomicReadModifyWriteCase`, which serves `add`, `and`,
+  `compareExchange`, `exchange`, `load`, `or`, `sub` and `xor`, and
+  `atomicStore`) still checked `isDetached()` and the bounds first and called
+  `typedVector()` afterwards, so a transfer that landed in between gave them a
+  null base. They now load the base first and throw the detached `TypeError`
+  on null, as `DataView` does; loaded before the checks, a non-null base is a
+  mapping that stays until the next stop. The `Atomics.wait`/`notify` paths
+  need a `SharedArrayBuffer`, which cannot be detached. Reachable only under the
+  amplifier: 0 of 600 such Debug runs after.
+- **`api/thread-lifecycle.js` was wrong, GIL off.** Found by the final
+  amplifier campaign, once (exit 3, "continuation cannot run while the lock is
+  held: expected 0 but got 1"), and not again in 2,400 targeted amplified
+  runs. Its second part created the thread that calls `lock.asyncHold` before
+  the main thread took the lock, and checked inside the hold that the
+  continuation had not run. With the GIL on the thread cannot run until the
+  main thread yields inside the hold; with the GIL off it can take the lock
+  first and run the continuation at once, legitimately. The thread is now
+  created inside the hold, so its `asyncHold` always finds the lock held, which
+  is what the test means to exercise (a ticket whose registrant has finished).
+- **`sync/atomics-futex-lock.js` was wrong, GIL off.** Also from the final
+  campaign (one hang in about 130 amplified GIL-off runs; targeted, 96 at a
+  time, 17 hangs and 3 exits with status 3 in 1,000). Its ping-pong part hands
+  a turn marker to a fresh worker each round and parks in an untimed
+  `Atomics.wait`, and it assumed the GIL: that the worker cannot run before
+  the main thread parks. Without it the worker sometimes ran before the marker
+  was handed over, threw "worker ran out of turn", and left the main thread
+  waiting for ever; or it finished before the main thread parked, whose wait
+  then returned "not-equal". The worker now spins for its turn and the main
+  thread re-checks the marker around its wait; the strict alternation is still
+  what is checked. 0 of 1,000 after, and 0 of 300 GIL on.
+- **`cve/mc-tear-rope-resolve-race.js` was wrong, GIL off.** From the final
+  campaign: "torn length: 612 vs 596" in 1 of about 460 amplified GIL-off runs
+  (targeted, 1 of 1,000). Not a torn rope: the main thread published each
+  round's rope and expected string as four separate fields and the threads
+  read them one by one, so a thread delayed between two of those reads while
+  the main thread was already storing the next round's fields compared one
+  round's rope with the next round's expected value. Each round is now one
+  record, published by a single store and read once. 0 of 1,000 after.
+- **`jit/dfg-array-shift-elements-race.js` was wrong.** From the final
+  campaign, GIL on: "expected ArrayWithInt32 but got ArrayWithArrayStorage" for
+  an array that a spawned thread had just made, in 1 of about 160 amplified
+  runs (targeted, 4 of 400). This is the array allocation profile, not a race:
+  an array literal's site starts making ArrayStorage arrays once an array it
+  made has become one, from the moment its profile next looks at that array,
+  which for a baseline or LLInt maker is the next allocation and for an
+  optimizing-tier maker is never; and part 1 of the test converts an array to
+  ArrayStorage (that is what it checks) and then expects the next array from
+  the same maker to start flat. It did whenever the maker was still optimized
+  code, and the amplifier's delays sometimes had it running in a lower tier at
+  that point. The same happens flag off with `$vm.ensureArrayStorage`. The
+  arrays the test converts now each come from a maker with its own source text
+  (functions with the same source share the site through the code cache):
+  0 of 600 amplified runs GIL on and 0 of 300 GIL off after.
+- **The LLInt's `op_put_private_name` and `op_set_private_brand` test the
+  flag** (the audit's PRE-4). Their caches are never filled with the flag on,
+  so the fast paths never matched, but those paths store a StructureID and
+  write through a raw butterfly, and nothing local said they must not run. Both
+  now branch to the slow path on the flag, as `op_put_by_id` does. No test:
+  nothing changes.
+- **Terminations that stay VM-wide: decided.** The watchdog (a time budget for
+  the VM's scripts), a `SIGINT` in Bun, and a worker's `terminate()` are
+  requests about a VM, and they stop every thread of it: with the GIL off a
+  spawned thread does not service the watchdog check itself, the carrier does
+  and fans the termination out (`VMTraps.cpp`, `NeedWatchdogCheck`), and
+  `notifyNeedTermination()` fans out by definition. Only a deadline
+  (`VM::addTerminationDeadline`, `node:vm`'s `timeout`) belongs to one
+  evaluation on one thread, and it terminates that thread (second round). The
+  comments on `VM::notifyNeedTermination` and
+  `notifyNeedTerminationForCurrentThread` say this; nothing else changes.
+
+**`--verifyConcurrentButterfly`.** The corpus in the four modes, Release and
+Debug, with `JSC_verifyConcurrentButterfly=1` in the environment, on the tree
+with the `createFromSet` fix: no failure (273/288/48/62 pass, as without it).
+The GIL-off JSC suite with the verifier added, on the same tree plus the LLInt
+change: no verifier abort. Against the second round's GIL-off run its failure
+list differs by two FFI tests in `ftl-eager-no-cjit` (the executable-memory
+flake; four others went the other way) and
+`stress/re-enter-resolve-rope-string.js.no-ftl`, a `memoryHog` test killed
+with signal 9 under the load of that run, which passes alone in every mode.
+
+**Corpus** (`Tools/threads/run-tests.sh`), on the final tree, with the four
+new tests:
+
+| Build | Default, GIL on | Default, GIL off | CVE, GIL on | CVE, GIL off |
+|---|---|---|---|---|
+| Release | 276 pass, 0 fail, 22 skip | 291 pass, 0 fail, 7 skip | 48 pass, 0 fail, 17 skip | 62 pass, 0 fail, 3 skip |
+| Debug (ASAN) | 276 pass, 0 fail, 22 skip | 291 pass, 0 fail, 7 skip | 48 pass, 0 fail, 17 skip | 62 pass, 0 fail, 3 skip |
+
+The Debug runs include the new `handleTraps` assertion; it did not fire.
+
+**JSC suites** (`run-javascriptcore-tests`, Release, the same collections
+as before), on the final tree, with the amplifier campaign and Bun's tests
+running on the same machine:
+
+- Flag off: 578 failures, against 579 on `main`. The lists differ only in FFI
+  tests in `ftl-eager-no-cjit` (three fail here, four on `main`), the
+  executable-memory failure that changes files with every run.
+- Flag on, GIL on (`JSC_useJSThreads=1`): 851 failures, against the second
+  round's 853 on the same collections. The differences are FFI tests in
+  `ftl-eager-no-cjit` again (two against three) and
+  `int8-repeat-in-then-out-of-bounds.js.ftl-no-cjit-no-inline-validate`, the
+  reoptimization-count test the second round described, which passed this
+  time.
+- GIL off: 1,781 failures, against the second round's 1,780. Six FFI
+  `ftl-eager-no-cjit` tests went one way or the other. Three more failed here:
+  `big-int-strict-spec-to-this.js.default`, which asserts
+  `numberOfDFGCompiles(foo) > 1` and passes alone (a compile-count test under
+  load); `re-enter-resolve-rope-string.js.no-ftl`, a `memoryHog` test killed
+  with signal 9 under the load, which passes alone in every mode; and
+  `regress-174463162.js.dfg-eager-no-cjit-validate`, which crashed with signal
+  11. That one is not this branch's: the test installs an inline-cache
+  watchpoint with a dead owner through `$vm` and runs here with
+  `--collectContinuously=1 --verifyGC=1`, and under the same load it crashes
+  in 7 of 200 runs flag off, and in 7 of 200 with a jsc built from `main`
+  (`ASSERTION FAILED: decontaminate()` in Debug). It is recorded here so that
+  it is not rediscovered as a threads failure.
+
+**TSAN** (JIT on, `Tools/tsan/suppressions.txt`), on the final tree: the
+corpus, GIL on (276 pass, 22 skip) and GIL off (291 pass, 7 skip), and the
+CVE suite, GIL on (48 pass) and GIL off (62 pass): 0 reports, 0 failures.
+`races/` under the amplifier, ten seeds per test, both GIL modes: 7 of 7 pass
+in each, 0 reports. Two earlier TSAN runs of the round and the two findings
+they produced (the 16-byte DCAS emulation and `sourceURLStripped`) are in
+TSAN-RESULTS.md, "Third round".
+
+**Amplifier.** Three campaigns, each running the four modes in parallel with
+ten random seeds per test per pass (`run-tests.sh --amplify`), on a machine
+that was also running the suites: about two hours on the tree with the first
+three fixes (11, 11, 30 and 25 passes of default GIL on, default GIL off, CVE
+GIL on, CVE GIL off), 75 minutes on the tree before the `Atomics` fix (12, 11,
+31, 28), and four hours on the final tree (42, 40, 108 and 96 passes; a
+default pass is about 280 tests, a CVE pass 48 or 62). Findings other than
+output that differs from the reference run (thread timings and counts that the
+tests print; every such test was looked at once): the first campaign produced
+the `mc-jit-double-relabel-stale-shape.js` exit and the
+`mc-reent-store-missing-indexed-define-race.js` watchdog abort; the second,
+`thread-lifecycle.js`, `atomics-futex-lock.js` and the `Atomics` crash in
+`mc-prim-arraybuffer-transfer-vs-atomics.js`; the last, one
+`dfg-array-shift-elements-race.js` exit and one `mc-tear-rope-resolve-race.js`
+exit in its first 100 minutes, both test mistakes fixed while it ran (above),
+and nothing in the 26 default GIL-on passes and 56 CVE GIL-off passes after
+those two fixes, nor in the other two modes. No crash, hang or assertion is
+open.
+
+**Bun.** The second round's Bun changes (the two build fixes and the three
+GIL-off protocol changes, kept as patches outside this tree) applied to Bun's
+tree, a `debug-local` build against the final tree, and the same eight test
+directories three times: flag off, `BUN_JSC_useJSThreads=1`, and
+`BUN_JSC_useJSThreads=1` with `JSC_useSharedGCHeap=1
+JSC_useThreadGILOffUnsafe=1 JSC_useThreadGIL=0`, one after the other on a
+loaded machine (the JSC suites and the amplifier campaign were running).
+
+| Directory | Flag off | Flag on | GIL off |
+|---|---|---|---|
+| `test/js/bun/jsc` | 262 pass, 2 fail | 262 pass, 2 fail | 262 pass, 2 fail |
+| `test/js/bun/ffi` | 232 pass | 232 pass | 232 pass |
+| `test/js/bun/util` | 2038 pass, 6 fail | 2038 pass, 6 fail | 2038 pass, 6 fail |
+| `test/js/node/vm` | 292 pass | 292 pass | 292 pass |
+| `test/js/node/util` | runner crashed | runner crashed | runner crashed |
+| `test/js/web/timers` | 69 pass, 4 fail | 69 pass, 4 fail | 68 pass, 5 fail |
+| `test/js/node/worker_threads` | 156 pass | 156 pass | 156 pass |
+| `test/js/web/workers` | 455 pass, 2 fail | 454 pass, 3 fail | 454 pass, 3 fail |
+
+The failing tests are the same tests in the three columns, with two
+exceptions. `web/workers`, flag on and GIL off: the accept-loop test of the
+second round (`terminate() while a worker's Bun.connect() open is firing`),
+Bun's unbounded accept loop, unchanged. `web/timers`, GIL off: `setInterval
+runs with at least the delay time` saw a tick 31 ms late and the next one 7 ms
+after it, which the fixture rejects; it did not fail again in 20 GIL-off and
+20 flag-off reruns of the fixture under the same load, and it passed GIL off in
+the second round, so it is recorded as load, not as a difference. The rest is
+flag-independent: the two `bun/jsc` failures are the `DOMJIT` `node:vm` tests
+timing out in this Debug build, `node/util`'s runner dies of a stack overflow
+in Bun's console writer (`bun-inspect.test.ts`) in every mode, and the `util`
+and `timers` failures are leak and subprocess tests that fail flag off too. No
+JSC-side difference was found; nothing GIL-off-specific was left to fix on
+this side. The Bun-side items stay as they were (the five changes, the accept
+loop), plus one to check: Bun's error-stack hooks (`computeErrorInfo` and the
+source-map lookup behind it) now run on whichever thread first reads an
+error's `stack`, serialized per error but concurrently for different errors.
+
+**Flag-off changes.** No fix changes what flag-off code does. These change
+the code that runs flag off: `op_put_private_name` and `op_set_private_brand`
+in the LLInt load the flag byte and branch, once per execution, as
+`op_put_by_id` already does; `ExpressionInfo::lineColumnForInstPC` tests the
+flag before it takes its lock; `SourceProvider::sourceURLStripped()` tests an
+atomic flag instead of the `String` and takes the provider's lock on its first
+call, in all modes; the two `Atomics` templates test the loaded base for
+null, which flag off is implied by the detach check next to it;
+`FunctionRareData`, `ErrorInstance` and `SourceProvider` each gain a byte in
+padding they already had, which flag-off code does not read
+(`FunctionRareData` and `ErrorInstance` keep their size). The
+`createFromSet`, `JSFunction`, `ErrorInstance` and `ThreadAtomics.cpp` changes
+are in GIL-off branches, the `VMTraps` assertion is Debug-only, and the DCAS
+change is TSAN-only. The intro's "final tree" includes the `Atomics` fix: the
+three JSC suites, the corpus and TSAN were rerun after it.
+
+**Found on the way, not fixed (performance).** `Array.prototype.shift` and
+`unshift` on an array with ArrayStorage copy the whole storage for every call
+when the flag is on (`unshiftCountWithArrayStorageConcurrent` and its `shift`
+twin, the AS-COPY rule), where flag off they adjust the index bias in place.
+A loop that drains a 200,000-element queue with `shift()` takes 37 s instead
+of 10 ms (Release, GIL on or off), and
+`stress/array-unshift-should-not-race-against-compiler-thread.js` takes 5
+minutes instead of 1 s, which is what made the flag-on suites of this round
+and the last take hours. This is the largest flag-on cost found so far, ahead
+of the uncached property adds; both are Part 2.
+
 ### Open items
 
-Work that is not done, after the second round. Each item says why. The items
-that the second round closed are in "Results, second round".
+Work that is not done, after the third round. Each item says why. The items
+that the rounds closed are in their "Results" sections.
 
 - **Bun needs five changes to build and run against this branch.** Two to
   build: `RegExp::ovectorSpan` takes a `VM&`, and `TopExceptionScope` is 72
@@ -819,34 +1209,45 @@ that the second round closed are in "Results, second round".
   `Heap::runWithOtherClientsStopped`, and `NodeVMRunTermination.cpp` makes an
   enclosing run's request again with `notifyNeedTerminationForCurrentThread()`.
   They are in Bun's tree, not here.
+- **Bun's error-stack hooks run on any thread, GIL off.** JSC calls Bun's
+  `computeErrorInfo` hooks from whichever thread first reads an error's
+  `stack`; after the third round that is serialized per error but concurrent
+  across errors. Whether Bun's side of those hooks (its source-map cache in
+  particular) tolerates that has not been checked. A Bun item.
 - **Bun's accept loop has no bound** (`us_internal_dispatch_ready_poll`). A
   server whose clients reconnect as fast as it accepts never returns to its
   event loop. `worker-terminate-lifetime.test.ts` stops there with the flag
   on, and it stops flag off too when the handler takes 3 ms. A bound of 64
   accepts per readiness event fixes the test. This is a Bun change.
+- **`shift` and `unshift` copy the whole ArrayStorage on every call with the
+  flag on**, so queue-draining loops are quadratic (37 s against 10 ms for
+  200,000 elements). See "Found on the way" in the third round. Part 2, and
+  the first thing to fix there.
 - **Property adds are not cached with the flag on.** JIT code performs no
   structure transition, so each add runs in C++. A loop that creates objects
-  with six properties runs about 40 times slower in Release. It is the largest
-  flag-on cost found so far. See Part 2.
+  with six properties runs about 40 times slower in Release. See Part 2.
+- **A `gc()` keeps the caller's own newest garbage while another thread is
+  attached.** The window-liveness constraint (`Wlr`, `Heap::addCoreConstraints`)
+  retains the newly allocated cells of every attached client's active blocks,
+  and the conducting thread's blocks are among them, although its stack and
+  registers are scanned as in the single-mutator protocol (the argument the
+  single-client gate in that constraint already makes). Bounded (one block per
+  allocator per thread, freed by a later cycle), but it surprised a test (third
+  round, `mc-dos-waiter-table-storm.js`). Decide in Part 2 whether the conductor's
+  own blocks can be left to the ordinary scan.
 - **`bun:ffi` with the GIL off** stays refused on spawned threads. That is
   the decision for landing. The full fix is described in section 1.3.
-- **Three amplifier findings, all older than this round** (see "Amplifier"
-  above): the stop-the-world watchdog abort in
-  `shared-objects/map-set-shared-writers.js` GIL off, the lost `waitAsync`
-  settle in `cve/mc-dos-waiter-table-storm.js`, and the progress assertion in
-  `jit/int-gate-fire-vs-execute.js`. Each needs load plus the amplifier to
-  reproduce (1 to 5 in 100). Not root-caused.
-- **`--verifyConcurrentButterfly` in more runs.** The verifier found the
-  `butterfly()` misuses of this round, and a search found the rest by reading.
-  Only a few corpus tests set it. Running the corpus and the GIL-off JSC suite
-  with it would check the search.
-- **Two LLInt transitions have no local check.** `op_put_private_name` and
-  `op_set_private_brand` rely on their metadata never being filled with the
-  flag on, so the cached StructureID stays 0 and never matches (the audit's
-  PRE-4).
-- **Termination that stays VM-wide.** The watchdog, `SIGINT` in Bun, and a
-  worker's `terminate()` still stop every thread of the VM. Only a deadline
-  (`node:vm`'s `timeout`) is per thread.
+- **Lazily created state, GIL off.** The third round fixed four first-use
+  races (a function's `prototype`, an error's stack strings, a provider's
+  stripped URL, a code block's line/column cache) and read the neighbours it
+  could name (`SourceProvider::getID()`, a function's lazy `length` and `name`,
+  `LazyProperty`, property tables; see the audit's PRE-10). Any other cache that
+  a cell or a runtime object fills on first use with a plain check-then-store
+  has the same shape; no complete search was made.
+- **The trap check under a cell lock is asserted, not proven absent.** A search
+  found one (`ThreadAtomics.cpp`, fixed) and `VMTraps::handleTraps` asserts in
+  Debug that no cell lock is held, so the Debug corpus catches a new one only
+  where a test makes a trap pending inside the locked region.
 - **Paths with no test in the jsc shell.** The debugger's carrier checks in
   `Debugger.cpp`, `queryHolders`, and Bun's module-info string lookup. Each
   fix was made by reading.
@@ -858,7 +1259,11 @@ that the second round closed are in "Results, second round".
 - **Other platforms.** Everything here ran on Linux x86-64 only. The
   address-dependency arguments in this document (the property table's vector
   word, the structure's table pointer) hold on arm64 too, but nothing has run
-  there.
+  there. Two things from the third round are x86-64-only as written: the TSAN
+  build's DCAS (the audit's PRE-12; an arm64 TSAN build still goes through
+  TSAN's emulated 16-byte atomic), and the base-before-length order that the
+  typed-array C++ paths rely on against a concurrent detach (PRE-13), which on
+  arm64 wants a load-load fence in `JSArrayBufferView::vector()`.
 
 ## Part 2: Performance
 
