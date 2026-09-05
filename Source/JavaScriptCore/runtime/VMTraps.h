@@ -510,6 +510,7 @@ public:
     // LANDED (AB-17; VMTraps::vm() itself now consults m_liteOwnerVM) — this
     // helper remains the explicit form for paths that predate that change.
     ALWAYS_INLINE VM& liteAwareVM() const { return m_liteOwnerVM ? *m_liteOwnerVM : vm(); }
+    bool trapsDeferred() const { return m_trapsDeferred; }
 private:
 
     // Deferral state is a property of one thread's stack: DeferTermination and

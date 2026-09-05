@@ -26,6 +26,9 @@
 #include "config.h"
 #include "JSThreadsSafepoint.h"
 
+#include "ConcurrentJSLock.h"
+#include "GCThreadLocalCache.h"
+
 #include "Heap.h"
 #include "HeapInlines.h"
 #include "MachineContext.h" // B16 watchdog triage: foreign-thread PC/FP capture for the fail-stop backtrace dump.
@@ -799,6 +802,14 @@ bool parkSitePollAndParkForStopTheWorld(VM& vm)
 {
     if (!vm.gilOff()) [[likely]]
         return false;
+#if ASSERT_ENABLED
+    // A thread that waits for a cell lock or a ConcurrentJSLock waits without
+    // a safepoint, so a holder that parks here (or would, were a stop pending)
+    // can keep a stop from ever completing. Checked on every poll, pending or
+    // not, so the Debug corpus finds such a holder without needing the race.
+    ASSERT(!GCCellLockDepth::current());
+    ASSERT(!ConcurrentJSLockDepth::current());
+#endif
     if (!jsThreadsStopPendingFor(vm)) [[likely]] {
         // counter-lock contgc wedge fix (root cause; H1xH2 composition): a
         // class-(2) access-holding wait must quiesce for a pending

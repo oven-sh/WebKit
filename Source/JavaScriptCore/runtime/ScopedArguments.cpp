@@ -27,6 +27,7 @@
 #include "ScopedArguments.h"
 
 #include "GenericArgumentsImplInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "JSArray.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -41,7 +42,7 @@ uint32_t ScopedArguments::length(JSGlobalObject* globalObject) const
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_overrodeThings) [[unlikely]] {
+    if (overrodeThings()) [[unlikely]] {
         auto value = get(globalObject, vm.propertyNames->length);
         RETURN_IF_EXCEPTION(scope, 0);
         RELEASE_AND_RETURN(scope, value.toUInt32(globalObject));
@@ -132,22 +133,35 @@ Structure* ScopedArguments::createStructure(VM& vm, JSGlobalObject* globalObject
     return Structure::create(vm, globalObject, prototype, TypeInfo(ScopedArgumentsType, StructureFlags), info());
 }
 
+// GIL-off, two threads can make the first store or delete of `length`,
+// `callee` or `Symbol.iterator` on one shared arguments object together, and
+// each calls overrideThings(); or unmap two arguments together, where each
+// copies the table and one copy would drop the other's change. One
+// process-wide lock serializes both, as DirectArguments does; the holder
+// re-checks, and publishes m_overrodeThings after its puts (overrodeThings()
+// acquires).
+static Lock s_gilOffScopedArgumentsLock;
+
 void ScopedArguments::overrideThings(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
-    RELEASE_ASSERT(!m_overrodeThings);
+    GILOffFirstUseLocker locker(s_gilOffScopedArgumentsLock, vm, vm.gilOffWithProcessGate());
+    if (!vm.gilOff())
+        RELEASE_ASSERT(!m_overrodeThings);
+    else if (overrodeThings())
+        return;
     
     putDirect(vm, vm.propertyNames->length, jsNumber(m_table->length()), static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirect(vm, vm.propertyNames->callee, m_callee.get(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirect(vm, vm.propertyNames->iteratorSymbol, globalObject->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     
-    m_overrodeThings = true;
+    WTF::atomicStore(&m_overrodeThings, true, std::memory_order_release); // THREADS: pairs with overrodeThings(); a plain byte store flag off.
 }
 
 void ScopedArguments::overrideThingsIfNecessary(JSGlobalObject* globalObject)
 {
-    if (!m_overrodeThings)
+    if (!overrodeThings())
         overrideThings(globalObject);
 }
 
@@ -156,6 +170,7 @@ void ScopedArguments::unmapArgument(JSGlobalObject* globalObject, uint32_t i)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT_WITH_SECURITY_IMPLICATION(i < m_totalLength);
+    GILOffFirstUseLocker locker(s_gilOffScopedArgumentsLock, vm, vm.gilOffWithProcessGate());
     m_hasUnmappedArgument = true;
     unsigned namedLength = m_table->length();
     if (i < namedLength) {
@@ -182,7 +197,7 @@ bool ScopedArguments::isIteratorProtocolFastAndNonObservable()
     if (!globalObject->isArgumentsPrototypeIteratorProtocolFastAndNonObservable())
         return false;
 
-    if (m_overrodeThings) [[unlikely]]
+    if (overrodeThings()) [[unlikely]]
         return false;
 
     if (m_hasUnmappedArgument) [[unlikely]]
@@ -201,7 +216,7 @@ JSArray* ScopedArguments::fastSlice(JSGlobalObject* globalObject, ScopedArgument
     if (count >= MIN_SPARSE_ARRAY_INDEX)
         return nullptr;
 
-    if (arguments->m_overrodeThings) [[unlikely]]
+    if (arguments->overrodeThings()) [[unlikely]]
         return nullptr;
 
     if (arguments->m_hasUnmappedArgument) [[unlikely]]

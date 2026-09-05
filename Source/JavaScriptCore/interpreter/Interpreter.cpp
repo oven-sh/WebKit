@@ -766,6 +766,16 @@ ALWAYS_INLINE static HandlerInfo* findExceptionHandler(StackVisitor& visitor, Co
     return codeBlock->handlerForIndex(exceptionHandlerIndex, requiredHandler);
 }
 
+// The same lookup, copied out under the CodeBlock's handler-table lock when the
+// table can change under another thread (CodeBlock::RareData::m_exceptionHandlersLock).
+ALWAYS_INLINE static CatchInfo findCatchInfo(StackVisitor& visitor, CodeBlock* codeBlock, RequiredHandler requiredHandler)
+{
+    std::optional<Locker<Lock>> locker;
+    if (Lock* lock = codeBlock->exceptionHandlersLockForConcurrentLookup()) [[unlikely]]
+        locker.emplace(*lock);
+    return { findExceptionHandler(visitor, codeBlock, requiredHandler), codeBlock };
+}
+
 class GetCatchHandlerFunctor {
 public:
     GetCatchHandlerFunctor()
@@ -783,7 +793,14 @@ public:
         if (!codeBlock)
             return IterationStatus::Continue;
 
-        m_handler = findExceptionHandler(visitor, codeBlock, RequiredHandler::CatchHandler);
+        {
+            // Only whether a catch handler exists leaves this scope.
+            std::optional<Locker<Lock>> locker;
+            if (Lock* lock = codeBlock->exceptionHandlersLockForConcurrentLookup()) [[unlikely]]
+                locker.emplace(*lock);
+            m_handler = findExceptionHandler(visitor, codeBlock, RequiredHandler::CatchHandler);
+            ASSERT(!m_handler || m_handler->isCatchHandler());
+        }
         if (m_handler)
             return IterationStatus::Done;
 
@@ -894,7 +911,7 @@ public:
         m_handler.m_valid = false;
         if (m_codeBlock) {
             if (!m_isTermination) {
-                m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
+                m_handler = findCatchInfo(visitor, m_codeBlock, RequiredHandler::AnyHandler);
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
             }
@@ -1062,9 +1079,7 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
         GetCatchHandlerFunctor functor;
         if (callFrame)
             StackVisitor::visit(callFrame, vm, functor);
-        HandlerInfo* handler = functor.handler();
-        ASSERT(!handler || handler->isCatchHandler());
-        bool hasCatchHandler = !!handler;
+        bool hasCatchHandler = !!functor.handler();
         if (!hasCatchHandler) {
             EntryFrame* topEntryFrame = vm.group3Primitives().topEntryFrame; // UNGIL §A.1.3 mode split.
             if (topEntryFrame) {

@@ -1065,13 +1065,14 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
         std::span<WriteBarrier<Unknown>> destination { data + to, count };
         std::span<const WriteBarrier<Unknown>> source { data + from, count };
 
-        if (type == ArrayWithInt32)
+        if (Options::useJSThreads()) [[unlikely]]
+            butterflyConcurrentMoveWords(destination.data(), source.data(), count * sizeof(JSValue)); // Whole slots (see fastShift).
+        else if (type == ArrayWithInt32)
             memmoveSpan(destination, source);
-        else {
-            ASSERT(type == ArrayWithContiguous);
+        else
             gcSafeMemmove(destination.data(), source.data(), count * sizeof(JSValue));
+        if (type == ArrayWithContiguous)
             vm.writeBarrier(this);
-        }
         return true;
     }
     case ArrayWithDouble: {
@@ -1083,7 +1084,10 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
         std::span<double> destination { data + to, count };
         std::span<double> source { data + from, count };
 
-        memmoveSpan(destination, source);
+        if (Options::useJSThreads()) [[unlikely]]
+            butterflyConcurrentMoveWords(destination.data(), source.data(), count * sizeof(double)); // Whole slots (see fastShift).
+        else
+            memmoveSpan(destination, source);
         return true;
     }
     case ArrayWithArrayStorage: {
@@ -1959,7 +1963,9 @@ JSValue JSArray::fastShift(VM& vm)
         if (moveCount) {
             if (holesMustForwardToPrototype()) [[unlikely]]
                 return { };
-            if (indexingType == ArrayWithInt32)
+            if (Options::useJSThreads()) [[unlikely]]
+                butterflyConcurrentMoveWords(butterfly->contiguous().data(), butterfly->contiguous().data() + 1, sizeof(JSValue) * moveCount); // Whole slots: a first foreign store can land during the move.
+            else if (indexingType == ArrayWithInt32)
                 memmove(butterfly->contiguous().data(), butterfly->contiguous().data() + 1, sizeof(JSValue) * moveCount);
             else
                 gcSafeMemmove(butterfly->contiguous().data(), butterfly->contiguous().data() + 1, sizeof(JSValue) * moveCount);
@@ -1990,7 +1996,10 @@ JSValue JSArray::fastShift(VM& vm)
         if (moveCount) {
             if (holesMustForwardToPrototype()) [[unlikely]]
                 return { };
-            memmove(butterfly->contiguousDouble().data(), butterfly->contiguousDouble().data() + 1, sizeof(double) * moveCount);
+            if (Options::useJSThreads()) [[unlikely]]
+                butterflyConcurrentMoveWords(butterfly->contiguousDouble().data(), butterfly->contiguousDouble().data() + 1, sizeof(double) * moveCount); // Whole slots; see above.
+            else
+                memmove(butterfly->contiguousDouble().data(), butterfly->contiguousDouble().data() + 1, sizeof(double) * moveCount);
         }
         butterfly->contiguousDouble().at(this, moveCount) = PNaN;
         butterfly->setPublicLength(moveCount);
@@ -2473,6 +2482,10 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
                     }
                     butterfly->contiguous().at(this, i).setWithoutWriteBarrier(v);
                 }
+            } else if (Options::useJSThreads()) [[unlikely]] {
+                butterflyConcurrentMoveWords(butterfly->contiguous().data() + startIndex,
+                    butterfly->contiguous().data() + startIndex + count,
+                    sizeof(JSValue) * moveCount); // Whole slots (see fastShift).
             } else {
                 gcSafeMemmove(butterfly->contiguous().data() + startIndex,
                     butterfly->contiguous().data() + startIndex + count,
@@ -2520,6 +2533,10 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
                     }
                     butterfly->contiguousDouble().at(this, i) = v;
                 }
+            } else if (Options::useJSThreads()) [[unlikely]] {
+                butterflyConcurrentMoveWords(butterfly->contiguousDouble().data() + startIndex,
+                    butterfly->contiguousDouble().data() + startIndex + count,
+                    sizeof(double) * moveCount); // Whole slots (see fastShift).
             } else {
                 gcSafeMemmove(butterfly->contiguousDouble().data() + startIndex,
                     butterfly->contiguousDouble().data() + startIndex + count,
@@ -2776,8 +2793,12 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         } else
             butterfly = this->butterfly();
 
-        if (moveCount)
-            gcSafeMemmove(butterfly->contiguous().data() + startIndex + count, butterfly->contiguous().data() + startIndex, moveCount * sizeof(EncodedJSValue));
+        if (moveCount) {
+            if (Options::useJSThreads()) [[unlikely]]
+                butterflyConcurrentMoveWords(butterfly->contiguous().data() + startIndex + count, butterfly->contiguous().data() + startIndex, moveCount * sizeof(EncodedJSValue)); // Whole slots (see fastShift).
+            else
+                gcSafeMemmove(butterfly->contiguous().data() + startIndex + count, butterfly->contiguous().data() + startIndex, moveCount * sizeof(EncodedJSValue));
+        }
 
         // Our memmoving of values around in the array could have concealed some of them from
         // the collector. Let's make sure that the collector scans this object again.
@@ -2846,8 +2867,12 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
         } else
             butterfly = this->butterfly();
 
-        if (moveCount)
-            gcSafeMemmove(butterfly->contiguousDouble().data() + startIndex + count, butterfly->contiguousDouble().data() + startIndex, moveCount * sizeof(double));
+        if (moveCount) {
+            if (Options::useJSThreads()) [[unlikely]]
+                butterflyConcurrentMoveWords(butterfly->contiguousDouble().data() + startIndex + count, butterfly->contiguousDouble().data() + startIndex, moveCount * sizeof(double)); // Whole slots (see fastShift).
+            else
+                gcSafeMemmove(butterfly->contiguousDouble().data() + startIndex + count, butterfly->contiguousDouble().data() + startIndex, moveCount * sizeof(double));
+        }
 
         // NOTE: we're leaving being garbage in the part of the array that we shifted out
         // of. This is fine because the caller is required to store over that area, and

@@ -119,9 +119,12 @@ public:
 
     SourceID asID()
     {
-        if (!m_id)
-            getID();
-        return m_id;
+        // A relaxed load: getID() assigns once (a compare-and-swap), so any
+        // thread that sees a non-zero ID sees the only one. Plain load codegen.
+        SourceID id = WTF::atomicLoad(&m_id, std::memory_order_relaxed);
+        if (!id)
+            id = getID();
+        return id;
     }
 
     void setSourceURLDirective(const String& sourceURLDirective) { m_sourceURLDirective = sourceURLDirective; }
@@ -143,7 +146,7 @@ private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
     JS_EXPORT_PRIVATE virtual void unlockUnderlyingBufferImpl();
 
-    JS_EXPORT_PRIVATE void NODELETE getID();
+    JS_EXPORT_PRIVATE SourceID NODELETE getID();
 
     std::atomic<unsigned> m_lockingCount { 0 };
     SourceProviderSourceType m_sourceType;
