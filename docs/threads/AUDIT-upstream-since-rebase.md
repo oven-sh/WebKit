@@ -1029,9 +1029,10 @@ block landing, but they are not upstream's doing.
   `PutStructure` assert that the flag is off; the DFG parser does not inline a
   delete hit or a private brand with threads; the private-brand handler thunk
   jumps to its slow path with threads, as the delete handlers do. The LLInt
-  `put_private_name` and `set_private_brand` paths still rely on the metadata
-  never being filled flag-on, so the cached StructureID stays 0 and never
-  matches.
+  `put_private_name` and `set_private_brand` fast paths branch to their slow
+  paths on the flag (third round); before that they relied on the metadata
+  never being filled flag-on, so that the cached StructureID stayed 0 and
+  never matched.
 
 ### PRE-5: a lower tier could replace a higher one, GIL off (second round)
 
@@ -1087,7 +1088,10 @@ block landing, but they are not upstream's doing.
   heap, it may be reachable. It has the same fix. `FunctionRareData::initializeObjectAllocationProfile`
   and `createInternalFunctionAllocationStructureFromBaseGILOff` allocate under
   the rare data's lock on purpose: `visitChildren` does not take it, and the
-  waiters poll for stops.
+  waiters poll for stops. Third round: that lock is a plain `Lock` in the rare
+  data now, not its cell lock, because the holder also parks under it and the
+  Debug cell-lock checks under `--useConcurrentSharedGCMarking` (no cell lock
+  at a collection point or a park) fired there; see PRE-10.
 - Test: `JSTests/threads/objectmodel/sparse-define-collects-outside-cell-lock.js`.
   Found by `stress/intl-having-a-bad-time.js` in the GIL-off JSC suite.
 
@@ -1154,6 +1158,130 @@ block landing, but they are not upstream's doing.
   `reallyAdd` fails the compile as invalidated, `fireInternal` jettisons.
 - Reproducer: `gc-stress/watchpoint-storm.js` under `amplify.sh`, GIL off, 5
   of 400 runs before, 0 of 400 after.
+
+### PRE-9: a `Set` spread restarted its walk from the first table, GIL off (third round)
+
+**Risk: confirmed by test. Fixed.**
+
+- `JSCellButterfly::createFromSet` (the C++ copy behind `[...set]`), GIL-off
+  branch: every step called `transitAndNext` with the set's first table and the
+  entry reached in the newest one. After a rehash by another thread, each step
+  moved the entry back by the obsolete table's deleted-entry count (to 0 after
+  a clear), so the walk never ended and never reached a safepoint; the next
+  stop-the-world request hit the watchdog.
+- Fix: carry the table forward (`storage = transitionResult.storage`), as
+  `JSSetIterator`, `forEachInSetStorage` and the `Array.from` fast paths do. A
+  search of every `transitAndNext` / `nextAndUpdateIterationEntry` caller found
+  no other loop of this shape.
+- Test: `JSTests/threads/shared-objects/set-spread-vs-rehash.js`. The
+  amplifier finding was `shared-objects/map-set-shared-writers.js`.
+
+### PRE-10: lazy first-use state raced, GIL off (third round)
+
+**Risk: confirmed by test (three sites) and by TSAN (one). Fixed.**
+
+State that a cell or a runtime object creates on first use, with a plain
+check-then-store, is created twice when two threads use it first together.
+With the GIL on the check and the store never interleave. Four sites:
+
+- `JSFunction`'s lazy `prototype` (`getOwnPropertySlot`, `put`,
+  `defineOwnProperty`, `reifyLazyPrototypeIfNeeded`): two threads created two
+  prototype objects and the second store replaced the first, so objects
+  already made on the first thread were not `instanceof` the function, and a
+  user's store racing the first read could be replaced by a default object.
+  Fix: GIL off, check and store under one process-wide lock whose waiters poll
+  for stops (`storeLazyPrototypeIfMissingGILOff`). Test:
+  `semantics/lazy-prototype-first-use-race.js`.
+- `ErrorInstance::materializeErrorInfoIfNeeded`: the first read of `stack`
+  builds the strings and frees the captured trace; a second thread walking the
+  trace crashed. Fix: GIL off, one thread claims the materialization through an
+  atomic state byte; the others wait (polling for stops) and use its result.
+  Test: `semantics/error-stack-first-access-race.js`.
+- `SourceProvider::sourceURLStripped()`: a `String` computed and assigned on
+  first call, from the stack-trace path. Fix: publish once, under the
+  provider's lock, behind an acquire/release flag (all modes; the fast path is
+  one load). Found by TSAN on the test above.
+- `ExpressionInfo::lineColumnForInstPC`: a `HashMap` cache per code block,
+  filled from the stack-trace path (and the debugger and profilers). Fix: with
+  the flag on, one process-wide lock around the lookup and the fill. Found in
+  Debug on the test above (the hash table's iterator checks).
+- `FunctionRareData`'s allocation-profile fill was already serialized (first
+  round); the third round changed its lock from the cell lock to a plain lock,
+  because the holder allocates and parks under it (PRE-6's rule, enforced by
+  the Debug cell-lock checks under `--useConcurrentSharedGCMarking`). Test:
+  `objectmodel/allocation-profile-init-lock-not-a-cell-lock.js`.
+- Read and left: `SourceProvider::getID()` assigns the provider's ID on first
+  use with a plain store, so two first calls from two threads can hand out two
+  IDs and keep the later one; nothing dereferences an ID, and its users (the
+  debugger, the type and control-flow profilers, code-cache keys) run on the
+  carrier or at link time, so it stays as it is, noted here. `JSFunction`'s
+  lazy `length` and `name` store equal primitive values, so a double store is
+  harmless; `LazyProperty` has its own GIL-off protocol
+  (`LazyPropertyInlines.h`); `Structure` property tables are materialized under
+  the structure's lock.
+
+### PRE-11: a trap check under a cell lock, GIL off (third round)
+
+**Risk: confirmed under the amplifier. Fixed.**
+
+- `JSObject::putDirectIndexForAtomicsMissingAdd` (`ThreadAtomics.cpp`), the
+  sparse-map arm: `RETURN_IF_EXCEPTION` after `map->putDirect`, inside the
+  object's cell lock. `RETURN_IF_EXCEPTION` handles traps, and a handled trap
+  parks for a pending stop or, after a conductor moved the heap-fact epoch,
+  requests a stop to jettison the thread's optimized code. A thread blocked on
+  the same cell lock (`Object.defineProperty` of the same index) has no
+  safepoint, so the stop never completed:
+  `cve/mc-reent-store-missing-indexed-define-race.js` hit the 30 s watchdog in
+  35 of 3,000 amplified runs (64 at a time), 0 of 3,000 after.
+- Fix: `RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED` there. A brace-aware search of
+  `runtime/`, `bytecode/`, `heap/`, `jit/`, `dfg/` and `llint/` for trap checks
+  inside `Locker { ...cellLock() }` / `lockCellChecked` blocks found no other,
+  and `VMTraps::handleTraps` now asserts in Debug, GIL off, that the thread
+  holds no cell lock (`GCCellLockDepth`), so a callee that checks traps under a
+  caller's cell lock fails the Debug corpus.
+
+### PRE-12: TSAN's 16-byte compare-and-swap is not atomic against smaller atomics (third round)
+
+**Risk: TSAN builds only. Fixed there.**
+
+- `dcasHeaderAndButterfly` used `__sync_bool_compare_and_swap` on
+  `unsigned __int128`, which clang lowers to `__tsan_atomic128_compare_exchange`
+  under TSAN, and TSAN's runtime implements 16-byte atomics with an internal
+  lock around a plain load and store. The 1-, 4- and 8-byte atomics on the
+  same 16 bytes (cell lock bits, structure ID lane, butterfly word) do not take
+  that lock, so a lock bit set between the load and the store was lost
+  ("Invalid value for lock" at the holder's unlock). Every TSAN result of the
+  object model depended on this being atomic.
+- Fix: under `TSAN_ENABLED` on x86-64, `lock cmpxchg16b` by inline assembly,
+  after two no-op read-modify-writes that give TSAN the publish's release edge
+  on both words. arm64 TSAN builds would need the same and are not used.
+
+### PRE-13: `Atomics` C++ paths loaded the typed array base after the detach check, GIL off (third round)
+
+**Risk: confirmed under the amplifier (a null-base write, signal 11). Fixed.**
+
+- GIL off, `JSArrayBufferView::detachFromArrayBuffer` keeps the base word for
+  JIT code and sets `m_detachedKeepingVector`, and the C++ accessor `vector()`
+  returns null from then on. The C++ element paths were converted to load the
+  base once, before or together with their bounds proof, and to treat null as
+  detached (`getIndexQuicklyAsNativeValue`, `setIndexQuicklyToNativeValue`,
+  `setFromTypedArray`, `setFromArrayLike`, `fill`, `copyWithin`, `includes`,
+  `indexOf`, `lastIndexOf`, `reverse`, `sort`, `DataView` get/set). Two were
+  not: `atomicReadModifyWriteCase` (behind `Atomics.add`, `and`,
+  `compareExchange`, `exchange`, `load`, `or`, `sub`, `xor`, and the DFG's
+  `operationAtomics*` slow paths) and `atomicStore` checked `isDetached()` and
+  `inBounds()` and then called `typedVector()`, which a transfer on another
+  thread could have turned null in between:
+  `cve/mc-prim-arraybuffer-transfer-vs-atomics.js` crashed at address 0 to 12
+  in 17 of 600 amplified Debug runs.
+- Fix: load the base before the checks and throw the detached `TypeError` when
+  it is null (flag off, a null base there implies `isDetached()`). The
+  remaining `typedVector()` calls in `AtomicsObject.cpp` are the
+  `wait`/`notify`/waiter-list paths, which require a `SharedArrayBuffer`, and
+  that cannot be detached. The `Uint8Array` base64/hex methods load the base
+  before the length, which on x86-64 cannot pair a null base with a stale
+  length (the detach publishes the flag before the zero length); noted for
+  arm64, where `vector()` would want a load-load fence for the same argument.
 
 ## What this audit did not check
 

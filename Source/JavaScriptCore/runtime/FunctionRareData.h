@@ -30,6 +30,7 @@
 #include "ObjectAllocationProfile.h"
 #include "PackedCellPtr.h"
 #include "Watchpoint.h"
+#include <wtf/Lock.h>
 
 namespace JSC {
 
@@ -179,6 +180,10 @@ private:
     bool m_hasReifiedName : 1;
     bool m_hasModifiedLengthForBoundOrNonHostFunction : 1;
     bool m_hasModifiedNameForBoundOrNonHostFunction : 1;
+    // GIL-off: serializes the fills and clears of the two allocation profiles
+    // (FunctionRareData.cpp). Held across an allocation and a park, which a cell
+    // lock must not be, and taken only with tryLock. Fits in the tail padding.
+    Lock m_allocationProfileLock;
 };
 
 class FunctionRareData::AllocationProfileClearingWatchpoint final : public Watchpoint {

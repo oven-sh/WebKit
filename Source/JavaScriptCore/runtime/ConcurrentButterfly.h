@@ -288,24 +288,42 @@ ALWAYS_INLINE uint64_t mergeVolatileHeaderBits(uint64_t desired, uint64_t fresh)
 // tagged-word loads. The GCC/Clang path uses the __sync builtin, which is
 // either inlined or a link error - it never silently routes through libatomic.
 //
-// V7 (TSAN, review amendment D — PRECONDITION TO VERIFY on the rebuilt
-// WebKitBuild/TSan binary): the V7 annotation scheme (relaxed header-byte
-// loads in JSCell.h, spine tsanPublish/tsanConsume pairs in Butterfly.h /
-// ConcurrentButterfly.cpp) assumes clang lowers this __sync builtin to atomic
-// cmpxchg IR that the TSAN pass instruments (__tsan_atomic128_compare_
-// exchange_strong), making the publish an ATOMIC write in TSAN's model. One-
-// shot empirical check before trusting a green V7 rung: disassemble or
-// `nm`-grep the TSAN jsc for __tsan_atomic128_* referenced from this TU (or
-// inspect any surviving report's dcas frame for an atomic-op annotation). If
-// the CAS is NOT instrumented (raw cmpxchg16b asm), the publish is invisible
-// to TSAN and the dcas-vs-header-load family will keep reporting: the fix
-// then is to route the publish through explicit __tsan_atomic128 hooks under
-// TSAN_ENABLED — do NOT suppress.
+// V7 (TSAN): clang does lower the __sync builtin to __tsan_atomic128_compare_
+// exchange, but that instrumented form is not usable here (see the TSAN arm
+// below), so TSAN builds issue the instruction directly. The V7 annotation
+// scheme does not depend on TSAN seeing this write: header-byte loads are
+// relaxed atomics (JSCell.h), spines pair through tsanPublish/tsanConsume
+// (Butterfly.h / ConcurrentButterfly.cpp), and the TSAN arm publishes a release
+// edge on both words before the swap.
 ALWAYS_INLINE bool dcasHeaderAndButterfly(JSCell* cell, CellHeaderAndButterfly expected, CellHeaderAndButterfly desired)
 {
     RELEASE_ASSERT(!(reinterpret_cast<uintptr_t>(cell) & 15)); // I1; PA cells (8-mod-16) forbidden (I36)
 #if JSC_CONCURRENT_BUTTERFLY_HAS_HARDWARE_DCAS
-#if COMPILER(MSVC) && !COMPILER(CLANG)
+#if TSAN_ENABLED && CPU(X86_64) && (COMPILER(GCC) || COMPILER(CLANG))
+    // Under TSAN the __sync builtin below becomes __tsan_atomic128_compare_
+    // exchange, and TSAN's runtime implements 16-byte atomics with a lock of
+    // its own around a plain load and a plain store. That is not atomic against
+    // the 1-, 4- and 8-byte atomics that other threads apply to the same 16
+    // bytes (the cell lock bits, the structure ID lane, the butterfly word): a
+    // lock bit set between that load and that store was lost, and the holder's
+    // unlock then found the lock free ("Invalid value for lock"). So issue the
+    // instruction itself, which TSAN does not see, and first give TSAN the
+    // publish's release edge on both words as no-op read-modify-writes, so an
+    // acquire load of either word on another thread still orders after the
+    // stores that built what is published. (arm64 TSAN builds would need the
+    // same; none run today.)
+    reinterpret_cast<Atomic<uint64_t>*>(cell)->exchangeAdd(0);
+    reinterpret_cast<Atomic<uint64_t>*>(reinterpret_cast<char*>(cell) + 8)->exchangeAdd(0);
+    bool swapped;
+    uint64_t expectedLow = expected.header;
+    uint64_t expectedHigh = expected.taggedButterfly;
+    asm volatile(
+        "lock; cmpxchg16b %[destination]"
+        : [destination] "+m" (*reinterpret_cast<volatile unsigned __int128*>(cell)), "+a" (expectedLow), "+d" (expectedHigh), "=@ccz" (swapped)
+        : "b" (desired.header), "c" (desired.taggedButterfly)
+        : "memory");
+    return swapped;
+#elif COMPILER(MSVC) && !COMPILER(CLANG)
     // _InterlockedCompareExchange128(dest, high, low, comparand): high lane =
     // bytes [8,16) = taggedButterfly, low lane = bytes [0,8) = header.
     // `expected` is by-value, so the comparand write-back is discarded.

@@ -32,7 +32,7 @@
 #include "ObjectAllocationProfileInlines.h"
 #include "UnlinkedFunctionExecutable.h"
 
-#include <wtf/Scope.h>
+#include <wtf/Lock.h>
 #include <wtf/Threading.h>
 
 namespace JSC {
@@ -137,11 +137,13 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
 
     if (vm.gilOff()) [[unlikely]] {
         // GIL-off, two mutators can reach here for the same FunctionRareData, so the publish is
-        // serialized on this cell's lock. The claim is a tryLock poll, not lock(): the holder
-        // allocates inside the critical section and can park at a safepoint there, so a waiter
-        // must keep cooperating with stop-the-world requests. A loser leaves once a publish is
-        // visible; consumers still validate the pair (objectAllocationStructureKeyedTo) because
-        // clear() can null it at any moment.
+        // serialized on m_allocationProfileLock. The claim is a tryLock poll, not lock(): the
+        // holder allocates inside the critical section and can park at a safepoint there, so a
+        // waiter must keep cooperating with stop-the-world requests. A loser leaves once a publish
+        // is visible; consumers still validate the pair (objectAllocationStructureKeyedTo) because
+        // clear() can null it at any moment. The lock is not the cell lock for the same reason: a
+        // cell lock is never held across a park or an allocation (the concurrent marker's rule,
+        // Heap::stopIfNecessaryForAllClients), and this one is held across both. No marker takes it.
         //
         // The prototype is re-read under the lock, after a full fence: the caller publishes the
         // rare data before arriving here, and a .prototype store on another thread is followed
@@ -149,14 +151,14 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
         // this lock. So that store is either visible to the read below, or its clear finds the
         // rare data and nulls the pair published here. No pair keyed to a superseded prototype
         // stays published.
-        while (!cellLock().tryLock()) {
+        while (!m_allocationProfileLock.tryLock()) {
             if (isObjectAllocationProfileInitialized())
                 return;
             if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
                 Thread::yield();
         }
         {
-            auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
+            Locker locker { AdoptLock, m_allocationProfileLock };
             if (isObjectAllocationProfileInitialized())
                 return;
             WTF::storeLoadFence();
@@ -174,7 +176,7 @@ Structure* FunctionRareData::createInternalFunctionAllocationStructureFromBaseGI
     // class, and both fill it. The second fill would then see a profile that
     // already matches, and would replace it with a second structure and fire
     // the rotation watchpoint for nothing. So the fill is serialized on the
-    // cell lock with the same tryLock poll as initializeObjectAllocationProfile,
+    // same lock, with the same tryLock poll, as initializeObjectAllocationProfile,
     // and a thread that finds a matching structure, before or under the lock,
     // uses it.
     auto matchingStructure = [&]() -> Structure* {
@@ -183,13 +185,13 @@ Structure* FunctionRareData::createInternalFunctionAllocationStructureFromBaseGI
             return structure;
         return nullptr;
     };
-    while (!cellLock().tryLock()) {
+    while (!m_allocationProfileLock.tryLock()) {
         if (Structure* structure = matchingStructure())
             return structure;
         if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
             Thread::yield();
     }
-    auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
+    Locker locker { AdoptLock, m_allocationProfileLock };
     if (Structure* structure = matchingStructure())
         return structure;
     return m_internalFunctionAllocationProfile.createAllocationStructureFromBase(vm, baseGlobalObject, this, prototype, baseStructure, allocationProfileWatchpointSet());
@@ -203,9 +205,9 @@ void FunctionRareData::clear(const char* reason)
         // stop-the-world while the lock holder is parked inside its allocation. A lost tryLock
         // skips the nulling (consumers validate the pair against the live .prototype) but still
         // fires the set, so no compiled code keeps the stale structure. fireAll runs outside the
-        // cell lock because it drives the stop-the-world machinery that parked waiters depend on.
-        if (cellLock().tryLock()) {
-            auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
+        // lock because it drives the stop-the-world machinery that parked waiters depend on.
+        if (m_allocationProfileLock.tryLock()) {
+            Locker locker { AdoptLock, m_allocationProfileLock };
             m_objectAllocationProfile.clear();
             m_internalFunctionAllocationProfile.clear();
         }
@@ -220,17 +222,17 @@ void FunctionRareData::clear(const char* reason)
 void FunctionRareData::clearAfterPrototypeStore(VM& vm, const char* reason)
 {
     // Runs on the mutator that just stored .prototype, with no lock held, so it can wait for an
-    // initializer that is mid-publish under the cell lock: a pair keyed to the superseded
+    // initializer that is mid-publish under m_allocationProfileLock: a pair keyed to the superseded
     // prototype must not stay published, because the baseline, DFG and FTL fast paths allocate
     // from it without validation. The wait is a tryLock poll that keeps cooperating with
     // stop-the-world requests, for the same reason initializeObjectAllocationProfile's is.
     ASSERT(vm.gilOff());
-    while (!cellLock().tryLock()) {
+    while (!m_allocationProfileLock.tryLock()) {
         if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
             Thread::yield();
     }
     {
-        auto unlocker = WTF::makeScopeExit([&] { cellLock().unlock(); });
+        Locker locker { AdoptLock, m_allocationProfileLock };
         m_objectAllocationProfile.clear();
         m_internalFunctionAllocationProfile.clear();
     }

@@ -37,8 +37,11 @@ function makePieces(round) {
     return pieces;
 }
 
-const box = { rope: null, sub: null, expected: null, expectedSub: null,
-              round: -1, stop: 0, started: 0 };
+// One record per round, published by a single store: a thread that reads the
+// fields one by one while main is already storing the next round's would pair
+// one round's rope with another round's expected value (GIL off), and report a
+// tear that is the test's own.
+const box = { current: null, round: -1, stop: 0, started: 0 };
 const gate = { go: 0 };
 
 const threads = spawnN(THREADS, (id) => {
@@ -46,20 +49,19 @@ const threads = spawnN(THREADS, (id) => {
     let rounds = 0;
     let last = -1;
     while (Atomics.load(box, "stop") === 0) {
-        const r = Atomics.load(box, "round");
-        if (r === last) {
+        const current = box.current;
+        if (current === null || current.round === last) {
             // Bounded yield; all threads wake on the round publication and
             // hit resolution of the same fresh rope near-simultaneously.
             Atomics.wait(gate, "go", 0, 2);
             continue;
         }
+        const r = current.round;
         last = r;
-        const rope = box.rope;
-        const sub = box.sub;
-        const expected = box.expected;
-        const expectedSub = box.expectedSub;
-        if (rope === null)
-            continue;
+        const rope = current.rope;
+        const sub = current.sub;
+        const expected = current.expected;
+        const expectedSub = current.expectedSub;
 
         // Force resolution through several distinct entry points:
         // charCodeAt (resolveRope), comparison (resolve + memcmp),
@@ -109,10 +111,7 @@ for (let r = 0; r < ROUNDS; ++r) {
     // Expected values, built piecewise via join so main does not resolve
     // the SAME rope cell the threads race on.
     const expected = pieces.join("");
-    box.expected = expected;
-    box.expectedSub = expected.substring(lo, hi);
-    box.rope = rope;
-    box.sub = sub;
+    box.current = { round: r, rope, sub, expected, expectedSub: expected.substring(lo, hi) };
     Atomics.store(box, "round", r);
     Atomics.notify(gate, "go");
     sleepMs(1);

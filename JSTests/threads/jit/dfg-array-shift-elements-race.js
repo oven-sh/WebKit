@@ -25,18 +25,31 @@ function shiftObject(a) { return a.shift(); }
 noInline(shiftObject);
 
 // Each array has spare vector capacity, so pushes stay in the same butterfly.
-function makeInt() { const a = []; for (let i = 0; i < 32; ++i) a.push(i); a.length = 8; return a; }
-noInline(makeInt);
-function makeDouble() { const a = []; for (let i = 0; i < 32; ++i) a.push(i + 0.5); a.length = 8; return a; }
-noInline(makeDouble);
+//
+// The arrays that Parts 1 and 2 convert to ArrayStorage each come from a maker
+// of their own (kind.fresh), whose source text is unique: an array literal's
+// allocation site starts making ArrayStorage arrays once an array it made has
+// become one (when its profile next looks at that array, which depends on the
+// tier the maker runs in at the time), and functions with the same source
+// share that site through the code cache. So a converted array must not share
+// its maker with an array whose starting shape is checked later.
 const marker = { tag: 7 };
-function makeObject() { const a = []; for (let i = 0; i < 32; ++i) a.push(marker); a.length = 8; return a; }
+const makeIntSource = "const a = []; for (let i = 0; i < 32; ++i) a.push(i); a.length = 8; return a;";
+const makeDoubleSource = "const a = []; for (let i = 0; i < 32; ++i) a.push(i + 0.5); a.length = 8; return a;";
+const makeObjectSource = "const a = []; for (let i = 0; i < 32; ++i) a.push(marker); a.length = 8; return a;";
+const makeInt = new Function("marker", makeIntSource);
+noInline(makeInt);
+const makeDouble = new Function("marker", makeDoubleSource);
+noInline(makeDouble);
+const makeObject = new Function("marker", makeObjectSource);
 noInline(makeObject);
+let freshMakers = 0;
+function fresh(source) { return new Function("marker", source + "\n// maker " + (++freshMakers))(marker); }
 
 const kinds = [
-    { name: "Int32", shift: shiftInt, make: makeInt, value: 7, first: 0 },
-    { name: "Double", shift: shiftDouble, make: makeDouble, value: 7.5, first: 0.5 },
-    { name: "Contiguous", shift: shiftObject, make: makeObject, value: marker, first: marker },
+    { name: "Int32", shift: shiftInt, make: () => makeInt(marker), fresh: () => fresh(makeIntSource), value: 7, first: 0 },
+    { name: "Double", shift: shiftDouble, make: () => makeDouble(marker), fresh: () => fresh(makeDoubleSource), value: 7.5, first: 0.5 },
+    { name: "Contiguous", shift: shiftObject, make: () => makeObject(marker), fresh: () => fresh(makeObjectSource), value: marker, first: marker },
 ];
 
 // The first write or push from another thread fires watchpoints on the array
@@ -57,7 +70,7 @@ for (const kind of kinds) {
 
 // Part 1.
 for (const kind of kinds) {
-    const written = kind.make();
+    const written = kind.fresh();
     shouldBe($vm.indexingMode(written), "ArrayWith" + kind.name);
     new Thread(() => { written[7] = kind.value; }).join();
     shouldBe(kind.shift(written), kind.first);
@@ -65,7 +78,7 @@ for (const kind of kinds) {
     shouldBe(written[6], kind.value);
     shouldBe($vm.indexingMode(written), "ArrayWithArrayStorage");
 
-    const foreign = new Thread(() => kind.make()).join();
+    const foreign = new Thread(() => kind.fresh()).join();
     shouldBe($vm.indexingMode(foreign), "ArrayWith" + kind.name);
     shouldBe(kind.shift(foreign), kind.first);
     shouldBe(foreign.length, 7);
@@ -75,7 +88,7 @@ for (const kind of kinds) {
 // Part 2.
 const iterations = 3000;
 for (const kind of kinds) {
-    const shared = kind.make();
+    const shared = kind.fresh();
     const other = new Thread(() => {
         for (let n = 0; n < iterations; ++n) {
             shared.push(kind.value);

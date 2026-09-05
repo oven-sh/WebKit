@@ -140,10 +140,16 @@ EncodedJSValue atomicReadModifyWriteCase(JSGlobalObject* globalObject, VM& vm, c
         extraArgs[i] = value;
     }
 
-    if (typedArray->isDetached() || !typedArray->inBounds(accessIndex))
+    // The base is loaded once, before the detach and bounds checks, and is the only base dereferenced
+    // below. GIL off, a detach on another thread can land between those checks and the access; loaded
+    // after them, the base would then be null. Loaded before, it is null only when the view is already
+    // detached (thrown as such below; in the other modes isDetached() says so too), and otherwise it is
+    // a mapping that stays until the next stop, so a length that went stale is only a value race.
+    auto* base = typedArray->typedVector();
+    if (typedArray->isDetached() || !typedArray->inBounds(accessIndex) || !base)
         return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
 
-    auto result = func(typedArray->typedVector() + accessIndex, extraArgs);
+    auto result = func(base + accessIndex, extraArgs);
     RELEASE_AND_RETURN(scope, JSValue::encode(Adaptor::toJSValue(globalObject, result)));
 }
 
@@ -416,10 +422,12 @@ EncodedJSValue atomicStoreCase(JSGlobalObject* globalObject, VM& vm, JSValue ope
         RETURN_IF_EXCEPTION(scope, { });
     }
 
-    if (typedArray->isDetached() || !typedArray->inBounds(accessIndex))
+    // One base load before the checks, as in atomicReadModifyWriteCase above.
+    auto* base = typedArray->typedVector();
+    if (typedArray->isDetached() || !typedArray->inBounds(accessIndex) || !base)
         return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
 
-    WTF::atomicStoreFullyFenced(typedArray->typedVector() + accessIndex, extraArg);
+    WTF::atomicStoreFullyFenced(base + accessIndex, extraArg);
     RELEASE_AND_RETURN(scope, JSValue::encode(value));
 }
 

@@ -86,6 +86,11 @@ for (let w = 0; w < 2e3; ++w)
 Atomics.store(gate, "go", 1);
 Atomics.notify(gate, "go", Infinity);
 
+// Storm only once the relabeler has made its first flip: under load it can
+// take longer to get there than the rounds below take, and then nothing
+// raced and the "relabeled" check at the end fails.
+waitUntil(() => Atomics.load(gate, "round") > 0);
+
 for (let r = 0; r < ROUNDS; ++r) {
     doubleStorm(victim, r);               // races the in-place relabel STWs
     // Integrity sweep: every slot must be a number or the relabeler's

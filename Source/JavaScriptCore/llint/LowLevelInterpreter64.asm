@@ -2436,6 +2436,11 @@ llintOpWithMetadata(op_put_private_name, OpPutPrivateName, macro (size, get, dis
     get(m_property, t3)
     loadConstantOrVariableCell(size, t3, t1, .opPutPrivateNameSlow)
     metadata(t5, t2)
+    # SPEC-jit sec.4.3: flag-on, this cache is never filled (LLIntSlowPaths.cpp),
+    # and the paths below store a StructureID and write through a raw
+    # butterfly, which only flag-off code may do. Do not rely on the empty
+    # cache alone: take the slow path.
+    ifJSThreadsBranch(t2, .opPutPrivateNameSlow)
     loadi OpPutPrivateName::Metadata::m_oldStructureID[t5], t2
     bineq t2, JSCell::m_structureID[t0], .opPutPrivateNameSlow
 
@@ -2479,6 +2484,9 @@ llintOpWithMetadata(op_set_private_brand, OpSetPrivateBrand, macro (size, get, d
     get(m_brand, t3)
     loadConstantOrVariableCell(size, t3, t1, .opSetPrivateBrandSlow)
     metadata(t5, t2)
+    # SPEC-jit sec.4.3: never filled flag-on; the transition below is a raw
+    # StructureID store. Same local check as op_put_private_name.
+    ifJSThreadsBranch(t2, .opSetPrivateBrandSlow)
     loadi OpSetPrivateBrand::Metadata::m_oldStructureID[t5], t2
     bineq t2, JSCell::m_structureID[t0], .opSetPrivateBrandSlow
 

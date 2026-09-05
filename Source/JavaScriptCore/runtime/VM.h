@@ -1795,11 +1795,17 @@ public:
     // Termination is VM-wide: GIL-off, parked threads poll only their own
     // lite's word and a shielded carrier ignores a bare VM-word bit, so the
     // raise must be fanned to every lite (fireTrapVMWide). GIL-on / flag-off
-    // it is exactly the single-word fireTrap.
+    // it is exactly the single-word fireTrap. This is the request for callers
+    // that mean the VM: the watchdog's time budget (which a spawned GIL-off
+    // thread does not service itself; the carrier does, and fans it out), a
+    // host's interrupt (Bun's SIGINT handler), a worker's terminate(). They
+    // stop every JS thread of the VM, by decision, not by omission.
     CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrapVMWide(VMTraps::NeedTermination); }
     // GIL-off, a termination for the current thread only, which it services
-    // without the fan-out (a time limit, see addTerminationDeadline). Other
-    // modes have one running thread, and this is notifyNeedTermination().
+    // without the fan-out. For a limit that belongs to one evaluation on one
+    // thread: a deadline (addTerminationDeadline, node:vm's timeout), or a host
+    // re-raising such a limit for an enclosing evaluation. Other modes have one
+    // running thread, and this is notifyNeedTermination().
     JS_EXPORT_PRIVATE void notifyNeedTerminationForCurrentThread();
     CONCURRENT_SAFE void notifyNeedWatchdogCheck() { traps().fireTrap(VMTraps::NeedWatchdogCheck); }
 
