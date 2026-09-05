@@ -142,7 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(protoFuncWeakMapGetOrInsert, (JSGlobalObject* globalObj
 
     JSValue value;
 
-    {
+    map->withLockIfGILOff([&] {
         AssertNoGC assertNoGC;
 
         auto [index, exists] = map->findBucketIndex(keyCell, hash);
@@ -152,7 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(protoFuncWeakMapGetOrInsert, (JSGlobalObject* globalObj
             value = callFrame->argument(1);
             map->addBucket(vm, keyCell, value, hash, index);
         }
-    }
+    });
 
     return JSValue::encode(value);
 }
@@ -179,14 +179,15 @@ JSC_DEFINE_HOST_FUNCTION(protoFuncWeakMapGetOrInsertComputed, (JSGlobalObject* g
     JSCell* keyCell = key.asCell();
 
     auto hash = jsWeakMapHash(keyCell);
-    {
+    JSValue value = map->withLockIfGILOff([&]() -> JSValue {
         AssertNoGC assertNoGC;
         auto [index, exists] = map->findBucketIndex(keyCell, hash);
         if (exists)
-            return JSValue::encode(map->getBucket(keyCell, hash, index));
-    }
-
-    JSValue value;
+            return map->getBucket(keyCell, hash, index);
+        return JSValue();
+    });
+    if (value)
+        return JSValue::encode(value);
     if (callData.type == CallData::Type::JS) [[likely]] {
         CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(valueCallback), 1);
         RETURN_IF_EXCEPTION(scope, { });

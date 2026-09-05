@@ -169,6 +169,7 @@ bool ExceptionScope::tryClearException()
 #define RETURN_IF_EXCEPTION(scope__, value__) do { \
         SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm(); \
         EXCEPTION_ASSERT(!!(scope__).exception() == vm.trapsForCurrentThread().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
+        vm.assertNoLockHeldAtTrapCheck(); \
         if (vm.trapsMaybeNeedHandlingForCurrentThread()) [[unlikely]] { \
             if (vm.hasExceptionsAfterHandlingTraps()) \
                 return value__; \

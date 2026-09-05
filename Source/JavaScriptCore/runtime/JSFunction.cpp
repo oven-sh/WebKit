@@ -363,6 +363,12 @@ static bool storeLazyPrototypeIfMissingGILOff(VM& vm, JSFunction* function, cons
     return true;
 }
 
+// The same for the lazily made `length` and `name` (reifyLazyLengthIfNeeded and the name
+// paths below). Their "made" flags live in the rare data and are set after the put, so a thread
+// that finds a flag set finds the property; a thread that finds it clear takes this lock and
+// looks again, so the property is made once and a value defined over it is not put back.
+static Lock s_lazyLengthOrNameLock;
+
 bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -623,8 +629,8 @@ void JSFunction::reifyLength(VM& vm)
     JSValue initialValue = jsNumber(length);
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
     const Identifier& identifier = vm.propertyNames->length;
-    rareData->setHasReifiedLength();
     putDirect(vm, identifier, initialValue, initialAttributes);
+    rareData->setHasReifiedLength();
 }
 
 JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalObject)
@@ -657,8 +663,8 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
         name = makeNameWithOutOfMemoryCheck(globalObject, throwScope, "Setter "_s, "set "_s, name);
     RETURN_IF_EXCEPTION(throwScope, PropertyStatus::Lazy);
 
-    rareData->setHasReifiedName();
     putDirect(vm, propID, jsString(vm, WTF::move(name)), initialAttributes);
+    rareData->setHasReifiedName();
     return PropertyStatus::Reified;
 }
 
@@ -730,6 +736,9 @@ JSFunction::PropertyStatus JSFunction::reifyLazyLengthIfNeeded(VM& vm, JSGlobalO
 {
     if (propertyName == vm.propertyNames->length) {
         if (!hasReifiedLength()) {
+            GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, vm.gilOffWithProcessGate());
+            if (hasReifiedLength())
+                return PropertyStatus::Lazy;
             reifyLength(vm);
             return PropertyStatus::Reified;
         }
@@ -741,8 +750,12 @@ JSFunction::PropertyStatus JSFunction::reifyLazyLengthIfNeeded(VM& vm, JSGlobalO
 JSFunction::PropertyStatus JSFunction::reifyLazyNameIfNeeded(VM& vm, JSGlobalObject* globalObject, PropertyName propertyName)
 {
     if (propertyName == vm.propertyNames->name) {
-        if (!hasReifiedName())
+        if (!hasReifiedName()) {
+            GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, vm.gilOffWithProcessGate());
+            if (hasReifiedName())
+                return PropertyStatus::Lazy;
             return reifyName(vm, globalObject);
+        }
         return PropertyStatus::Lazy;
     }
     return PropertyStatus::Eager;
@@ -759,6 +772,10 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
     if (hasReifiedName())
         return PropertyStatus::Lazy;
 
+    GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, vm.gilOffWithProcessGate());
+    if (hasReifiedName())
+        return PropertyStatus::Lazy;
+
     if (isBuiltinFunction())
         RELEASE_AND_RETURN(scope, reifyName(vm, globalObject));
     else if (this->inherits<JSBoundFunction>()) {
@@ -767,23 +784,23 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         JSString* string = jsString(globalObject, vm.smallStrings.boundPrefixString(), name);
         RETURN_IF_EXCEPTION(scope, PropertyStatus::Lazy);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
         putDirect(vm, nameIdent, string, initialAttributes);
+        rareData->setHasReifiedName();
     } else if (this->inherits<JSRemoteFunction>()) {
         FunctionRareData* rareData = this->ensureRareData(vm);
         JSString* name = uncheckedDowncast<JSRemoteFunction>(this)->nameMayBeNull();
         if (!name)
             name = jsEmptyString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
         putDirect(vm, nameIdent, name, initialAttributes);
+        rareData->setHasReifiedName();
     } else {
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
         JSString* name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
         putDirect(vm, nameIdent, name, initialAttributes);
+        rareData->setHasReifiedName();
     }
     return PropertyStatus::Reified;
 }

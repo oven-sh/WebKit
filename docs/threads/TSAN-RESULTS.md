@@ -769,3 +769,66 @@ Both come from one cause, which is not a race in the tree:
   found on the same test.)
 
 Left open: none.
+
+### Fourth round (2026-09-05)
+
+The same configuration, on the fourth round's trees (LANDING-PLAN.md,
+"Results, fourth round"). Report files, and failures that are not reports:
+
+| Step | Corpus, GIL on | Corpus, GIL off | CVE, GIL on | CVE, GIL off |
+|---|---|---|---|---|
+| The first batch (the seven first-use fixes) | 0 | 2 (one test) | 0 | 0 |
+| With the park-site assertions, the Wlr change | 0 | 3 (two tests) | 0 | 0 |
+| With the two remaining fixes (the final tree) | 0 | 0 | 0 | 0 |
+
+Findings, in order:
+
+- **The new Intl test under TSAN**, GIL off: 65 reports per run, all with one
+  side inside `libicui18n`/`libicuuc` (a `memcpy` in one thread against an
+  `operator new` in another, under `IntlRelativeTimeFormat::formatToParts` and
+  `IntlDurationFormat::format` on a shared object). ICU is not instrumented;
+  its lazily compiled formatter fast path (`LocalizedNumberFormatter`, after N
+  uses) is published with ICU's own atomics, which TSAN cannot see, and the
+  ICU calls made on shared objects are `const` member functions. Suppressed on
+  the two module names (`race:libicui18n.so`, `race:libicuuc.so`); a
+  `called_from_lib` suppression was tried first and dropped, because it also
+  hides ICU's mutex acquisitions from TSAN and turns ICU's condition waits into
+  "unlock of an unlocked mutex" reports. 0 of 6 after.
+- **`jit/dfg-array-shift-elements-race.js`**, GIL off (2 of 2 in one corpus
+  run, 7 of 10 targeted; never in earlier rounds): `JSArray::fastShift`'s
+  `memmove` on the owner thread against `trySetIndexQuicklyConcurrent`'s atomic
+  store on another. The owner-only in-place moves (`fastShift`, flat
+  `shift`/`unshift`, `copyWithin`) now use `butterflyConcurrentMoveWords`
+  (word atomics under TSAN, `gcSafeMemmove` in production, flag on). 0 of 10
+  after. See the plan's entry for why this is more than a TSAN artifact.
+- **`objectmodel/allocation-profile-init-lock-not-a-cell-lock.js`** with
+  `--useConcurrentSharedGCMarking --collectContinuously`, GIL off, once: a
+  `TypeInfoBlob::tsanRelaxedLoad` in one thread's `JSCell` constructor (reading
+  its Structure's blob) against `HeapCell::zap` in another thread's sweep. The
+  Structure's cell had been swept and handed out again before the object was
+  made from it on a third thread: the recycled-cell class the wave-7 block of
+  the suppressions file describes, with a dedicated relaxed accessor on our
+  side. Added `race:JSC::TypeInfoBlob::tsanRelaxedLoad` to that block.
+- **`congc-t9-attach-exit-churn.js`**, GIL on, once: `Heap::setMutatorShouldBeFenced`
+  from one attaching client's `noteSharedServerSticky` against
+  `snapshotBarrierFenceStateForAttach` in another attaching client (the
+  `$vm` shared-heap harness churns clients from C++ threads). The sticky flip
+  raises the barrier fence after it publishes the shared-server bit, under the
+  thread lock only, so a client attaching on another thread at that moment
+  snapshots the master fence pair while it is being written. A snapshot that
+  misses the raise is harmless (the per-client copies are consulted by no
+  marking before the first shared window, whose close republishes the master
+  pair to every client), but the accesses overlapped; the pair is now written
+  and snapshotted with relaxed atomics (plain moves). Never reproduced in 12
+  targeted runs before or after; 0 in the final corpus run.
+
+On the final tree the default corpus also ran under the race amplifier on the
+TSAN build (`run-tests.sh --amplify`, ten random seeds per test), once with the
+GIL on and once off: no report in either. Nine tests "failed" in both modes by
+printing timings or counts that differ from the reference run, which is what
+the amplifier's divergence check flags for any benchmark-like test; none
+crashed, hung or reported.
+
+Left open: nothing from TSAN. The suppressions file gained three entries this
+round (the two ICU modules and the `TypeInfoBlob` accessor), each with its
+justification in the file.
