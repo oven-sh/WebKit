@@ -366,11 +366,33 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
     ExpectedFunction expectedFunction = NoExpectedFunction;
     RefPtr<RegisterID> tag = nullptr;
     RefPtr<RegisterID> base = nullptr;
-    if (!m_tag->isLocation()) {
+    // Set for super.tag`...` and super[tag]`...`. A super property reference looks the tag up on the home object's
+    // prototype (|base|) but is called with the current |this| (https://tc39.es/ecma262/#sec-evaluatecall step 1.a.i,
+    // GetThisValue of a Super Reference), exactly like super.tag(...) in FunctionCallDotNode / FunctionCallBracketNode.
+    RefPtr<RegisterID> thisValue = nullptr;
+
+    // The parentheses in (a?.b)`...` end the optional chain, but the parenthesized expression is still the
+    // property reference a?.b, so the tag is called with |this| = a, exactly like (a?.b)() is
+    // (https://tc39.es/ecma262/#sec-evaluatecall step 1.a.i). Look through the OptionalChainNode to get at the
+    // base. Only the lookup of the tag short-circuits, so the chain target is pushed here and popped right
+    // after the lookup: a nullish base leaves the tag undefined and the call throws, as the spec requires.
+    ExpressionNode* tagNode = m_tag;
+    bool tagIsOptionalChain = false;
+    if (m_tag->isOptionalChain()) {
+        ExpressionNode* expr = static_cast<OptionalChainNode*>(m_tag)->expr();
+        if (expr->isLocation()) {
+            ASSERT(!expr->isResolveNode());
+            tagNode = expr;
+            tagIsOptionalChain = true;
+            generator.pushOptionalChainTarget();
+        }
+    }
+
+    if (!tagNode->isLocation()) {
         tag = generator.newTemporary();
-        tag = generator.emitNode(tag.get(), m_tag);
-    } else if (m_tag->isResolveNode()) {
-        ResolveNode* resolve = static_cast<ResolveNode*>(m_tag);
+        tag = generator.emitNode(tag.get(), tagNode);
+    } else if (tagNode->isResolveNode()) {
+        ResolveNode* resolve = static_cast<ResolveNode*>(tagNode);
         const Identifier& identifier = resolve->identifier();
         expectedFunction = generator.expectedFunctionForIdentifier(identifier);
 
@@ -388,23 +410,49 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
             generator.emitGetFromScope(tag.get(), base.get(), var, ThrowIfNotFound);
             generator.emitTDZCheckIfNecessary(var, tag.get(), nullptr);
         }
-    } else if (m_tag->isBracketAccessorNode()) {
-        BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(m_tag);
-        base = generator.newTemporary();
-        base = generator.emitNode(base.get(), bracket->base());
-        RefPtr<RegisterID> property = generator.emitNodeForProperty(bracket->subscript());
+    } else if (tagNode->isBracketAccessorNode()) {
+        BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(tagNode);
         if (bracket->base()->isSuperNode()) {
-            RefPtr<RegisterID> thisValue = generator.ensureThis();
+            thisValue = generator.ensureThis();
+            base = emitSuperBaseForCallee(generator);
+        } else {
+            base = generator.newTemporary();
+            base = generator.emitNode(base.get(), bracket->base());
+            if (bracket->base()->isOptionalChainBase())
+                generator.emitOptionalCheck(base.get());
+        }
+        RefPtr<RegisterID> property = generator.emitNodeForProperty(bracket->subscript());
+        generator.emitExpressionInfo(bracket->divot(), bracket->divotStart(), bracket->divotEnd());
+        if (thisValue)
             tag = generator.emitGetByVal(generator.newTemporary(), base.get(), thisValue.get(), property.get());
-        } else
+        else
             tag = generator.emitGetByVal(generator.newTemporary(), base.get(), property.get());
     } else {
-        ASSERT(m_tag->isDotAccessorNode());
-        DotAccessorNode* dot = static_cast<DotAccessorNode*>(m_tag);
+        ASSERT(tagNode->isDotAccessorNode());
+        DotAccessorNode* dot = static_cast<DotAccessorNode*>(tagNode);
         tag = generator.newTemporary();
-        base = generator.newTemporary();
-        base = generator.emitNode(base.get(), dot->base());
-        tag = dot->emitGetPropertyValue(generator, tag.get(), base.get());
+        if (dot->base()->isSuperNode()) {
+            thisValue = generator.ensureThis();
+            base = emitSuperBaseForCallee(generator);
+        } else {
+            base = generator.newTemporary();
+            base = generator.emitNode(base.get(), dot->base());
+            if (dot->base()->isOptionalChainBase())
+                generator.emitOptionalCheck(base.get());
+        }
+        generator.emitExpressionInfo(dot->divot(), dot->divotStart(), dot->divotEnd());
+        tag = dot->emitGetPropertyValue(generator, tag.get(), base.get(), thisValue);
+    }
+
+    if (tagIsOptionalChain) {
+        // A short-circuited chain is the plain value undefined: there is no tag and no base to use as |this|.
+        // |base| has to be written here as well, since nothing else writes it on this path.
+        Ref<Label> end = generator.newLabel();
+        generator.emitJump(end.get());
+        generator.popOptionalChainTarget();
+        generator.emitLoad(tag.get(), jsUndefined());
+        generator.emitLoad(base.get(), jsUndefined());
+        generator.emitLabel(end.get());
     }
 
     RefPtr<RegisterID> templateObject = generator.emitGetTemplateObject(nullptr, this);
@@ -414,7 +462,9 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
         ++expressionsCount;
 
     CallArguments callArguments(generator, nullptr, 1 + expressionsCount);
-    if (base)
+    if (thisValue)
+        generator.move(callArguments.thisRegister(), thisValue.get());
+    else if (base)
         generator.move(callArguments.thisRegister(), base.get());
     else
         generator.emitLoad(callArguments.thisRegister(), jsUndefined());
