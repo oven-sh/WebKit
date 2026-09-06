@@ -2491,16 +2491,18 @@ public:
 
     // A disjunction with a single alternative gets no AlternativeBegin term. Appending one and
     // removing it again in closeAlternative() shifts every term emitted for the alternative, which
-    // makes the compile of nested groups quadratic in the nesting depth.
+    // makes the compile of nested groups quadratic in the nesting depth. m_currentAlternativeIndex
+    // keeps pointing at the enclosing disjunction's alternative term in that case, because
+    // alternativeDisjunction() is never called for a single alternative.
     void openParentheses(unsigned beginTerm, unsigned alternativeCount, unsigned alternativeFrameLocation)
     {
         bool hasAlternativeBegin = alternativeCount > 1;
-        if (hasAlternativeBegin) {
-            m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
-            m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
-        }
-
         m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex, hasAlternativeBegin));
+        if (!hasAlternativeBegin)
+            return;
+
+        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
+        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
         m_currentAlternativeIndex = beginTerm + 1;
     }
 
