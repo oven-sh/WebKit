@@ -825,6 +825,7 @@ private:
     void reconcileWeakReferencesAtGCEnd();
 
     void deleteUnmarkedCompiledCode();
+    void validateICWatchpointLiveness();
     void releaseUnusedSharedBaselineCode();
     JS_EXPORT_PRIVATE void addToRememberedSet(const JSCell*);
     void updateAllocationLimits();
