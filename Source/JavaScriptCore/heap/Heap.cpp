@@ -1787,8 +1787,13 @@ NEVER_INLINE bool Heap::runConcurrentPhase(GCConductor conn)
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
+        // The scheduler lets the mutator run until it is short of headroom. A mutator that waits for
+        // this collection and cannot hand it to a collector thread would never allocate again, so it
+        // has to finish the cycle itself.
+        bool mustFinishHere = m_collectorThreadUnavailable && (m_worldState.load() & mutatorWaitingBit);
         if (visitor.didReachTermination()
-            || m_scheduler->shouldStop())
+            || m_scheduler->shouldStop()
+            || mustFinishHere)
             return changePhase(conn, CollectorPhase::Reloop);
         
         // We could be coming from a collector phase that stuffed our SlotVisitor, so make sure we donate
@@ -2353,12 +2358,13 @@ bool Heap::relinquishConn(unsigned oldState)
 
 bool Heap::ensureCollectorThread(const AbstractLocker& locker)
 {
-    if (m_thread->hasUnderlyingThread(locker))
-        return true;
-    // Starts the thread if the OS allows it. It polls, sees that the mutator still has the conn,
-    // and waits until the conn is handed over.
-    m_threadCondition->notifyOne(locker);
-    return m_thread->hasUnderlyingThread(locker);
+    if (!m_thread->hasUnderlyingThread(locker)) {
+        // Starts the thread if the OS allows it. It polls, sees that the mutator still has the conn,
+        // and waits until the conn is handed over.
+        m_threadCondition->notifyOne(locker);
+    }
+    m_collectorThreadUnavailable = !m_thread->hasUnderlyingThread(locker);
+    return !m_collectorThreadUnavailable;
 }
 
 void Heap::finishRelinquishingConn()
