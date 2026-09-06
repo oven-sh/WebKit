@@ -41,6 +41,7 @@
 #include "NativeCallee.h"
 #include "NativeCalleeRegistry.h"
 #include "NativeExecutable.h"
+#include "PCToCodeOriginMap.h"
 #include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
@@ -103,22 +104,25 @@ static bool isFramePointerOnMachineStack(VM& vm, void* framePointer, const Abstr
 // drops the sample. The frame pointer chain is intact either way: a C leaf such as
 // libm's sin leaves the JIT frame in the frame pointer register, and a C function
 // that sets up a frame links back to it. Walk that chain from the machine frame and
-// stop at the first frame that is either topCallFrame (the frame a call frame tracer
-// or the native call thunk stored, which is at least as young as any JS frame on the
-// chain) or a live JS frame. Fall back to topCallFrame when neither is found, which
-// is what the walk below used unconditionally before.
+// stop at the first frame that is either a live JS frame or topCallFrame (the frame a
+// call frame tracer or the native call thunk stored, which is at least as young as any
+// JS frame on the chain). Fall back to topCallFrame when neither is found, which is
+// what the walk below used unconditionally before.
 //
 // When the chain ends at a live JS frame, also report the address the C code returns
 // to in that frame's JIT code, so that the sample can be attributed to the exact call
 // site (with its inline stack) instead of the call site index stored in the frame. The
 // FTL does not store one before a call with no side effects. The return address is in
 // the C frame below the JS frame, or, when the C leaf has no frame of its own, in the
-// first words above the stack pointer.
+// words above the stack pointer. JIT code calls out at one fixed stack depth per frame,
+// so the first word there that the frame's PC-to-code-origin map covers is the return
+// address of the current call. Stale return addresses below it belong to thunks or to
+// other code blocks, which the map rejects.
 SUPPRESS_ASAN
-static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, void* stackPointer, const std::optional<Locker<Lock>>& executableAllocatorLocker, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker, void*& returnPC)
+static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, void* stackPointer, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker, void*& returnPC)
 {
     static constexpr unsigned maxCFramesToWalk = 32;
-    static constexpr unsigned maxStackWordsToScanForReturnPC = 16;
+    static constexpr unsigned maxStackWordsToScanForReturnPC = 128;
     returnPC = nullptr;
     CallFrame* topCallFrame = vm.topCallFrame;
     auto* frame = static_cast<CallFrame*>(machineFrame);
@@ -126,18 +130,19 @@ static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, void* st
     for (unsigned i = 0; i < maxCFramesToWalk; ++i) {
         if (!frame || !isFramePointerOnMachineStack(vm, frame, machineThreadsLocker))
             break;
-        if (frame == topCallFrame)
-            return frame;
         CodeBlock* codeBlock = frame->unsafeCodeBlock();
         if (codeBlock && !frame->unsafeCallee().isNativeCallee() && vm.heap.codeBlockSet().contains(codeBlockSetLocker, codeBlock)) {
-            if (!executableAllocatorLocker)
+#if ENABLE(JIT)
+            PCToCodeOriginMap* pcToCodeOriginMap = nullptr;
+            if (JSC::JITCode::isJIT(codeBlock->jitType())) {
+                if (auto* jitCode = codeBlock->jitCode().get())
+                    pcToCodeOriginMap = jitCode->pcToCodeOriginMap();
+            }
+            if (!pcToCodeOriginMap)
                 return frame;
-            auto isJITPC = [&](void* pc) {
-                return ExecutableAllocator::singleton().isValidExecutableMemory(*executableAllocatorLocker, pc);
-            };
             if (previousFrame) {
                 void* pc = reinterpret_cast<CallerFrameAndPC*>(previousFrame)->returnPC;
-                if (isJITPC(pc))
+                if (pcToCodeOriginMap->findPC(pc))
                     returnPC = pc;
                 return frame;
             }
@@ -145,13 +150,16 @@ static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, void* st
             for (unsigned j = 0; j < maxStackWordsToScanForReturnPC && word < std::bit_cast<void**>(frame); ++j, ++word) {
                 if (!isFramePointerOnMachineStack(vm, word, machineThreadsLocker))
                     break;
-                if (isJITPC(*word)) {
+                if (pcToCodeOriginMap->findPC(*word)) {
                     returnPC = *word;
                     break;
                 }
             }
+#endif
             return frame;
         }
+        if (frame == topCallFrame)
+            return frame;
         auto* parent = static_cast<CallFrame*>(frame->unsafeCallerFrameOrEntryFrame());
         if (parent <= frame)
             break;
@@ -505,7 +513,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 regExp = m_vm.m_executingRegExp;
                 // We usually get here when we're executing C code. See callFrameForSampleInCCode.
                 void* returnPC = nullptr;
-                callFrame = callFrameForSampleInCCode(m_vm, machineFrame, machineStackPointer, executableAllocatorLocker, codeBlockSetLocker, machineThreadsLocker, returnPC);
+                callFrame = callFrameForSampleInCCode(m_vm, machineFrame, machineStackPointer, codeBlockSetLocker, machineThreadsLocker, returnPC);
                 // The address before the return address is inside the call instruction, so it maps to the call site.
                 if (returnPC)
                     topPC = static_cast<uint8_t*>(returnPC) - 1;
