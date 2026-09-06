@@ -39,42 +39,53 @@ static constexpr bool verbose = false;
 
 Ref<AutomaticThreadCondition> AutomaticThreadCondition::create()
 {
-    return adoptRef(*new AutomaticThreadCondition);
+    return create(StartFailure::Crash);
 }
 
-AutomaticThreadCondition::AutomaticThreadCondition() = default;
+Ref<AutomaticThreadCondition> AutomaticThreadCondition::create(StartFailure startFailure)
+{
+    return adoptRef(*new AutomaticThreadCondition(startFailure));
+}
+
+AutomaticThreadCondition::AutomaticThreadCondition(StartFailure startFailure)
+    : m_startFailure(startFailure)
+{
+}
 
 AutomaticThreadCondition::~AutomaticThreadCondition() = default;
 
-void AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
+bool AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
 {
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker)) {
             thread->notify(locker);
-            return;
+            return true;
         }
     }
 
     for (auto& thread : m_threads) {
         if (!thread->hasUnderlyingThread(locker)) {
-            thread->start(locker);
-            return;
+            // If this one fails, the others would fail for the same reason: do not try them.
+            return thread->start(locker);
         }
     }
 
     m_condition.notifyOne();
+    return true;
 }
 
-void AutomaticThreadCondition::notifyAll(const AbstractLocker& locker)
+bool AutomaticThreadCondition::notifyAll(const AbstractLocker& locker)
 {
     m_condition.notifyAll();
 
+    bool startedAll = true;
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker))
             thread->notify(locker);
-        else if (!thread->hasUnderlyingThread(locker))
-            thread->start(locker);
+        else if (startedAll && !thread->hasUnderlyingThread(locker))
+            startedAll = thread->start(locker);
     }
+    return startedAll;
 }
 
 void AutomaticThreadCondition::wait(Lock& lock)
@@ -252,15 +263,16 @@ bool AutomaticThread::start(const AbstractLocker&)
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
         }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec);
+
     if (!thread) {
-        // The OS refused the thread. Leave this AutomaticThread startable so the
-        // next notify retries; the caller falls back to doing the work itself or
-        // to another thread of the same condition.
+        // The entry point (and its ref to this) was destroyed without running.
         m_hasUnderlyingThread = false;
+        RELEASE_ASSERT_WITH_MESSAGE(m_condition->startFailure() == AutomaticThreadCondition::StartFailure::Retry, "Could not create the underlying thread for %s", name().characters());
         if (verbose)
-            dataLog(RawPointer(this), ": Failed to start automatic thread!\n");
+            dataLog(RawPointer(this), ": Could not create the underlying thread; will retry on the next notify.\n");
         return false;
     }
+
     thread->detach();
     return true;
 }

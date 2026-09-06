@@ -118,7 +118,6 @@ Thread::~Thread()
 {
     // It is OK because FLSAlloc's callback will be called even before there are some open handles.
     // This easily ensures that all the thread resources are automatically closed.
-    // m_handle is null when establishHandle failed (Thread::tryCreate returned nullptr).
     if (m_handle && m_handle != INVALID_HANDLE_VALUE)
         CloseHandle(m_handle);
 }

@@ -778,8 +778,9 @@ private:
     void handleNeedCollectionEpilogue();
     
     bool relinquishConn(unsigned);
-    void finishRelinquishingConn();
-    bool ensureCollectorThread(const AbstractLocker&);
+    bool finishRelinquishingConn();
+    void takeConnBecauseCollectorThreadCouldNotStart(const AbstractLocker&);
+    void collectAsTheCollectorBecauseCollectorThreadCouldNotStart();
     
     void setNeedCollectionEpilogue();
     void waitWhileNeedCollectionEpilogue();
@@ -1061,8 +1062,6 @@ private:
     CollectorPhase m_currentPhase { CollectorPhase::NotRunning };
     CollectorPhase m_nextPhase { CollectorPhase::NotRunning };
     bool m_collectorThreadIsRunning { false };
-    // Mutator thread only. True after the OS refused the collector thread in ensureCollectorThread().
-    bool m_collectorThreadUnavailable { false };
     bool m_threadShouldStop { false };
     bool m_mutatorDidRun { true };
     bool m_didDeferGCWork { false };

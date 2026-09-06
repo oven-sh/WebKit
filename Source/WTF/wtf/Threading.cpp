@@ -325,15 +325,14 @@ RefPtr<Thread> Thread::tryCreate(ASCIILiteral name, Function<void()>&& entryPoin
     Ref context = adoptRef(*new NewThreadContext { name, WTF::move(entryPoint), thread.get() });
     {
         MutexLocker locker(context->mutex);
+        context->ref(); // Adopted by Thread::entryPoint
         if (stackSpec.kind() == StackAllocationSpecification::Kind::Default) {
             auto maybeSize = stackSize(threadType);
             if (maybeSize)
                 stackSpec = StackAllocationSpecification::RequestSize(maybeSize.value());
         }
-        context->ref(); // Adopted by Thread::entryPoint
         if (!thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy)) {
-            // The OS refused the thread (EAGAIN from a pids/nproc limit, or no address space).
-            // Thread::entryPoint never runs, so the ref it would have adopted is dropped here.
+            // Thread::entryPoint never runs, so take back the ref it would have adopted.
             context->deref();
             return nullptr;
         }

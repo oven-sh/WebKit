@@ -73,12 +73,29 @@ class AutomaticThread;
 
 class AutomaticThreadCondition : public ThreadSafeRefCounted<AutomaticThreadCondition> {
 public:
+    // What notifyOne()/notifyAll() do when an AutomaticThread has no underlying thread and the OS
+    // refuses to create one (EAGAIN from pthread_create: RLIMIT_NPROC, a cgroup pids limit).
+    enum class StartFailure : uint8_t {
+        // Crash. This is the default: the work would otherwise wait for a thread that never comes.
+        Crash,
+        // Leave the AutomaticThread without an underlying thread and return false from the notify.
+        // The next notify tries again. Only for users that act on a false return, so that the work
+        // still completes without the thread: ParallelHelperPool (the client runs the task itself),
+        // JSC::Heap (the mutator collects) and JSC::JITWorklist (plans stay queued or are cancelled).
+        Retry,
+    };
+
     static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> NODELETE create();
+    static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> NODELETE create(StartFailure);
 
     WTF_EXPORT_PRIVATE ~AutomaticThreadCondition();
     
-    WTF_EXPORT_PRIVATE void notifyOne(const AbstractLocker&);
-    WTF_EXPORT_PRIVATE void notifyAll(const AbstractLocker&);
+    // Both return false only when a thread had to be started for this notification and the OS
+    // refused, which can only happen with StartFailure::Retry.
+    WTF_EXPORT_PRIVATE bool notifyOne(const AbstractLocker&);
+    WTF_EXPORT_PRIVATE bool notifyAll(const AbstractLocker&);
+
+    StartFailure startFailure() const { return m_startFailure; }
     
     // You can reuse this condition for other things, just as you would any other condition.
     // However, since conflating conditions could lead to thundering herd, it's best to avoid it.
@@ -91,7 +108,7 @@ public:
 private:
     friend class AutomaticThread;
     
-    WTF_EXPORT_PRIVATE AutomaticThreadCondition();
+    WTF_EXPORT_PRIVATE AutomaticThreadCondition(StartFailure);
 
     void add(const AbstractLocker&, AutomaticThread*);
     void remove(const AbstractLocker&, AutomaticThread*);
@@ -99,6 +116,7 @@ private:
     
     Condition m_condition;
     Vector<CheckedPtr<AutomaticThread>> m_threads;
+    const StartFailure m_startFailure;
 };
 
 class WTF_EXPORT_PRIVATE AutomaticThread : public ThreadSafeRefCounted<AutomaticThread>, public CanMakeThreadSafeCheckedPtr<AutomaticThread> {
@@ -193,7 +211,8 @@ protected:
 private:
     friend class AutomaticThreadCondition;
 
-    // Returns false when the OS refused the thread; the AutomaticThread stays startable.
+    // Returns false when the OS refused to create the thread and m_condition's StartFailure is
+    // Retry. With StartFailure::Crash it crashes instead.
     bool start(const AbstractLocker&);
 
 protected:
