@@ -1141,9 +1141,12 @@ private:
         case StringCharCodeAt:
         case StringCodePointAt: {
             // Currently we have no good way of refining these.
-            if (op == StringAt)
+            if (op == StringAt) {
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::OutOfBounds) || node->arrayMode() == ArrayMode(Array::String, Array::Read, Array::InBounds));
-            else
+                // An out-of-bounds StringAt returns undefined instead of exiting, so nothing depends on it running.
+                if (node->arrayMode().isOutOfBounds())
+                    node->clearFlags(NodeMustGenerate);
+            } else
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read));
             blessArrayOperation(node->child1(), node->child2(), node->child1()); // Rewrite child1 with ResolveRope.
             fixEdge<KnownStringUse>(node->child1());
