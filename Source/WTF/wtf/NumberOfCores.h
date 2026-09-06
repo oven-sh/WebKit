@@ -25,8 +25,13 @@
 
 namespace WTF {
 
-// This counts logical cores.
+// This counts logical cores. The result is computed once and cached.
 WTF_EXPORT_PRIVATE int numberOfProcessorCores();
+
+// Same count, read from the OS on every call. On Linux it follows a change to the
+// affinity mask or to the cgroup cpu quota made after startup, as libuv's
+// uv_available_parallelism() does.
+WTF_EXPORT_PRIVATE int numberOfProcessorCoresUncached();
 
 #if OS(DARWIN)
 WTF_EXPORT_PRIVATE int numberOfPhysicalProcessorCores();
