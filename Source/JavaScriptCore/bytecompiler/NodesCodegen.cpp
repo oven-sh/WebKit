@@ -3459,6 +3459,10 @@ RegisterID* InNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
 RegisterID* LogicalOpNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    // The right operand is a basic block of its own, like the arms of a conditional: it
+    // runs only when the left one does not short-circuit. The block after the whole
+    // expression starts again on both paths, so a hook emitted inside the right operand
+    // (after an await, for example) does not claim the code that follows the expression.
     if (dst == generator.ignoredResult()) {
         Ref<Label> afterExpr1 = generator.newLabel();
         Ref<Label> afterExpr2 = generator.newLabel();
@@ -3468,8 +3472,10 @@ RegisterID* LogicalOpNode::emitBytecode(BytecodeGenerator& generator, RegisterID
             generator.emitNodeInConditionContext(m_expr1, afterExpr2.get(), afterExpr1.get(), FallThroughMeansFalse);
         generator.emitLabel(afterExpr1.get());
 
+        generator.emitProfileControlFlow(m_expr2->startOffset());
         generator.emitNodeInTailPosition(dst, m_expr2);
         generator.emitLabel(afterExpr2.get());
+        generator.emitProfileControlFlow(m_expr2->endOffset());
         return dst;
     }
 
@@ -3481,8 +3487,10 @@ RegisterID* LogicalOpNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         generator.emitJumpIfFalse(temp.get(), target.get());
     else
         generator.emitJumpIfTrue(temp.get(), target.get());
+    generator.emitProfileControlFlow(m_expr2->startOffset());
     generator.emitNodeInTailPosition(temp.get(), m_expr2);
     generator.emitLabel(target.get());
+    generator.emitProfileControlFlow(m_expr2->endOffset());
 
     return generator.move(dst, temp.get());
 }
@@ -3516,9 +3524,11 @@ RegisterID* CoalesceNode::emitBytecode(BytecodeGenerator& generator, RegisterID*
 
     if (m_hasAbsorbedOptionalChain)
         generator.popOptionalChainTarget();
+    generator.emitProfileControlFlow(m_expr2->startOffset());
     generator.emitNodeInTailPosition(temp.get(), m_expr2);
 
     generator.emitLabel(endLabel.get());
+    generator.emitProfileControlFlow(m_expr2->endOffset());
     return generator.move(dst, temp.get());
 }
 
@@ -5562,19 +5572,22 @@ RegisterID* MethodDefinitionNode::emitBytecode(BytecodeGenerator& generator, Reg
 
 RegisterID* YieldExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    RefPtr<RegisterID> value;
     if (!delegate()) {
         RefPtr<RegisterID> arg = nullptr;
         if (argument())
             arg = generator.emitNode(argument());
         else
             arg = generator.emitLoad(nullptr, jsUndefined());
-        RefPtr<RegisterID> value = generator.emitYield(arg.get());
-        if (dst == generator.ignoredResult())
-            return nullptr;
-        return generator.move(generator.finalDestination(dst), value.get());
+        value = generator.emitYield(arg.get());
+    } else {
+        RefPtr<RegisterID> arg = generator.emitNode(argument());
+        value = generator.emitDelegateYield(arg.get(), this);
     }
-    RefPtr<RegisterID> arg = generator.emitNode(argument());
-    RefPtr<RegisterID> value = generator.emitDelegateYield(arg.get(), this);
+    // The code after a yield runs only if the generator is resumed. Start a new
+    // basic block there so the control flow profiler does not count it as
+    // executed when the generator was suspended and never resumed.
+    generator.emitProfileControlFlow(divotEnd().offset);
     if (dst == generator.ignoredResult())
         return nullptr;
     return generator.move(generator.finalDestination(dst), value.get());
@@ -5585,7 +5598,12 @@ RegisterID* YieldExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
 RegisterID* AwaitExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     RefPtr<RegisterID> arg = generator.emitNode(argument());
-    return generator.emitAwait(dst ? dst : generator.newTemporary(), arg.get(), position());
+    RegisterID* result = generator.emitAwait(dst ? dst : generator.newTemporary(), arg.get(), position());
+    // The code after an await runs only if the promise settles and the function
+    // resumes. Start a new basic block there so the control flow profiler does
+    // not count it as executed when the function stayed suspended.
+    generator.emitProfileControlFlow(divotEnd().offset);
+    return result;
 }
 
 // ------------------------------ DefineFieldNode ---------------------------------
