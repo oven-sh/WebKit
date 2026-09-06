@@ -768,6 +768,13 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
 {
     if (!m_samplingProfiler) {
+#if USE(BUN_JSC_ADDITIONS)
+        // Without the map, a sample in DFG or FTL code is attributed to the call site
+        // index the frame last stored, not to the sampled PC, so a callee inlined into
+        // its caller is credited to the caller. Build it for code compiled from now on,
+        // as --useSamplingProfiler does.
+        setShouldBuildPCToCodeOriginMapping();
+#endif
         lazyInitialize(m_samplingProfiler, adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch))));
         requestEntryScopeService(EntryScopeService::SamplingProfiler);
     }
