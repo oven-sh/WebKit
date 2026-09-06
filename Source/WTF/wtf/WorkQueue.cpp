@@ -175,7 +175,19 @@ WorkQueue& WorkQueue::mainSingleton()
 
 Ref<WorkQueue> WorkQueue::create(ASCIILiteral name, QOS qos)
 {
-    return adoptRef(*new WorkQueue(name, qos));
+    RefPtr<WorkQueue> queue = tryCreate(name, qos);
+    RELEASE_ASSERT(queue);
+    return queue.releaseNonNull();
+}
+
+RefPtr<WorkQueue> WorkQueue::tryCreate(ASCIILiteral name, QOS qos)
+{
+    Ref<WorkQueue> queue = adoptRef(*new WorkQueue(name, qos));
+#if !USE(COCOA_EVENT_LOOP)
+    if (!queue->m_runLoop)
+        return nullptr;
+#endif
+    return queue;
 }
 
 WorkQueue::WorkQueue(ASCIILiteral name, QOS qos)
