@@ -101,6 +101,20 @@ public:
     JSPromise* loadedPromise(JSGlobalObject*);
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A synchronous load (Bun's require(esm)) drives an entry through its fetch
+    // and module steps inline instead of through the microtask reactions. The
+    // embedder hook that produces each value can run user code, and that code
+    // can load this same entry again before the hook returns. So the entry may
+    // already be past the step by the time the caller holds the value. Each of
+    // these applies its step only while the entry is still at it, and returns
+    // whether it did. The reactions check the same condition on their path
+    // (moduleRegistryFetchSettled, moduleRegistryModuleSettled).
+    bool settleFetch(JSGlobalObject*, JSPromise* fetched);
+    bool failFetch(JSGlobalObject*, JSValue error);
+    bool settleModule(JSGlobalObject*, JSPromise* made);
+#endif
+
 private:
     ModuleRegistryEntry(VM&, Structure*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
 

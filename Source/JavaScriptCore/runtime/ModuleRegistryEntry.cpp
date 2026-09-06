@@ -290,4 +290,58 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
     m_status = Status::Fetched;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool ModuleRegistryEntry::settleFetch(JSGlobalObject* globalObject, JSPromise* fetched)
+{
+    if (m_status != Status::Fetching || !m_fetchPromise || m_fetchPromise->status() != JSPromise::Status::Pending)
+        return false;
+    // Settled directly rather than through fulfill()/reject(): once
+    // hostLoadImportedModule has pipeFrom()'d this promise,
+    // isFirstResolvingFunctionCalled is set and the guarded forms do nothing.
+    VM& vm = globalObject->vm();
+    switch (fetched->status()) {
+    case JSPromise::Status::Fulfilled:
+        m_fetchPromise->fulfillPromise(vm, fetched->result());
+        return true;
+    case JSPromise::Status::Rejected:
+        m_fetchPromise->rejectPromise(vm, fetched->result());
+        return true;
+    case JSPromise::Status::Pending:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool ModuleRegistryEntry::failFetch(JSGlobalObject* globalObject, JSValue error)
+{
+    if (m_status != Status::Fetching || !m_fetchPromise || m_fetchPromise->status() != JSPromise::Status::Pending)
+        return false;
+    setFetchError(globalObject, error);
+    m_fetchPromise->rejectPromise(globalObject->vm(), error);
+    return true;
+}
+
+bool ModuleRegistryEntry::settleModule(JSGlobalObject* globalObject, JSPromise* made)
+{
+    if (!m_modulePromise || m_modulePromise->status() != JSPromise::Status::Pending)
+        return false;
+    VM& vm = globalObject->vm();
+    switch (made->status()) {
+    case JSPromise::Status::Fulfilled: {
+        auto* record = uncheckedDowncast<AbstractModuleRecord>(made->result());
+        fetchComplete(globalObject, record);
+        m_modulePromise->fulfill(vm, record);
+        return true;
+    }
+    case JSPromise::Status::Rejected:
+        setEvaluationError(globalObject, made->result());
+        m_modulePromise->reject(vm, made->result());
+        return true;
+    case JSPromise::Status::Pending:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#endif
+
 } // namespace JSC

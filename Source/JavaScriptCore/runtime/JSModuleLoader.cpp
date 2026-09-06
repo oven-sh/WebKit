@@ -731,23 +731,26 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             // synchronously so this graph can complete without yielding; the
             // outer async path will see the entry as Fetched when it eventually
             // drains and short-circuit.
+            //
+            // fetch() and makeModule() run embedder code (a plugin's load hook,
+            // a synthetic module's generator reading user getters), and that
+            // code can load this same key again before the call returns. The
+            // nested load reaches this block for the same entry, takes the same
+            // branch, and settles the step first. So the value a call returns is
+            // handed to the entry, which applies the step only if the entry is
+            // still at it (ModuleRegistryEntry::settleFetch / settleModule).
+            // Nothing here decides from state read before the call.
             JSPromise* fetchPromise = mapEntry->ensureFetchPromise(globalObject);
             JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
             if (modulePromise->status() == JSPromise::Status::Pending) {
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
                     // Transpilation still in flight — re-issue through the
-                    // embedder's synchronous fetch. fetchPromise was already
-                    // pipeFrom()'d by the async path which set
-                    // isFirstResolvingFunctionCalledFlag, so use the unguarded
-                    // fulfill/reject. The ModuleRegistryFetchSettled reaction on
-                    // fetchPromise lands on the sync queue and drives the rest of
-                    // the chain (including loadPromise).
+                    // embedder's synchronous fetch. The ModuleRegistryFetchSettled
+                    // reaction on fetchPromise lands on the sync queue and drives
+                    // the rest of the chain (including loadPromise).
                     JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (promise->status() == JSPromise::Status::Fulfilled)
-                        fetchPromise->fulfillPromise(vm, promise->result());
-                    else if (promise->status() == JSPromise::Status::Rejected)
-                        fetchPromise->rejectPromise(vm, promise->result());
+                    mapEntry->settleFetch(globalObject, promise);
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -757,11 +760,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // settled and bail in moduleRegistryFetchSettled's handler.
                     JSPromise* makePromise = makeModule(globalObject, resolved, uncheckedDowncast<JSSourceCode>(fetchPromise->result()));
                     RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (makePromise->status() == JSPromise::Status::Fulfilled) {
-                        mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
-                        modulePromise->fulfillPromise(vm, makePromise->result());
-                    } else if (makePromise->status() == JSPromise::Status::Rejected)
-                        modulePromise->rejectPromise(vm, makePromise->result());
+                    mapEntry->settleModule(globalObject, makePromise);
                 }
                 // The reactions above were diverted to the sync queue but
                 // haven't *run* yet — they'll run when the caller's
@@ -800,11 +799,33 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
         // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
+#if USE(BUN_JSC_ADDITIONS)
+        // Register the fetch before the embedder hook runs. The hook can run
+        // user code that loads this key again. That load then finds a Fetching
+        // entry with a pending fetch promise to join (or, in a synchronous load,
+        // to drive through the block above) instead of a New entry it would
+        // fetch a second time and whose status this path would then reset.
+        JSPromise* fetchPromise = mapEntry->ensureFetchPromise(globalObject);
+        mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
+        JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            // A fetch that threw has nothing else to settle its promise, unless
+            // a nested load during the hook already did (failFetch checks). A
+            // termination exception ends the run; leave the entry as it is for it.
+            if (!vm.isTerminationException(exception))
+                mapEntry->failFetch(globalObject, exception->value());
+            return nullptr;
+        }
+        // A nested load may have settled the fetch promise while the hook ran.
+        if (fetchPromise->status() == JSPromise::Status::Pending)
+            fetchPromise->pipeFrom(vm, promise);
+#else
         JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
+#endif
     }
     JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
