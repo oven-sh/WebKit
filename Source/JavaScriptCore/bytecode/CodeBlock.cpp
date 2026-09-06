@@ -415,6 +415,15 @@ static FunctionExecutable* instantiatedModuleFunctionExecutable(JSModuleEnvironm
     return executable;
 }
 
+// A function whose unlinkedFunctionStart/End are offsets into the owner's source text.
+// A builtin default class constructor's offsets are into the builtin source
+// "(function () { })". A class field initializer's span is the whole owner source.
+// Neither is a function in the text the control flow profiler describes.
+static bool isTextualFunction(const UnlinkedFunctionExecutable* executable)
+{
+    return !executable->isBuiltinDefaultClassConstructor() && executable->parseMode() != SourceParseMode::ClassFieldInitializerMode;
+}
+
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
 // of linking is taking an abstract representation of bytecode and tying it to a GlobalObject and scope
 // chain. For example, this process allows us to cache the depth of lexical environment reads that reach
@@ -474,8 +483,9 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         // source, not into this source. Recording them here would mark an unrelated
         // range of this source as a function that never ran, and running the
         // constructor would not clear it because its CodeBlock belongs to the
-        // builtin source.
-        if (shouldUpdateFunctionHasExecutedCache && !unlinkedExecutable->isBuiltinDefaultClassConstructor())
+        // builtin source. A class field initializer spans the whole source, the
+        // same range as the program itself.
+        if (shouldUpdateFunctionHasExecutedCache && isTextualFunction(unlinkedExecutable))
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
         m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
     }
@@ -3777,6 +3787,8 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         // inside the CodeBlock's instruction stream.
         auto insertFunctionGaps = [basicBlockLocation, basicBlockStartOffset, basicBlockEndOffset] (const WriteBarrier<FunctionExecutable>& functionExecutable) {
             const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
+            if (!isTextualFunction(executable))
+                return;
             int functionStart = executable->unlinkedFunctionStart();
             int functionEnd = executable->unlinkedFunctionEnd();
             if (functionStart >= basicBlockStartOffset && functionEnd <= basicBlockEndOffset)

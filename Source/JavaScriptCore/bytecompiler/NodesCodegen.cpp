@@ -5207,7 +5207,12 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
         }
     }
 
-    generator.emitProfileControlFlow(startStartOffset());
+    // The class field initializer has no text of its own: its node carries
+    // offset 0 and the source of the whole enclosing program. A hook there
+    // would share the program's first basic block and count every instance
+    // construction as one more run of the top-level code.
+    if (generator.parseMode() != SourceParseMode::ClassFieldInitializerMode)
+        generator.emitProfileControlFlow(startStartOffset());
     generator.emitDebugHook(DidEnterCallFrame, JSTextPosition(startLine(), startStartOffset(), startLineStartOffset()));
 
     switch (generator.parseMode()) {
