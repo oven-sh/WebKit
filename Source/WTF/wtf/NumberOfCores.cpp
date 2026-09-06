@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <utility>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
@@ -50,14 +51,10 @@ namespace WTF {
 
 static constexpr unsigned maxNumberOfProcessorCoresOverride = 1024;
 
-int numberOfProcessorCores()
+int numberOfProcessorCoresUncached()
 {
     const int defaultIfUnavailable = 1;
-    static int s_numberOfCores = -1;
 
-    if (s_numberOfCores > 0)
-        return s_numberOfCores;
-    
     ASCIILiteral coresEnvName = "WTF_numberOfProcessorCores";
     CString coresEnv = getenv(coresEnvName);
 #if !USE(BUN_JSC_ADDITIONS)
@@ -73,10 +70,11 @@ int numberOfProcessorCores()
             // The value sizes thread pools and is reported as navigator.hardwareConcurrency
             // and os.availableParallelism(), so it must be at least 1. The cap keeps it in
             // `int` range; it matches the UV_THREADPOOL_SIZE cap.
-            s_numberOfCores = static_cast<int>(std::clamp<unsigned>(*numberOfCores, 1, maxNumberOfProcessorCoresOverride));
-            return s_numberOfCores;
+            return static_cast<int>(std::clamp<unsigned>(*numberOfCores, 1, maxNumberOfProcessorCoresOverride));
         }
-        SAFE_FPRINTF(stderr, "WARNING: failed to parse %s=%s\n", coresEnvName, coresEnv);
+        static bool s_warnedAboutEnv = false;
+        if (!std::exchange(s_warnedAboutEnv, true))
+            SAFE_FPRINTF(stderr, "WARNING: failed to parse %s=%s\n", coresEnvName, coresEnv);
     }
 
 #if OS(DARWIN)
@@ -88,7 +86,7 @@ int numberOfProcessorCores()
     };
     int sysctlResult = sysctl(name.data(), name.size(), &result, &length, 0, 0);
 
-    s_numberOfCores = sysctlResult < 0 ? defaultIfUnavailable : result;
+    return sysctlResult < 0 ? defaultIfUnavailable : result;
 #elif OS(LINUX)
     long result = sysconf(_SC_NPROCESSORS_ONLN);
 
@@ -103,23 +101,33 @@ int numberOfProcessorCores()
     if (int constrained = uv_get_constrained_cpu(); constrained > 0 && (result < 1 || constrained < result))
         result = constrained;
 
-    s_numberOfCores = result < 1 ? defaultIfUnavailable : static_cast<int>(result);
+    return result < 1 ? defaultIfUnavailable : static_cast<int>(result);
 #elif OS(AIX) || OS(OPENBSD) || OS(NETBSD) || OS(FREEBSD) || OS(HAIKU)
     long sysconfResult = sysconf(_SC_NPROCESSORS_ONLN);
 
-    s_numberOfCores = sysconfResult < 0 ? defaultIfUnavailable : static_cast<int>(sysconfResult);
+    return sysconfResult < 0 ? defaultIfUnavailable : static_cast<int>(sysconfResult);
 #elif OS(QNX)
     int numCpuQNX = _syspage_ptr->num_cpu;
-    s_numberOfCores = numCpuQNX < 0 ? defaultIfUnavailable : numCpuQNX;
+    return numCpuQNX < 0 ? defaultIfUnavailable : numCpuQNX;
 #elif OS(WINDOWS)
     UNUSED_PARAM(defaultIfUnavailable);
     SYSTEM_INFO sysInfo;
     GetSystemInfo(&sysInfo);
 
-    s_numberOfCores = sysInfo.dwNumberOfProcessors;
+    return sysInfo.dwNumberOfProcessors;
 #else
-    s_numberOfCores = defaultIfUnavailable;
+    return defaultIfUnavailable;
 #endif
+}
+
+int numberOfProcessorCores()
+{
+    static int s_numberOfCores = -1;
+
+    if (s_numberOfCores > 0)
+        return s_numberOfCores;
+
+    s_numberOfCores = numberOfProcessorCoresUncached();
     return s_numberOfCores;
 }
 
