@@ -81,6 +81,54 @@ ALWAYS_INLINE static void reportStats()
     }
 }
 
+static bool isFramePointerOnMachineStack(VM& vm, void* framePointer, const AbstractLocker& machineThreadsLocker)
+{
+    uint8_t* fpCast = std::bit_cast<uint8_t*>(framePointer);
+    for (auto& thread : vm.heap.machineThreads().threads(machineThreadsLocker)) {
+        uint8_t* stackBase = static_cast<uint8_t*>(thread->stack().origin());
+        uint8_t* stackLimit = static_cast<uint8_t*>(thread->stack().end());
+        RELEASE_ASSERT(stackBase);
+        RELEASE_ASSERT(stackLimit);
+        RELEASE_ASSERT(stackLimit <= stackBase);
+        if (fpCast < stackBase && fpCast >= stackLimit)
+            return true;
+    }
+    return false;
+}
+
+// The sampled PC is in C code. JIT code does not store vm.topCallFrame before it
+// calls an operation that cannot throw (AssemblyHelpers::prepareCallOperation only
+// does so when ASSERT_ENABLED), so topCallFrame can be stale: an older frame, which
+// credits the sample to the caller, or a dead frame, which makes the walk bail and
+// drops the sample. The frame pointer chain is intact either way: a C leaf such as
+// libm's sin leaves the JIT frame in the frame pointer register, and a C function
+// that sets up a frame links back to it. Walk that chain from the machine frame and
+// stop at the first frame that is either topCallFrame (the frame a call frame tracer
+// or the native call thunk stored, which is at least as young as any JS frame on the
+// chain) or a live JS frame. Fall back to topCallFrame when neither is found, which
+// is what the walk below used unconditionally before.
+SUPPRESS_ASAN
+static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+{
+    static constexpr unsigned maxCFramesToWalk = 32;
+    CallFrame* topCallFrame = vm.topCallFrame;
+    auto* frame = static_cast<CallFrame*>(machineFrame);
+    for (unsigned i = 0; i < maxCFramesToWalk; ++i) {
+        if (!frame || !isFramePointerOnMachineStack(vm, frame, machineThreadsLocker))
+            break;
+        if (frame == topCallFrame)
+            return frame;
+        CodeBlock* codeBlock = frame->unsafeCodeBlock();
+        if (codeBlock && !frame->unsafeCallee().isNativeCallee() && vm.heap.codeBlockSet().contains(codeBlockSetLocker, codeBlock))
+            return frame;
+        auto* parent = static_cast<CallFrame*>(frame->unsafeCallerFrameOrEntryFrame());
+        if (parent <= frame)
+            break;
+        frame = parent;
+    }
+    return topCallFrame;
+}
+
 class FrameWalker {
 public:
     FrameWalker(VM& vm, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
@@ -205,17 +253,7 @@ protected:
 
     bool NODELETE isValidFramePointer(void* callFrame)
     {
-        uint8_t* fpCast = std::bit_cast<uint8_t*>(callFrame);
-        for (auto& thread : m_vm.heap.machineThreads().threads(m_machineThreadsLocker)) {
-            uint8_t* stackBase = static_cast<uint8_t*>(thread->stack().origin());
-            uint8_t* stackLimit = static_cast<uint8_t*>(thread->stack().end());
-            RELEASE_ASSERT(stackBase);
-            RELEASE_ASSERT(stackLimit);
-            RELEASE_ASSERT(stackLimit <= stackBase);
-            if (fpCast < stackBase && fpCast >= stackLimit)
-                return true;
-        }
-        return false;
+        return isFramePointerOnMachineStack(m_vm, callFrame, m_machineThreadsLocker);
     }
 
     bool isValidCodeBlock(CodeBlock* codeBlock)
@@ -426,9 +464,8 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
                 regExp = m_vm.m_executingRegExp;
-                // We resort to topCallFrame to see if we can get anything
-                // useful. We usually get here when we're executing C code.
-                callFrame = m_vm.topCallFrame;
+                // We usually get here when we're executing C code. See callFrameForSampleInCCode.
+                callFrame = callFrameForSampleInCCode(m_vm, machineFrame, codeBlockSetLocker, machineThreadsLocker);
                 if (Options::collectExtraSamplingProfilerData() && !Options::sampleCCode())
                     shouldAppendTopFrameAsCCode = true;
             }
