@@ -2315,8 +2315,14 @@ public:
         RELEASE_ASSERT(allocatorPool);
 
         DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get());
-        if (!context) [[unlikely]]
+        if (!context) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+            pattern->m_allocator->stopAllocator();
+            return static_cast<unsigned>(static_cast<int>(JSRegExpResult::ErrorNoMemory));
+#else
             return offsetNoMatch;
+#endif
+        }
 
         dataLogLnIf(verbose, "  Interpret input: ", input, "\n  Matching");
 
@@ -2334,6 +2340,11 @@ public:
         pattern->m_allocator->stopAllocator(retainedAllocatorOverflowBytes);
 
         ASSERT((result == JSRegExpResult::Match) == (output[0] != offsetNoMatch));
+
+#if USE(BUN_JSC_ADDITIONS)
+        if (static_cast<int>(result) < static_cast<int>(JSRegExpResult::NoMatch)) [[unlikely]]
+            return static_cast<unsigned>(static_cast<int>(result));
+#endif
 
         return output[0];
     }

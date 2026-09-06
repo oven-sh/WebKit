@@ -2188,7 +2188,11 @@ class YarrGenerator final : public YarrJITInfo {
 
         if (!m_hitMatchLimit.empty()) {
             m_hitMatchLimit.link(&m_jit);
+#if USE(BUN_JSC_ADDITIONS)
+            m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorHitLimit)), m_regs.returnRegister);
+#else
             m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorNoMatch)), m_regs.returnRegister);
+#endif
         }
 
         finishExiting.link(&m_jit);
