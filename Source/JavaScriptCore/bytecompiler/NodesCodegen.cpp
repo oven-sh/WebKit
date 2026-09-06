@@ -5607,6 +5607,9 @@ void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
     switch (m_type) {
     case DefineFieldNode::Type::Name: {
         StrictModeScope strictModeScope(generator);
+        // Defining the property throws if the receiver is not extensible or already has the property as a
+        // non-configurable one; report that at the field, as the other two cases do.
+        generator.emitExpressionInfo(position(), position(), position() + m_ident.length());
         if (auto index = parseIndex(m_ident)) {
             RefPtr<RegisterID> propertyName = generator.emitLoad(nullptr, jsNumber(index.value()));
             generator.emitDirectPutByVal(generator.thisRegister(), propertyName.get(), value.get());
@@ -5737,7 +5740,7 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         Vector<UnlinkedFunctionExecutable::ClassElementDefinition> instanceElementDefinitions;
         generator.emitDefineClassElements(m_classElements, constructor.get(), prototype.get(), instanceElementDefinitions, staticElementDefinitions);
         if (!instanceElementDefinitions.isEmpty()) {
-            RefPtr<RegisterID> instanceFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(instanceElementDefinitions), m_classHeritage);
+            RefPtr<RegisterID> instanceFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(instanceElementDefinitions), m_classHeritage, BytecodeGenerator::ClassFieldInitializerKind::Instance);
 
             // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
             // https://bugs.webkit.org/show_bug.cgi?id=196867
@@ -5758,7 +5761,7 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         generator.emitInstallPrivateClassBrand(constructor.get());
 
     if (!staticElementDefinitions.isEmpty()) {
-        RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(staticElementDefinitions), m_classHeritage);
+        RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(staticElementDefinitions), m_classHeritage, BytecodeGenerator::ClassFieldInitializerKind::Static);
         // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
         // https://bugs.webkit.org/show_bug.cgi?id=196867
         emitPutHomeObject(generator, staticFieldInitializer.get(), constructor.get());

@@ -3594,7 +3594,7 @@ RegisterID* BytecodeGenerator::emitNewDefaultConstructor(RegisterID* dst, Constr
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* dst, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>&& classElementDefinitions, bool isDerived)
+RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* dst, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>&& classElementDefinitions, bool isDerived, ClassFieldInitializerKind kind)
 {
     DerivedContextType newDerivedContextType;
     SuperBinding superBinding;
@@ -3611,9 +3611,31 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     SourceParseMode parseMode = SourceParseMode::ClassFieldInitializerMode;
     ConstructAbility constructAbility = ConstructAbility::CannotConstruct;
 
-    FunctionMetadataNode metadata(parserArena(), JSTokenLocation(), JSTokenLocation(), 0, 0, 0, 0, 0, ImplementationVisibility::Private, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
-    metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
-    auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+#if USE(BUN_JSC_ADDITIONS)
+    // Keep the initializer in stack traces, under the names V8 uses for it, so that an error created while a
+    // field is initialized reports the field's position rather than that of the constructor that ran it.
+    ImplementationVisibility implementationVisibility = ImplementationVisibility::Public;
+    Identifier ecmaName = Identifier::fromString(m_vm, kind == ClassFieldInitializerKind::Static ? "<static_initializer>"_s : "<instance_members_initializer>"_s);
+#else
+    UNUSED_PARAM(kind);
+    ImplementationVisibility implementationVisibility = ImplementationVisibility::Private;
+    Identifier ecmaName;
+#endif
+
+    // The initializer is compiled from the enclosing scope's whole source, so it has to be placed on that source's
+    // first line: from line 0, UnlinkedFunctionExecutable links it to a SourceCode starting at line 1, column 1, and
+    // positions on the enclosing source's first line (in the initializer and in the functions the fields create) get
+    // measured from the enclosing function's start instead of the line's. The offsets stay 0 on purpose: they only
+    // feed the function range recorded for the control flow profiler, and moving them changes what coverage reports.
+    const SourceCode& source = m_scopeNode->source();
+    JSTokenLocation location;
+    location.line = source.firstLine().oneBasedInt();
+
+    FunctionMetadataNode metadata(parserArena(), location, location, 0, 0, 0, 0, 0, implementationVisibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
+    metadata.finishParsing(source, Identifier(), FunctionMode::MethodDefinition);
+    metadata.setEndPosition(JSTextPosition(location.line, 0, 0));
+    metadata.setEcmaName(ecmaName);
+    auto initializer = UnlinkedFunctionExecutable::create(m_vm, source, &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
 
     unsigned index = m_codeBlock->addFunctionExpr(initializer);
