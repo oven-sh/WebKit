@@ -779,6 +779,7 @@ private:
     
     bool relinquishConn(unsigned);
     void finishRelinquishingConn();
+    bool ensureCollectorThread(const AbstractLocker&);
     
     void setNeedCollectionEpilogue();
     void waitWhileNeedCollectionEpilogue();
