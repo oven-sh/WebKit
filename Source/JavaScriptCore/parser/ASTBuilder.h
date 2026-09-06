@@ -396,11 +396,6 @@ public:
         return node;
     }
 
-    YieldExprNode* createYield(const JSTokenLocation& location)
-    {
-        return new (m_parserArena) YieldExprNode(location, nullptr, /* delegate */ false);
-    }
-
     YieldExprNode* createYield(const JSTokenLocation& location, ExpressionNode* argument, bool delegate, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
     {
         YieldExprNode* node = new (m_parserArena) YieldExprNode(location, argument, delegate);

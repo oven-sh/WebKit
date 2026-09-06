@@ -470,7 +470,12 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     m_functionExprs = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionExprs());
     for (size_t count = unlinkedCodeBlock->numberOfFunctionExprs(), i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache)
+        // A builtin default class constructor's offsets are into its own builtin
+        // source, not into this source. Recording them here would mark an unrelated
+        // range of this source as a function that never ran, and running the
+        // constructor would not clear it because its CodeBlock belongs to the
+        // builtin source.
+        if (shouldUpdateFunctionHasExecutedCache && !unlinkedExecutable->isBuiltinDefaultClassConstructor())
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
         m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
     }

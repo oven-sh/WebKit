@@ -5562,19 +5562,22 @@ RegisterID* MethodDefinitionNode::emitBytecode(BytecodeGenerator& generator, Reg
 
 RegisterID* YieldExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    RefPtr<RegisterID> value;
     if (!delegate()) {
         RefPtr<RegisterID> arg = nullptr;
         if (argument())
             arg = generator.emitNode(argument());
         else
             arg = generator.emitLoad(nullptr, jsUndefined());
-        RefPtr<RegisterID> value = generator.emitYield(arg.get());
-        if (dst == generator.ignoredResult())
-            return nullptr;
-        return generator.move(generator.finalDestination(dst), value.get());
+        value = generator.emitYield(arg.get());
+    } else {
+        RefPtr<RegisterID> arg = generator.emitNode(argument());
+        value = generator.emitDelegateYield(arg.get(), this);
     }
-    RefPtr<RegisterID> arg = generator.emitNode(argument());
-    RefPtr<RegisterID> value = generator.emitDelegateYield(arg.get(), this);
+    // The code after a yield runs only if the generator is resumed. Start a new
+    // basic block there so the control flow profiler does not count it as
+    // executed when the generator was suspended and never resumed.
+    generator.emitProfileControlFlow(divotEnd().offset);
     if (dst == generator.ignoredResult())
         return nullptr;
     return generator.move(generator.finalDestination(dst), value.get());
@@ -5585,7 +5588,12 @@ RegisterID* YieldExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
 RegisterID* AwaitExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     RefPtr<RegisterID> arg = generator.emitNode(argument());
-    return generator.emitAwait(dst ? dst : generator.newTemporary(), arg.get(), position());
+    RegisterID* result = generator.emitAwait(dst ? dst : generator.newTemporary(), arg.get(), position());
+    // The code after an await runs only if the promise settles and the function
+    // resumes. Start a new basic block there so the control flow profiler does
+    // not count it as executed when the function stayed suspended.
+    generator.emitProfileControlFlow(divotEnd().offset);
+    return result;
 }
 
 // ------------------------------ DefineFieldNode ---------------------------------
