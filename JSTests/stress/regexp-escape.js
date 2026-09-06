@@ -29,3 +29,21 @@ shouldBe(RegExp.escape("^$\\.*+?()[]{}|/"), "\\^\\$\\\\\\.\\*\\+\\?\\(\\)\\[\\]\
 shouldBe(RegExp.escape(",-=<>#&!%:;@~'`\""), "\\x2c\\x2d\\x3d\\x3c\\x3e\\x23\\x26\\x21\\x25\\x3a\\x3b\\x40\\x7e\\x27\\x60\\x22");
 shouldBe(RegExp.escape(" \uFEFF\u2000\u3000"), "\\x20\\ufeff\\u2000\\u3000");
 shouldBe(RegExp.escape("\uD7FF_\uD800_\uD801_\uDFFE_\uDFFF_\uE000"), "\uD7FF_\\ud800_\\ud801_\\udffe_\\udfff_\uE000");
+
+// Supplementary code points whose low 16 bits spell a syntax character, a
+// punctuator, a control character or whitespace must pass through unchanged.
+shouldBe(RegExp.escape("\u{2002A}"), "\u{2002A}"); // low 16 bits: '*'
+shouldBe(RegExp.escape("\u{20009}"), "\u{20009}"); // low 16 bits: '\t'
+shouldBe(RegExp.escape("\u{2002C}"), "\u{2002C}"); // low 16 bits: ','
+shouldBe(RegExp.escape("\u{20020}"), "\u{20020}"); // low 16 bits: ' '
+shouldBe(RegExp.escape("\u{12000}"), "\u{12000}"); // low 16 bits: U+2000 (EN QUAD)
+shouldBe(RegExp.escape("\u{1D800}"), "\u{1D800}"); // low 16 bits: lead surrogate
+shouldBe(RegExp.escape("\u{1FEFF}"), "\u{1FEFF}"); // low 16 bits: U+FEFF (BOM)
+for (const s of ["\u{2002A}", "\u{20009}", "\u{2002C}", "\u{20020}", "\u{12000}", "\u{1D800}", "\u{1FEFF}", "\u{1F600}"]) {
+    for (const flags of ["", "u", "v"])
+        shouldBe(new RegExp(RegExp.escape(s), flags).test(s), true);
+}
+for (let codePoint = 0x10000; codePoint < 0x110000; codePoint++) {
+    const s = String.fromCodePoint(codePoint);
+    shouldBe(RegExp.escape(s), s);
+}
