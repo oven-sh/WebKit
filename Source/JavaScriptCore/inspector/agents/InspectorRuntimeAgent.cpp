@@ -426,7 +426,7 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::Runtime::TypeDescription>>> 
         auto sourceIDString = location->getString("sourceID"_s);
         auto divot = location->getInteger("divot"_s).value_or(0);
 
-        auto typeLocation = m_vm.typeProfiler()->findLocation(divot, parseInteger<uintptr_t>(sourceIDString).value(), static_cast<TypeProfilerSearchDescriptor>(descriptor), m_vm);
+        auto typeLocation = m_vm.typeProfiler()->findLocation(divot, parseInteger<uintptr_t>(sourceIDString).value_or(0), static_cast<TypeProfilerSearchDescriptor>(descriptor), m_vm);
 
         RefPtr<TypeSet> typeSet;
         if (typeLocation) {
