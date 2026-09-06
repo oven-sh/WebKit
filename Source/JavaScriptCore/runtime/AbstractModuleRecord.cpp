@@ -42,7 +42,9 @@
 #include "JSAsyncFunctionGenerator.h"
 #include "JSBoundFunction.h"
 #include "JSFunctionWithFields.h"
+#include "JSLexicalEnvironment.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
+#include "JSPromiseConstructor.h"
 #include "JSPromiseReaction.h"
 #include "VMInlines.h"
 #endif
@@ -1224,8 +1226,8 @@ enum class ImportPromiseGate : uint8_t {
     Released,
     // A chain ends in the dependency's body, or in a module the dependency waits on: the wait is a deadlock.
     Gates,
-    // A chain leaves JS (an embedder's then with no result promise, a host function handler) or the walk gave up:
-    // the walk cannot tell.
+    // A chain leaves JS (an embedder's then with no result promise, a host or builtin function handler) or the walk
+    // gave up: the walk cannot tell.
     Escapes,
 };
 
@@ -1285,8 +1287,32 @@ static ImportPromiseGate importPromiseGate(JSPromise* importPromise, CyclicModul
         return { };
     };
 
-    // A PromiseReactionJob handler. Script code is followed through the derived promise. A resolving function is
-    // followed to the promise it settles. Any other host callable is code the walk cannot see into.
+    // The resolve and reject functions `new Promise(executor)` hands the executor are arrow functions nested in the
+    // Promise constructor builtin (PromiseConstructor.js). The promise they settle is the one promise captured in
+    // their scope.
+    auto promiseConstructorResolverTarget = [&](JSFunction* function) -> JSValue {
+        FunctionExecutable* executable = function->jsExecutable();
+        FunctionExecutable* constructorExecutable = function->globalObject()->promiseConstructor()->jsExecutable();
+        const SourceCode& source = executable->source();
+        const SourceCode& constructorSource = constructorExecutable->source();
+        if (executable == constructorExecutable || source.provider() != constructorSource.provider())
+            return { };
+        if (source.startOffset() < constructorSource.startOffset() || source.endOffset() > constructorSource.endOffset())
+            return { };
+        auto* environment = dynamicDowncast<JSLexicalEnvironment>(function->scope());
+        if (!environment)
+            return { };
+        unsigned scopeSize = environment->symbolTable()->scopeSize();
+        for (unsigned i = 0; i < scopeSize; ++i) {
+            JSValue value = environment->variableAt(ScopeOffset(i)).get();
+            if (value.inherits<JSPromise>())
+                return value;
+        }
+        return { };
+    };
+
+    // A PromiseReactionJob handler. User script is followed through the derived promise. A resolving function is
+    // followed to the promise it settles. Any other host or builtin callable is code the walk cannot see into.
     auto visitHandler = [&](JSValue handler) {
         if (handler.isUndefined())
             return;
@@ -1298,8 +1324,15 @@ static ImportPromiseGate importPromiseGate(JSPromise* importPromise, CyclicModul
             escapes = true;
             return;
         }
-        if (!function->isHostFunction())
+        if (!function->isHostFunction()) {
+            if (!function->jsExecutable()->isBuiltinFunction())
+                return;
+            if (JSValue target = promiseConstructorResolverTarget(function))
+                follow(target);
+            else
+                escapes = true;
             return;
+        }
         if (auto* withFields = dynamicDowncast<JSFunctionWithFields>(function)) {
             if (JSValue target = resolvingFunctionTarget(withFields)) {
                 follow(target);
