@@ -624,6 +624,9 @@ Protocol::ErrorStringOr<std::tuple<Protocol::Debugger::BreakpointId, Ref<Protoco
     if (!parseLocation(errorString, location, sourceID, lineNumber, columnNumber))
         return makeUnexpected(errorString);
 
+    if (!m_scripts.isValidKey(sourceID))
+        return makeUnexpected("Missing script for scriptId in given location"_s);
+
     auto scriptIterator = m_scripts.find(sourceID);
     if (scriptIterator == m_scripts.end())
         return makeUnexpected("Missing script for scriptId in given location"_s);
@@ -1073,6 +1076,12 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::continueToLocation(Ref<JSO
     if (!parseLocation(errorString, location, sourceID, lineNumber, columnNumber))
         return makeUnexpected(errorString);
 
+    if (!m_scripts.isValidKey(sourceID)) {
+        m_debugger.continueProgram();
+        m_frontendDispatcher->resumed();
+        return makeUnexpected("Missing script for scriptId in given location"_s);
+    }
+
     auto scriptIterator = m_scripts.find(sourceID);
     if (scriptIterator == m_scripts.end()) {
         m_debugger.continueProgram();
@@ -1116,7 +1125,11 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::continueToLocation(Ref<JSO
 
 Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>>> InspectorDebuggerAgent::searchInContent(const Protocol::Debugger::ScriptId& scriptId, const String& query, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex)
 {
-    auto it = m_scripts.find(parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0));
+    auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(JSC::noSourceID);
+    if (!m_scripts.isValidKey(sourceID))
+        return makeUnexpected("Missing script for given scriptId"_s);
+
+    auto it = m_scripts.find(sourceID);
     if (it == m_scripts.end())
         return makeUnexpected("Missing script for given scriptId"_s);
 
@@ -1125,7 +1138,11 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>>>
 
 Protocol::ErrorStringOr<String> InspectorDebuggerAgent::getScriptSource(const Protocol::Debugger::ScriptId& scriptId)
 {
-    auto it = m_scripts.find(parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0));
+    auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(JSC::noSourceID);
+    if (!m_scripts.isValidKey(sourceID))
+        return makeUnexpected("Missing script for given scriptId"_s);
+
+    auto it = m_scripts.find(sourceID);
     if (it == m_scripts.end())
         return makeUnexpected("Missing script for given scriptId"_s);
 
@@ -1172,6 +1189,9 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::Debugger::Location>>> Inspec
 
     if (startLineNumber == endLineNumber && endColumnNumber < startColumnNumber)
         return makeUnexpected("Cannot have columnNumber of given end be before columnNumber of given start"_s);
+
+    if (!m_scripts.isValidKey(startSourceID))
+        return makeUnexpected("Missing script for scriptId in given start"_s);
 
     auto scriptIterator = m_scripts.find(startSourceID);
     if (scriptIterator == m_scripts.end())
