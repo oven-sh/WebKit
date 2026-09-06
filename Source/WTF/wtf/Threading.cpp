@@ -311,6 +311,13 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
 
 Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
 {
+    RefPtr thread = tryCreate(name, WTF::move(entryPoint), threadType, qos, schedulingPolicy, stackSpec);
+    RELEASE_ASSERT(thread);
+    return thread.releaseNonNull();
+}
+
+RefPtr<Thread> Thread::tryCreate(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
+{
     WTF::initialize();
 
     Ref thread = adoptRef(*new Thread(qos, schedulingPolicy, Thread::IsMain::No));
@@ -318,14 +325,18 @@ Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, Thr
     Ref context = adoptRef(*new NewThreadContext { name, WTF::move(entryPoint), thread.get() });
     {
         MutexLocker locker(context->mutex);
-        context->ref(); // Adopted by Thread::entryPoint
         if (stackSpec.kind() == StackAllocationSpecification::Kind::Default) {
             auto maybeSize = stackSize(threadType);
             if (maybeSize)
                 stackSpec = StackAllocationSpecification::RequestSize(maybeSize.value());
         }
-        bool success = thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy);
-        RELEASE_ASSERT(success);
+        context->ref(); // Adopted by Thread::entryPoint
+        if (!thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy)) {
+            // The OS refused the thread (EAGAIN from a pids/nproc limit, or no address space).
+            // Thread::entryPoint never runs, so the ref it would have adopted is dropped here.
+            context->deref();
+            return nullptr;
+        }
 
 #if HAVE(STACK_BOUNDS_FOR_NEW_THREAD)
         thread->m_stack = StackBounds::newThreadStackBounds(thread->m_handle);

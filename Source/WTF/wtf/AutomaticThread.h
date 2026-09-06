@@ -193,7 +193,8 @@ protected:
 private:
     friend class AutomaticThreadCondition;
 
-    void start(const AbstractLocker&);
+    // Returns false when the OS refused the thread; the AutomaticThread stays startable.
+    bool start(const AbstractLocker&);
 
 protected:
     Box<Lock> m_lock;

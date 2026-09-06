@@ -138,9 +138,12 @@ public:
     static dispatch_qos_class_t dispatchQOSClass(QOS);
 #endif
 
-    // Returns nullptr if thread creation failed.
+    // Crashes if thread creation failed.
     // The thread name must be a literal since on some platforms it's passed in to the thread.
     WTF_EXPORT_PRIVATE static Ref<Thread> create(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
+
+    // Returns nullptr if thread creation failed (for example EAGAIN from a pids or nproc limit).
+    WTF_EXPORT_PRIVATE static RefPtr<Thread> tryCreate(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
 
     // Returns Thread object.
     static Thread& currentSingleton();
@@ -408,7 +411,7 @@ protected:
     WordLock m_mutex;
     StackBounds m_stack { StackBounds::emptyBounds() };
     ThreadSafeWeakHashSet<ThreadGroup> m_threadGroups;
-    PlatformThreadHandle m_handle;
+    PlatformThreadHandle m_handle { };
     const uint32_t m_uid;
 #if OS(WINDOWS)
     ThreadIdentifier m_id { 0 };

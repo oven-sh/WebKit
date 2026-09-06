@@ -166,7 +166,7 @@ void AutomaticThread::join()
         m_isRunningCondition.wait(*m_lock);
 }
 
-void AutomaticThread::start(const AbstractLocker&)
+bool AutomaticThread::start(const AbstractLocker&)
 {
     RELEASE_ASSERT(m_isRunning);
     
@@ -186,7 +186,7 @@ void AutomaticThread::start(const AbstractLocker&)
         break;
     }
 
-    Thread::create(
+    RefPtr<Thread> thread = Thread::tryCreate(
         name(),
         [=, this] () {
             if (verbose)
@@ -251,7 +251,18 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
-        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec);
+    if (!thread) {
+        // The OS refused the thread. Leave this AutomaticThread startable so the
+        // next notify retries; the caller falls back to doing the work itself or
+        // to another thread of the same condition.
+        m_hasUnderlyingThread = false;
+        if (verbose)
+            dataLog(RawPointer(this), ": Failed to start automatic thread!\n");
+        return false;
+    }
+    thread->detach();
+    return true;
 }
 
 void AutomaticThread::threadDidStart()
