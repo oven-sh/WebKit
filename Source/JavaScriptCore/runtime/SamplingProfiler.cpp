@@ -107,23 +107,55 @@ static bool isFramePointerOnMachineStack(VM& vm, void* framePointer, const Abstr
 // or the native call thunk stored, which is at least as young as any JS frame on the
 // chain) or a live JS frame. Fall back to topCallFrame when neither is found, which
 // is what the walk below used unconditionally before.
+//
+// When the chain ends at a live JS frame, also report the address the C code returns
+// to in that frame's JIT code, so that the sample can be attributed to the exact call
+// site (with its inline stack) instead of the call site index stored in the frame. The
+// FTL does not store one before a call with no side effects. The return address is in
+// the C frame below the JS frame, or, when the C leaf has no frame of its own, in the
+// first words above the stack pointer.
 SUPPRESS_ASAN
-static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+static CallFrame* callFrameForSampleInCCode(VM& vm, void* machineFrame, void* stackPointer, const std::optional<Locker<Lock>>& executableAllocatorLocker, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker, void*& returnPC)
 {
     static constexpr unsigned maxCFramesToWalk = 32;
+    static constexpr unsigned maxStackWordsToScanForReturnPC = 16;
+    returnPC = nullptr;
     CallFrame* topCallFrame = vm.topCallFrame;
     auto* frame = static_cast<CallFrame*>(machineFrame);
+    CallFrame* previousFrame = nullptr;
     for (unsigned i = 0; i < maxCFramesToWalk; ++i) {
         if (!frame || !isFramePointerOnMachineStack(vm, frame, machineThreadsLocker))
             break;
         if (frame == topCallFrame)
             return frame;
         CodeBlock* codeBlock = frame->unsafeCodeBlock();
-        if (codeBlock && !frame->unsafeCallee().isNativeCallee() && vm.heap.codeBlockSet().contains(codeBlockSetLocker, codeBlock))
+        if (codeBlock && !frame->unsafeCallee().isNativeCallee() && vm.heap.codeBlockSet().contains(codeBlockSetLocker, codeBlock)) {
+            if (!executableAllocatorLocker)
+                return frame;
+            auto isJITPC = [&](void* pc) {
+                return ExecutableAllocator::singleton().isValidExecutableMemory(*executableAllocatorLocker, pc);
+            };
+            if (previousFrame) {
+                void* pc = reinterpret_cast<CallerFrameAndPC*>(previousFrame)->returnPC;
+                if (isJITPC(pc))
+                    returnPC = pc;
+                return frame;
+            }
+            auto** word = static_cast<void**>(stackPointer);
+            for (unsigned j = 0; j < maxStackWordsToScanForReturnPC && word < std::bit_cast<void**>(frame); ++j, ++word) {
+                if (!isFramePointerOnMachineStack(vm, word, machineThreadsLocker))
+                    break;
+                if (isJITPC(*word)) {
+                    returnPC = *word;
+                    break;
+                }
+            }
             return frame;
+        }
         auto* parent = static_cast<CallFrame*>(frame->unsafeCallerFrameOrEntryFrame());
         if (parent <= frame)
             break;
+        previousFrame = frame;
         frame = parent;
     }
     return topCallFrame;
@@ -436,10 +468,16 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             bool topFrameIsLLInt = false;
             RegExp* regExp = nullptr;
             void* llintPC;
+            void* machineStackPointer;
+            // The PC in JIT code that the top frame is attributed to. This is the
+            // sampled PC, or, when that PC is in C code, the address the C code
+            // returns to.
+            void* topPC;
             {
                 PlatformRegisters registers;
                 m_jscExecutionThread->getRegisters(threadSuspendLocker, registers);
                 machineFrame = MachineContext::framePointer(registers);
+                machineStackPointer = MachineContext::stackPointer(registers);
                 callFrame = static_cast<CallFrame*>(machineFrame);
                 auto instructionPointer = MachineContext::instructionPointer(registers);
                 if (instructionPointer)
@@ -448,6 +486,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     machinePC = nullptr;
                 llintPC = removeCodePtrTag(MachineContext::llintInstructionPointer(registers));
                 assertIsNotTagged(machinePC);
+                topPC = machinePC;
             }
 
             bool shouldAppendTopFrameAsCCode = false;
@@ -465,7 +504,11 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
                 regExp = m_vm.m_executingRegExp;
                 // We usually get here when we're executing C code. See callFrameForSampleInCCode.
-                callFrame = callFrameForSampleInCCode(m_vm, machineFrame, codeBlockSetLocker, machineThreadsLocker);
+                void* returnPC = nullptr;
+                callFrame = callFrameForSampleInCCode(m_vm, machineFrame, machineStackPointer, executableAllocatorLocker, codeBlockSetLocker, machineThreadsLocker, returnPC);
+                // The address before the return address is inside the call instruction, so it maps to the call site.
+                if (returnPC)
+                    topPC = static_cast<uint8_t*>(returnPC) - 1;
                 if (Options::collectExtraSamplingProfilerData() && !Options::sampleCCode())
                     shouldAppendTopFrameAsCCode = true;
             }
@@ -499,7 +542,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     stackTrace.append(UnprocessedStackFrame { machinePC });
                 stackTrace.appendRange(m_currentFrames.begin(), m_currentFrames.begin() + walkSize);
 
-                m_unprocessedStackTraces.append(UnprocessedStackTrace { timestamp, nowTime, machinePC, topFrameIsLLInt, llintPC, regExp, WTF::move(stackTrace) });
+                m_unprocessedStackTraces.append(UnprocessedStackTrace { timestamp, nowTime, topPC, topFrameIsLLInt, llintPC, regExp, WTF::move(stackTrace) });
 
                 if (didRunOutOfVectorSpace)
                     m_currentFrames.grow(m_currentFrames.size() * 1.25);
