@@ -347,33 +347,38 @@ JSValue JSPromise::asyncStackTraceContext() const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>& callback) const
+void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue, JSValue)>& callback) const
 {
     ASSERT(status() == Status::Pending);
     switch (inlineReactionKind()) {
     case InlineReactionKind::None: {
         for (auto* reaction = uncheckedDowncast<JSPromiseReaction>(payloadCell()); reaction; reaction = reaction->next()) {
             JSValue contextOrHandler;
+            JSValue secondHandler = jsUndefined();
             JSValue promise = reaction->promise();
             if (auto* slim = dynamicDowncast<JSSlimPromiseReaction>(reaction)) {
                 contextOrHandler = slim->handlerOrContext();
                 if (slim->promiseSlotIsAsyncContext())
                     promise = jsUndefined();
-            } else
-                contextOrHandler = uncheckedDowncast<JSFullPromiseReaction>(reaction)->context();
-            if (!callback(reaction->internalMicrotask(), promise, contextOrHandler))
+            } else {
+                // A full reaction is always a PromiseReactionJob that runs one of two handlers; its context is the embedder's argument to them.
+                auto* full = uncheckedDowncast<JSFullPromiseReaction>(reaction);
+                contextOrHandler = full->onFulfilled();
+                secondHandler = full->onRejected();
+            }
+            if (!callback(reaction->internalMicrotask(), promise, contextOrHandler, secondHandler))
                 return;
         }
         return;
     }
     case InlineReactionKind::InternalMicrotask: {
         JSCell* cell = inlineReactionCarriesAsyncContext() ? nullptr : payloadCell();
-        callback(inlineReactionMicrotask(), cell ? JSValue(cell) : jsUndefined(), m_slot.get());
+        callback(inlineReactionMicrotask(), cell ? JSValue(cell) : jsUndefined(), m_slot.get(), jsUndefined());
         return;
     }
     case InlineReactionKind::FulfillHandler:
     case InlineReactionKind::RejectHandler:
-        callback(InternalMicrotask::None, JSValue(inlineHandlerResultPromise()), m_slot.get());
+        callback(InternalMicrotask::None, JSValue(inlineHandlerResultPromise()), m_slot.get(), jsUndefined());
         return;
     }
 }

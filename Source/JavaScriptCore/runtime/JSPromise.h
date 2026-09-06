@@ -122,7 +122,11 @@ public:
     JSValue asyncStackTraceContext() const;
 
 #if USE(BUN_JSC_ADDITIONS)
-    void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
+    // Visits each pending reaction as (task, cell, handlerOrContext, secondHandler). For a PromiseReactionJob
+    // (InternalMicrotask::None) the cell is the derived promise, undefined when an embedder's then has no result
+    // promise, and the last two are the fulfill and reject handlers. For every other task the third argument is its
+    // context.
+    void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue, JSValue)>&) const;
 #endif
 
     JS_EXPORT_PRIVATE static JSPromise* resolvedPromise(JSGlobalObject*, JSValue);

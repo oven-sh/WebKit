@@ -40,8 +40,11 @@
 #include "InternalFieldTuple.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncFunctionGenerator.h"
+#include "JSBoundFunction.h"
+#include "JSFunctionWithFields.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseReaction.h"
+#include "VMInlines.h"
 #endif
 #include "ObjectConstructor.h"
 #include "SyntheticModuleRecord.h"
@@ -1213,8 +1216,23 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+// What the pending reactions hanging off a dynamic import's promise say about the EvaluatingAsync dependency the
+// imported graph is about to wait on (InnerModuleEvaluation step 12.b.v).
+enum class ImportPromiseGate : uint8_t {
+    // Every chain ends inside JS without reaching the dependency: nothing the dependency waits on is waiting on this
+    // import, so the spec wait is safe.
+    Released,
+    // A chain ends in the dependency's body, or in a module the dependency waits on: the wait is a deadlock.
+    Gates,
+    // A chain leaves JS (an embedder's then with no result promise, a host function handler) or the walk gave up:
+    // the walk cannot tell.
+    Escapes,
+};
+
+static ImportPromiseGate importPromiseGate(JSPromise* importPromise, CyclicModuleRecord* dependency)
 {
+    VM& vm = importPromise->vm();
+
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
         Vector<AbstractModuleRecord*, 8> work;
@@ -1248,12 +1266,47 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
     Vector<JSPromise*, 16> work;
     work.append(importPromise);
     bool found = false;
+    bool escapes = false;
 
     auto follow = [&](JSValue value) {
         if (JSCell* cell = cellOf(value)) {
             if (auto* promise = dynamicDowncast<JSPromise>(cell))
                 work.append(promise);
         }
+    };
+
+    // The promise a resolving function (new Promise executor, Promise.withResolvers) settles, or null.
+    auto resolvingFunctionTarget = [&](JSFunctionWithFields* function) -> JSValue {
+        ExecutableBase* executable = function->executable();
+        if (executable == vm.promiseResolvingFunctionResolveExecutable() || executable == vm.promiseResolvingFunctionRejectExecutable())
+            return function->getField(JSFunctionWithFields::Field::ResolvingPromise);
+        if (executable == vm.promiseFirstResolvingFunctionResolveExecutable() || executable == vm.promiseFirstResolvingFunctionRejectExecutable())
+            return function->getField(JSFunctionWithFields::Field::FirstResolvingPromise);
+        return { };
+    };
+
+    // A PromiseReactionJob handler. Script code is followed through the derived promise. A resolving function is
+    // followed to the promise it settles. Any other host callable is code the walk cannot see into.
+    auto visitHandler = [&](JSValue handler) {
+        if (handler.isUndefined())
+            return;
+        JSObject* callee = handler.getObject();
+        while (auto* bound = callee ? dynamicDowncast<JSBoundFunction>(callee) : nullptr)
+            callee = bound->targetFunction();
+        auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
+        if (!function) {
+            escapes = true;
+            return;
+        }
+        if (!function->isHostFunction())
+            return;
+        if (auto* withFields = dynamicDowncast<JSFunctionWithFields>(function)) {
+            if (JSValue target = resolvingFunctionTarget(withFields)) {
+                follow(target);
+                return;
+            }
+        }
+        escapes = true;
     };
 
     // A promise, or the async function or module body that an await or for-await resumes.
@@ -1268,8 +1321,17 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             found = resumesDependency(module);
     };
 
-    auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
+    auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context, JSValue secondHandler) -> bool {
         switch (task) {
+        case InternalMicrotask::None:
+            // A then() with no result promise is an embedder waiting on this promise from native code.
+            if (!cell.inherits<JSPromise>())
+                escapes = true;
+            else
+                follow(cell);
+            visitHandler(context);
+            visitHandler(secondHandler);
+            break;
         case InternalMicrotask::AsyncFunctionResume:
         case InternalMicrotask::AsyncModuleExecutionResume:
         case InternalMicrotask::AsyncGeneratorDriverResume:
@@ -1299,7 +1361,6 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
                 follow(globalContext->promise());
             break;
         }
-        case InternalMicrotask::None:
         case InternalMicrotask::PromiseResolveThenableJobFast:
         case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast:
         case InternalMicrotask::PromiseResolveThenableJob:
@@ -1325,6 +1386,8 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             follow(cell);
             break;
         default:
+            // Promise.race / Promise.any, async generator steps, Wasm streaming, opaque embedder jobs.
+            escapes = true;
             break;
         }
         return !found;
@@ -1338,10 +1401,12 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         if (!seen.add(promise).isNewEntry)
             continue;
         if (seen.size() > maxPromises)
-            return false;
+            return ImportPromiseGate::Escapes;
         promise->forEachPendingReaction(visitReaction);
     }
-    return found;
+    if (found)
+        return ImportPromiseGate::Gates;
+    return escapes ? ImportPromiseGate::Escapes : ImportPromiseGate::Released;
 }
 #endif
 
@@ -1470,9 +1535,26 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 12.b.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
             if (cyclic->asyncEvaluationOrder().hasOrder()) {
 #if USE(BUN_JSC_ADDITIONS)
-                // referrerAsyncOrder covers an import() whose promise reaches the suspended referrer only through native code (an HTTP round trip, a captured resolver), where the walk cannot follow.
-                bool deadlocks = cyclic->asyncEvaluationOrder().order() == referrerAsyncOrder
-                    || (dynamicImportPromise && importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic));
+                // Bun evaluates the importing graph at once instead of deadlocking when the suspended dependency
+                // itself waits on this import(). The walk over the import promise's reactions decides. When a chain
+                // leaves JS (an HTTP round trip back into the referrer's own server), the walk cannot tell, and the
+                // skip falls back to whether the dependency is the module the import() is written in. An import()
+                // written there that nothing waits on does not skip: the referrer finishes first, as in Node.
+                bool lexicalReferrer = cyclic->asyncEvaluationOrder().order() == referrerAsyncOrder;
+                bool deadlocks = lexicalReferrer;
+                if (dynamicImportPromise) {
+                    switch (importPromiseGate(dynamicImportPromise, cyclic)) {
+                    case ImportPromiseGate::Gates:
+                        deadlocks = true;
+                        break;
+                    case ImportPromiseGate::Escapes:
+                        deadlocks = lexicalReferrer;
+                        break;
+                    case ImportPromiseGate::Released:
+                        deadlocks = false;
+                        break;
+                    }
+                }
                 if (!deadlocks) {
 #endif
                 // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
