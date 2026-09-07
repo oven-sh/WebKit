@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CodeSpecializationKind.h"
+#include "DeclaredNamesLink.h"
 #include "ConstructAbility.h"
 #include "ConstructorKind.h"
 #include "ExecutableInfo.h"
@@ -181,6 +182,16 @@ public:
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const { return m_parentScopeTDZVariables; }
+    void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { ensureRareData().m_parentDeclaredNames = WTF::move(names); }
+    RefPtr<DeclaredNamesLink> takeParentDeclaredNames()
+    {
+        if (!m_rareData || !m_rareData->m_parentDeclaredNames)
+            return nullptr;
+        RefPtr<DeclaredNamesLink> result = std::exchange(m_rareData->m_parentDeclaredNames, nullptr);
+        if (m_rareData->isEmpty())
+            m_rareData = nullptr;
+        return result;
+    }
 
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames() const
     {
@@ -254,6 +265,16 @@ public:
         FixedVector<Identifier> m_generatorOrAsyncWrapperFunctionParameterNames;
         FixedVector<ClassElementDefinition> m_classElementDefinitions;
         PrivateNameEnvironment m_parentPrivateNameEnvironment;
+        // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
+        // enclosing scopes at the creation site. Never encoded into a bytecode cache.
+        RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
+
+        bool isEmpty() const
+        {
+            return m_classSource.isNull() && m_sourceURLDirective.isNull() && m_sourceMappingURLDirective.isNull()
+                && m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty() && m_classElementDefinitions.isEmpty()
+                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames;
+        }
     };
 
     NeedsClassFieldInitializer needsClassFieldInitializer() const { return static_cast<NeedsClassFieldInitializer>(m_needsClassFieldInitializer); }

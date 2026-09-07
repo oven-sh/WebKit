@@ -31,7 +31,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include <JavaScriptCore/ConcurrentJSLock.h>
-#include <JavaScriptCore/DeclaredNamesLink.h>
 #include <JavaScriptCore/DFGDoesGCCheck.h>
 #include <JavaScriptCore/ExceptionEventLocation.h>
 #include <JavaScriptCore/FunctionHasExecutedCache.h>
@@ -99,9 +98,6 @@ using WTF::SimpleStats;
 using WTF::StackTrace;
 
 namespace JSC {
-
-class DeclaredNamesLink;
-class UnlinkedFunctionExecutable;
 
 class ArgList;
 class BuiltinExecutables;
@@ -283,11 +279,6 @@ public:
     JS_EXPORT_PRIVATE static RefPtr<VM> tryCreate(HeapType = HeapType::Small, WTF::RunLoop* = nullptr);
     static Ref<VM> createContextGroup(HeapType = HeapType::Small);
     JS_EXPORT_PRIVATE ~VM();
-
-    // Only while generating with OptimizeBytecode::Yes: the enclosing declarations of function executables that have
-    // been created but not generated yet (taken when the executable is generated, cleared when the recursive
-    // generation that created them finishes).
-    UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, RefPtr<DeclaredNamesLink>> m_pendingDeclaredNames;
 
     Watchdog* watchdog() { return m_watchdog.getIfExists(); }
     Watchdog& ensureWatchdog() { return m_watchdog.get(*this); }

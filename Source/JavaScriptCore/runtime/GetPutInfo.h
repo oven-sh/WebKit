@@ -83,10 +83,14 @@ enum ResolveType : unsigned {
     Dynamic
 };
 
-// Only in unlinked op_resolve_scope emitted by the bytecode optimizer: the variable lives in the environment record
-// (resolveType - firstStaticClosureVarResolveType) hops out from the function's own scope, plus localScopeDepth.
-// Linking turns it into ClosureVar without any name lookups.
+// Only in the resolveType operand of an *unlinked* op_resolve_scope emitted by the bytecode optimizer: the variable
+// lives in the environment record staticClosureVarHops(type) hops out from the function's own scope (plus the
+// instruction's localScopeDepth). CodeBlock linking turns it into ordinary ClosureVar metadata without name lookups;
+// no other consumer sees these values.
 static constexpr unsigned firstStaticClosureVarResolveType = 32;
+inline bool isStaticClosureVarResolveType(ResolveType type) { return static_cast<unsigned>(type) >= firstStaticClosureVarResolveType; }
+inline unsigned staticClosureVarHops(ResolveType type) { return static_cast<unsigned>(type) - firstStaticClosureVarResolveType; }
+inline ResolveType staticClosureVarResolveType(unsigned hops) { return static_cast<ResolveType>(firstStaticClosureVarResolveType + hops); }
 
 enum class InitializationMode : unsigned {
     Initialization,      // "let x = 20;"
@@ -121,6 +125,8 @@ ALWAYS_INLINE const char* resolveTypeName(ResolveType type)
         "UnresolvedPropertyWithVarInjectionChecks",
         "Dynamic"
     });
+    if (isStaticClosureVarResolveType(type))
+        return "StaticClosureVar";
     return names[type];
 }
 

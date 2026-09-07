@@ -604,9 +604,9 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             const Identifier& ident = identifier(bytecode.m_var);
             RELEASE_ASSERT(bytecode.m_resolveType != ResolvedClosureVar);
 
-            if (static_cast<unsigned>(bytecode.m_resolveType) >= firstStaticClosureVarResolveType) {
+            if (isStaticClosureVarResolveType(bytecode.m_resolveType)) {
                 // Statically resolved by the bytecode optimizer: a pointer walk, no name lookups.
-                unsigned outerHops = static_cast<unsigned>(bytecode.m_resolveType) - firstStaticClosureVarResolveType;
+                unsigned outerHops = staticClosureVarHops(bytecode.m_resolveType);
                 JSScope* environment = scope;
                 for (unsigned i = 0; i < outerHops; ++i)
                     environment = environment->next();

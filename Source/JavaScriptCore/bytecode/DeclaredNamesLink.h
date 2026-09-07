@@ -30,20 +30,47 @@
 
 namespace JSC {
 
-// The names lexically declared by the scopes enclosing a function at the point where its executable is created
-// (one link per enclosing function/program, innermost first). Only built while generating bytecode for a cache
-// image; the bytecode optimizer uses it to tell free variables that resolve to an environment record (stable for the
-// lifetime of an activation) from ones that fall through to the global object.
+// The scopes enclosing a function at the point where its executable is created: one link per enclosing
+// function/program (innermost first), each with the names it declares and the environment records it has on the
+// scope chain right then. Only built while generating with OptimizeBytecode::Yes; the bytecode optimizer uses it to
+// locate free variables statically and to tell environment-record bindings (stable for the lifetime of an
+// activation) from names that fall through to the global object.
 class DeclaredNamesLink : public RefCounted<DeclaredNamesLink> {
 public:
-    // One environment record that is on the scope chain at the creation site, innermost first: the names that
-    // live in it and their slots. A barrier frame stands for a `with` object (anything past it is dynamic).
-    struct Frame {
-        bool isBarrier { false };
-        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> slots; // name -> ScopeOffset
+    // Names declared by one scope of the enclosing function. Chained innermost first and shared between every
+    // function created while that scope is open, so building a link is O(1) per function.
+    struct Names : public RefCounted<Names> {
+        static Ref<Names> create(IdentifierSet&& names, RefPtr<Names> next) { return adoptRef(*new Names { WTF::move(names), WTF::move(next) }); }
+        IdentifierSet names;
+        RefPtr<Names> next;
+
+    private:
+        Names(IdentifierSet&& names, RefPtr<Names> next)
+            : names(WTF::move(names))
+            , next(WTF::move(next))
+        {
+        }
+    };
+    // One environment record that is on the scope chain at the creation site (innermost first): the names that live
+    // in it and their slots. A barrier frame stands for a `with` object or a sloppy eval's var scope: anything at or
+    // past it is dynamic.
+    struct Frame : public RefCounted<Frame> {
+        using Slots = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset
+        static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next) }); }
+        bool isBarrier;
+        Slots slots;
+        RefPtr<Frame> next;
+
+    private:
+        Frame(bool isBarrier, Slots&& slots, RefPtr<Frame> next)
+            : isBarrier(isBarrier)
+            , slots(WTF::move(slots))
+            , next(WTF::move(next))
+        {
+        }
     };
 
-    static Ref<DeclaredNamesLink> create(IdentifierSet&& names, Vector<Frame>&& frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
     {
         return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, WTF::move(parent)));
     }
@@ -64,39 +91,29 @@ public:
     {
         unsigned hops = 0;
         for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
-            for (auto& frame : link->m_frames) {
-                if (frame.isBarrier)
+            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
+                if (frame->isBarrier)
                     return { };
-                auto it = frame.slots.find(name);
-                if (it != frame.slots.end())
+                auto it = frame->slots.find(name);
+                if (it != frame->slots.end())
                     return { Resolution::Slot, hops, it->value };
                 ++hops;
             }
-            if (link->m_names.contains(name))
-                return { Resolution::Stable, 0, 0 };
+            for (const Names* names = link->m_names.get(); names; names = names->next.get()) {
+                if (names->names.contains(name))
+                    return { Resolution::Stable, 0, 0 };
+            }
             if (link->m_isDynamicBarrier)
                 return { };
         }
         return { };
     }
 
-    // True if some enclosing scope declares |name| before the lookup would have to cross a scope whose contents can
-    // change at run time (sloppy direct eval, with).
-    bool isStablyDeclared(UniquedStringImpl* name) const
-    {
-        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
-            if (link->m_names.contains(name))
-                return true;
-            if (link->m_isDynamicBarrier)
-                return false;
-        }
-        return false;
-    }
-
-    DeclaredNamesLink* parent() const { return m_parent.get(); }
+    Names* names() const { return m_names.get(); }
+    Frame* frames() const { return m_frames.get(); }
 
 private:
-    DeclaredNamesLink(IdentifierSet&& names, Vector<Frame>&& frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    DeclaredNamesLink(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
         : m_names(WTF::move(names))
         , m_frames(WTF::move(frames))
         , m_parent(WTF::move(parent))
@@ -104,8 +121,8 @@ private:
     {
     }
 
-    IdentifierSet m_names;
-    Vector<Frame> m_frames;
+    RefPtr<Names> m_names;
+    RefPtr<Frame> m_frames;
     RefPtr<DeclaredNamesLink> m_parent;
     bool m_isDynamicBarrier;
 };

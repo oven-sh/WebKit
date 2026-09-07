@@ -1171,6 +1171,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     bool isWithScope = false;
 
     m_lexicalScopeStack.append({ moduleEnvironmentSymbolTable, m_topLevelScopeRegister, isWithScope, constantSymbolTable->index() });
+    declaredNamesScopesChanged();
     emitPrefillStackTDZVariables(lexicalVariables, moduleEnvironmentSymbolTable);
 
     // makeFunction assumes that there's correct TDZ stack entries.
@@ -1438,6 +1439,7 @@ void BytecodeGenerator::initializeVarLexicalEnvironment(int symbolTableConstantI
     }
     bool isWithScope = false;
     m_lexicalScopeStack.append({ functionSymbolTable, m_lexicalEnvironmentRegister, isWithScope, symbolTableConstantIndex });
+    declaredNamesScopesChanged();
     m_varScopeLexicalScopeStackIndex = m_lexicalScopeStack.size() - 1;
 }
 
@@ -2304,6 +2306,7 @@ void BytecodeGenerator::pushLexicalScopeInternal(VariableEnvironment& environmen
 
     bool isWithScope = false;
     m_lexicalScopeStack.append({ symbolTable, newScope, isWithScope, symbolTableConstantIndex });
+    declaredNamesScopesChanged();
     pushTDZVariables(environment, tdzCheckOptimization, tdzRequirement);
 
     if (tdzRequirement == TDZRequirement::UnderTDZ)
@@ -2450,6 +2453,7 @@ void BytecodeGenerator::popLexicalScopeInternal(VariableEnvironment& environment
         environment.markAllVariablesAsCaptured();
 
     auto stackEntry = m_lexicalScopeStack.takeLast();
+    declaredNamesScopesChanged();
     SymbolTable* symbolTable = stackEntry.m_symbolTable;
     bool hasCapturedVariables = false;
     for (auto& entry : environment) {
@@ -2473,6 +2477,7 @@ void BytecodeGenerator::popLexicalScopeInternal(VariableEnvironment& environment
     }
 
     m_TDZStack.removeLast();
+    declaredNamesScopesChanged();
 }
 
 void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvironmentNode* node, RegisterID* loopSymbolTable)
@@ -3345,6 +3350,7 @@ void BytecodeGenerator::pushTDZVariables(const VariableEnvironment& environment,
         map.add(entry.key, entry.value.isFunction() ? TDZNecessityLevel::NotNeeded : level);
 
     m_TDZStack.append(TDZStackEntry { WTF::move(map), nullptr });
+    declaredNamesScopesChanged();
 }
 
 Vector<Identifier> BytecodeGenerator::getParameterNames() const
@@ -3377,51 +3383,77 @@ std::optional<PrivateNameEnvironment> BytecodeGenerator::getAvailablePrivateAcce
 
 RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
 {
-    IdentifierSet names;
-    for (auto& entry : m_TDZStack) {
-        for (auto& name : entry.first.keys())
-            names.add(name);
+    if (!m_functionDeclaredNames) {
+        IdentifierSet names;
+        for (auto& entry : m_scopeNode->varDeclarations())
+            names.add(entry.key);
+        for (auto& entry : m_scopeNode->lexicalVariables())
+            names.add(entry.key);
+        if (m_scopeNode->isFunctionNode()) {
+            auto* functionNode = static_cast<FunctionNode*>(m_scopeNode);
+            for (auto& name : getParameterNames())
+                names.add(name.impl());
+            if (!functionNode->ident().isNull())
+                names.add(functionNode->ident().impl());
+            if (!isArrowFunction())
+                names.add(propertyNames().arguments.impl());
+        }
+        m_functionDeclaredNames = DeclaredNamesLink::Names::create(WTF::move(names), nullptr);
     }
-    for (auto& entry : m_scopeNode->varDeclarations())
-        names.add(entry.key);
-    for (auto& entry : m_scopeNode->lexicalVariables())
-        names.add(entry.key);
-    if (m_scopeNode->isFunctionNode()) {
-        auto* functionNode = static_cast<FunctionNode*>(m_scopeNode);
-        for (auto& name : getParameterNames())
-            names.add(name.impl());
-        if (!functionNode->ident().isNull())
-            names.add(functionNode->ident().impl());
-        if (!isArrowFunction())
-            names.add(propertyNames().arguments.impl());
-    }
-    bool isDynamicBarrier = (m_scopeNode->usesEval() && !m_ecmaMode.isStrict()) || (m_scopeNode->features() & WithFeature) || m_codeType == EvalCode;
 
-    // The environment records that exist right now, innermost first. Only scopes that allocated an environment
-    // (m_scope) are on the chain at run time.
-    Vector<DeclaredNamesLink::Frame> frames;
-    for (unsigned i = m_lexicalScopeStack.size(); i--;) {
+    // One shared Names node per TDZ stack entry, innermost last.
+    m_declaredNamesForTDZStack.grow(m_TDZStack.size());
+    RefPtr<DeclaredNamesLink::Names> names = m_functionDeclaredNames;
+    for (unsigned i = 0; i < m_TDZStack.size(); ++i) {
+        auto& node = m_declaredNamesForTDZStack[i];
+        if (!node || node->next != names) {
+            IdentifierSet set;
+            for (auto& name : m_TDZStack[i].first.keys())
+                set.add(name);
+            node = DeclaredNamesLink::Names::create(WTF::move(set), names);
+        }
+        names = node;
+    }
+
+    // The environment records that exist right now. Only scopes that allocated an environment (m_scope) are on the
+    // chain at run time; a `with` scope hides everything below it.
+    m_framesForLexicalScopeStack.grow(m_lexicalScopeStack.size());
+    m_frameSymbolTableSizes.grow(m_lexicalScopeStack.size());
+    RefPtr<DeclaredNamesLink::Frame> frames;
+    for (unsigned i = 0; i < m_lexicalScopeStack.size(); ++i) {
         auto& entry = m_lexicalScopeStack[i];
+        auto& node = m_framesForLexicalScopeStack[i];
         if (entry.m_isWithScope) {
-            frames.append({ true, { } });
-            break;
+            if (!node || !node->isBarrier || node->next != frames)
+                node = DeclaredNamesLink::Frame::create(true, { }, frames);
+            frames = node;
+            continue;
         }
         if (!entry.m_scope || !entry.m_symbolTable)
             continue;
-        DeclaredNamesLink::Frame frame;
-        {
-            ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
+        ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
+        unsigned size = entry.m_symbolTable->size(locker);
+        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size) {
+            DeclaredNamesLink::Frame::Slots slots;
             for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
                 VarOffset offset = it->value.varOffset();
                 if (offset.isScope())
-                    frame.slots.add(it->key, offset.scopeOffset().offset());
+                    slots.add(it->key, offset.scopeOffset().offset());
             }
+            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames);
+            m_frameSymbolTableSizes[i] = size;
         }
-        frames.append(WTF::move(frame));
+        frames = node;
     }
-    if (m_codeType == EvalCode || (m_scopeNode->usesEval() && !m_ecmaMode.isStrict()))
-        frames.insert(0, DeclaredNamesLink::Frame { true, { } });
-    return DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
+    bool hasSloppyEval = m_codeType == EvalCode || (m_scopeNode->usesEval() && !m_ecmaMode.isStrict());
+    if (hasSloppyEval)
+        frames = DeclaredNamesLink::Frame::create(true, { }, WTF::move(frames)); // eval can add vars to the innermost var scope
+    bool isDynamicBarrier = hasSloppyEval || (m_scopeNode->features() & WithFeature);
+
+    // Functions created back to back in the same scope (the common case) share one link.
+    if (!m_cachedDeclaredNames || m_cachedDeclaredNames->names() != names.get() || m_cachedDeclaredNames->frames() != frames.get())
+        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
+    return m_cachedDeclaredNames;
 }
 
 RefPtr<TDZEnvironmentLink> BytecodeGenerator::getVariablesUnderTDZ()
@@ -3472,6 +3504,7 @@ void BytecodeGenerator::preserveTDZStack(BytecodeGenerator::PreservedTDZStack& p
 void BytecodeGenerator::restoreTDZStack(const BytecodeGenerator::PreservedTDZStack& preservedStack)
 {
     m_TDZStack = preservedStack.m_preservedTDZStack;
+    m_declaredNamesForTDZStack.shrink(0);
 }
 
 RegisterID* BytecodeGenerator::emitNewObject(RegisterID* dst)
@@ -4195,6 +4228,7 @@ RegisterID* BytecodeGenerator::emitPushWithScope(RegisterID* objectScope)
 
     move(scopeRegister(), newScope);
     m_lexicalScopeStack.append({ nullptr, newScope, true, 0 });
+    declaredNamesScopesChanged();
 
     return newScope;
 }
@@ -4210,6 +4244,7 @@ void BytecodeGenerator::emitPopWithScope()
     emitGetParentScope(scopeRegister(), scopeRegister());
     popLocalControlFlowScope();
     auto stackEntry = m_lexicalScopeStack.takeLast();
+    declaredNamesScopesChanged();
     stackEntry.m_scope->deref();
     RELEASE_ASSERT(stackEntry.m_isWithScope);
 }
