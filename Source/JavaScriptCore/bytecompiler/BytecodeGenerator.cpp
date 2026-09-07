@@ -2477,7 +2477,6 @@ void BytecodeGenerator::popLexicalScopeInternal(VariableEnvironment& environment
     }
 
     m_TDZStack.removeLast();
-    declaredNamesScopesChanged();
 }
 
 void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvironmentNode* node, RegisterID* loopSymbolTable)
@@ -3350,7 +3349,6 @@ void BytecodeGenerator::pushTDZVariables(const VariableEnvironment& environment,
         map.add(entry.key, entry.value.isFunction() ? TDZNecessityLevel::NotNeeded : level);
 
     m_TDZStack.append(TDZStackEntry { WTF::move(map), nullptr });
-    declaredNamesScopesChanged();
 }
 
 Vector<Identifier> BytecodeGenerator::getParameterNames() const
@@ -3383,37 +3381,17 @@ std::optional<PrivateNameEnvironment> BytecodeGenerator::getAvailablePrivateAcce
 
 RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
 {
-    if (!m_functionDeclaredNames) {
+    // A name a nested function can refer to is captured, so it has a slot in one of the Frames below; the only
+    // stable bindings without a slot are a module's imports.
+    if (!m_functionDeclaredNames && m_codeType == ModuleCode) {
         IdentifierSet names;
-        for (auto& entry : m_scopeNode->varDeclarations())
-            names.add(entry.key);
-        for (auto& entry : m_scopeNode->lexicalVariables())
-            names.add(entry.key);
-        if (m_scopeNode->isFunctionNode()) {
-            auto* functionNode = static_cast<FunctionNode*>(m_scopeNode);
-            for (auto& name : getParameterNames())
-                names.add(name.impl());
-            if (!functionNode->ident().isNull())
-                names.add(functionNode->ident().impl());
-            if (!isArrowFunction())
-                names.add(propertyNames().arguments.impl());
+        for (auto& entry : m_scopeNode->lexicalVariables()) {
+            if (entry.value.isImported())
+                names.add(entry.key);
         }
-        m_functionDeclaredNames = DeclaredNamesLink::Names::create(WTF::move(names), nullptr);
+        m_functionDeclaredNames = DeclaredNamesLink::Names::create(WTF::move(names));
     }
-
-    // One shared Names node per TDZ stack entry, innermost last.
-    m_declaredNamesForTDZStack.grow(m_TDZStack.size());
     RefPtr<DeclaredNamesLink::Names> names = m_functionDeclaredNames;
-    for (unsigned i = 0; i < m_TDZStack.size(); ++i) {
-        auto& node = m_declaredNamesForTDZStack[i];
-        if (!node || node->next != names) {
-            IdentifierSet set;
-            for (auto& name : m_TDZStack[i].first.keys())
-                set.add(name);
-            node = DeclaredNamesLink::Names::create(WTF::move(set), names);
-        }
-        names = node;
-    }
 
     // The environment records that exist right now. Only scopes that allocated an environment (m_scope) are on the
     // chain at run time; a `with` scope hides everything below it.
@@ -3504,7 +3482,6 @@ void BytecodeGenerator::preserveTDZStack(BytecodeGenerator::PreservedTDZStack& p
 void BytecodeGenerator::restoreTDZStack(const BytecodeGenerator::PreservedTDZStack& preservedStack)
 {
     m_TDZStack = preservedStack.m_preservedTDZStack;
-    m_declaredNamesForTDZStack.shrink(0);
 }
 
 RegisterID* BytecodeGenerator::emitNewObject(RegisterID* dst)

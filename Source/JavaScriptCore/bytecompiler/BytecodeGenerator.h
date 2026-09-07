@@ -1344,17 +1344,14 @@ namespace JSC {
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
         bool m_optimizeBytecode;
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
-        // currentDeclaredNames() state: one shared node per m_TDZStack / m_lexicalScopeStack entry (built lazily,
-        // dropped when the entry is popped), the function-level names, and the last link handed out.
-        Vector<RefPtr<DeclaredNamesLink::Names>> m_declaredNamesForTDZStack;
+        // currentDeclaredNames() state: one shared Frame per m_lexicalScopeStack entry (built lazily, dropped when the
+        // entry is popped), the module's import names, and the last link handed out.
         Vector<RefPtr<DeclaredNamesLink::Frame>> m_framesForLexicalScopeStack;
         Vector<unsigned> m_frameSymbolTableSizes; // slots each m_framesForLexicalScopeStack entry was built from
         RefPtr<DeclaredNamesLink::Names> m_functionDeclaredNames;
         RefPtr<DeclaredNamesLink> m_cachedDeclaredNames;
         void declaredNamesScopesChanged()
         {
-            if (m_declaredNamesForTDZStack.size() > m_TDZStack.size())
-                m_declaredNamesForTDZStack.shrink(m_TDZStack.size());
             if (m_framesForLexicalScopeStack.size() > m_lexicalScopeStack.size()) {
                 m_framesForLexicalScopeStack.shrink(m_lexicalScopeStack.size());
                 m_frameSymbolTableSizes.shrink(m_lexicalScopeStack.size());

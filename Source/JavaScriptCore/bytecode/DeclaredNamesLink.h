@@ -37,17 +37,15 @@ namespace JSC {
 // activation) from names that fall through to the global object.
 class DeclaredNamesLink : public RefCounted<DeclaredNamesLink> {
 public:
-    // Names declared by one scope of the enclosing function. Chained innermost first and shared between every
-    // function created while that scope is open, so building a link is O(1) per function.
+    // Names an enclosing module binds stably without giving them an environment slot of its own (imports). Every
+    // other name a nested function can see is captured and therefore has a slot in some Frame.
     struct Names : public RefCounted<Names> {
-        static Ref<Names> create(IdentifierSet&& names, RefPtr<Names> next) { return adoptRef(*new Names { WTF::move(names), WTF::move(next) }); }
+        static Ref<Names> create(IdentifierSet&& names) { return adoptRef(*new Names { WTF::move(names) }); }
         IdentifierSet names;
-        RefPtr<Names> next;
 
     private:
-        Names(IdentifierSet&& names, RefPtr<Names> next)
+        explicit Names(IdentifierSet&& names)
             : names(WTF::move(names))
-            , next(WTF::move(next))
         {
         }
     };
@@ -99,10 +97,8 @@ public:
                     return { Resolution::Slot, hops, it->value };
                 ++hops;
             }
-            for (const Names* names = link->m_names.get(); names; names = names->next.get()) {
-                if (names->names.contains(name))
-                    return { Resolution::Stable, 0, 0 };
-            }
+            if (link->m_names && link->m_names->names.contains(name))
+                return { Resolution::Stable, 0, 0 };
             if (link->m_isDynamicBarrier)
                 return { };
         }
