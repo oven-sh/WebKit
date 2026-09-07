@@ -110,9 +110,9 @@ class VMLite;
 // namespace.
 // =============================================================================
 #if OS(LINUX)
-extern "C" __attribute__((tls_model("initial-exec"))) thread_local VMLite* g_jscCurrentVMLite;
+extern "C" __attribute__((tls_model("initial-exec"))) constinit thread_local VMLite* g_jscCurrentVMLite;
 #else
-extern "C" thread_local VMLite* g_jscCurrentVMLite;
+extern "C" constinit thread_local VMLite* g_jscCurrentVMLite;
 #endif
 
 // =============================================================================
@@ -598,7 +598,13 @@ static_assert(OBJECT_OFFSETOF(VMLite, primitives) == 0);
 // no JS objects, so 0 is unobservable there); never notTTLTID (0x7fff).
 // =============================================================================
 
-JS_EXPORT_PRIVATE ButterflyTID currentButterflyTID();
+// Inline (fifth round): every flag-on C++ butterfly install and E4/N1 check
+// calls this; it is one initial-exec TLS load and a field load.
+ALWAYS_INLINE ButterflyTID currentButterflyTID()
+{
+    VMLite* lite = VMLite::currentIfExists();
+    return lite ? lite->tid : 0;
+}
 
 // TID-tag hook (§6.7; jit CS3/I19 provider). Null by default; jit task 1b
 // (ConcurrentButterflyOperations.cpp, initializeButterflyTIDTagForCurrentThread)

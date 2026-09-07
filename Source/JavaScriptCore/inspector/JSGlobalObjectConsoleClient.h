@@ -58,6 +58,7 @@ public:
     void setPersistentHeapAgent(InspectorHeapAgent* agent) { m_heapAgent = agent; }
 
 private:
+    bool consoleAgentUsable() const;
     void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<ScriptArguments>&&) final;
     void count(JSC::JSGlobalObject*, const String& label) final;
     void countReset(JSC::JSGlobalObject*, const String& label) final;

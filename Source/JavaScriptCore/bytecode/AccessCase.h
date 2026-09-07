@@ -232,6 +232,12 @@ public:
     void convertToNonStringPrimitiveKeyAccessType(AccessType);
     PropertyOffset offset() const { return m_offset; }
 
+    bool isTransition() const
+    {
+        return m_type == Transition || m_type == IndexedUndefinedKeyTransition || m_type == IndexedNullKeyTransition
+            || m_type == IndexedTrueKeyTransition || m_type == IndexedFalseKeyTransition;
+    }
+
     Structure* structure() const
     {
         if (m_type == Transition || m_type == Delete || m_type == SetPrivateBrand

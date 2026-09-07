@@ -354,7 +354,7 @@ protected:
 #if TSAN_ENABLED
         return WTF::atomicLoad(&m_fiber, std::memory_order_acquire);
 #else
-        return WTF::atomicLoad(&m_fiber, std::memory_order_relaxed);
+        return m_fiber; // Plain: one aligned word; lets isRope()/length()/... fold as on main.
 #endif
     }
 
@@ -636,7 +636,8 @@ public:
 private:
     friend class LLIntOffsetsExtractor;
 
-    void convertToNonRope(String&&) const;
+    ALWAYS_INLINE void convertToNonRope(String&&) const;
+    void convertToNonRopeGILOff(String&&, bool isAtom) const;
 
     // Constructor-only (see tsanRelaxedStore): the single writer recombines
     // the word with a plain load and store in production.

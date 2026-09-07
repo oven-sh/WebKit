@@ -28,6 +28,7 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <cstdint>
 #include <limits>
+#include <wtf/Atomics.h>
 #include <wtf/Assertions.h>
 #include <wtf/text/WTFString.h>
 
@@ -45,7 +46,7 @@ JS_EXPORT_PRIVATE TimeZoneID utcTimeZoneIDSlow();
 
 inline TimeZoneID utcTimeZoneID()
 {
-    unsigned value = utcTimeZoneIDStorage;
+    unsigned value = racyLoad(utcTimeZoneIDStorage); // Set once (call_once in the slow path); process-global, read from any thread.
     if (value == std::numeric_limits<TimeZoneID>::max())
         return utcTimeZoneIDSlow();
     return value;

@@ -30,6 +30,8 @@
 #include "config.h"
 #include "Interpreter.h"
 
+#include "JSThreadsSafepoint.h"
+
 #include "AbortReason.h"
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
@@ -1647,6 +1649,9 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
         }
 
         bool isGlobalVariableEnvironment = variableObject->isGlobalObject();
+        // See JSGlobalObject::globalDeclarationLock(): the global leg's checks
+        // and binding creation are one step GIL off.
+        GILOffFirstUseLocker declarationLocker(JSGlobalObject::globalDeclarationLock(), vm, isGlobalVariableEnvironment && vm.gilOffWithProcessGate());
         if (isGlobalVariableEnvironment) {
             for (auto& slot : functionDecls) {
                 FunctionExecutable* function = slot.get();

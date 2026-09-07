@@ -799,6 +799,10 @@ public:
     // This get function only looks at the property map.
     JSValue getDirect(VM& vm, PropertyName propertyName) const
     {
+        if (Options::useJSThreads()) [[unlikely]] {
+            unsigned unusedAttributes;
+            return getDirectRevalidatingConcurrently(vm, propertyName, unusedAttributes);
+        }
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName);
         checkOffset(offset, structure->inlineCapacity());
@@ -807,11 +811,22 @@ public:
     
     JSValue getDirect(VM& vm, PropertyName propertyName, unsigned& attributes) const
     {
+        if (Options::useJSThreads()) [[unlikely]]
+            return getDirectRevalidatingConcurrently(vm, propertyName, attributes);
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName, attributes);
         checkOffset(offset, structure->inlineCapacity());
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
+
+    // Flag-on body of the two above (I34/M7(c)): Structure::get can
+    // materialize a property table, which allocates and can park in another
+    // thread's stop, so the {structure, offset, attributes} sampled before the
+    // slot load can be stale by the time of the load (a kind change under §6
+    // L4-K, a delete and a re-add). Re-checks the raw structureID and, for a
+    // pinned table, its edit stamp after the load and re-derives on a mismatch,
+    // as getOwnNonIndexPropertySlot does.
+    JS_EXPORT_PRIVATE JSValue getDirectRevalidatingConcurrently(VM&, PropertyName, unsigned& attributes, PropertyOffset* offsetOut = nullptr) const;
 
     PropertyOffset getDirectOffset(VM& vm, PropertyName propertyName)
     {
@@ -1519,6 +1534,16 @@ private:
     // WHOLE operation from a fresh structureID/tag (§2 dispatch). Defined in
     // JSObjectInlines.h.
     inline bool tryPutDirectTransitionConcurrent(VM&, Structure* expectedSource, StructureID sourceID, Structure* newStructure, PropertyOffset, JSValue);
+    // SPEC-objectmodel §6 L4-K (kind change under a stop). GIL off, a
+    // defineOwnProperty that turns an existing property of a cacheable
+    // structure from a data property into an accessor (or a custom) or back
+    // stores the new value and publishes the new structure inside one
+    // stop-the-world window, so that no lock-free reader keyed on either
+    // structure (an inline cache, an LLInt cache, DFG code) is between its
+    // structure check and its slot access while the slot changes kind; DFG
+    // code with a hoisted check parked at a poll is jettisoned by the window's
+    // heap-fact epoch bump. false = RESTART.
+    NEVER_INLINE bool definePropertyChangingKindGILOff(VM&, Structure* expectedSource, StructureID sourceID, PropertyName, PropertyOffset, unsigned newAttributes, JSValue);
 
     // SPEC-objectmodel §6 (review round 3): regime guard for the cell-locked
     // dictionary / without-transition adds. The under-lock classification
@@ -1635,10 +1660,10 @@ protected:
         : JSObject(vm, structure)
         , m_butterfly(butterfly, WriteBarrierEarlyInit)
     {
-        // SPEC-objectmodel §2.1/Task 2: stamp the allocating thread's TID at
-        // first install. Pre-escape (object not yet visible to other threads),
-        // so a plain store is the sanctioned E4-eligible install form (N3).
-        if (Options::useJSThreads() && butterfly) [[unlikely]]
+        // SPEC-objectmodel §2/§2.1 (r16 N1-I, I40): stamp the allocating
+        // thread's TID at birth, butterfly or not - the tag of a butterfly-less
+        // word names the instance owner. Pre-escape, so a plain store.
+        if (Options::useJSThreads()) [[unlikely]]
             m_butterfly.setWithoutBarrier(std::bit_cast<Butterfly*>(encodeButterfly(butterfly, currentButterflyTID(), false)));
     }
 
@@ -1646,6 +1671,8 @@ protected:
         : JSObject(CreatingWellDefinedBuiltinCell, structureID, blob)
         , m_butterfly(nullptr, WriteBarrierEarlyInit)
     {
+        if (Options::useJSThreads()) [[unlikely]]
+            m_butterfly.setWithoutBarrier(std::bit_cast<Butterfly*>(butterflyLessWordForCurrentThread())); // I40
     }
 
 private:

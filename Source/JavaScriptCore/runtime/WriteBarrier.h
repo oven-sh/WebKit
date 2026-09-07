@@ -373,7 +373,7 @@ public:
 
     void clear()
     {
-        m_structureID = { };
+        StructureID::relaxedStore(&m_structureID, StructureID()); // pairs with value()'s relaxed read (lock-free cross-thread readers)
     }
 
     explicit operator bool() const

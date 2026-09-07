@@ -55,7 +55,15 @@ public:
     
     unsigned cellSize() const;
     
-    LocalAllocator* localAllocator() const { return m_localAllocator; }
+    LocalAllocator* localAllocator() const { ASSERT(!isEncodedTLCSlot()); return m_localAllocator; }
+
+    // GIL off, allocation profiles cannot bake a LocalAllocator* (those are
+    // per thread); they store the size class's thread-local-cache slot as a
+    // tagged small integer instead, and the JIT resolves it through the
+    // running thread's VMLite (AssemblyHelpers::emitResolveProfiledAllocator).
+    // Never dereferenced by C++; low bit set = encoded slot.
+    static Allocator encodedTLCSlot(unsigned slot) { return Allocator(reinterpret_cast<LocalAllocator*>((static_cast<uintptr_t>(slot) << 1) | 1)); }
+    bool isEncodedTLCSlot() const { return reinterpret_cast<uintptr_t>(m_localAllocator) & 1; }
     
     friend bool operator==(const Allocator&, const Allocator&) = default;
     explicit operator bool() const { return *this != Allocator(); }

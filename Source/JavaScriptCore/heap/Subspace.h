@@ -66,6 +66,11 @@ public:
 
     void prepareForAllocation();
     
+    void didCreateFirstDirectory(BlockDirectory* directory) { racyStore(m_directoryForEmptyAllocation, directory); } // search cursor shared by every client allocator of this subspace (shared heap): racy by design
+    
+    // Finds an empty block from any Subspace that agrees to trade blocks with us.
+    MarkedBlock::Handle* findEmptyBlockToSteal();
+    
     template<typename Func>
     void forEachDirectory(const Func&);
     

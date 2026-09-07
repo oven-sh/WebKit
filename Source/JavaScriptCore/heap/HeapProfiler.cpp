@@ -28,6 +28,7 @@
 
 #include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
+#include "JSThreadsSafepoint.h"
 #include "SubspaceInlines.h"
 #include "SymbolTable.h"
 #include "VM.h"
@@ -70,6 +71,24 @@ static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)
         ConcurrentJSLocker locker(symbolTable->m_lock);
         symbolTable->materializeCachedEntriesIfNeeded(locker);
     });
+}
+
+void HeapProfiler::acquireBuilderGILOff()
+{
+    if (!m_vm.gilOffWithProcessGate()) [[likely]]
+        return;
+    while (!m_builderLock.tryLock()) {
+        if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(m_vm))
+            continue;
+        Thread::yield();
+    }
+}
+
+void HeapProfiler::releaseBuilderGILOff()
+{
+    if (!m_vm.gilOffWithProcessGate()) [[likely]]
+        return;
+    m_builderLock.unlock();
 }
 
 void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)

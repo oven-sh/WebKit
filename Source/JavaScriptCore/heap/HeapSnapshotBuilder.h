@@ -28,6 +28,7 @@
 #include "HeapAnalyzer.h"
 #include "JSExportMacros.h"
 #include <functional>
+#include <atomic>
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -150,7 +151,7 @@ public:
 
 private:
     void dumpToStreamImpl(PrintStream&);
-    static NodeIdentifier nextAvailableObjectIdentifier;
+    static std::atomic<NodeIdentifier> nextAvailableObjectIdentifier; // Process-global; builders on different VMs/threads share it.
 
     // Finalized snapshots are not modified during building. So searching them
     // for an existing node can be done concurrently without a lock.

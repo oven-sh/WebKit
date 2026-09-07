@@ -189,17 +189,7 @@ void RegExp::finishCreation(VM& vm)
         return;
     }
 
-    updateMetadataFromPattern(pattern);
-
-    unsigned offsetVectorSize = offsetVectorBaseForNamedCaptures();
-    if (hasNamedCaptures())
-        offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
-    m_ovector = FixedVector<int>(offsetVectorSize);
-}
-
-void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
-{
-    m_atom = WTF::move(pattern.m_atom);
+    publishAtom(WTF::move(pattern.m_atom));
     WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     m_numSubpatterns = pattern.m_numSubpatterns;
@@ -302,7 +292,7 @@ RegExp* RegExp::create(VM& vm, const String& patternString, OptionSet<Yarr::Flag
 void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
 {
     Base::finishCreation(vm);
-    m_atom = WTF::move(atom);
+    publishAtom(WTF::move(atom));
     m_specificPattern = specificPattern;
     m_numSubpatterns = numSubpatterns;
     m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
@@ -313,6 +303,19 @@ void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& a
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode)
 {
     return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);
+}
+
+void RegExp::publishAtom(String&& atom)
+{
+    // First-set-wins publication of one pointer word (see the m_atom comment in
+    // RegExp.h): the StringImpl is complete before the release store; readers
+    // on other threads load the word racily and reach the characters through
+    // an address dependency. String is exactly one RefPtr<StringImpl>.
+    static_assert(sizeof(String) == sizeof(StringImpl*));
+    ASSERT(!atomImplConcurrently());
+    if (atom.isNull())
+        return;
+    WTF::atomicStore(std::bit_cast<StringImpl**>(&m_atom), atom.releaseImpl().leakRef(), std::memory_order_release);
 }
 
 void RegExp::byteCodeCompileIfNecessary(VM* vm)
@@ -334,8 +337,8 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
 
-    if (m_atom.isNull())
-        m_atom = WTF::move(pattern.m_atom);
+    if (!atomImplConcurrently())
+        publishAtom(WTF::move(pattern.m_atom));
     WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, constructionErrorCode);
@@ -380,8 +383,8 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
 
-    if (m_atom.isNull())
-        m_atom = WTF::move(pattern.m_atom);
+    if (!atomImplConcurrently())
+        publishAtom(WTF::move(pattern.m_atom));
     WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     if (!hasCode()) {
@@ -597,8 +600,8 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
 
-    if (m_atom.isNull())
-        m_atom = WTF::move(pattern.m_atom);
+    if (!atomImplConcurrently())
+        publishAtom(WTF::move(pattern.m_atom));
     WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
 
     if (!hasCode()) {

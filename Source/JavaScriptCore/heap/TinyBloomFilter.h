@@ -30,24 +30,23 @@
 
 namespace JSC {
 
-// m_bits is a relaxed WTF::Atomic word because lock-free ruleOut() readers
-// (concurrent transition lookup, getConcurrently()) race with add(): a stale
-// value only steers the caller to a re-validating slow path, but a torn plain
-// load would be UB. Every add() writer is serialized by its owner
+// Lock-free ruleOut() readers (concurrent transition lookup, getConcurrently(),
+// the conservative scan) race with add(): a stale value only steers the caller
+// to a re-validating slow path. Every add() writer is serialized by its owner
 // (Structure::m_lock, the marked-space registry lock, or a stopped world), so
-// add() is a relaxed load and store, not an atomic RMW: it compiles to the
-// same plain load/or/store as a non-atomic word, and no ordering is implied.
-// JIT code reads the word directly via offsetOfBits(); Atomic<Bits> wraps a
-// single std::atomic<Bits>, so the layout is unchanged.
+// add() is a load and a store, not an atomic RMW. The accesses go through
+// racyLoad/racyStore: relaxed atomics under TSAN, the plain word otherwise, so
+// the conservative scan's inner loop keeps the filter in a register as on
+// main. JIT code reads the word directly via offsetOfBits().
 template <typename Bits = uintptr_t>
 class TinyBloomFilter {
 public:
     TinyBloomFilter() = default;
     TinyBloomFilter(Bits);
-    TinyBloomFilter(const TinyBloomFilter& other) { m_bits.storeRelaxed(other.m_bits.loadRelaxed()); }
+    TinyBloomFilter(const TinyBloomFilter& other) { racyStore(m_bits, racyLoad(other.m_bits)); }
     TinyBloomFilter& operator=(const TinyBloomFilter& other)
     {
-        m_bits.storeRelaxed(other.m_bits.loadRelaxed());
+        racyStore(m_bits, racyLoad(other.m_bits));
         return *this;
     }
 
@@ -55,16 +54,12 @@ public:
     void add(TinyBloomFilter&);
     bool ruleOut(Bits) const; // True for 0.
     void reset();
-    Bits bits() const { return m_bits.loadRelaxed(); }
+    Bits bits() const { return racyLoad(m_bits); }
 
-    static constexpr ptrdiff_t offsetOfBits()
-    {
-        static_assert(sizeof(WTF::Atomic<Bits>) == sizeof(Bits));
-        return OBJECT_OFFSETOF(TinyBloomFilter, m_bits);
-    }
+    static constexpr ptrdiff_t offsetOfBits() { return OBJECT_OFFSETOF(TinyBloomFilter, m_bits); }
 
 private:
-    WTF::Atomic<Bits> m_bits { 0 };
+    Bits m_bits { 0 };
 };
 
 template <typename Bits>
@@ -76,13 +71,13 @@ inline TinyBloomFilter<Bits>::TinyBloomFilter(Bits bits)
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::add(Bits bits)
 {
-    m_bits.storeRelaxed(m_bits.loadRelaxed() | bits);
+    racyStore(m_bits, racyLoad(m_bits) | bits);
 }
 
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::add(TinyBloomFilter& other)
 {
-    m_bits.storeRelaxed(m_bits.loadRelaxed() | other.m_bits.loadRelaxed());
+    racyStore(m_bits, racyLoad(m_bits) | racyLoad(other.m_bits));
 }
 
 template <typename Bits>
@@ -91,7 +86,7 @@ inline bool TinyBloomFilter<Bits>::ruleOut(Bits bits) const
     if (!bits)
         return true;
 
-    if ((bits & m_bits.loadRelaxed()) != bits)
+    if ((bits & racyLoad(m_bits)) != bits)
         return true;
 
     return false;
@@ -100,7 +95,7 @@ inline bool TinyBloomFilter<Bits>::ruleOut(Bits bits) const
 template <typename Bits>
 inline void TinyBloomFilter<Bits>::reset()
 {
-    m_bits.storeRelaxed(0);
+    racyStore(m_bits, 0);
 }
 
 } // namespace JSC

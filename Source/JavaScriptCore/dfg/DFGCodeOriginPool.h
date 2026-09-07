@@ -31,7 +31,10 @@
 
 #include "CallFrame.h"
 #include "CodeOrigin.h"
+#include "Options.h"
+#include <wtf/Atomics.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/UniqueArray.h>
 
 namespace JSC { namespace DFG {
 
@@ -49,14 +52,34 @@ public:
     void removeDisposableCallSiteIndex(DisposableCallSiteIndex);
     void shrinkToFit();
 
-    CodeOrigin get(unsigned index) { return m_codeOrigins[index]; }
+    // Readers are lock-free and, with useJSThreads, on other threads (stack
+    // walks, unwinding, error stacks, the sampling profiler) while an inline
+    // cache regeneration appends a disposable call site under the CodeBlock
+    // lock. Flag-on, a growing append therefore never frees the array a
+    // reader may be indexing: it copies into a larger one, release-publishes
+    // it, and retires the old array until the pool dies (appends after link
+    // are rare and bounded by the free list). Flag-off: the plain Vector.
+    CodeOrigin get(unsigned index)
+    {
+        if (Options::useJSThreads()) [[unlikely]]
+            return WTF::atomicLoad(&m_published, std::memory_order_acquire)[index];
+        return m_codeOrigins[index];
+    }
     unsigned size() const { return m_codeOrigins.size(); }
 
 private:
     CodeOriginPool();
+    void appendEntry(CodeOrigin);
+    void republish();
 
     Vector<CodeOrigin, 0, UnsafeVectorOverflow> m_codeOrigins;
     Vector<unsigned> m_callSiteIndexFreeList;
+    // Flag-on only: the array lock-free readers index (== m_codeOrigins' buffer
+    // contents, republished after every growth) and the buffers it replaced.
+    CodeOrigin* m_published { nullptr };
+    unsigned m_publishedCapacity { 0 };
+    UniqueArray<CodeOrigin> m_publishedOwner;
+    Vector<UniqueArray<CodeOrigin>> m_retired;
 };
 
 } } // namespace JSC::DFG
