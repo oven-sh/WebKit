@@ -95,6 +95,15 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     ModuleProgramExecutable* moduleProgramExecutable = nullptr;
     JSModuleEnvironment* env = nullptr;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The messages below match the ones for ImportEntries in step 7, which name the requested module by its key.
+    auto requestedModuleKey = [&](const ExportEntry& e) -> String {
+        if (AbstractModuleRecord* requestedModule = hostResolveImportedModule(globalObject, e.moduleName, e.moduleRequestType))
+            return requestedModule->moduleKey().string();
+        return e.moduleName.string();
+    };
+#endif
+
     // 1. For each ExportEntry Record e of module.[[IndirectExportEntries]], do
     for (const auto& [key, e] : exportEntries()) {
         if (e.type != ExportEntry::Type::Indirect)
@@ -109,7 +118,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         case Resolution::Type::NotFound:
 #if USE(BUN_JSC_ADDITIONS)
             if (m_isTypeScript) break;
-            throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
+            throwSyntaxError(globalObject, scope, makeString("Export named '"_s, e.importName.string(), "' not found in module '"_s, requestedModuleKey(e), "'."_s));
 #else
             throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' is not found."_s));
 #endif
@@ -117,7 +126,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
         case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
+            throwSyntaxError(globalObject, scope, makeString("Export named '"_s, e.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, requestedModuleKey(e), "'."_s));
 #else
             throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -125,7 +134,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
         case Resolution::Type::Error:
 #if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
+            // ResolveExport answers Error only when a 'default' binding along the chain is unresolvable (export * never provides one).
+            if (e.importName == vm.propertyNames->defaultKeyword)
+                throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, requestedModuleKey(e), "'."_s));
+            else
+                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, e.importName.string(), "' not found in module '"_s, requestedModuleKey(e), "'."_s));
 #else
             throwSyntaxError(globalObject, scope, "Indirectly exported binding name 'default' cannot be resolved by star export entries."_s);
 #endif
