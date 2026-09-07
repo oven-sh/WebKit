@@ -1775,13 +1775,13 @@ CalendarID iso8601CalendarIDSlow()
         const auto& calendars = intlAvailableCalendars();
         for (unsigned index = 0; index < calendars.size(); ++index) {
             if (calendars[index] == "iso8601"_s) {
-                iso8601CalendarIDStorage = index;
+                racyStore(iso8601CalendarIDStorage, static_cast<CalendarID>(index));
                 return;
             }
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
-    return iso8601CalendarIDStorage;
+    return racyLoad(iso8601CalendarIDStorage);
 }
 
 #define DEFINE_CALENDAR_ID(name, str) \
@@ -1793,13 +1793,13 @@ CalendarID iso8601CalendarIDSlow()
             const auto& calendars = intlAvailableCalendars(); \
             for (unsigned index = 0; index < calendars.size(); ++index) { \
                 if (calendars[index] == str) { \
-                    name##CalendarIDStorage = index; \
+                    racyStore(name##CalendarIDStorage, static_cast<CalendarID>(index)); \
                     return; \
                 } \
             } \
             RELEASE_ASSERT_NOT_REACHED(); \
         }); \
-        return name##CalendarIDStorage; \
+        return racyLoad(name##CalendarIDStorage); \
     }
 FOR_EACH_CACHED_CALENDAR_ID(DEFINE_CALENDAR_ID)
 #undef DEFINE_CALENDAR_ID
@@ -2232,9 +2232,9 @@ TimeZoneID utcTimeZoneIDSlow()
     std::call_once(initializeOnce, [&] {
         auto id = intlResolveTimeZoneID("UTC"_s);
         RELEASE_ASSERT(id);
-        utcTimeZoneIDStorage = *id;
+        racyStore(utcTimeZoneIDStorage, *id);
     });
-    return utcTimeZoneIDStorage;
+    return racyLoad(utcTimeZoneIDStorage);
 }
 
 void initializeAvailableTimeZones()

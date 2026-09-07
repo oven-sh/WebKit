@@ -44,9 +44,9 @@ namespace JSC {
 // ===========================================================================
 
 #if OS(LINUX)
-extern "C" __attribute__((tls_model("initial-exec"))) thread_local uint64_t g_jscButterflyTIDTag = 0;
+extern "C" __attribute__((tls_model("initial-exec"))) constinit thread_local uint64_t g_jscButterflyTIDTag = 0;
 #else
-extern "C" thread_local uint64_t g_jscButterflyTIDTag = 0;
+extern "C" constinit thread_local uint64_t g_jscButterflyTIDTag = 0;
 #endif
 
 // ===========================================================================

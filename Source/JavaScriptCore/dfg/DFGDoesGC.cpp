@@ -106,6 +106,7 @@ bool doesGCIgnoringClobberize(Graph& graph, Node* node)
     case CheckStructure:
     case CheckStructureOrEmpty:
     case CheckStructureImmediate:
+    case CheckTransitionOwner:
     case GetExecutable:
     case GetButterfly:
     case CheckJSCast:

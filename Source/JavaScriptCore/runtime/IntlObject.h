@@ -111,7 +111,7 @@ extern CalendarID JS_EXPORT_PRIVATE iso8601CalendarIDStorage;
 CalendarID JS_EXPORT_PRIVATE iso8601CalendarIDSlow();
 inline CalendarID iso8601CalendarID()
 {
-    unsigned value = iso8601CalendarIDStorage;
+    unsigned value = racyLoad(iso8601CalendarIDStorage); // set once under call_once in the slow path; process-global
     if (value == std::numeric_limits<CalendarID>::max())
         return iso8601CalendarIDSlow();
     return value;
@@ -141,7 +141,7 @@ inline CalendarID iso8601CalendarID()
     CalendarID JS_EXPORT_PRIVATE name##CalendarIDSlow(); \
     inline CalendarID name##CalendarID() \
     { \
-        unsigned value = name##CalendarIDStorage; \
+        unsigned value = racyLoad(name##CalendarIDStorage); \
         if (value == std::numeric_limits<CalendarID>::max()) \
             return name##CalendarIDSlow(); \
         return value; \

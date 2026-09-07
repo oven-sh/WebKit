@@ -27,6 +27,7 @@
 #include "HeapProfiler.h"
 
 #include "HeapSnapshot.h"
+#include "JSThreadsSafepoint.h"
 #include "VM.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -56,6 +57,24 @@ void HeapProfiler::appendSnapshot(std::unique_ptr<HeapSnapshot> snapshot)
 void HeapProfiler::clearSnapshots()
 {
     m_snapshots.clear();
+}
+
+void HeapProfiler::acquireBuilderGILOff()
+{
+    if (!m_vm.gilOffWithProcessGate()) [[likely]]
+        return;
+    while (!m_builderLock.tryLock()) {
+        if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(m_vm))
+            continue;
+        Thread::yield();
+    }
+}
+
+void HeapProfiler::releaseBuilderGILOff()
+{
+    if (!m_vm.gilOffWithProcessGate()) [[likely]]
+        return;
+    m_builderLock.unlock();
 }
 
 void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)

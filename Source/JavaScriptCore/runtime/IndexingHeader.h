@@ -56,36 +56,30 @@ public:
         u.lengths.vectorLength = 0;
     }
     
-    // TSAN-TRIAGE §3.15 (butterfly-words; SPEC-objectmodel C4): on shared
-    // butterflies these words are concurrently read by indexed fast paths and
-    // written by growers (Butterfly::bumpPublicLengthToAtLeast CAS,
-    // ensureLengthSlow's concurrent drivers). C4 makes every stale value
-    // legal — readers bound by min(publicLength, vectorLength) and
-    // re-dispatch — but the plain read/write side of that pairing is UB, so
-    // the runtime accessors are RELAXED atomics. Identical codegen to the
-    // plain MOV/LDR/STR on x86-64/arm64: flag-off (useJSThreads=false)
-    // semantics and codegen are unchanged, and JIT-emitted loads via
-    // offsetOfPublicLength()/offsetOfVectorLength() are untouched.
-    uint32_t vectorLength() const { return WTF::atomicLoad(const_cast<uint32_t*>(&u.lengths.vectorLength), std::memory_order_relaxed); }
+    // SPEC-objectmodel C4: on shared butterflies these words are read by
+    // indexed fast paths while growers write them (bumpPublicLengthToAtLeast's
+    // CAS, ensureLengthSlow), and every stale value is legal (readers bound by
+    // min(publicLength, vectorLength) and re-dispatch). racyLoad/racyStore:
+    // relaxed atomics under TSAN, the plain accesses otherwise, so the
+    // compiler still hoists and combines them in loops as it does on main; the
+    // JIT's loads through offsetOfPublicLength()/offsetOfVectorLength() were
+    // always plain. The publishing CAS itself stays an explicit atomic
+    // (Butterfly.h).
+    uint32_t vectorLength() const { return racyLoad(u.lengths.vectorLength); }
 
     void setVectorLength(uint32_t length)
     {
         RELEASE_ASSERT(length <= maximumLength);
-        WTF::atomicStore(&u.lengths.vectorLength, length, std::memory_order_relaxed);
+        racyStore(u.lengths.vectorLength, length);
     }
 
-    uint32_t publicLength() const { return WTF::atomicLoad(const_cast<uint32_t*>(&u.lengths.publicLength), std::memory_order_relaxed); }
-    void setPublicLength(uint32_t auxWord) { WTF::atomicStore(&u.lengths.publicLength, auxWord, std::memory_order_relaxed); }
-    
-    // r18 (post-closeout review): same discipline as the length words above
-    // — a stale wasteful-view probe (possiblySharedBufferImpl ->
-    // existingBufferInButterfly) can read this word on a butterfly whose
-    // MarkedBlock was re-handed-out (wave-7 dead-cell probe class; the
-    // probed buffer is revalidated by the OOB protocol). Relaxed atomics,
-    // identical codegen, flag-off unchanged; JIT loads via
-    // offsetOfArrayBuffer() untouched.
-    ArrayBuffer* arrayBuffer() { return WTF::atomicLoad(&u.typedArray.buffer, std::memory_order_relaxed); }
-    void setArrayBuffer(ArrayBuffer* buffer) { WTF::atomicStore(&u.typedArray.buffer, buffer, std::memory_order_relaxed); }
+    uint32_t publicLength() const { return racyLoad(u.lengths.publicLength); }
+    void setPublicLength(uint32_t auxWord) { racyStore(u.lengths.publicLength, auxWord); }
+
+    // Same class: a stale wasteful-view probe can read this word on a butterfly
+    // whose block was handed out again (the probed buffer is revalidated).
+    ArrayBuffer* arrayBuffer() { return racyLoad(u.typedArray.buffer); }
+    void setArrayBuffer(ArrayBuffer* buffer) { racyStore(u.typedArray.buffer, buffer); }
     
     static IndexingHeader* from(Butterfly* butterfly)
     {

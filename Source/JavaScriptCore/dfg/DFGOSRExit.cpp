@@ -26,6 +26,8 @@
 #include "config.h"
 #include "DFGOSRExit.h"
 
+#include "VMLite.h"
+
 #if ENABLE(DFG_JIT)
 
 #include "AssemblyHelpersSpoolers.h"
@@ -203,8 +205,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
             WTF::loadLoadFence(); // pairs with FINALIZE_CODE's publish + setExitCode()'s internal storeStoreFence.
             // The ramp may have been compiled and finalized on another thread;
             // the executing PE needs its own context synchronization before
-            // the thunk far-jumps into it.
-            WTF::crossModifyingCodeFence();
+            // the thunk far-jumps into it - ONCE per publication, not per exit:
+            // setExitCode bumps the stop generation before publishing, so the
+            // per-thread generation compare issues the serializing instruction
+            // exactly when something new was published since this thread last
+            // synced (an unconditional cpuid per exit cost 3x on throw-heavy
+            // code, and far more under virtualization).
+            jsThreadsSyncToStopGenerationBeforeJITEntry();
             vm.group3Primitives().osrExitJumpDestination = publishedCodePtr;
             return;
         }
@@ -234,7 +241,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
             // A racing thread compiled and published this exit while we were
             // contending for the lock: reuse its ramp, with the executing PE's
             // own context synchronization before the thunk far-jumps into it.
-            WTF::crossModifyingCodeFence();
+            jsThreadsSyncToStopGenerationBeforeJITEntry();
             vm.group3Primitives().osrExitJumpDestination = existing.code().taggedPtr();
             return;
         }

@@ -256,6 +256,8 @@ namespace JSC { namespace DFG {
     macro(CheckStructureOrEmpty, NodeMustGenerate) \
     macro(GetExecutable, NodeResultJS) \
     macro(PutStructure, NodeMustGenerate) \
+    /* useJSThreads (SPEC-jit §5.5 Transition): the OM E4 / N2-LF runtime owner predicate for an inlined non-reallocating transition from structure(); OSR-exits when this thread may not transition child1 lock-free. */\
+    macro(CheckTransitionOwner, NodeMustGenerate) \
     macro(AllocatePropertyStorage, NodeMustGenerate | NodeResultStorage) \
     macro(ReallocatePropertyStorage, NodeMustGenerate | NodeResultStorage) \
     macro(GetButterfly, NodeResultStorage) \

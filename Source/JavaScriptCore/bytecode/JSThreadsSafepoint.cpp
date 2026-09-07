@@ -243,6 +243,11 @@ PureCodeLifecycleStopWindowScope::~PureCodeLifecycleStopWindowScope()
     --t_pureCodeLifecycleStopWindowDepth;
 }
 
+// Requests that reached a conductor (GIL off) or the GIL-on stub, not the
+// nested/inline R1.h cases. Test-only observable ($vm.jsThreadsStopRequestCount).
+static std::atomic<uint64_t> s_stopTheWorldRequestCount { 0 };
+uint64_t stopTheWorldRequestCount() { return s_stopTheWorldRequestCount.load(std::memory_order_relaxed); }
+
 void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
 {
     // R1.h FIRST (load-bearing for SPEC-jit section 5.3, Task 5): a caller that
@@ -371,6 +376,7 @@ void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
     // not reach here: jsThreadsThreadGranularWorldIsStopped() feeds the
     // worldIsStopped() disjunct above, so they run inline under the witness
     // scope (R1.h).
+    s_stopTheWorldRequestCount.fetch_add(1, std::memory_order_relaxed);
     if (vm.gilOff()) [[unlikely]] {
         // checktraps-dejank-invalidation-point (review blocker fix, amend
         // round — see the BUMP-EDGE LAW comment above): bump the conductor

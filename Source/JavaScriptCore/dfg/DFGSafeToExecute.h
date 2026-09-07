@@ -318,6 +318,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case FiatInt52:
     case HasIndexedProperty:
     case CheckStructureImmediate:
+    case CheckTransitionOwner:
     case GetMyArgumentByVal:
     case GetMyArgumentByValOutOfBounds:
     case GetPrototypeOf:

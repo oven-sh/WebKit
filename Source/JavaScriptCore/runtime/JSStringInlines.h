@@ -383,7 +383,35 @@ inline JSString* repeatCharacter(JSGlobalObject* globalObject, CharacterType cha
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-inline void JSRopeString::convertToNonRope(String&& string) const
+inline NEVER_INLINE void JSRopeString::convertToNonRopeGILOff(String&& string, bool isAtom) const
+{
+    // GIL-off: multiple mutators can race to resolve the same rope, so this
+    // transition must be idempotent. Serialize the one-pointer publish on
+    // the cell lock; a loser observes the winner's publish under the lock,
+    // drops its own String (the argument destructs on return), and treats
+    // "already resolved by another thread" as success. All heavy work
+    // (buffer fill, atomization, atom-table locking) stays outside the
+    // cell lock. notifyNeedsDestruction is hoisted out of the critical
+    // section so no cellLock -> directory-bitvector-lock order edge is
+    // introduced; the destructible bit is monotone toward true, so the
+    // winner flipping it after unlocking is sound (see
+    // MarkedBlock::Handle::setIsDestructible).
+    {
+        Locker locker { cellLock() };
+        if (!(fiberConcurrently() & isRopeInPointer))
+            return; // Lost the race; the winner's value is already published.
+        WTF::atomicStore(&m_fiber, std::bit_cast<uintptr_t>(string.releaseImpl().leakRef()), std::memory_order_release);
+    }
+    // We do not clear the trailing fibers and length information (fiber1 and fiber2) because we could be reading the length concurrently.
+    ASSERT(!JSString::isRope());
+    if (isAtom) {
+        WTF::storeStoreFence(); // Publish the impl before the per-cell bit that advertises it.
+        markAsAtom();
+    }
+    notifyNeedsDestruction();
+}
+
+ALWAYS_INLINE void JSRopeString::convertToNonRope(String&& string) const
 {
     // Concurrent compiler threads can access String held by JSString, and lock-free
     // mutator readers snapshot m_fiber through fiberConcurrently() while we republish
@@ -401,33 +429,11 @@ inline void JSRopeString::convertToNonRope(String&& string) const
     // destructor via valueInternal()).
     bool isAtom = string.impl() && string.impl()->isAtom();
     static_assert(sizeof(String) == sizeof(RefPtr<StringImpl>), "JSString's String initialization must be done in one pointer move.");
-    if (vm().gilOff()) [[unlikely]] {
-        // GIL-off: multiple mutators can race to resolve the same rope, so this
-        // transition must be idempotent. Serialize the one-pointer publish on
-        // the cell lock; a loser observes the winner's publish under the lock,
-        // drops its own String (the argument destructs on return), and treats
-        // "already resolved by another thread" as success. All heavy work
-        // (buffer fill, atomization, atom-table locking) stays outside the
-        // cell lock. notifyNeedsDestruction is hoisted out of the critical
-        // section so no cellLock -> directory-bitvector-lock order edge is
-        // introduced; the destructible bit is monotone toward true, so the
-        // winner flipping it after unlocking is sound (see
-        // MarkedBlock::Handle::setIsDestructible).
-        {
-            Locker locker { cellLock() };
-            if (!(fiberConcurrently() & isRopeInPointer))
-                return; // Lost the race; the winner's value is already published.
-            WTF::atomicStore(&m_fiber, std::bit_cast<uintptr_t>(string.releaseImpl().leakRef()), std::memory_order_release);
-        }
-        // We do not clear the trailing fibers and length information (fiber1 and fiber2) because we could be reading the length concurrently.
-        ASSERT(!JSString::isRope());
-        if (isAtom) {
-            WTF::storeStoreFence(); // Publish the impl before the per-cell bit that advertises it.
-            markAsAtom();
-        }
-        notifyNeedsDestruction();
-        return;
-    }
+    // The process byte first, so flag-off and GIL-on pay one predicted-untaken
+    // test and no vm() lookup; the GIL-off body is out of line so this stays
+    // small enough to inline into resolveRope as on main.
+    if (g_jscConfig.gilOffProcess && vm().gilOff()) [[unlikely]]
+        return convertToNonRopeGILOff(WTF::move(string), isAtom);
     ASSERT(JSString::isRope());
     // GIL-on / flag-off: single mutator; release store == plain store + the
     // old storeStoreFence on every supported target (same shape accepted for

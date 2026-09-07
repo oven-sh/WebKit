@@ -191,6 +191,8 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(CheckStructure, Common) \
     CLONE_STATUS(CheckStructureOrEmpty, Common) \
     CLONE_STATUS(CheckVarargs, Common) \
+    CLONE_STATUS(CheckTraps, Common) \
+    CLONE_STATUS(CheckTransitionOwner, Common) \
     CLONE_STATUS(CompareBelow, Common) \
     CLONE_STATUS(CompareBelowEq, Common) \
     CLONE_STATUS(CompareEq, Common) \

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "WeakGCHashTable.h"
+#include "WeakGCMap.h"
 #include "WeakInlines.h"
 #include <wtf/HashSet.h>
 
@@ -68,11 +69,22 @@ public:
     using iterator = typename HashSetType::iterator;
     using const_iterator = typename HashSetType::const_iterator;
 
-    explicit WeakGCSet(VM&);
+    // With the flag on the set can be reached from several JS threads (the
+    // global object's custom getter/setter function sets are filled on any
+    // thread that reifies a custom accessor), so its operations take a leaf
+    // lock, on the same terms as a locking WeakGCMap: holders only touch the
+    // hash table (fastMalloc, Weak slot moves), and ensureValue() runs its
+    // functor, which allocates the cell, between the lookup and the publish.
+    explicit WeakGCSet(VM&, WeakGCMapLocking = WeakGCMapLocking::No);
     ~WeakGCSet() final;
 
     void clear()
     {
+        if (m_locking == WeakGCMapLocking::Yes) {
+            Locker locker { m_lock };
+            m_set.clear();
+            return;
+        }
         m_set.clear();
     }
 
@@ -80,6 +92,12 @@ public:
     {
         // Constructing a Weak shouldn't trigger a GC but add this ASSERT for good measure.
         AssertNoGC assertNoGC;
+        if (m_locking == WeakGCMapLocking::Yes) {
+            // The returned iterator must not be dereferenced by the caller.
+            ValueType value(key);
+            Locker locker { m_lock };
+            return m_set.add(WTF::move(value));
+        }
         return m_set.add(key);
     }
 
@@ -89,7 +107,29 @@ public:
         // If functor invokes GC, GC can prune WeakGCSet, and manipulate HashSet while we are touching it in the ensure function.
         // The functor must not invoke GC.
         AssertNoGC assertNoGC;
-        
+
+        if (m_locking == WeakGCMapLocking::Yes) {
+            {
+                Locker locker { m_lock };
+                auto it = m_set.template find<HashTranslator>(key);
+                if (it != m_set.end()) {
+                    if (ValueArg* existing = it->get())
+                        return existing;
+                }
+            }
+            ValueType created = functor();
+            ValueArg* result = created.get();
+            Locker locker { m_lock };
+            auto it = m_set.template find<HashTranslator>(key);
+            if (it != m_set.end()) {
+                if (ValueArg* existing = it->get())
+                    return existing; // First wins; ours dies with `created`.
+                m_set.remove(it);
+            }
+            m_set.add(WTF::move(created));
+            return result;
+        }
+
         auto result = m_set.template ensure<HashTranslator>(std::forward<T>(key), functor);
         return result.iterator->get();
     }
@@ -108,6 +148,8 @@ private:
 
     HashSetType m_set;
     VM& m_vm;
+    const WeakGCMapLocking m_locking;
+    mutable Lock m_lock;
 };
 
 } // namespace JSC

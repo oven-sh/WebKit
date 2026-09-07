@@ -33,6 +33,7 @@
 #include "DFGMinifiedGraph.h"
 #include "DFGOSREntry.h"
 #include "DFGOSRExit.h"
+#include "VMLite.h"
 #include "DFGVariableEventStream.h"
 #include "ExecutionCounter.h"
 #include "JITCode.h"
@@ -183,6 +184,16 @@ public:
         auto* slotExecMem = std::bit_cast<RefPtr<ExecutableMemoryHandle>*>(std::bit_cast<char*>(&slot) + executableMemoryOffset);
         auto* srcExecMem = std::bit_cast<RefPtr<ExecutableMemoryHandle>*>(std::bit_cast<char*>(&code) + executableMemoryOffset);
         *slotExecMem = WTF::move(*srcExecMem);
+        // GIL-off: the ramp was compiled by SOME thread; every thread that
+        // later observes the published pointer must issue its context
+        // synchronization once before jumping into it. Bumping the process
+        // stop generation BEFORE the publish makes "saw the pointer" imply
+        // "saw the bump", so the reader's cheap generation compare
+        // (jsThreadsSyncToStopGenerationBeforeJITEntry) replaces an
+        // unconditional serializing instruction per exit. Flag-off/GIL-on:
+        // a counter increment on a once-per-exit-compile path.
+        if (Options::useJSThreads()) [[unlikely]]
+            jsThreadsBumpStopGeneration();
         WTF::storeStoreFence();
         void** slotCodePtrWord = std::bit_cast<void**>(std::bit_cast<char*>(&slot) + MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
         WTF::atomicStore(slotCodePtrWord, code.code().taggedPtr(), std::memory_order_relaxed);

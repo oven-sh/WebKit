@@ -32,6 +32,8 @@
 #include "InspectorHeapAgent.h"
 #include "InspectorScriptProfilerAgent.h"
 #include "ScriptArguments.h"
+#include "ThreadManager.h"
+#include "VM.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -70,12 +72,26 @@ JSGlobalObjectConsoleClient::JSGlobalObjectConsoleClient(InspectorConsoleAgent* 
 {
 }
 
+// The console agent's message buffer, counters and timers are inspector
+// state with no synchronization of their own. GIL off, spawned JS threads can
+// run console.* concurrently with the carrier; they still print to the system
+// console above but never feed the agent (matching the debugger's rule that
+// spawned-thread hooks are no-ops until N-thread inspection exists).
+bool JSGlobalObjectConsoleClient::consoleAgentUsable() const
+{
+    if (!m_consoleAgent->developerExtrasEnabled())
+        return false;
+    if (VM::isGILOffProcess() && ThreadManager::isJSThreadCurrent()) [[unlikely]]
+        return false;
+    return true;
+}
+
 void JSGlobalObjectConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
 {
     if (JSGlobalObjectConsoleClient::logToSystemConsole())
         ConsoleClient::printConsoleMessageWithArguments(MessageSource::ConsoleAPI, type, level, globalObject, arguments.copyRef());
 
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     String message;
@@ -90,7 +106,7 @@ void JSGlobalObjectConsoleClient::messageWithTypeAndLevel(MessageType type, Mess
 
 void JSGlobalObjectConsoleClient::count(JSGlobalObject* globalObject, const String& label)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     m_consoleAgent->count(globalObject, label);
@@ -98,7 +114,7 @@ void JSGlobalObjectConsoleClient::count(JSGlobalObject* globalObject, const Stri
 
 void JSGlobalObjectConsoleClient::countReset(JSGlobalObject* globalObject, const String& label)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     m_consoleAgent->countReset(globalObject, label);
@@ -106,7 +122,7 @@ void JSGlobalObjectConsoleClient::countReset(JSGlobalObject* globalObject, const
 
 void JSGlobalObjectConsoleClient::profile(JSC::JSGlobalObject*, const String& title)
 {
-    if (!m_consoleAgent->enabled()) [[likely]]
+    if (!m_consoleAgent->enabled() || !consoleAgentUsable()) [[likely]]
         return;
 
     // Allow duplicate unnamed profiles. Disallow duplicate named profiles.
@@ -127,7 +143,7 @@ void JSGlobalObjectConsoleClient::profile(JSC::JSGlobalObject*, const String& ti
 
 void JSGlobalObjectConsoleClient::profileEnd(JSC::JSGlobalObject*, const String& title)
 {
-    if (!m_consoleAgent->enabled()) [[likely]]
+    if (!m_consoleAgent->enabled() || !consoleAgentUsable()) [[likely]]
         return;
 
     // Stop profiles in reverse order. If the title is empty, then stop the last profile.
@@ -168,7 +184,7 @@ void JSGlobalObjectConsoleClient::stopConsoleProfile()
 
 void JSGlobalObjectConsoleClient::takeHeapSnapshot(JSC::JSGlobalObject*, const String& title)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     if (!m_heapAgent)
@@ -184,7 +200,7 @@ void JSGlobalObjectConsoleClient::takeHeapSnapshot(JSC::JSGlobalObject*, const S
 
 void JSGlobalObjectConsoleClient::time(JSGlobalObject* globalObject, const String& label)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     m_consoleAgent->startTiming(globalObject, label);
@@ -192,7 +208,7 @@ void JSGlobalObjectConsoleClient::time(JSGlobalObject* globalObject, const Strin
 
 void JSGlobalObjectConsoleClient::timeLog(JSGlobalObject* globalObject, const String& label, Ref<ScriptArguments>&& arguments)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     m_consoleAgent->logTiming(globalObject, label, WTF::move(arguments));
@@ -200,7 +216,7 @@ void JSGlobalObjectConsoleClient::timeLog(JSGlobalObject* globalObject, const St
 
 void JSGlobalObjectConsoleClient::timeEnd(JSGlobalObject* globalObject, const String& label)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     m_consoleAgent->stopTiming(globalObject, label);
@@ -208,7 +224,7 @@ void JSGlobalObjectConsoleClient::timeEnd(JSGlobalObject* globalObject, const St
 
 void JSGlobalObjectConsoleClient::timeStamp(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     warnUnimplemented("console.timeStamp"_s);
@@ -216,7 +232,7 @@ void JSGlobalObjectConsoleClient::timeStamp(JSGlobalObject*, Ref<ScriptArguments
 
 void JSGlobalObjectConsoleClient::record(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     warnUnimplemented("console.record"_s);
@@ -224,7 +240,7 @@ void JSGlobalObjectConsoleClient::record(JSGlobalObject*, Ref<ScriptArguments>&&
 
 void JSGlobalObjectConsoleClient::recordEnd(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     warnUnimplemented("console.recordEnd"_s);
@@ -232,7 +248,7 @@ void JSGlobalObjectConsoleClient::recordEnd(JSGlobalObject*, Ref<ScriptArguments
 
 void JSGlobalObjectConsoleClient::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
-    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+    if (!consoleAgentUsable()) [[likely]]
         return;
 
     warnUnimplemented("console.screenshot"_s);

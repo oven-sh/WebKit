@@ -420,7 +420,9 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto data = butterfly.contiguousDouble().data();
         bool holesKnownToBeOK = false;
         for (; i < length; ++i) {
-            double value = data[i];
+            // Flag-on another thread may be storing elements (a JS-level race;
+            // 8-byte aligned, so untorn): one racy word load (relaxed under TSAN).
+            double value = std::bit_cast<double>(racyLoad(reinterpret_cast<const uint64_t*>(data)[i]));
             if (!isHole(value)) [[likely]]
                 joiner.appendNumber(vm, value);
             else {

@@ -832,3 +832,106 @@ crashed, hung or reported.
 Left open: nothing from TSAN. The suppressions file gained three entries this
 round (the two ICU modules and the `TypeInfoBlob` accessor), each with its
 justification in the file.
+
+### Fifth round (2026-09-06)
+
+This round added a second source of TSAN evidence besides the corpus: the
+mirror harness (`Tools/threads/mirror/`, see LANDING-PLAN "Results, fifth
+round"), which runs the global code of every `JSTests/stress` file on two JS
+threads at once, GIL off, on the TSanJIT build. 5752 files, 420 s per file;
+the run on the round's first tree produced reports in 448 files, 75 distinct
+(first-frame pair) signatures. Every signature was classified; the table lists
+them by disposition. "Fixed" means a code change in this round (the corpus and
+the mirror were rerun on the final tree afterwards, numbers below);
+"publication" means a constructor or a build-then-publish sequence on one
+thread paired with a later reader on another thread that reached the object
+through a JS-heap pointer (address dependency) or through JIT code, which TSAN
+cannot pair — the class the suppressions file documents since wave 7; those got
+a suppression line each, with the reason in the file.
+
+| Signature (first frames) | Files | Disposition |
+|---|---|---|
+| `StructureRareData::m_specialPropertyCache` unique_ptr read vs CAS install | 186 | Fixed: readers load the pointer word (relaxed under TSAN); the install was already a CAS. |
+| `ProxyObject::getHandlerTrap` handler-trap offset cache | 76 | Suppressed with reasoning: two threads using one Proxy refill a per-object offset cache; a JavaScript-level race on the handler whose every outcome reads a handler slot through a bounds-safe offset and re-validates callability. |
+| `utcTimeZoneID`, `iso8601CalendarID` and the five other cached calendar IDs: plain fast-path read vs `call_once` store | 78 | Fixed: racy (relaxed-under-TSAN) load/store pair; the value is set once. |
+| `StructureRareData` bitfield word (`cachedHasDefaultToPrimitive...` 2 bits sharing a word with the 30-bit replacement-watchpoint count) | 42 | Fixed (real lost-update): one explicit word; flag-on updates are CAS read-modify-writes. |
+| `RegExp::m_atom` String assigned under the cell lock vs `hasValidAtom()` on a matching thread | 37 | Fixed: the impl pointer is release-published once (`publishAtom`), read as one racy word. |
+| jsc shell `GlobalObject::PropertyFilter` (VM side data) and `VM::m_hasSideData` | 25+ | Fixed (shell): the filter is locked; the flag is a racy same-value store. Debug also hit the unlocked HashSet as a null-table crash (`create-many-realms.js` and 20 more). |
+| DFG `handleAsyncIteratorOpen` plain read of `IterationModeMetadata::seenModes` vs the mutator's relaxed store | 24 | Fixed: uses `loadIterationModeSeenModesConcurrently` like the sync sites (newer upstream code, missed by PRE-12). |
+| `DateInstance`, `JSBoundFunction`, `JSFinalObject`, `JSBigInt` (ctor, `createFrom`, in-place arithmetic on an unpublished result), `RegExpObject`, `JSModuleLoader`, `BrandedStructure`, `Symbol`, `WeakMapImpl` constructors vs a later reader on another thread | 40 | Publication; suppressed per constructor. |
+| `JITMathIC::arithProfile` vs the allocating (compiling) thread; OSR-exit `ScratchBuffer` create vs `ActiveScratchBufferScope` | 6 | Publication through JIT code (the address is baked into / loaded by code another thread compiled); suppressed. |
+| `BinarySwitch` global randomization counter (two compiler threads) | 2 | Upstream shape (concurrent JIT threads); any value correct; suppressed. |
+| `JSObject::getArrayLength/getVectorLength` vs a fresh butterfly's header init (`tryCreateUninitializedRestricted`, growth copies) | 10 | Recycled auxiliary memory; the `IndexingHeader` accessors were already listed, these are their inlined callers; suppressed. |
+| `fastArrayJoin` plain double-element read vs another thread's element store | 3 | Fixed: racy 64-bit load (JS-level race on array elements; untorn). |
+| `Heap::immutableButterflyToStringCache` HashMap find/add from two threads | 3 | Fixed (real): the CoW `toString` cache is not used GIL off. |
+| `HeapSnapshotBuilder::nextAvailableObjectIdentifier++` | 1 | Fixed: atomic counter (process-global). |
+| `ScriptExecutable` never-inline/optimize/FTL bits (`noInline()` and friends from two threads on one function) | 7 | Testing intrinsics; suppressed with reasoning (a lost bit loses a tuning hint). |
+| `JSGlobalObject::stackTraceLimit` set/get from two threads | 4 | Fixed: one 64-bit racy word {engaged, value}. |
+| `JSArray::fastSlice` memcpy vs memcpy at one address (slice on one thread, splice result on the other) | 1 | Recycled auxiliary memory. Independently, the flat-source copy now copies 64-bit lanes flag-on (`butterflyConcurrentCopyWords` = `gcSafeMemcpy`), because the SOURCE of a slice can be receiving another thread's element stores and `memcpy` promises no unit. |
+| `Butterfly::resizeArray` copy vs `allocateSparseIndexMap` store (both in `ensureArrayStorageExistsAndEnterDictionaryIndexingMode`) | 3 | Fixed (real): the blank-indexing case created the ArrayStorage and then allocated the sparse map UNLOCKED while another thread, now seeing ArrayStorage, did the same under the cell lock; the blank case now goes through the locked `enterDictionaryIndexingModeWhenArrayStorageAlreadyExists`. |
+| `convertToArrayStorageConcurrent` planning read of a spine's `vectorLength` vs a grower's store | 1 | Fixed: racy load (re-validated under the stop). |
+| `RegExp::m_state` byte written under the cell lock vs the matcher's unlocked double-check | 3 | Fixed: `RacyRegExpState` (relaxed byte under TSAN). Also the interpreter fallback now load-load-fences before reading `m_regExpBytecode` after observing `ByteCode` (weak-memory ordering; x86 unaffected). |
+| `WriteBarrierStructureID::clear` (allocation-profile clear on `prototype` store) vs relaxed readers | 1 | Fixed: relaxed store. |
+| `Subspace::m_directoryForEmptyAllocation` steal cursor advanced by two client allocators | 1 | Fixed: racy cursor (a race revisits or skips a directory once). |
+| `VM::entryScope` read by a conductor asking whether another VM is entered | 1 | Fixed: racy pointer read. |
+| `JSGlobalObject::ffiContext` lazy unique_ptr | 3 | Fixed: CAS publication, loser drops its copy. |
+| `PropertyTable::freeze/seal` attribute rewrite of a new structure's private table vs a later `isFrozen` reader | 1 | Publication; suppressed. |
+| `RegExp::firstCharacterBitmap` lazy bitmap between two DFG compiler threads | 2 | Upstream shape (`ThreadSafeLazyUniquePtr`); suppressed. |
+| Typed-array element search (`includes`/`indexOf`, `findFloat`/`findDouble`, `unalignedLoad`) vs another thread's element store | 5 | JavaScript-level data race on shared element storage, permitted by the model (plain vectorizable reads by design, no sub-8-byte tearing on supported targets); suppressed. |
+| `$vm`/shell hooks (`functionOverrideDateNow`) | 1 | Test hook; suppressed. |
+| `CodeBlock` construction on one thread vs baseline finalization (`setupWithUnlinkedBaselineCode`) on another | 1 | Publication through the JIT plan queue; suppressed. |
+
+Final tree (after the fixes above and the later ones in LANDING-PLAN "Results,
+fifth round": F16-F24). Corpus under the TSanJIT build, suppressions file as
+committed: GIL on 303 passed, 0 failed, 0 report files; GIL off 318 passed, 0
+failed, 0 report files. One suppression was added late in the round for a new
+test (`objectmodel/undecided-owner-relabel-no-stop.js` publishes fresh arrays
+to a reader thread through a plain property store; TSAN pairs the array
+butterfly's creation-time hole fill, `Butterfly::clearRange`, with the
+reader's racy element load — publication, the reader sees the hole or the
+value). The default corpus under the amplifier on the TSanJIT build (ten seeds per
+test, both modes): GIL on 292 passed, 9 flagged; GIL off 306 passed, 11
+flagged; 0 report files in either. Every flag is an output divergence of a
+timing-printing test (the `scaling/` set, `heap-bench-allocation.js`,
+`jit/int-gate-stop-budget.js`, `vmstate/dump-registers-…`), plus
+GIL off one stop-latency diagnostic line under TSAN's slowdown
+(`congc-t5-celllock-audit.js`, "access barrier has waited 5 s") and three
+60-second amplifier timeouts of `gc-stress/heap-snapshot-from-two-threads.js`,
+which takes 50-70 s under TSAN unamplified and completes.
+
+Final-tree TSanJIT mirror, eval mode (every `JSTests/stress` file on two
+threads of one global; suppressions as committed before this pass): 5,752
+files, 57 with a report, 30 distinct signatures. Triage:
+
+| Signature (top frames) | Files | Ruling |
+|---|---|---|
+| `Vector<HeapObserver*>::append` / `size` (`Heap::addObserver` from `FFI::FFIContext::FFIContext`) | 15 | **Real, fixed (F23):** two threads creating a global's FFI context at once both registered an observer; `addObserver`/`removeObserver` now lock. |
+| `VM::setGlobalConstRedeclarationShouldThrow` | 5 | `$vm` test hook setting a VM-wide flag from both threads. Suppressed (test-only). |
+| `compare_exchange_strong` vs `malloc` | 4 | Atomic on freshly recycled memory (allocator reuse); TSAN artefact. |
+| `NativeExecutable::function` vs `NativeExecutable()` | 3 | Construct-then-publish through a JS heap pointer. Suppressed (publication). |
+| `JSBoundFunction::canConstruct` vs `canConstructSlow` | 3 | Idempotent lazy `TriState` cache. Suppressed (benign; racy accessor is the tidy follow-up). |
+| `racyLoad` vs `ensureLengthSlowConcurrent` | 2 | Butterfly length words, C4 racy-by-design; reader already `racyLoad`, writer path is the locked grower's plain store inside the AS/flat copy. Covered by the existing `ensureLengthSlow` entry after this pass's rerun. |
+| `JSBigInt::hash` vs `hashSlow` | 2 | Idempotent lazy hash. Suppressed (benign). |
+| `tryGetIndexQuickly[Concurrent]` vs `relabelIndexingShapeConcurrent` | 3 | This round's Undecided owner relabel: hole-lane fill (plain) before the fenced StructureID publish, paired with a foreign racy read. Suppressed (publication; SPEC-objectmodel T4). |
+| `VMEntryScope::tearDownSlow` vs `racyLoad(entryScope)` | 1 | `VM::entryScope` racy by design flag-on (round 4). Suppressed. |
+| `domJITGetterComplexSlowCall` statics | 1 | `$vm` DOMJIT test getter's static counter. Suppressed (test-only). |
+| `IntlCollator::updateCanDoASCIIUCADUCETComparison` | 1 | Idempotent lazy flag. Suppressed (benign). |
+| `WeakImpl*` swap (`generational-opaque-roots.js`) | 1 | `$vm`-driven weak handle churn from both threads on one test object; the `WeakSet` free list is per-block under the owner's allocation — reviewed, the pair is two `Weak<>` assignments to one test-global slot (JS-level race on a harness variable). No engine change. |
+| `unique_ptr<ULocaleDisplayNames>` (`IntlDisplayNames::of` vs `initializeDisplayNames`) | 1 | Construct-then-publish (constructor on one thread, `of()` on the other). Suppressed (publication). |
+| `CString` (`IntlLocale::toString` vs `initializeLocale`) | 1 | Same. Suppressed (publication). |
+| `CompactPtr<UniquedStringImpl>` (`Structure::transitionPropertyName` in `LiteralParser` vs `addNewPropertyTransition`) | 1 | New structure's fields written before it is published in the transition table; the JSON.parse fast path read them after finding it there. Suppressed (publication). |
+| `WeakRandom::setSeed` (`functionSetRandomSeed`) | 1 | Shell test hook. Suppressed (test-only). |
+| `memcpy` in `Butterfly::resizeArray` vs atomic store | 1 | ArrayStorage copy under the cell lock reading a lane a lock-free SW=1 store is writing: AS-COPY reads racy lanes by design (the copy is republished; the store lands in old or new storage per §4.6, I19). Covered by the existing AS-COPY entries. |
+| `CachedSpecialPropertyAdaptive…` / `Bag` vs `memset` (2 files) | 2 | Structure rare-data special-property cache install vs a fresh `Bag` node's zeroing: allocation-then-publish under the rare-data lock (F11 area, round 5). Covered by the existing rare-data entries. |
+| `RegExpCache::ensureEmptyRegExp[Slow]` (2 files) | 2 | Idempotent lazy pointer (two empty `RegExp` cells at worst, one wins). Suppressed (benign). |
+| `ScriptExecutable()` vs atomic byte load | 1 | Construct-then-publish. Suppressed. |
+| `ScopedArguments::isMappedArgument` vs `ScopedArguments()` | 1 | Construct-then-publish. Suppressed. |
+| typed-array sort / `simdutf` base64 / `JSBigInt::absoluteAddOne`/`SubOne` (4 files) | 4 | JS-level data races of the doubled test on shared buffers (two threads sorting / decoding into / incrementing the same object); permitted by the memory model, no tearing hazard in engine state. No change. |
+| `HeapObserver` vector buffer `capacity`/`alloc` variants | 2 | Same as row 1 (F23). |
+
+Net: one engine fix (F23), thirteen suppressions with stated reasons
+(publication idioms, idempotent lazy caches, test hooks), the rest already
+covered or JavaScript-level races of the doubled test. Debug and Release
+mirror passes on the same tree found F20-F22 (LANDING-PLAN); the TSanJIT
+pass's non-report exits were the shared `$vm`/type-profiler/agent artefacts,
+one JIT-pool-exhaustion test and one 4,000-realm test killed by memory.

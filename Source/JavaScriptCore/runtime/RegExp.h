@@ -211,8 +211,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // m_atom is a pure function of the immutable pattern and flags: the first
     // successful parse sets it and nothing replaces or clears it afterwards, so
     // lock-free readers may hold the returned reference across a whole match.
-    bool hasValidAtom() const { return !m_atom.isNull(); }
-    const String& atom() const LIFETIME_BOUND { return m_atom; }
+    // GIL off the setter runs under the cell lock on the compiling thread while
+    // matchers on other threads read it: the impl pointer is release-published
+    // (publishAtom) and read as one racy word here.
+    bool hasValidAtom() const { return !!atomImplConcurrently(); }
+    const String& atom() const LIFETIME_BOUND { atomImplConcurrently(); return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return WTF::atomicLoad(const_cast<Yarr::SpecificPattern*>(&m_specificPattern), std::memory_order_relaxed); } // THREADS: advisory matcher hint; racy vs cellLock'd recompile by design.
 
     const WTF::BitSet<256>* firstCharacterBitmap(FirstCharacterFilterPosition);
@@ -239,6 +242,16 @@ private:
         JITCode,
         ByteCode,
         NotCompiled
+    };
+    // m_state is written under the cell lock (compiles, deleteCode in a stop)
+    // and read lock-free by matchers on any thread (double-checked against the
+    // locked compile); one byte, so the racy read is a stale-or-current value.
+    // Relaxed atomic under TSAN, plain otherwise.
+    struct RacyRegExpState {
+        RegExpState value;
+        RacyRegExpState(RegExpState v) : value(v) { }
+        operator RegExpState() const { return racyLoad(value); }
+        RacyRegExpState& operator=(RegExpState v) { racyStore(value, v); return *this; }
     };
 
     Yarr::ErrorCode constructionErrorCode() const { return WTF::atomicLoad(const_cast<Yarr::ErrorCode*>(&m_constructionErrorCode), std::memory_order_relaxed); }
@@ -285,7 +298,9 @@ private:
 
     String m_patternString;
     String m_atom;
-    RegExpState m_state { NotCompiled };
+    StringImpl* atomImplConcurrently() const { return racyLoad(*std::bit_cast<StringImpl* const*>(&m_atom)); }
+    void publishAtom(String&&);
+    RacyRegExpState m_state { NotCompiled };
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };

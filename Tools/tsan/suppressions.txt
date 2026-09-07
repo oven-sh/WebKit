@@ -626,3 +626,119 @@ race:JSC::JSString::JSString
 # an unlocked mutex" reports.)
 race:libicui18n.so
 race:libicuuc.so
+
+# ---- Fifth landing round: mirror harness (JSTests/stress global code on two
+# threads, GIL off). Publication of a freshly constructed cell to another
+# thread goes through a JS heap store and an address-dependent load, which
+# TSAN cannot pair; each entry below is a constructor (or the first reader of
+# a constructor-initialized immutable field) confirmed to be that class.
+race:JSC::DateInstance::DateInstance
+race:JSC::JSBoundFunction::JSBoundFunction
+race:JSC::JSFinalObject::JSFinalObject
+race:JSC::JSBigInt::JSBigInt
+race:JSC::JSBigInt::createWithLength
+# Baseline math IC objects are allocated by the compiling thread and reached by
+# other threads only through the linked code that embeds their address.
+race:JSC::JITMathIC<*>::arithProfile
+# OSR-exit scratch buffers: installed release/acquire in the per-thread table
+# (VMLite::ensureScratchBufferAtIndex), but the exit thunk loads the pointer in
+# JIT code and hands it to operationCompileOSRExit, so TSAN sees no edge.
+race:JSC::ActiveScratchBufferScope::ActiveScratchBufferScope
+# BinarySwitch's global randomization counter is bumped by every compiler
+# thread without synchronization upstream as well (concurrent JIT threads);
+# any value is correct.
+race:JSC::BinarySwitch::BinarySwitch
+# ProxyObject's handler-trap offset cache: racing refills by two threads using
+# one Proxy are a JavaScript-level race on the handler object; every outcome
+# reads a slot of the handler through a bounds-safe offset and re-validates
+# callability, so the result is one of the racing handler states (memory-safe).
+race:JSC::ProxyObject::getHandlerTrap
+race:JSC::ProxyObject::clearHandlerTrapsOffsetsCache
+# More constructor/publication pairs from the mirror pass (same class as above):
+race:JSC::RegExpObject::RegExpObject
+race:JSC::JSModuleLoader::JSModuleLoader
+race:JSC::BrandedStructure::BrandedStructure
+race:JSC::Symbol::Symbol
+# Structure transition helpers edit the NEW structure's private property-table
+# copy before the structure is published (seal/freeze attribute rewrite); a
+# later reader on another thread reaches it through the published structure.
+race:JSC::PropertyTable::freeze
+race:JSC::PropertyTable::seal
+# JSBigInt digits and length are immutable once the cell is published; every
+# report on them pairs a creating thread's initialization (constructor,
+# createFrom, the in-place arithmetic on a not-yet-published result) with a
+# later reader on another thread.
+race:JSC::JSBigInt::digit
+race:JSC::JSBigInt::length
+race:JSC::JSBigInt::setLength
+# Butterfly header words of a FRESH butterfly (tryCreateUninitializedRestricted,
+# new growth copies) vs a stale relaxed reader at a recycled auxiliary address;
+# the IndexingHeader accessors are already listed, these are their inlined
+# callers as TSAN names them.
+race:JSC::JSObject::getArrayLength
+race:JSC::JSObject::getVectorLength
+# Typed-array element storage is shared memory by design: plain (vectorizable)
+# element reads racing another thread's element stores are a JavaScript-level
+# data race the memory model permits (no tearing below 8 bytes on supported
+# targets); Atomics.* is the synchronized path.
+race:JSC::genericTypedArrayViewProtoFuncIncludes
+race:JSC::genericTypedArrayViewProtoFuncIndexOf
+race:WTF::findFloat
+race:WTF::findDouble
+race:WTF::unalignedLoad
+# Test-shell hooks ($vm / jsc-only globals) with process-global state.
+race:JSC::functionOverrideDateNow
+race:GlobalObject::PropertyFilter
+# ScriptExecutable's never-inline/never-optimize/never-FTL bits are set by the
+# noInline()/noDFG()/noFTL() testing intrinsics; two threads applying them to
+# one function race a bitfield word (each sets its own bit; a lost bit only
+# loses a testing hint).
+race:JSC::ScriptExecutable::setNeverInline
+race:JSC::ScriptExecutable::setNeverOptimize
+race:JSC::ScriptExecutable::setNeverFTLOptimize
+# Baseline code finalization reads a CodeBlock another thread constructed; the
+# CodeBlock reached the finalizing thread through the JIT plan (locked queue).
+race:JSC::CodeBlock::setupWithUnlinkedBaselineCode
+race:JSC::WeakMapImpl<*>::WeakMapImpl
+# Lazily built first-character bitmap: ThreadSafeLazyUniquePtr publishes it;
+# the pairing TSAN misses is between two DFG compiler threads (upstream shape).
+race:JSC::RegExp::firstCharacterBitmap
+# A fresh array butterfly's hole fill (memset in JSArray::tryCreate) paired
+# with another JS thread's racy element load after the array was published to
+# it through a plain JS property store: publication, the reader sees the hole
+# or a later value (objectmodel/undecided-owner-relabel-no-stop.js).
+race:JSC::Butterfly::clearRange
+# --- Fifth landing round, final mirror pass (JSTests/stress on two threads) ---
+# Construct-then-publish: an object built on one thread (its constructor's
+# plain field stores) reached the other through a JS heap pointer and was read
+# there; TSAN cannot see the JS-level publication.
+race:JSC::IntlDisplayNames::initializeDisplayNames
+race:JSC::IntlLocale::initializeLocale
+race:JSC::NativeExecutable::NativeExecutable
+race:JSC::NativeExecutable::finishCreation
+race:JSC::ScriptExecutable::ScriptExecutable
+race:JSC::ScopedArguments::ScopedArguments
+# A new Structure's transition name/attributes are written before it is
+# published in the transition table; the JSON.parse fast path reads them from
+# a structure it found there.
+race:JSC::Structure::transitionPropertyName
+# Idempotent lazy caches (every racer computes the same value; word-sized).
+race:JSC::JSBoundFunction::canConstructSlow
+race:JSC::JSBigInt::hashSlow
+race:JSC::IntlCollator::updateCanDoASCIIUCADUCETComparison
+race:JSC::RegExpCache::ensureEmptyRegExpSlow
+# VM::entryScope is read racily by design flag-on (VMEntryScope's isEntered
+# uses racyLoad); the writer side is the owning thread's plain store.
+race:JSC::VMEntryScope::tearDownSlow
+race:JSC::VMEntryScope::setUpSlow
+# T4 owner relabel of an Undecided butterfly (SPEC-objectmodel §4.5): the
+# owner fills hole lanes with plain stores before publishing the new
+# StructureID with a release fence; a foreign racy indexed read pairs with the
+# fill and sees the hole or, after the publish, the value.
+race:JSC::JSObject::relabelIndexingShapeConcurrent
+# Test-shell hooks: $vm setters of VM-wide flags, the $vm DOMJIT test getters'
+# static call counters, the shell's setRandomSeed().
+race:JSC::VM::setGlobalConstRedeclarationShouldThrow
+race:functionDOMJITGetterComplexSlowCall
+race:domJITGetterComplexSlowCall
+race:functionSetRandomSeed

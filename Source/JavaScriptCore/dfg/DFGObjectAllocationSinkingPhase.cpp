@@ -1208,6 +1208,22 @@ private:
                 m_heap.escape(node->child1().node());
             break;
 
+        case CheckTransitionOwner: {
+            // useJSThreads only. A check on an allocation this code made does
+            // not escape it; when the allocation is sunk, its transitions are
+            // folded into the materialization (which stores the final
+            // structure into an object no other thread can see yet), so the
+            // check goes away with them. Resolution is only possible in the
+            // lowering pass, which is when the node is dropped.
+            Allocation* allocation = m_heap.onlyLocalAllocation(node->child1().node());
+            if (allocation && allocation->isObjectAllocation()) {
+                if (m_sinkCandidates.contains(allocation->identifier()) && heapResolve(PromotedHeapLocation(allocation->identifier(), StructurePLoc)))
+                    node->remove(m_graph);
+            } else
+                m_heap.escape(node->child1().node());
+            break;
+        }
+
         case CheckStructureOrEmpty:
         case CheckStructure: {
             Allocation* allocation = m_heap.onlyLocalAllocation(node->child1().node());

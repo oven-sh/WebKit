@@ -749,7 +749,7 @@ public:
     }
 
     // Returns the owner's table, creating it if the owner has none.
-    static Storage* materializeGILOff(JSGlobalObject* globalObject, HashTable* owner)
+    NEVER_INLINE static Storage* materializeGILOff(JSGlobalObject* globalObject, HashTable* owner)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -810,7 +810,7 @@ public:
     // Replaces the owner's table `base` with a rehash into `newCapacity`. Does
     // nothing if `base` is no longer current, or no longer fits; the caller
     // then plans again against the current table.
-    static void rehashGILOff(JSGlobalObject* globalObject, HashTable* owner, Storage& base, TableSize newCapacity)
+    NEVER_INLINE static void rehashGILOff(JSGlobalObject* globalObject, HashTable* owner, Storage& base, TableSize newCapacity)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -846,7 +846,7 @@ public:
             setKeyOrValueData(vm, storage, newEntryKeyIndex + 1, value);
     }
 
-    static void addNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, JSValue value, TableSize hash)
+    NEVER_INLINE static void addNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, JSValue value, TableSize hash)
     {
         VM& vm = getVM(globalObject);
         DeferTerminationForAWhile noTermination(vm);
@@ -890,7 +890,7 @@ public:
         }
     }
 
-    static bool removeNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, TableSize hash)
+    NEVER_INLINE static bool removeNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, TableSize hash)
     {
         VM& vm = getVM(globalObject);
         DeferTerminationForAWhile noTermination(vm);
@@ -928,7 +928,7 @@ public:
         return removed;
     }
 
-    static void clearGILOff(JSGlobalObject* globalObject, HashTable* owner)
+    NEVER_INLINE static void clearGILOff(JSGlobalObject* globalObject, HashTable* owner)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -946,7 +946,7 @@ public:
     }
 
     // Returns a copy of the owner's table, or null if the owner has none.
-    static Storage* copyGILOff(JSGlobalObject* globalObject, HashTable* owner)
+    NEVER_INLINE static Storage* copyGILOff(JSGlobalObject* globalObject, HashTable* owner)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);

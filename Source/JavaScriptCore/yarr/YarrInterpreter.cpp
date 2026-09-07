@@ -27,6 +27,8 @@
 #include "config.h"
 #include "YarrInterpreter.h"
 
+#include "JSCConfig.h"
+
 #include "ConcurrentJSLock.h"
 #include "Options.h"
 #include "SuperSampler.h"
@@ -74,6 +76,13 @@ private:
     CompileMode m_compileMode { CompileMode::Legacy };
     bool m_recursiveDump { false };
 };
+
+// GIL-off: one backtracking-context allocator per thread (see interpret()).
+static BumpPointerAllocator& threadLocalRegExpAllocator()
+{
+    static thread_local BumpPointerAllocator allocator;
+    return allocator;
+}
 
 template<typename CharType>
 class Interpreter {
@@ -2303,7 +2312,19 @@ public:
         if (pattern->hasEndAnchoredFixedSize() && input.end() >= pattern->m_endAnchoredFixedSize)
             input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
 
-        ConcurrentJSLocker locker(pattern->m_lock);
+        // The lock only guards the VM-wide bump allocator the backtracking
+        // contexts come from. In a GIL-off process every JS thread (and every
+        // compiler thread running matchConcurrently) may interpret at once;
+        // sharing one allocator would serialize all their matches on this lock
+        // with heap access held. Use a per-thread allocator there instead and
+        // take no lock (the pattern itself is immutable). Flag-off / GIL-on:
+        // unchanged.
+        BumpPointerAllocator* allocator = pattern->m_allocator;
+        std::optional<ConcurrentJSLocker> locker;
+        if (g_jscConfig.gilOffProcess) [[unlikely]]
+            allocator = &threadLocalRegExpAllocator();
+        else
+            locker.emplace(pattern->m_lock);
 
         for (unsigned i = 0; i < pattern->m_body->m_numSubpatterns + 1; ++i)
             output[i << 1] = offsetNoMatch;
@@ -2311,7 +2332,7 @@ public:
         for (unsigned i = pattern->m_offsetVectorBaseForNamedCaptures; i < pattern->m_offsetsSize; ++i)
             output[i] = 0;
 
-        allocatorPool = pattern->m_allocator->startAllocator(Options::maxRegExpStackSize());
+        allocatorPool = allocator->startAllocator(Options::maxRegExpStackSize());
         RELEASE_ASSERT(allocatorPool);
 
         DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get());
@@ -2331,7 +2352,7 @@ public:
         // Keep a few overflow pools mapped between matches: patterns whose backtracking contexts
         // outgrow the head page would otherwise map and unmap them around every match.
         static constexpr size_t retainedAllocatorOverflowBytes = 64 * KB;
-        pattern->m_allocator->stopAllocator(retainedAllocatorOverflowBytes);
+        allocator->stopAllocator(retainedAllocatorOverflowBytes);
 
         ASSERT((result == JSRegExpResult::Match) == (output[0] != offsetNoMatch));
 

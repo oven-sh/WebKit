@@ -2055,46 +2055,14 @@ void Structure::fireThreadLocalSetsWithChainUnderStop(VM& vm, const char* reason
             structure->m_writeThreadLocalWatchpointSet.fireAll(vm, reason);
     };
 
+    // r16: fire exactly this structure's sets (F1/F2/F3 name S, or S and the
+    // target, and the caller invokes this once per named structure). The r13
+    // chain-fire over the previousID chain and the transition-table subtree is
+    // withdrawn (SPEC-objectmodel §5 F4): under instance-keyed ownership it
+    // turned one shared object's first foreign transition into the loss of
+    // lock-free/cached transitions for the whole shape family. It was additive
+    // (perf-motivated), so dropping it changes no soundness argument.
     fireOne(this);
-
-    // F4 chain-fire (r13): also fire the still-valid sets along this
-    // structure's previousID chain and transition-table successor subtree, in
-    // the SAME stop. Monotone => sound; bounds N-thread warmup stop counts.
-    // Interpretation note (recorded in INTEGRATE-objectmodel.md): the chain
-    // propagates the same set kind(s) that fired - fireWriteThreadLocal (F1)
-    // chains only writeThreadLocal so foreign WRITES do not destroy E1/E4
-    // transition elision for the whole shape family; fireTransitionThreadLocal
-    // (F2/F3) chains both (it implies writeThreadLocal, §5).
-    //
-    // The walk allocates only malloc memory (worklist) - never GC heap (O1/O4;
-    // heap §10A exemption covers metadata writes inside stop windows).
-    // DeferGCForAWhile satisfies WeakGCMap::forEach's isDeferred() contract
-    // during the transition-table iteration WITHOUT polling GC at scope exit:
-    // callers reach this under a §10.6 stop (asserted above) and may also be
-    // inside an ObjectInitializationScope (AssertNoGC), so ~DeferGC's
-    // collectIfNecessaryOrDefer would assert (JSCVAL-002) and would otherwise
-    // poll a collection mid-STW with the SW publication not yet landed.
-    DeferGCForAWhile deferGC(vm);
-
-    for (Structure* ancestor = previousID(); ancestor; ancestor = ancestor->previousID())
-        fireOne(ancestor);
-
-    Vector<Structure*, 16> worklist;
-    worklist.append(this);
-    while (!worklist.isEmpty()) {
-        Structure* current = worklist.takeLast();
-        if (current != this)
-            fireOne(current); // Fired with NO lock held: fires may take rank-6b CodeBlock locks, which are OUTER to m_lock (I20).
-        // Collect successors under m_lock (L6: mutator transition-table walks
-        // hold m_lock; mutators are stopped, but compiler threads still run
-        // Concurrently readers).
-        ConcurrentJSLocker locker(current->m_lock);
-        current->m_transitionTable.forEachTransition([&](Structure* successor) {
-            if ((alsoFireTransitionThreadLocal && successor->m_transitionThreadLocalWatchpointSet.isStillValid())
-                || successor->m_writeThreadLocalWatchpointSet.isStillValid())
-                worklist.append(successor);
-        });
-    }
 }
 
 void Structure::fireTransitionThreadLocal(VM& vm, const char* reason)
@@ -2362,6 +2330,18 @@ PropertyTable* Structure::copyPropertyTableForPinning(VM& vm, Structure* transit
         return PropertyTable::clone(vm, *table);
     bool setPropertyTable = false;
     return materializePropertyTable(vm, setPropertyTable);
+}
+
+void Structure::materializePropertyTableForMutatorLookup(VM& vm)
+{
+    ASSERT(Options::useJSThreads());
+    if (isCompilationThread() || Thread::mayBeGCThread() || !vm.currentThreadIsHoldingAPILock())
+        return;
+    if (protectPropertyTableWhileTransitioning())
+        return; // An in-flight transition of THIS thread owns the table slot's absence.
+    if (!previousID() || propertyTableOrNull())
+        return;
+    materializePropertyTable(vm, true);
 }
 
 PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attributes)

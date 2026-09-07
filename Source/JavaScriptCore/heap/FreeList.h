@@ -55,21 +55,21 @@ struct FreeCell {
     // thread while STALE concurrent readers (another mutator's relaxed-atomic
     // cell-header/butterfly-word loads through the SPEC-objectmodel concurrent
     // accessors) may still touch the dead cell's memory; staleness is tolerated
-    // by the object-model GTs, but the writes must be atomic so the race is
-    // defined. Relaxed stores; plain mov codegen.
+    // by the object-model GTs; racyLoad/racyStore (relaxed atomics under TSAN,
+    // the plain accesses otherwise).
     ALWAYS_INLINE void makeLast(uint32_t lengthInBytes, uint64_t secret)
     {
-        WTF::atomicStore(&scrambledBits, scramble(1, lengthInBytes, secret), std::memory_order_relaxed); // We use a set LSB to indicate a sentinel pointer.
+        racyStore(scrambledBits, scramble(1, lengthInBytes, secret)); // We use a set LSB to indicate a sentinel pointer.
     }
 
     ALWAYS_INLINE void setNext(FreeCell* next, uint32_t lengthInBytes, uint64_t secret)
     {
-        WTF::atomicStore(&scrambledBits, scramble((next - this) * sizeof(FreeCell), lengthInBytes, secret), std::memory_order_relaxed);
+        racyStore(scrambledBits, scramble((next - this) * sizeof(FreeCell), lengthInBytes, secret));
     }
 
     ALWAYS_INLINE std::tuple<int32_t, uint32_t> decode(uint64_t secret)
     {
-        return descramble(WTF::atomicLoad(&scrambledBits, std::memory_order_relaxed), secret);
+        return descramble(racyLoad(scrambledBits), secret);
     }
 
     static ALWAYS_INLINE void advance(uint64_t secret, FreeCell*& interval, char*& intervalStart, char*& intervalEnd)

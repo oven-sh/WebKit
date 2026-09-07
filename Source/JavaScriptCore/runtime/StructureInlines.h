@@ -828,18 +828,11 @@ ALWAYS_INLINE bool Structure::mayTransitionLockFreeFromThisStructure(const JSCel
     if (hasAnyArrayStorage(indexingType()))
         return false;
 
-    if (taggedButterflyWord & butterflyPointerMask) {
-        // Butterfly-bearing: ownership is the INSTANCE tag - exactly
-        // (currentButterflyTID(), SW=0). No structure-TID compare: a thread
-        // transitioning its own instance through a foreign-created shape stays
-        // lock-free (§5 E4/F2, r12 per-object keying).
-        return (taggedButterflyWord & butterflyTagMask) == encodeButterflyTag(currentButterflyTID(), false);
-    }
-
-    ASSERT(!taggedButterflyWord); // §2: payload 0 + nonzero tag is illegal.
-    // Butterfly-less (incl. N2 structure-only transitions): ownership is the
-    // structure's transition TID (N1).
-    return currentButterflyTID() == m_transitionThreadLocalTID;
+    // Ownership is the INSTANCE tag - exactly (currentButterflyTID(), SW=0) -
+    // for butterfly-bearing and butterfly-less words alike (§2.1 N1-I, r16; E4).
+    // No structure-TID compare: a thread transitioning its own instance through
+    // a foreign-created shape stays lock-free.
+    return butterflyWordOwnedByCurrentThread(taggedButterflyWord);
 }
 
 // SPEC-objectmodel I29 (Task 3): the final re-validation of an E4 lock-free

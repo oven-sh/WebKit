@@ -324,12 +324,6 @@ void VMLite::clearScratchBuffers()
 }
 
 // §6.7: the sole definition of currentButterflyTID().
-ButterflyTID currentButterflyTID()
-{
-    auto* lite = VMLite::currentIfExists();
-    return lite ? lite->tid : 0;
-}
-
 void setVMLiteTIDTagHook(void (*hook)(uint16_t))
 {
     s_vmLiteTIDTagHook.store(hook, std::memory_order_release);

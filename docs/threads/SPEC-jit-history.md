@@ -449,3 +449,152 @@ States are monotonic, so the legitimate lost race can never trip it; a
 `ClearWatchpoint` entry (a future direct caller bypassing the `IsWatched`
 precheck) is trapped exactly as the pre-claim `ASSERT(state() == IsWatched)`
 trapped it pre-amendment. No behavior change in release; flag-off untouched.
+
+## §24. Transition emission (§5.5 Transition row rewritten; fifth landing round)
+
+Until now §5.5's Transition row was a predicate no tier emitted: `tryCachePutBy`
+returned GiveUpOnCache for every NewProperty put flag-on, the IC compiler's
+Transition case asserted unreachable, and the DFG parser demoted every
+Transition variant to a generic PutById — so each property add ran
+`putDirectInternal` in C++ (the 40x-1400x object-creation costs recorded in
+LANDING-PLAN "Results, fourth round"). The row is now the emitted contract.
+
+What is emitted, and why each clause: (1) compile-time, both source TTL sets
+valid, and the emitter WATCHES four sets (source and target, transition- and
+write-thread-local): E4/I15 need the source pair; the target pair is F2's "fire
+BOTH sets on S and target" mirrored on the consumer side so a fire that names
+only the target still retires the emitter (conservative; costs two watchpoint
+registrations). (2) Source not ArrayStorage-shaped: OM I31, every AS relayout is
+cell-locked and E4 excludes AS in C++ (`mayTransitionLockFreeFromThisStructure`).
+(3) Non-reallocating only: a reallocating transition installs a NEW butterfly,
+which flag-on is a tagged-word publication with its own protocols (N3 first
+install: nuke-CAS + casButterfly; E4 growth: T1 CAS shape); those stay R3 in
+this revision. (4) Runtime PA exclusion and ONE tagged-word load feeding both
+legs, no second load (a second load could pair a fresh tag with a stale
+decision). (5) Butterfly-bearing leg = E4's instance-tag compare and today's
+store sequence (the owner of a (currentTID,0) instance is the only lock-free
+transitioner; every foreign participant fires F1/F2 in a stop first, and the
+window has no poll). (6) Butterfly-less leg = OM N2-LF, never a plain store:
+see OM history §23 for the participant table; the compare against
+`S->transitionThreadLocalTID()` is an immediate because the stub is specialized
+on S. (7) DFG: the runtime legs become an exiting check node so that a foreign
+thread running shared optimized code exits (and, via the baseline slow path,
+fires F2, after which recompilation sees invalid sets and plants no
+transition); `PutStructure` carries the N2-LF claim for the word==0 case
+because the DFG keeps value store and structure store as two nodes — sound
+because both sit in one poll-free region after the check and the participant
+table excludes every concurrent lane writer while the watched sets are valid;
+non-escaped local allocations need nothing (no other thread can name the
+object before it escapes, and escape materializes the final structure).
+
+Flag-off: nothing changes (the flag-off Transition case is byte-identical; the
+new DFG node is never planted).
+
+## §25. CheckTraps GIL-on model = flag-off; CheckTraps cloneable (I21 amended; fifth landing round)
+
+Measured: flag-on GIL-on, a 3e8-iteration integer loop took 1.7x flag-off and
+a closure-call loop 2.6x the instructions. Cause: the GIL-on arm of
+`CheckTraps` in DFGClobberize/AI was `read(World); write(Heap)` /
+`clobberWorld()` ("trivially correct" placeholder from the GIL-off work), so
+every loop poll killed constants (callee/scope folding, closure-variable
+constants), LICM and B3 loop opts; and `CheckTraps` was not cloneable, so
+DFG loop unrolling refused every loop flag-on (`isNodeCloneable`). Neither is
+needed GIL-on: the phase-1 GIL is cooperative and handed off only inside the
+blocking primitives (LockObject/ConditionObject/ThreadObject parks,
+`jsThreadGILHandoffYield`), never from `VMTraps::handleTraps`; a thread at a
+poll therefore excludes every other mutator of its VM exactly as a flag-off
+thread does, and the flag-off model (InternalState only) is exact. The GIL-off
+arm is unchanged (invalidation point + precise jettison + the poll-bounded
+plain-data clobbers of AUDIT-checktraps §7.1). Cloning: `CheckTraps` has no
+children and no per-node data; a clone is another poll (GIL-off: with its own
+invalidation point at codegen), which only adds safepoints.
+
+## §26. Profiled allocation GIL off: TLC-slot allocators, and the pair check (fifth landing round)
+
+Before: GIL off, `ObjectAllocationProfile::initializeProfile` left the
+profile's `Allocator` null (a raw `LocalAllocator*` is per client, and the
+profile is per structure/function, shared), so `op_new_object`,
+`op_create_this` and DFG `CreateThis` took the C++ slow path for every object.
+Change: the profile stores `Allocator::encodedTLCSlot(slot)` (low bit set,
+slot = `tlcIndexBase + sizeClassIndex`, thread-independent) and the emitters
+resolve it through the current thread's lite TLC table
+(`emitResolveProfiledAllocator`, FTL `resolveProfiledAllocator`); an
+out-of-range slot resolves to null and the existing null test takes the slow
+path. Measured: GIL-off constructor loop 490 -> 298 ms at the time.
+
+Consequence found by the amplifier: the `create_this` fast paths read the
+profile as two words {allocator, structure}. GIL off another thread can
+`clear()` (a `.prototype` store) or refill the profile between the loads; with
+a non-null GIL-off allocator the torn pair — old allocator, null structure;
+or an allocator sized for a different structure after a refill — reached the
+inline allocator (SIGSEGV; a size mismatch would have been silent
+corruption). The old comment's claim that a torn pair "just takes the slow
+path" was true only of the allocator. Rule (all three tiers, flag-on): read
+structure, allocator, structure; slow path unless the two structure reads are
+equal and non-null. Writers: `initializeProfile` stores allocator then
+structure (store-store fence, as landed); `clear()` now stores structure
+(null) then allocator. Under those orders, two equal non-null structure reads
+bracket an allocator that belongs to that structure (a refill to a different
+structure between them changes the second read; a refill to the same
+structure has the same size class). x86: loads are ordered; elsewhere the
+emitted `loadFence`s. `op_new_object`'s metadata profile is written once
+before the CodeBlock is published and is not subject to this.
+`jit/create-this-profile-torn-pair.js`.
+
+## §27. IC property conditions can go stale before generation (fifth landing round)
+
+`PolymorphicAccess` generates a case only after `couldStillSucceed()` has
+re-validated its `ObjectPropertyConditionSet`, and the compiler
+release-asserted during generation that each non-watchable condition's
+structure still ensures it ("This condition is no longer met"). The invariant
+is single-threaded: with JS threads another thread can transition the
+condition's object — a shared prototype — between the check and generation
+(mirror harness, `primitive-poly-proto.js`; `jit/ic-condition-stale-at-generation.js`
+reproduces it in 5 of 10 runs). Flag-on rule: a stale condition makes the case
+fail softly. `collectConditions` returns false (also for an equivalence
+condition that stopped being watchable), `generateWithConditionChecks` emits
+an always-miss arm (`m_failAndIgnore`), the handler compiler returns
+`GaveUp`; the next repatch derives a fresh case. Nothing already emitted is
+wrong: the arm is unreachable and the stub's other cases are unaffected.
+Flag-off the assertion stands.
+
+Addendum (measurement). The FTL arm of the pair check first used full fences
+(`fence(root, root)`, a locked op on x86) between the three loads; on
+`class-ctor-4` that cost 22 ms of 108 GIL on. They are load-load fences now
+(B3 `Fence` with a write range and no read range → Air `LoadFence`: nothing
+on x86, `dmb ishld` on ARM64), which is all the check needs: the second
+structure load must not be folded into the first nor hoisted above the
+allocator load. Baseline and DFG used `loadFence()` from the start.
+
+
+## §28. Global-property scope caching flag-on (fifth landing round)
+
+Review round 1 froze `op_get_from_scope`/`op_put_to_scope` metadata after
+linking flag-on: `tryCacheGetFromScopeGlobal` rewrites `{getPutInfo,
+structureID, operand}` under `CodeBlock::m_lock`, and the LLInt/Baseline fast
+paths read them with no lock, possibly on another thread. The price was every
+non-`var` global read — `Math`, `JSON`, `Object`, any property of the global
+object — on the slow path in the LLInt and Baseline and, because the DFG takes
+its structure from the same metadata, a generic `GetByIdFlush` in the DFG/FTL
+too: `Math.sqrt(i)` in a loop 14x flag-off, a global property read 50x, the
+scaling suite's ray tracer 2.8x, its Richards 2.7x.
+
+Rule now (x86-64; other targets keep the freeze until their fast paths order
+the two loads): the GlobalProperty fill and re-fill publish `operand`, a
+store-store fence, then `structureID`. The reader loads `structureID`,
+compares it with the scope's, then loads `operand`, then the butterfly. (i) A
+reader that sees the new `structureID` sees the operand stored before it. (ii)
+A reader that pairs an older matching `structureID` with a newer operand
+reads the property's current slot: the writer resolved the operand against
+the structure the global object already had, whose value and butterfly were
+published before its StructureID (M5), all before the operand store; TSO
+makes them visible to the reader before the operand is. A genuinely stale
+pair reads a slot that offset quarantine (SPEC-objectmodel §6) keeps from
+being reused before a stop. (iii) The two rewrites that change the operand's
+meaning together with the resolve type — GlobalProperty to GlobalLexicalVar,
+and the put side, whose fast path would also need the butterfly write
+predicate — stay frozen flag-on; those sites keep the slow path. The DFG reads
+the pair under `m_lock` as before and inlines the load behind a structure
+check. `jit/global-property-cache-vs-global-transitions.js` races four
+readers (own and shared metadata) against a main thread that keeps
+transitioning the global object.

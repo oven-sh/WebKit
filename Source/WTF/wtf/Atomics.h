@@ -518,10 +518,42 @@ ALWAYS_INLINE T& ensurePointer(Atomic<T*>& pointer, const Invocable<T*()> auto& 
     return *newValue;
 }
 
+// A word that other threads may read or write at the same time by design, in a
+// protocol where every reader tolerates a stale value (a length that a racing
+// grower republishes, a slot another thread overwrites with a whole value).
+// Under TSAN these are relaxed atomics, so the detector sees the intent and
+// reports only unintended races. In every other build they are the plain
+// access: an aligned word is one load or store on every supported target, and,
+// unlike a relaxed atomic, a plain access can be kept in a register, hoisted
+// out of a loop, combined and vectorized, so single-threaded code pays nothing.
+// Not for words whose atomicity or ordering is load-bearing (a flag another
+// thread spins on, a publication edge): those stay explicit atomics.
+template<typename T>
+ALWAYS_INLINE T racyLoad(const T& location)
+{
+#if TSAN_ENABLED
+    return std::bit_cast<Atomic<T>*>(const_cast<T*>(&location))->load(std::memory_order_relaxed);
+#else
+    return location;
+#endif
+}
+
+template<typename T, typename U>
+ALWAYS_INLINE void racyStore(T& location, U value)
+{
+#if TSAN_ENABLED
+    std::bit_cast<Atomic<T>*>(&location)->store(static_cast<T>(value), std::memory_order_relaxed);
+#else
+    location = static_cast<T>(value);
+#endif
+}
+
 } // namespace WTF
 
 using WTF::Atomic;
 using WTF::Dependency;
+using WTF::racyLoad;
+using WTF::racyStore;
 using WTF::InputAndValue;
 using WTF::inputAndValue;
 using WTF::ensurePointer;
