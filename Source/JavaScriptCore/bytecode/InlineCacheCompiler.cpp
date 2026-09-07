@@ -1918,8 +1918,23 @@ static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelp
 
     hasButterfly.link(&jit);
     {
-        JIT_COMMENT(jit, "butterfly-bearing: plain E4 sequence");
-        // Committed (scratch2GPR = untagged butterfly).
+        JIT_COMMENT(jit, "butterfly-bearing: claim, then E4 sequence");
+        // r17 (OM E4-C, history §26): this leg claims the StructureID lane
+        // too, so the stub's legality rests on the owner tag and the claim
+        // alone - no thread-local-set watchpoints - and it keeps working after
+        // the source's sets have fired (foreign cell-locked writers claim the
+        // same lane first and RESTART when they lose). The butterfly word must
+        // be re-derived after the claim: scratch1 held the tag test, scratch2
+        // the pointer, and the CAS needs both registers.
+        loadOldStructureIDBits(scratch1GPR);
+        jit.move(scratch1GPR, scratch2GPR);
+        jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
+        slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
+        // Committed. The word cannot move while an owner-tagged SW=0 instance's
+        // lane is held (SW flips need the un-nuked header, locked writers lost
+        // the lane), so the re-load yields the same payload.
+        jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        jit.and64(CCallHelpers::TrustedImm64(butterflyPointerMask), scratch2GPR);
         loadOffset(scratch1GPR);
         CCallHelpers::Jump isInline = jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset));
         jit.neg32(scratch1GPR);
@@ -3821,12 +3836,31 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
         auto allocator = makeDefaultScratchAllocator(scratchGPR);
 
         if (Options::useJSThreads()) [[unlikely]] {
-            // SPEC-jit §5.5 Transition (OM E4 / N2-LF): tryCachePutBy creates
-            // only non-reallocating Transition cases flag-on; emit them with
-            // the runtime owner predicate. A predicate failure takes the
-            // generic put (m_failAndIgnore), which performs the transition
-            // through the C++ protocols and fires F2 if this thread is foreign.
-            RELEASE_ASSERT(!allocating);
+            // SPEC-jit §5.5 Transition (OM E4-C, r17): the claim-first
+            // non-reallocating form with its runtime owner predicate; a
+            // predicate failure takes the generic put (m_failAndIgnore). An
+            // allocating transition that reaches this per-case path (it has
+            // conditions to check, so the shared handlers were not used) calls
+            // the operation that runs the whole install through the
+            // object-model protocols: rare enough not to duplicate the shared
+            // handler's inline install here.
+            if (allocating) {
+                RELEASE_ASSERT(m_propertyCache.isHandlerIC());
+                InlineCacheCompiler::SpillState spillState = preserveLiveRegistersToStackForCall({ });
+                jit.transfer32(CCallHelpers::Address(m_propertyCache.propertyCacheGPR(), PropertyInlineCache::offsetOfCallSiteIndex()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+                jit.makeSpaceOnStackForCCall();
+                InlineCacheCompiler::emitDataICPrepareForCall(jit);
+                // The handler of a per-case-compiled stub carries no transition
+                // fields; pass the access case itself (it lives as long as the stub).
+                jit.setupArguments<decltype(operationPutByTransitionReallocatingConcurrent)>(CCallHelpers::TrustedImmPtr(&vm), baseGPR, valueRegs, CCallHelpers::TrustedImmPtr(&accessCase));
+                jit.prepareCallOperation(vm);
+                jit.callOperation<OperationPtrTag>(operationPutByTransitionReallocatingConcurrent);
+                InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
+                jit.reclaimSpaceOnStackForCCall();
+                restoreLiveRegistersFromStackForCall(spillState, { });
+                succeed();
+                return;
+            }
             GPRReg scratch2GPR = allocator.allocateScratchGPR();
             ScratchRegisterAllocator::PreservedState preservedState =
                 allocator.preserveReusedRegistersByPushing(jit, ScratchRegisterAllocator::ExtraStackSpace::NoExtraSpace);
@@ -4899,14 +4933,10 @@ static Vector<WatchpointSet*, 3> collectAdditionalWatchpoints(VM& vm, AccessCase
     if (WatchpointSet* set  = accessCase.additionalSet())
         result.append(set);
 
-    if (Options::useJSThreads() && accessCase.isTransition()) [[unlikely]] {
-        // SPEC-jit §5.5 Transition: the four thread-local sets. A fire (always
-        // inside a stop, OM I13) retires this stub before any mutator resumes.
-        result.append(structure->transitionThreadLocalWatchpointSet().inflate());
-        result.append(structure->writeThreadLocalWatchpointSet().inflate());
-        result.append(accessCase.newStructure()->transitionThreadLocalWatchpointSet().inflate());
-        result.append(accessCase.newStructure()->writeThreadLocalWatchpointSet().inflate());
-    }
+    // SPEC-jit §5.5 Transition, r14 (OM r17 E4-C): the cached transition
+    // claims the StructureID lane in both legs, so its legality is the runtime
+    // owner test plus the claim and it no longer watches the four thread-local
+    // sets; a fired source keeps its cached transitions on every thread.
 
     if (structure
         && structure->hasRareData()
@@ -5988,9 +6018,95 @@ static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpL
             emitConcurrentNonReallocatingTransitionForHandler(jit, *concurrentSlow, baseJSR.payloadGPR(), valueJSR, scratch1GPR, scratch2GPR);
             return;
         }
-        // Reallocating transitions are never cached flag-on (Repatch.cpp);
-        // trap rather than emit an unguarded butterfly install.
-        jit.breakpoint();
+        // r17 (SPEC-jit §5.5 Transition, OM E4-C): the (re)allocating
+        // transition, claim-first. Owner predicate first (only scratch1/2
+        // touched: a failure falls through to the next handler with every
+        // operand intact); then allocate and fill the grown out-of-line
+        // storage, store the new property's value INTO IT (I9: value before
+        // type), claim the StructureID lane (CAS S -> nuked S), re-check that
+        // the word is still this owner's SW=0 word (a foreign first write would
+        // have flipped it and may have stored into the old storage after our
+        // copy), publish the tagged word, fence, store S' (M5 order). Failures
+        // after the allocation take the allocation-failure call, whose
+        // operation completes the put through the object-model protocols.
+        RELEASE_ASSERT(concurrentSlow);
+        GPRReg baseGPR = baseJSR.payloadGPR();
+        JIT_COMMENT(jit, "concurrent allocating transition: owner predicate");
+        concurrentSlow->append(jit.branchTestPtr(CCallHelpers::NonZero, baseGPR, CCallHelpers::TrustedImm32(PreciseAllocation::halfAlignment))); // OM I36
+        jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        jit.loadButterflyTIDTag(scratch1GPR);
+        jit.xor64(scratch2GPR, scratch1GPR);
+        jit.urshift64(CCallHelpers::TrustedImm32(butterflyTIDShift), scratch1GPR);
+        concurrentSlow->append(jit.branchTest32(CCallHelpers::NonZero, scratch1GPR));
+
+        JIT_COMMENT(jit, "allocating");
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewSize()), scratch1GPR);
+        if (vm.gilOff()) [[unlikely]]
+            jit.emitAllocateVariableSizedGILOff(scratch2GPR, vm.auxiliarySpace(), scratch1GPR, scratch4GPR, scratch3GPR, allocationFailure); // shared heap: the thread's TLC
+        else
+            jit.emitAllocateVariableSized(scratch2GPR, vm.auxiliarySpace(), scratch1GPR, scratch4GPR, scratch3GPR, allocationFailure);
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewSize()), scratch1GPR); // (clobbered by the GIL-off form)
+        if constexpr (reallocating) {
+            JIT_COMMENT(jit, "reallocating");
+            jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOldSize()), scratch3GPR);
+            jit.sub32(scratch1GPR, scratch3GPR, scratch1GPR);
+            {
+                auto empty = jit.branchTest32(CCallHelpers::Zero, scratch1GPR);
+                auto loop = jit.label();
+                jit.storeTrustedValue(JSValue(), CCallHelpers::Address(scratch2GPR));
+                jit.addPtr(CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch2GPR);
+                jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch1GPR).linkTo(loop, &jit);
+                empty.link(&jit);
+            }
+            jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch1GPR);
+            jit.and64(CCallHelpers::TrustedImm64(butterflyPointerMask), scratch1GPR); // I14: the word is tagged
+            jit.subPtr(scratch1GPR, scratch3GPR, scratch1GPR);
+            {
+                auto empty = jit.branchTest32(CCallHelpers::Zero, scratch3GPR);
+                auto loop = jit.label();
+                jit.transferPtr(CCallHelpers::Address(scratch1GPR, -static_cast<ptrdiff_t>(sizeof(IndexingHeader))), CCallHelpers::Address(scratch2GPR));
+                jit.addPtr(CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch1GPR);
+                jit.addPtr(CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch2GPR);
+                jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch3GPR).linkTo(loop, &jit);
+                empty.link(&jit);
+            }
+        } else {
+            JIT_COMMENT(jit, "newlyAllocating");
+            auto empty = jit.branchTest32(CCallHelpers::Zero, scratch1GPR);
+            auto loop = jit.label();
+            jit.storeTrustedValue(JSValue(), CCallHelpers::Address(scratch2GPR));
+            jit.addPtr(CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch2GPR);
+            jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(sizeof(JSValue)), scratch1GPR).linkTo(loop, &jit);
+            empty.link(&jit);
+        }
+        jit.addPtr(CCallHelpers::TrustedImm32(sizeof(IndexingHeader)), scratch2GPR); // scratch2 = the new butterfly
+
+        JIT_COMMENT(jit, "value into the new storage, before publication");
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR); // out-of-line by construction
+        jit.neg32(scratch1GPR);
+        jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
+        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+
+        JIT_COMMENT(jit, "claim, re-check, publish");
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), scratch3GPR);
+        jit.move(scratch3GPR, scratch4GPR);
+        jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch4GPR);
+        allocationFailure.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch3GPR, scratch4GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
+        jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch3GPR);
+        jit.loadButterflyTIDTag(scratch4GPR);
+        jit.xor64(scratch4GPR, scratch3GPR);
+        jit.urshift64(CCallHelpers::TrustedImm32(butterflyTIDShift), scratch3GPR);
+        CCallHelpers::Jump stillOwned = jit.branchTest32(CCallHelpers::Zero, scratch3GPR);
+        // The word moved between the load and the claim (a foreign first write
+        // flipped SW; it may have stored into the old storage after our copy):
+        // un-claim and let the operation redo the put.
+        jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()));
+        allocationFailure.append(jit.jump());
+        stillOwned.link(&jit);
+        jit.orPtr(scratch2GPR, scratch4GPR); // the tag register still holds this thread's (TID, SW=0) tag
+        jit.store64(scratch4GPR, CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()));
+        jit.storeFence();
+        jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()));
         return;
     }
     if constexpr (!allocating) {

@@ -449,7 +449,10 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, Call
             JSArray* array = asArray(thisValue);
             JSString* separatorString = asString(separatorValue);
             Butterfly* butterfly = nullptr;
-            if (!separatorString->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32) && flatButterflySnapshot(array, butterfly)) {
+            // GIL-off the two-pass joiner is skipped: it measures the lanes and then
+            // re-reads them into a buffer of that size, which a racing writer can
+            // overrun (ArrayPrototypeInlines.h fastJoin).
+            if (!separatorString->length() && !g_jscConfig.gilOffProcess && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32) && flatButterflySnapshot(array, butterfly)) {
                 unsigned length = butterfly->publicLength();
                 if (Options::useJSThreads()) [[unlikely]]
                     length = std::min(length, butterfly->vectorLength());
@@ -667,7 +670,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
         if (containsHole(data, static_cast<uint32_t>(length)) && holesMustForwardToPrototype(thisObject))
             break;
         std::reverse(data, data + length);
-        if (!hasInt32(thisObject->indexingType()))
+        if (!hasInt32(thisObject->indexingType()) || g_jscConfig.gilOffProcess) // I41: GIL-off an Int32 observation of a foreign-owned array may be stale and the lanes may hold cells; the barrier is cheap.
             vm.writeBarrier(thisObject);
         return JSValue::encode(thisObject);
     }
@@ -1707,6 +1710,18 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     IndexingType type = firstArray->mergeIndexingTypeForCopying(secondType, /* allowPromotion */ true);
     ASSERT(type != NonArray);
 
+    // SPEC-objectmodel I41: the copies below decode lanes (and label the result)
+    // from firstType/secondType. GIL-off a source owned by another thread that is
+    // not yet Double/Contiguous may be relabelled by its owner at any instant, so
+    // it takes the generic concat.
+    if (Options::useJSThreads()) [[unlikely]] {
+        auto mayMove = [](JSArray* array, IndexingType observed) {
+            return butterflyWordMayBeRelabelledConcurrently(array->taggedButterflyWord()) && !hasDouble(observed) && !hasContiguous(observed);
+        };
+        if (mayMove(firstArray, firstType) || mayMove(secondArray, secondType))
+            return nullptr;
+    }
+
     if (!resultSize)
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
 
@@ -1875,6 +1890,11 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
         if (Options::useJSThreads()) [[unlikely]] {
             sourceSize = std::min(sourceSize, sourceButterfly->vectorLength());
             if (sourceSize > resultSize - offset || mergeIndexingTypesForCopying(type, sourceType, /* allowPromotion */ true) != type)
+                return false;
+            // I41: a foreign-owned source not yet Double/Contiguous may be
+            // relabelled by its owner at any instant GIL-off; its lanes cannot be
+            // decoded (or copied under an Int32 label) from sourceType.
+            if (butterflyWordMayBeRelabelledConcurrently(array->taggedButterflyWord()) && !hasDouble(sourceType) && !hasContiguous(sourceType)) [[unlikely]]
                 return false;
             // Another thread can store into the source while it is copied, so a
             // copy of words in the same representation is made a word at a time,

@@ -249,7 +249,7 @@ JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* ca
             case ALL_INT32_INDEXING_TYPES:
                 if (index < butterfly->publicLength()) {
                     JSValue value = butterfly->contiguous().at(rawArray, index).get();
-                    if (value) [[likely]]
+                    if (value && value.isInt32()) [[likely]] // I41: flag-on a foreign owner may relabel Int32->Contiguous under us; a non-Int32 lane takes the generic path below.
                         segment = jsString(vm, vm.liveNumericStrings().add(value.asInt32()));
                 }
                 break;

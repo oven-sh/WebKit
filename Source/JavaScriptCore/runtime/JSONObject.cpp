@@ -1827,6 +1827,10 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendInt32Array(JSArra
             recordFailure("!canGetIndexQuickly"_s);
             return;
         }
+        if (!element.isInt32()) [[unlikely]] {
+            recordFailure("Int32 lane relabelled concurrently"_s); // SPEC-objectmodel I41: a foreign owner's stop-free Int32->Contiguous.
+            return;
+        }
         if (!hasRemainingCapacity(1 + newLineAndIndent + maxInt32StringLength)) [[unlikely]] {
             recordBufferFull();
             return;

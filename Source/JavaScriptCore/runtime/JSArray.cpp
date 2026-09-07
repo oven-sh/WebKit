@@ -75,7 +75,7 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
         return false;
 
     void* theBase = butterfly->base(0, propertyCapacity);
-    bool canReallocInPlace = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && !Options::useJSThreads() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation(); // flag-on: never in place (SPEC-objectmodel M8 / manifest 4b), independent of the barrier mode
+    bool canReallocInPlace = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && !vm.gilOff() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation(); // GIL-off: never in place (SPEC-objectmodel M8; a stale foreign reader may hold the old block). GIL-on: ensureLength's owner leg reallocates in place (r17).
     if (canReallocInPlace)
         return false;
 
@@ -647,6 +647,15 @@ static ALWAYS_INLINE bool jsThreadsFlatSnapshot(JSObject* object, JSThreadsFastP
         if (intent == JSThreadsFastPathIntent::InPlaceWrite
             && (word & butterflyPointerMask)
             && (butterflySharedWrite(word) || butterflyWriterIsForeign(word))) // incl. §9.6 forceButterflySWBit
+            return false;
+        // I41 (r17): these callers key their lane decoding - and for the copying
+        // ones the RESULT's Int32 label - on a shape they read after this probe.
+        // GIL-off the owner of a foreign SW=0 word may move Undecided/Int32 to
+        // Contiguous at any instant, so such a source takes the generic route
+        // unless it is already Double/Contiguous (those only move inside a stop,
+        // which the callers' post-allocation shape re-checks cover).
+        IndexingType shape = object->indexingType();
+        if (butterflyWordMayBeRelabelledConcurrently(word) && !hasDouble(shape) && !hasContiguous(shape)) [[unlikely]]
             return false;
     }
     butterfly = untaggedButterfly(word);
@@ -1497,6 +1506,14 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
             for (unsigned i = startIndex; i < newLength; ++i)
                 butterfly->contiguousInt32().at(this, i).setWithoutWriteBarrier(JSValue());
         }
+    } else if (type == ArrayWithInt32 && butterflyWordMayBeRelabelledConcurrently(otherArray->taggedButterflyWord())) [[unlikely]] {
+        // I41: GIL-off a foreign owner may relabel the Int32 source to
+        // Contiguous at any instant (not only at our park points), so lanes
+        // from a source this thread does not own are checked as they are
+        // copied; a non-Int32 lane bails to the caller's generic append, which
+        // re-stores every element from startIndex.
+        if (!butterflyConcurrentCopyInt32LanesChecked(selfButterfly->contiguous().data() + startIndex, otherButterfly->contiguous().data(), sizeof(JSValue) * otherLength))
+            return false;
 #if TSAN_ENABLED
     } else if (Options::useJSThreads()) [[unlikely]] {
         // Another thread can store into the source while it is copied. Under
@@ -2194,8 +2211,15 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         if (Options::useJSThreads()) [[unlikely]] {
             // The source may be shared: another thread can store elements
             // while we copy (a JavaScript-level race), so copy whole 64-bit
-            // lanes, never bytes - a torn lane would be a torn JSValue.
-            butterflyConcurrentCopyWords(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
+            // lanes, never bytes - a torn lane would be a torn JSValue. I41:
+            // GIL-off a foreign owner may also relabel an Int32 source to
+            // Contiguous under us, so an Int32-labelled result from a source
+            // this thread does not own is copied lane-checked.
+            if (hasInt32(indexingType) && butterflyWordMayBeRelabelledConcurrently(sourceWord)) [[unlikely]] {
+                if (!butterflyConcurrentCopyInt32LanesChecked(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength))
+                    return nullptr; // The unpublished butterfly drops unreferenced; the caller's generic slice re-reads every element.
+            } else
+                butterflyConcurrentCopyWords(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
         } else
             memcpy(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
 
@@ -3266,6 +3290,13 @@ JSArray* tryCloneArrayFromFast(JSGlobalObject* globalObject, JSValue arrayValue)
         // path.
         uint64_t word = array->taggedButterflyWord();
         if (isSegmentedButterfly(word) || !(word & butterflyPointerMask) || hasAnyArrayStorage(sourceType))
+            return nullptr;
+        // I41: an Int32/Undecided source another thread owns may be relabelled
+        // (and then hold non-Int32 values) at any instant GIL-off; the result
+        // below is labelled from sourceType, so such a source takes the generic
+        // path rather than a checked copy (Array.from / toSorted of a foreign
+        // array is not a fast path worth a third copy loop).
+        if (butterflyWordMayBeRelabelledConcurrently(word) && !hasDouble(sourceType) && !hasContiguous(sourceType)) [[unlikely]]
             return nullptr;
         butterfly = untaggedButterfly(word);
         if (butterfly->publicLength() > butterfly->vectorLength())

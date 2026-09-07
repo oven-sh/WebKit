@@ -9989,6 +9989,7 @@ void SpeculativeJIT::compileArraySlice(Node* node)
 
         GPRTemporary storage(this);
         GPRReg storageResultGPR = storage.gpr();
+        GPRReg scratchGPRForSliceOwnerTest = storageResultGPR; // written only before storageResultGPR's first use below
 
         GPRReg sizeGPR = tempGPR; 
 
@@ -10015,6 +10016,21 @@ void SpeculativeJIT::compileArraySlice(Node* node)
 
         isInt32.link(this);
         move(TrustedImmPtr(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32))), tempValue);
+        if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+            // OM I41 / SPEC-jit history §29: GIL-off, the lanes copied below come
+            // from a butterfly loaded before this shape byte; if another thread owns
+            // the source it may have relabelled Int32->Contiguous in between and can
+            // store cells into those lanes while we copy. An Int32-labelled result
+            // is only sound for a source this thread owns (tag == our TID, SW=0);
+            // otherwise label the copy Contiguous (Int32 lanes are valid there).
+            GPRReg wordGPR = emptyValueRegs.payloadGPR(); // free until emitMoveEmptyValue below
+            load64(Address(cell.gpr(), JSObject::butterflyOffset()), wordGPR);
+            loadButterflyTIDTag(scratchGPRForSliceOwnerTest);
+            xor64(wordGPR, scratchGPRForSliceOwnerTest);
+            Jump owned = branch64(Below, scratchGPRForSliceOwnerTest, TrustedImm64(static_cast<int64_t>(1ULL << butterflyTIDShift)));
+            move(TrustedImmPtr(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous))), tempValue);
+            owned.link(this);
+        }
         emitMoveEmptyValue(JSValue());
 
         done.link(this);
@@ -11098,18 +11114,21 @@ void SpeculativeJIT::compileCheckStructure(Node* node)
 
 void SpeculativeJIT::compileAllocatePropertyStorage(Node* node)
 {
-    // SPEC-jit section 5.5 / Task 9: transition machinery is never emitted
-    // flag-on (see compileNukeStructureAndSetButterfly).
-    RELEASE_ASSERT(!Options::useJSThreads());
-
+    // Flag-on note: pure allocation (+ copy from the MASKED old storage the
+    // GetButterfly child yields); the install is NukeStructureAndSetButterfly.
     ASSERT(!node->transition()->previous->outOfLineCapacity());
     ASSERT(initialOutOfLineCapacity == node->transition()->next->outOfLineCapacity());
     
     size_t size = initialOutOfLineCapacity * sizeof(JSValue);
 
     Allocator allocator = vm().auxiliarySpace().allocatorFor(size, AllocatorForMode::AllocatorIfExists);
+    // H-VMLITE-TLCPTR: GIL-off the server allocator is null; resolve the
+    // thread's TLC slot instead of calling out for every transition.
+    std::optional<unsigned> tlcSlot;
+    if (vm().gilOff()) [[unlikely]]
+        tlcSlot = tlcSlotForSubspace(&vm().auxiliarySpace(), size);
 
-    if (!allocator || node->transition()->previous->couldHaveIndexingHeader()) {
+    if ((!allocator && !tlcSlot) || node->transition()->previous->couldHaveIndexingHeader()) {
         SpeculateCellOperand base(this, node->child1());
         
         GPRReg baseGPR = base.gpr();
@@ -11132,7 +11151,11 @@ void SpeculativeJIT::compileAllocatePropertyStorage(Node* node)
     GPRReg scratchGPR3 = scratch3.gpr();
         
     JumpList slowPath;
-    emitAllocate(scratchGPR1, JITAllocator::constant(allocator), scratchGPR2, scratchGPR3, slowPath, SlowAllocationResult::UndefinedBehavior);
+    if (tlcSlot) {
+        emitLoadTLCAllocatorForSlot(scratchGPR2, *tlcSlot, slowPath);
+        emitAllocate(scratchGPR1, JITAllocator::variable(), scratchGPR2, scratchGPR3, slowPath, SlowAllocationResult::UndefinedBehavior);
+    } else
+        emitAllocate(scratchGPR1, JITAllocator::constant(allocator), scratchGPR2, scratchGPR3, slowPath, SlowAllocationResult::UndefinedBehavior);
     addPtr(TrustedImm32(size + sizeof(IndexingHeader)), scratchGPR1);
 
     addSlowPathGenerator(
@@ -11146,17 +11169,18 @@ void SpeculativeJIT::compileAllocatePropertyStorage(Node* node)
 
 void SpeculativeJIT::compileReallocatePropertyStorage(Node* node)
 {
-    // SPEC-jit section 5.5 / Task 9: transition machinery is never emitted
-    // flag-on (see compileNukeStructureAndSetButterfly).
-    RELEASE_ASSERT(!Options::useJSThreads());
-
+    // Flag-on note: pure allocation (+ copy from the MASKED old storage the
+    // GetButterfly child yields); the install is NukeStructureAndSetButterfly.
     size_t oldSize = node->transition()->previous->outOfLineCapacity() * sizeof(JSValue);
     size_t newSize = oldSize * outOfLineGrowthFactor;
     ASSERT(newSize == node->transition()->next->outOfLineCapacity() * sizeof(JSValue));
     
     Allocator allocator = vm().auxiliarySpace().allocatorFor(newSize, AllocatorForMode::AllocatorIfExists);
+    std::optional<unsigned> tlcSlot; // H-VMLITE-TLCPTR (see compileAllocatePropertyStorage)
+    if (vm().gilOff()) [[unlikely]]
+        tlcSlot = tlcSlotForSubspace(&vm().auxiliarySpace(), newSize);
 
-    if (!allocator || node->transition()->previous->couldHaveIndexingHeader()) {
+    if ((!allocator && !tlcSlot) || node->transition()->previous->couldHaveIndexingHeader()) {
         SpeculateCellOperand base(this, node->child1());
         
         GPRReg baseGPR = base.gpr();
@@ -11181,7 +11205,11 @@ void SpeculativeJIT::compileReallocatePropertyStorage(Node* node)
     GPRReg scratchGPR3 = scratch3.gpr();
     
     JumpList slowPath;
-    emitAllocate(scratchGPR1, JITAllocator::constant(allocator), scratchGPR2, scratchGPR3, slowPath, SlowAllocationResult::UndefinedBehavior);
+    if (tlcSlot) {
+        emitLoadTLCAllocatorForSlot(scratchGPR2, *tlcSlot, slowPath);
+        emitAllocate(scratchGPR1, JITAllocator::variable(), scratchGPR2, scratchGPR3, slowPath, SlowAllocationResult::UndefinedBehavior);
+    } else
+        emitAllocate(scratchGPR1, JITAllocator::constant(allocator), scratchGPR2, scratchGPR3, slowPath, SlowAllocationResult::UndefinedBehavior);
     
     addPtr(TrustedImm32(newSize + sizeof(IndexingHeader)), scratchGPR1);
 
@@ -11202,21 +11230,38 @@ void SpeculativeJIT::compileReallocatePropertyStorage(Node* node)
 
 void SpeculativeJIT::compileNukeStructureAndSetButterfly(Node* node)
 {
-    // SPEC-jit section 5.5 / Task 9: the DFG never implements transition
-    // semantics flag-on (E4 is not emitted by this tier). All creation sites
-    // of AllocatePropertyStorage / ReallocatePropertyStorage /
-    // NukeStructureAndSetButterfly (ByteCodeParser handlePutById +
-    // handlePutPrivateName, ConstantFoldingPhase emitPutByOffset) are gated
-    // under Options::useJSThreads(), so emission here is a logic error:
-    // fail fast (the raw butterfly install below would claim tag (0,0) and
-    // bypass the OM's transition protocol).
-    RELEASE_ASSERT(!Options::useJSThreads());
-
     SpeculateCellOperand base(this, node->child1());
     StorageOperand storage(this, node->child2());
 
     GPRReg baseGPR = base.gpr();
     GPRReg storageGPR = storage.gpr();
+
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit §5.5 Transition, (re)allocating form (r14 / OM r17 E4):
+        // the parser inlines a transition only under the four watched
+        // thread-local sets, planted CheckTransitionOwner first, the value
+        // store into the fresh storage next, and an InvalidationPoint right
+        // before this node (every park site of the sequence - the allocation,
+        // a sunk value's materialization - lies before it: a fire during one
+        // of them retires this code there, before anything is installed).
+        // From here to PutStructure there is no poll, so no foreign writer or
+        // transitioner of this object can be running its protocol (each must
+        // fire one of the watched sets in a stop first) and no collection can
+        // see the nuked header: this thread is the only writer of the header
+        // and the word, and the install is E4's plain publication order -
+        // nuke, fence, TAGGED word (this thread's TID, SW=0); PutStructure
+        // follows.
+        GPRTemporary temp(this);
+        GPRReg t = temp.gpr();
+        or32(TrustedImm32(StructureID::nukedStructureIDBit), Address(baseGPR, JSCell::structureIDOffset()));
+        storeFence();
+        loadButterflyTIDTag(t);
+        orPtr(storageGPR, t);
+        store64(t, Address(baseGPR, JSObject::butterflyOffset()));
+        storeFence();
+        noResult(node);
+        return;
+    }
 
     nukeStructureAndStoreButterfly(vm(), storageGPR, baseGPR);
     
@@ -15991,7 +16036,7 @@ void SpeculativeJIT::compilePutByOffset(Node* node)
 {
     StorageAccessData& storageAccessData = node->storageAccessData();
 
-    if (Options::useJSThreads() && isOutOfLineOffset(storageAccessData.offset)) [[unlikely]] {
+    if (Options::useJSThreads() && isOutOfLineOffset(storageAccessData.offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]] {
         // SPEC-jit section 5.5 / Task 9: out-of-line stores re-load the TAGGED
         // butterfly from the base and run the frozen WRITE predicate in the
         // same poll-free window as the store (I16). The storage child

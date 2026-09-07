@@ -41,6 +41,8 @@
 
 namespace JSC {
 
+class AccessCase;
+
 typedef int64_t EncodedJSValue;
     
 class ArrayAllocationProfile;
@@ -393,6 +395,7 @@ JSC_DECLARE_JIT_OPERATION(operationReallocateButterflyToHavePropertyStorageWithI
 JSC_DECLARE_JIT_OPERATION(operationReallocateButterflyToGrowPropertyStorage, char*, (VM*, JSObject*, size_t newSize));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, void, (VM*, JSObject*, const InlineCacheHandler*, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationPutByTransitionReallocatingConcurrent, void, (VM*, JSObject*, EncodedJSValue, AccessCase*));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWriteBarrierSlowPath, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationOSRWriteBarrier, void, (VM*, JSCell*));

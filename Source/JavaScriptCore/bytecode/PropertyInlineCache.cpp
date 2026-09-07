@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PropertyInlineCache.h"
 
+#include "CCallHelpers.h"
 #include "BaselineJITRegisters.h"
 #include "CacheableIdentifierInlines.h"
 #include "DFGJITCode.h"
@@ -1175,7 +1176,14 @@ void PropertyInlineCache::prependHandler(VM& vm, CodeBlock* codeBlock, Ref<Inlin
             // below; the handler still dispatches correctly via the chain (F2),
             // we only lose the call-site inlined fast path for this shape.
             bool holderBearing = handler->cacheType() == CacheType::GetByIdPrototype;
-            if (!Options::useJSThreads() || !holderBearing) [[likely]] {
+            // Nor an out-of-line Replace where the flag-on call-site fast
+            // path cannot run the owner test in place (no scratch-free TLS
+            // xor): there it stores inline offsets only and sends out-of-line
+            // ones to the chain, so an inlined out-of-line Replace would leave
+            // the chain without the handler and every such put on the
+            // optimize slow path for good (measured 10x, sixth round).
+            bool outOfLineReplace = handler->cacheType() == CacheType::PutByIdReplace && !isInlineOffset(handler->offset()) && !CCallHelpers::supportsXorButterflyTIDTagInPlace();
+            if (!Options::useJSThreads() || (!holderBearing && !outOfLineReplace)) [[likely]] {
                 handlerIC.setInlinedHandler(codeBlock, WTF::move(handler));
                 return;
             }
