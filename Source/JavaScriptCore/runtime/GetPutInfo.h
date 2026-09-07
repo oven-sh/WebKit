@@ -89,7 +89,11 @@ enum ResolveType : unsigned {
 // no other consumer sees these values.
 static constexpr unsigned firstStaticClosureVarResolveType = 32;
 inline bool isStaticClosureVarResolveType(ResolveType type) { return static_cast<unsigned>(type) >= firstStaticClosureVarResolveType; }
-inline unsigned staticClosureVarHops(ResolveType type) { return static_cast<unsigned>(type) - firstStaticClosureVarResolveType; }
+inline unsigned staticClosureVarHops(ResolveType type)
+{
+    ASSERT(isStaticClosureVarResolveType(type));
+    return static_cast<unsigned>(type) - firstStaticClosureVarResolveType;
+}
 inline ResolveType staticClosureVarResolveType(unsigned hops) { return static_cast<ResolveType>(firstStaticClosureVarResolveType + hops); }
 
 enum class InitializationMode : unsigned {

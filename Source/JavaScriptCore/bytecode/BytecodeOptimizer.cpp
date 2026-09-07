@@ -1011,7 +1011,8 @@ void BytecodeOptimizerAccess::stepLiveness(FastBitVector& live, const Insn& insn
     }
     if (auto* handler = handlerForInsn(insn)) {
         unsigned target = nextLiveInsn(m_offsetToIndex[handler->target]);
-        live |= m_blocks[m_blockForInsn[target]].liveIn;
+        if (target < m_insns.size() && m_blockForInsn[target] != UINT_MAX)
+            live |= m_blocks[m_blockForInsn[target]].liveIn;
     }
 }
 
