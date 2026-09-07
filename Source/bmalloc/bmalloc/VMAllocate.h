@@ -432,10 +432,41 @@ inline void vmZeroAndPurge(void* p, size_t vmSize, VMTag usage)
 
 inline void vmDeallocatePhysicalPages(void* p, size_t vmSize)
 {
+    // Windows equivalent of madvise(MADV_DONTNEED): release physical backing
+    // while keeping the virtual range committed and accessible. The paired
+    // vmAllocatePhysicalPages() re-commits on reuse.
+    //
+    // MEM_RESET alone is NOT sufficient — it marks contents as uninteresting
+    // but does not release physical frames or remove pages from the working
+    // set, so RSS and commit charge grow unboundedly on long-running
+    // processes (bun#30562).
+    //
+    // DiscardVirtualMemory frees the physical pages immediately and removes
+    // them from the working set. On older Windows 10 builds and on ranges
+    // spanning multiple reservations it can fail, so we fall back to a
+    // per-reservation MEM_RESET loop + VirtualUnlock, which evicts the pages
+    // from the working set with lazy reclaim. This mirrors the pattern
+    // already used in libpas (pas_page_malloc.c).
     vmValidatePhysical(p, vmSize);
-    bool writable = true;
-    bool executable = true;
-    VirtualAlloc(p, vmSize, MEM_RESET, protection(writable, executable));
+    if (DiscardVirtualMemory(p, vmSize)) {
+        bool writable = true;
+        bool executable = true;
+        size_t totalSeen = 0;
+        void* currentPtr = p;
+        while (totalSeen < vmSize) {
+            MEMORY_BASIC_INFORMATION memInfo;
+            SIZE_T bytes = VirtualQuery(currentPtr, &memInfo, sizeof(memInfo));
+            RELEASE_BASSERT(bytes == sizeof(memInfo));
+            RELEASE_BASSERT(memInfo.RegionSize > 0);
+            size_t chunkSize = std::min<size_t>(memInfo.RegionSize, vmSize - totalSeen);
+            VirtualAlloc(currentPtr, chunkSize, MEM_RESET, protection(writable, executable));
+            currentPtr = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(currentPtr) + memInfo.RegionSize);
+            totalSeen += memInfo.RegionSize;
+        }
+        // VirtualUnlock of unlocked pages evicts them from the working set,
+        // which MEM_RESET alone does not do.
+        VirtualUnlock(p, vmSize);
+    }
 }
 
 inline void vmAllocatePhysicalPages(void* p, size_t vmSize)
