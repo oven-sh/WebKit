@@ -7,7 +7,9 @@ function shouldThrowTDZ(f, what) {
     try {
         f();
     } catch (e) {
-        threw = e instanceof ReferenceError;
+        threw = e instanceof ReferenceError && /before initialization|uninitialized variable|before accessing .this./.test(e.message);
+        if (!threw)
+            throw new Error("expected a TDZ ReferenceError: " + what + ", got " + e);
     }
     if (!threw)
         throw new Error("expected a TDZ ReferenceError: " + what);

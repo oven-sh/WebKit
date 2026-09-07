@@ -74,5 +74,8 @@ function level1(p) {
 const [out, later] = level1("p");
 shouldBe(out.join("|"), "top/l1/l2/0/0|top/l1/l2/10/1|caught/l1/top|top/l2|top/l1/top/l2", "static depths");
 top = "TOP";
-later().then(v => shouldBe(v, "TOP/l1/l2/p", "closure sees reassigned outer let"));
+let asyncFailure;
+later().then(v => shouldBe(v, "TOP/l1/l2/p", "closure sees reassigned outer let")).catch(e => { asyncFailure = e; });
 drainMicrotasks();
+if (asyncFailure)
+    throw asyncFailure;
