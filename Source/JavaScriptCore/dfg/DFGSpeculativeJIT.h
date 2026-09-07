@@ -1404,6 +1404,14 @@ public:
     // required; indexingScratchGPR may be InvalidGPRReg (conservative:
     // every non-owner write goes slow).
     JITCompiler::JumpList emitThreadedButterflyLoadForRead(GPRReg baseGPR, GPRReg destGPR, GPRReg scratchGPR, const ThreadedButterflyPlan&);
+    // SPEC-jit §5.5 Read row / OM I41: GIL-off, a lane loaded under an Int32
+    // array mode may hold any JSValue (its owner can relabel Int32->Contiguous
+    // without a stop); verify it before it is typed Int32. No-op otherwise.
+    void speculateInt32LaneIfRelabellable(ArrayMode mode, GPRReg laneGPR)
+    {
+        if (mode.type() == Array::Int32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+            speculationCheck(BadType, JSValueRegs(), nullptr, branchIfNotInt32(laneGPR));
+    }
     JITCompiler::JumpList emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg tidScratchGPR, GPRReg indexingScratchGPR, const ThreadedButterflyPlan&);
 
     // ===== T3-jit-segmented-arraymode (SPEC-objectmodel §4 / SCALEBENCH §25) =====

@@ -3197,6 +3197,11 @@ public:
         m_formatter.oneByteOp64Addr(OP_MOV_GvEv, dst, addr);
     }
 
+    void xorq_mr(uint32_t addr, RegisterID dst)
+    {
+        m_formatter.oneByteOp64Addr(OP_XOR_GvEv, dst, addr);
+    }
+
     void movq_i32m(int imm, int offset, RegisterID base)
     {
         m_formatter.oneByteOp64(OP_GROUP11_EvIz, GROUP11_MOV, base, offset);

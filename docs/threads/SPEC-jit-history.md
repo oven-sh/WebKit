@@ -598,3 +598,133 @@ the pair under `m_lock` as before and inlines the load behind a structure
 check. `jit/global-property-cache-vs-global-transitions.js` races four
 readers (own and shared metadata) against a main thread that keeps
 transitioning the global object.
+
+## §29. Int32-mode reads verify the lane GIL off (§5.5 Read row; sixth landing round)
+
+Companion of SPEC-objectmodel rev 17 (history §25 there). Once the owner of
+an array may relabel Int32->Contiguous without a stop GIL off, a reader on
+another thread whose Int32 shape check is stale (the check is a separate,
+earlier load, and the DFG may hoist it across polls) can load a lane that now
+holds a non-Int32 JSValue. Flag-off the DFG and FTL type an Int32-mode
+`GetByVal`/`ArrayPop` result Int32 with no check (`DataFormatJSInt32`,
+`SpecInt32Only`); a cell there would surface its low 32 bits as an integer.
+GIL off those two nodes test the loaded value and OSR-exit (BadType) when it
+is not an Int32; the abstract type is then true by construction. The inline
+`ArraySlice` copies lanes under the same possibly-stale mode, so GIL off an
+Int32-mode slice allocates its result with the Contiguous structure (a
+mislabelled Int32 result holding a cell would be a marking hole). LLInt and
+Baseline indexed loads already return the lane as an untyped JSValue and
+need nothing; every conversion itself runs in C++ in all tiers
+(`operationEnsure*`, the put-by-val slow paths), where the owner leg lives.
+GIL on nothing is emitted: no other mutator of the VM can be between its
+check and its load (I21, GIL on). Cost: one compare and branch per Int32-mode
+element load in optimized code, GIL off only.
+
+## §30. Megamorphic cache GIL on; claimed transitions in the inline caches (sixth landing round)
+
+Two changes with one mechanism behind them (SPEC-objectmodel history §26).
+
+Megamorphic cache. The VM-global `MegamorphicCache` was inert flag-on: probes
+bailed, fills no-op'd (§5.5 Task 8 inventory). The reason is GIL-off only — a
+fill is a multi-word entry write with a `RefPtr` uid that N unsynchronized
+mutators cannot share. GIL on, one mutator of the VM runs at a time and the
+GIL is handed off only inside blocking calls, never inside a probe (straight-
+line JIT code) or a fill (straight-line C++), so the cache is exactly as
+consistent as flag-off. Rule now: the cache is disabled per PROCESS mode
+(`useJSThreads && gilOffProcess`), not per flag. What the probes had to learn
+flag-on is the tagged butterfly: loads go through `loadPropertyTagged` (mask;
+segmented or shared-written words to the generic path — no register is free
+there for the ArrayStorage shape test, the same conservative choice
+`loadButterflyForRead` makes without a scratch), replaces through
+`storePropertyTagged` (the §5.5 write predicate: owner, or SW=1 on a
+non-ArrayStorage shape), and the store cache's TRANSITION arm is the claimed
+non-reallocating sequence of the Transition row with runtime refusals for
+PreciseAllocation, copy-on-write and ArrayStorage instances (the probe cannot
+know the structure at generation time, and needs no watchpoints because it
+claims). The reallocating arm's C++ operation completes the transition through
+the object-model protocols (`tryCompleteCachedTransitionConcurrent`) instead of
+the flag-off nuke-and-set. `Structure::forEachProperty` (the JSON fast
+stringifier's walk, `Object.assign` and friends) takes the flag-off lock-free
+walk GIL on for the same reason; GIL off it keeps the locked snapshot.
+Measured GIL on: the megamorphic-load micro row 63 -> 11 ms (flag-off 10.5),
+`JSON.stringify` 36 -> 27 (25), JetStream `Air` 0.67 -> 0.88 of flag-off
+before the transition arm; the remaining tables are in PERF-RESULTS. GIL off
+is unchanged (a per-thread cache with a global epoch is the recorded design:
+32-bit entry epochs so a wrapped epoch cannot validate a stale entry, fills
+tagged with the epoch read BEFORE the lookup so a concurrent prototype
+mutation cannot produce a persistently stale miss, `age()` over every
+thread's cache at collection end).
+
+Claimed transitions. The inline caches' butterfly-bearing transition leg
+stored value then StructureID with no claim, so the stub had to watch the
+source's and target's thread-local sets and died with them; after the first
+cross-thread transition of any object of a shape, no thread cached that
+transition again. The leg now claims the lane first (as the butterfly-less
+leg has since r13), the four watchpoints are gone, and `tryCachePutBy`
+accepts fired sources. Sound because every foreign writer of the lane claims
+it first too (OM §4.3 step order, N2 (ii), r17) and restarts when it loses;
+the marker treats the nuked lane as a race; the word of an owner-tagged SW=0
+instance cannot move while the lane is held, so the leg re-derives the
+butterfly after the claim (the two scratch registers were needed for the
+CAS). Cost: one `lock cmpxchg` per cached out-of-line-within-capacity add in
+IC code; DFG/FTL-inlined adds under watched sets are unchanged.
+
+## §31. (Re)allocating transitions in every tier; the out-of-line Replace fast path (sixth landing round)
+
+Profiles of the JetStream tests still at 0.5-0.7 of flag-off GIL on
+(typescript, ai-astar, Babylon) were dominated not by the megamorphic cache
+(§30) but by two ordinary things the flag-on JITs refused.
+
+(1) (Re)allocating transitions - the add that grows or first installs the
+out-of-line storage - were "R3 until a tagged-butterfly install is
+specified": `tryCachePutBy` gave up on them, the DFG/FTL parser sent them to
+a generic `PutById`, so every such add ran `operationPutById*` -> the C++ E4
+leg (typescript: `operationPutByIdSloppyGaveUp` + `tryPutDirectTransition
+Concurrent` + `createOrGrowPropertyStorage` at the top of the profile). The
+install is now specified in both places (§5.5 Transition row, (RE)ALLOCATING
+form). In the inline caches it is claim-first like the non-reallocating legs
+and needs no watchpoints; the one subtlety is the copy: the grown storage is
+filled from the old one BEFORE the claim, and a foreign first write that
+flipped SW between the owner test and the claim could store into the old
+storage after the copy - so the word is re-checked under the claim and a
+moved word un-claims and defers to the operation. In the DFG/FTL it is E4's
+plain publication under the four watched sets, made sound across the
+sequence's park sites (the allocation; the materialization of a sunk object
+stored as the value) by an `InvalidationPoint` planted after the value store
+and immediately before the install (a fire while parked retires the code
+there; after it nothing polls, allocates or exits until `PutStructure`, so
+neither a foreign protocol nor a collection can meet the nuked header - the
+first cut of this had the install before the value store and a GIL-on
+`ftl-eager` stress test's heap verifier found a materialization's collection
+looking at a nuked object). A `PutByOffset` whose storage child is the
+transition's own allocation node stores through that child, skips the flag-on
+re-load + predicate, never exits and does not clobber exit state - it is this
+thread's unpublished storage for an object it owns. GIL off the FTL `MultiPutByOffset` keeps refusing
+reallocating variants (no InvalidationPoint inside a node) and the inline
+caches allocate through the thread's TLC slot (the server allocator is null
+under the shared heap, which made the handler's inline allocation always
+fail). Measured GIL on: the ai-astar-shaped micro (construct, six adds of
+which two allocate, then replaces) 7.0x -> 1.2x of flag-off; typescript 0.46
+-> 0.88, ai-astar 0.49 -> 0.64 -> (with (2)) see PERF-RESULTS §3.
+
+(2) Out-of-line Replace never cached in baseline code. The flag-on `put_by_id`
+call-site fast path stored inline offsets only ("no register pair for the
+write predicate") and sent out-of-line ones to the handler chain; but a
+monomorphic Replace handler is installed as the site's INLINED handler
+(`setInlinedHandler`), not into the chain - so the chain held only the
+slow-path handler, every out-of-line replace called `operationPutByIdOptimize`,
+created a Replace case, had it refused as a duplicate of the inlined one
+(`MadeNoChanges`), and the site never settled (10x on a loop of out-of-line
+replaces to the thread's own objects, in every mode; present since round 2).
+Two fixes: the call-site fast path handles out-of-line offsets where the
+owner test needs no scratch register (x86-64: `xor %fs:tag, word`; §4.2
+bullet), and where it cannot, an out-of-line Replace goes into the chain
+instead of the inlined slot. Test `jit/put-by-id-replace-out-of-line-
+cached.js` (FTL off so the two-shape site stays on the caches: 7.9x -> 1.0x).
+
+Also this round: `loadPropertyTagged` (the megamorphic load probe's tagged
+read, §30) wrote the loaded word into its result register before the
+slow-case branch; in the data-IC handlers the result register IS
+`handlerGPR`, which the fall-through path dereferences to find the next
+handler - a shared-written or segmented base crashed there (four corpus tests
+GIL on). The probe now stages the word in the dead entry register.

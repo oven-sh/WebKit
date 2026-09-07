@@ -341,19 +341,27 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
             break;
         auto data = butterfly.contiguous().data();
 
-        JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
-        if (auto joined = onlyInt32sJoiner.tryJoin<Int32Shape>(globalObject, data, length))
-            RELEASE_AND_RETURN(scope, joined);
-        RETURN_IF_EXCEPTION(scope, { });
+        // GIL-off the two-pass joiner (measure the lanes, then re-read them into
+        // a buffer of the measured size) is unsound on an array another thread
+        // may write: a longer value between the passes overruns the measure.
+        // The one-pass joiner below converts each lane as it reads it.
+        if (!g_jscConfig.gilOffProcess) [[likely]] {
+            JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
+            if (auto joined = onlyInt32sJoiner.tryJoin<Int32Shape>(globalObject, data, length))
+                RELEASE_AND_RETURN(scope, joined);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
 
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });
         bool holesKnownToBeOK = false;
         for (; i < length; ++i) {
             JSValue value = data[i].get();
-            if (value) [[likely]]
+            if (value) [[likely]] {
+                if (g_jscConfig.gilOffProcess && !value.isInt32()) [[unlikely]]
+                    goto generalCase; // SPEC-objectmodel I41: the owner relabelled Int32->Contiguous under us.
                 joiner.appendNumber(vm, value.asInt32());
-            else {
+            } else {
                 sawHoles = true;
                 if (!holesKnownToBeOK) {
                     if (holesMustForwardToPrototype(thisObject))
@@ -375,10 +383,12 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto data = butterfly.contiguous().data();
         bool holesKnownToBeOK = false;
 
-        JSOnlyStringsAndInt32sJoiner onlyStringsJoiner(separator);
-        if (auto joined = onlyStringsJoiner.tryJoin<ContiguousShape>(globalObject, data, length))
-            RELEASE_AND_RETURN(scope, joined);
-        RETURN_IF_EXCEPTION(scope, { });
+        if (!g_jscConfig.gilOffProcess) [[likely]] { // Two-pass joiner: see the Int32 case.
+            JSOnlyStringsAndInt32sJoiner onlyStringsJoiner(separator);
+            if (auto joined = onlyStringsJoiner.tryJoin<ContiguousShape>(globalObject, data, length))
+                RELEASE_AND_RETURN(scope, joined);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
 
         for (; i < length; ++i) {
             if (JSValue value = data[i].get()) {
