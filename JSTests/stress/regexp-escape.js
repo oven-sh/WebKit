@@ -43,7 +43,16 @@ for (const s of ["\u{2002A}", "\u{20009}", "\u{2002C}", "\u{20020}", "\u{12000}"
     for (const flags of ["", "u", "v"])
         shouldBe(new RegExp(RegExp.escape(s), flags).test(s), true);
 }
-for (let codePoint = 0x10000; codePoint < 0x110000; codePoint++) {
-    const s = String.fromCodePoint(codePoint);
-    shouldBe(RegExp.escape(s), s);
+// Every BMP code unit RegExp.escape rewrites, combined with every plane.
+const escapedCodeUnits = [..."^$\\.*+?()[]{}|/,-=<>#&!%:;@~'`\"\t\n\v\f\r \u00a0\u1680\u2028\u2029\u202f\u205f\u3000\ufeff"].map((c) => c.charCodeAt(0));
+for (let codeUnit = 0x2000; codeUnit <= 0x200a; codeUnit++)
+    escapedCodeUnits.push(codeUnit);
+escapedCodeUnits.push(0xd800, 0xd83d, 0xdbff, 0xdc00, 0xde00, 0xdfff);
+for (const codeUnit of escapedCodeUnits)
+    shouldBe(RegExp.escape("_" + String.fromCharCode(codeUnit)) !== "_" + String.fromCharCode(codeUnit), true);
+for (let plane = 1; plane <= 16; plane++) {
+    for (const codeUnit of escapedCodeUnits) {
+        const s = String.fromCodePoint((plane << 16) | codeUnit);
+        shouldBe(RegExp.escape(s), s);
+    }
 }
