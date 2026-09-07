@@ -280,6 +280,11 @@ public:
     static Ref<VM> createContextGroup(HeapType = HeapType::Small);
     JS_EXPORT_PRIVATE ~VM();
 
+    // Set by embedders while this VM is generating bytecode for an on-disk bytecode image
+    // (bun build --compile --bytecode); enables build-time-only bytecode optimizations.
+    bool generatingForBytecodeCacheImage() const { return m_generatingForBytecodeCacheImage; }
+    void setGeneratingForBytecodeCacheImage(bool value) { m_generatingForBytecodeCacheImage = value; }
+
     Watchdog* watchdog() { return m_watchdog.getIfExists(); }
     Watchdog& ensureWatchdog() { return m_watchdog.get(*this); }
 
@@ -444,6 +449,7 @@ public:
 
 private:
     bool m_isInService { false };
+    bool m_generatingForBytecodeCacheImage { false };
     RefPtr<CrossTaskToken> m_crossTaskToken;
     VMIdentifier m_identifier;
     const Ref<JSLock> m_apiLock;

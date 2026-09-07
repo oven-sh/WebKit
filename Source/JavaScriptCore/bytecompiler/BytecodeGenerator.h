@@ -358,6 +358,7 @@ namespace JSC {
         WTF_MAKE_NONCOPYABLE(BytecodeGenerator);
 
         friend class FinallyContext;
+        friend class BytecodeOptimizerAccess;
         friend class ForInContext;
         friend class StrictModeScope;
 

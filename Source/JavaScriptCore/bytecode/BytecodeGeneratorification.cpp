@@ -45,6 +45,7 @@ struct YieldData {
     JSInstructionStream::Offset point { 0 };
     VirtualRegister argument { 0 };
     FastBitVector liveness;
+    bool found { false }; // The bytecode optimizer may have removed an unreachable op_yield, leaving a hole in the numbering.
 };
 
 class BytecodeGeneratorification {
@@ -82,6 +83,7 @@ public:
                 YieldData& data = m_yields[liveCalleeLocalsIndex];
                 data.point = instruction.offset();
                 data.argument = bytecode.m_argument;
+                data.found = true;
                 break;
             }
 
@@ -192,8 +194,11 @@ public:
 
         runLivenessFixpoint(codeBlock, instructions, m_generatorification.graph());
 
-        for (YieldData& data : m_generatorification.yields())
+        for (YieldData& data : m_generatorification.yields()) {
+            if (!data.found)
+                continue;
             data.liveness = getLivenessInfoAtInstruction(codeBlock, instructions, m_generatorification.graph(), BytecodeIndex(m_generatorification.instructions().at(data.point).next().offset()));
+        }
     }
 
 private:
@@ -222,8 +227,10 @@ void BytecodeGeneratorification::run()
         jumpTable.m_branchOffsets = FixedVector<int32_t>(m_yields.size() + 1);
         std::ranges::fill(jumpTable.m_branchOffsets, 0);
         jumpTable.add(0, nextToEnterPoint.offset());
-        for (unsigned i = 0; i < m_yields.size(); ++i)
-            jumpTable.add(i + 1, m_yields[i].point);
+        for (unsigned i = 0; i < m_yields.size(); ++i) {
+            if (m_yields[i].found)
+                jumpTable.add(i + 1, m_yields[i].point);
+        }
         jumpTable.m_defaultOffset = nextToEnterPoint.offset();
 
         rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
@@ -232,6 +239,8 @@ void BytecodeGeneratorification::run()
     }
 
     for (const YieldData& data : m_yields) {
+        if (!data.found)
+            continue;
         VirtualRegister scope = virtualRegisterForArgumentIncludingThis(static_cast<int32_t>(JSGenerator::Argument::Frame));
 
         auto instruction = m_instructions.at(data.point);

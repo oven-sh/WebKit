@@ -36,6 +36,7 @@
 #include "BuiltinNames.h"
 #include "BytecodeGeneratorBaseInlines.h"
 #include "BytecodeGeneratorification.h"
+#include "BytecodeOptimizer.h"
 #include "BytecodeUseDef.h"
 #include "DefinePropertyAttributes.h"
 #include "Interpreter.h"
@@ -363,6 +364,9 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         m_codeBlock->addExceptionHandler(info);
     }
     
+
+    if (Options::useBytecodeOptimizer() || m_vm.generatingForBytecodeCacheImage()) [[unlikely]]
+        BytecodeOptimizer::run(*this);
 
     if (m_needsGeneratorification)
         performGeneratorification(*this, m_codeBlock.get(), m_writer, m_generatorFrameSymbolTable.get(), m_generatorFrameSymbolTableIndex);

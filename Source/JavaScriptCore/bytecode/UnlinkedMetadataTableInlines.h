@@ -116,6 +116,14 @@ ALWAYS_INLINE unsigned UnlinkedMetadataTable::addEntry(OpcodeID opcodeID)
     return preprocessBuffer()[opcodeID]++;
 }
 
+ALWAYS_INLINE void UnlinkedMetadataTable::restartForReemit()
+{
+    ASSERT(!m_isFinalized && !m_isBackedBySteps);
+    memset(preprocessBuffer(), 0, sizeof(Offset32) * s_offsetTableEntries);
+    m_numValueProfiles = 0;
+    m_hasMetadata = false;
+}
+
 ALWAYS_INLINE unsigned UnlinkedMetadataTable::addValueProfile()
 {
     ASSERT(!m_isFinalized);
