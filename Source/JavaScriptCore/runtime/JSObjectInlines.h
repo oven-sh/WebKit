@@ -148,8 +148,13 @@ inline void JSObject::storeTaggedButterflyWordConcurrent(VM& vm, Butterfly* butt
         // The word we are replacing must be empty or owner-tagged flat; a
         // foreign-tagged or segmented word here means a caller escaped the
         // protocol audit (§3/§4.2/§4.3 own those words).
-        RELEASE_ASSERT(!old || (!isSegmentedButterfly(old) && butterflyTID(old) == currentButterflyTID()));
-        uint64_t desired = butterfly ? encodeButterfly(butterfly, currentButterflyTID(), butterflySharedWrite(old)) : 0;
+        // r16 (N1-I): a butterfly-LESS word carries its allocator's TID, so a
+        // foreign first install under the lock (the classifier's None case:
+        // fresh storage, StructureID lane pre-claimed, no copy hazard) arrives
+        // here with a foreign-tagged payload-free word; that is the N3 shape
+        // and the installer becomes the word's owner, as when the word was 0.
+        RELEASE_ASSERT(!(old & butterflyPointerMask) || (!isSegmentedButterfly(old) && butterflyTID(old) == currentButterflyTID()));
+        uint64_t desired = butterfly ? encodeButterfly(butterfly, currentButterflyTID(), butterflySharedWrite(old)) : butterflyLessWordForCurrentThread(); // r16: a cleared word keeps the owner TID (I40)
         uint64_t observed = word->compareExchangeStrong(old, desired, std::memory_order_seq_cst);
         if (observed == old)
             break;
@@ -173,16 +178,17 @@ inline void JSObject::setButterflyConcurrent(VM& vm, Butterfly* butterfly)
     WTF::storeStoreFence();
     Atomic<uint64_t>* word = std::bit_cast<Atomic<uint64_t>*>(butterflyAddress());
     uint64_t old = word->load(std::memory_order_relaxed);
-    if (!old && butterfly) {
-        // §2.1 N3 first install: CAS the all-zero word to (b, currentTID, SW=0).
+    if (!(old & butterflyPointerMask) && butterfly) {
+        // §2.1 N3 first install: CAS the None word (ownerTID, 0, 0) - r16: the
+        // loaded value, no longer literal 0 - to (b, currentTID, SW=0).
         uint64_t desired = encodeButterfly(butterfly, currentButterflyTID(), false);
-        uint64_t previous = word->compareExchangeStrong(0, desired);
+        uint64_t previous = word->compareExchangeStrong(old, desired);
         // N3 failure = a racing first install won; the loser must re-dispatch on
         // the winner's tag. Every present caller installs into an object it
         // allocated or owns under E4-eligible conditions, so the CAS cannot
         // lose until the multi-mutator paths (Tasks 5-8) route racy installs
         // through casButterfly() (§9.3) with caller re-dispatch.
-        RELEASE_ASSERT(!previous);
+        RELEASE_ASSERT(previous == old);
         vm.writeBarrier(this);
     } else
         storeTaggedButterflyWordConcurrent(vm, butterfly);
@@ -751,7 +757,7 @@ inline NEVER_INLINE PropertyOffset JSObject::putDirectWithoutTransitionConcurren
                     // for the (bounded, poll-free, DeferGC'd) table edit.
                     auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
                     bool preNuked = false;
-                    if (!taggedButterflyWord()
+                    if (!(taggedButterflyWord() & butterflyPointerMask)
                         && Structure::outOfLineCapacity(structure->maxOffset() + 1) != structure->outOfLineCapacity()) {
                         if (idAtomic->compareExchangeStrong(structureID.bits(), structureID.nuke().bits()) != structureID.bits())
                             restart = true;
@@ -985,6 +991,30 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
         // butterfly is discarded unreferenced; take the locked protocols.
     }
 
+    // ---- N2-LF (SPEC-objectmodel §2.1 N2 (iii), r15): the owner's lock-free
+    // structure-only add on a butterfly-LESS instance. Same predicate as the
+    // E4 leg (sets valid+watched, !PA, !AS, N1 owner) plus word == 0 and no
+    // reallocation; the StructureID lane is CLAIMED (CAS old -> nuked) before
+    // anything is written, so a lost claim returns false with no side effect
+    // and the caller RESTARTs. This is the form the JIT caches emit (jit §5.5);
+    // the participant argument is history §23.
+    if (!(word & butterflyPointerMask) && oldCapacity == newCapacity && (offset == invalidOffset || isInlineOffset(offset))
+        && expectedSource->mayTransitionLockFreeFromThisStructure(this, word)) {
+        AssertNoGC assertNoGC; // I29: fresh loads above (word) and below, no poll until the publish.
+        auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
+        if (idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) == sourceID.bits()) {
+            if (offset != invalidOffset)
+                reinterpret_cast<Atomic<uint64_t>*>(&inlineStorage()[offsetInInlineStorage(offset)])->store(JSValue::encode(value), std::memory_order_release); // M2
+            WTF::storeStoreFence();
+            setStructure(vm, newStructure); // Un-nukes: publishes the new ID last (M5).
+            vm.writeBarrier(this, newStructure);
+            if (offset != invalidOffset)
+                vm.writeBarrier(this, value);
+            return true;
+        }
+        return false; // RESTART: the lane moved (a racing publication); nothing written.
+    }
+
     // ---- Locked protocols (§4.3 / §4.6 / N2). false => caller RESTART (fresh
     // §2 dispatch: fresh target derivation, fresh F1/F2 checks).
     //
@@ -1134,6 +1164,23 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             continue; // M5: a racing publication is mid-flight; spin to the settled ID.
     }
     Structure* structure = structureID.decode();
+    if constexpr (jsThreads && mode == PutModeDefineOwnProperty) {
+        // §6 L4-K: a data <-> accessor/custom change of an existing property is
+        // published under a stop GIL off (see definePropertyChangingKindGILOff).
+        // An uncacheable dictionary edits its table in place under the same
+        // structureID; no tier caches its accesses and the C++ readers use the
+        // table's edit stamp (getOwnNonIndexPropertySlot), so it keeps the
+        // locked leg below.
+        if (vm.gilOff() && !structure->isUncacheableDictionary()) [[unlikely]] {
+            unsigned currentAttributes;
+            PropertyOffset existingOffset = structure->get(vm, propertyName, currentAttributes);
+            if (existingOffset != invalidOffset && ((newAttributes ^ currentAttributes) & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+                if (!definePropertyChangingKindGILOff(vm, structure, structureID, propertyName, existingOffset, newAttributes, value))
+                    continue; // RESTART from a fresh structureID (§2).
+                return { };
+            }
+        }
+    }
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
         if constexpr (mode == PutModePut) {
@@ -1177,7 +1224,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     // putDirectWithoutTransitionConcurrent for the full note).
                     auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
                     bool preNuked = false;
-                    if (!taggedButterflyWord()
+                    if (!(taggedButterflyWord() & butterflyPointerMask)
                         && Structure::outOfLineCapacity(structure->maxOffset() + 1) != structure->outOfLineCapacity()) {
                         if (idAtomic->compareExchangeStrong(structureID.bits(), structureID.nuke().bits()) != structureID.bits())
                             restart = true;

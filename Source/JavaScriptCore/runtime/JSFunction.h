@@ -104,7 +104,19 @@ public:
     // unsynchronized check-then-act and only one cell may be published) or
     // the constructor initializes it on recycled cell memory — all other
     // accesses are relaxed atomics (plain mov codegen).
-    uintptr_t executableOrRareDataConcurrently() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_executableOrRareData), std::memory_order_acquire); } // Acquire: callers dereference the rare data, which another thread may have just published.
+    // Callers dereference the rare data, which another thread may have just
+    // published (release store in allocateRareData): acquire under TSAN, which
+    // cannot see dependency ordering; elsewhere the plain load, whose address
+    // dependency into the rare data orders the dereference on every supported
+    // target, as for every structure()->... chain in the engine.
+    uintptr_t executableOrRareDataConcurrently() const
+    {
+#if TSAN_ENABLED
+        return WTF::atomicLoad(const_cast<uintptr_t*>(&m_executableOrRareData), std::memory_order_acquire);
+#else
+        return m_executableOrRareData;
+#endif
+    }
 
     ExecutableBase* executable() const
     {

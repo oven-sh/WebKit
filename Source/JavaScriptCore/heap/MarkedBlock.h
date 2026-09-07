@@ -195,6 +195,7 @@ public:
         bool isAllocated();
         
         bool isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell*);
+        bool isLiveIgnoringDirectoryBit(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell*);
         inline bool isLiveCell(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const void*);
 
         bool isLive(const HeapCell*);

@@ -2583,6 +2583,7 @@ private:
 
         case OverridesHasInstance:
         case CheckStructure:
+        case CheckTransitionOwner:
         case CreateThis:
         case CreatePromise:
         case CreateGenerator:

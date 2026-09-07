@@ -27,6 +27,7 @@
 
 #include "ObjectAllocationProfile.h"
 
+#include "JSCellInlines.h"
 #include "JSFunctionInlines.h"
 
 namespace JSC {
@@ -137,6 +138,13 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
             }
         }
 
+        if (!allocator && vm.gilOff()) [[unlikely]] {
+            // The client TLC allocates this size class on every thread; give
+            // the JIT fast paths its slot instead of a null allocator (which
+            // sent every profiled allocation to the C++ slow path GIL off).
+            if (auto slot = tlcSlotForConcurrently<JSFinalObject>(vm, JSFinalObject::allocationSize(inlineCapacity)))
+                allocator = Allocator::encodedTLCSlot(*slot);
+        }
         WTF::atomicStore(&m_allocator, allocator, std::memory_order_relaxed); // THREADS: see clear().
     }
 

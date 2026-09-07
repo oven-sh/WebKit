@@ -880,7 +880,9 @@ void Options::notifyOptionsChanged()
     // (AssemblyHelpers::loadException / materializeGILOffExceptionSlot) and
     // passes the §A.1.3 audit.
     if (Options::useJSThreads() && !Options::useThreadGIL() && Options::useWasm()) {
-        dataLogLn("JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM).");
+        // (No log line: embedders' tests compare stderr. The refusal is
+        // documented - AUDIT / LANDING-PLAN "WebAssembly" - and observable as
+        // `typeof WebAssembly === "undefined"`.)
         Options::useWasm() = false;
     }
 

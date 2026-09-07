@@ -22,16 +22,19 @@ shouldBe(cond.notifyAll(), 0);
 for (let i = 0; i < 10; ++i)
     cond.notifyAll();
 // Despite 10+ prior notifyAll calls, a subsequent waiter still parks: the
-// worker below observes main parked (it can only run once main blocks) and
-// its own notifyAll reports exactly one dequeued waiter.
+// worker below observes main parked (GIL on it can only run once main blocks;
+// GIL off it waits for `parking`, which main sets under the lock and follows
+// only by wait()) and its own notifyAll reports exactly one dequeued waiter.
 {
-    const box = { ready: 0, woken: -1 };
+    const box = { ready: 0, parking: 0, woken: -1 };
     const w = new Thread(() => {
+        while (!Atomics.load(box, "parking")) { }
         lock.hold(() => { box.ready = 1; });
         box.woken = cond.notifyAll();
         return "ok";
     });
     lock.hold(() => {
+        Atomics.store(box, "parking", 1);
         while (!box.ready)
             cond.wait(lock);
     });
@@ -44,14 +47,19 @@ for (let i = 0; i < 10; ++i)
 // to check the queue fully resets.
 for (const useAll of [false, true]) {
     for (let lap = 0; lap < 3; ++lap) {
-        const box = { ready: 0, first: -1, second: -1 };
+        const box = { ready: 0, parking: 0, first: -1, second: -1 };
         const w = new Thread(() => {
+            // Do not race main to the lock: main sets `parking` while holding
+            // it and releases it only inside wait(), so once we see the flag
+            // our hold() below cannot run before main is parked.
+            while (!Atomics.load(box, "parking")) { }
             lock.hold(() => { box.ready = 1; });
             box.first = useAll ? cond.notifyAll() : cond.notify();
             box.second = useAll ? cond.notifyAll() : cond.notify();
             return "ok";
         });
         lock.hold(() => {
+            Atomics.store(box, "parking", 1);
             while (!box.ready)
                 cond.wait(lock);
         });

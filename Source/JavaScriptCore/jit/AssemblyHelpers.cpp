@@ -151,7 +151,7 @@ static void emitLoadTypedArrayArrayBuffer(AssemblyHelpers& jit, GPRReg baseGPR, 
 // Defined in runtime/VM.cpp (initial-exec model there too); declared with the
 // same language linkage + TLS model so the address-of below resolves to the
 // thread-invariant TPOFF the baked immediate relies on.
-extern "C" __attribute__((tls_model("initial-exec"))) thread_local VMLite* g_jscCurrentVMLite;
+extern "C" __attribute__((tls_model("initial-exec"))) constinit thread_local VMLite* g_jscCurrentVMLite;
 
 namespace {
 
@@ -1346,6 +1346,25 @@ void AssemblyHelpers::emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned 
     slowPath.append(branch32(BelowOrEqual, Address(allocatorGPR, static_cast<int32_t>(VMLite::offsetOfTlcTableBound())), TrustedImm32(static_cast<int32_t>(tlcSlot))));
     loadPtr(Address(allocatorGPR, static_cast<int32_t>(VMLite::offsetOfTlcTable())), allocatorGPR);
     loadPtr(Address(allocatorGPR, static_cast<int32_t>(tlcSlot * sizeof(void*))), allocatorGPR);
+}
+
+void AssemblyHelpers::emitResolveProfiledAllocator(VM& vm, GPRReg allocatorGPR, GPRReg scratchGPR)
+{
+    if (!vm.gilOff()) [[likely]]
+        return;
+    ASSERT(allocatorGPR != scratchGPR);
+    JIT_COMMENT(*this, "resolve profiled allocator (TLC slot)");
+    Jump isPointerOrNull = branchTestPtr(Zero, allocatorGPR, TrustedImm32(1));
+    urshiftPtr(TrustedImm32(1), allocatorGPR); // slot
+    loadVMLite(scratchGPR);
+    Jump inBound = branch32(Above, Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfTlcTableBound())), allocatorGPR);
+    move(TrustedImmPtr(nullptr), allocatorGPR); // bound miss: null => the variable-allocator slow path
+    Jump done = jump();
+    inBound.link(this);
+    loadPtr(Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfTlcTable())), scratchGPR);
+    loadPtr(BaseIndex(scratchGPR, allocatorGPR, TimesEight), allocatorGPR);
+    done.link(this);
+    isPointerOrNull.link(this);
 }
 
 void AssemblyHelpers::emitAllocate(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult)

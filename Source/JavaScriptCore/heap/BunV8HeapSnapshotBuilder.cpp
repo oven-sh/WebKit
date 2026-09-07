@@ -31,7 +31,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(BunV8HeapSnapshotBuilder);
 
 BunV8HeapSnapshotBuilder::BunV8HeapSnapshotBuilder(HeapProfiler& profiler)
     : m_profiler(profiler)
-    , m_previousSnapshot(profiler.mostRecentSnapshot())
+    , m_previousSnapshot((profiler.acquireBuilderGILOff(), profiler.mostRecentSnapshot()))
 {
     m_snapshot = makeUnique<HeapSnapshot>(m_previousSnapshot);
 
@@ -97,7 +97,10 @@ void BunV8HeapSnapshotBuilder::initializeTypeNames()
         m_edgeTypeMap.set(m_edgeTypeNames[i], i);
 }
 
-BunV8HeapSnapshotBuilder::~BunV8HeapSnapshotBuilder() = default;
+BunV8HeapSnapshotBuilder::~BunV8HeapSnapshotBuilder()
+{
+    m_profiler.releaseBuilderGILOff();
+}
 
 String BunV8HeapSnapshotBuilder::json()
 {
