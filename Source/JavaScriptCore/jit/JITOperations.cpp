@@ -240,7 +240,7 @@ static inline UGPRPair materializeTargetCode(VM& vm, JSFunction* targetFunction)
                 // ANNEX CBI item 3 (AB17c F4): matched (entrypoint,
                 // CodeBlock) pair derived through the one CodeBlock
                 // snapshot — see bytecode/RepatchInlines.h linkFor.
-                return encodeResult(codeBlockSlot->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), codeBlockSlot);
+                return encodeResult(codeBlockSlot->jitCodeRawPtr()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), codeBlockSlot);
             }
         }
         return encodeResult(executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), codeBlockSlot);
@@ -4779,13 +4779,10 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject*
             }
         }
 
-        // SPEC-jit §5.5 (review round 1): flag-on, scope metadata is FROZEN
-        // after CodeBlock linking - the {m_getPutInfo, m_structureID,
-        // m_operand} triple is rewritten by tryCache* as three plain stores
-        // that the LLInt/Baseline fast paths read unsynchronized. See
-        // llint/LLIntSlowPaths.cpp slow_path_get_from_scope.
-        if (!Options::useJSThreads()) [[likely]]
-            CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, environment, slot, ident);
+        // SPEC-jit §5.5: flag-on, tryCacheGetFromScopeGlobal publishes the
+        // {structureID, operand} pair in reader order and keeps the
+        // type-changing rewrites frozen (see there).
+        CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, environment, slot, ident);
 
         if (!result)
             return slot.getValue(globalObject, ident);

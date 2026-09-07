@@ -1026,11 +1026,7 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
     // butterfly-less instance - thread != the structure's N1 transition TID.
     uint64_t planningWord = butterflyWordAtomic(object)->load(std::memory_order_seq_cst);
     {
-        bool trigger;
-        if (!(planningWord & butterflyPointerMask))
-            trigger = currentButterflyTID() != source->transitionThreadLocalTID();
-        else
-            trigger = butterflyTID(planningWord) != currentButterflyTID() || butterflySharedWrite(planningWord);
+        bool trigger = !butterflyWordOwnedByCurrentThread(planningWord); // N1-I (r16): instance-keyed for every regime.
         if (trigger && anyTTLSetStillValid(source, newStructure)) {
             fireTTLSetsForSharedTransition(vm, source, newStructure, "F2: shared transition (§4.3)");
             return false; // RESTART after the stop (§4.2 rule).
@@ -1554,13 +1550,9 @@ bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSou
     // ---- Step 0: F2 firing (I10b/I13), same trigger taxonomy as §4.3.
     {
         uint64_t word = object->taggedButterflyWord();
-        bool trigger;
-        if (!(word & butterflyPointerMask))
-            trigger = currentButterflyTID() != source->transitionThreadLocalTID(); // N1 keying.
-        else if (isSegmentedButterfly(word))
-            trigger = true;
-        else
-            trigger = butterflyTID(word) != currentButterflyTID() || butterflySharedWrite(word);
+        // N1-I (r16): one instance-keyed test for every regime - segmented and
+        // shared-written words fail it by construction.
+        bool trigger = !butterflyWordOwnedByCurrentThread(word);
         if (trigger && anyTTLSetStillValid(source, newStructure)) {
             fireTTLSetsForSharedTransition(vm, source, newStructure, "F2: shared structure-only transition (N2)");
             return false; // RESTART after the stop.

@@ -64,7 +64,7 @@ namespace GCClient {
 // JSLock A36C carrier swap, Heap.cpp main-client adoption) is semantically
 // unchanged.
 
-thread_local Heap* Heap::s_currentThreadClient { nullptr };
+constinit thread_local Heap* Heap::s_currentThreadClient { nullptr };
 // Snapshot of the current thread's stamped client's GCThreadLocalCache
 // {m_table, m_tableBound}, so the C++ non-iso allocate fast path
 // (CompleteSubspaceInlines.h) skips both the allocationClientForCurrentThread
@@ -75,8 +75,8 @@ thread_local Heap* Heap::s_currentThreadClient { nullptr };
 // pointer never dangles while the client lives. Zero-init gives bound == 0,
 // so unstamped readers (compilation threads, pre-attach bootstrap) take the
 // resolver.
-thread_local Allocator* Heap::s_currentThreadTLCTable { nullptr };
-thread_local unsigned Heap::s_currentThreadTLCBound { 0 };
+constinit thread_local Allocator* Heap::s_currentThreadTLCTable { nullptr };
+constinit thread_local unsigned Heap::s_currentThreadTLCBound { 0 };
 
 void Heap::setCurrentThreadTLCSnapshot(Allocator* table, unsigned bound)
 {

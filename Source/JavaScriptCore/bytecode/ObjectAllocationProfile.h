@@ -67,8 +67,14 @@ protected:
         // (or vice versa) just takes the profile slow path. m_structure
         // accesses flow through WriteBarrier's concurrent accessors. Relaxed
         // atomics compile to plain stores, so flag-off codegen is unchanged.
-        WTF::atomicStore(&m_allocator, Allocator(), std::memory_order_relaxed);
+        // Structure first, then allocator: the JIT create_this fast paths read
+        // structure, allocator, structure and accept the pair only when both
+        // structure reads agree (flag-on), which with initializeProfile's
+        // allocator-then-structure order makes the allocator between two equal
+        // non-null structure reads belong to that structure.
         m_structure.clear();
+        WTF::storeStoreFence();
+        WTF::atomicStore(&m_allocator, Allocator(), std::memory_order_relaxed);
         ASSERT(isNull());
     }
 

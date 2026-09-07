@@ -79,8 +79,10 @@ void Subspace::prepareForAllocation()
 
 MarkedBlock::Handle* Subspace::findEmptyBlockToSteal()
 {
-    for (; m_directoryForEmptyAllocation; m_directoryForEmptyAllocation = m_directoryForEmptyAllocation->nextDirectoryInAlignedMemoryAllocator()) {
-        if (MarkedBlock::Handle* block = m_directoryForEmptyAllocation->findEmptyBlockToSteal())
+    // The cursor is shared by every client allocator of this subspace (shared
+    // heap); a racing advance only revisits or skips a directory this time.
+    for (BlockDirectory* directory = racyLoad(m_directoryForEmptyAllocation); directory; directory = directory->nextDirectoryInAlignedMemoryAllocator(), racyStore(m_directoryForEmptyAllocation, directory)) {
+        if (MarkedBlock::Handle* block = directory->findEmptyBlockToSteal())
             return block;
     }
     return nullptr;

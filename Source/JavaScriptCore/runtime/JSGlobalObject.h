@@ -606,9 +606,16 @@ public:
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_typedArray ## name ## PrototypeConstructorWatchpoint;
     FOR_EACH_TYPED_ARRAY_TYPE(DECLARE_TYPED_ARRAY_TYPE_WATCHPOINT)
 #undef DECLARE_TYPED_ARRAY_TYPE_WATCHPOINT
+    // Owners of the adaptive watchpoints installed after init() by lazy
+    // structure initializers (Map, Set, Number, TypedArray prototypes) and the
+    // species / property-descriptor installers. Two of those can run at once on
+    // two threads with the flag on (different LazyProperty slots, each
+    // init-once), so the appends take m_installedWatchpointsLock; nothing reads
+    // these vectors.
     Vector<UniqueRef<ObjectAdaptiveStructureWatchpoint>> m_installedObjectAdaptiveStructureWatchpoints;
     Vector<UniqueRef<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>> m_installedObjectPropertyChangeAdaptiveWatchpoints;
     Vector<UniqueRef<ChainedWatchpoint>> m_installedChainedWatchpoints;
+    Lock m_installedWatchpointsLock;
 
     void installObjectAdaptiveStructureWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
     void installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
@@ -695,7 +702,7 @@ public:
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
-    std::optional<unsigned> m_stackTraceLimit;
+    uint64_t m_stackTraceLimitBits { 0 }; // {engaged:32, value:32}; see stackTraceLimit()
     // Leaf lock guarding the Weak slot below (TSAN triage §8.36 function-ctor-cache).
     // This per-global Function-constructor source cache is a pure cache, not blessed
     // racy by SPEC-ungil §K: with useThreadGIL=false, N threads can run
@@ -813,8 +820,10 @@ public:
     WatchpointSet& ensureReferencedPropertyWatchpointSet(UniquedStringImpl*);
 #endif
 
-    std::optional<unsigned> stackTraceLimit() const { return m_stackTraceLimit; }
-    void setStackTraceLimit(std::optional<unsigned> value) { m_stackTraceLimit = value; }
+    // Error.stackTraceLimit is a global setting any thread may set or delete
+    // (useJSThreads): one 64-bit word {engaged, value}, read and written whole.
+    std::optional<unsigned> stackTraceLimit() const { uint64_t bits = racyLoad(m_stackTraceLimitBits); return (bits >> 32) ? std::optional<unsigned>(static_cast<unsigned>(bits)) : std::nullopt; }
+    void setStackTraceLimit(std::optional<unsigned> value) { racyStore(m_stackTraceLimitBits, value ? ((1ull << 32) | *value) : 0ull); }
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);
@@ -1414,6 +1423,17 @@ public:
     void installTypedArrayConstructorSpeciesWatchpoint(JSTypedArrayViewConstructor*);
     void installTypedArrayPrototypeIteratorProtocolWatchpoint(JSTypedArrayViewPrototype*);
     void tryInstallPropertyDescriptorFastPathWatchpoint();
+    void tryInstallPropertyDescriptorFastPathWatchpointImpl();
+
+    // GIL off, GlobalDeclarationInstantiation (program code) and the global
+    // leg of EvalDeclarationInstantiation check the global object and its
+    // lexical environment for conflicting names and then create the bindings;
+    // two threads evaluating scripts on one global object must not interleave
+    // those, or both add the same lexical variable (SymbolTable::add asserts a
+    // new entry) or a var and a let of one name both get created. One
+    // process-wide lock, taken through GILOffFirstUseLocker because the holder
+    // allocates and can park.
+    JS_EXPORT_PRIVATE static Lock& globalDeclarationLock();
 
     const ImportMap& importMap() const { return m_importMap.get(); }
     ImportMap& importMap() { return m_importMap.get(); }

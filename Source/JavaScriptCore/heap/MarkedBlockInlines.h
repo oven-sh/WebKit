@@ -32,6 +32,7 @@
 #include "Scribble.h"
 #include "SuperSampler.h"
 #include "VM.h"
+#include "VMManager.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -109,6 +110,11 @@ ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapV
     m_directory->assertIsMutatorOrMutatorIsStopped();
     if (m_directory->isAllocated(this))
         return true;
+    return isLiveIgnoringDirectoryBit(markingVersion, newlyAllocatedVersion, isMarking, cell);
+}
+
+ALWAYS_INLINE bool MarkedBlock::Handle::isLiveIgnoringDirectoryBit(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
+{
 
     // We need to do this while holding the lock because marks might be stale. In that case, newly
     // allocated will not yet be valid. Consider this interleaving.
@@ -207,6 +213,25 @@ inline bool MarkedBlock::Handle::isLiveCell(HeapVersion markingVersion, HeapVers
 
 inline bool MarkedBlock::Handle::isLive(const HeapCell* cell)
 {
+    // Mutator-side convenience form (isPendingDestruction, watchpoint validity,
+    // embedder liveness queries). With the shared heap another client's slow
+    // path may be re-allocating this directory's bit vectors (addBlock) while
+    // we read them, and a plain mutator holds none of the witnesses the
+    // lock-free read requires (a stop, the mutator slow-path lock, this
+    // directory's refill stripe); take the directory's bit-vector lock for the
+    // one bit read then. The marker and the sweeper use the explicit-version
+    // form above under their own witnesses and never come through here.
+    if (g_jscConfig.gilOffProcess && space()->heap().isSharedServer() && !space()->heap().worldIsStoppedForAllClients()
+        && !(jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor())) [[unlikely]] {
+        bool allocated;
+        {
+            Locker locker { m_directory->bitvectorLock() };
+            allocated = m_directory->isAllocated(this);
+        }
+        if (allocated)
+            return true;
+        return isLiveIgnoringDirectoryBit(space()->markingVersion(), space()->newlyAllocatedVersion(), space()->isMarking(), cell);
+    }
     return isLive(space()->markingVersion(), space()->newlyAllocatedVersion(), space()->isMarking(), cell);
 }
 

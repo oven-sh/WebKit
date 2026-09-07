@@ -233,6 +233,8 @@ JS_EXPORT_PRIVATE bool parkSitePollAndParkForStopTheWorld(VM&);
 // rewrites heap facts is a correctness bug.
 JS_EXPORT_PRIVATE uint64_t conductorHeapFactRewriteEpoch();
 JS_EXPORT_PRIVATE void noteConductorHeapFactRewrite();
+// Number of stop-the-world requests that were not satisfied inline (test observable).
+JS_EXPORT_PRIVATE uint64_t stopTheWorldRequestCount();
 
 // RAII, thread-local, nests: while open on this thread, neither the
 // ClassAStopWatchdogContext edges nor stopTheWorldAndRun's in-window bump

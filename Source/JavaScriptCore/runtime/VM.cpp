@@ -230,9 +230,9 @@ static void purgePromiseRejectionHandoffRecordsAtVMDestruction(VM&);
 // offset), so GIL-off is refused at option validation there (Options.cpp) and
 // the loadVMLite emitters fail-stop instead of emitting a load.
 #if OS(LINUX)
-extern "C" __attribute__((tls_model("initial-exec"))) thread_local VMLite* g_jscCurrentVMLite = nullptr;
+extern "C" __attribute__((tls_model("initial-exec"))) constinit thread_local VMLite* g_jscCurrentVMLite = nullptr;
 #else
-extern "C" thread_local VMLite* g_jscCurrentVMLite = nullptr;
+extern "C" constinit thread_local VMLite* g_jscCurrentVMLite = nullptr;
 #endif
 
 MicrotaskQueue& VM::defaultMicrotaskQueue() { return m_defaultMicrotaskQueue.get(); }
@@ -436,6 +436,11 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         m_heapProfiler.initLater([](VM& vm, auto& ref) {
             ref.set(makeUniqueRef<HeapProfiler>(vm));
         });
+        // GIL off, two threads' first heap snapshots would both run the
+        // initializer above (LazyUniqueRef has no publication protocol); the
+        // profiler also carries the lock that serializes builders. Make it now.
+        if (m_gilOff) [[unlikely]]
+            ensureHeapProfiler();
 
         m_stringSearcherTables.initLater([](VM&, auto& ref) {
             ref.set(makeUniqueRef<AdaptiveStringSearcherTables>());
@@ -701,7 +706,16 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // (even a same-value store to a read-only page faults). The first flag-on
     // VM forces the option before the freeze, so later VMs always observe
     // true here and skip. THREADS-INTEGRATE(objectmodel)
-    if (Options::useJSThreads() && !Options::forceFencedBarrier()) [[unlikely]]
+    // Fifth round: GIL-on no longer forces the fenced barrier. Its two jobs
+    // were (a) keeping in-place butterfly reallocation off (now gated on
+    // useJSThreads directly in tryReallocInPlace's callers) and (b) the fenced
+    // nuke/publication order, which GIL-on needs only against a concurrent
+    // marker (the normal marking-time toggle) - another JS thread runs only
+    // after a GIL hand-off, itself a full barrier. GIL-off keeps the forcing
+    // (Heap::setMutatorShouldBeFenced also pins it once the server is shared),
+    // pending the per-client barrier-flag reroute. The cost removed GIL-on:
+    // every C++ write barrier took the slow path with a store-load fence.
+    if (Options::useJSThreads() && !isX86() && !Options::forceFencedBarrier()) [[unlikely]]
         Options::forceFencedBarrier() = true;
 
     Config::finalize();
@@ -742,7 +756,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // reallocs must stay disabled for the HEAP LIFETIME. Heap::endMarking
     // restores the fence from Options::forceFencedBarrier() (Heap.cpp), which
     // was forced above, before Config::finalize(). THREADS-INTEGRATE(objectmodel)
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useJSThreads() && !isX86()) [[unlikely]]
         heap.setMutatorShouldBeFenced(true);
 
     // SPEC-objectmodel §9.2/I32 + Task 1 self-test (manifest entry 4a).
@@ -1301,6 +1315,12 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 #if ENABLE(SAMPLING_PROFILER)
 SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
 {
+    // GIL off, two threads' first $vm/inspector requests can both get here;
+    // the profiler itself refuses to sample such a VM, but the object must be
+    // made once (lazyInitialize asserts). A process-wide first-use lock: the
+    // constructor allocates no GC cell, so a plain Lock is enough.
+    static Lock s_lock;
+    Locker locker { s_lock };
     if (!m_samplingProfiler) {
         lazyInitialize(m_samplingProfiler, adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch))));
         requestEntryScopeService(EntryScopeService::SamplingProfiler);
@@ -1776,6 +1796,10 @@ void VM::shrinkFootprintWhenIdle()
 
 SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 {
+    // Every parser calls this; GIL off, parsers on different threads are
+    // serialized by the GIL-off compilation lock (their callers take it), so
+    // assert it rather than add a lock of our own.
+    ASSERT(!gilOff() || gilOffCompilationLock().isOwner());
     auto addResult = sourceProviderCacheMap.add(sourceProvider, nullptr);
     if (addResult.isNewEntry)
         addResult.iterator->value = SourceProviderCache::create(sourceProvider->source().length());

@@ -1560,8 +1560,17 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             // The structure cannot transition mid-iteration on FastStringifier's case.
             // canPerformFastPropertyEnumeration ruled out getters/setters and
             // mayHaveToJSON ruled out a toJSON / getter / Proxy on the prototype chain,
-            // so there is no JS observable to mutate the structure.
-            ASSERT(object.structure() == &structure);
+            // so there is no JS observable to mutate the structure — on THIS thread.
+            // With JS threads another thread can transition a shared object while we
+            // walk it; give the fast path up then (the generic stringifier re-reads
+            // through the object) instead of pairing the old table with new slots.
+            if (Options::useJSThreads()) [[unlikely]] {
+                if (object.structure() != &structure) {
+                    recordFailure("structure changed concurrently"_s);
+                    return false;
+                }
+            } else
+                ASSERT(object.structure() == &structure);
 
             JSValue value = object.getDirect(entry.offset());
             if (value.isUndefined())

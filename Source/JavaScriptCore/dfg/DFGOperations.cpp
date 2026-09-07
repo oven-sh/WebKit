@@ -455,9 +455,16 @@ JSC_DEFINE_JIT_OPERATION(operationCreateThis, JSCell*, (JSGlobalObject* globalOb
                 // pair keyed to the live .prototype is used; otherwise allocate from that
                 // prototype directly, which is what the uncached path below computes for a
                 // function with a data .prototype.
+                // A mono-proto structure carries its prototype, so there is no pair to tear:
+                // a non-null structure read (dependency-ordered) is a complete, once-valid
+                // profile, and a .prototype store that happens-before this construct has
+                // already nulled it (clearAfterPrototypeStore). Only poly-proto needs the
+                // keyed pair check against the live .prototype (a property lookup).
                 JSObject* prototype = nullptr;
-                JSObject* expectedPrototype = uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject);
-                if (Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
+                Structure* monoStructure = allocationProfile->structure();
+                if (monoStructure && !monoStructure->hasPolyProto()) [[likely]]
+                    result = constructEmptyObject(vm, monoStructure);
+                else if (JSObject* expectedPrototype = uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject); Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
                     result = constructEmptyObject(vm, structure);
                     if (structure->hasPolyProto()) {
                         result->putDirectOffset(vm, knownPolyProtoOffset, prototype);

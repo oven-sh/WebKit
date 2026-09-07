@@ -139,16 +139,45 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
 
             offset = thisObject->getDirectOffset(vm, propertyName, attributes);
             if (!isValidOffset(offset)) {
+                // Flag-on another thread may delete the property between the
+                // reification above and this probe; that is "not found".
+                if (Options::useJSThreads()) [[unlikely]]
+                    return false;
                 dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
                 RELEASE_ASSERT_NOT_REACHED();
             }
         }
     }
 
+    JSValue value = thisObject->getDirect(offset);
+    if (Options::useJSThreads()) [[unlikely]] {
+        // The offset came from one structure sample and the slot load is a
+        // second one, with a possible park between them (the reification lock,
+        // a table materialization). A hole here means either the storage was
+        // re-laid while we were parked (a dictionary flatten runs inside a
+        // stop, e.g. Object.freeze on the global object from two threads) or
+        // the property was deleted concurrently; it never means another
+        // property's value, because freed offsets are quarantined past the next
+        // stop (SPEC-objectmodel section 6) and concurrent adds do not move
+        // existing slots. So re-derive on a hole, a bounded number of times; no
+        // structure or table-stamp revalidation (that loops for as long as
+        // another thread keeps adding properties to a shared dictionary).
+        for (unsigned retries = 0; !value; ++retries) {
+            if (retries == 8)
+                return false;
+            offset = thisObject->getDirectOffset(vm, propertyName, attributes);
+            if (!isValidOffset(offset))
+                return false; // deleted under us
+            value = thisObject->getDirect(offset);
+        }
+        if (isAccessor != value.isGetterSetter())
+            return false;
+    }
+
     if (isAccessor)
-        slot.setCacheableGetterSlot(thisObject, attributes, uncheckedDowncast<GetterSetter>(thisObject->getDirect(offset)), offset);
+        slot.setCacheableGetterSlot(thisObject, attributes, uncheckedDowncast<GetterSetter>(value), offset);
     else
-        slot.setValue(thisObject, attributes, thisObject->getDirect(offset), offset);
+        slot.setValue(thisObject, attributes, value, offset);
     return true;
 }
 

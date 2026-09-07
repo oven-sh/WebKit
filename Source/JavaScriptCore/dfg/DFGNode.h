@@ -2507,6 +2507,7 @@ public:
     {
         switch (op()) {
         case ArrayifyToStructure:
+        case CheckTransitionOwner:
         case MaterializeNewInternalFieldObject:
         case NewObject:
         case NewInternalFieldObject:

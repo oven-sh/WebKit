@@ -368,6 +368,19 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CheckStructureImmediate:
         return;
 
+    case CheckTransitionOwner:
+        // Reads the tagged butterfly word (and this thread's TID tag, a
+        // thread constant); may exit. The facts it establishes are stable
+        // under this thread's own effects and change only through foreign
+        // actions that fire the watched thread-local sets first (SPEC-jit
+        // §5.5 Transition), so hoisting/CSE across polls is sound.
+        // The predicate is structure-independent (instance tag vs this
+        // thread's tag, OM r16 N1-I), so consecutive transitions of one
+        // object share one check.
+        read(JSObject_butterfly);
+        def(PureValue(node));
+        return;
+
     case ExtractCatchLocal:
         read(AbstractHeap(CatchLocals, node->catchOSREntryIndex()));
         return;
@@ -794,7 +807,15 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CheckTraps:
         read(InternalState);
         write(InternalState);
-        if (Options::useJSThreads()) [[unlikely]] {
+        // GIL-on flag-on (fifth round): modeled exactly as flag-off. While this
+        // thread is at a poll it holds the VM's GIL, and the phase-1 GIL is
+        // handed off only inside blocking primitives (Thread.join, Lock.hold,
+        // Condition.wait, Atomics.wait), which are calls and clobber the world
+        // anyway; so no other mutator of this VM can rewrite a heap fact while
+        // this thread is parked here, and the trap services that run at a poll
+        // (termination, watchdog, debugger, VMManager stop) are the flag-off
+        // ones with the flag-off invalidation story. See SPEC-jit I21.
+        if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
             // UNGIL §K.5 / SPEC-jit I21 (AB-10 closure): flag-on, the polling
             // CheckTraps is a PARK SITE — a mutator that traps here parks for
             // the whole §A.3 thread-granular window (or a Mode-machine stop),
@@ -841,12 +862,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             // emitted (gate must match: useJSThreads && !useThreadGIL &&
             // node->origin.exitOK at all three sites + AI).
             //
-            // GIL-on flag-on keeps the conservative model: the GIL park/
-            // hand-off edges are not all routed through handleTraps' epoch
-            // check, so invalidation coverage is not proven there; clobbering
-            // is trivially correct. Flag-off this whole branch is dead
-            // (byte-identical codegen LAW).
-            if (!Options::useThreadGIL() && node->origin.exitOK) {
+            // GIL-off without exit permission (not expected) keeps the
+            // conservative clobber below. Flag-off and GIL-on never enter this
+            // branch (byte-identical codegen LAW flag-off).
+            if (node->origin.exitOK) {
                 write(Watchpoint_fire);
                 write(SideState);
                 // AUDIT-checktraps §7.1 INTERIM DEFAULT (amend round 2),

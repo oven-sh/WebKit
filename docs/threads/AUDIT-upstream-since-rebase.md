@@ -1413,6 +1413,51 @@ are one word each; two threads may make two bound functions (identity only).
 - Change: skip `GCClient::Heap::currentThreadClient()` in the client walk.
 - Test: `gc-stress/gc-reclaims-conductor-garbage-with-thread-attached.js`.
 
+### PRE-17: static sweep of the directories the earlier rounds did not walk (fifth round)
+
+**Risk: mixed; the real items are fixed, the rest classified.**
+
+Method: the same read the fourth round applied to `runtime/`, `bytecode/`,
+`parser/` and `dfg/`, now over `interpreter/`, `jit/`, `llint/`, `heap/`,
+`yarr/`, `inspector/` (no frontend attached), `debugger/`, `API/` and the WTF
+types a cell can expose: every `mutable` member, every `ensure*` / `m_cached*`
+/ check-then-store, every `static` local or `NeverDestroyed`, every `HashMap`
+/ `HashSet` / `Vector` a JS-reachable object owns and mutates after
+construction, every non-atomic reference count or `WeakPtr` / `CheckedPtr` /
+`SingleThreadIntegralWrapper` on such an object. About 290 rows were written
+down with writer, readers and existing synchronization; the ones not SAFE by an
+existing lock, a stop, pre-publication, or an earlier PRE row are these.
+
+| Site | What | Disposition |
+|---|---|---|
+| `dfg/DFGCodeOriginPool.cpp` `addDisposableCallSiteIndex` (reached from `CodeBlock::newExceptionHandlingCallSiteIndex` when an inline cache with calls under `try` is regenerated), readers `StackVisitor::readFrame` / `CallFrame::codeOrigin` / the sampling profiler | `Vector<CodeOrigin>` append (may reallocate) under the CodeBlock lock; readers on other threads take no lock. PRE-14 locked the sibling `m_exceptionHandlers` table for the same grow-at-link / read-at-unwind shape and missed this one. | **Fixed.** Flag-on the pool keeps a release-published copy of the array for lock-free readers and retires (never frees) the arrays it replaces on growth; appends after link are rare and bounded by the free list. Removal stays world-stopped (GC End). |
+| `heap/Heap.h` `immutableButterflyToStringCache` (`Array.prototype.toString` on copy-on-write literals) | bare VM-wide `HashMap` `find`/`add` from every thread (heap-container audit HC-02, still open) | **Fixed:** not used GIL off (it is a per-GC-cycle cache). Also seen by the TSAN mirror. |
+| `heap/Heap.cpp` `preventCollection` | `m_collectContinuouslyLock.lock()` with heap access held: a second snapshotter parks in the lock while the holder requests a stop that then never completes | **Fixed** (found by the mirror first, `gc-stress/heap-snapshot-from-two-threads.js`): GIL off the shared server polls `tryLock` with the park-site poll in the loop. |
+| `runtime/VM.h` `ensureHeapProfiler()` and the snapshot builders | `LazyUniqueRef` check-then-construct; `HeapProfiler`'s snapshot list appended by two builders | **Fixed:** the profiler is created eagerly GIL off; builders serialize on a profiler lock taken with the polling protocol (same test). |
+| `heap/Heap.cpp` `clearConcurrentRetainedDataIfPossible` (incremental sweeper timer) | guard is `vm().entryScope`, which GIL off says nothing about other threads; would free `StringImpl`s other threads hold through `GCOwnedDataScope` | Not reachable today: the shared server forces the fenced barrier GIL off and the function returns on `mutatorShouldBeFenced()`. Made explicit (`isGILOffProcess()` early return) so it does not depend on that forcing. |
+| `inspector/JSGlobalObjectConsoleClient.cpp` -> `InspectorConsoleAgent` message buffer, counters, timers | JSCOnly builds have `developerExtrasEnabled()` constant true, so every `console.*` feeds the agent's unsynchronized containers from any thread (jsc shell; Bun installs its own client and is not affected) | **Fixed:** spawned GIL-off JS threads print to the system console but do not feed the agent (`consoleAgentUsable()`), the debugger's SD13 rule. |
+| `debugger/Debugger.cpp` `didCreateInternalFunction` / `willCallInternalFunction` | missed the spawned-thread early return their native-executable siblings have | **Fixed.** |
+| `runtime/RegExpInlines.h` interpreter fallback after an unlocked `m_state` re-read | another thread's failed other-width JIT compile flips the state to `ByteCode` and publishes `m_regExpBytecode` with a store-store fence; the reader had no matching fence (wrong "no match" on weakly-ordered targets) | **Fixed:** load-load fence before the bytecode read GIL off; `m_state` reads are a relaxed byte under TSAN (`RacyRegExpState`). |
+| `jit/BaselineJITCode.h` `m_ownerWentAwayAt` (Bun addition) | two sweeping threads destroying two owners of one shared unlinked code store the same time stamp | Racy store/load pair (defined behaviour; value identical). |
+| `jit/JITThunks.cpp` "first fetcher issues the cross-modifying-code fence" | upstream assumes one mutator; a second mutator fetching a compiler-thread-generated thunk issues no fence of its own | arm64-only and theoretical (fresh executable memory, broadcast icache flush); x86-64 needs none. Recorded; the round's OSR-exit change (below) shows the mechanism to use if it is ever needed: bump the process stop generation on publication, `jsThreadsSyncToStopGenerationBeforeJITEntry` on the consumer. |
+| `jit/JITSizeStatistics.cpp`, `jit/ICStats.cpp` | option-gated diagnostics (`dumpBaselineJITSizeStatistics`, `useICStats`) append to process-global containers from any finalizing / IC-probing thread | Diagnostics only; documented as single-thread options (like the type profiler). |
+| `interpreter/ShadowChicken.cpp` exemption predicate | exempts spawned JS threads, not a second embedder/carrier thread entering a GIL-off VM | Debugger / `alwaysUseShadowChicken` only; Bun has one carrier per VM. Recorded. |
+| `interpreter/CallFrame.cpp` `describeFrame()` static buffer | lldb helper; upstream Workers race it too | Left. |
+| `yarr/` interpreter: no poll inside a match; `BytecodePattern` allocator is the VM's `m_regExpAllocator` under `m_regExpAllocatorLock` for the whole match | race-free, but (a) a long backtracking match delays every stop, (b) all interpreted (non-JIT) matches of all threads serialize on one lock, waiting with heap access held | (b) **Fixed** in this round's performance work (per-thread allocator, PERF-RESULTS B5); (a) is the same latency class as a long C++ loop in stock JSC (it delays that engine's GC the same way) and is recorded under A5. |
+| `heap/Heap.cpp` `m_deprecatedExtraMemorySize`, Darwin critical-memory cache, opportunistic-task pacing fields (HC-05..08) | plain counters written from several threads | Accounting drift only; unchanged, listed in AUDIT-heapcontainers. |
+| `heap/Heap.cpp` lambda / C finalizers | run on whichever thread conducts the collection | By design GIL off (documented for embedders: Bun's napi/FFI finalizers must not assume the main thread); no JSC change. |
+| `heap/Heap.h` `m_observers`, `inspector` heap agent | frontend-attached only | Out of scope (no N-thread inspection), recorded. |
+| `API/JSCallbackObject*`, `API/JSClassRef.cpp` (`contextData`, `prototype`), `API/JSWeakObjectMapRef*`, `JSObjectGet/SetPrivate`, `OpaqueJSPropertyNameArray` refcount | the C API's callback objects, class context data, private-property maps and weak maps are single-mutator structures with no locking | **Unsupported GIL off for objects reachable from two JS threads**, recorded in SPEC-nativeaffinity: Bun does not create `JSCallbackObject`s or C-API weak maps (verified: no `JSClassCreate` / `JSObjectMake` / `JSWeakObjectMapCreate` in its sources); an embedder that does must keep such objects thread-confined. `JSLockHolder` / `DropAllLocks` themselves are routed to the per-thread entry token and are safe. |
+| `runtime/JSString.h` `vm.lastCachedString` (`jsStringWithCache`, used by Bun bindings) | unfenced single-word cache publish | Benign lost update (a cache miss); left, noted for the Bun patch set. |
+| WTF types on cells: `RefCounted` (non-atomic) payloads hanging off shared cells | searched: `StringImpl` and `SymbolImpl` counts are atomic in this tree; `SourceProvider`, `SharedArrayBufferContents`, `ArrayBuffer` are `ThreadSafeRefCounted`; the remaining `RefCounted` payloads found on JS-reachable cells (`DateInstanceData` via the per-thread `DateCache`, `RegExp`'s `BytecodePattern` owned by the cell, Intl ICU handles behind PRE-14's lazy fields) are either per-thread, immutable after publication, or behind the cell lock | No new site. |
+
+Two more first-use sites turned up by the mirror run rather than the read,
+same class as PRE-14: `BuiltinExecutables::createExecutable` parsed (and used
+the VM's per-provider function cache) outside the GIL-off compilation lock when
+two threads touched different builtins first (fixed: takes the lock;
+`VM::addSourceProviderCache` asserts it), and `JSGlobalObject::ffiContext()`'s
+lazy `unique_ptr` (fixed: CAS publication).
+
 ## What this audit did not check
 
 - Nothing was built or run. No test was written. TSAN was not run.

@@ -108,16 +108,18 @@ ALWAYS_INLINE bool forceButterflySWBitEnabled()
 
 // ===== §9.1 encode/decode =====
 
-// Validates I2 (structurally: null payload => all-zero word) and I3
-// (notTTLTID => SW=1). Liveness of the payload (the rest of I2) is not
-// checkable here. RELEASE_ASSERT semantics: only called when
+// Validates I2 (structurally: a null payload carries the allocating thread's
+// TID with SW=0 — r16 N1-I; the all-zero word is the TID-0 case) and I3
+// (notTTLTID => SW=1, payload != 0). Liveness of the payload (the rest of I2)
+// is not checkable here. RELEASE_ASSERT semantics: only called when
 // verifyConcurrentButterfly is on.
 ALWAYS_INLINE void validateTaggedButterflyWord(uint64_t tagged)
 {
     uint64_t payload = tagged & butterflyPointerMask;
+    uint64_t tid = (tagged & butterflyTIDMask) >> butterflyTIDShift;
     if (!payload)
-        RELEASE_ASSERT(!tagged); // payload 0 + nonzero tag is illegal (§2)
-    else if (((tagged & butterflyTIDMask) >> butterflyTIDShift) == notTTLTID)
+        RELEASE_ASSERT(!(tagged & butterflySWBit) && tid != notTTLTID); // None word: (t, SW=0, 0) only (§2 r16)
+    else if (tid == notTTLTID)
         RELEASE_ASSERT(tagged & butterflySWBit); // notTTLTID + SW=0 is illegal (I3)
 }
 
@@ -131,10 +133,24 @@ ALWAYS_INLINE uint64_t encodeButterflyTag(ButterflyTID tid, bool sharedWrite)
 ALWAYS_INLINE uint64_t encodeButterfly(Butterfly* butterfly, ButterflyTID tid, bool sharedWrite)
 {
     uint64_t tagged = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(butterfly)) | encodeButterflyTag(tid, sharedWrite);
-    ASSERT(butterfly || !tagged); // never tag a null payload (§2)
+    ASSERT(butterfly || !sharedWrite); // a null payload carries only the owner TID (§2 r16 N1-I)
     if (verifyConcurrentButterflyEnabled()) [[unlikely]]
         validateTaggedButterflyWord(tagged);
     return tagged;
+}
+
+// §2.1 N1 (r16 N1-I) / E4: the instance owner test, one leg for every
+// regime-0/1 word — tag == (currentButterflyTID(), SW=0). False for segmented
+// (SW=1) and shared-written words by construction.
+ALWAYS_INLINE bool butterflyWordOwnedByCurrentThread(uint64_t tagged)
+{
+    return (tagged & butterflyTagMask) == encodeButterflyTag(currentButterflyTID(), false);
+}
+
+// The None word a fresh butterfly-less object is born with (I40).
+ALWAYS_INLINE uint64_t butterflyLessWordForCurrentThread()
+{
+    return encodeButterflyTag(currentButterflyTID(), false);
 }
 
 // Segmented words are (notTTLTID, SW=1, spine) by construction (§2/I3).
@@ -204,7 +220,7 @@ ALWAYS_INLINE ButterflyRegime butterflyRegimeForWord(uint64_t tagged)
     if (verifyConcurrentButterflyEnabled()) [[unlikely]]
         validateTaggedButterflyWord(tagged);
     if (!(tagged & butterflyPointerMask)) {
-        ASSERT(!tagged); // §2: payload 0 + nonzero tag illegal
+        ASSERT(!(tagged & butterflySWBit)); // §2 r16: a None word is (ownerTID, SW=0, 0)
         return ButterflyRegime::None; // N4: None payloads never dereferenced
     }
     if (butterflyTID(tagged) == notTTLTID) {

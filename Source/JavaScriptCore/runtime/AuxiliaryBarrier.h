@@ -68,7 +68,7 @@ public:
     void clear()
     {
         if constexpr (isAtomicCapable)
-            WTF::atomicStore(&m_value, T(), std::memory_order_relaxed);
+            racyStore(m_value, T());
         else
             m_value = T();
     }
@@ -86,7 +86,7 @@ public:
     void setWithoutBarrier(U&& value)
     {
         if constexpr (isAtomicCapable)
-            WTF::atomicStore(&m_value, T(std::forward<U>(value)), std::memory_order_relaxed);
+            racyStore(m_value, T(std::forward<U>(value))); // Relaxed atomic under TSAN only; see the class comment.
         else
             m_value = std::forward<U>(value);
     }

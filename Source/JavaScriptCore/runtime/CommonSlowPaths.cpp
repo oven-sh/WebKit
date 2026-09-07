@@ -191,9 +191,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_this)
             // GIL-off, a racing FunctionRareData::clear() can null the profile between the ensure
             // above and these reads, and an initializer can be mid-publish, so only a pair keyed
             // to the live .prototype is used; anything else takes the uncached path below.
+            // A mono-proto structure carries its prototype (no pair to tear), and a .prototype
+            // store that happens-before this construct has already nulled the profile; only
+            // poly-proto needs the keyed check against the live .prototype (a property lookup).
             JSObject* prototype = nullptr;
-            JSObject* expectedPrototype = constructor->prototypeForConstruction(vm, globalObject);
-            if (Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
+            Structure* monoStructure = allocationProfile->structure();
+            if (monoStructure && !monoStructure->hasPolyProto()) [[likely]]
+                result = constructEmptyObject(vm, monoStructure);
+            else if (JSObject* expectedPrototype = constructor->prototypeForConstruction(vm, globalObject); Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
                 result = constructEmptyObject(vm, structure);
                 if (structure->hasPolyProto()) {
                     result->putDirectOffset(vm, knownPolyProtoOffset, prototype);

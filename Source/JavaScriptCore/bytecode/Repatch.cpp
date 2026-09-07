@@ -300,7 +300,7 @@ static void linkPolymorphicCallImpl(VM& vm, JSCell* owner, CallFrame* callFrame,
                     // from one tier with slot.m_codeBlock from another.
                     // Host functions (codeBlock == nullptr) keep the mirror
                     // read: their jitCode is set once at creation.
-                    codePtr = codeBlock->jitCode()->addressForCall(arityCheck);
+                    codePtr = codeBlock->jitCodeRawPtr()->addressForCall(arityCheck);
                 } else
                     codePtr = variant.executable()->generatedJITCodeForCall()->addressForCall(arityCheck);
                 slot.m_arityCheckMode = arityCheck;
@@ -1453,16 +1453,6 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 ASSERT(!isGlobalProxy);
                 ASSERT(slot.type() == PutPropertySlot::NewProperty);
 
-                // Under useJSThreads a generated oldStructure->newStructure
-                // transition needs the transition predicate (compile-time
-                // transitionThreadLocal validity plus the runtime thread-tag /
-                // shared-write test), and no tier emits it: the IC compiler's
-                // Transition case asserts it is unreachable flag-on. Every
-                // transition takes the generic locked object-model path until
-                // that predicate is emitted.
-                if (Options::useJSThreads()) [[unlikely]]
-                    return GiveUpOnCache;
-
                 if (!oldStructure->isObject())
                     return GiveUpOnCache;
 
@@ -1479,6 +1469,25 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 Structure* newStructure = Structure::addPropertyTransitionToExistingStructureConcurrently(oldStructure, ident.impl(), static_cast<unsigned>(PropertyAttribute::None), offset);
                 if (!newStructure || !newStructure->propertyAccessesAreCacheable())
                     return GiveUpOnCache;
+
+                if (Options::useJSThreads()) [[unlikely]] {
+                    // SPEC-jit §5.5 Transition (OM E4 / N2-LF): a cached
+                    // transition needs both source thread-local sets valid (the
+                    // stub watches them and the target's, see
+                    // collectAdditionalWatchpoints), a source that is not
+                    // ArrayStorage-shaped (OM I31), and no butterfly
+                    // (re)allocation; the runtime owner test is emitted by the
+                    // handler. Everything else stays on the C++ protocols.
+                    if (!oldStructure->transitionThreadLocalIsValidAndWatched() || !oldStructure->writeThreadLocalIsValidAndWatched())
+                        return GiveUpOnCache;
+                    if (hasAnyArrayStorage(oldStructure->indexingType()))
+                        return GiveUpOnCache;
+                    if (newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity())
+                        return GiveUpOnCache;
+                    // The C++ add revalidated after the put, but a foreign fire
+                    // between then and here would leave a stub whose watchpoint
+                    // install fails; connectWatchpointSets re-checks validity.
+                }
 
                 // If JSObject::put is overridden by UserObject, UserObject::put performs side-effect on JSObject::put, and it neglects to mark the PutPropertySlot as non-cachaeble,
                 // then arbitrary structure transitions can happen during the put operation, and this generates wrong transition information here as if oldStructure -> newStructure.

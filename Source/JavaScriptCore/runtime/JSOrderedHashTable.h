@@ -95,12 +95,8 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (vm.gilOff()) [[unlikely]] {
-            JSValue normalizedKey = normalizeMapKey(key);
-            uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
-            RETURN_IF_EXCEPTION(scope, void());
-            RELEASE_AND_RETURN(scope, Helper::addNormalizedGILOff(globalObject, this, normalizedKey, value, hash));
-        }
+        if (vm.gilOff()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, addGILOff(globalObject, key, value));
 
         materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -140,13 +136,8 @@ public:
 
     ALWAYS_INLINE uint32_t size()
     {
-        if (Helper::iterationLiteIfGILOff()) [[unlikely]] {
-            if (!m_storage)
-                return 0;
-            return Helper::withCurrentTableLockedGILOff(this, [](Storage& storage) {
-                return Helper::aliveEntryCount(storage);
-            });
-        }
+        if (Helper::iterationLiteIfGILOff()) [[unlikely]]
+            return sizeGILOff();
         if (m_storage)
             return Helper::aliveEntryCount(storageRef());
         return 0;
@@ -206,7 +197,26 @@ public:
 
     // With the GIL off, the key is normalized and hashed before the table lock
     // is taken, because hashing a rope key resolves it (see the helper).
-    bool hasGILOff(JSGlobalObject* globalObject, JSValue key)
+    NEVER_INLINE void addGILOff(JSGlobalObject* globalObject, JSValue key, JSValue value)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue normalizedKey = normalizeMapKey(key);
+        uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
+        RETURN_IF_EXCEPTION(scope, void());
+        RELEASE_AND_RETURN(scope, Helper::addNormalizedGILOff(globalObject, this, normalizedKey, value, hash));
+    }
+
+    NEVER_INLINE uint32_t sizeGILOff()
+    {
+        if (!m_storage)
+            return 0;
+        return Helper::withCurrentTableLockedGILOff(this, [](Storage& storage) {
+            return Helper::aliveEntryCount(storage);
+        });
+    }
+
+    NEVER_INLINE bool hasGILOff(JSGlobalObject* globalObject, JSValue key)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -220,7 +230,7 @@ public:
         });
     }
 
-    bool removeGILOff(JSGlobalObject* globalObject, JSValue key)
+    NEVER_INLINE bool removeGILOff(JSGlobalObject* globalObject, JSValue key)
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -263,15 +273,8 @@ public:
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key)
     {
-        VM& vm = getVM(globalObject);
-        if (vm.gilOff()) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            JSValue normalizedKey = normalizeMapKey(key);
-            uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
-            RETURN_IF_EXCEPTION(scope, { });
-            JSValue result = getGILOff(globalObject, normalizedKey, hash);
-            return result.isEmpty() ? jsUndefined() : result;
-        }
+        if (getVM(globalObject).gilOff()) [[unlikely]]
+            return getUnnormalizedGILOff(globalObject, key);
         JSValue result = getImpl(globalObject, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
             return Helper::find(globalObject, storage, key);
         });
@@ -301,22 +304,8 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (vm.gilOff()) [[unlikely]] {
-            // The value is computed with no lock held, because that can call
-            // into JS. Another thread can add the key meanwhile; the add below
-            // then overwrites its value.
-            JSValue normalizedKey = normalizeMapKey(key);
-            uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
-            RETURN_IF_EXCEPTION(scope, { });
-            JSValue value = getGILOff(globalObject, normalizedKey, hash);
-            if (!value.isEmpty())
-                return value;
-            value = getValueFunctor();
-            RETURN_IF_EXCEPTION(scope, { });
-            Helper::addNormalizedGILOff(globalObject, this, normalizedKey, value, hash);
-            RETURN_IF_EXCEPTION(scope, { });
-            return value;
-        }
+        if (vm.gilOff()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, getOrInsertGILOff(globalObject, key, getValueFunctor));
 
         materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
@@ -343,8 +332,40 @@ public:
         return value;
     }
 
+    NEVER_INLINE JSValue getUnnormalizedGILOff(JSGlobalObject* globalObject, JSValue key)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue normalizedKey = normalizeMapKey(key);
+        uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue result = getGILOff(globalObject, normalizedKey, hash);
+        return result.isEmpty() ? jsUndefined() : result;
+    }
+
+    template<typename Functor>
+    NEVER_INLINE JSValue getOrInsertGILOff(JSGlobalObject* globalObject, JSValue key, const Functor& getValueFunctor)
+    {
+        // The value is computed with no lock held, because that can call
+        // into JS. Another thread can add the key meanwhile; the add below
+        // then overwrites its value.
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue normalizedKey = normalizeMapKey(key);
+        uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue value = getGILOff(globalObject, normalizedKey, hash);
+        if (!value.isEmpty())
+            return value;
+        value = getValueFunctor();
+        RETURN_IF_EXCEPTION(scope, { });
+        Helper::addNormalizedGILOff(globalObject, this, normalizedKey, value, hash);
+        RETURN_IF_EXCEPTION(scope, { });
+        return value;
+    }
+
     // Returns the empty value when the key is absent.
-    JSValue getGILOff(JSGlobalObject* globalObject, JSValue normalizedKey, uint32_t hash)
+    NEVER_INLINE JSValue getGILOff(JSGlobalObject* globalObject, JSValue normalizedKey, uint32_t hash)
     {
         if (!m_storage)
             return { };

@@ -189,17 +189,23 @@ void JSArrayBufferView::finishCreation(VM& vm)
     case ResizableNonSharedWastefulTypedArray:
     case ResizableNonSharedAutoLengthWastefulTypedArray:
     case GrowableSharedWastefulTypedArray:
-    case GrowableSharedAutoLengthWastefulTypedArray:
-        vm.heap.addReference(this, butterfly()->indexingHeader()->arrayBuffer());
+    case GrowableSharedAutoLengthWastefulTypedArray: {
+        ArrayBuffer* buffer = butterfly()->indexingHeader()->arrayBuffer();
+        vm.heap.addReference(this, buffer);
+        detachIfBufferDetachedSinceConstruction(*buffer);
         return;
+    }
     case DataViewMode:
     case ResizableNonSharedDataViewMode:
     case ResizableNonSharedAutoLengthDataViewMode:
     case GrowableSharedDataViewMode:
-    case GrowableSharedAutoLengthDataViewMode:
+    case GrowableSharedAutoLengthDataViewMode: {
         ASSERT(!butterfly());
-        vm.heap.addReference(this, uncheckedDowncast<JSDataView>(this)->possiblySharedBuffer());
+        ArrayBuffer* buffer = uncheckedDowncast<JSDataView>(this)->possiblySharedBuffer();
+        vm.heap.addReference(this, buffer);
+        detachIfBufferDetachedSinceConstruction(*buffer);
         return;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -258,6 +264,24 @@ JSArrayBuffer* JSArrayBufferView::possiblySharedJSBuffer(JSGlobalObject* globalO
         return vm.m_typedArrayController->toJS(globalObject, this->realm(), *buffer);
     scope.throwException(globalObject, createOutOfMemoryError(globalObject));
     return nullptr;
+}
+
+// GIL off, another thread can detach the buffer between the creator's
+// isDetached() check (before the view captured the base pointer) and the
+// addReference above. The detacher sets the sticky detached flag first and
+// then neuters a snapshot of the incoming references taken under the same set
+// lock addReference takes; so either that snapshot contains this view, or this
+// re-check (after our registration, ordered by the lock) sees the flag. Without
+// it the view keeps a base into the quarantined mapping past the stop that
+// frees it. The result is a zero-length view, which is what a view detached
+// right after construction is.
+void JSArrayBufferView::detachIfBufferDetachedSinceConstruction(ArrayBuffer& buffer)
+{
+    if (!g_jscConfig.gilOffProcess) [[likely]]
+        return;
+    if (buffer.isShared() || !buffer.isDetached())
+        return;
+    detachFromArrayBuffer();
 }
 
 void JSArrayBufferView::detachFromArrayBuffer()

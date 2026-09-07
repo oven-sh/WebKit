@@ -28,6 +28,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "B3ValueRep.h"
+#include <atomic>
 #include "CodeOrigin.h"
 #include "DFGExitProfile.h"
 #include "DFGNodeOrigin.h"
@@ -153,6 +154,10 @@ struct OSRExit : public DFG::OSRExitBase {
 
     OSRExitDescriptor* m_descriptor;
     MacroAssemblerCodeRef<OSRExitPtrTag> m_code;
+    // GIL-off lock-free readers of the compiled ramp (operationCompileFTLOSRExit
+    // fast path): published release AFTER m_code is set under the exit
+    // generation lock and after the stop-generation bump; null until then.
+    void* m_codePtrForConcurrentReaders { nullptr }; // accessed with WTF::atomicLoad/atomicStore (OSRExit must stay movable)
     // This tells us where to place a jump.
     CodeLocationJump<JSInternalPtrTag> m_patchableJump;
     FixedVector<B3::ValueRep> m_valueReps;

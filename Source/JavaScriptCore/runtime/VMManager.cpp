@@ -1228,6 +1228,18 @@ void VMManager::notifyVMUnblocking(VM& vm, StopTheWorldEvent exitEvent)
 
 void VMManager::notifyVMStop(VM& vm, StopTheWorldEvent event)
 {
+    // A thread that is itself conducting a collection must not park here. The
+    // shared collector's own stop request sets this VM's trap bit on every
+    // thread, the conductor's included ("harmless, it runs no JS until
+    // resume"), but the conductor does run C++ that polls traps: an embedder's
+    // error-info hook called from ErrorInstance::finalizeUnconditionally
+    // (Bun's stack formatter calls VM::hasExceptionsAfterHandlingTraps), weak
+    // callbacks, finalizers. Parking there waits for a resume only this thread
+    // can perform. It services whatever is pending at its next poll after the
+    // collection. GC helper threads never park here either.
+    if (vm.heap.currentThreadIsDoingGCWork()) [[unlikely]]
+        return;
+
     // The stop is already being serviced by this thread (see
     // t_stopTheWorldCallbackVM): the world is Stopped for it, and counting
     // the VM as stopped a second time would break the

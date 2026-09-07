@@ -23,6 +23,7 @@
 #pragma once
 
 #include "ExecutableInfo.h"
+#include "JSThreadsSafepoint.h"
 #include "Lexer.h"
 #include "ModuleScopeData.h"
 #include "Nodes.h"
@@ -2340,6 +2341,12 @@ std::unique_ptr<ParsedNode> parseRootNode(
 {
     static_assert(std::is_same_v<ParsedNode, ProgramNode> || std::is_same_v<ParsedNode, ModuleProgramNode>);
     ASSERT(!source.provider()->source().isNull());
+
+    // The parser uses VM-wide tables (VM::addSourceProviderCache). GIL off,
+    // every parse holds the process compilation lock; taken here (recursive,
+    // an uncontended try-lock when the caller already holds it) so that
+    // embedder callers of this entry point are covered too.
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
 
     MonotonicTime before;
     if (Options::reportParseTimes()) [[unlikely]]

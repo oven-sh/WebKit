@@ -220,7 +220,7 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
             // versa. Derive the entrypoint THROUGH the one CodeBlock
             // snapshot (address-dependent, jit F2) — a stale-but-matched
             // pair is always executable.
-            codePtr = codeBlock->jitCode()->addressForCall(arity);
+            codePtr = codeBlock->jitCodeRawPtr()->addressForCall(arity); // raw: the CodeBlock pins its JITCode (see jitCodeRawPtr)
         } else
             codePtr = functionExecutable->entrypointFor(kind, arity);
     }
@@ -291,7 +291,7 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
             // linkFor above — derive the entrypoint through the CodeBlock
             // snapshot just stored to the callee frame, not through the
             // executable's independently-republished m_jitCodeFor* mirror.
-            return (*codeBlockSlot)->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr();
+            return (*codeBlockSlot)->jitCodeRawPtr()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(); // raw: no refcount bounce on the shared JITCode
         }
     }
 

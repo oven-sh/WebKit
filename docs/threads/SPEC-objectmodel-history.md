@@ -1005,3 +1005,220 @@ race window provably entered 9+ times (detector trips, both directions);
 reload-return restored via env arm: 2/5 corruptions, each causally paired
 in-run with a `KEYATOM-RACE` trip. Standing tripwire: keep
 Tools/threads/bughunt/repro.js in the load6 soak rotation.
+
+## §23. Rev 15 (fifth landing round): N2-LF lock-free structure-only add, L4-K kind change under a stop
+
+**N2-LF.** The problem: flag-on no tier cached a property-add transition, so
+every add ran `putDirectInternal` in C++ (40x on object-creation loops). E4
+already licenses the owner's lock-free transition of a butterfly-BEARING
+instance (tag == (currentTID, 0)); for a butterfly-LESS instance (`word == 0`,
+the common `{...}` with inline slots) the C++ E4 leg refuses (AB18-R1-H: its
+publication is a plain StructureID store, and the argument that excludes every
+racer names only racers that fire sets or stop the world). An inline cache
+cannot take the cell lock, so the cached form needs a lock-free protocol whose
+safety does not rest on "nobody else can be here": N2-LF claims the StructureID
+lane with a 32-bit CAS `old -> nuke(old)` BEFORE writing anything, then
+release-stores the value, fences, and stores the new un-nuked ID. A CAS that
+fails (the lane is nuked, or names another structure) abandons with nothing
+written and re-dispatches through the slow path. Value-after-claim is what
+distinguishes it from the r14 §21/8h "lock-free N2 header-CAS" that was
+REJECTED: that variant stored the value first and CASed the header after, so a
+loser could clobber a slot the winner had just given to another property
+(I9/I21); here a loser has stored nothing.
+
+Preconditions (= E4's butterfly-less predicate, evaluated by fresh loads with
+no poll before the claim, I29): both source TTL sets valid and watched by the
+emitter (stub or DFG plan registers on `transitionThreadLocal` and
+`writeThreadLocal` of the source, and of the target); `!isPreciseAllocation`
+(kept for uniformity with E4/I36; the 32-bit CAS itself would be legal on a PA
+cell); tagged word == 0; `currentButterflyTID() == source->transitionThreadLocalTID()`
+(N1); source not ArrayStorage-shaped; target `outOfLineCapacity` == source's
+(non-reallocating; inline offset).
+
+Interference, participant by participant, for object `o` wearing `S`, thread A
+the N1 owner running an N2-LF emitter, any other thread B:
+- B, named add/delete/attribute change/seal/freeze/setPrototype/indexing
+  change/dictionary conversion on `o` (tryStructureOnlyTransition,
+  deletePropertyNamedConcurrent, publishStructureOnlyTransitionConcurrently,
+  createInitialIndexedStorageConcurrent's shared leg, the §4.6 stops): each
+  runs F2 step 0 first — B != S's transition TID is a trigger — and while
+  either set of S is still valid that step is a stop-the-world fire, whose
+  closure jettisons/retires every emitter watching S (jit §5.3/§5.6) before any
+  mutator resumes; A is parked at a poll outside the emitter's window (the
+  window has no poll). After the fire the sets are invalid, so no N2-LF emitter
+  for S exists or can be created (I14). Hence B's locked publication and A's
+  N2-LF never overlap in time: I38. If the sets were ALREADY invalid when B
+  arrives, the same conclusion holds trivially.
+- B, first indexed install on `o` (word == 0): `foreignButterflyLessInstall`
+  (N1-keyed) takes the shared per-event-stop leg, which fires first: as above.
+- A itself through C++ (E4 leg, locked N2, N3 owner install): same thread,
+  sequential.
+- B, foreign write to an existing INLINE slot of `o`: lock-free for any thread
+  (§3 "Inline slots"), a different slot from the one being added; no
+  interaction. Foreign write to an out-of-line slot: `o` has no butterfly.
+- B, reader keyed on S (any tier): reads only slots S names; unaffected by the
+  new slot; a reader that loads the StructureID inside the window sees
+  nuke(S): IC/DFG structure checks compare the raw 32 bits and miss to the slow
+  path; C++ `structure()` masks the nuke bit (M5) and reads consistent S state;
+  `structureID()`-based re-validation loops treat nuked as "retry" (bounded by
+  the straight-line window). Reader keyed on S' after step 4: the value store
+  (2) is ordered before (4) by the fence (M2/I9); ARM readers per M7.
+- GC visit of `o` during the window: raw nuked ID => didRace/revisit (M5,
+  §4.5-1); the new slot is beyond S's inlineSize so an S-keyed visit does not
+  read it; the emitter's write barrier on `o` after (4) (baseline put_by_id /
+  DFG StoreBarrier) covers a concurrent-marking black `o`, as for the
+  flag-off transition IC.
+- TTL fire of S or S' racing the window: fires run world-stopped (I13); A is
+  not at a safepoint inside the window, so a fire lands strictly before (A then
+  finds the emitter retired / re-checks the sets by fresh loads and goes slow)
+  or strictly after (4).
+- Two N2-LF emitters on one `o`: both require currentTID == S's transition
+  TID, i.e. the same thread.
+The CAS therefore never fails in a correct execution; it is kept so that a
+missed participant degrades to "slow path" (A) or to the locked writer's
+taxonomy-(d) fail-stop (B), never to a silent lost add.
+
+C++ adopts N2-LF in `tryPutDirectTransitionConcurrent` for the same predicate
+(replacing the locked N2 for the owner's inline adds); the JIT emission and its
+watchpoints are jit §5.5 rev (history §24 there).
+
+**L4-K.** Found by the fifth round's mirror run (`regress-160749.js` with its
+global code on two threads: a `GetterSetter` cell reached `jsAdd`). A
+`defineProperty` that turns an existing data property into an accessor (or
+back) keeps the property's offset and rewrites the slot's KIND in place:
+`putDirectInternal<DefineOwnProperty>` stored the `GetterSetter` at the offset
+and then published the attribute-change structure. Every lock-free reader —
+baseline/LLInt/DFG get ICs and C++ `fastGetOwnProperty` — is "check structure,
+load slot" with nothing after the load, so a reader between the two took the
+`GetterSetter` for the property's value under the data structure (or, in the
+other direction, would call a plain value as an accessor). `getOwnNonIndexPropertySlot`
+already carried an M7(c) re-check for exactly this torn pair; the JIT readers
+cannot. Options weighed: (a) a fresh offset for the reconfigured property
+(delete+add; changes enumeration order, needs growth handling), (b) reader-side
+type checks in every get IC (a tax on every property load), (c) publish the
+kind change under a per-event stop. (c) costs one stop per data<->accessor
+redefinition of an existing property — rare — and nothing anywhere else, and
+the existing stop machinery already gives the needed guarantee: IC and LLInt
+check->load windows contain no poll, so no reader is inside one while the world
+is stopped, and DFG code that hoisted the check across a poll is jettisoned by
+the window's in-window heap-fact epoch bump before it can reuse the check
+(AUDIT-checktraps BUMP-EDGE LAW). C++ readers can be parked INSIDE their
+window (Structure::get may materialize a table and allocate), so the three C++
+read paths re-validate the raw structureID after the load and refuse to return
+an accessor cell under data attributes (I39): `getOwnNonIndexPropertySlot`
+(pre-existing), `JSObject::getDirect(VM&, PropertyName[, attributes])` (now a
+re-deriving loop flag-on), `JSCell::fastGetOwnProperty` (returns empty so the
+caller takes the full path). Uncacheable dictionaries are excluded: their
+attribute change is an in-place table edit under the same StructureID, no tier
+caches their accesses, and the C++ readers already validate against the
+table's edit stamp. GIL-on and flag-off are unchanged: no reader can run
+between the store and the publication.
+
+## §24. Rev 16 (fifth landing round): N1-I — butterfly-less ownership keyed on the instance, not the shape
+
+Measured after rev 15's cached transitions landed: one thread creating
+objects with four property adds ran 2M iterations in 8 ms; two threads doing
+the same independent work took 1.9 s, and two threads of a sinkable object
+literal 6.3 s (profile: both threads in the C++ locked N2, a third of the time
+re-materializing property tables). Cause, by construction of r12's N1: a
+butterfly-less object's lock-free transitioner was the thread whose TID the
+STRUCTURE carried, and that TID is the creator's of the ROOT of the transition
+tree, inherited by every descendant. The empty-object structures of a global
+are created by the main thread, so every other thread was foreign to its own
+freshly allocated `{}`: its first add fired the root's sets under a stop (F2),
+F4 then made every structure later derived from that root born-fired, and from
+then on every thread — the main thread included — took the cell-locked N2 for
+every add to a plain object, and no tier could cache or inline those
+transitions again (their legality needs valid sets). The design note in r12
+("no spare header bits, so key butterfly-less ownership on the shape") was the
+only reason for shape keying; but the butterfly WORD of a butterfly-less object
+is free: its payload is 0 and its tag bits were required to be 0.
+
+Rev 16 stamps the allocating thread's TID into that tag at birth (C++
+constructors, including the well-defined-builtin-cell form used for functions;
+every JIT inline allocation stores the thread's TID tag word instead of 0), and
+keys None-regime ownership on it: E4, N2-LF, N3, F2's trigger and the JIT
+predicate (jit §5.5 CheckTransitionOwner / the IC legs) all compare
+`(word ^ currentTag) & tagMask == 0`, one leg for every regime-0/1 word. What
+had to change besides the predicate: N3's CAS expects the loaded None word
+instead of literal 0; `butterflyRegimeForWord`/`encodeButterfly`/the verifier
+accept (t, 0, payload 0); the dead-TID restamp (Heap.cpp) now also visits None
+words; the C++ sites that tested `!word` test the payload. What did not change:
+every reader already masks the tag before dereferencing (I14 choke points,
+`butterfly()`), and every "has a butterfly?" test in C++ and the LLInt was
+already a payload test; flag-off words are all-zero-tagged as before (TID 0,
+byte-identical). Interference argument: identical to E4's butterfly-bearing
+leg (history §17/§21) with "instance tag" read for "structure TID" — the owner
+is unique by construction (one allocating thread; tags change only by a locked
+or world-stopped foreign install after an F2 fire, or by the dead-TID restamp
+inside a stop), and every foreign participant still fires both source sets in
+a stop before touching the object. TID reuse after a thread's death is covered
+by the existing restamp-to-0 of dead TIDs (now including None words), so a new
+thread never inherits lock-free rights over a dead thread's objects... and if
+it did (restamp skipped), it would still be the unique lock-free actor.
+`Structure::m_transitionThreadLocalTID` stays (inherited as before) but decides
+nothing; it is kept for diagnostics and to avoid a layout change.
+
+Rev 16 also withdraws r13's F4 chain-fire (the stop that fires S's sets no
+longer fires the sets of S's ancestors and of every structure reachable from S
+through the transition table). It existed to cap warm-up stops under shape
+keying; under instance keying it made one shared object's first foreign add
+retire E4 and every cached/inlined transition for the whole shape family. The
+born-fired rule for targets created later from a fired structure stays. Open
+(recorded in LANDING-PLAN): F2 itself is still per-STRUCTURE — the first
+cross-thread transition of any object of shape S retires lock-free adds from S
+for all objects — and a per-instance demotion (mark the object shared instead
+of firing S, with claim-first publication in every N2 leg so no stop is needed)
+is the designed next step.
+
+### 24.4 §4.6 AS-INPLACE and M8 (same revision)
+
+Two smaller rev-16 changes ride with N1-I. (1) ArrayStorage shift/unshift on
+a word the current thread owns move elements inside the installed vector
+under the cell lock instead of building a fresh butterfly per call (AS-COPY
+allocated and copied the whole storage for every `shift()`). The argument is
+the one already used for the owner's in-place flat shift: the only unlocked
+observers of an SW=0 AS word are JIT reads, which decode pointer, header and
+vectorLength (none of which move) and then load a slot, where they find a
+value that was in the array or a hole; everything else takes the lock. The
+head-moving O(1) form (`Butterfly::shift`, indexBias) relocates the header and
+the out-of-line property slots a stale reader is decoding, so it stays
+excluded; making it legal needs an owner test on AS reads in every tier,
+recorded as the follow-up. (2) M8 no longer forces the fenced write barrier
+GIL-on, and GIL-off keeps it only on weakly-ordered targets and under
+concurrent shared marking; the reasons are in the M8 text. Measured: GIL-on
+`class`-constructor loop 157 -> 86 ms, `throw` 115 -> 89 ms; GIL-off 237 -> 168
+and 127 -> 103.
+
+### 24.5 T4: Undecided-source relabel by the owner, without a stop (same revision)
+
+Found by the mirror harness (fifth round): with two threads sharing one
+global, every `new Array(n)`-then-store and every species-created array paid
+a stop-the-world for its Undecided->typed relabel once the Undecided shape's
+sets had fired anywhere in the process (F2 is per structure), and one stress
+file ran 25x slower in a storm of such stops. The earlier proposal to skip the
+stop for "thread-local" objects was withdrawn as unsound because a foreign
+lock-free reader can be decoding the lanes an in-place Int32->Double or
+Double->Contiguous rewrite is changing. That argument does not reach an
+Undecided source: nothing reads an element lane of an Undecided-shaped object
+in any tier, so the rewrite (holes or PNaN) is invisible until the typed
+structure is published after it. What still needs excluding is a concurrent
+transition or SW flip of the same object by another thread, and the N2-LF
+claim (CAS the StructureID to its nuked form first) does exactly that: the
+foreign paths run a stop or a DCAS that re-verifies or carries the ID lane.
+So T4 gains one owner leg: Undecided source, owned flat word, claim, re-check
+word, fill, fence, publish; everything else keeps the stop. The relabel
+loop's "racer already settled" early return relied on every publication
+happening inside a stop for its ordering; it now has a load-load fence.
+
+### 24.6 N1-I follow-up: the locked first install (F20)
+
+One site was missed when butterfly-less words got their owner TID: the
+tagged-word store on the §6 locked add path asserted (release) that the word
+it replaces is empty or owner-tagged. A foreign thread's first out-of-line add
+on a butterfly-less dictionary object reaches it through the classifier's
+None case with a foreign-owned, payload-free word. That is N3 (fresh storage,
+StructureID lane claimed by the caller, no copy hazard), so the assertion
+admits payload-free words of any owner and the install stamps the installer
+as owner, exactly what the pre-r16 code did with a zero word. Found by the
+mirror harness on the final tree; `objectmodel/foreign-first-outofline-add-on-dictionary.js`.

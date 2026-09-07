@@ -1233,9 +1233,9 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_arrayBufferDetachWatchpointSet(WatchpointSet::create(IsWatched))
     , m_weakRandom(Options::forceWeakRandomSeed() ? Options::forcedWeakRandomSeed() : cryptographicallyRandomNumber<uint32_t>())
     , m_runtimeFlags()
-    , m_stackTraceLimit(Options::defaultErrorStackTraceLimit())
-    , m_customGetterFunctionSet(vm)
-    , m_customSetterFunctionSet(vm)
+    , m_stackTraceLimitBits((1ull << 32) | Options::defaultErrorStackTraceLimit())
+    , m_customGetterFunctionSet(vm, Options::useJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
+    , m_customSetterFunctionSet(vm, Options::useJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
     , m_importMap(ImportMap::create())
     , m_intlLegacyConstructedSymbol(SymbolImpl::create(intlLegacyConstructedSymbolDescription))
     , m_globalObjectMethodTable(globalObjectMethodTable ? globalObjectMethodTable : baseGlobalObjectMethodTable())
@@ -4280,6 +4280,7 @@ void JSGlobalObject::installObjectAdaptiveStructureWatchpoint(const ObjectProper
 {
     auto watchpoint = makeUniqueRef<ObjectAdaptiveStructureWatchpoint>(this, key, watchpointSet);
     watchpoint->install(*m_vm);
+    Locker locker { m_installedWatchpointsLock };
     m_installedObjectAdaptiveStructureWatchpoints.append(WTF::move(watchpoint));
 }
 
@@ -4287,6 +4288,7 @@ void JSGlobalObject::installObjectPropertyChangeAdaptiveWatchpoint(const ObjectP
 {
     auto watchpoint = makeUniqueRef<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>(this, key, watchpointSet);
     watchpoint->install(*m_vm);
+    Locker locker { m_installedWatchpointsLock };
     m_installedObjectPropertyChangeAdaptiveWatchpoints.append(WTF::move(watchpoint));
 }
 
@@ -4294,10 +4296,37 @@ void JSGlobalObject::installChainedWatchpoint(InlineWatchpointSet& from, InlineW
 {
     auto watchpoint = makeUniqueRef<ChainedWatchpoint>(this, to);
     watchpoint->install(from, *m_vm);
+    Locker locker { m_installedWatchpointsLock };
     m_installedChainedWatchpoints.append(WTF::move(watchpoint));
 }
 
+Lock& JSGlobalObject::globalDeclarationLock()
+{
+    static Lock lock;
+    return lock;
+}
+
 void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpoint()
+{
+    VM& vm = this->vm();
+    // The caller (toPropertyDescriptor) enters on `state() == ClearWatchpoint`;
+    // GIL-off, several threads' first Object.defineProperty can all see Clear,
+    // and a second entrant trips the RELEASE_ASSERT(!isBeingWatched()) below
+    // and appends to m_installedObjectAdaptiveStructureWatchpoints while the
+    // first does. Once per global: install under the thread-granular stop and
+    // re-check inside it, as the two species siblings above do.
+    if (vm.gilOff()) [[unlikely]] {
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
+            if (m_propertyDescriptorFastPathWatchpointSet.state() != ClearWatchpoint)
+                return;
+            tryInstallPropertyDescriptorFastPathWatchpointImpl();
+        }));
+        return;
+    }
+    tryInstallPropertyDescriptorFastPathWatchpointImpl();
+}
+
+void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpointImpl()
 {
     VM& vm = this->vm();
 
@@ -4555,13 +4584,19 @@ void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t paylo
 
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
-    if (!m_ffiContext) [[unlikely]] {
+    // Lazily created by whichever thread asks first; with useJSThreads two
+    // threads can ask at once, so publish with a CAS on the pointer word and
+    // let the loser drop its copy (a plain unique_ptr store could replace a
+    // context the winner is already using).
+    static_assert(sizeof(std::unique_ptr<FFI::FFIContext>) == sizeof(FFI::FFIContext*));
+    auto** slot = std::bit_cast<FFI::FFIContext**>(&m_ffiContext);
+    if (!WTF::atomicLoad(slot, std::memory_order_acquire)) [[unlikely]] {
         ASSERT(!isCompilationThread());
         auto context = makeUnique<FFI::FFIContext>(vm());
-        WTF::storeStoreFence();
-        m_ffiContext = WTF::move(context);
+        if (!WTF::atomicCompareExchangeStrong(slot, static_cast<FFI::FFIContext*>(nullptr), context.get()))
+            context.release(); // published; owned by m_ffiContext now
     }
-    return *m_ffiContext;
+    return *WTF::atomicLoad(slot, std::memory_order_acquire);
 }
 #endif
 

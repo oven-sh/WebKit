@@ -272,7 +272,12 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     {
         // GIL-off, a compile on another thread can move m_state to ByteCode,
         // ParseError or NotCompiled after this thread's locked check in
-        // compileIfNecessary; the interpreter is never handed a null pattern.
+        // compileIfNecessary. That writer publishes m_regExpBytecode before
+        // the state with a store-store fence; pair it here so observing the
+        // state implies observing the pattern (weakly-ordered targets), and
+        // never hand the interpreter a null pattern.
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
+            WTF::loadLoadFence();
         Yarr::BytecodePattern* bytecode = m_regExpBytecode.get();
         if (vm.gilOffWithProcessGate() && !bytecode) [[unlikely]]
             return -1;

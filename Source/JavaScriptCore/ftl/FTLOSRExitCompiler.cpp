@@ -878,6 +878,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
 
     JITCode* jitCode = codeBlock->jitCode()->ftl();
     OSRExit& exit = jitCode->m_osrExit[exitID];
+
+    if (vm.gilOff()) [[unlikely]] {
+        // GIL-off never repatches the exit jump (see below), so EVERY exit of
+        // an already-compiled ramp lands here; exception exits do not
+        // reoptimize, so this is a hot path for throw-heavy code. Lock-free
+        // read of the published code pointer first (compileStub publishes it
+        // last, release, after bumping the stop generation), then the cheap
+        // per-thread generation compare instead of a serializing instruction
+        // per exit; the lock, the exit-value decode and the compile only run
+        // for a not-yet-published ramp.
+        if (void* published = WTF::atomicLoad(&exit.m_codePtrForConcurrentReaders, std::memory_order_acquire)) [[likely]] {
+            jsThreadsSyncToStopGenerationBeforeJITEntry();
+            return published;
+        }
+    }
+
     FixedOperands<ExitValue> exitValues = exit.m_descriptor->values(*jitCode);
     
     if (shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseFTLOSRExit()) {
@@ -911,13 +927,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         // Exits are rare and trigger reoptimization, so the extra thunk
         // round-trips are noise.
         OSRExitGenerationLocker locker(vm, callFrame);
-        if (!exit.m_code)
+        if (!exit.m_code) {
             compileStub(vm, exitID, jitCode, exit, exitValues, codeBlock);
-        else {
-            // The stub was compiled and finalized on another thread (or on an
-            // earlier traversal); the executing PE needs its own context
-            // synchronization before the thunk far-jumps into it.
-            WTF::crossModifyingCodeFence();
+            jsThreadsBumpStopGeneration(); // before the publish below: "saw the pointer" implies "saw the bump"
+            WTF::atomicStore(&exit.m_codePtrForConcurrentReaders, exit.m_code.code().taggedPtr(), std::memory_order_release);
+        } else {
+            // The stub was compiled and finalized on another thread while we
+            // contended for the lock; sync this PE before jumping into it.
+            jsThreadsSyncToStopGenerationBeforeJITEntry();
         }
         return exit.m_code.code().taggedPtr();
     }

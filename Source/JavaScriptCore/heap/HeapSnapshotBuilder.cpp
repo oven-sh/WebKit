@@ -42,21 +42,23 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HeapSnapshotBuilder);
 
-NodeIdentifier HeapSnapshotBuilder::nextAvailableObjectIdentifier = 1;
-NodeIdentifier HeapSnapshotBuilder::getNextObjectIdentifier() { return nextAvailableObjectIdentifier++; }
-void HeapSnapshotBuilder::resetNextAvailableObjectIdentifier() { HeapSnapshotBuilder::nextAvailableObjectIdentifier = 1; }
+std::atomic<NodeIdentifier> HeapSnapshotBuilder::nextAvailableObjectIdentifier = 1;
+NodeIdentifier HeapSnapshotBuilder::getNextObjectIdentifier() { return nextAvailableObjectIdentifier.fetch_add(1, std::memory_order_relaxed); }
+void HeapSnapshotBuilder::resetNextAvailableObjectIdentifier() { HeapSnapshotBuilder::nextAvailableObjectIdentifier.store(1, std::memory_order_relaxed); }
 
 HeapSnapshotBuilder::HeapSnapshotBuilder(HeapProfiler& profiler, SnapshotType type)
     : HeapAnalyzer()
     , m_profiler(profiler)
     , m_snapshotType(type)
 {
+    m_profiler.acquireBuilderGILOff();
 }
 
 HeapSnapshotBuilder::~HeapSnapshotBuilder()
 {
     if (m_snapshotType == SnapshotType::GCDebuggingSnapshot)
         m_profiler.clearSnapshots();
+    m_profiler.releaseBuilderGILOff();
 }
 
 void HeapSnapshotBuilder::buildSnapshot()

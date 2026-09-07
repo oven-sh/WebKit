@@ -409,8 +409,11 @@ public:
 
     IncrementalSweeper& sweeper() { return m_sweeper.get(); }
 
-    void addObserver(HeapObserver* observer) { m_observers.append(observer); }
-    void removeObserver(HeapObserver* observer) { m_observers.removeFirst(observer); }
+    // Registration can come from any JS thread flag-on (a global object's FFI
+    // context is created lazily by whichever thread uses it first); the list
+    // is iterated only by the collector with the mutators stopped.
+    void addObserver(HeapObserver* observer) { Locker locker { m_observersLock }; m_observers.append(observer); }
+    void removeObserver(HeapObserver* observer) { Locker locker { m_observersLock }; m_observers.removeFirst(observer); }
 
     // SharedGC (review round 2): per-THREAD once ISS — reads the calling
     // thread's mutator-state slot (see mutatorStateSlot()); !ISS: the server
@@ -1526,6 +1529,7 @@ private:
     // client TLS stamp (GC helpers world-stopped), the server counter.
     // Defined at the bottom of this header (needs GCClient::Heap).
     inline unsigned& deferralDepthSlot();
+    unsigned& deferralDepthSlotShared();
     inline unsigned currentDeferralDepth() const;
 
     // SharedGC (review round 4): the calling thread's deferred-GC-hint slot.
@@ -1776,6 +1780,7 @@ private:
     const Ref<StopIfNecessaryTimer> m_stopIfNecessaryTimer;
 
     Vector<HeapObserver*> m_observers;
+    Lock m_observersLock;
     
     Vector<GCCompletionCallback> m_gcCompletionCallbacks;
     
@@ -2584,17 +2589,17 @@ private:
     // attribute on this declaration carries to the definition (same entity;
     // GCThreadLocalCache.cpp includes this header).
 #if OS(LINUX)
-    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static thread_local Heap* s_currentThreadClient;
+    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static constinit thread_local Heap* s_currentThreadClient;
     // H-TLS-TABLE: same IE-TLS rationale as s_currentThreadClient above
     // (single `movq %fs:@TPOFF`; libJavaScriptCore is never dlopen()'d). The
     // attribute on these declarations carries to the definitions in
     // GCThreadLocalCache.cpp (same entity).
-    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static thread_local Allocator* s_currentThreadTLCTable;
-    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static thread_local unsigned s_currentThreadTLCBound;
+    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static constinit thread_local Allocator* s_currentThreadTLCTable;
+    JS_EXPORT_PRIVATE __attribute__((tls_model("initial-exec"))) static constinit thread_local unsigned s_currentThreadTLCBound;
 #else
-    JS_EXPORT_PRIVATE static thread_local Heap* s_currentThreadClient;
-    JS_EXPORT_PRIVATE static thread_local Allocator* s_currentThreadTLCTable;
-    JS_EXPORT_PRIVATE static thread_local unsigned s_currentThreadTLCBound;
+    JS_EXPORT_PRIVATE static constinit thread_local Heap* s_currentThreadClient;
+    JS_EXPORT_PRIVATE static constinit thread_local Allocator* s_currentThreadTLCTable;
+    JS_EXPORT_PRIVATE static constinit thread_local unsigned s_currentThreadTLCBound;
 #endif
     static void setCurrentThreadClient(Heap*); // §10A.1; defined in GCThreadLocalCache.cpp.
     static void setCurrentThreadTLCSnapshot(Allocator*, unsigned); // H-TLS-TABLE restamp; defined in GCThreadLocalCache.cpp.
@@ -2723,18 +2728,25 @@ private:
 // m_isSharedServer (the same shape as sharedGCBarrierStateIsPerClient()).
 ALWAYS_INLINE unsigned& Heap::deferralDepthSlot()
 {
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
-        GCClient::Heap* client = GCClient::Heap::currentThreadClient();
-        if (client && &client->server() == this) {
-            // I17: a client's depth is touched only by its access-holding
-            // thread (or the conductor while the world is stopped).
-            ASSERT(client->hasHeapAccess() || worldIsStoppedForAllClients());
-            return client->m_deferralDepth;
-        }
-        // No client TLS stamp (e.g. a GC helper thread world-stopped, or the
-        // last pre-attach increments): fall back to the server counter; reads
-        // on such threads consult the same counter, so the pairing holds.
+    // The shared-server arm is out of line: every DeferGC scope inlines this,
+    // and flag-off it must stay the option-byte test plus the member access.
+    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]]
+        return deferralDepthSlotShared();
+    return m_deferralDepth;
+}
+
+NEVER_INLINE inline unsigned& Heap::deferralDepthSlotShared()
+{
+    GCClient::Heap* client = GCClient::Heap::currentThreadClient();
+    if (client && &client->server() == this) {
+        // I17: a client's depth is touched only by its access-holding
+        // thread (or the conductor while the world is stopped).
+        ASSERT(client->hasHeapAccess() || worldIsStoppedForAllClients());
+        return client->m_deferralDepth;
     }
+    // No client TLS stamp (e.g. a GC helper thread world-stopped, or the
+    // last pre-attach increments): fall back to the server counter; reads
+    // on such threads consult the same counter, so the pairing holds.
     return m_deferralDepth;
 }
 

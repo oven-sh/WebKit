@@ -74,7 +74,7 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
         return false;
 
     void* theBase = butterfly->base(0, propertyCapacity);
-    bool canReallocInPlace = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation();
+    bool canReallocInPlace = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && !Options::useJSThreads() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation(); // flag-on: never in place (SPEC-objectmodel M8 / manifest 4b), independent of the barrier mode
     if (canReallocInPlace)
         return false;
 
@@ -1233,7 +1233,10 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
     if (canUseFastArrayJoin(this)) [[likely]] {
         const Latin1Character comma = ',';
 
-        bool isCoW = isCopyOnWrite(this->indexingMode());
+        // The toString cache for copy-on-write array literals is a plain
+        // VM-wide map cleared at GC end; GIL off, mutators on several threads
+        // would race on it, so it is simply not used then.
+        bool isCoW = isCopyOnWrite(this->indexingMode()) && !vm.gilOff();
         JSCellButterfly* immutableButterfly = nullptr;
         if (isCoW) {
             immutableButterfly = JSCellButterfly::fromButterfly(this->butterfly());
@@ -2182,7 +2185,13 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         // We initialize Butterfly first before setting it to JSArray. In that case, butterfly is not scannoed so that we can safely use memcpy here.
         // Round 4: the source read uses the pre-allocation SNAPSHOT (never a
         // butterfly() re-load), bounded by the snapshot's vectorLength above.
-        memcpy(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // The source may be shared: another thread can store elements
+            // while we copy (a JavaScript-level race), so copy whole 64-bit
+            // lanes, never bytes - a torn lane would be a torn JSValue.
+            butterflyConcurrentCopyWords(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
+        } else
+            memcpy(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
 
         Butterfly::clearRange(indexingType, butterfly, initialLength, vectorLength);
         return createWithButterfly(vm, &deferralContext, resultStructure, butterfly);
@@ -2282,6 +2291,26 @@ bool JSArray::shiftCountWithArrayStorageConcurrent(VM& vm, unsigned startIndex, 
     unsigned vectorCount = std::min(count, vectorLength - startIndex);
     unsigned usedVectorLength = std::min(vectorLength, oldLength);
     ASSERT(startIndex + vectorCount <= usedVectorLength);
+
+    // §4.6 AS-INPLACE (r16, owner only): on a word this thread owns
+    // ((currentTID, 0)) compact the elements inside the installed vector under
+    // the lock. Nothing a stale lock-free reader decodes moves - the butterfly
+    // pointer, IndexingHeader, indexBias and vectorLength stay put - so such a
+    // reader (an SW=0 AS read takes no lock in JIT code) sees, per slot, an
+    // element that was in the array or a hole, exactly as for the owner's
+    // in-place flat shift above; locked readers/writers and the marker (which
+    // locks AS butterflies) are excluded by the lock. No allocation. The
+    // head-moving Butterfly::shift() of the flag-off path stays excluded: it
+    // relocates the header such a reader is decoding.
+    if (butterflyWordOwnedByCurrentThread(word)) {
+        storage->m_numValuesInVector -= count;
+        storage->setLength(length);
+        if (usedVectorLength - (startIndex + vectorCount))
+            gcSafeMemmove(storage->m_vector + startIndex, storage->m_vector + startIndex + vectorCount, (usedVectorLength - (startIndex + vectorCount)) * sizeof(JSValue));
+        for (unsigned i = usedVectorLength - vectorCount; i < usedVectorLength; ++i)
+            storage->m_vector[i].clear();
+        return true;
+    }
 
     // Fresh AS butterfly: same capacity, indexBias 0, elements compacted with
     // [startIndex, startIndex + vectorCount) removed. It is allocated before
@@ -2601,7 +2630,17 @@ bool JSArray::unshiftCountWithArrayStorageConcurrent(JSGlobalObject* globalObjec
             ASSERT(usedVectorLength <= MAX_STORAGE_VECTOR_LENGTH);
             if (count > MAX_STORAGE_VECTOR_LENGTH - usedVectorLength)
                 outOfMemory = true;
-            else {
+            else if (butterflyWordOwnedByCurrentThread(word) && usedVectorLength + count <= vectorLength) {
+                // §4.6 AS-INPLACE (r16, owner only): open the gap inside the
+                // installed vector; see shiftCountWithArrayStorageConcurrent for
+                // why nothing a stale reader decodes moves. The caller stores
+                // into the cleared gap and sets the length.
+                if (usedVectorLength - startIndex)
+                    gcSafeMemmove(storage->m_vector + startIndex + count, storage->m_vector + startIndex, (usedVectorLength - startIndex) * sizeof(JSValue));
+                for (unsigned i = 0; i < count; ++i)
+                    storage->m_vector[startIndex + i].clear();
+                handled = true;
+            } else {
                 unsigned requiredVectorLength = usedVectorLength + count;
                 // Same atomic-decay growth policy as unshiftCountSlowCase.
                 unsigned desiredCapacity = std::min(MAX_STORAGE_VECTOR_LENGTH, std::max(BASE_ARRAY_STORAGE_VECTOR_LEN, requiredVectorLength) << 1);

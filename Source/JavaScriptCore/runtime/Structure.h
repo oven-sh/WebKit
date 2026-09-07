@@ -457,7 +457,7 @@ public:
     bool hasAnyOfBitFieldFlags(unsigned flags) const
     {
         // V7: relaxed read paired with the DEFINE_BITFIELD CAS writers (same codegen as the plain load).
-        return WTF::atomicLoad(const_cast<uint32_t*>(&m_bitField), std::memory_order_relaxed) & flags;
+        return racyLoad(m_bitField) & flags;
     }
 
     // Type accessors.
@@ -556,7 +556,7 @@ public:
         // (consume-style dependent load, identical codegen, I22-safe).
         return WTF::atomicLoad(const_cast<WriteBarrier<JSCell>&>(m_previousOrRareData).slot(), std::memory_order_acquire);
 #else
-        return WTF::atomicLoad(const_cast<WriteBarrier<JSCell>&>(m_previousOrRareData).slot(), std::memory_order_relaxed);
+        return racyLoad(*const_cast<WriteBarrier<JSCell>&>(m_previousOrRareData).slot());
 #endif
     }
 
@@ -658,7 +658,7 @@ public:
     }
     unsigned inlineCapacity() const
     {
-        return WTF::atomicLoad(const_cast<uint8_t*>(&m_inlineCapacity), std::memory_order_relaxed);
+        return racyLoad(m_inlineCapacity);
     }
     unsigned inlineSize() const
     {
@@ -899,6 +899,7 @@ public:
     // The direct read in StructureInlines.h:transitionThreadLocalIsCurrent
     // stays with that header's owning slice.
     ButterflyTID transitionThreadLocalTID() const { return concurrentRelaxedLoad(m_transitionThreadLocalTID); }
+    static constexpr ptrdiff_t transitionThreadLocalTIDOffset() { return OBJECT_OFFSETOF(Structure, m_transitionThreadLocalTID); } // jit §5.5 Transition (N2-LF leg).
     // TID rebias (Heap.cpp): a dead thread's TID is restamped to 0 under the
     // shared stop, and the TTL sets are fired in that same stop so no compiled
     // code survives with the old TID baked in. Mutators are stopped, but
@@ -1120,7 +1121,7 @@ public:
     static constexpr uint32_t s_##lowerName##Mask = ((1 << (width - 1)) | ((1 << (width - 1)) - 1));\
     static constexpr uint32_t s_##lowerName##Bits = s_##lowerName##Mask << s_##lowerName##Shift;\
     static constexpr uint32_t s_bitWidthOf##upperName = width;\
-    type lowerName() const { return static_cast<type>((WTF::atomicLoad(const_cast<uint32_t*>(&m_bitField), std::memory_order_relaxed) >> offset) & s_##lowerName##Mask); }\
+    type lowerName() const { return static_cast<type>((racyLoad(m_bitField) >> offset) & s_##lowerName##Mask); }\
     void set##upperName(type newValue) \
     {\
         uint32_t setBits = (static_cast<uint32_t>(newValue) & s_##lowerName##Mask) << offset;\
@@ -1129,8 +1130,8 @@ public:
             return;\
         }\
         /* Flag off, only the mutator writes, but compiler threads read the word. */\
-        uint32_t oldBits = WTF::atomicLoad(&m_bitField, std::memory_order_relaxed);\
-        WTF::atomicStore(&m_bitField, (oldBits & ~(s_##lowerName##Mask << offset)) | setBits, std::memory_order_relaxed);\
+        uint32_t oldBits = racyLoad(m_bitField);\
+        racyStore(m_bitField, (oldBits & ~(s_##lowerName##Mask << offset)) | setBits);\
     }
 
     DEFINE_BITFIELD(DictionaryKind, dictionaryKind, DictionaryKind, 2, 0);
@@ -1284,6 +1285,11 @@ private:
     
     // This will grab the lock. Do not call when holding the Structure's lock.
     JS_EXPORT_PRIVATE PropertyTable* materializePropertyTable(VM&, bool setPropertyTable = true);
+    // Flag-on Structure::get helper (StructureInlinesLight.h): publish this
+    // structure's table so mutator lookups stop walking the chain. No-op for
+    // structures a transition is currently building from (their table is
+    // deliberately absent) and off mutator threads.
+    JS_EXPORT_PRIVATE void materializePropertyTableForMutatorLookup(VM&);
     
     void setPropertyTable(VM& vm, PropertyTable* table);
     
@@ -1663,51 +1669,51 @@ inline bool Structure::transitivelyTransitionedFrom(Structure* structureToFind)
 
 inline PropertyOffset Structure::maxOffset() const
 {
-    uint16_t maxOffset = WTF::atomicLoad(const_cast<uint16_t*>(&m_maxOffset), std::memory_order_relaxed);
+    uint16_t maxOffset = racyLoad(m_maxOffset);
     if (maxOffset == shortInvalidOffset)
         return invalidOffset;
     if (maxOffset == useRareDataFlag)
-        return WTF::atomicLoad(const_cast<PropertyOffset*>(&rareData()->m_maxOffset), std::memory_order_relaxed);
+        return racyLoad(rareData()->m_maxOffset);
     return maxOffset;
 }
 
 inline void Structure::setMaxOffset(VM& vm, PropertyOffset offset)
 {
     if (offset == invalidOffset)
-        WTF::atomicStore(&m_maxOffset, shortInvalidOffset, std::memory_order_relaxed);
+        racyStore(m_maxOffset, shortInvalidOffset);
     else if (offset < useRareDataFlag && offset < shortInvalidOffset)
-        WTF::atomicStore(&m_maxOffset, static_cast<uint16_t>(offset), std::memory_order_relaxed);
-    else if (WTF::atomicLoad(&m_maxOffset, std::memory_order_relaxed) == useRareDataFlag)
-        WTF::atomicStore(&rareData()->m_maxOffset, offset, std::memory_order_relaxed);
+        racyStore(m_maxOffset, static_cast<uint16_t>(offset));
+    else if (racyLoad(m_maxOffset) == useRareDataFlag)
+        racyStore(rareData()->m_maxOffset, offset);
     else {
-        WTF::atomicStore(&ensureRareData(vm)->m_maxOffset, offset, std::memory_order_relaxed);
+        racyStore(ensureRareData(vm)->m_maxOffset, offset);
         WTF::storeStoreFence();
-        WTF::atomicStore(&m_maxOffset, useRareDataFlag, std::memory_order_relaxed);
+        racyStore(m_maxOffset, useRareDataFlag);
     }
 }
 
 inline PropertyOffset Structure::transitionOffset() const
 {
-    uint16_t transitionOffset = WTF::atomicLoad(const_cast<uint16_t*>(&m_transitionOffset), std::memory_order_relaxed);
+    uint16_t transitionOffset = racyLoad(m_transitionOffset);
     if (transitionOffset == shortInvalidOffset)
         return invalidOffset;
     if (transitionOffset == useRareDataFlag)
-        return WTF::atomicLoad(const_cast<PropertyOffset*>(&rareData()->m_transitionOffset), std::memory_order_relaxed);
+        return racyLoad(rareData()->m_transitionOffset);
     return transitionOffset;
 }
 
 inline void Structure::setTransitionOffset(VM& vm, PropertyOffset offset)
 {
     if (offset == invalidOffset)
-        WTF::atomicStore(&m_transitionOffset, shortInvalidOffset, std::memory_order_relaxed);
+        racyStore(m_transitionOffset, shortInvalidOffset);
     else if (offset < useRareDataFlag && offset < shortInvalidOffset)
-        WTF::atomicStore(&m_transitionOffset, static_cast<uint16_t>(offset), std::memory_order_relaxed);
-    else if (WTF::atomicLoad(&m_transitionOffset, std::memory_order_relaxed) == useRareDataFlag)
-        WTF::atomicStore(&rareData()->m_transitionOffset, offset, std::memory_order_relaxed);
+        racyStore(m_transitionOffset, static_cast<uint16_t>(offset));
+    else if (racyLoad(m_transitionOffset) == useRareDataFlag)
+        racyStore(rareData()->m_transitionOffset, offset);
     else {
-        WTF::atomicStore(&ensureRareData(vm)->m_transitionOffset, offset, std::memory_order_relaxed);
+        racyStore(ensureRareData(vm)->m_transitionOffset, offset);
         WTF::storeStoreFence();
-        WTF::atomicStore(&m_transitionOffset, useRareDataFlag, std::memory_order_relaxed);
+        racyStore(m_transitionOffset, useRareDataFlag);
     }
 }
 

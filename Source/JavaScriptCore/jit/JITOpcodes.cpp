@@ -87,6 +87,7 @@ void JIT::emit_op_new_object(const JSInstruction* currentInstruction)
 
     loadPtrFromMetadata(bytecode, OpNewObject::Metadata::offsetOfObjectAllocationProfile() + ObjectAllocationProfile::offsetOfAllocator(), allocatorReg);
     loadPtrFromMetadata(bytecode, OpNewObject::Metadata::offsetOfObjectAllocationProfile() + ObjectAllocationProfile::offsetOfStructure(), structureReg);
+    emitResolveProfiledAllocator(*m_vm, allocatorReg, scratchReg);
 
     JumpList slowCases;
     auto butterfly = TrustedImmPtr(nullptr);
@@ -1681,13 +1682,34 @@ void JIT::emit_op_create_this(const JSInstruction* currentInstruction)
     addSlowCase(branchIfNotFunction(calleeReg));
     loadPtr(Address(calleeReg, JSFunction::offsetOfExecutableOrRareData()), rareDataReg);
     addSlowCase(branchTestPtr(Zero, rareDataReg, TrustedImm32(JSFunction::rareDataTag)));
-    loadPtr(Address(rareDataReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), allocatorReg);
-    loadPtr(Address(rareDataReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), structureReg);
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Another thread can clear() or re-initialize this profile between our
+        // loads (a .prototype store, a racing first fill), so a plain
+        // {allocator, structure} pair can be torn: a non-null allocator with a
+        // null structure, or an allocator sized for a different structure.
+        // Writers store allocator-then-structure (initialize) and
+        // structure-then-allocator (clear); read structure, allocator,
+        // structure again, and take the slow path unless the two structure
+        // reads agree and are non-null - then the allocator between them
+        // belongs to that structure. Loads stay ordered (x86 TSO; fences
+        // elsewhere).
+        auto structureAddress = Address(rareDataReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag);
+        loadPtr(structureAddress, structureReg);
+        loadFence(); // load-load order (no-op on x86)
+        loadPtr(Address(rareDataReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), allocatorReg);
+        loadFence(); // load-load order (no-op on x86)
+        addSlowCase(branchTestPtr(Zero, structureReg));
+        addSlowCase(branchPtr(NotEqual, structureReg, structureAddress));
+    } else {
+        loadPtr(Address(rareDataReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), allocatorReg);
+        loadPtr(Address(rareDataReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), structureReg);
+    }
 
     loadPtrFromMetadata(bytecode, OpCreateThis::Metadata::offsetOfCachedCallee(), cachedFunctionReg);
     Jump hasSeenMultipleCallees = branchPtr(Equal, cachedFunctionReg, TrustedImmPtr(JSCell::seenMultipleCalleeObjects()));
     addSlowCase(branchPtr(NotEqual, calleeReg, cachedFunctionReg));
     hasSeenMultipleCallees.link(this);
+    emitResolveProfiledAllocator(*m_vm, allocatorReg, scratchReg);
 
     JumpList slowCases;
     auto butterfly = TrustedImmPtr(nullptr);

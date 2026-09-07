@@ -614,17 +614,20 @@ private:
     class PropertyFilter : public SideDataRepository::SideData {
         WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PropertyFilter);
     public:
+        // One filter per VM; with --useJSThreads any thread can create a
+        // global object, so the set is locked.
         void add(UniquedStringImpl* uid)
         {
+            Locker locker { m_lock };
             auto result = m_names.add(uid);
             if (result.isNewEntry)
                 m_strings.append(uid);
         }
 
-        bool contains(UniquedStringImpl* name) const { return m_names.contains(name); }
-        const UncheckedKeyHashSet<UniquedStringImpl*>& NODELETE names() const { return m_names; }
+        bool contains(UniquedStringImpl* name) const { Locker locker { m_lock }; return m_names.contains(name); }
 
     private:
+        mutable Lock m_lock;
         Vector<AtomString> m_strings; // To keep the UniqueStringImpls alive.
         UncheckedKeyHashSet<UniquedStringImpl*> m_names;
     };
@@ -2714,7 +2717,15 @@ RefPtr<Message> Worker::dequeue()
 
 Worker& Worker::current()
 {
-    return **currentWorker();
+    // A JS Thread spawned with --useJSThreads runs shell functions ($.agent,
+    // checkScriptSyntax, the bytecode-cache source provider) on a thread the
+    // shell never made a Worker for. Give such a thread a non-main Worker on
+    // first use, as $.agent.start does for its threads; it lives as long as the
+    // thread's other thread-specific data.
+    Worker*& slot = *currentWorker();
+    if (!slot) [[unlikely]]
+        slot = new Worker(Workers::singleton(), false);
+    return *slot;
 }
 
 ThreadSpecific<Worker*>& Worker::currentWorker()
@@ -2739,9 +2750,10 @@ Workers::~Workers()
 template<typename Func>
 void Workers::broadcast(const Func& func)
 {
+    Worker* current = &Worker::current(); // May construct one, which takes m_lock.
     Locker locker { m_lock };
     for (Worker& worker : m_workers) {
-        if (&worker != &Worker::current())
+        if (&worker != current)
             func(locker, worker);
     }
     m_condition.notifyAll();
@@ -3308,9 +3320,12 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, Call
 
     // We need to add the dispatch callback to the run loop even the delay is 0 secs, otherwise 
     // it will cause setTimeout starvation problem (see stress test settimeout-starvation.js).
+    // The VM's run loop, not the calling thread's: a JS Thread spawned with
+    // --useJSThreads has no run loop of its own running, and its timers, like
+    // every other ticket, are serviced by the thread that runs the VM's loop.
     JSValue timeout = callFrame->argument(1);
     Seconds delay = timeout.isNumber() ? Seconds::fromMilliseconds(timeout.asNumber()) : Seconds(0);
-    RunLoop::currentSingleton().dispatchAfter(delay, WTF::move(dispatch));
+    vm.runLoop().dispatchAfter(delay, WTF::move(dispatch));
 
     return JSValue::encode(jsUndefined());
 }

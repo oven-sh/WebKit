@@ -94,7 +94,7 @@ inline void StructureRareData::clearPreviousID()
 
 inline JSValue StructureRareData::cachedSpecialProperty(CachedSpecialPropertyKey key) const
 {
-    auto* cache = m_specialPropertyCache.get();
+    auto* cache = specialPropertyCachePointer();
     if (!cache)
         return JSValue();
     JSValue value = cache->m_cache[static_cast<unsigned>(key)].m_value.get();
@@ -170,7 +170,7 @@ inline void StructureRareData::setCachedPropertyNames(VM& vm, CachedPropertyName
 inline bool StructureRareData::canCacheSpecialProperty(CachedSpecialPropertyKey key)
 {
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
-    auto* cache = m_specialPropertyCache.get();
+    auto* cache = specialPropertyCachePointer();
     if (!cache)
         return true;
     return cache->m_cache[static_cast<unsigned>(key)].m_value.get() != JSCell::seenMultipleCalleeObjects();
@@ -179,7 +179,7 @@ inline bool StructureRareData::canCacheSpecialProperty(CachedSpecialPropertyKey 
 inline SpecialPropertyCache& StructureRareData::ensureSpecialPropertyCache()
 {
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
-    if (auto* cache = m_specialPropertyCache.get())
+    if (auto* cache = specialPropertyCachePointer())
         return *cache;
     return ensureSpecialPropertyCacheSlow();
 }

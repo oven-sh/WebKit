@@ -1923,6 +1923,14 @@ public:
     // slow-path branch. gilOff-mode emission ONLY — every call site is
     // behind a vm.gilOff() codegen gate (flag-off byte-identity).
     void emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned tlcSlot, JumpList& slowPath);
+    // GIL-off companion for allocators loaded from an allocation profile
+    // (op_new_object / op_create_this / DFG CreateThis): the profile word is a
+    // LocalAllocator*, null, or Allocator::encodedTLCSlot (low bit set); the
+    // latter is resolved through the current lite's TLC table into
+    // allocatorGPR (null on a bound miss, so the caller's variable-allocator
+    // null check takes the slow path). Clobbers scratchGPR. Emits nothing
+    // unless vm.gilOff().
+    void emitResolveProfiledAllocator(VM&, GPRReg allocatorGPR, GPRReg scratchGPR);
 
     // SPEC-jit App. R5: one-load read of the current thread's pre-shifted
     // butterfly TID tag (uint64_t(currentButterflyTID()) << 48, SW=0) from
@@ -1961,6 +1969,22 @@ public:
     void emitAllocateJSObject(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, StructureType structure, StorageType storage, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult = SlowAllocationResult::ClearToNull)
     {
         emitAllocateJSCell(resultGPR, allocator, allocatorGPR, structure, scratchGPR, slowPath, slowAllocationResult);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-objectmodel §2 (r16 N1-I, I40): every object is born with
+            // the allocating thread's TID in its butterfly word, butterfly or
+            // not: word = g_jscButterflyTIDTag | storage (storage may be 0).
+            // Pre-escape plain store; a register storage stays untagged for
+            // the caller's later header/element writes.
+            if constexpr (std::is_same_v<std::decay_t<StorageType>, GPRReg>)
+                emitTagInstalledButterflyWithTID(resultGPR, storage, scratchGPR);
+            else {
+                loadButterflyTIDTag(scratchGPR);
+                if (storage.asIntptr())
+                    orPtr(storage, scratchGPR);
+                storePtr(scratchGPR, Address(resultGPR, JSObject::butterflyOffset()));
+            }
+            return;
+        }
         storePtr(storage, Address(resultGPR, JSObject::butterflyOffset()));
     }
     
@@ -1981,17 +2005,12 @@ public:
             // falls through to the legacy null-bake.
             if (auto slot = tlcSlotForConcurrentlyWithIso<ClassType>(vm, size)) {
                 emitLoadTLCAllocatorForSlot(scratchGPR1, *slot, slowPath);
-                emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
-                emitTagInstalledButterflyWithTIDIfNonNull(resultGPR, storage, scratchGPR1, scratchGPR2);
+                emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult); // tags the word (I40)
                 return;
             }
         }
         Allocator allocator = allocatorForConcurrently<ClassType>(vm, size, AllocatorForMode::AllocatorIfExists);
-        emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult);
-        // GIL-on too: the C++ constructor stamps the allocating thread's TID
-        // whenever useJSThreads is on, and spawned threads have nonzero TIDs.
-        if (Options::useJSThreads()) [[unlikely]]
-            emitTagInstalledButterflyWithTIDIfNonNull(resultGPR, storage, scratchGPR1, scratchGPR2);
+        emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, storage, scratchGPR2, slowPath, slowAllocationResult); // flag-on: tags the word (I40), GIL-on included
     }
 
     // TID-tags the butterfly word emitAllocateJSObject just stored. A register

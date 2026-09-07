@@ -1014,6 +1014,9 @@ private:
         case CheckNotEmpty:
             compileCheckNotEmpty();
             break;
+        case CheckTransitionOwner:
+            compileCheckTransitionOwner();
+            break;
         case AssertNotEmpty:
             compileAssertNotEmpty();
             codeGenerationResult = CodeGenerationResult::NotGenerated;
@@ -2720,6 +2723,37 @@ private:
         m_out.jump(continuation);
         m_out.appendTo(continuation, lastNext);
         return m_out.phi(pointerType(), fast, slow);
+    }
+
+    // GIL-off: an allocator word loaded from an ObjectAllocationProfile is a
+    // LocalAllocator*, null, or Allocator::encodedTLCSlot (low bit set); the
+    // latter resolves through the current lite's TLC table (null on a bound
+    // miss, which allocateHeapCell turns into the slow path). Flag-off /
+    // GIL-on: identity.
+    LValue resolveProfiledAllocator(LValue allocator)
+    {
+        if (!vm().gilOff()) [[likely]]
+            return allocator;
+        LBasicBlock encoded = m_out.newBlock();
+        LBasicBlock haveSlot = m_out.newBlock();
+        LBasicBlock noSlot = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        ValueFromBlock asIs = m_out.anchor(allocator);
+        m_out.branch(m_out.testIsZeroPtr(allocator, m_out.constIntPtr(1)), unsure(continuation), unsure(encoded));
+        LBasicBlock lastNext = m_out.appendTo(encoded, haveSlot);
+        LValue slot = m_out.castToInt32(m_out.lShr(allocator, m_out.constInt32(1)));
+        LValue lite = currentVMLitePointer();
+        LValue bound = m_out.load32(m_out.address(m_heaps.root, lite, VMLite::offsetOfTlcTableBound()));
+        m_out.branch(m_out.above(bound, slot), usually(haveSlot), rarely(noSlot));
+        m_out.appendTo(haveSlot, noSlot);
+        LValue table = m_out.loadPtr(m_out.address(m_heaps.root, lite, VMLite::offsetOfTlcTable()));
+        ValueFromBlock fast = m_out.anchor(m_out.loadPtr(m_out.baseIndex(m_heaps.root, table, m_out.zeroExtPtr(slot), ScaleEight)));
+        m_out.jump(continuation);
+        m_out.appendTo(noSlot, continuation);
+        ValueFromBlock slow = m_out.anchor(m_out.intPtrZero);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(pointerType(), asIs, fast, slow);
     }
 
     // H-VMLITE-TLCPTR + H-ISO-TLCSLOT convenience:
@@ -4657,8 +4691,6 @@ private:
 
     void compilePutStructure()
     {
-        // See the DFG's PutStructure: no creator emits it with threads.
-        RELEASE_ASSERT(!Options::useJSThreads());
         RegisteredStructure oldStructure = m_node->transition()->previous;
         RegisteredStructure newStructure = m_node->transition()->next;
         m_graph.m_plan.transitions().addLazily(m_node->origin.semantic.codeOriginOwner(), oldStructure.get(), newStructure.get());
@@ -4672,8 +4704,27 @@ private:
         auto& heap = m_node->transition()->next->transitionKind() == TransitionKind::PropertyDeletion ? m_heaps.JSCellHeaderAndNamedProperties : m_heaps.JSCell_structureID;
         TypedPointer pointer { heap, m_out.addPtr(cell, m_heaps.JSCell_structureID.offset()) };
 
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit §5.5 Transition (see the DFG's PutStructure): the value
+            // store precedes; fence on weakly-ordered targets, then the
+            // flag-off store publishes.
+            m_out.fence(&m_heaps.root, nullptr); // store-store (B3: reads, no writes)
+        }
+
         m_out.store32(
             weakStructureID(newStructure), pointer);
+    }
+
+    void compileCheckTransitionOwner()
+    {
+        // SPEC-jit §5.5 Transition runtime legs (see the DFG's codegen).
+        LValue cell = lowCell(m_node->child1());
+        speculate(BadCache, noValue(), m_node->child1().node(),
+            m_out.testNonZeroPtr(cell, m_out.constIntPtr(PreciseAllocation::halfAlignment)));
+        // One owner test for every word (OM r16 N1-I): tag == (currentTID, SW=0).
+        LValue word = m_out.load64(cell, m_heaps.JSObject_butterfly);
+        LValue diff = m_out.bitAnd(m_out.bitXor(word, loadButterflyTIDTag()), m_out.constInt64(butterflyTagMask));
+        speculate(BadCache, noValue(), m_node->child1().node(), m_out.notZero64(diff));
     }
 
     void compileGetById(AccessType type)
@@ -11262,8 +11313,27 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(hasRareData, slowPath);
         LValue rareData = m_out.sub(rareDataTags, m_out.constIntPtr(JSFunction::rareDataTag));
-        LValue allocator = m_out.loadPtr(rareData, m_heaps.FunctionRareData_allocator);
-        LValue structure = m_out.loadPtr(rareData, m_heaps.FunctionRareData_structure);
+        LValue allocator;
+        LValue structure;
+        if (Options::useJSThreads()) [[unlikely]] {
+            // Torn {allocator, structure} pair under a racing clear()/re-fill:
+            // see JIT::emit_op_create_this. Load-load fences (B3: writes, no
+            // reads — Air LoadFence, nothing on x86, dmb ishld on ARM64) keep B3
+            // from folding the second structure load into the first and keep
+            // the load order; a full fence here cost a locked op per allocation.
+            structure = m_out.loadPtr(rareData, m_heaps.FunctionRareData_structure);
+            m_out.fence(nullptr, &m_heaps.root);
+            LValue rawAllocator = m_out.loadPtr(rareData, m_heaps.FunctionRareData_allocator);
+            m_out.fence(nullptr, &m_heaps.root);
+            LValue structureAgain = m_out.loadPtr(rareData, m_heaps.FunctionRareData_structure);
+            LBasicBlock pairConsistent = m_out.newBlock();
+            m_out.branch(m_out.bitOr(m_out.isNull(structure), m_out.notEqual(structure, structureAgain)), rarely(slowPath), usually(pairConsistent));
+            m_out.appendTo(pairConsistent, slowPath);
+            allocator = resolveProfiledAllocator(rawAllocator);
+        } else {
+            allocator = resolveProfiledAllocator(m_out.loadPtr(rareData, m_heaps.FunctionRareData_allocator));
+            structure = m_out.loadPtr(rareData, m_heaps.FunctionRareData_structure);
+        }
         LValue butterfly = m_out.constIntPtr(0);
         ValueFromBlock fastResult = m_out.anchor(allocateObject(allocator, structure, butterfly, slowPath));
         m_out.jump(continuation);
@@ -13837,20 +13907,26 @@ IGNORE_CLANG_WARNINGS_END
                     storage = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
             } else {
                 DFG_ASSERT(m_graph, m_node, variant.kind() == PutByVariant::Transition, variant.kind());
-                // SPEC-jit section 5.5 / Task 10: Transition variants are
-                // filtered out flag-on at graph construction (Task 9's
-                // ByteCodeParser handlePutById/handlePutPrivateName and
-                // ConstantFoldingPhase gates, "also protects FTL/Task 10");
-                // reaching here would inline transition semantics, which
-                // section 5.5 forbids for this tier.
-                RELEASE_ASSERT(!Options::useJSThreads());
                 m_graph.m_plan.transitions().addLazily(
                     m_origin.semantic.codeOriginOwner(),
                     variant.oldStructureForTransition(), variant.newStructure());
 
-                storage = storageForTransition(
-                    base, variant.offset(),
-                    variant.oldStructureForTransition(), variant.newStructure());
+                if (Options::useJSThreads()) [[unlikely]] {
+                    // SPEC-jit §5.5 Transition: the parser admitted only
+                    // non-reallocating variants with watched sets and planted a
+                    // CheckTransitionOwner before this node, so this thread is
+                    // the instance owner (tag == ours, SW=0): inline slot, or the
+                    // existing out-of-line storage through the masked word.
+                    RELEASE_ASSERT(!variant.reallocatesStorage());
+                    if (isInlineOffset(variant.offset()))
+                        storage = base;
+                    else
+                        storage = m_out.bitAnd(m_out.loadPtr(base, m_heaps.JSObject_butterfly), m_out.constIntPtr(butterflyPointerMask));
+                } else {
+                    storage = storageForTransition(
+                        base, variant.offset(),
+                        variant.oldStructureForTransition(), variant.newStructure());
+                }
             }
 
             if (m_node->child2().useKind() == DoubleRepUse)
@@ -13862,6 +13938,8 @@ IGNORE_CLANG_WARNINGS_END
                 ASSERT(variant.oldStructureForTransition()->indexingType() == variant.newStructure()->indexingType());
                 ASSERT(variant.oldStructureForTransition()->typeInfo().inlineTypeFlags() == variant.newStructure()->typeInfo().inlineTypeFlags());
                 ASSERT(variant.oldStructureForTransition()->typeInfo().type() == variant.newStructure()->typeInfo().type());
+                if (Options::useJSThreads()) [[unlikely]]
+                    m_out.fence(&m_heaps.root, nullptr); // value before structure (store-store)
                 m_out.store32(
                     weakStructureID(m_graph.registerStructure(variant.newStructure())), base, m_heaps.JSCell_structureID);
             }
@@ -25089,13 +25167,15 @@ IGNORE_CLANG_WARNINGS_END
         // OWNER at its first write or growth. Emitted whenever useJSThreads is
         // on, GIL-on included: spawned threads have nonzero TIDs there too, and
         // the write predicate compares against the same per-thread tag. A
-        // const-null butterfly (every no-butterfly ClassType) skips the tag,
-        // matching the constructor's `if (butterfly)` guard. The untagged
-        // `butterfly` stays available to callers for post-install header and
-        // element writes. Pre-escape, so a plain store is the install form.
+        // const-null butterfly gets the bare tag: butterfly-less objects are
+        // born instance-tagged too (SPEC-objectmodel r16 N1-I, I40). The
+        // untagged `butterfly` stays available to callers for post-install
+        // header and element writes. Pre-escape, so a plain store.
         LValue installedButterfly = butterfly;
         if (Options::useJSThreads()) [[unlikely]] {
-            if (!(butterfly->hasIntPtr() && !butterfly->asIntPtr()))
+            if (butterfly->hasIntPtr() && !butterfly->asIntPtr())
+                installedButterfly = loadButterflyTIDTag();
+            else
                 installedButterfly = m_out.bitOr(butterfly, loadButterflyTIDTag());
         }
         m_out.storePtr(installedButterfly, result, m_heaps.JSObject_butterfly);

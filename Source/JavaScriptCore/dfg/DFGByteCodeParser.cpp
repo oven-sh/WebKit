@@ -7974,16 +7974,29 @@ void ByteCodeParser::handlePutById(
             }
         }
 
+        Structure* transitionOwnerCheckStructure = nullptr;
         if (Options::useJSThreads()) [[unlikely]] {
-            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Tasks 9/10: no
-            // inlined transition sequences flag-on (see the Transition case
-            // below); MultiPutByOffset transition variants would lower to the
-            // same machinery in the FTL.
+            // SPEC-jit §5.5 Transition (FTL MultiPutByOffset form): every
+            // Transition variant must be inlinable on its own terms - non-
+            // reallocating, non-ArrayStorage source, the four thread-local
+            // sets watchable by this plan - else the whole put stays generic.
+            // One CheckTransitionOwner (structure-independent owner test)
+            // guards all of them.
             for (unsigned variantIndex = putByStatus.numVariants(); variantIndex--;) {
-                if (putByStatus[variantIndex].kind() == PutByVariant::Transition) {
+                const PutByVariant& variant = putByStatus[variantIndex];
+                if (variant.kind() != PutByVariant::Transition)
+                    continue;
+                Structure* source = variant.oldStructureForTransition();
+                Structure* target = variant.newStructure();
+                if (variant.reallocatesStorage() || hasAnyArrayStorage(source->indexingType())
+                    || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(source)
+                    || !m_graph.watchpoints().considerButterflyWriteThreadLocal(source)
+                    || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(target)
+                    || !m_graph.watchpoints().considerButterflyWriteThreadLocal(target)) {
                     emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
                     return;
                 }
+                transitionOwnerCheckStructure = source;
             }
         }
 
@@ -7991,6 +8004,8 @@ void ByteCodeParser::handlePutById(
             m_graph.compilation()->noticeInlinedPutById();
 
         addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
+        if (transitionOwnerCheckStructure)
+            addToGraph(CheckTransitionOwner, OpInfo(m_graph.registerStructure(transitionOwnerCheckStructure)), unwrapped);
 
         for (const PutByVariant& variant : putByStatus.variants()) {
             for (Structure* structure : variant.oldStructure())
@@ -8020,17 +8035,28 @@ void ByteCodeParser::handlePutById(
     }
     
     case PutByVariant::Transition: {
+        bool needsTransitionOwnerCheck = false;
         if (Options::useJSThreads()) [[unlikely]] {
-            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Task 9: the inlined
-            // transition sequence (AllocatePropertyStorage / PutByOffset /
-            // NukeStructureAndSetButterfly / PutStructure) implements transition
-            // semantics in JIT'd code, which section 5.5 forbids until the E4
-            // transition predicate (TTL sets valid+watched + PA bit test +
-            // owner-tag compare) is emitted around it. Route through the
-            // generic PutById IC: the OM's C++ paths perform the transition
-            // under its regime rules (R3 slow-path rule).
-            emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
-            return;
+            // SPEC-jit §5.5 Transition (DFG form): inline only the
+            // non-reallocating transition from a non-ArrayStorage source
+            // whose four thread-local sets this plan can watch (source and
+            // target, transition- and write-thread-local); the runtime owner
+            // legs become a CheckTransitionOwner before the PutByOffset, and
+            // PutStructure carries the N2-LF publication. Everything else goes
+            // through the generic PutById (R3), whose C++ paths run the OM
+            // protocols. A reallocating transition installs a butterfly, which
+            // flag-on is a tagged-word protocol of its own: not inlined.
+            Structure* source = variant.oldStructureForTransition();
+            Structure* target = variant.newStructure();
+            if (variant.reallocatesStorage() || hasAnyArrayStorage(source->indexingType())
+                || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(source)
+                || !m_graph.watchpoints().considerButterflyWriteThreadLocal(source)
+                || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(target)
+                || !m_graph.watchpoints().considerButterflyWriteThreadLocal(target)) {
+                emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+                return;
+            }
+            needsTransitionOwnerCheck = true;
         }
 
         addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
@@ -8046,6 +8072,8 @@ void ByteCodeParser::handlePutById(
         Node* propertyStorage;
         Transition* transition = m_graph.m_transitions.add(
             m_graph.registerStructure(variant.oldStructureForTransition()), m_graph.registerStructure(variant.newStructure()));
+        if (needsTransitionOwnerCheck)
+            addToGraph(CheckTransitionOwner, OpInfo(transition->previous), unwrapped);
 
         if (variant.reallocatesStorage()) {
 
@@ -13338,7 +13366,7 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
     CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
     auto bytecode = currentInstruction->as<OpAsyncIteratorOpen>();
     auto& metadata = bytecode.metadata(m_inlineStackTop->m_codeBlock);
-    uint32_t seenModes = metadata.m_iterationMetadata.seenModes & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::AsyncFromSync) | static_cast<uint32_t>(IterationMode::Generic));
+    uint32_t seenModes = CommonSlowPaths::loadIterationModeSeenModesConcurrently(metadata.m_iterationMetadata) & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::AsyncFromSync) | static_cast<uint32_t>(IterationMode::Generic));
 
     JSGlobalObject* globalObject = codeBlock->globalObjectFor(currentCodeOrigin());
 
@@ -13636,7 +13664,7 @@ void ByteCodeParser::handleAsyncIteratorNext(const JSInstruction* currentInstruc
     auto& metadata = bytecode.metadata(codeBlock);
     // Gate on the observed modes (fast-enqueue vs generic real-call) like handleIteratorNext, so a
     // monomorphic site emits only the branch it needs, guarded by a speculation that OSR-exits on mismatch.
-    uint32_t seenModes = metadata.m_iterationMetadata.seenModes & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::Generic));
+    uint32_t seenModes = CommonSlowPaths::loadIterationModeSeenModesConcurrently(metadata.m_iterationMetadata) & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::Generic));
 
     if (!globalObject->promiseSpeciesWatchpointSet().isStillValid() || m_vm->gilOff())
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastAsyncGenerator);

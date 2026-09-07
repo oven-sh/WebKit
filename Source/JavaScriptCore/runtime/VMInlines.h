@@ -148,7 +148,7 @@ inline void VM::forEachDebugger(const Func& callback)
 template<typename Type, typename Functor>
 Type& VM::ensureSideData(void* key, const Functor& functor)
 {
-    m_hasSideData = true;
+    racyStore(m_hasSideData, true); // Same value from any thread; the repository itself is locked.
     return sideDataRepository().ensure<Type>(this, key, functor);
 }
 

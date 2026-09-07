@@ -52,12 +52,12 @@ namespace JSC {
 // ELF (glibc + musl): initial-exec model is REQUIRED so .so builds keep a
 // thread-invariant TLS-base offset that the JIT tiers can bake as an
 // immediate (App. R5).
-extern "C" __attribute__((tls_model("initial-exec"))) thread_local uint64_t g_jscButterflyTIDTag;
+extern "C" __attribute__((tls_model("initial-exec"))) constinit thread_local uint64_t g_jscButterflyTIDTag;
 #else
 // Darwin: this thread_local serves C++ readers only; Mach-O TLV has no
 // constant offset, so JIT/LLInt reads go through the pthread key landed in
 // Task 1b (App. R5). Windows: unsupported flag-on (D8).
-extern "C" thread_local uint64_t g_jscButterflyTIDTag;
+extern "C" constinit thread_local uint64_t g_jscButterflyTIDTag;
 #endif
 
 // Install the current thread's pre-shifted TID tag (and, first time through,

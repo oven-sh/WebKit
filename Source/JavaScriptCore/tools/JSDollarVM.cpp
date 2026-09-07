@@ -35,6 +35,7 @@
 #include "CachedCall.h"
 #include "CharacterPropertyDataGenerator.h"
 #include "CodeBlock.h"
+#include "ConcurrentButterfly.h"
 #include "Completion.h"
 #include "ControlFlowProfiler.h"
 #include "DOMAttributeGetterSetter.h"
@@ -55,6 +56,7 @@
 #include "JSCInlines.h"
 #include "JSGlobalProxyInlines.h"
 #include "JSONObject.h"
+#include "JSThreadsSafepoint.h"
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
@@ -2152,6 +2154,17 @@ JSC_DEFINE_HOST_FUNCTION(functionWasmStreamingCompilerAddBytes, (JSGlobalObject*
 namespace JSC {
 
 static NO_RETURN_DUE_TO_CRASH JSC_DECLARE_HOST_FUNCTION(functionCrash);
+// $vm.jsThreadsStopRequestCount(): stop-the-world requests so far that were
+// not satisfied inline (JSThreadsSafepoint::stopTheWorldRequestCount).
+JSC_DEFINE_HOST_FUNCTION(functionJSThreadsStopRequestCount, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(static_cast<double>(JSThreadsSafepoint::stopTheWorldRequestCount())));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionCurrentButterflyTID);
+static JSC_DECLARE_HOST_FUNCTION(functionButterflyOwnerTID);
+static JSC_DECLARE_HOST_FUNCTION(functionStructureThreadLocalSetsValid);
 static JSC_DECLARE_HOST_FUNCTION(functionBreakpoint);
 static JSC_DECLARE_HOST_FUNCTION(functionExit);
 static JSC_DECLARE_HOST_FUNCTION(functionDFGTrue);
@@ -2346,6 +2359,45 @@ static EncodedJSValue doPrint(JSGlobalObject* globalObject, CallFrame* callFrame
 
 // Triggers a crash after dumping any paramater passed to it.
 // Usage: $vm.crash(...)
+// SPEC-objectmodel probes for JSTests/threads (useJSThreads): the current
+// thread's butterfly TID, the owner TID recorded in an object's butterfly word
+// (r16 N1-I: meaningful with or without a butterfly), and whether the object's
+// structure still has both thread-local sets valid.
+JSC_DEFINE_HOST_FUNCTION(functionCurrentButterflyTID, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(currentButterflyTID()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionButterflyOwnerTID, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object || object->type() == WebAssemblyGCObjectType)
+        return JSValue::encode(jsUndefined());
+    uint64_t word = object->taggedButterflyWord();
+    if (isSegmentedButterfly(word))
+        return JSValue::encode(jsNumber(-1));
+    return JSValue::encode(jsNumber(butterflyTID(word)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionStructureThreadLocalSetsValid, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return JSValue::encode(jsUndefined());
+    Structure* structure = object->structure();
+    JSArray* result = constructEmptyArray(globalObject, nullptr, 2);
+    if (!result)
+        return JSValue::encode(jsUndefined());
+    result->putDirectIndex(globalObject, 0, jsBoolean(structure->transitionThreadLocalIsStillValid()));
+    result->putDirectIndex(globalObject, 1, jsBoolean(structure->writeThreadLocalIsStillValid()));
+    UNUSED_PARAM(vm);
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(functionCrash, NO_RETURN_DUE_TO_CRASH, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5572,6 +5624,10 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "abort"_s, functionCrash, 0);
     addFunction(vm, allowIfNotFuzz, "crash"_s, functionCrash, 0);
+    addFunction(vm, allowIfNotFuzz, "currentButterflyTID"_s, functionCurrentButterflyTID, 0);
+    addFunction(vm, allowIfNotFuzz, "jsThreadsStopRequestCount"_s, functionJSThreadsStopRequestCount, 0);
+    addFunction(vm, allowIfNotFuzz, "butterflyOwnerTID"_s, functionButterflyOwnerTID, 1);
+    addFunction(vm, allowIfNotFuzz, "structureThreadLocalSetsValid"_s, functionStructureThreadLocalSetsValid, 1);
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);
     addFunction(vm, allowIfNotFuzz, "cancelTermination"_s, functionCancelTermination, 0);
     addFunction(vm, allowIfNotFuzz, "hasPendingTermination"_s, functionHasPendingTermination, 0);

@@ -385,7 +385,7 @@ public:
     {
         if (gilOffWithProcessGate()) [[unlikely]]
             return isAnyThreadEntered();
-        return !!entryScope;
+        return !!racyLoad(entryScope); // also asked about OTHER VMs by a conductor (JSThreadsSafepoint)
     }
     JS_EXPORT_PRIVATE bool isAnyThreadEntered() const;
 
@@ -736,11 +736,15 @@ public:
         return false;
     }
 
+    // The GIL-off selectors below are one byte test of the frozen Config page
+    // for flag-off / GIL-on callers; the GIL-off arm is a TLS load, a compare
+    // and a field load, kept inline (it runs on every exception check and
+    // trap poll of a GIL-off mutator) but [[unlikely]] so it is laid out cold.
     ALWAYS_INLINE VMLitePrimitives& group3Primitives()
     {
-        if (gilOffWithProcessGate()) [[unlikely]] {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
-            if (lite && lite->vm == this) [[likely]]
+            if (m_gilOff && lite && lite->vm == this) [[likely]]
                 return lite->primitives;
         }
         return mainVMLitePrimitives();
@@ -758,9 +762,9 @@ public:
     // it is written only by the ctor, so no reader races a writer.
     ALWAYS_INLINE size_t& currentSoftReservedZoneSizeSlot()
     {
-        if (gilOffWithProcessGate()) [[unlikely]] {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
-            if (lite && lite->vm == this) [[likely]]
+            if (m_gilOff && lite && lite->vm == this) [[likely]]
                 return lite->softReservedZoneSize;
         }
         return m_currentSoftReservedZoneSize;
@@ -1754,9 +1758,9 @@ public:
     // asserted here instead of being silently relied on.
     ALWAYS_INLINE VMTraps& trapsForCurrentThread()
     {
-        if (gilOffWithProcessGate()) [[unlikely]] {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
-            if (lite && lite->vm == this) [[likely]] {
+            if (m_gilOff && lite && lite->vm == this) [[likely]] {
                 ASSERT(lite->gilOff == (m_gilOff ? 1 : 0));
                 return lite->threadContext.traps();
             }
@@ -1776,9 +1780,9 @@ public:
     // predicted-not-taken Config load and branch flag-off.
     ALWAYS_INLINE bool trapsMaybeNeedHandlingForCurrentThread() const
     {
-        if (gilOffWithProcessGate()) [[unlikely]] {
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
-            if (lite && lite->vm == this) [[likely]] {
+            if (m_gilOff && lite && lite->vm == this) [[likely]] {
                 // Same selector as trapsForCurrentThread()/group3Primitives()
                 // (see the selector-identity note above).
                 ASSERT(lite->gilOff == (m_gilOff ? 1 : 0));

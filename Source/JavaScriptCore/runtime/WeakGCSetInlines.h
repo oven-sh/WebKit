@@ -32,8 +32,9 @@
 namespace JSC {
 
 template<typename ValueArg, typename HashArg, typename TraitsArg>
-inline WeakGCSet<ValueArg, HashArg, TraitsArg>::WeakGCSet(VM& vm)
+inline WeakGCSet<ValueArg, HashArg, TraitsArg>::WeakGCSet(VM& vm, WeakGCMapLocking locking)
     : m_vm(vm)
+    , m_locking(locking)
 {
     vm.heap.registerWeakGCHashTable(this);
 }
@@ -47,6 +48,14 @@ inline WeakGCSet<ValueArg, HashArg, TraitsArg>::~WeakGCSet()
 template<typename ValueArg, typename HashArg, typename TraitsArg>
 NEVER_INLINE void WeakGCSet<ValueArg, HashArg, TraitsArg>::pruneStaleEntries()
 {
+    // GC side; the leaf lock may be taken in the GC window, as for WeakGCMap.
+    if (m_locking == WeakGCMapLocking::Yes) {
+        Locker locker { m_lock };
+        m_set.removeIf([](auto& entry) {
+            return !entry;
+        });
+        return;
+    }
     m_set.removeIf([](auto& entry) {
         return !entry;
     });

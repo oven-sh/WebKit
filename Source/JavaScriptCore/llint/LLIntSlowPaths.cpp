@@ -543,9 +543,9 @@ static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
     CODEBLOCK_LOG_EVENT(codeBlock, "OSR entry", ("in prologue"));
     
     if (kind == Prologue)
-        LLINT_RETURN_TWO(codeBlock->jitCode()->executableAddress(), nullptr);
+        LLINT_RETURN_TWO(codeBlock->jitCodeRawPtr()->executableAddress(), nullptr);
     ASSERT(kind == ArityCheck);
-    LLINT_RETURN_TWO(codeBlock->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
+    LLINT_RETURN_TWO(codeBlock->jitCodeRawPtr()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
 }
 #else // ENABLE(JIT)
 static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
@@ -585,8 +585,8 @@ static UGPRPair functionEntryOSR(CallFrame* callFrame, CodeBlock* executableCode
         if (frameCodeBlock->jitType() == JITType::BaselineJIT) {
             WTF::loadLoadFence(); // See jitCompileAndSetHeuristics: the type is the publication point.
             if (kind == Prologue)
-                LLINT_RETURN_TWO(frameCodeBlock->jitCode()->executableAddress(), nullptr);
-            LLINT_RETURN_TWO(frameCodeBlock->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
+                LLINT_RETURN_TWO(frameCodeBlock->jitCodeRawPtr()->executableAddress(), nullptr);
+            LLINT_RETURN_TWO(frameCodeBlock->jitCodeRawPtr()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
         }
 #endif
         LLINT_RETURN_TWO(nullptr, nullptr);
@@ -2410,7 +2410,7 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
             // a live tier-up installCode between the two reads otherwise
             // pairs a stale entrypoint with the new CodeBlock (see
             // bytecode/RepatchInlines.h linkFor).
-            codePtr = codeBlock->jitCode()->addressForCall(arity);
+            codePtr = codeBlock->jitCodeRawPtr()->addressForCall(arity);
         } else
             codePtr = functionExecutable->entrypointFor(kind, arity);
     }
@@ -2688,18 +2688,10 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
                 return throwException(globalObject, throwScope, createTDZError(globalObject, ident.string()));
         }
 
-        // SPEC-jit §5.5 (review round 1): flag-on, op_get_from_scope metadata is
-        // FROZEN after CodeBlock linking. tryCacheGetFromScopeGlobal rewrites the
-        // {m_getPutInfo, m_structureID, m_operand} triple as three plain stores
-        // (under codeBlock->m_lock, which the LLInt/Baseline fast paths never
-        // take), so a racing reader could pair a new structureID with a stale
-        // operand (OOB through the masked butterfly) or a stale GlobalProperty
-        // resolveType with an operand that is now a raw pointer. GlobalProperty
-        // accesses whose link-time cache misses simply stay on this slow path.
-        // See docs/threads/INTEGRATE-jit.md (scope-metadata freeze) for the
-        // matching CommonSlowPathsInlines.h defense-in-depth hunk.
-        if (!Options::useJSThreads()) [[likely]]
-            CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, scope, slot, ident);
+        // SPEC-jit §5.5: flag-on, tryCacheGetFromScopeGlobal publishes the
+        // {structureID, operand} pair in reader order (see there) and keeps
+        // the type-changing rewrites frozen.
+        CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, scope, slot, ident);
 
         if (!result)
             return slot.getValue(globalObject, ident);

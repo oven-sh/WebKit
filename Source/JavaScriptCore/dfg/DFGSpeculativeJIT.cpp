@@ -466,27 +466,13 @@ void SpeculativeJIT::emitAllocateRawObject(GPRReg resultGPR, RegisteredStructure
     }
     if (cellSlot) {
         emitLoadTLCAllocatorForSlot(scratchGPR, *cellSlot, slowCases);
+        // emitAllocateJSObject TID-tags the installed word flag-on (a null
+        // storageGPR too: r16 N1-I / I40); storageGPR stays UNTAGGED for the
+        // header/element fills below and the callers' element stores.
         emitAllocateJSObject(resultGPR, JITAllocator::variable(), scratchGPR, TrustedImmPtr(structure), storageGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
-        // Task-8: TID-tag the inline-installed butterfly word so it matches
-        // JSObjectWithButterfly's ctor encoding. storageGPR is provably
-        // non-null on the fall-through path iff `size != 0` (the auxiliary
-        // allocation above set it; the size==0 path leaves it null and
-        // matches the ctor's `if (butterfly)` skip). storageGPR stays
-        // UNTAGGED for the header/element fills below (offsetOfPublicLength,
-        // emitFillStorageWith*, emitInitializeOutOfLineStorage, and the
-        // callers' post-return element stores — compileNewArray /
-        // compileMaterializeNewObject). Pre-escape, plain store (E4/N3).
-        // gilOff arm only (cellSlot set only when vm.gilOff()).
-        if (size)
-            emitTagInstalledButterflyWithTID(resultGPR, storageGPR, scratchGPR);
         emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
     } else if (allocator) {
         emitAllocateJSObject(resultGPR, JITAllocator::constant(allocator), scratchGPR, TrustedImmPtr(structure), storageGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
-        // GIL-on too: a spawned thread has a nonzero TID and the C++ install
-        // (operationNewRawObject) stamps it, so a raw TID-0 word here would
-        // make the creator's own first growth a foreign transition.
-        if (Options::useJSThreads() && size) [[unlikely]]
-            emitTagInstalledButterflyWithTID(resultGPR, storageGPR, scratchGPR);
         emitInitializeInlineStorage(resultGPR, structure->inlineCapacity(), scratchGPR);
     } else
         slowCases.append(jump());
@@ -17075,8 +17061,24 @@ void SpeculativeJIT::compileCreateThis(Node* node)
     slowPath.append(branchIfNotFunction(calleeGPR));
     loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), rareDataGPR);
     slowPath.append(branchTestPtr(Zero, rareDataGPR, TrustedImm32(JSFunction::rareDataTag)));
-    loadPtr(Address(rareDataGPR, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), allocatorGPR);
-    loadPtr(Address(rareDataGPR, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), structureGPR);
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Torn {allocator, structure} pair under a racing clear()/re-fill: see
+        // JIT::emit_op_create_this. structureGPR aliases rareDataGPR, so the
+        // first structure read goes to scratchGPR and the re-check compares it
+        // against memory before rareData is overwritten.
+        auto structureAddress = Address(rareDataGPR, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag);
+        loadPtr(structureAddress, scratchGPR);
+        loadFence(); // load-load order (no-op on x86)
+        loadPtr(Address(rareDataGPR, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), allocatorGPR);
+        loadFence(); // load-load order (no-op on x86)
+        slowPath.append(branchTestPtr(Zero, scratchGPR));
+        slowPath.append(branchPtr(NotEqual, scratchGPR, structureAddress));
+        move(scratchGPR, structureGPR);
+    } else {
+        loadPtr(Address(rareDataGPR, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), allocatorGPR);
+        loadPtr(Address(rareDataGPR, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), structureGPR);
+    }
+    emitResolveProfiledAllocator(vm(), allocatorGPR, scratchGPR);
 
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObject(resultGPR, JITAllocator::variable(), allocatorGPR, structureGPR, butterfly, scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);

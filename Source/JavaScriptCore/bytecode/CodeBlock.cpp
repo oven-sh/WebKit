@@ -1025,7 +1025,7 @@ CodeBlock::~CodeBlock()
 
 #if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     if (jitType() == JITType::BaselineJIT)
-        static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = vm.heap.lastGCBoundaryTime();
+        racyStore(static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt, vm.heap.lastGCBoundaryTime()); // two sweeping threads may destroy two owners of one shared code at once (same value)
 #endif
     // With JS threads enabled this destructor frees everything inline exactly
     // as it does with the flag off: the collection that unmarked this

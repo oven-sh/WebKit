@@ -553,8 +553,18 @@ void VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite()
             callFrame = callFrame->callerFrame(entryFrame);
         }
     }
+    // Count these as reoptimizations. Unlike the debugger/termination
+    // jettisons this path shares its reason with, it can fire at every stop
+    // whose window rewrote a heap fact (a foreign transition of a shared
+    // shape, a Class-A fire) - under sharing, continually. Uncounted, the
+    // function is re-optimized on its next warm-up, jettisoned by the next
+    // overlapped stop, and so on: two threads mutating one global object kept
+    // one 60-bytecode function in a compile/install/jettison loop (48,000 DFG
+    // compiles in 40 s), each install churning every incoming call site's
+    // link record until the retired-record list exhausted memory. Counting
+    // gives the stock exponential back-off (and the give-up cap).
     for (CodeBlock* codeBlock : codeBlocksToJettison)
-        codeBlock->jettison(Profiler::JettisonDueToVMTraps);
+        codeBlock->jettison(Profiler::JettisonDueToVMTraps, CountReoptimization);
 }
 
 WorkQueue& VMTraps::queue()

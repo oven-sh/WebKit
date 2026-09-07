@@ -203,6 +203,13 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
 
 UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const SourceCode& source, const BuiltinSourceMetadata& scanned, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement)
 {
+    // GIL off, builtins are created lazily on whichever thread touches them
+    // first, and this parses: the Parser uses the VM's per-provider function
+    // cache and the builtins share one provider. Everything else that parses
+    // holds the GIL-off compilation lock (ScriptExecutable / CodeCache), so
+    // this does too. Recursive; flag-off and GIL-on take no lock.
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
+
     StringView view = source.view();
     RELEASE_ASSERT(scanned.sourceLength == view.length());
 

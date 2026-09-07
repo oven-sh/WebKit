@@ -490,6 +490,9 @@ void Debugger::willCallNativeExecutable(CallFrame* callFrame)
 
 void Debugger::didCreateInternalFunction(InternalFunction& internalFunction)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]] // SD13 (§A.2.7): spawned hooks are defined no-ops, like the native-executable pair above.
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didCreateInternalFunction(internalFunction);
     });
@@ -497,6 +500,9 @@ void Debugger::didCreateInternalFunction(InternalFunction& internalFunction)
 
 void Debugger::willCallInternalFunction(InternalFunction& internalFunction)
 {
+    if (isSpawnedJSThreadGILOff(m_vm)) [[unlikely]]
+        return;
+
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willCallInternalFunction(internalFunction);
     });

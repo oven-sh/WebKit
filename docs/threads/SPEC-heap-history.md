@@ -1086,3 +1086,32 @@ read protocol (round-7 F1; MarkedBlock::sharedGCWindowWitnessSnapshot) is requir
 prior lock-free reads raced aboutToMarkSlow's clear/fold/version writes. Gate note: the
 Wlr gate keys on sticky ISS (NOT gilOff) — ruled correct, the window hole is a property of
 shared conduction (round-7 F5, EVIDENCE.md §14).
+
+### 26. Fifth landing round: three stop-cooperation gaps and the fence forcing
+
+Four heap-side changes came out of the fifth landing round; none changes the
+model, each closes a place where a thread with heap access could fail to reach
+a stop, or removes a cost the model no longer needs.
+
+(a) `Heap::waitForCollector`'s shared loop (preventCollection, collectSync
+waiters) polled only the collection's own stop (`stopIfNecessaryForAllClients`)
+and held heap access across a thread-granular JS-threads stop requested
+meanwhile; with the collection's marking paused behind that stop this was a
+three-way wait (amplifier, `w16-c1-prevent-collection.js`, the 30 s watchdog).
+The loop also polls the JS-threads park site GIL off. (b)
+`VMManager::notifyVMStop` returns at once on a thread that is doing GC work:
+the shared collector's stop request traps every thread of the VM including
+the conductor's own, and the conductor does run C++ that polls traps
+(embedder error-info hooks from `ErrorInstance::finalizeUnconditionally`,
+finalizers), where parking waits for a resume only it can perform (Bun, GIL
+off, a FIFO test with a second JS thread: a hang). (c) The mutator-side
+`MarkedBlock::Handle::isLive(cell)` overload takes the directory's bit-vector
+lock for its one bit read GIL off when the caller holds none of the lock-free
+read's witnesses (an embedder liveness query from a plain mutator; the marker
+and sweeper use the explicit-version form under their own witnesses). (d)
+`setMutatorShouldBeFenced` no longer pins the fenced barrier for the shared
+heap's lifetime on x86 (kept on weakly-ordered targets, whose JIT publication
+fences are conditional on it, and under concurrent shared marking, whose
+in-window per-client raise/lower is not yet rerouted to the emitted code);
+`VM` no longer forces `forceFencedBarrier` GIL on. Measured in SPEC-objectmodel
+history §24.4.

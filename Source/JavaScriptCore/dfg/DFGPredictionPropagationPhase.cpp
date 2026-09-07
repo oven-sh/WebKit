@@ -1840,6 +1840,7 @@ private:
         case SetArgumentMaybe:
         case SetFunctionName:
         case EnqueueAsyncGeneratorDriver:
+        case CheckTransitionOwner:
         case CheckStructure:
         case CheckIsConstant:
         case CheckNotEmpty:

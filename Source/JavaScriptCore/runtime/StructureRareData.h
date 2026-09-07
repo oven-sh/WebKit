@@ -134,8 +134,8 @@ public:
     JSValue cachedSpecialProperty(CachedSpecialPropertyKey) const;
     void cacheSpecialProperty(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
 
-    TriState cachedHasDefaultToPrimitiveFastAndNonObservable() const { return static_cast<TriState>(m_cachedHasDefaultToPrimitiveFastAndNonObservable); }
-    void setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState mode) { m_cachedHasDefaultToPrimitiveFastAndNonObservable = static_cast<unsigned>(mode); }
+    TriState cachedHasDefaultToPrimitiveFastAndNonObservable() const { return static_cast<TriState>(racyLoad(m_replacementCountAndToPrimitiveCache) >> toPrimitiveCacheShift); }
+    void setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState mode) { updatePackedWord(static_cast<unsigned>(mode) << toPrimitiveCacheShift, toPrimitiveCacheMask); }
 
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
     uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
@@ -234,15 +234,8 @@ public:
     // m_replacementWatchpointSets under m_lock before clearing
     // isWatchingReplacement (see the T3-residual comment there). Do not add
     // flag-on callers that trust this counter.
-    unsigned incrementActiveReplacementWatchpointSet()
-    {
-        return ++m_activeReplacementWatchpointSet;
-    }
-
-    unsigned decrementActiveReplacementWatchpointSet()
-    {
-        return --m_activeReplacementWatchpointSet;
-    }
+    unsigned incrementActiveReplacementWatchpointSet() { return addToReplacementCount(1); }
+    unsigned decrementActiveReplacementWatchpointSet() { return addToReplacementCount(-1); }
 
 private:
     friend class LLIntOffsetsExtractor;
@@ -305,13 +298,52 @@ private:
 
     PropertyWatchpointMap m_replacementWatchpointSets;
     std::unique_ptr<SpecialPropertyCache> m_specialPropertyCache;
+    // The pointer word is CAS-published (ensureSpecialPropertyCacheSlow) and
+    // read lock-free by other mutators and compiler threads: read it as one
+    // racy word (relaxed under TSAN) rather than through unique_ptr.
+    SpecialPropertyCache* specialPropertyCachePointer() const { return racyLoad(*std::bit_cast<SpecialPropertyCache* const*>(&m_specialPropertyCache)); }
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
 
     WriteBarrierStructureID m_previous;
     PropertyOffset m_maxOffset;
     PropertyOffset m_transitionOffset;
-    unsigned m_activeReplacementWatchpointSet : 30 { 0 };
-    unsigned m_cachedHasDefaultToPrimitiveFastAndNonObservable : 2 { static_cast<unsigned>(TriState::Indeterminate) }; // TriState
+    // Low 30 bits: active replacement watchpoint set count; high 2 bits: the
+    // cached TriState above. One word (the class is size-capped); flag-on the
+    // two writers run on different threads (the count under Structure::m_lock,
+    // the cache from any toPrimitive), so updates are CAS read-modify-writes
+    // then, plain otherwise.
+    static constexpr unsigned toPrimitiveCacheShift = 30;
+    static constexpr unsigned toPrimitiveCacheMask = 3u << toPrimitiveCacheShift;
+    static constexpr unsigned replacementCountMask = ~toPrimitiveCacheMask;
+    void updatePackedWord(unsigned bits, unsigned mask)
+    {
+        if (!Options::useJSThreads()) [[likely]] {
+            m_replacementCountAndToPrimitiveCache = (m_replacementCountAndToPrimitiveCache & ~mask) | bits;
+            return;
+        }
+        for (;;) {
+            unsigned oldWord = WTF::atomicLoad(&m_replacementCountAndToPrimitiveCache, std::memory_order_relaxed);
+            unsigned newWord = (oldWord & ~mask) | bits;
+            if (oldWord == newWord || WTF::atomicCompareExchangeWeakRelaxed(&m_replacementCountAndToPrimitiveCache, oldWord, newWord))
+                return;
+        }
+    }
+    unsigned addToReplacementCount(int delta)
+    {
+        if (!Options::useJSThreads()) [[likely]] {
+            unsigned count = ((m_replacementCountAndToPrimitiveCache & replacementCountMask) + delta) & replacementCountMask;
+            m_replacementCountAndToPrimitiveCache = (m_replacementCountAndToPrimitiveCache & toPrimitiveCacheMask) | count;
+            return count;
+        }
+        for (;;) {
+            unsigned oldWord = WTF::atomicLoad(&m_replacementCountAndToPrimitiveCache, std::memory_order_relaxed);
+            unsigned count = ((oldWord & replacementCountMask) + delta) & replacementCountMask;
+            unsigned newWord = (oldWord & toPrimitiveCacheMask) | count;
+            if (WTF::atomicCompareExchangeWeakRelaxed(&m_replacementCountAndToPrimitiveCache, oldWord, newWord))
+                return count;
+        }
+    }
+    unsigned m_replacementCountAndToPrimitiveCache { static_cast<unsigned>(TriState::Indeterminate) << toPrimitiveCacheShift };
 };
 #ifdef NDEBUG
 static_assert(sizeof(StructureRareData) <= 96, "StructureRareData should remain small");

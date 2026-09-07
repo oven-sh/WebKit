@@ -114,8 +114,17 @@ ALWAYS_INLINE PropertyOffset Structure::get(VM& vm, PropertyName propertyName, u
     // by the L3 cell lock. Callers must NOT hold this structure's m_lock
     // (the in-tree under-lock asserts query the table directly instead).
     // Flag-off: today's code, bit-identical (I22).
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useJSThreads()) [[unlikely]] {
+        // A head structure whose table was stolen by a successor makes
+        // getConcurrently walk (and lock) the transition chain on every call.
+        // This is a mutator with heap access (flag-off allocates here too), so
+        // materialize and publish the table once - the flag-on publication in
+        // materializePropertyTable is exact-before-visible (T3) - and let the
+        // validated lock-free probe below hit it from then on.
+        if (!propertyTableOrNull() && previousID())
+            materializePropertyTableForMutatorLookup(vm);
         return getConcurrently(propertyName.uid(), attributes);
+    }
 
     PropertyTable* propertyTable = ensurePropertyTableIfNotEmpty(vm);
     if (!propertyTable)

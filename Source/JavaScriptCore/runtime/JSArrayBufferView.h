@@ -454,6 +454,7 @@ private:
     JS_EXPORT_PRIVATE ArrayBuffer* slowDownAndWasteMemory();
     static void finalize(JSCell*);
     void detachFromArrayBuffer();
+    void detachIfBufferDetachedSinceConstruction(ArrayBuffer&);
     void refreshVector(void* newData);
 
 protected:

@@ -34,7 +34,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "BaselineJITRegisters.h"
 #include "CallFrameShuffler.h"
 #include "ClonedArguments.h"
+#include "ConcurrentButterfly.h"
 #include "DFGAbstractInterpreterInlines.h"
+#include "PreciseAllocation.h"
 #include "DFGDoesGC.h"
 #include "DFGOperations.h"
 #include "DFGSlowPathGenerator.h"
@@ -5475,10 +5477,6 @@ void SpeculativeJIT::compile(Node* node)
     }
         
     case PutStructure: {
-        // A plain structure store. With threads, no creator emits it (SPEC-jit
-        // section 5.5): a published object needs the checked publication in
-        // JSObject::publishStructureOnlyTransitionConcurrently.
-        RELEASE_ASSERT(!Options::useJSThreads());
         RegisteredStructure oldStructure = node->transition()->previous;
         RegisteredStructure newStructure = node->transition()->next;
         m_graph.m_plan.transitions().addLazily(node->origin.semantic.codeOriginOwner(), oldStructure.get(), newStructure.get());
@@ -5489,8 +5487,40 @@ void SpeculativeJIT::compile(Node* node)
         ASSERT_UNUSED(oldStructure, oldStructure->indexingMode() == newStructure->indexingMode());
         ASSERT(oldStructure->typeInfo().type() == newStructure->typeInfo().type());
         ASSERT(oldStructure->typeInfo().inlineTypeFlags() == newStructure->typeInfo().inlineTypeFlags());
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit §5.5 Transition (DFG form): the parser planted a
+            // CheckTransitionOwner for oldStructure before the PutByOffset that
+            // precedes this node, the plan watches the four thread-local sets,
+            // and every parkable node between them carries a trailing
+            // invalidation point GIL-off; so this thread is the only writer of
+            // the object's StructureID lane here and the flag-off store is the
+            // publication (value first: fence on weakly-ordered targets).
+            storeFence();
+        }
         store32(TrustedImm32(newStructure->id().bits()), Address(baseGPR, JSCell::structureIDOffset()));
         
+        noResult(node);
+        break;
+    }
+
+    case CheckTransitionOwner: {
+        // SPEC-jit §5.5 Transition runtime legs (OM E4 / N2-LF predicate):
+        // !PreciseAllocation; word != 0 => tag == (currentTID, SW=0);
+        // word == 0 => currentTID == structure()->transitionThreadLocalTID().
+        SpeculateCellOperand base(this, node->child1());
+        GPRTemporary temp1(this);
+        GPRTemporary temp2(this);
+        GPRReg baseGPR = base.gpr();
+        GPRReg t1 = temp1.gpr();
+        GPRReg t2 = temp2.gpr();
+        speculationCheck(BadCache, JSValueSource::unboxedCell(baseGPR), node->child1(),
+            branchTestPtr(NonZero, baseGPR, TrustedImm32(PreciseAllocation::halfAlignment)));
+        // One owner test for every word (OM r16 N1-I): tag == (currentTID, SW=0).
+        load64(Address(baseGPR, JSObject::butterflyOffset()), t1);
+        loadButterflyTIDTag(t2);
+        xor64(t2, t1);
+        urshift64(TrustedImm32(butterflyTIDShift), t1);
+        speculationCheck(BadCache, JSValueSource::unboxedCell(baseGPR), node->child1(), branchTest32(NonZero, t1));
         noResult(node);
         break;
     }

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -53,10 +54,18 @@ public:
     HeapAnalyzer* activeHeapAnalyzer() const { return m_activeAnalyzer; }
     void NODELETE setActiveHeapAnalyzer(HeapAnalyzer*);
 
+    // GIL off, a snapshot builder can be made on any JS thread of the VM, and
+    // a builder clears and appends m_snapshots and sets the active analyzer for
+    // its collection; one builder at a time. The holder collects, so a waiter
+    // polls for stops instead of blocking (HeapProfiler.cpp). No-ops otherwise.
+    JS_EXPORT_PRIVATE void acquireBuilderGILOff();
+    JS_EXPORT_PRIVATE void releaseBuilderGILOff();
+
 private:
     VM& m_vm;
     Vector<std::unique_ptr<HeapSnapshot>> m_snapshots;
     HeapAnalyzer* m_activeAnalyzer { nullptr };
+    Lock m_builderLock;
 };
 
 } // namespace JSC

@@ -1711,7 +1711,7 @@ void Heap::releaseUnusedSharedBaselineCode()
     // End phase: the world is stopped and allocation already is, so no HeapIterationScope.
     auto visit = [&] (HeapCell* cell, HeapCell::Kind) {
         auto& code = static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode;
-        if (code && code->hasOneRef() && code->m_ownerWentAwayAt < cutoff)
+        if (code && code->hasOneRef() && racyLoad(code->m_ownerWentAwayAt) < cutoff)
             code = nullptr;
     };
     for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
@@ -1830,6 +1830,14 @@ void Heap::clearConcurrentRetainedDataIfPossible()
 
     // FIXME: It's weird that we drive the runloop in the middle of a JS stack. But a few places in WebCore testing/debugger code do that so clearing would otherwise be invalid there. This is technically not strong enough to catch any bad code but it seems to work for the testing/debugger code in question.
     if (vm().entryScope) [[unlikely]]
+        return;
+    // GIL off, other mutators are in JS (holding GCOwnedDataScopes, old
+    // StringImpls) whatever this thread's entry scope says, and the sweeper
+    // timer that calls this runs mutator-concurrently once the server is
+    // shared. The forced-fenced barrier below already returns in that mode
+    // today; say it directly so this stays true if that forcing is dropped.
+    // The list is still cleared at GC end (pruneRetainedStrings, world stopped).
+    if (VM::isGILOffProcess()) [[unlikely]]
         return;
 
     // It wouldn't be safe to clear the list if it's possible to have a GCOwnedDataScope on the stack since
@@ -3222,6 +3230,16 @@ void Heap::waitForCollector(const Func& func)
                         return;
                 }
                 stopIfNecessaryForAllClients();
+                // GIL off, the collection's stops are not the only stops: a
+                // thread-granular JS-threads stop (a jettison, an object-model
+                // per-event stop) requested while we wait here with heap access
+                // held needs this thread parked too, and the collection we are
+                // waiting for may itself be waiting behind that stop (found by
+                // the amplifier: preventCollection on one thread, a jettison on
+                // another, the conductor's marking paused for the jettison's
+                // window - a three-way wait until the stop watchdog fired).
+                if (g_jscConfig.gilOffProcess) [[unlikely]]
+                    JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm());
                 {
                     Locker locker { *m_threadLock };
                     if (func(locker))
@@ -5645,7 +5663,19 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         return;
     
     // This prevents the collectContinuously thread from starting a collection.
-    m_collectContinuouslyLock.lock();
+    // GIL off, another JS thread can hold this lock across its own
+    // collectNow(Sync) (a heap snapshot, $vm, deleteAllCode), and that
+    // collection needs this thread parked; blocking in lock() with heap access
+    // held would wedge it (30 s watchdog). Wait for the lock the way every
+    // other access-holding native wait does, polling for stops.
+    if (g_jscConfig.gilOffProcess && isSharedServer()) [[unlikely]] {
+        while (!m_collectContinuouslyLock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm()))
+                continue;
+            Thread::yield();
+        }
+    } else
+        m_collectContinuouslyLock.lock();
 
     // Wait for all collections to finish.
     //
@@ -5750,7 +5780,22 @@ void Heap::setMutatorShouldBeFenced(bool value)
     // stays at the raise (CG-I3). Flag-off (!useConcurrentSharedGCMarking):
     // the landed always-fenced forcing, byte-for-byte (CG-I0/CGD4.4).
     if (isSharedServer()) [[unlikely]] {
-        if (!Options::useConcurrentSharedGCMarking() || VM::isGILOffProcess())
+        // Fifth round: the always-fenced rule is kept where it is load-bearing
+        // and dropped where it only costs. (1) Not x86: the JIT's post-
+        // allocation mutatorFence / nuke ordering is conditional on this flag,
+        // and with N mutators another thread may load a freshly published
+        // object at any time, so weakly-ordered targets keep it raised for the
+        // heap's shared lifetime (T5b). (2) GIL-off with concurrent shared
+        // marking: JIT code reads the SERVER flag, the in-window per-client
+        // raise/lower is not rerouted yet (F19), so keep it raised. Otherwise
+        // (x86, marking inside the stop) the flag follows marking as in the
+        // single-mutator engine; forcing it made every write barrier take the
+        // slow path with a store-load fence (measured: 1.4-2.7x on barrier-
+        // heavy micro-benchmarks GIL-off).
+        bool keepRaised = !isX86();
+        if (VM::isGILOffProcess() && Options::useConcurrentSharedGCMarking())
+            keepRaised = true;
+        if (keepRaised)
             value = true;
         // §5.3(1) FEP bump (release) per master mutation; the WND-close
         // republish loop stamps every client's m_fenceEpochSeen with it.
@@ -6629,12 +6674,12 @@ static NEVER_INLINE void conductTIDRebiasUnderSharedStop(JSC::Heap& heap, const 
                     return IterationStatus::Continue; // JSObject WITHOUT the butterfly word (the sole such family; offset 8 is not a tag word there)
                 JSObject* object = asObject(cell);
                 uint64_t word = object->taggedButterflyWord();
-                if (!(word & butterflyPointerMask))
-                    return IterationStatus::Continue; // None regime: all-zero word
+                // r16 N1-I: None words carry the owner TID too and are
+                // restamped like flat ones (payload 0 stays 0, SW is 0).
                 ButterflyTID instanceTID = butterflyTID(word);
                 if (!instanceTID || instanceTID == JSC::notTTLTID || !dead.quickGet(instanceTID))
                     return IterationStatus::Continue; // TID-0, segmented, or live-owner word
-                // Dead flat/flat-shared tag: tid -> 0, payload + SW preserved.
+                // Dead None/flat/flat-shared tag: tid -> 0, payload + SW preserved.
                 uint64_t restamped = word & ~butterflyTIDMask;
                 reinterpret_cast<Atomic<uint64_t>*>(reinterpret_cast<char*>(object) + JSObject::butterflyOffset())->store(restamped, std::memory_order_relaxed);
                 return IterationStatus::Continue;
