@@ -78,9 +78,12 @@ struct Insn {
     // Calls build the callee frame on top of the caller's registers: every local with index >= clobberFrom is
     // garbage afterwards (frame header, arguments the callee may overwrite, and the callee's own locals).
     unsigned clobberFrom { UINT_MAX };
+    unsigned clobberEnd { UINT_MAX }; // locals at or beyond this index are fresh registers added by the optimizer, placed below all frames
     bool hasSrcDst { false };
+    // If valid, "mov copyTo, dst" is emitted right after this instruction (a fresh register caching its result).
+    VirtualRegister copyTo;
 
-    bool clobbers(VirtualRegister r) const { return r.isLocal() && static_cast<unsigned>(r.toLocal()) >= clobberFrom; }
+    bool clobbers(VirtualRegister r) const { return r.isLocal() && static_cast<unsigned>(r.toLocal()) >= clobberFrom && static_cast<unsigned>(r.toLocal()) < clobberEnd; }
 
     OpcodeID effectiveOpcode() const
     {
@@ -220,6 +223,8 @@ public:
         , m_codeBlock(codeBlock)
         , m_writer(writer)
         , m_numLocals(codeBlock->numCalleeLocals())
+        , m_originalNumLocals(codeBlock->numCalleeLocals())
+        , m_originalNumVars(codeBlock->numVars())
     {
     }
 
@@ -267,8 +272,39 @@ private:
     Vector<unsigned> m_offsetToIndex;
     Vector<Block> m_blocks;
     Vector<unsigned> m_blockForInsn;
-    unsigned m_numLocals;
+    unsigned m_numLocals; // in analysis numbering: original locals, then fresh registers
+    unsigned m_originalNumLocals;
+    unsigned m_originalNumVars;
+    unsigned m_numFreshRegisters { 0 }; // allocated by the optimizer; physically placed right after the original vars
     bool m_changedControlFlow { true };
+
+    VirtualRegister allocateFreshRegister()
+    {
+        VirtualRegister result = virtualRegisterForLocal(m_numLocals);
+        ++m_numLocals;
+        ++m_numFreshRegisters;
+        return result;
+    }
+    // Analysis register -> register in the emitted code block.
+    VirtualRegister physicalRegister(VirtualRegister r) const
+    {
+        if (!r.isLocal() || !m_registerShift)
+            return r;
+        unsigned index = r.toLocal();
+        if (index < m_originalNumVars)
+            return r;
+        if (index < m_originalNumLocals)
+            return virtualRegisterForLocal(index + m_registerShift);
+        return virtualRegisterForLocal(m_originalNumVars + (index - m_originalNumLocals));
+    }
+    unsigned m_registerShift { 0 };
+    struct ScopeValue {
+        int base;
+        unsigned via;
+    };
+    UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> m_scopeCacheContents; // cache register -> what it holds
+    bool cacheScopeResolutions();
+    bool isStableScopeName(unsigned identifierIndex) const;
 };
 
 void BytecodeOptimizerAccess::dumpIR(const char* title)
@@ -325,6 +361,7 @@ void BytecodeOptimizerAccess::decode()
         insn.oldOffset = instruction.offset();
         insn.opcode = instruction->opcodeID();
         insn.hasCheckpoints = static_cast<unsigned>(insn.opcode) < NUMBER_OF_BYTECODE_WITH_CHECKPOINTS;
+        insn.clobberEnd = m_numLocals;
         m_offsetToIndex[insn.oldOffset] = m_insns.size();
         m_insns.append(WTF::move(insn));
     }
@@ -502,9 +539,11 @@ void BytecodeOptimizerAccess::computeUseDef(Insn& insn)
     unsigned checkpoints = insn.hasCheckpoints ? bytecodeCheckpointCountTable[insn.opcode] : 1;
     for (unsigned checkpoint = 0; checkpoint < checkpoints; ++checkpoint) {
         computeUsesForBytecodeIndexImpl(insn.instruction, checkpoint, useFunctor);
-        computeDefsForBytecodeIndexImpl(m_codeBlock->numVars(), insn.instruction, checkpoint, defFunctor);
+        computeDefsForBytecodeIndexImpl(m_originalNumVars, insn.instruction, checkpoint, defFunctor);
     }
     applySubstitutions(insn);
+    if (insn.copyTo.isValid())
+        addDef(insn.copyTo);
 }
 
 void BytecodeOptimizerAccess::applySubstitutions(Insn& insn)
@@ -946,8 +985,8 @@ void BytecodeOptimizerAccess::stepLiveness(FastBitVector& live, const Insn& insn
         if (isLocal(r))
             live[r.toLocal()] = false;
     }
-    if (insn.clobberFrom < m_numLocals)
-        live.clearRange(insn.clobberFrom, m_numLocals);
+    if (insn.clobberFrom < insn.clobberEnd)
+        live.clearRange(insn.clobberFrom, std::min(insn.clobberEnd, m_numLocals));
     for (auto r : insn.uses) {
         if (isLocal(r))
             live[r.toLocal()] = true;
@@ -1008,6 +1047,11 @@ bool BytecodeOptimizerAccess::eliminateDeadStores()
             auto& insn = m_insns[i];
             if (!insn.live)
                 continue;
+            if (insn.copyTo.isValid() && !live[insn.copyTo.toLocal()]) {
+                insn.copyTo = VirtualRegister();
+                computeUseDef(insn);
+                changed = true;
+            }
             if (isPure(insn) && !insn.defs.isEmpty()) {
                 bool allDead = true;
                 for (auto r : insn.defs) {
@@ -1222,6 +1266,185 @@ bool BytecodeOptimizerAccess::propagateCopies()
     return result;
 }
 
+bool BytecodeOptimizerAccess::isStableScopeName(unsigned identifierIndex) const
+{
+    UniquedStringImpl* name = m_codeBlock->identifier(identifierIndex).impl();
+    if (auto* link = m_generator.m_parentDeclaredNames.get())
+        return link->isStablyDeclared(name);
+    return false;
+}
+
+bool BytecodeOptimizerAccess::cacheScopeResolutions()
+{
+    // resolve_scope of a name declared by an enclosing function/module scope yields the same environment record
+    // every time it runs against the same starting scope. Cache such resolutions in fresh registers (placed below
+    // all call frames so calls do not clobber them) and turn repeats into movs. Names that would fall through to
+    // the global object are left alone: a later global lexical binding can change what they resolve to.
+    struct Candidate {
+        int scope;
+        unsigned identifier;
+        unsigned count { 0 };
+        VirtualRegister cache;
+        bool operator==(const Candidate& other) const { return scope == other.scope && identifier == other.identifier; }
+    };
+    Vector<Candidate> candidates;
+    auto candidateIndex = [&](const Insn& insn) -> std::optional<unsigned> {
+        if (!insn.live || insn.kind != Insn::Original || insn.opcode != op_resolve_scope)
+            return std::nullopt;
+        auto bytecode = insn.instruction->as<OpResolveScope>();
+        if (bytecode.m_resolveType != GlobalProperty || !insn.useMap.isEmpty() || !insn.defMap.isEmpty())
+            return std::nullopt;
+        Candidate key { bytecode.m_scope.offset(), bytecode.m_var, 0, { } };
+        for (unsigned i = 0; i < candidates.size(); ++i) {
+            if (candidates[i] == key)
+                return i;
+        }
+        if (!isStableScopeName(bytecode.m_var))
+            return std::nullopt;
+        candidates.append(key);
+        return candidates.size() - 1;
+    };
+    for (auto& insn : m_insns) {
+        if (auto index = candidateIndex(insn))
+            candidates[*index].count++;
+    }
+    Vector<unsigned> selected;
+    for (unsigned i = 0; i < candidates.size(); ++i) {
+        if (candidates[i].count >= 2)
+            selected.append(i);
+    }
+    if (selected.isEmpty())
+        return false;
+    std::sort(selected.begin(), selected.end(), [&](unsigned a, unsigned b) { return candidates[a].count > candidates[b].count; });
+    constexpr unsigned maxCached = 32;
+    if (selected.size() > maxCached)
+        selected.shrink(maxCached);
+    Vector<int> slotOf;
+    slotOf.fill(-1, candidates.size());
+    for (unsigned i = 0; i < selected.size(); ++i) {
+        slotOf[selected[i]] = i;
+        candidates[selected[i]].cache = allocateFreshRegister();
+        m_scopeCacheContents.add(candidates[selected[i]].cache.offset(), ScopeValue { candidates[selected[i]].scope, candidates[selected[i]].identifier });
+    }
+    // Keep the frame aligned: temporaries shift by an even amount.
+    if (m_numFreshRegisters % stackAlignmentRegisters())
+        allocateFreshRegister();
+    m_registerShift = m_numFreshRegisters;
+    for (auto& block : m_blocks) {
+        block.liveIn.resize(m_numLocals);
+        block.liveOut.resize(m_numLocals);
+    }
+
+    // Forward must-availability of each selected resolution in its cache register.
+    using Bits = uint32_t;
+    static_assert(maxCached <= 32);
+    struct State {
+        bool top { true };
+        Bits available { 0 };
+    };
+    Vector<State> outStates(m_blocks.size());
+    Vector<bool> isHandlerEntry;
+    isHandlerEntry.fill(false, m_blocks.size());
+    for (auto& handler : m_handlers) {
+        unsigned target = nextLiveInsn(m_offsetToIndex[handler.target]);
+        if (target < m_insns.size() && m_blockForInsn[target] != UINT_MAX)
+            isHandlerEntry[m_blockForInsn[target]] = true;
+    }
+    auto killScope = [&](Bits& available, VirtualRegister r) {
+        if (!available)
+            return;
+        for (unsigned i = 0; i < selected.size(); ++i) {
+            if (candidates[selected[i]].scope == r.offset())
+                available &= ~(1u << i);
+        }
+    };
+    auto transfer = [&](Block& block, Bits& available, bool apply) -> bool {
+        bool changed = false;
+        for (unsigned i = block.start; i < block.end; ++i) {
+            auto& insn = m_insns[i];
+            if (!insn.live)
+                continue;
+            std::optional<unsigned> slot;
+            if (auto index = candidateIndex(insn); index && slotOf[*index] >= 0)
+                slot = slotOf[*index];
+            if (slot && (available & (1u << *slot))) {
+                if (apply) {
+                    VirtualRegister dst = insn.defs[0];
+                    insn.kind = Insn::SynthMov;
+                    insn.synthDst = dst;
+                    insn.synthSrc = candidates[selected[*slot]].cache;
+                    insn.targets.shrink(0);
+                    computeUseDef(insn);
+                    changed = true;
+                }
+                continue;
+            }
+            for (auto r : insn.defs)
+                killScope(available, r);
+            if (insn.clobberFrom != UINT_MAX && available) {
+                for (unsigned j = 0; j < selected.size(); ++j) {
+                    if (insn.clobbers(VirtualRegister { candidates[selected[j]].scope }))
+                        available &= ~(1u << j);
+                }
+            }
+            // Do not keep caches alive across a yield/await: generatorification would spill and refill them at every
+            // suspension point. Re-resolving after the resume is cheaper.
+            if (insn.kind == Insn::Original && insn.opcode == op_yield)
+                available = 0;
+            if (slot) {
+                if (apply && !insn.copyTo.isValid()) {
+                    insn.copyTo = candidates[selected[*slot]].cache;
+                    computeUseDef(insn);
+                    changed = true;
+                }
+                available |= 1u << *slot;
+            }
+        }
+        return changed;
+    };
+    auto computeIn = [&](unsigned b) -> Bits {
+        if (isHandlerEntry[b] || !b)
+            return 0;
+        Bits result = ~0u;
+        bool any = false;
+        for (unsigned p : m_blocks[b].predecessors) {
+            if (!m_blocks[p].reachable || outStates[p].top)
+                continue;
+            result &= outStates[p].available;
+            any = true;
+        }
+        return any ? result : 0;
+    };
+    bool changed;
+    unsigned iterations = 0;
+    do {
+        changed = false;
+        for (unsigned b = 0; b < m_blocks.size(); ++b) {
+            auto& block = m_blocks[b];
+            if (!block.reachable)
+                continue;
+            Bits state = computeIn(b);
+            transfer(block, state, false);
+            if (outStates[b].top || outStates[b].available != state) {
+                outStates[b].top = false;
+                outStates[b].available = state;
+                changed = true;
+            }
+        }
+        if (++iterations > 100)
+            return false;
+    } while (changed);
+    bool result = false;
+    for (unsigned b = 0; b < m_blocks.size(); ++b) {
+        auto& block = m_blocks[b];
+        if (!block.reachable)
+            continue;
+        Bits state = computeIn(b);
+        result |= transfer(block, state, true);
+    }
+    return result;
+}
+
 bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
 {
     // A binding leaves its temporal dead zone exactly once and never re-enters it. So a check_tdz on a value loaded
@@ -1239,10 +1462,6 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
         uint64_t packed() const { return (static_cast<uint64_t>(static_cast<uint16_t>(base)) << 48) ^ (static_cast<uint64_t>(via) << 24) ^ name; }
     };
     using KeySet = UncheckedKeyHashMap<uint64_t, Key, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-    struct ScopeValue {
-        int base;
-        unsigned via;
-    };
     struct State {
         bool top { true };
         KeySet checked;
@@ -1269,11 +1488,17 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
         // Block-local knowledge about registers: which scope value / which binding's value they hold.
         UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regScope;
         UncheckedKeyHashMap<int, Key, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regBinding;
+        // Registers defined in this block by something that cannot produce the empty value.
+        UncheckedKeyHashSet<int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> neverEmpty;
 
         auto scopeValueOf = [&](VirtualRegister scope) -> ScopeValue {
             auto it = regScope.find(scope.offset());
             if (it != regScope.end())
                 return it->value;
+            // A scope-cache register only ever holds the resolution it was allocated for.
+            auto cached = m_scopeCacheContents.find(scope.offset());
+            if (cached != m_scopeCacheContents.end())
+                return cached->value;
             return { scope.offset(), UINT_MAX };
         };
         auto killRegister = [&](VirtualRegister r) {
@@ -1316,17 +1541,24 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
             std::optional<std::pair<int, ScopeValue>> newScope;
             std::optional<std::pair<int, Key>> newBinding;
             std::optional<Key> stored;
+            auto knownScope = [&](VirtualRegister r) -> std::optional<ScopeValue> {
+                if (auto it = regScope.find(r.offset()); it != regScope.end())
+                    return it->value;
+                if (auto it = m_scopeCacheContents.find(r.offset()); it != m_scopeCacheContents.end())
+                    return it->value;
+                return std::nullopt;
+            };
             if (insn.kind == Insn::SynthMov) {
-                if (auto it = regScope.find(insn.synthSrc.offset()); it != regScope.end())
-                    newScope = { { insn.synthDst.offset(), it->value } };
+                if (auto scope = knownScope(insn.synthSrc))
+                    newScope = { { insn.synthDst.offset(), *scope } };
                 if (auto it = regBinding.find(insn.synthSrc.offset()); it != regBinding.end())
                     newBinding = { { insn.synthDst.offset(), it->value } };
             } else if (insn.kind == Insn::Original) {
                 switch (opcode) {
                 case op_mov:
                     if (insn.uses.size() == 1 && insn.defs.size() == 1) {
-                        if (auto it = regScope.find(insn.uses[0].offset()); it != regScope.end())
-                            newScope = { { insn.defs[0].offset(), it->value } };
+                        if (auto scope = knownScope(insn.uses[0]))
+                            newScope = { { insn.defs[0].offset(), *scope } };
                         if (auto it = regBinding.find(insn.uses[0].offset()); it != regBinding.end())
                             newBinding = { { insn.defs[0].offset(), it->value } };
                     }
@@ -1346,8 +1578,12 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                     break;
                 }
                 case op_put_to_scope: {
+                    // Storing the empty value (how derived constructors park |this|) puts a binding *into* its TDZ, so
+                    // only count stores of values known not to be empty.
                     auto bytecode = insn.instruction->as<OpPutToScope>();
-                    if (bytecode.m_var != UINT_MAX) {
+                    VirtualRegister value = mappedUse(insn, bytecode.m_value);
+                    bool valueNeverEmpty = value.isConstant() ? !!constantValue(value) || (m_codeBlock->constantSourceCodeRepresentation(value) == SourceCodeRepresentation::LinkTimeConstant) : neverEmpty.contains(value.offset());
+                    if (bytecode.m_var != UINT_MAX && valueNeverEmpty) {
                         ScopeValue scope = scopeValueOf(mappedUse(insn, bytecode.m_scope));
                         stored = Key { scope.base, scope.via, bytecode.m_var };
                     }
@@ -1358,9 +1594,53 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                 }
             }
 
-            for (auto r : insn.defs)
+            bool producesNonEmpty = false;
+            switch (opcode) {
+            case op_mov:
+                if (insn.uses.size() == 1) {
+                    VirtualRegister src = insn.uses[0];
+                    producesNonEmpty = src.isConstant() ? !!constantValue(src) : neverEmpty.contains(src.offset());
+                }
+                break;
+            case op_call:
+            case op_construct:
+            case op_call_varargs:
+            case op_construct_varargs:
+            case op_get_by_id:
+            case op_get_by_val:
+            case op_get_by_id_direct:
+            case op_get_length:
+            case op_new_object:
+            case op_new_array:
+            case op_new_array_buffer:
+            case op_new_array_with_size:
+            case op_new_func:
+            case op_new_func_exp:
+            case op_new_async_func:
+            case op_new_async_func_exp:
+            case op_new_generator_func:
+            case op_new_generator_func_exp:
+            case op_new_async_generator_func:
+            case op_new_async_generator_func_exp:
+            case op_new_reg_exp:
+            case op_to_string:
+            case op_strcat:
+            case op_typeof:
+            case op_create_this:
+            case op_resolve_scope:
+                producesNonEmpty = insn.kind == Insn::Original;
+                break;
+            default:
+                break;
+            }
+            for (auto r : insn.defs) {
                 killRegister(r);
+                neverEmpty.remove(r.offset());
+            }
+            if (producesNonEmpty && insn.defs.size() == 1)
+                neverEmpty.add(insn.defs[0].offset());
             if (insn.clobberFrom != UINT_MAX) {
+                neverEmpty.removeIf([&](int r) { return insn.clobbers(VirtualRegister { r }); });
                 Vector<int, 4> clobbered;
                 for (auto& entry : regScope) {
                     if (insn.clobbers(VirtualRegister { entry.key }))
@@ -1377,10 +1657,16 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                 for (int r : clobbered)
                     killRegister(VirtualRegister { r });
             }
-            if (newScope)
+            if (newScope) {
                 regScope.set(newScope->first, newScope->second);
-            if (newBinding)
+                if (insn.copyTo.isValid())
+                    regScope.set(insn.copyTo.offset(), newScope->second);
+            }
+            if (newBinding) {
                 regBinding.set(newBinding->first, newBinding->second);
+                if (insn.copyTo.isValid())
+                    regBinding.set(insn.copyTo.offset(), newBinding->second);
+            }
             if (stored)
                 checked.add(stored->packed(), *stored); // A store that completes leaves the binding initialized.
         }
@@ -1546,7 +1832,7 @@ struct BytecodeOptimizerAccess::Mapper {
     unsigned targetCursor { 0 };
     bool finalPass { false };
 
-    VirtualRegister operator()(BytecodeOperandName name, VirtualRegister r)
+    VirtualRegister logical(BytecodeOperandName name, VirtualRegister r)
     {
         switch (name) {
         case BytecodeOperandName::firstFree:
@@ -1565,6 +1851,11 @@ struct BytecodeOptimizerAccess::Mapper {
             }
             return r;
         }
+    }
+
+    VirtualRegister operator()(BytecodeOperandName name, VirtualRegister r)
+    {
+        return optimizer.physicalRegister(logical(name, r));
     }
 
     BoundLabel operator()(BytecodeOperandName, BoundLabel)
@@ -1588,6 +1879,10 @@ struct BytecodeOptimizerAccess::Mapper {
     {
         if (isValueProfileOperand(name))
             return optimizer.m_generator.nextValueProfileIndex();
+        // Frame offsets counted in registers from the callee frame (call argv, iterator stackOffset) move with
+        // the temporaries when fresh registers are inserted below them.
+        if (name == BytecodeOperandName::argv || name == BytecodeOperandName::stackOffset)
+            return value + optimizer.m_registerShift;
         return value;
     }
 
@@ -1621,10 +1916,10 @@ void BytecodeOptimizerAccess::emit()
                     reemitInstruction(insn.instruction, &m_generator, insn.minimumSize, mapper);
                     break;
                 case Insn::SynthMov:
-                    OpMov::emit(&m_generator, insn.synthDst, insn.synthSrc);
+                    OpMov::emit(&m_generator, physicalRegister(insn.synthDst), physicalRegister(insn.synthSrc));
                     break;
                 case Insn::SynthRet:
-                    OpRet::emit(&m_generator, insn.synthSrc);
+                    OpRet::emit(&m_generator, physicalRegister(insn.synthSrc));
                     break;
                 case Insn::SynthJmp: {
                     BoundLabel label = mapper(BytecodeOperandName::targetLabel, BoundLabel());
@@ -1646,6 +1941,17 @@ void BytecodeOptimizerAccess::emit()
                 OpcodeSize size = emitted->isWide32() ? OpcodeSize::Wide32 : emitted->isWide16() ? OpcodeSize::Wide16 : OpcodeSize::Narrow;
                 if (static_cast<unsigned>(size) > static_cast<unsigned>(insn.minimumSize))
                     insn.minimumSize = size;
+                if (insn.copyTo.isValid()) {
+                    // Cache the result in its fresh register. The source is whatever the instruction's dst became.
+                    VirtualRegister dst;
+                    if (insn.kind == Insn::SynthMov)
+                        dst = insn.synthDst;
+                    else {
+                        RELEASE_ASSERT(insn.explicitDefs.size() == 1);
+                        dst = mapper.logical(BytecodeOperandName::dst, insn.explicitDefs[0]);
+                    }
+                    OpMov::emit(&m_generator, physicalRegister(insn.copyTo), physicalRegister(dst));
+                }
             }
         });
         if (finalPass) {
@@ -1751,6 +2057,16 @@ void BytecodeOptimizerAccess::emit()
     m_writer.swap(newWriter);
     m_generator.m_lastOpcodeID = JSGeneratorTraits::opcodeForDisablingOptimizations;
     m_generator.m_lastInstruction = m_writer.ref();
+
+    if (m_registerShift) {
+        // Fresh registers live right after the original vars (op_enter initializes them; they sit below every call
+        // frame), and all temporaries moved up by the same (even) amount.
+        m_codeBlock->setNumVars(m_originalNumVars + m_registerShift);
+        m_codeBlock->setNumCalleeLocals(m_originalNumLocals + m_registerShift);
+        for (unsigned i = 0; i < m_registerShift; ++i)
+            m_generator.newRegister();
+        RELEASE_ASSERT(m_codeBlock->numCalleeLocals() == m_originalNumLocals + m_registerShift);
+    }
 }
 
 void BytecodeOptimizerAccess::run()
@@ -1762,6 +2078,16 @@ void BytecodeOptimizerAccess::run()
         dumpIR("after decode");
 
     unsigned originalCount = m_insns.size();
+    if (Options::useBytecodeOptimizerScopeCache()) {
+        buildBlocks();
+        if (removeUnreachable())
+            buildBlocks();
+        if (cacheScopeResolutions()) {
+            buildBlocks();
+            computeLiveness();
+            eliminateDeadStores();
+        }
+    }
     for (unsigned round = 0; round < 6; ++round) {
         bool changed = false;
         buildBlocks();

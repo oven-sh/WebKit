@@ -675,6 +675,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/ComplexGetStatus.h
     bytecode/DFGExitProfile.h
     bytecode/DataFormat.h
+    bytecode/DeclaredNamesLink.h
     bytecode/DeferredCompilationCallback.h
     bytecode/DeferredSourceDump.h
     bytecode/DeleteByStatus.h

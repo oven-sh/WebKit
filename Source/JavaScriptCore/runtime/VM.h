@@ -31,6 +31,7 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include <JavaScriptCore/ConcurrentJSLock.h>
+#include <JavaScriptCore/DeclaredNamesLink.h>
 #include <JavaScriptCore/DFGDoesGCCheck.h>
 #include <JavaScriptCore/ExceptionEventLocation.h>
 #include <JavaScriptCore/FunctionHasExecutedCache.h>
@@ -98,6 +99,9 @@ using WTF::SimpleStats;
 using WTF::StackTrace;
 
 namespace JSC {
+
+class DeclaredNamesLink;
+class UnlinkedFunctionExecutable;
 
 class ArgList;
 class BuiltinExecutables;
@@ -284,6 +288,11 @@ public:
     // (bun build --compile --bytecode); enables build-time-only bytecode optimizations.
     bool generatingForBytecodeCacheImage() const { return m_generatingForBytecodeCacheImage; }
     void setGeneratingForBytecodeCacheImage(bool value) { m_generatingForBytecodeCacheImage = value; }
+    // Only while generating a bytecode cache image: the enclosing declarations of function executables that have
+    // been created but not generated yet (taken when the executable is generated), and the handoff from
+    // UnlinkedFunctionExecutable::unlinkedCodeBlockFor to the BytecodeGenerator it spawns.
+    UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, RefPtr<DeclaredNamesLink>> m_pendingDeclaredNames;
+    RefPtr<DeclaredNamesLink> m_parentDeclaredNamesForNextGenerator;
 
     Watchdog* watchdog() { return m_watchdog.getIfExists(); }
     Watchdog& ensureWatchdog() { return m_watchdog.get(*this); }

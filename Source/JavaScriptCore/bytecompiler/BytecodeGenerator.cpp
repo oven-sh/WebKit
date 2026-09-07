@@ -469,6 +469,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     int symbolTableConstantIndex = 0;
 
     m_cachedParentTDZ = parentScopeTDZVariables;
+    m_parentDeclaredNames = vm.m_parentDeclaredNamesForNextGenerator;
     m_generatorOrAsyncWrapperFunctionParameterNames = generatorOrAsyncWrapperFunctionParameterNames;
 
     FunctionParameters& parameters = *functionNode->parameters(); 
@@ -3365,6 +3366,30 @@ std::optional<PrivateNameEnvironment> BytecodeGenerator::getAvailablePrivateAcce
     if (!result.size())
         return std::nullopt;
     return result;
+}
+
+RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
+{
+    IdentifierSet names;
+    for (auto& entry : m_TDZStack) {
+        for (auto& name : entry.first.keys())
+            names.add(name);
+    }
+    for (auto& entry : m_scopeNode->varDeclarations())
+        names.add(entry.key);
+    for (auto& entry : m_scopeNode->lexicalVariables())
+        names.add(entry.key);
+    if (m_scopeNode->isFunctionNode()) {
+        auto* functionNode = static_cast<FunctionNode*>(m_scopeNode);
+        for (auto& name : getParameterNames())
+            names.add(name.impl());
+        if (!functionNode->ident().isNull())
+            names.add(functionNode->ident().impl());
+        if (!isArrowFunction())
+            names.add(propertyNames().arguments.impl());
+    }
+    bool isDynamicBarrier = (m_scopeNode->usesEval() && !m_ecmaMode.isStrict()) || (m_scopeNode->features() & WithFeature) || m_codeType == EvalCode;
+    return DeclaredNamesLink::create(WTF::move(names), isDynamicBarrier, m_parentDeclaredNames);
 }
 
 RefPtr<TDZEnvironmentLink> BytecodeGenerator::getVariablesUnderTDZ()
