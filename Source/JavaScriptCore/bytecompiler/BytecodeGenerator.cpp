@@ -3389,7 +3389,32 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
             names.add(propertyNames().arguments.impl());
     }
     bool isDynamicBarrier = (m_scopeNode->usesEval() && !m_ecmaMode.isStrict()) || (m_scopeNode->features() & WithFeature) || m_codeType == EvalCode;
-    return DeclaredNamesLink::create(WTF::move(names), isDynamicBarrier, m_parentDeclaredNames);
+
+    // The environment records that exist right now, innermost first. Only scopes that allocated an environment
+    // (m_scope) are on the chain at run time.
+    Vector<DeclaredNamesLink::Frame> frames;
+    for (unsigned i = m_lexicalScopeStack.size(); i--;) {
+        auto& entry = m_lexicalScopeStack[i];
+        if (entry.m_isWithScope) {
+            frames.append({ true, { } });
+            break;
+        }
+        if (!entry.m_scope || !entry.m_symbolTable)
+            continue;
+        DeclaredNamesLink::Frame frame;
+        {
+            ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
+            for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
+                VarOffset offset = it->value.varOffset();
+                if (offset.isScope())
+                    frame.slots.add(it->key, offset.scopeOffset().offset());
+            }
+        }
+        frames.append(WTF::move(frame));
+    }
+    if (m_codeType == EvalCode || (m_scopeNode->usesEval() && !m_ecmaMode.isStrict()))
+        frames.insert(0, DeclaredNamesLink::Frame { true, { } });
+    return DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
 }
 
 RefPtr<TDZEnvironmentLink> BytecodeGenerator::getVariablesUnderTDZ()

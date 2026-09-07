@@ -83,6 +83,11 @@ enum ResolveType : unsigned {
     Dynamic
 };
 
+// Only in unlinked op_resolve_scope emitted by the bytecode optimizer: the variable lives in the environment record
+// (resolveType - firstStaticClosureVarResolveType) hops out from the function's own scope, plus localScopeDepth.
+// Linking turns it into ClosureVar without any name lookups.
+static constexpr unsigned firstStaticClosureVarResolveType = 32;
+
 enum class InitializationMode : unsigned {
     Initialization,      // "let x = 20;"
     ConstInitialization, // "const x = 20;"

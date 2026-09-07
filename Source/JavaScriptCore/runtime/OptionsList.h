@@ -148,6 +148,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
     v(Bool, useBytecodeOptimizerTDZ, true, Normal, "bytecode optimizer: redundant TDZ check elimination") \
     v(Bool, useBytecodeOptimizerScopeCache, true, Normal, "bytecode optimizer: cache environment-record scope resolutions in fresh registers") \
+    v(Bool, useBytecodeOptimizerStaticScopes, true, Normal, "bytecode optimizer: resolve environment-record variables statically (no abstractResolve at link)") \
+    v(Bool, useBytecodeOptimizerHoistScopes, false, Normal, "bytecode optimizer: hoist environment-record resolutions to function entry") \
+    v(Bool, validateBytecodeOptimizerStaticScopes, false, Normal, "check statically resolved scopes against JSScope::abstractResolve when linking") \
     v(Bool, dumpBytecodeOptimizer, false, Normal, "dump the bytecode optimizer IR") \
     v(Unsigned, bytecodeOptimizerSkipFirst, 0, Normal, "debugging: leave the first N code blocks unoptimized") \
     v(Unsigned, bytecodeOptimizerMaxCount, UINT_MAX, Normal, "debugging: optimize at most N code blocks (after the skipped ones)") \

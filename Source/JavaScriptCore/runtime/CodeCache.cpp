@@ -27,6 +27,7 @@
 #include "CodeCache.h"
 
 #include "BytecodeGenerator.h"
+#include "BytecodeOptimizer.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
 #include "ModuleProgramExecutable.h"
@@ -144,6 +145,8 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
         return nullptr;
 
     generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error, depth);
+    if (Options::reportBytecodeOptimizer()) [[unlikely]]
+        BytecodeOptimizer::reportInliningOpportunities(vm, unlinkedCodeBlock);
     return unlinkedCodeBlock;
 }
 

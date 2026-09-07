@@ -28,6 +28,8 @@
 namespace JSC {
 
 class BytecodeGenerator;
+class UnlinkedCodeBlock;
+class VM;
 
 // A whole-function bytecode optimizer that runs at the end of bytecode generation (before
 // generatorification and finalization). It decodes the generated instruction stream into a small IR,
@@ -40,6 +42,9 @@ class BytecodeGenerator;
 class BytecodeOptimizer {
 public:
     static void run(BytecodeGenerator&);
+    // Development aid: after a whole module/program tree has been generated, report how many call sites target
+    // statically-known tiny leaf functions (Options::reportBytecodeOptimizer()).
+    static void reportInliningOpportunities(VM&, UnlinkedCodeBlock* root);
 };
 
 } // namespace JSC

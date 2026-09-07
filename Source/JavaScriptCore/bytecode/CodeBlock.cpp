@@ -62,6 +62,7 @@
 #include "JSCInlines.h"
 #include "JSCJSValue.h"
 #include "JSLexicalEnvironment.h"
+#include "JSSymbolTableObject.h"
 #include "JSModuleEnvironment.h"
 #include "JSSet.h"
 #include "JSString.h"
@@ -602,6 +603,25 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             const Identifier& ident = identifier(bytecode.m_var);
             RELEASE_ASSERT(bytecode.m_resolveType != ResolvedClosureVar);
+
+            if (static_cast<unsigned>(bytecode.m_resolveType) >= firstStaticClosureVarResolveType) {
+                // Statically resolved by the bytecode optimizer: a pointer walk, no name lookups.
+                unsigned outerHops = static_cast<unsigned>(bytecode.m_resolveType) - firstStaticClosureVarResolveType;
+                JSScope* environment = scope;
+                for (unsigned i = 0; i < outerHops; ++i)
+                    environment = environment->next();
+                auto* symbolTableObject = uncheckedDowncast<JSSymbolTableObject>(environment);
+                if (Options::validateBytecodeOptimizerStaticScopes()) [[unlikely]] {
+                    ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, GlobalProperty, InitializationMode::NotInitialization);
+                    RELEASE_ASSERT(op.type == ClosureVar, op.type, outerHops);
+                    RELEASE_ASSERT(op.depth == bytecode.m_localScopeDepth + outerHops, op.depth, bytecode.m_localScopeDepth, outerHops);
+                    RELEASE_ASSERT(op.lexicalEnvironment == environment);
+                }
+                metadata.m_resolveType = ClosureVar;
+                metadata.m_localScopeDepth = bytecode.m_localScopeDepth + outerHops;
+                metadata.m_symbolTable.set(vm, this, symbolTableObject->symbolTable());
+                break;
+            }
 
             ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_resolveType, InitializationMode::NotInitialization);
 

@@ -36,9 +36,48 @@ namespace JSC {
 // lifetime of an activation) from ones that fall through to the global object.
 class DeclaredNamesLink : public RefCounted<DeclaredNamesLink> {
 public:
-    static Ref<DeclaredNamesLink> create(IdentifierSet&& names, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    // One environment record that is on the scope chain at the creation site, innermost first: the names that
+    // live in it and their slots. A barrier frame stands for a `with` object (anything past it is dynamic).
+    struct Frame {
+        bool isBarrier { false };
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> slots; // name -> ScopeOffset
+    };
+
+    static Ref<DeclaredNamesLink> create(IdentifierSet&& names, Vector<Frame>&& frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
     {
-        return adoptRef(*new DeclaredNamesLink(WTF::move(names), isDynamicBarrier, WTF::move(parent)));
+        return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, WTF::move(parent)));
+    }
+
+    struct Resolution {
+        enum Kind : uint8_t {
+            Dynamic, // may resolve differently at run time (globals, eval/with in the way): leave alone
+            Stable, // always the same binding for a given starting scope, but no static slot (e.g. an import)
+            Slot, // lives |hops| environment records out from the function's own scope, at |offset|
+        };
+        Kind kind { Dynamic };
+        unsigned hops { 0 };
+        unsigned offset { 0 };
+    };
+
+    // Resolve |name| as seen from a function created at this point (i.e. starting from that function's [[Scope]]).
+    Resolution resolve(UniquedStringImpl* name) const
+    {
+        unsigned hops = 0;
+        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
+            for (auto& frame : link->m_frames) {
+                if (frame.isBarrier)
+                    return { };
+                auto it = frame.slots.find(name);
+                if (it != frame.slots.end())
+                    return { Resolution::Slot, hops, it->value };
+                ++hops;
+            }
+            if (link->m_names.contains(name))
+                return { Resolution::Stable, 0, 0 };
+            if (link->m_isDynamicBarrier)
+                return { };
+        }
+        return { };
     }
 
     // True if some enclosing scope declares |name| before the lookup would have to cross a scope whose contents can
@@ -57,14 +96,16 @@ public:
     DeclaredNamesLink* parent() const { return m_parent.get(); }
 
 private:
-    DeclaredNamesLink(IdentifierSet&& names, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    DeclaredNamesLink(IdentifierSet&& names, Vector<Frame>&& frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
         : m_names(WTF::move(names))
+        , m_frames(WTF::move(frames))
         , m_parent(WTF::move(parent))
         , m_isDynamicBarrier(isDynamicBarrier)
     {
     }
 
     IdentifierSet m_names;
+    Vector<Frame> m_frames;
     RefPtr<DeclaredNamesLink> m_parent;
     bool m_isDynamicBarrier;
 };

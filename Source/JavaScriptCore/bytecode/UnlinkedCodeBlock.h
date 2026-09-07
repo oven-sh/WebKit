@@ -371,6 +371,7 @@ protected:
 
 private:
     friend class BytecodeRewriter;
+    friend class BytecodeOptimizerAccess;
     friend class UnlinkedCodeBlockGenerator;
     template<typename Traits>
     friend class BytecodeGeneratorBase;

@@ -34,11 +34,14 @@
 #include "JSCJSValueInlines.h"
 #include "PreciseJumpTargetsInlines.h"
 #include "UnlinkedCodeBlockGenerator.h"
+#include "UnlinkedFunctionCodeBlock.h"
+#include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedMetadataTableInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC {
 
@@ -82,6 +85,10 @@ struct Insn {
     bool hasSrcDst { false };
     // If valid, "mov copyTo, dst" is emitted right after this instruction (a fresh register caching its result).
     VirtualRegister copyTo;
+    // Statically resolved scope accesses: resolve_scope gets resolveType = firstStaticClosureVarResolveType + hops
+    // beyond the function's own scope; get_from_scope gets ResolvedClosureVar with a known slot.
+    std::optional<unsigned> staticOuterHops;
+    std::optional<unsigned> staticScopeOffset;
 
     bool clobbers(VirtualRegister r) const { return r.isLocal() && static_cast<unsigned>(r.toLocal()) >= clobberFrom && static_cast<unsigned>(r.toLocal()) < clobberEnd; }
 
@@ -175,7 +182,7 @@ static bool isPure(const Insn& insn)
     case op_argument_count:
         return true;
     case op_get_from_scope:
-        return insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
+        return insn.staticScopeOffset || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
     default:
         return false;
     }
@@ -230,6 +237,7 @@ public:
 
     void run();
     static void runIfAppropriate(BytecodeGenerator&);
+    static void reportInliningOpportunities(VM&, UnlinkedCodeBlock* root);
 
 private:
     void decode();
@@ -298,12 +306,24 @@ private:
         return virtualRegisterForLocal(m_originalNumVars + (index - m_originalNumLocals));
     }
     unsigned m_registerShift { 0 };
+    struct PrologueResolve {
+        VirtualRegister dst;
+        VirtualRegister scope;
+        unsigned identifier;
+        unsigned localScopeDepth;
+        ResolveType resolveType;
+    };
+    Vector<PrologueResolve> m_prologueResolves; // emitted right after op_enter
     struct ScopeValue {
         int base;
-        unsigned via;
+        unsigned via; // identifier index given to resolve_scope, or environmentVia(...) for a statically located record, or UINT_MAX for |base| itself
     };
+    static unsigned environmentVia(unsigned localScopeDepth, unsigned hops) { return 0x80000000u | (localScopeDepth << 16) | hops; }
     UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> m_scopeCacheContents; // cache register -> what it holds
     bool cacheScopeResolutions();
+    bool resolveScopesStatically();
+    unsigned m_staticResolves { 0 };
+    unsigned m_staticGets { 0 };
     bool isStableScopeName(unsigned identifierIndex) const;
 };
 
@@ -544,6 +564,12 @@ void BytecodeOptimizerAccess::computeUseDef(Insn& insn)
     applySubstitutions(insn);
     if (insn.copyTo.isValid())
         addDef(insn.copyTo);
+    if (insn.opcode == op_enter) {
+        for (auto& resolve : m_prologueResolves) {
+            addUse(resolve.scope);
+            addDef(resolve.dst);
+        }
+    }
 }
 
 void BytecodeOptimizerAccess::applySubstitutions(Insn& insn)
@@ -1266,41 +1292,136 @@ bool BytecodeOptimizerAccess::propagateCopies()
     return result;
 }
 
+bool BytecodeOptimizerAccess::resolveScopesStatically()
+{
+    // For free variables that the enclosing-scope chain proves live in an environment record at a fixed distance:
+    //   resolve_scope dst, scope, X         (X is |hops| records beyond this function's own scope)
+    //     -> mov dst, scope                 if hops + localScopeDepth == 0 (the record *is* the current scope)
+    //     -> resolve_scope with a static resolve type otherwise (link walks pointers, no name lookups)
+    //   get_from_scope dst, s, X (s known to be X's record) -> ResolvedClosureVar with X's slot.
+    // put_to_scope is left dynamic: linking it also invalidates the variable's watchpoint.
+    auto* link = m_generator.m_parentDeclaredNames.get();
+    if (!link)
+        return false;
+    bool changed = false;
+    // Which environment (identified by hop count from [[Scope]]) a register is known to hold, block-locally.
+    struct Known {
+        unsigned hops;
+    };
+    for (auto& block : m_blocks) {
+        if (!block.reachable)
+            continue;
+        UncheckedKeyHashMap<int, Known, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regEnv;
+        for (unsigned i = block.start; i < block.end; ++i) {
+            auto& insn = m_insns[i];
+            if (!insn.live)
+                continue;
+            std::optional<std::pair<int, Known>> established;
+            if (insn.kind == Insn::Original && insn.opcode == op_resolve_scope && insn.useMap.isEmpty() && insn.defMap.isEmpty()) {
+                auto bytecode = insn.instruction->as<OpResolveScope>();
+                if (bytecode.m_resolveType == GlobalProperty && bytecode.m_scope == m_codeBlock->scopeRegister()) {
+                    auto resolution = link->resolve(m_codeBlock->identifier(bytecode.m_var).impl());
+                    if (Options::reportBytecodeOptimizer()) {
+                        static std::atomic<unsigned> s_kinds[4];
+                        static std::once_flag once;
+                        std::call_once(once, [] { std::atexit([] { dataLogLn("BytecodeOptimizer resolve_scope kinds: depth0 ", s_kinds[0].load(), " deeper ", s_kinds[1].load(), " stableNoSlot(imports) ", s_kinds[2].load(), " dynamic(global) ", s_kinds[3].load()); }); });
+                        unsigned kind = resolution.kind == DeclaredNamesLink::Resolution::Slot ? (!resolution.hops && !bytecode.m_localScopeDepth ? 0 : 1) : resolution.kind == DeclaredNamesLink::Resolution::Stable ? 2 : 3;
+                        s_kinds[kind]++;
+                    }
+                    if (resolution.kind == DeclaredNamesLink::Resolution::Slot) {
+                        if (!resolution.hops && !bytecode.m_localScopeDepth) {
+                            insn.kind = Insn::SynthMov;
+                            insn.synthDst = bytecode.m_dst;
+                            insn.synthSrc = bytecode.m_scope;
+                            insn.targets.shrink(0);
+                        } else
+                            insn.staticOuterHops = resolution.hops;
+                        computeUseDef(insn);
+                        established = { { bytecode.m_dst.offset(), Known { resolution.hops } } };
+                        changed = true;
+                        m_staticResolves++;
+                    }
+                }
+            } else if (insn.kind == Insn::Original && insn.opcode == op_get_from_scope && insn.useMap.isEmpty() && !insn.staticScopeOffset) {
+                auto bytecode = insn.instruction->as<OpGetFromScope>();
+                auto it = regEnv.find(bytecode.m_scope.offset());
+                if (it != regEnv.end() && bytecode.m_getPutInfo.resolveType() == GlobalProperty) {
+                    auto resolution = link->resolve(m_codeBlock->identifier(bytecode.m_var).impl());
+                    // A slot past 255 would force the instruction wide (+8 bytes) just to save one link-time lookup;
+                    // not worth the bytes unless the instruction is wide already.
+                    bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32();
+                    if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.hops == it->value.hops && fits) {
+                        insn.staticScopeOffset = resolution.offset;
+                        changed = true;
+                        m_staticGets++;
+                    }
+                }
+            }
+            for (auto r : insn.defs)
+                regEnv.remove(r.offset());
+            if (insn.clobberFrom != UINT_MAX)
+                regEnv.removeIf([&](auto& entry) { return insn.clobbers(VirtualRegister { entry.key }); });
+            if (insn.isMov() && insn.uses.size() == 1 && insn.defs.size() == 1) {
+                if (auto it = regEnv.find(insn.uses[0].offset()); it != regEnv.end())
+                    established = { { insn.defs[0].offset(), it->value } };
+            }
+            if (established) {
+                regEnv.set(established->first, established->second);
+                if (insn.copyTo.isValid())
+                    regEnv.set(insn.copyTo.offset(), established->second);
+            }
+        }
+    }
+    return changed;
+}
+
 bool BytecodeOptimizerAccess::isStableScopeName(unsigned identifierIndex) const
 {
     UniquedStringImpl* name = m_codeBlock->identifier(identifierIndex).impl();
     if (auto* link = m_generator.m_parentDeclaredNames.get())
-        return link->isStablyDeclared(name);
+        return link->resolve(name).kind != DeclaredNamesLink::Resolution::Dynamic;
     return false;
 }
 
 bool BytecodeOptimizerAccess::cacheScopeResolutions()
 {
+    using Bits = uint32_t;
     // resolve_scope of a name declared by an enclosing function/module scope yields the same environment record
     // every time it runs against the same starting scope. Cache such resolutions in fresh registers (placed below
     // all call frames so calls do not clobber them) and turn repeats into movs. Names that would fall through to
     // the global object are left alone: a later global lexical binding can change what they resolve to.
+    // A candidate is either a statically located environment record (every name living |hops| records out
+    // resolves to the same object, so they share one cache) or a single stable name without a static slot
+    // (an import: resolves to the exporting module's environment).
     struct Candidate {
         int scope;
-        unsigned identifier;
+        unsigned localScopeDepth;
+        unsigned identifier; // UINT_MAX for environment-record candidates
+        unsigned hops; // UINT_MAX for name candidates
         unsigned count { 0 };
         VirtualRegister cache;
-        bool operator==(const Candidate& other) const { return scope == other.scope && identifier == other.identifier; }
+        bool operator==(const Candidate& other) const { return scope == other.scope && localScopeDepth == other.localScopeDepth && identifier == other.identifier && hops == other.hops; }
     };
     Vector<Candidate> candidates;
+    auto* link = m_generator.m_parentDeclaredNames.get();
     auto candidateIndex = [&](const Insn& insn) -> std::optional<unsigned> {
-        if (!insn.live || insn.kind != Insn::Original || insn.opcode != op_resolve_scope)
+        if (!link || !insn.live || insn.kind != Insn::Original || insn.opcode != op_resolve_scope)
             return std::nullopt;
         auto bytecode = insn.instruction->as<OpResolveScope>();
-        if (bytecode.m_resolveType != GlobalProperty || !insn.useMap.isEmpty() || !insn.defMap.isEmpty())
+        if (!insn.useMap.isEmpty() || !insn.defMap.isEmpty())
             return std::nullopt;
-        Candidate key { bytecode.m_scope.offset(), bytecode.m_var, 0, { } };
+        if (bytecode.m_resolveType != GlobalProperty && !insn.staticOuterHops)
+            return std::nullopt;
+        Candidate key { bytecode.m_scope.offset(), bytecode.m_localScopeDepth, bytecode.m_var, UINT_MAX, 0, { } };
+        if (insn.staticOuterHops) {
+            key.identifier = UINT_MAX;
+            key.hops = *insn.staticOuterHops;
+        } else if (link->resolve(m_codeBlock->identifier(bytecode.m_var).impl()).kind != DeclaredNamesLink::Resolution::Stable)
+            return std::nullopt;
         for (unsigned i = 0; i < candidates.size(); ++i) {
             if (candidates[i] == key)
                 return i;
         }
-        if (!isStableScopeName(bytecode.m_var))
-            return std::nullopt;
         candidates.append(key);
         return candidates.size() - 1;
     };
@@ -1308,9 +1429,17 @@ bool BytecodeOptimizerAccess::cacheScopeResolutions()
         if (auto index = candidateIndex(insn))
             candidates[*index].count++;
     }
+    // Environment-record candidates reachable from the function's own scope register are hoisted: one
+    // resolve right after op_enter serves every use (they are pure, cannot throw, and cost a few loads). Name
+    // candidates (imports) are hoisted when used at least twice. Everything else needs a dominating occurrence.
+    auto isHoistable = [&](const Candidate& candidate) {
+        if (candidate.scope != m_codeBlock->scopeRegister().offset() || candidate.localScopeDepth)
+            return false;
+        return candidate.hops != UINT_MAX || candidate.count >= 2;
+    };
     Vector<unsigned> selected;
     for (unsigned i = 0; i < candidates.size(); ++i) {
-        if (candidates[i].count >= 2)
+        if (candidates[i].count >= 2 || isHoistable(candidates[i]))
             selected.append(i);
     }
     if (selected.isEmpty())
@@ -1324,7 +1453,39 @@ bool BytecodeOptimizerAccess::cacheScopeResolutions()
     for (unsigned i = 0; i < selected.size(); ++i) {
         slotOf[selected[i]] = i;
         candidates[selected[i]].cache = allocateFreshRegister();
-        m_scopeCacheContents.add(candidates[selected[i]].cache.offset(), ScopeValue { candidates[selected[i]].scope, candidates[selected[i]].identifier });
+        m_scopeCacheContents.add(candidates[selected[i]].cache.offset(), ScopeValue { candidates[selected[i]].scope, candidates[selected[i]].identifier != UINT_MAX ? candidates[selected[i]].identifier : environmentVia(candidates[selected[i]].localScopeDepth, candidates[selected[i]].hops) });
+    }
+    Bits hoisted = 0;
+    unsigned enterIndex = UINT_MAX;
+    for (unsigned i = 0; i < m_insns.size(); ++i) {
+        if (m_insns[i].live && m_insns[i].kind == Insn::Original && m_insns[i].opcode == op_enter) {
+            enterIndex = i;
+            break;
+        }
+    }
+    if (enterIndex != UINT_MAX && Options::useBytecodeOptimizerHoistScopes()) {
+        for (unsigned i = 0; i < selected.size() && i < 32; ++i) {
+            auto& candidate = candidates[selected[i]];
+            if (!isHoistable(candidate))
+                continue;
+            // Find an exemplar instruction to copy operands from.
+            for (auto& insn : m_insns) {
+                if (auto index = candidateIndex(insn); index && *index == selected[i]) {
+                    auto bytecode = insn.instruction->as<OpResolveScope>();
+                    PrologueResolve resolve;
+                    resolve.dst = candidate.cache;
+                    resolve.scope = bytecode.m_scope;
+                    resolve.identifier = bytecode.m_var;
+                    resolve.localScopeDepth = bytecode.m_localScopeDepth;
+                    resolve.resolveType = insn.staticOuterHops ? static_cast<ResolveType>(firstStaticClosureVarResolveType + *insn.staticOuterHops) : bytecode.m_resolveType;
+                    m_prologueResolves.append(resolve);
+                    hoisted |= 1u << i;
+                    break;
+                }
+            }
+        }
+        if (!m_prologueResolves.isEmpty())
+            computeUseDef(m_insns[enterIndex]);
     }
     // Keep the frame aligned: temporaries shift by an even amount.
     if (m_numFreshRegisters % stackAlignmentRegisters())
@@ -1336,7 +1497,6 @@ bool BytecodeOptimizerAccess::cacheScopeResolutions()
     }
 
     // Forward must-availability of each selected resolution in its cache register.
-    using Bits = uint32_t;
     static_assert(maxCached <= 32);
     struct State {
         bool top { true };
@@ -1391,6 +1551,8 @@ bool BytecodeOptimizerAccess::cacheScopeResolutions()
             // suspension point. Re-resolving after the resume is cheaper.
             if (insn.kind == Insn::Original && insn.opcode == op_yield)
                 available = 0;
+            if (insn.kind == Insn::Original && insn.opcode == op_enter)
+                available |= hoisted;
             if (slot) {
                 if (apply && !insn.copyTo.isValid()) {
                     insn.copyTo = candidates[selected[*slot]].cache;
@@ -1567,8 +1729,10 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                     auto bytecode = insn.instruction->as<OpResolveScope>();
                     ScopeValue base = scopeValueOf(mappedUse(insn, bytecode.m_scope));
                     bool singleDst = insn.defs.size() == 1 || (insn.defs.size() == 2 && insn.copyTo.isValid());
-                    if (base.via == UINT_MAX && singleDst)
-                        newScope = { { insn.defs[0].offset(), ScopeValue { base.base, bytecode.m_var } } };
+                    if (base.via == UINT_MAX && singleDst) {
+                        unsigned via = insn.staticOuterHops ? environmentVia(bytecode.m_localScopeDepth, *insn.staticOuterHops) : bytecode.m_var;
+                        newScope = { { insn.defs[0].offset(), ScopeValue { base.base, via } } };
+                    }
                     break;
                 }
                 case op_get_from_scope: {
@@ -1876,8 +2040,24 @@ struct BytecodeOptimizerAccess::Mapper {
         return BoundLabel(delta);
     }
 
+    ResolveType operator()(BytecodeOperandName, ResolveType type)
+    {
+        if (insn->staticOuterHops)
+            return static_cast<ResolveType>(firstStaticClosureVarResolveType + *insn->staticOuterHops);
+        return type;
+    }
+
+    GetPutInfo operator()(BytecodeOperandName, GetPutInfo info)
+    {
+        if (insn->staticScopeOffset && insn->effectiveOpcode() == op_get_from_scope)
+            return GetPutInfo(info.resolveMode(), ResolvedClosureVar, info.initializationMode(), info.ecmaMode());
+        return info;
+    }
+
     unsigned operator()(BytecodeOperandName name, unsigned value)
     {
+        if (name == BytecodeOperandName::offset && insn->staticScopeOffset && insn->effectiveOpcode() == op_get_from_scope)
+            return *insn->staticScopeOffset;
         if (isValueProfileOperand(name))
             return optimizer.m_generator.nextValueProfileIndex();
         // Frame offsets counted in registers from the callee frame (call argv, iterator stackOffset) move with
@@ -1942,6 +2122,10 @@ void BytecodeOptimizerAccess::emit()
                 OpcodeSize size = emitted->isWide32() ? OpcodeSize::Wide32 : emitted->isWide16() ? OpcodeSize::Wide16 : OpcodeSize::Narrow;
                 if (static_cast<unsigned>(size) > static_cast<unsigned>(insn.minimumSize))
                     insn.minimumSize = size;
+                if (insn.kind == Insn::Original && insn.opcode == op_enter) {
+                    for (auto& resolve : m_prologueResolves)
+                        OpResolveScope::emit(&m_generator, physicalRegister(resolve.dst), physicalRegister(resolve.scope), resolve.identifier, resolve.resolveType, resolve.localScopeDepth);
+                }
                 if (insn.copyTo.isValid()) {
                     // Cache the result in its fresh register. The source is whatever the instruction's dst became.
                     VirtualRegister dst;
@@ -2079,6 +2263,12 @@ void BytecodeOptimizerAccess::run()
         dumpIR("after decode");
 
     unsigned originalCount = m_insns.size();
+    if (Options::useBytecodeOptimizerStaticScopes()) {
+        buildBlocks();
+        if (removeUnreachable())
+            buildBlocks();
+        resolveScopesStatically();
+    }
     if (Options::useBytecodeOptimizerScopeCache()) {
         buildBlocks();
         if (removeUnreachable())
@@ -2134,13 +2324,13 @@ void BytecodeOptimizerAccess::run()
     if (verbose || Options::dumpBytecodeOptimizer())
         dumpIR("before emit");
 
-    unsigned liveCount = 0;
+    unsigned liveCount = m_prologueResolves.size();
     for (auto& insn : m_insns)
-        liveCount += insn.live;
+        liveCount += insn.live + (insn.live && insn.copyTo.isValid());
     unsigned oldSize = m_writer.size();
     emit();
     if (Options::reportBytecodeOptimizer()) {
-        dataLogLn("BytecodeOptimizer: instructions ", originalCount, " -> ", liveCount, ", bytes ", oldSize, " -> ", m_writer.size());
+        dataLogLn("BytecodeOptimizer: instructions ", originalCount, " -> ", liveCount, ", bytes ", oldSize, " -> ", m_writer.size(), ", staticResolves ", m_staticResolves, " staticGets ", m_staticGets);
         static std::array<std::atomic<unsigned>, numOpcodeIDs> s_before;
         static std::array<std::atomic<unsigned>, numOpcodeIDs> s_after;
         static std::once_flag once;
@@ -2183,6 +2373,8 @@ void BytecodeOptimizerAccess::run()
             s_before[insn.opcode]++; // every IR instruction started life as an original one; insn.opcode keeps that
             if (insn.live)
                 s_after[opcode]++;
+            if (insn.live && insn.opcode == op_enter)
+                s_after[op_resolve_scope] += m_prologueResolves.size();
             if (!insn.live || opcode != op_mov || insn.uses.size() != 1 || insn.defs.size() != 1)
                 continue;
             VirtualRegister src = insn.uses[0];
@@ -2233,6 +2425,234 @@ void BytecodeOptimizerAccess::runIfAppropriate(BytecodeGenerator& generator)
 void BytecodeOptimizer::run(BytecodeGenerator& generator)
 {
     BytecodeOptimizerAccess::runIfAppropriate(generator);
+}
+
+void BytecodeOptimizerAccess::reportInliningOpportunities(VM&, UnlinkedCodeBlock* root)
+{
+    // Collect the tree.
+    Vector<UnlinkedCodeBlock*> blocks;
+    Vector<UnlinkedCodeBlock*> worklist;
+    worklist.append(root);
+    while (!worklist.isEmpty()) {
+        UnlinkedCodeBlock* block = worklist.takeLast();
+        blocks.append(block);
+        auto visit = [&](UnlinkedFunctionExecutable* executable) {
+            if (executable->m_isGeneratedFromCache)
+                return;
+            if (auto* code = executable->m_unlinkedCodeBlockForCall.get())
+                worklist.append(code);
+            if (auto* code = executable->m_unlinkedCodeBlockForConstruct.get())
+                worklist.append(code);
+        };
+        for (unsigned i = 0; i < block->numberOfFunctionDecls(); ++i)
+            visit(block->functionDecl(i));
+        for (unsigned i = 0; i < block->numberOfFunctionExprs(); ++i)
+            visit(block->functionExpr(i));
+    }
+
+    // Module-level function bindings: hoisted declarations of the root, plus names stored exactly once in the root
+    // body with a freshly created function expression.
+    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, UnlinkedFunctionCodeBlock*> candidates;
+    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned> storeCounts;
+    for (auto* block : blocks) {
+        if (!block->m_instructions)
+            continue;
+        for (const auto& instruction : block->instructions()) {
+            if (instruction->opcodeID() == op_put_to_scope) {
+                auto bytecode = instruction->as<OpPutToScope>();
+                if (bytecode.m_var < block->numberOfIdentifiers())
+                    storeCounts.add(block->identifier(bytecode.m_var).impl(), 0).iterator->value++;
+            }
+        }
+    }
+    for (unsigned i = 0; i < root->numberOfFunctionDecls(); ++i) {
+        auto* executable = root->functionDecl(i);
+        if (executable->m_isGeneratedFromCache || !executable->m_unlinkedCodeBlockForCall)
+            continue;
+        auto* name = executable->name().impl();
+        if (name && storeCounts.get(name) <= 1)
+            candidates.set(name, executable->m_unlinkedCodeBlockForCall.get());
+    }
+    {
+        UncheckedKeyHashMap<int, UnlinkedFunctionExecutable*, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> lastNewFunc;
+        for (const auto& instruction : root->instructions()) {
+            switch (instruction->opcodeID()) {
+            case op_new_func_exp: {
+                auto bytecode = instruction->as<OpNewFuncExp>();
+                lastNewFunc.set(bytecode.m_dst.offset(), root->functionExpr(bytecode.m_functionDecl));
+                break;
+            }
+            case op_put_to_scope: {
+                auto bytecode = instruction->as<OpPutToScope>();
+                auto it = lastNewFunc.find(bytecode.m_value.offset());
+                if (it != lastNewFunc.end() && bytecode.m_var < root->numberOfIdentifiers()) {
+                    auto* name = root->identifier(bytecode.m_var).impl();
+                    if (storeCounts.get(name) == 1 && !it->value->m_isGeneratedFromCache && it->value->m_unlinkedCodeBlockForCall)
+                        candidates.set(name, it->value->m_unlinkedCodeBlockForCall.get());
+                }
+                break;
+            }
+            default:
+                if (instruction->opcodeID() < NUMBER_OF_BYTECODE_WITH_METADATA || isBranch(instruction->opcodeID()))
+                    lastNewFunc.clear();
+                break;
+            }
+        }
+    }
+
+    // Classify candidates as inlinable leaves.
+    struct Leaf {
+        unsigned size;
+        bool ok;
+    };
+    auto classify = [&](UnlinkedFunctionCodeBlock* code) -> Leaf {
+        Leaf leaf { 0, true };
+        if (!code->m_instructions || code->numParameters() > 4)
+            return { 0, false };
+        if (isGeneratorOrAsyncFunctionWrapperParseMode(code->parseMode()) || isGeneratorOrAsyncFunctionBodyParseMode(code->parseMode()))
+            return { 0, false };
+        for (const auto& instruction : code->instructions()) {
+            leaf.size++;
+            switch (instruction->opcodeID()) {
+            case op_enter:
+            case op_ret:
+            case op_mov:
+            case op_get_by_id:
+            case op_get_by_val:
+            case op_get_length:
+            case op_resolve_scope:
+            case op_get_from_scope:
+            case op_check_tdz:
+            case op_jtrue:
+            case op_jfalse:
+            case op_jmp:
+            case op_jeq_null:
+            case op_jneq_null:
+            case op_jundefined_or_null:
+            case op_jnundefined_or_null:
+            case op_jstricteq:
+            case op_jnstricteq:
+            case op_jless:
+            case op_jlesseq:
+            case op_jgreater:
+            case op_jgreatereq:
+            case op_jnless:
+            case op_jnlesseq:
+            case op_jngreater:
+            case op_jngreatereq:
+            case op_stricteq:
+            case op_nstricteq:
+            case op_eq:
+            case op_neq:
+            case op_less:
+            case op_lesseq:
+            case op_greater:
+            case op_greatereq:
+            case op_add:
+            case op_sub:
+            case op_mul:
+            case op_not:
+            case op_typeof:
+            case op_typeof_is_undefined:
+            case op_typeof_is_function:
+            case op_typeof_is_object:
+            case op_is_undefined_or_null:
+            case op_is_boolean:
+            case op_is_number:
+            case op_is_object:
+            case op_is_cell_with_type:
+            case op_in_by_id:
+            case op_instanceof:
+            case op_to_string:
+            case op_strcat:
+            case op_new_object:
+            case op_put_by_id:
+            case op_new_array:
+            case op_new_array_buffer:
+                break;
+            default:
+                leaf.ok = false;
+                break;
+            }
+        }
+        if (leaf.size > 16)
+            leaf.ok = false;
+        return leaf;
+    };
+    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Leaf> leaves;
+    unsigned leafCandidates = 0;
+    for (auto& entry : candidates) {
+        Leaf leaf = classify(entry.value);
+        leaves.set(entry.key, leaf);
+        leafCandidates += leaf.ok;
+    }
+
+    // Call sites.
+    unsigned totalCalls = 0;
+    unsigned callsToKnown = 0;
+    unsigned callsToLeaves = 0;
+    std::array<unsigned, 17> callsByLeafSize { };
+    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned> perLeaf;
+    for (auto* block : blocks) {
+        if (!block->m_instructions)
+            continue;
+        UncheckedKeyHashMap<int, UniquedStringImpl*, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regName;
+        for (const auto& instruction : block->instructions()) {
+            OpcodeID opcode = instruction->opcodeID();
+            if (opcode == op_get_from_scope) {
+                auto bytecode = instruction->as<OpGetFromScope>();
+                if (bytecode.m_var < block->numberOfIdentifiers())
+                    regName.set(bytecode.m_dst.offset(), block->identifier(bytecode.m_var).impl());
+                continue;
+            }
+            std::optional<VirtualRegister> callee;
+            if (opcode == op_call)
+                callee = instruction->as<OpCall>().m_callee;
+            else if (opcode == op_call_ignore_result)
+                callee = instruction->as<OpCallIgnoreResult>().m_callee;
+            else if (opcode == op_tail_call)
+                callee = instruction->as<OpTailCall>().m_callee;
+            if (callee) {
+                totalCalls++;
+                auto it = regName.find(callee->offset());
+                if (it != regName.end()) {
+                    if (candidates.contains(it->value)) {
+                        callsToKnown++;
+                        auto leaf = leaves.get(it->value);
+                        if (leaf.ok) {
+                            callsToLeaves++;
+                            callsByLeafSize[std::min<unsigned>(leaf.size, 16)]++;
+                            perLeaf.add(it->value, 0).iterator->value++;
+                        }
+                    }
+                }
+                regName.clear();
+                continue;
+            }
+            if (opcode == op_check_tdz || opcode == op_mov || opcode == op_resolve_scope)
+                continue;
+            if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode))
+                regName.clear();
+        }
+    }
+    dataLogLn("BytecodeOptimizer inlining survey: blocks ", blocks.size(), ", module-level function bindings ", candidates.size(), " (leaf candidates ", leafCandidates, "), call sites ", totalCalls, ", to known module-level functions ", callsToKnown, ", to inlinable leaves ", callsToLeaves);
+    StringPrintStream sizes;
+    for (unsigned i = 0; i <= 16; ++i)
+        sizes.print(i, ":", callsByLeafSize[i], " ");
+    dataLogLn("  calls to leaves by callee instruction count: ", sizes.toString());
+    Vector<std::pair<unsigned, UniquedStringImpl*>> top;
+    for (auto& entry : perLeaf)
+        top.append({ entry.value, entry.key.get() });
+    std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.first > b.first; });
+    StringPrintStream tops;
+    for (unsigned i = 0; i < std::min<size_t>(top.size(), 25); ++i)
+        tops.print(String(top[i].second), "(", leaves.get(top[i].second).size, ")x", top[i].first, " ");
+    dataLogLn("  most-called leaves: ", tops.toString());
+}
+
+void BytecodeOptimizer::reportInliningOpportunities(VM& vm, UnlinkedCodeBlock* root)
+{
+    BytecodeOptimizerAccess::reportInliningOpportunities(vm, root);
 }
 
 } // namespace JSC
