@@ -365,7 +365,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     }
     
 
-    if (Options::useBytecodeOptimizer() || m_vm.generatingForBytecodeCacheImage()) [[unlikely]]
+    if (shouldRunBytecodeOptimizer()) [[unlikely]]
         BytecodeOptimizer::run(*this);
 
     if (m_needsGeneratorification)

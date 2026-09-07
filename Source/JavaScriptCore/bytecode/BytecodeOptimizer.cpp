@@ -1652,6 +1652,7 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
         UncheckedKeyHashMap<int, Key, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regBinding;
         // Registers defined in this block by something that cannot produce the empty value.
         UncheckedKeyHashSet<int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> neverEmpty;
+        UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> blockLoads; // survey only
 
         auto scopeValueOf = [&](VirtualRegister scope) -> ScopeValue {
             auto it = regScope.find(scope.offset());
@@ -1740,6 +1741,20 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                     ScopeValue scope = scopeValueOf(mappedUse(insn, bytecode.m_scope));
                     if (insn.defs.size() == 1)
                         newBinding = { { insn.defs[0].offset(), Key { scope.base, scope.via, bytecode.m_var } } };
+                    if (apply && Options::reportBytecodeOptimizer()) {
+                        // Survey: loads of a binding already loaded earlier in the same block with no store/yield
+                        // in between (what a "value-stable binding" load CSE could remove, block-local lower bound).
+                        static std::atomic<unsigned> s_repeatLoads;
+                        static std::atomic<unsigned> s_loads;
+                        static std::once_flag once;
+                        std::call_once(once, [] { std::atexit([] { dataLogLn("BytecodeOptimizer load survey: get_from_scope ", s_loads.load(), ", block-local repeats of the same binding ", s_repeatLoads.load()); }); });
+                        s_loads++;
+                        uint64_t key = Key { scope.base, scope.via, bytecode.m_var }.packed();
+                        if (blockLoads.contains(key))
+                            s_repeatLoads++;
+                        else
+                            blockLoads.add(key);
+                    }
                     break;
                 }
                 case op_put_to_scope: {
@@ -1834,6 +1849,10 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
             }
             if (stored)
                 checked.add(stored->packed(), *stored); // A store that completes leaves the binding initialized.
+            if (opcode == op_put_to_scope)
+                blockLoads.clear();
+            if (opcode == op_yield)
+                blockLoads.clear();
         }
         return changed;
     };

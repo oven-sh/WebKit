@@ -396,7 +396,7 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment)
+        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No)
         {
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]
@@ -404,6 +404,7 @@ namespace JSC {
 
             DeferGC deferGC(vm);
             auto bytecodeGenerator = makeUnique<BytecodeGenerator>(vm, node, unlinkedCodeBlock, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, privateNameEnvironment);
+            bytecodeGenerator->m_optimizeBytecode = optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer();
             unsigned size;
             auto result = bytecodeGenerator->generate(size);
 
@@ -1106,6 +1107,8 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
+        bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
+        OptimizeBytecode optimizeBytecode() const { return m_optimizeBytecode ? OptimizeBytecode::Yes : OptimizeBytecode::No; }
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1255,7 +1258,7 @@ namespace JSC {
                 generatorOrAsyncWrapperFunctionParameterNames = getParameterNames();
 
             auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement);
-            if (m_vm.generatingForBytecodeCacheImage() || Options::useBytecodeOptimizer()) [[unlikely]]
+            if (shouldRunBytecodeOptimizer()) [[unlikely]]
                 m_vm.m_pendingDeclaredNames.set(executable, currentDeclaredNames());
             return executable;
         }
@@ -1341,6 +1344,7 @@ namespace JSC {
         unsigned localScopeCount() const { return m_localScopeCount; }
     private:
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
+        bool m_optimizeBytecode { false };
 
         struct LexicalScopeStackEntry {
             SymbolTable* m_symbolTable;

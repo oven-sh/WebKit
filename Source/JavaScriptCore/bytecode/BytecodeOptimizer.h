@@ -37,8 +37,9 @@ class VM;
 // stream together with the side tables that reference instruction offsets (jump tables, exception
 // handlers, expression info). Metadata IDs and value profile indices are renumbered densely.
 //
-// It is only run for code being generated for a bytecode cache image (bun build --compile --bytecode)
-// or when Options::useBytecodeOptimizer() is set.
+// It runs when bytecode is generated with OptimizeBytecode::Yes (what an embedder passes to recursivelyGenerate* when
+// building a bytecode cache image, e.g. bun build --compile --bytecode) or, for testing in the shell, when
+// Options::useBytecodeOptimizer() is set.
 class BytecodeOptimizer {
 public:
     static void run(BytecodeGenerator&);

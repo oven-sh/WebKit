@@ -284,13 +284,9 @@ public:
     static Ref<VM> createContextGroup(HeapType = HeapType::Small);
     JS_EXPORT_PRIVATE ~VM();
 
-    // Set by embedders while this VM is generating bytecode for an on-disk bytecode image
-    // (bun build --compile --bytecode); enables build-time-only bytecode optimizations.
-    bool generatingForBytecodeCacheImage() const { return m_generatingForBytecodeCacheImage; }
-    void setGeneratingForBytecodeCacheImage(bool value) { m_generatingForBytecodeCacheImage = value; }
-    // Only while generating a bytecode cache image: the enclosing declarations of function executables that have
-    // been created but not generated yet (taken when the executable is generated), and the handoff from
-    // UnlinkedFunctionExecutable::unlinkedCodeBlockFor to the BytecodeGenerator it spawns.
+    // Only while generating with OptimizeBytecode::Yes: the enclosing declarations of function
+    // executables that have been created but not generated yet (taken when the executable is generated), and the
+    // handoff from UnlinkedFunctionExecutable::unlinkedCodeBlockFor to the BytecodeGenerator it spawns.
     UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, RefPtr<DeclaredNamesLink>> m_pendingDeclaredNames;
     RefPtr<DeclaredNamesLink> m_parentDeclaredNamesForNextGenerator;
 
@@ -458,7 +454,6 @@ public:
 
 private:
     bool m_isInService { false };
-    bool m_generatingForBytecodeCacheImage { false };
     RefPtr<CrossTaskToken> m_crossTaskToken;
     VMIdentifier m_identifier;
     const Ref<JSLock> m_apiLock;

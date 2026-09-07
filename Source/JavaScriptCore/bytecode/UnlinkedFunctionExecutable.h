@@ -124,7 +124,7 @@ public:
 
     UnlinkedFunctionCodeBlock* unlinkedCodeBlockFor(
         VM&, const SourceCode&, CodeSpecializationKind, OptionSet<CodeGenerationMode>,
-        ParserError&, SourceParseMode);
+        ParserError&, SourceParseMode, OptimizeBytecode = OptimizeBytecode::No);
 
     static UnlinkedFunctionExecutable* fromGlobalCode(
         const Identifier&, JSGlobalObject*, const SourceCode&, LexicallyScopedFeatures, JSObject*& exception,
