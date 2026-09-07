@@ -2790,6 +2790,7 @@ void SpeculativeJIT::compileGetByValSegmentedAwareContiguous(Node* node, const S
         speculationCheck(OutOfBounds, JSValueSource(), nullptr, segPastLength);
         speculationCheck(OutOfBounds, JSValueSource(), nullptr, segOOB);
         speculationCheck(LoadFromHole, JSValueSource(), nullptr, branchIfEmpty(resultReg));
+        speculateInt32LaneIfRelabellable(arrayMode, resultReg);
         jsValueResult(resultReg, node, format);
         return;
     }
@@ -2800,7 +2801,10 @@ void SpeculativeJIT::compileGetByValSegmentedAwareContiguous(Node* node, const S
         segOOB.link(this);
         speculationCheck(NegativeIndex, JSValueSource(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
         move(TrustedImm64(JSValue::encode(jsUndefined())), resultReg);
+        Jump done = jump();
         notEmpty.link(this);
+        speculateInt32LaneIfRelabellable(arrayMode, resultReg);
+        done.link(this);
         jsValueResult(resultReg, node, format);
         return;
     }
@@ -3071,6 +3075,7 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<G
                 speculationCheck(
                     LoadFromHole, JSValueSource(), nullptr,
                     branchIfEmpty(result));
+                speculateInt32LaneIfRelabellable(node->arrayMode(), result);
             }
             jsValueResult(result, node, format);
             break;
@@ -3099,10 +3104,13 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<G
         load64(BaseIndex(storageReg, propertyReg, TimesEight), resultReg);
 
         if (node->arrayMode().isOutOfBoundsSaneChain()) {
-            auto done = branchIfNotEmpty(resultReg);
+            auto notEmpty = branchIfNotEmpty(resultReg);
             slowCases.link(this);
             speculationCheck(NegativeIndex, JSValueSource(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
             move(TrustedImm64(JSValue::encode(jsUndefined())), resultReg);
+            auto done = jump();
+            notEmpty.link(this);
+            speculateInt32LaneIfRelabellable(node->arrayMode(), resultReg);
             done.link(this);
         } else {
             slowCases.append(branchIfEmpty(resultReg));
@@ -9989,10 +9997,18 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
                 } else {
                     load64(BaseIndex(scratch2GPR, indexGPR, TimesEight), resultGPR);
                     if (arrayMode.isInBoundsSaneChain()) {
+                        if (expectedType == ArrayWithInt32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+                            Jump hole = branchIfEmpty(resultGPR);
+                            speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41
+                            hole.link(this);
+                        }
                         move(TrustedImm64(JSValue::encode(jsUndefined())), scratch1GPR);
                         moveConditionally64(Equal, resultGPR, TrustedImm32(0), scratch1GPR, resultGPR, resultGPR);
-                    } else
+                    } else {
                         speculationCheck(LoadFromHole, JSValueSource(baseGPR), nullptr, branchIfEmpty(resultGPR));
+                        if (expectedType == ArrayWithInt32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+                            speculationCheck(BadType, JSValueSource(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41
+                    }
                 }
                 doneCases.append(jump());
                 return;
@@ -10009,6 +10025,8 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
             } else {
                 load64(BaseIndex(scratch2GPR, indexGPR, TimesEight), resultGPR);
                 slowJumps.append(branchIfEmpty(resultGPR));
+                if (expectedType == ArrayWithInt32 && arrayMode.isOutOfBoundsSaneChain() && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+                    speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41; the effectful form is HeapTop-typed
             }
             doneCases.append(jump());
         };

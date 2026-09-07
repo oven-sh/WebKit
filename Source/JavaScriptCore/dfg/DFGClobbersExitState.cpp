@@ -38,6 +38,13 @@ bool clobbersExitState(Graph& graph, Node* node)
 {
     // There are certain nodes whose effect on the exit state has nothing to do with what they
     // normally clobber.
+    // Flag-on (SPEC-jit §5.5 Transition, (re)allocating form): a store into
+    // the transition's own freshly allocated, not yet installed storage is as
+    // unobservable as the allocation itself; the InvalidationPoint the parser
+    // plants between it and the install relies on that. Every other PutByOffset
+    // takes the default rule below.
+    if (node->op() == PutByOffset && Options::useJSThreads() && putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]]
+        return false;
     switch (node->op()) {
     case InitializeEntrypointArguments:
     case MovHint:

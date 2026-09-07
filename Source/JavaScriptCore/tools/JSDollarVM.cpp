@@ -2162,6 +2162,15 @@ JSC_DEFINE_HOST_FUNCTION(functionJSThreadsStopRequestCount, (JSGlobalObject*, Ca
     return JSValue::encode(jsNumber(static_cast<double>(JSThreadsSafepoint::stopTheWorldRequestCount())));
 }
 
+// $vm.jsThreadsLockedTransitionCount(): cell-locked property transitions so
+// far (JSC::lockedTransitionCount).
+static JSC_DECLARE_HOST_FUNCTION(functionJSThreadsLockedTransitionCount);
+JSC_DEFINE_HOST_FUNCTION(functionJSThreadsLockedTransitionCount, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(static_cast<double>(lockedTransitionCount())));
+}
+
 static JSC_DECLARE_HOST_FUNCTION(functionCurrentButterflyTID);
 static JSC_DECLARE_HOST_FUNCTION(functionButterflyOwnerTID);
 static JSC_DECLARE_HOST_FUNCTION(functionStructureThreadLocalSetsValid);
@@ -5646,6 +5655,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "crash"_s, functionCrash, 0);
     addFunction(vm, allowIfNotFuzz, "currentButterflyTID"_s, functionCurrentButterflyTID, 0);
     addFunction(vm, allowIfNotFuzz, "jsThreadsStopRequestCount"_s, functionJSThreadsStopRequestCount, 0);
+    addFunction(vm, allowIfNotFuzz, "jsThreadsLockedTransitionCount"_s, functionJSThreadsLockedTransitionCount, 0);
     addFunction(vm, allowIfNotFuzz, "butterflyOwnerTID"_s, functionButterflyOwnerTID, 1);
     addFunction(vm, allowIfNotFuzz, "structureThreadLocalSetsValid"_s, functionStructureThreadLocalSetsValid, 1);
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);

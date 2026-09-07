@@ -598,6 +598,19 @@ race:llint_check_stack_and_vm_traps
 # constructor and finishCreation run before installCode publishes it.
 race:JSC::CodeBlock::CodeBlock
 race:JSC::CodeBlock::finishCreation
+# The same publish once more, for what bytecode GENERATION builds: the unlinked
+# code block's instruction stream, its symbol tables (InferredValue words) and
+# the rest, all written on the thread that first prepared the function (under
+# the GIL-off compilation lock, before the CodeBlock that points at them
+# exists) and read by LLInt slow paths (CallFrame::setCurrentVPC ->
+# CodeBlock::bytecodeOffset, JSLexicalEnvironment::create -> SymbolTable::
+# notifyCreation, ...) on a thread that entered the CodeBlock through JIT/LLInt
+# call linkage TSAN cannot see. Anchored on the writer, like CodeBlock::CodeBlock
+# above. Until the sixth round these were masked GIL off by the write barrier's
+# fenced slow path (taken on every store before the first collection), whose
+# lock gave TSAN an incidental edge between all threads.
+race:JSC::BytecodeGenerator::generate
+race:JSC::generateUnlinkedFunctionCodeBlock
 # The calllink family, like race:JSC::CallLinkInfo::loadCallTypeAndMode: a DFG
 # plan allocates the DirectCallLinkInfo, one mutator installs the code, and
 # another reaches it through loads in JIT code.

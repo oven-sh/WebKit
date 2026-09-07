@@ -1015,6 +1015,71 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
         return false; // RESTART: the lane moved (a racing publication); nothing written.
     }
 
+    // ---- E4-C (r17, SPEC-objectmodel §5 E4-C / history §26): the owner's
+    // CLAIM-FIRST lock-free leg once the source's thread-local sets are dead.
+    // F2 stays per structure (one stop, the first time any S-instance is
+    // transitioned by a foreign thread), but its consequence is no longer "every
+    // S-instance on every thread takes the cell lock forever": the owner of an
+    // SW=0, non-segmented, non-PA, non-AS, non-CoW instance keeps transitioning
+    // it without a lock, paying one CAS to claim the StructureID lane before it
+    // writes anything. Exclusion with the foreign cell-locked writers (§4.2/§4.3
+    // step 5, locked N2, locked N3) is by that lane: they also claim before they
+    // write shared storage and RESTART when they lose. The instance a foreign
+    // thread actually transitions leaves this leg for good (its word becomes
+    // SW=1 or segmented). Growth publishes the new butterfly while the lane is
+    // held (nuke -> word -> ID, M5), as the E4 leg above does.
+    if (!hasAnyArrayStorage(expectedSource->indexingType()) && !isCopyOnWrite(expectedSource->indexingMode())
+        && !isPreciseAllocation() && butterflyWordOwnedByCurrentThread(word) && !forceButterflySWBitEnabled()) {
+        ASSERT(!isSegmentedButterfly(word));
+        Butterfly* newButterfly = nullptr;
+        if (oldCapacity != newCapacity) {
+            ASSERT(newCapacity > oldCapacity);
+            // Grow from the SNAPSHOT word, not from a fresh load
+            // (allocateMoreOutOfLineStorage): with the sets dead a foreign
+            // locked writer may segment this object at any moment, including
+            // right now; a copy taken from a butterfly that is meanwhile
+            // replaced is discarded by the word re-check under the claim below.
+            newButterfly = Butterfly::createOrGrowPropertyStorage(untaggedButterfly(word), vm, this, expectedSource, oldCapacity, newCapacity); // May GC/poll => re-read below (I29).
+            for (size_t k = oldCapacity; k < newCapacity; ++k)
+                (newButterfly->propertyStorage() - (k + 1))->clear();
+        }
+        AssertNoGC assertNoGC; // I29: nothing polls between the re-reads and the publish.
+        if (this->structureID() != sourceID || taggedButterflyWord() != word)
+            return false; // Moved at the allocation poll: RESTART (the allocation drops unreferenced).
+        auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
+        if (idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) != sourceID.bits())
+            return false; // Lost the claim to a locked writer: RESTART, nothing written.
+        if (taggedButterflyWord() != word) {
+            idAtomic->store(sourceID.bits(), std::memory_order_seq_cst); // An SW flip / install landed before the claim: un-claim, RESTART.
+            return false;
+        }
+        if (newButterfly) {
+            if (offset != invalidOffset)
+                reinterpret_cast<Atomic<uint64_t>*>(newButterfly->propertyStorage() - (outOfLineButterflyIndex(offset) + 1))->store(JSValue::encode(value), std::memory_order_release); // private copy
+            WTF::storeStoreFence(); // Contents before the word.
+            if (!casButterfly(static_cast<JSObjectWithButterfly*>(this), word, encodeButterfly(newButterfly, currentButterflyTID(), false))) {
+                // Nothing can move the word of a claimed, owner-tagged SW=0
+                // instance (SW flips need the un-nuked header; locked writers
+                // lost the lane); defensive un-claim + RESTART, never merge.
+                idAtomic->store(sourceID.bits(), std::memory_order_seq_cst);
+                return false;
+            }
+        } else if (offset != invalidOffset) {
+            if (isInlineOffset(offset))
+                reinterpret_cast<Atomic<uint64_t>*>(&inlineStorage()[offsetInInlineStorage(offset)])->store(JSValue::encode(value), std::memory_order_release); // M2
+            else {
+                RELEASE_ASSERT(word & butterflyPointerMask); // Out-of-line within capacity implies storage.
+                reinterpret_cast<Atomic<uint64_t>*>(untaggedButterfly(word)->propertyStorage() - (outOfLineButterflyIndex(offset) + 1))->store(JSValue::encode(value), std::memory_order_release); // M2
+            }
+        }
+        WTF::storeStoreFence();
+        setStructure(vm, newStructure); // Un-nukes: publishes the new ID last (M5).
+        vm.writeBarrier(this);
+        if (offset != invalidOffset)
+            vm.writeBarrier(this, value);
+        return true;
+    }
+
     // ---- Locked protocols (§4.3 / §4.6 / N2). false => caller RESTART (fresh
     // §2 dispatch: fresh target derivation, fresh F1/F2 checks).
     //

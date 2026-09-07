@@ -777,9 +777,22 @@ reads under the cell's JSCellLock (10a), §E.1b shape - allocate
 OUTSIDE, re-validate under, never allocate/park holding it (OM
 I20). Rulings (full args: history):
 1. JSMap/JSSet (JSOrderedHashTable) + JSWeakMap/Set
- (WeakMapImpl): ALL ops cell-locked, reads too. DFG/FTL map
- intrinsics DISABLED GIL-off -> locked native bodies; revival
- post-ungil.
+ (WeakMapImpl): ALL mutations cell-locked; WeakMap/Set reads
+ too. Map/Set has/get/size are VALIDATED LOCK-FREE reads
+ (sixth round, history): the owner carries a seqlock word every
+ writer brackets odd->even under the table lock (insert, delete,
+ clear, the rehash fill+publish; a value overwrite is one
+ whole-JSValue store and needs none); a reader loads it
+ (acquire, even), the table, walks the chain trusting NOTHING
+ it reads (every index checked against the cell's immutable
+ length, slot 0 turning into the next-table cell or a
+ non-power-of-two capacity aborts, non-int32 links abort,
+ bounded chain), then load-load fence + unchanged version =>
+ the result is one consistent state of one table (a table a
+ later rehash retired reads as linearized before it); abort or
+ changed version retries, then takes the locked path.
+ Iteration, getOrInsert and every writer stay locked. DFG/FTL
+ map intrinsics DISABLED GIL-off -> these native bodies.
 2. Rope resolution/atomization (JSString.h:637-682): lock-FREE -
  resolver computes into a fresh buffer, publishes by ONE
  release-CAS of the fiber0/flags word; losers discard +

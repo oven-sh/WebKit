@@ -1471,29 +1471,29 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                     return GiveUpOnCache;
 
                 if (Options::useJSThreads()) [[unlikely]] {
-                    // SPEC-jit §5.5 Transition (OM E4 / N2-LF): a cached
-                    // transition needs both source thread-local sets valid (the
-                    // stub watches them and the target's, see
-                    // collectAdditionalWatchpoints), a source that is not
-                    // ArrayStorage-shaped (OM I31), and no butterfly
-                    // (re)allocation; the runtime owner test is emitted by the
-                    // handler. Everything else stays on the C++ protocols.
-                    if (!oldStructure->transitionThreadLocalIsValidAndWatched() || !oldStructure->writeThreadLocalIsValidAndWatched())
+                    // SPEC-jit §5.5 Transition (OM E4-C, r17): a cached
+                    // transition is the claim-first non-reallocating form with
+                    // its runtime owner test; it needs a source that is not
+                    // ArrayStorage-shaped (OM I31) nor copy-on-write (I35) and no
+                    // butterfly (re)allocation. The source's thread-local sets no
+                    // longer matter: the stub claims the lane. Everything else
+                    // stays on the C++ protocols.
+                    if (hasAnyArrayStorage(oldStructure->indexingType()) || isCopyOnWrite(oldStructure->indexingMode()))
                         return GiveUpOnCache;
-                    if (hasAnyArrayStorage(oldStructure->indexingType()))
-                        return GiveUpOnCache;
-                    if (newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity())
-                        return GiveUpOnCache;
-                    // The C++ add revalidated after the put, but a foreign fire
-                    // between then and here would leave a stub whose watchpoint
-                    // install fails; connectWatchpointSets re-checks validity.
+                    // (Re)allocating transitions are cached too (r17): the handler's
+                    // inline path is the claim-first install; structures that could
+                    // have an indexing header take the out-of-line handler, whose
+                    // operation runs the same protocol in C++.
                 }
 
                 // If JSObject::put is overridden by UserObject, UserObject::put performs side-effect on JSObject::put, and it neglects to mark the PutPropertySlot as non-cachaeble,
                 // then arbitrary structure transitions can happen during the put operation, and this generates wrong transition information here as if oldStructure -> newStructure.
                 // In reality, the transition is oldStructure -> something unknown structures -> baseValue's structure.
                 // To guard against the embedder's potentially incorrect UserObject::put implementation, we should check for this condition and if found, and give up on caching the put.
-                ASSERT(baseValue.asCell()->structure() == newStructure);
+                // Flag-on another thread may have transitioned the (shared) object
+                // since this put; the check below gives up on caching then. (Until
+                // r17 the fired-source refusal above returned before this point.)
+                ASSERT(baseValue.asCell()->structure() == newStructure || Options::useJSThreads());
                 if (baseValue.asCell()->structure() != newStructure)
                     return GiveUpOnCache;
 

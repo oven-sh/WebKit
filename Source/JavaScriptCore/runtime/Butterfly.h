@@ -438,6 +438,28 @@ ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size
 #endif
 }
 
+// SPEC-objectmodel I41 (r17): GIL-off, the OWNER of an Int32-shaped array may
+// relabel it to Contiguous without a stop and then store non-Int32 values, so
+// a copy that labels its RESULT Int32 from a shape observed on a FOREIGN-owned
+// source must verify every lane it copies (a cell under an Int32 label would
+// be invisible to the marker). Copies whole 64-bit lanes like
+// butterflyConcurrentCopyWords; returns false at the first lane that is neither
+// empty nor an Int32 (the caller demotes the result or takes its generic
+// path). Owned sources, GIL-on and flag-off callers keep the plain word copy.
+ALWAYS_INLINE bool butterflyConcurrentCopyInt32LanesChecked(void* dst, const void* src, size_t bytes)
+{
+    ASSERT(!(bytes % sizeof(uint64_t)));
+    uint64_t* to = static_cast<uint64_t*>(dst);
+    const uint64_t* from = static_cast<const uint64_t*>(src);
+    for (size_t i = 0; i < bytes / sizeof(uint64_t); ++i) {
+        uint64_t lane = WTF::atomicLoad(const_cast<uint64_t*>(&from[i]), std::memory_order_relaxed);
+        if (lane && (lane & static_cast<uint64_t>(JSValue::NumberTag)) != static_cast<uint64_t>(JSValue::NumberTag)) [[unlikely]] // neither a hole nor a boxed Int32
+            return false;
+        WTF::atomicStore(&to[i], lane, std::memory_order_relaxed);
+    }
+    return true;
+}
+
 // The in-place element move of an array this thread owns (fastShift, shift and
 // unshift on flat storage, copyWithin): another thread's FIRST store to the
 // array can land during the move (the window before that store publishes

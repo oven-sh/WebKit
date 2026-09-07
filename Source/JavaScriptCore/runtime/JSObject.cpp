@@ -145,6 +145,16 @@ ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyImpl(Visitor& visi
     auto visitElements = [&] (IndexingType indexingMode) {
         switch (indexingMode) {
         // We don't need to visit the elements for CopyOnWrite butterflies since they we marked the JSCellButterfly acting as our butterfly.
+        case ALL_WRITABLE_INT32_INDEXING_TYPES:
+            // SPEC-objectmodel I41 (r17), defense in depth: GIL-off, a copy path
+            // racing an owner's stop-free Int32->Contiguous relabel could label a
+            // result Int32 while a lane holds a cell. Int32 lanes are valid
+            // JSValues, so GIL-off they are value-visited like Contiguous ones and
+            // such a mislabel can never be an unmarked cell. GIL-on/flag-off: no
+            // visit, as before.
+            if (!(jsThreads && g_jscConfig.gilOffProcess)) [[likely]]
+                break;
+            [[fallthrough]];
         case ALL_WRITABLE_CONTIGUOUS_INDEXING_TYPES: {
             unsigned visitBound = butterfly->publicLength();
             // SPEC-objectmodel review round 3 (I21/I25 - GC bound vs lock-free
@@ -774,9 +784,9 @@ JSValue JSObject::getIndexQuicklyConcurrent(unsigned i) const
         // shrink/delete reads as undefined rather than an empty JSValue.
         if (!value) [[unlikely]]
             return jsUndefined();
-        if (hasInt32(indexingType()))
+        if (hasInt32(indexingType()) && value.isInt32()) [[likely]]
             return jsNumber(value.asInt32());
-        return value;
+        return value; // Contiguous, or an Int32 lane relabelled concurrently by its owner (I41): a valid JSValue either way.
     }
     case ALL_DOUBLE_INDEXING_TYPES: {
         double value;
@@ -841,7 +851,7 @@ JSValue JSObject::tryGetIndexQuicklyConcurrent(unsigned i, ArrayProfile* arrayPr
             if (!slot)
                 break;
             JSValue result = slot->get();
-            ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result);
+            ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result || butterflyWordMayBeRelabelledConcurrently(word)); // I41: a foreign owner may relabel Int32->Contiguous under us GIL-off
             return result; // empty => caller's generic path
         }
         const Butterfly* butterfly = untaggedButterfly(word);
@@ -852,7 +862,7 @@ JSValue JSObject::tryGetIndexQuicklyConcurrent(unsigned i, ArrayProfile* arrayPr
         // can race past THIS snapshot's storage.
         if (i < butterfly->publicLength() && i < butterfly->vectorLength()) {
             JSValue result = butterfly->contiguous().at(this, i).get();
-            ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result);
+            ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result || butterflyWordMayBeRelabelledConcurrently(word)); // I41: a foreign owner may relabel Int32->Contiguous under us GIL-off
             return result;
         }
         break;
@@ -3049,7 +3059,7 @@ ArrayStorage* JSObject::createInitialArrayStorage(VM& vm)
 
 ContiguousJSValues JSObject::convertUndecidedToInt32(VM& vm)
 {
-    ASSERT(hasUndecided(indexingType()));
+    ASSERT(hasUndecided(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
 
     // §4.7/I28 (review round 1): flag-on, in-place relabels run per-event STW.
     if (Options::useJSThreads()) [[unlikely]] {
@@ -3083,7 +3093,7 @@ ContiguousJSValues JSObject::convertUndecidedToInt32(VM& vm)
 ContiguousDoubles JSObject::convertUndecidedToDouble(VM& vm)
 {
     ASSERT(Options::allowDoubleShape());
-    ASSERT(hasUndecided(indexingType()));
+    ASSERT(hasUndecided(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
 
     // §4.7/I28 (review round 1): flag-on, in-place relabels run per-event STW.
     if (Options::useJSThreads()) [[unlikely]] {
@@ -3109,7 +3119,7 @@ ContiguousDoubles JSObject::convertUndecidedToDouble(VM& vm)
 
 ContiguousJSValues JSObject::convertUndecidedToContiguous(VM& vm)
 {
-    ASSERT(hasUndecided(indexingType()));
+    ASSERT(hasUndecided(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
 
     // §4.7/I28 (review round 1): flag-on, in-place relabels run per-event STW.
     if (Options::useJSThreads()) [[unlikely]] {
@@ -3191,7 +3201,7 @@ ArrayStorage* JSObject::convertUndecidedToArrayStorage(VM& vm)
 
 ContiguousDoubles JSObject::convertInt32ToDouble(VM& vm)
 {
-    ASSERT(hasInt32(indexingType()));
+    ASSERT(hasInt32(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
     ASSERT(!isCopyOnWrite(indexingMode()));
 
     // §4.7/I28 (review round 1): flag-on, in-place relabels run per-event STW.
@@ -3228,7 +3238,7 @@ ContiguousDoubles JSObject::convertInt32ToDouble(VM& vm)
 
 ContiguousJSValues JSObject::convertInt32ToContiguous(VM& vm)
 {
-    ASSERT(hasInt32(indexingType()));
+    ASSERT(hasInt32(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
 
     // §4.7/I28 (review round 1): no lane rewrite (boxed Int32 lanes are valid
     // Contiguous lanes), but the structure publication on a possibly shared
@@ -3255,7 +3265,7 @@ ArrayStorage* JSObject::convertInt32ToArrayStorage(VM& vm, TransitionKind transi
     if (Options::useJSThreads()) [[unlikely]] // §4.6 stops (Task 8)
         return convertToArrayStorageConcurrent(vm, transition);
     DeferGC deferGC(vm);
-    ASSERT(hasInt32(indexingType()));
+    ASSERT(hasInt32(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
 
     unsigned vectorLength = this->butterfly()->vectorLength();
     ArrayStorage* newStorage = constructConvertedArrayStorageWithoutCopyingElements(vm, vectorLength);
@@ -3285,7 +3295,7 @@ ArrayStorage* JSObject::convertInt32ToArrayStorage(VM& vm)
 
 ContiguousJSValues JSObject::convertDoubleToContiguous(VM& vm)
 {
-    ASSERT(hasDouble(indexingType()));
+    ASSERT(hasDouble(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
     ASSERT(!isCopyOnWrite(indexingMode()));
 
     // §4.7/I28 (review round 1): flag-on, in-place relabels run per-event STW.
@@ -3325,7 +3335,7 @@ ArrayStorage* JSObject::convertDoubleToArrayStorage(VM& vm, TransitionKind trans
     if (Options::useJSThreads()) [[unlikely]] // §4.6 stops (Task 8)
         return convertToArrayStorageConcurrent(vm, transition);
     DeferGC deferGC(vm);
-    ASSERT(hasDouble(indexingType()));
+    ASSERT(hasDouble(indexingType()) || Options::useJSThreads()); // flag-on the caller's shape read may be stale: another thread owning this array can relabel it without a stop (T4-O); the concurrent drivers re-derive the source
 
     unsigned vectorLength = this->butterfly()->vectorLength();
     ArrayStorage* newStorage = constructConvertedArrayStorageWithoutCopyingElements(vm, vectorLength);
@@ -3592,79 +3602,31 @@ ArrayStorage* JSObject::convertToArrayStorageConcurrent(VM& vm, TransitionKind t
     }
 }
 
-// SPEC-objectmodel §4.7/I28 (review round 1): flag-on driver for the in-place
-// indexing-shape relabels. The legacy bodies rewrite every element lane of the
-// CURRENT storage in place (boxed JSValue <-> raw double) and then
-// setStructure - a lock-free reader walking the same storage mid-rewrite would
-// reinterpret a half-rewritten lane (type-confused pointer deref). Flag-on the
-// relabel therefore runs as a per-event §10.6 stop, mirroring
-// convertToArrayStorageConcurrent: plan + allocate (the target Structure)
-// OUTSIDE the stop (O4: the closure allocates nothing), re-verify + rewrite +
-// setStructure INSIDE it. Shared triggers (foreign tag, SW=1, segmented - the
-// I28 "Double-touching shape change on a shared object" case) fire BOTH TTL
-// sets (F2/I10b/I13); the tag owner does not fire (§5 per-object keying). The
-// butterfly word is untouched (I16; flat AND segmented words supported - the
-// segmented leg rewrites through the loaded spine's fragment slots), so no
-// nuke is needed; trySegmentedTransition's hasDouble(source)==hasDouble(target)
-// RELEASE_ASSERT relies on exactly this stop existing for segmented relabels.
+// SPEC-objectmodel §4.4 T4 / §4.7 / I28: flag-on driver for the indexing-shape
+// relabels (Undecided/Int32/Double source -> Int32/Double/Contiguous target).
+// Two legs. OWNER leg (T4-O, rev 17; history §25): a flat SW=0 word this
+// thread owns is relabelled without a stop — GIL-on all three typed rewrites
+// run in place (no other mutator of the VM can sit between its shape check and
+// its lane load: the GIL is handed off only inside calls), GIL-off only the
+// representation-preserving Int32->Contiguous does, an Int32->Double request is
+// executed as Int32->Contiguous, and an Undecided source (no readable lanes,
+// rev 16) is fine in either mode. The leg claims the StructureID lane first
+// (CAS to its nuked form): lock-free while both source TTL sets are valid (a
+// foreign locked writer must fire them in a stop first), otherwise under the
+// cell lock (foreign locked writers assert their own nuke CAS). STOP leg:
+// everything else (foreign thread, SW=1, segmented, GIL-off Double->Contiguous)
+// re-verifies, fires F2 for shared triggers and rewrites inside a per-event
+// stop, as before; the butterfly word is untouched in both legs (I16).
 void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
 {
     ASSERT(Options::useJSThreads());
     ASSERT(!isCopyOnWrite(indexingMode())); // Callers materialize first (ensureWritable / §4.8).
     auto* object = static_cast<JSObjectWithButterfly*>(this);
-    // DeferGCForAWhile, not DeferGC: this relabel runs under callers that are
-    // themselves inside an ObjectInitializationScope no-GC region
-    // (initializeIndex -> setIndexQuicklyToUndecided -> convertUndecidedTo*),
-    // and ~DeferGC's decrementDeferralDepthAndGCIfNeeded() would COLLECT at
-    // function exit while AssertNoGC is still in effect (Heap.cpp
-    // collectIfNecessaryOrDefer assertion). DeferGCForAWhile conducts the
-    // deferral past this scope; the deferred collection runs at the caller's
-    // next natural GC point. Allocation coverage is unchanged
-    // (Structure::nonPropertyTransition + the loop's transient allocations
-    // stay deferred).
+    // DeferGCForAWhile, not DeferGC: callers can be inside an
+    // ObjectInitializationScope (initializeIndex -> convertUndecidedTo*), and
+    // ~DeferGC would collect at exit while AssertNoGC is still in effect.
     DeferGCForAWhile deferGC(vm);
-
-    // T4-relabel-threadlocal-fastpath: WITHDRAWN at adversarial review.
-    //
-    // The proposed gate (TID==me ∧ SW=0 ∧ both TTL sets valid ⇒ no foreign
-    // observer ⇒ rewrite+publish without a stop) is UNSOUND. TTL semantics
-    // (Structure.h I11/I12) witness only foreign WRITES and foreign
-    // TRANSITIONS; a foreign READ of an indexed lane fires nothing and flips
-    // nothing, and publishing this array into a shared container is a store to
-    // the CONTAINER that touches neither this object's tag nor its Structure's
-    // TTL sets. So a (TID=owner, SW=0, TTL-valid) array can already be in a
-    // foreign thread's hands, being walked by getIndexQuicklyConcurrent —
-    // which performs no ownership check and no load-load fence between
-    // indexingType() and the lane load. An out-of-stop in-place
-    // Int32→Double / Double→Contiguous rewrite then lets that reader decode a
-    // raw-double bit pattern as a boxed JSValue (or vice-versa): type-confused
-    // pointer deref. This is the SAME undetectability the F3 flatten rationale
-    // already records verbatim ("read-only foreign sharing is undetectable …
-    // so no 'unshared' fast path is sound", Structure.h
-    // flattenDictionaryStructureUnderStop comment), and it is exactly the
-    // invariant the racer-settled early return in the loop below depends on
-    // ("If a future path ever publishes an indexing shape outside a stop, this
-    // return becomes unsafe"). The proposal additionally violated I29
-    // (allocation between gate and publish via nonPropertyTransition with no
-    // post-allocation re-validation; DeferGCForAWhile defers collection, not
-    // §10.6 stop participation).
-    //
-    // Do NOT re-propose a dynamic "thread-local" gate here. The only sound
-    // STW-elision route is a CALLER-THREADED proof of non-escape — not a
-    // heuristic on the object's own tag/TTL state. T1-relabel-stw-elide-sound
-    // (campaign-3) lands that route as: JSArray::fastSlice's segmented-source
-    // sub-leg allocates the result FLAT and already-typed (zero relabels — the
-    // result cell is provably in-frame). The earlier "~36/run, 0.003%" claim
-    // here was FALSIFIED on the campaign-3 SCALEBENCH Phase-B profile by ~3
-    // orders of magnitude (segmented .slice() sources drove ~75.9k relabel
-    // STWs/run via arrayProtoFuncSlice's generic-loop fallback); the fastSlice
-    // leg eliminates that family at its source and accounts for the entire
-    // measured win. A second leg — an explicit known-unshared overload for
-    // slice/from/of result-fill paths still inside ObjectInitializationScope —
-    // was drafted but DROPPED unwired at amendment review: with no caller, its
-    // non-escape contract was unverifiable. Any future such overload must land
-    // together with its call site and that site's non-escape proof. This loop
-    // remains the conservative path for every possibly-shared object.
+    const bool gilOff = vm.gilOff();
 
     while (true) {
         StructureID oldStructureID = this->structureIDConcurrently(); // RAW bits (M5).
@@ -3682,18 +3644,9 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
         // instead of planning a transition from an invalid source (which would
         // assert here in debug and type-confuse the lane rewrite in release).
         //
-        // The early return is sound without a local acquire fence ONLY because
-        // every flag-on indexing-shape publication happens inside a §10.6 stop
-        // (this relabel loop, convertToArrayStorageConcurrent, the CoW
-        // materialize install): this thread is an entered mutator, so it was
-        // parked for the racer's stop, and the park/resume handshake orders
-        // our loop-top structureID read above after the racer's fenced lane
-        // rewrite. The racer's storeStoreFence is store-side only and would
-        // NOT by itself provide that edge. r16: the Undecided owner fast
-        // path below DOES publish outside a stop, so the early return now
-        // carries an explicit load-load fence (below); its publications only
-        // ever move Undecided -> typed with hole/PNaN lanes, which is what a
-        // late reader of the typed shape must see anyway.
+        // The owner leg below publishes outside a stop, so the early return
+        // orders the caller's lane accesses after the structure read with an
+        // explicit load-load fence rather than through a park hand-shake.
         bool relabelStillNeeded;
         switch (transition) {
         case TransitionKind::AllocateInt32:
@@ -3711,71 +3664,98 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
             break;
         }
         if (!relabelStillNeeded) {
-            // Racer already settled the object at/past the target shape. With
-            // the Undecided owner fast path below a shape can now be published
-            // OUTSIDE a stop, so order the caller's lane accesses after the
-            // structure read explicitly rather than through a park hand-shake.
             WTF::loadLoadFence();
             return;
         }
         ASSERT(hasUndecided(sourceType) || hasInt32(sourceType) || hasDouble(sourceType));
 
+        // T4-O GIL-off: an Int32 array never gains raw-double lanes after it
+        // has admitted JSValue-keyed readers (history §25) - the request is
+        // served as Int32->Contiguous by every thread; callers store the
+        // incoming double boxed through their settled-shape re-dispatch.
+        TransitionKind effectiveTransition = transition;
+        if (gilOff && hasInt32(sourceType) && transition == TransitionKind::AllocateDouble)
+            effectiveTransition = TransitionKind::AllocateContiguous;
+
         PlannedPropertyTableSnapshot tableSnapshot(oldStructure); // Before the clone inside nonPropertyTransition.
         // Fired at the end of this iteration, after the stop below publishes
         // newStructure, so an adaptive watchpoint re-installs on it.
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-        Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, transition, &deferred);
+        Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, effectiveTransition, &deferred);
         IndexingType targetType = newStructure->indexingType();
         ASSERT(hasInt32(targetType) || hasDouble(targetType) || hasContiguous(targetType));
 
-        // ---- UNDECIDED-source owner fast path (r16). The withdrawn gate above
-        // is unsound because a foreign lock-free reader may be decoding the
-        // lanes being rewritten. An Undecided source has no readable lanes: no
-        // tier loads an element from an Undecided-shaped object (C++
-        // canGetIndexQuicklyConcurrent/tryGetIndexQuicklyConcurrent return
-        // "no"; the JIT's Undecided array modes read only the length; the
-        // marker visits no elements), so writing holes/PNaN into its vector
-        // and then publishing the typed shape cannot confuse a reader that
-        // still holds the Undecided structure, and one that loads the new
-        // structure sees lanes initialized before it (store-store fence). What
-        // must still be excluded is a concurrent TRANSITION of this object by
-        // another thread (a foreign relabel/put runs the stop or locked
-        // protocol and re-verifies the StructureID inside it) and a concurrent
-        // SW flip (its DCAS carries the StructureID lane): claim the lane first
-        // (CAS old -> nuked, N2-LF's participant argument), re-check the word,
-        // write, publish. Owner words only ((currentTID, 0), flat, storage
-        // present); no poll or allocation between claim and publish (I29;
-        // newStructure was derived above). This removes a stop-the-world from
-        // every first indexed store into a `new Array(n)` / species-created
-        // array once the Undecided shape's sets have fired process-wide.
-        if (hasUndecided(sourceType)) {
+        // ---- OWNER leg (T4-O). Which (source, target, mode) triples may skip
+        // the stop is the whole content of history §25; the predicate below is
+        // its verbatim form.
+        bool ownerLegAllowed = hasUndecided(sourceType) // no tier reads an Undecided lane (r16)
+            || !gilOff // GIL on: in-place rewrites are unobservable to other mutators
+            || (hasInt32(sourceType) && hasContiguous(targetType)); // GIL off: representation-preserving only
+        if (ownerLegAllowed) {
             uint64_t word = object->taggedButterflyWord();
             if ((word & butterflyPointerMask) && !isSegmentedButterfly(word) && butterflyWordOwnedByCurrentThread(word) && tableSnapshot.stillMatches(oldStructure)) {
-                AssertNoGC assertNoGC;
                 auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
-                if (idAtomic->compareExchangeStrong(oldStructureID.bits(), oldStructureID.nuke().bits()) == oldStructureID.bits()) {
+                // Claim, re-check, rewrite, publish. No poll or allocation inside
+                // (I29; newStructure was derived above). Returns false with
+                // nothing written when the claim is lost or the word moved.
+                auto claimRewritePublish = [&]() -> bool {
+                    AssertNoGC assertNoGC;
+                    if (idAtomic->compareExchangeStrong(oldStructureID.bits(), oldStructureID.nuke().bits()) != oldStructureID.bits())
+                        return false;
                     if (object->taggedButterflyWord() != word) {
                         // An SW flip / install landed between the word load and
-                        // the claim: un-claim and take the general path.
+                        // the claim: un-claim; the stop leg re-plans.
                         idAtomic->store(oldStructureID.bits());
-                    } else {
-                        Butterfly* flat = untaggedButterfly(word);
-                        unsigned vectorLength = flat->vectorLength();
-                        for (unsigned i = 0; i < vectorLength; ++i) {
-                            uint64_t* lane = std::bit_cast<uint64_t*>(flat->indexingPayload<double>() + i);
+                        return false;
+                    }
+                    Butterfly* flat = untaggedButterfly(word);
+                    unsigned vectorLength = flat->vectorLength();
+                    for (unsigned i = 0; i < vectorLength; ++i) {
+                        uint64_t* lane = std::bit_cast<uint64_t*>(flat->indexingPayload<double>() + i);
+                        if (hasUndecided(sourceType)) {
                             if (hasDouble(targetType))
                                 *std::bit_cast<double*>(lane) = PNaN;
                             else
                                 *lane = JSValue::encode(JSValue());
+                            continue;
                         }
-                        WTF::storeStoreFence(); // Lanes before the type publish.
-                        setStructure(vm, newStructure); // Un-nukes: publishes the typed shape last (M5).
-                        vm.writeBarrier(this);
-                        return;
+                        if (hasInt32(sourceType)) {
+                            if (hasDouble(targetType)) {
+                                ASSERT(!gilOff);
+                                JSValue v = JSValue::decode(*lane);
+                                *std::bit_cast<double*>(lane) = v.isInt32() ? v.asInt32() : PNaN; // mid-initialization garbage becomes a hole, as flag-off
+                            }
+                            continue; // Int32 -> Contiguous: nothing to rewrite.
+                        }
+                        ASSERT(hasDouble(sourceType) && hasContiguous(targetType) && !gilOff);
+                        double d = *std::bit_cast<double*>(lane);
+                        *lane = d == d ? JSValue::encode(JSValue(JSValue::EncodeAsDouble, d)) : JSValue::encode(JSValue());
                     }
+                    WTF::storeStoreFence(); // Lanes before the type publish.
+                    setStructure(vm, newStructure); // Un-nukes: publishes the target shape last (M5).
+                    return true;
+                };
+                bool published;
+                if (oldStructure->transitionThreadLocalIsStillValid() && oldStructure->writeThreadLocalIsStillValid()) {
+                    // Sets valid by fresh loads in this poll-free window: every
+                    // foreign locked writer of this lane fires them in a stop
+                    // first, and this thread is not parked (I29/I38 argument).
+                    published = claimRewritePublish();
+                } else {
+                    // Sets dead: foreign cell-locked writers (§4.2/§4.3 step 5)
+                    // are un-excluded racers on the ID lane and assert their
+                    // nuke CAS; serialize with them on the cell lock. Still no
+                    // stop; nothing allocates or parks under the lock (O1/O2).
+                    Locker locker { object->cellLock() };
+                    published = this->structureIDConcurrently() == oldStructureID && claimRewritePublish();
                 }
-                // Lost the claim (a racing publication holds the lane): fall
-                // through to the stop, which re-plans on the settled state.
+                if (published) {
+                    vm.writeBarrier(this);
+                    return;
+                }
+                if (this->structureIDConcurrently() != oldStructureID)
+                    continue; // Lost to a racing transition: re-plan on the settled state.
+                // The word moved (SW flip / install): fall through to the stop leg.
             }
         }
 
@@ -3795,7 +3775,7 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
             bool shared = segmented || butterflySharedWrite(word) || butterflyTID(word) != currentButterflyTID();
 
             // ---- F2 (I10b/I13): shared triggers fire BOTH sets on source and
-            // target in this same stop (chain-fired per F4 inside).
+            // target in this same stop.
             if (shared) {
                 if (oldStructure->transitionThreadLocalIsStillValid() || oldStructure->writeThreadLocalIsStillValid())
                     oldStructure->fireTransitionThreadLocal(vm, "F2: shared in-place indexing-shape relabel (§4.7/I28)");
@@ -7485,6 +7465,11 @@ void JSObject::reallocateAndShrinkButterfly(VM& vm, unsigned length)
     // Flag-on, this site returned early into shrinkButterflyForSetLengthConcurrent
     // (Task 8: casButterfly form, I17); this is the flag-off path only (I22).
     butterflyRef().set(vm, this, newButterfly);
+}
+
+bool JSObject::tryCompleteCachedTransitionConcurrent(VM& vm, Structure* expectedSource, Structure* newStructure, PropertyOffset offset, JSValue value)
+{
+    return tryPutDirectTransitionConcurrent(vm, expectedSource, expectedSource->id(), newStructure, offset, value);
 }
 
 Butterfly* JSObject::allocateMoreOutOfLineStorage(VM& vm, size_t oldSize, size_t newSize)

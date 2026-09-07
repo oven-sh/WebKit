@@ -7484,6 +7484,14 @@ public:
         m_assembler.movq_mr(static_cast<uint32_t>(static_cast<int32_t>(offset)), dst);
     }
 
+    // dst ^= the 64-bit thread-local at `offset` (fs-relative), no scratch.
+    void xorFromELFTLS64(intptr_t offset, RegisterID dst)
+    {
+        RELEASE_ASSERT(offset == static_cast<intptr_t>(static_cast<int32_t>(offset)));
+        m_assembler.fs();
+        m_assembler.xorq_mr(static_cast<uint32_t>(static_cast<int32_t>(offset)), dst);
+    }
+
     static bool loadFromELFTLS64NeedsMacroScratchRegister()
     {
         return false;

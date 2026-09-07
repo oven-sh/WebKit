@@ -1222,3 +1222,305 @@ StructureID lane claimed by the caller, no copy hazard), so the assertion
 admits payload-free words of any owner and the install stamps the installer
 as owner, exactly what the pre-r16 code did with a zero word. Found by the
 mirror harness on the final tree; `objectmodel/foreign-first-outofline-add-on-dictionary.js`.
+
+## §25. Rev 17 (sixth landing round): T4-O — owner relabels of typed indexing shapes without a stop
+
+Measured on JetStream 2 with the flag on and the GIL on, one thread:
+`stanford-crypto-pbkdf2` and `-sha256` at 0.37-0.40 of flag-off, `Air`
+0.67, `ai-astar` 0.66. These build small arrays whose indexing shape moves
+after birth (sjcl's bit arrays are Int32 words with one large double pushed
+at the end; the others push objects into `[]`), and rev 16 left every relabel
+whose SOURCE has readable lanes — Int32->Double, Int32->Contiguous,
+Double->Contiguous — a per-event stop-the-world even for the array's owner
+with no second thread in the process. Only the Undecided-source case had been
+made stop-free (§24.5), by the argument that no tier reads a lane of an
+Undecided-shaped object. This revision extends the owner leg to the three
+typed sources. The argument differs by GIL mode, so the rule does too.
+
+**The reader model that constrains it.** Every tier's indexed fast path is
+"check the shape (structure ID or indexing byte in the header), load the
+butterfly word, bounds-check against that butterfly, load the lane", with
+nothing after the lane load; the check and the word load are two separate
+loads, and GIL off the DFG may hoist the shape check across polls (it is
+re-validated only by the stop-driven epoch/jettison mechanism; the butterfly
+word is re-loaded per poll window). A reader on another thread can therefore
+pair a shape it validated arbitrarily long ago with the butterfly word that is
+current now. Two things follow for any stop-free relabel whose source has
+readable lanes. (1) An in-place rewrite of lane REPRESENTATION (boxed Int32
+<-> raw double, raw double -> boxed) under such a reader is type confusion in
+both directions: a raw double read as a JSValue can be any bit pattern
+(positive denormals decode as cell pointers), and a boxed Int32 read as a
+double is an impure NaN, which the DFG's sane-chain double loads box without
+purification. (2) A COPY-convert — new butterfly B' with the converted lanes,
+old B never written again — does not rescue the JSValue-keyed reader either:
+whichever of {header, word} is stored first, and even if both are published
+by one 128-bit DCAS, a reader that checked Int32 before the publication and
+loads the word after it holds (Int32, B') and decodes raw doubles as
+JSValues. What copy-convert does buy is that a reader who already HOLDS B
+keeps a frozen, representation-consistent butterfly, and that the only
+inconsistent pair is (old shape, new storage); with word-first publication a
+Double->Contiguous copy-convert lets a stale Double-keyed reader misread a
+boxed lane only as a double — but the Int32->Double direction has no safe
+order, because there the stale reader is the JSValue-keyed one. Making every
+pair consistent needs the READER to bracket the word load with two shape
+loads (check, load word, re-check) in every tier plus an atomic {header,
+word} publication; that is a possible later revision (it would also make
+Double conversions stop-free GIL off) and is recorded, not adopted, here.
+
+**GIL on.** None of the above applies. The phase-1 GIL is handed off only
+inside blocking primitives (api §5.2), which are calls; no tier keeps a shape
+fact, a butterfly pointer or an open IC window across a call (stock
+re-entrancy discipline: the callee may run arbitrary JS), and C++ code that
+calls out to JS re-derives array state afterwards for the same reason. So no
+other mutator of the VM is between its shape check and its lane load while
+this thread rewrites lanes, exactly the argument SPEC-jit I21 (GIL on) makes
+for polls. The concurrent marker and the compiler threads are the stock
+participants and the stock in-place bodies are already correct against them
+(the marker brackets its butterfly visit with two structure checks and never
+value-visits Int32/Double lanes). What remains is the object-model
+bookkeeping: exclusion against a concurrent TRANSITION of the same object by
+a thread that is parked mid-protocol (none can be: locked protocols do not
+park, O2) and the F2 rule (a foreign relabel must still fire the source's
+sets, which needs a stop). Rule, GIL on: the OWNER of a flat SW=0 word
+(tag == (currentTID, 0), storage present, not CoW) relabels Int32->Double,
+Int32->Contiguous and Double->Contiguous IN PLACE with the flag-off lane
+bodies, claim-first (below), no stop. Foreign, SW=1 and segmented objects
+keep the stop (F2 / I28).
+
+**GIL off.** By (1)-(2), a source with readable lanes admits a stop-free
+relabel only if the lanes keep their representation: Int32->Contiguous (boxed
+Int32 lanes are valid Contiguous lanes; flag-off already does it as a bare
+structure change). Rule, GIL off: the owner of a flat SW=0 word relabels
+Int32->Contiguous in place, claim-first, no stop; an Int32->Double request
+(owner or foreign) is EXECUTED AS Int32->Contiguous GIL off (the incoming
+double is stored boxed; the array never acquires raw-double lanes after
+having admitted JSValue-keyed readers; allocation profiles converge on
+Contiguous for such sites as they converge on Double flag-off);
+Double->Contiguous keeps the per-event stop; Undecided->X stays as rev 16.
+The cost of the rule is that Int32-then-double arrays are Contiguous rather
+than Double GIL off — boxed doubles instead of raw ones in optimized code —
+against a stop-the-world per array today.
+
+What a stale Int32-keyed reader can now observe GIL off is a non-Int32
+JSValue in a lane (the owner's later Contiguous stores into the same
+butterfly), never a non-JSValue. Consequences, each handled: (a) DFG/FTL
+`GetByVal`/`ArrayPop` in Int32 array mode type their result Int32 without a
+check flag-off; GIL off they verify `isInt32` and exit (BadType) — without it
+a cell's low 32 bits would surface as an integer (an address leak, not memory
+corruption, but not a value anyone wrote). (b) C++ readers that switch on
+Int32 shape and call `asInt32()` on a lane test `isInt32()` flag-on and take
+their generic path otherwise (the quickly-family, `join`/`toString`,
+typed-array `set` from an Int32-shaped array, `String.raw`-style walkers).
+(c) C++ COPY paths that memcpy lanes out of an Int32-shaped source into a
+fresh Int32-LABELLED result (`fastSlice`, `appendMemcpy` for
+concat/unshift/spread, `JSImmutableButterfly::createFromArray`,
+`toReversed`/`with`/`toSpliced`, `Array.from`'s fast path) would turn the
+stale observation into a mislabelled array — an Int32-shaped butterfly
+holding a cell, which the marker does not visit: a GC hole. GIL off those
+paths memcpy only from a source the calling thread OWNS (only the owner
+relabels stop-free, so an owned source cannot change shape under its owner);
+a foreign-owned Int32 source is copied lane by lane with an `isInt32` check
+and demotes the result to Contiguous (or takes the generic path) on the
+first non-Int32 lane. The DFG's inline `ArraySlice` labels its result
+Contiguous GIL off when the source mode is Int32. (d) Defense in depth for
+(c): GIL off the marker value-visits Int32-shaped lanes as it does Contiguous
+ones (they are valid JSValues; the cost is marking time proportional to live
+Int32 arrays, GIL off only), so a copy site missed by the audit degrades to a
+mislabel (caught by (a)/(b)) instead of a use-after-free. (e) Foreign inline
+WRITERS need SW=1, and the owner leg requires SW=0 after its claim: a flip
+that lands before the claim sends the owner to the stop path, a flip after
+the publication pairs with the new shape; a foreign writer with a stale
+Int32 check stores an Int32, valid in Contiguous storage. No foreign writer
+can hold a stale Double check across an owner's stop-free relabel, because
+GIL off no stop-free relabel leaves or enters Double from a readable source.
+
+**Claim-first, and the exclusion the r16 leg was missing.** The owner leg
+publishes by: CAS StructureID S -> nuked(S); re-load the word and require it
+unchanged (still (currentTID, 0), same payload: an SW flip or install that
+landed before the claim un-claims and takes the stop path); rewrite lanes
+(GIL on) or nothing (GIL off Int32->Contiguous); storeStoreFence; store S'
+(un-nukes; header byte follows). Reading the locked protocols again for this
+revision found that the claim alone does not exclude every foreign locked
+writer: §4.2 step 5 / §4.3 step 5 CAS S -> nuked(S) under the cell lock and
+RELEASE_ASSERT success, on the argument that an owner lock-free writer exists
+only while the source's sets are valid and a foreign locked window opens only
+after those sets were fired in a stop. The r16 Undecided leg claimed without
+consulting the sets, so with the sets ALREADY dead a foreign thread's locked
+out-of-line add on the same array (no stop needed) could read S at step 3 and
+lose its step-5 CAS to the owner's claim — an abort on a legal program
+(narrow: the two CASes must interleave inside the foreign thread's locked
+window; not observed). Rev 17 closes it for the whole owner leg the way the
+AB18-S3 first-install leg already does: the owner claims LOCK-FREE only when
+both source sets are valid by fresh loads in the poll-free window (then every
+foreign locked window is preceded by a stop this thread is not parked in),
+and otherwise takes the CELL LOCK around claim, re-check, rewrite and
+publish (still no stop; allocation of S' happens before the lock, O1; the
+window does not park, O2). Under the lock the ID lane is this thread's by
+the existing L1 argument, so the locked writers' assertion stands unchanged.
+Lock-free participants against either form: the SW-flip DCAS expects an
+un-nuked header and re-dispatches on a nuked one (already so); N2-LF/E4
+emitters are the owner itself; the marker treats a nuked ID as didRace.
+
+**PreciseAllocation cells** are not excluded (the claim is a 32-bit CAS, legal
+on PA; nothing here uses the 16-byte DCAS). **CopyOnWrite** sources are
+materialized first by the callers, as before. The structure-transition
+watchpoint of a non-array source structure S still fires through the
+deferred fire after publication (a Class-A stop the first time S transitions,
+as for any transition; original array structures are born invalidated).
+
+**In-place growth of large butterflies (same revision).** Flag-off, a
+butterfly backed by a PreciseAllocation with no out-of-line properties grows
+by reallocating that allocation, which may move it and frees the old block at
+once; flag-on this was disabled outright (M8 note) because a stale reader on
+another thread may still be loading from the old block. GIL on there is no
+such reader (same argument as above; a parked thread's frames hold no live
+butterfly pointer across the call it is parked in, and a stale copy in a dead
+register is only a conservative-root false positive, never dereferenced), so
+the flag-off rule is restored when the VM's GIL is on and the heap's fenced-
+mutator mode is off (it is forced on for a shared collector, which keeps GIL
+off excluded without a second test). GIL off keeps fresh-allocation growth;
+reallocating in place there needs the old block quarantined to the next stop,
+like the typed-array transfer quarantine, and is not done.
+
+## §26. Rev 17: claim-first everywhere — owner transitions survive the F2 fire (E4-C), megamorphic transitions
+
+Measured: one object of shape `{a,b}` created by the main thread and given a
+third property by another thread made the main thread's own
+`{} .a .b .c .d` loop 20x slower from then on (31 -> 619 ms for 2M
+iterations, GIL on; 6.6x on an eight-add loop). §24 recorded why: F2 is per
+structure — the fire retires E4 (claim-free owner transitions) for the source
+and target shapes on every thread, and rev 12-16 gave a fired structure no
+owner leg at all, so every later transition of every object of those shapes,
+including the thread-private ones, took the cell-locked C++ protocol, and no
+tier cached it.
+
+What the fire is for, exactly. E4's owner window (C++ E4 leg, the inline
+caches' butterfly-bearing leg, DFG `CheckTransitionOwner` .. `PutStructure`)
+writes the new slot and then the StructureID WITHOUT claiming the lane. A
+foreign cell-locked writer adding a different property at the same offset
+would interleave with it (both store slot k, both publish; one add lost or one
+name paired with the other's value — I21). The fire excludes that: while the
+sets are valid a foreign writer must stop the world first, the owner is never
+parked inside its poll-free window, and the stop retires every emitter
+watching S. This is a MODE SWITCH for S, and it has to stay (making every
+owner window claim would cost a locked RMW per add on the fastest path;
+inline adds in the caches already pay it, DFG-inlined adds do not). What does
+not have to stay is the post-fire regime. After the fire, exclusion between an
+owner and a foreign writer of the same object can come from the StructureID
+lane itself, provided BOTH sides claim it (CAS S -> nuked(S)) before writing
+anything another claimant can reach: the loser's CAS fails, it has written
+nothing shared, and it re-plans on the winner's structure. Rev 15's N2-LF
+already had this shape for butterfly-less owner adds; two things were
+missing.
+
+(1) The cell-locked writers stored the value BEFORE their nuke CAS (§4.3 step
+4 then 5; locked N2 "release-store the inline value first") and asserted the
+CAS. Value-first is harmless against other LOCKED writers (the lock orders
+them) and against claim-free owners (excluded by the fire), but not against a
+lock-free claimant: owner claims, stores p's value at k, foreign (planned on S
+before the claim) stores q's value at k, foreign's CAS fails — and k now holds
+q's value under S+p. Rev 17 reorders every locked writer whose step-4 target
+is storage a lock-free claimant can reach: locked N2 (inline slot) and §4.3's
+stay-flat legs (existing out-of-line slot) claim first, then store, then
+publish from the nuked header; §4.2's conversion and §4.3's fresh-storage legs
+already wrote only private memory before the claim. And a lost claim under
+the lock is now RESTART, not an assertion (§4.2 step 5, §4.3 step 5, the CoW
+materializer; the AS paths keep the assertion — no lock-free leg admits an
+ArrayStorage source).
+
+(2) The owner had no claim-first leg once the sets were dead. E4-C: owner tag
+(currentTID, SW=0), not PreciseAllocation, source neither ArrayStorage nor
+copy-on-write, not a dictionary => allocate the grown butterfly if any (a
+poll: re-read structureID and word after it), CAS S -> nuked(S) (failure:
+RESTART, nothing written), re-check the word (an SW flip or install between
+the load and the claim un-claims and RESTARTs), store the value (inline slot,
+existing out-of-line slot, or the private grown copy then casButterfly),
+storeStoreFence, store S'. This is E4's publication order (M5: nuke, word,
+ID) with the nuke turned into the claim, and N2-LF's participant argument
+(history §23) with "sets valid" replaced by "every other writer of this lane
+claims first": foreign locked writers (now claim-first, (1)); foreign SW flips
+(DCAS on the un-nuked header: fail against the claim, or land before it and
+fail the owner's word re-check / owner test); foreign first installs (N3,
+claim-first since AB18-S3); the marker (nuked => didRace); other owner legs
+(same thread). PA cells stay excluded for uniformity with E4 (their
+publication uses the fenced byte-lane order, not touched here).
+
+The instance a foreign thread transitions is marked exactly as before — its
+word goes SW=1 (stay-flat-shared) or segmented — and that mark is what sends
+ITS owner to the locked path from then on (the owner test includes SW=0 and
+not-segmented). So F2 keeps its one stop per structure, and its lasting
+effect shrinks from "S is locked for everyone" to "S's owners claim instead
+of storing plain; the shared instances are locked". Measured after: the loop
+above 619 -> 88 ms, 2.8x its pre-fire time; the residue is the DFG planting the IC instead of its inline transition once the sets are dead (PERF-RESULTS §1.2).
+
+JIT (jit §5.5 Transition row, history §30 there): the inline caches'
+butterfly-bearing leg now claims like the butterfly-less one, so a cached
+transition no longer watches the four thread-local sets and keeps working
+after a fire; `tryCachePutBy` stops refusing fired sources. DFG/FTL inline
+transitions are unchanged (claim-free, four watched sets); when the sets are
+dead the put is planted as a generic `PutById`, whose IC caches the claimed
+form. The megamorphic store cache, re-enabled GIL-on this revision (§25's
+companion in jit history §30), fills transition entries again: its probe
+cannot watch per-structure sets, and does not need to — its transition arm is
+the same claimed form with runtime refusals for PreciseAllocation,
+copy-on-write and ArrayStorage instances.
+
+Addendum (same round). Two further consequences of "the lane, not the sets,
+excludes foreign writers once claimed": (a) the (re)allocating transition -
+grown out-of-line storage installed by the owner - got its JIT forms (jit
+history §31): claim-first in the inline caches, where the only new step is a
+word re-check under the claim because the grown storage is copied from the
+old one before the claim and a foreign first write landing in between would
+otherwise be lost; E4's plain order in DFG/FTL under the watched sets. (b) The
+`convert*` family's entry assertions (`ASSERT(hasInt32(indexingType()))` and
+kin) tolerate the flag: a foreign thread arrayifying an object between its
+own shape read and the call can now observe the OWNER's stop-free T4-O
+relabel in between (before r17 every relabel it could race with was a stop);
+the concurrent drivers re-derive the source shape and treat "already there"
+as done.
+
+### §26 addendum 1b - two aliasing holes in the first cut of E4-C (sixth round; found by the Release mirror pass)
+
+(a) E4-C's growth path called `allocateMoreOutOfLineStorage`, which re-loads
+the butterfly word and asserts it flat; with the sets dead a foreign locked
+writer may segment the object at any moment, so the re-load could see a
+segmented word (release assert, `stress/regress-187060.js` and two more under
+the harness). Growth now copies from the SNAPSHOT word the leg dispatched on
+(`Butterfly::createOrGrowPropertyStorage` on the untagged snapshot); a copy
+taken from storage that is meanwhile replaced is discarded by the word
+re-check under the claim, as the (re)allocating inline-cache form does. (b)
+§4.2's conversion stored the trigger's value into the fragment slot (step 4)
+BEFORE its nuke CAS (step 5). Fragments alias the live flat butterfly (I7),
+and the owner's claim-first legs write that butterfly until they lose the
+lane; with the old order an owner add that won the lane after the foreign
+store but before the foreign claim wrote its own value over an aliased slot
+the foreign thread then re-derived differently on RESTART - observed as
+`o.g` reading the foreign thread's `o.f` value. Step 4 now runs after the
+claim (spec §4.2). `objectmodel/e4c-growth-vs-foreign-segmentation.js`: 6
+of 6 before, 0 of 10 after, also with the JITs off. Both holes were
+introduced by this revision's first cut, not by r16.
+
+### §26 addendum 2 - GIL off, the Int32->Contiguous substitution makes sites polymorphic (sixth round, final pass; OPEN)
+
+Recorded, not changed. T4-O (§25) serves a GIL-off Int32->Double request as
+Int32->Contiguous. The final JetStream pass found its cost on code that ALSO
+has Double arrays from other sources - double-valued array literals
+(copy-on-write Double, materialized on first write) and `slice`/`concat`
+results of them: one use site then sees Double AND Contiguous arrays, the DFG
+profiles both, plants Arrayify(Contiguous), and every Double array reaching
+it is converted Double->Contiguous - which GIL off is the per-array stop T4
+keeps (a stale Double-keyed `InBoundsSaneChain` reader over JSValue lanes
+would box an impure NaN). `stanford-crypto-aes` GIL off went from 249 (fifth
+round: every relabel a stop, but shapes consistent) to 80-90, with 40 % of
+its samples in the stop conductor; `pbkdf2`/`sha256` GIL off went the other
+way (150 -> 520) because their arrays all grow from Int32. Serving
+Undecided->Double as ->Contiguous as well was tried and measured (+10 %, the
+Double arrays here do not come from growth) and not kept. The fix candidates,
+next round: (a) GIL off, every copy INTO FRESH storage from a Double source
+(copy-on-write materialization, `slice`, `concat`, `splice` results) produces
+Contiguous (boxing during the copy is free of the stale-reader hazard: the
+storage is new), so writable Double arrays GIL off come only from profiled
+JIT allocations, which follow the profile to Contiguous once the site has
+seen one; or (b) a validated (structure re-checked after the load) Double
+read in every tier GIL off, which would let Double->Contiguous publish a
+fresh boxed butterfly without a stop.

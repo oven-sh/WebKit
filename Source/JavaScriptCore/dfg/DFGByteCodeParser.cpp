@@ -8011,7 +8011,15 @@ void ByteCodeParser::handlePutById(
                     continue;
                 Structure* source = variant.oldStructureForTransition();
                 Structure* target = variant.newStructure();
-                if (variant.reallocatesStorage() || hasAnyArrayStorage(source->indexingType())
+                // GIL-off a (re)allocating variant stays out of MultiPutByOffset:
+                // its allocation can park mid-node, a fire during that park
+                // cannot retire the node before its install, and the plain
+                // install is only sound with no fire since the owner check
+                // (the single-variant form plants an InvalidationPoint between
+                // allocation and install instead). GIL-on nothing fires while
+                // this thread allocates.
+                if (hasAnyArrayStorage(source->indexingType()) || isCopyOnWrite(source->indexingMode())
+                    || (variant.reallocatesStorage() && !Options::useThreadGIL())
                     || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(source)
                     || !m_graph.watchpoints().considerButterflyWriteThreadLocal(source)
                     || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(target)
@@ -8061,17 +8069,19 @@ void ByteCodeParser::handlePutById(
         bool needsTransitionOwnerCheck = false;
         if (Options::useJSThreads()) [[unlikely]] {
             // SPEC-jit §5.5 Transition (DFG form): inline only the
-            // non-reallocating transition from a non-ArrayStorage source
+            // transition from a non-ArrayStorage, non-copy-on-write source
             // whose four thread-local sets this plan can watch (source and
             // target, transition- and write-thread-local); the runtime owner
             // legs become a CheckTransitionOwner before the PutByOffset, and
             // PutStructure carries the N2-LF publication. Everything else goes
             // through the generic PutById (R3), whose C++ paths run the OM
-            // protocols. A reallocating transition installs a butterfly, which
-            // flag-on is a tagged-word protocol of its own: not inlined.
+            // protocols. A (re)allocating transition installs a butterfly:
+            // flag-on NukeStructureAndSetButterfly is the claim-first tagged
+            // install and is planted BEFORE the PutByOffset (below), so its
+            // failures are exits with nothing observable written.
             Structure* source = variant.oldStructureForTransition();
             Structure* target = variant.newStructure();
-            if (variant.reallocatesStorage() || hasAnyArrayStorage(source->indexingType())
+            if (hasAnyArrayStorage(source->indexingType()) || isCopyOnWrite(source->indexingMode())
                 || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(source)
                 || !m_graph.watchpoints().considerButterflyWriteThreadLocal(source)
                 || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(target)
@@ -8136,7 +8146,19 @@ void ByteCodeParser::handlePutById(
             Edge(propertyStorage, KnownStorageUse),
             Edge(unwrapped),
             Edge(value));
-        
+
+        // Flag-on (SPEC-jit §5.5 Transition, (re)allocating form): the value
+        // store above went into the fresh, unpublished storage (it does not
+        // clobber exit state and never exits), and everything that can park -
+        // the allocation, a sunk allocation's materialization for the value -
+        // is behind us; an InvalidationPoint HERE retires this code if a
+        // watched thread-local set fired during any of those parks, and from it
+        // to PutStructure nothing polls, allocates or exits, so the install is
+        // E4's plain order (nuke, tagged word, then PutStructure) and no
+        // collection can observe the nuked header.
+        if (variant.reallocatesStorage() && Options::useJSThreads()) [[unlikely]]
+            addToGraph(InvalidationPoint);
+
         if (variant.reallocatesStorage())
             addToGraph(NukeStructureAndSetButterfly, Edge(unwrapped), Edge(propertyStorage, KnownStorageUse));
 

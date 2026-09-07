@@ -6347,10 +6347,20 @@ void Heap::noteSharedServerSticky() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         // that holder is then a correct release, not a lost poison.
         m_worldState.exchangeOr(hasAccessBit);
 
-        // §10B.5 (T5b): always-fenced once shared — raise the fence at the
-        // flip so the very first multi-mutator window is fenced even before
-        // the first conducted cycle's beginMarking().
-        setMutatorShouldBeFenced(true);
+        // §10B.5 (T5b): raise the fence at the flip where it is load-bearing
+        // before the first conducted cycle's beginMarking(): weakly-ordered
+        // targets (allocation-publication ordering) and GIL-off concurrent
+        // shared marking (JIT code reads the server flag) -
+        // setMutatorShouldBeFenced() keeps it raised in exactly those
+        // configurations whatever value is passed (ISS is already set above).
+        // Elsewhere (x86, marking inside the stop) the flag only orders barrier
+        // stores against CONCURRENT marking; none is running at the flip
+        // (attach quiescence) and beginMarking() raises it, so the legacy idle
+        // value is kept: raising it here made every write barrier take the
+        // fenced slow path until the first collection ended (sixth round:
+        // 2.2x on a put loop that never collects, GIL off).
+        ASSERT(isSharedServer());
+        setMutatorShouldBeFenced(m_mutatorShouldBeFenced);
     }
 }
 

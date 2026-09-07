@@ -232,6 +232,16 @@ void AssemblyHelpers::loadButterflyTIDTag(GPRReg destGPR)
 #endif
 }
 
+void AssemblyHelpers::xorButterflyTIDTagInPlace(GPRReg destGPR)
+{
+#if OS(LINUX) && CPU(X86_64)
+    xorFromELFTLS64(butterflyTIDTagELFTLSOffset(), destGPR);
+#else
+    UNUSED_PARAM(destGPR);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
 // Task-8 (SPEC-objectmodel §2.1): see the declaration's comment. Kept
 // out-of-line so AssemblyHelpers.h doesn't need ConcurrentButterflyOperations.h.
 void AssemblyHelpers::emitTagInstalledButterflyWithTID(GPRReg resultGPR, GPRReg storageGPR, GPRReg scratchGPR)
@@ -670,16 +680,93 @@ void AssemblyHelpers::storeProperty(GPRReg value, GPRReg object, GPRReg offset, 
     storeValue(value, BaseIndex(scratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 }
 
+void AssemblyHelpers::loadPropertyTagged(GPRReg object, GPRReg offset, JSValueRegs result, GPRReg storageScratch, JumpList& slowCases)
+{
+    ASSERT(Options::useJSThreads());
+    ASSERT(noOverlap(offset, result));
+    ASSERT(storageScratch != object && storageScratch != offset);
+    // `result` is written only by the final load: in the data-IC handlers it
+    // aliases handlerGPR, which the slow (fall-through) path still needs.
+    Jump isInline = branch32(LessThan, offset, TrustedImm32(firstOutOfLineOffset));
+
+    load64(Address(object, JSObject::butterflyOffset()), storageScratch);
+    // Segmented (top 16 bits all ones) and shared-written (bit 63) words both
+    // compare as negative: one signed test sends them to the generic path.
+    // Segmented needs the dependent spine load; SW=1 is refused conservatively
+    // (an SW=1 ArrayStorage-shaped object's storage is cell-locked, I31, and
+    // no register is free here for the shape test - CCallHelpers::
+    // loadButterflyForRead's no-scratch form makes the same choice).
+    slowCases.append(branchTest64(Signed, storageScratch, storageScratch));
+    and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), storageScratch);
+    neg32(offset);
+    signExtend32ToPtr(offset, offset);
+    Jump ready = jump();
+
+    isInline.link(this);
+    addPtr(
+        TrustedImm32(
+            static_cast<int32_t>(JSObject::offsetOfInlineStorage()) -
+            (static_cast<int32_t>(firstOutOfLineOffset) - 2) * static_cast<int32_t>(sizeof(EncodedJSValue))),
+        object, storageScratch);
+
+    ready.link(this);
+
+    loadValue(
+        BaseIndex(
+            storageScratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)),
+        result);
+}
+
+void AssemblyHelpers::storePropertyTagged(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg scratch2, JumpList& slowCases)
+{
+    ASSERT(Options::useJSThreads());
+    ASSERT(noOverlap(offset, scratch));
+    ASSERT(noOverlap(value, scratch));
+    ASSERT(scratch != object && scratch2 != object && scratch2 != scratch && scratch2 != offset && noOverlap(value, scratch2));
+    Jump isInline = branch32(LessThan, offset, TrustedImm32(firstOutOfLineOffset));
+
+    load64(Address(object, JSObject::butterflyOffset()), scratch);
+    slowCases.append(branch64(AboveOrEqual, scratch, TrustedImm64(static_cast<int64_t>(butterflyTagMask)))); // segmented
+    // Write predicate (SPEC-jit §5.5 Write row): (2) owner tag => store;
+    // (3) foreign SW=1 and not ArrayStorage => store; else slow (the generic
+    // put fires F1 / flips SW / takes the AS lock as needed).
+    loadButterflyTIDTag(scratch2);
+    xor64(scratch, scratch2);
+    Jump owner = branch64(Below, scratch2, TrustedImm64(static_cast<int64_t>(1ULL << butterflyTIDShift)));
+    slowCases.append(branchTest64(PositiveOrZero, scratch, scratch)); // foreign, SW=0
+    load8(Address(object, JSCell::indexingTypeAndMiscOffset()), scratch2);
+    and32(TrustedImm32(IndexingShapeMask), scratch2);
+    sub32(TrustedImm32(ArrayStorageShape), scratch2);
+    slowCases.append(branch32(BelowOrEqual, scratch2, TrustedImm32(SlowPutArrayStorageShape - ArrayStorageShape)));
+    owner.link(this);
+    and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), scratch);
+    neg32(offset);
+    signExtend32ToPtr(offset, offset);
+    Jump ready = jump();
+
+    isInline.link(this);
+    addPtr(
+        TrustedImm32(
+            static_cast<int32_t>(JSObject::offsetOfInlineStorage()) -
+            (static_cast<int32_t>(firstOutOfLineOffset) - 2) * static_cast<int32_t>(sizeof(EncodedJSValue))),
+        object, scratch);
+
+    ready.link(this);
+
+    storeValue(value, BaseIndex(scratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+}
+
 template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
 AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     using Entry = MegamorphicCache::LoadEntry;
-    if (Options::useJSThreads()) [[unlikely]] {
-        // SPEC-jit section 5.5 (Task 8): the megamorphic fast path reads the
-        // VM-global MegamorphicCache without synchronization and dereferences
-        // the butterfly without the TID/SW predicate; flag-on every
-        // megamorphic access defers to the generic operation (Task 8
-        // inventory; revisit with vmstate's shared-cache story).
+    if (MegamorphicCache::disabledForProcess()) [[unlikely]] {
+        // GIL-off: the VM-global MegamorphicCache is unusable by N unsynchronized
+        // mutators (torn multi-word entries, the entries' RefPtr uid); every
+        // megamorphic access defers to the generic operation until a per-thread
+        // cache exists. GIL-on (r17): one mutator at a time, no hand-off inside
+        // a probe or a fill, so the cache is used as flag-off, with the tagged
+        // butterfly handled by loadPropertyTagged/storePropertyTagged.
         JumpList slowCases;
         slowCases.append(jump());
         return slowCases;
@@ -780,7 +867,10 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
     auto missed = branchTestPtr(Zero, scratch2GPR);
     moveConditionally64(Equal, scratch2GPR, TrustedImm32(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects())), baseGPR, scratch2GPR, scratch1GPR);
     load16(Address(scratch3GPR, Entry::offsetOfOffset()), scratch2GPR);
-    loadProperty(scratch1GPR, scratch2GPR, resultGPR);
+    if (Options::useJSThreads()) [[unlikely]]
+        loadPropertyTagged(scratch1GPR, scratch2GPR, resultGPR, scratch3GPR, slowCases); // scratch3 (the entry) is dead here; result may be handlerGPR
+    else
+        loadProperty(scratch1GPR, scratch2GPR, resultGPR);
     auto done = jump();
 
     missed.link(this);
@@ -802,15 +892,18 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicGetterSetter(VM& vm, G
     loadPtr(Address(scratch3GPR, Entry::offsetOfHolder()), scratch1GPR);
     moveConditionally64(Equal, scratch1GPR, TrustedImm32(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects())), baseGPR, scratch1GPR, scratch1GPR);
     load16(Address(scratch3GPR, Entry::offsetOfOffset()), scratch2GPR);
-    loadProperty(scratch1GPR, scratch2GPR, resultGPR);
+    if (Options::useJSThreads()) [[unlikely]]
+        loadPropertyTagged(scratch1GPR, scratch2GPR, resultGPR, scratch3GPR, slowCases); // scratch3 (the entry) is dead here; result may be handlerGPR
+    else
+        loadProperty(scratch1GPR, scratch2GPR, resultGPR);
 
     return slowCases;
 }
 
 std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers::storeMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
-        // SPEC-jit section 5.5 (Task 8): see loadMegamorphicProperty above.
+    if (MegamorphicCache::disabledForProcess()) [[unlikely]] {
+        // GIL-off: see findMegamorphicCacheEntry.
         JumpList slowCases;
         slowCases.append(jump());
         return { WTF::move(slowCases), JumpList() };
@@ -873,14 +966,67 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
     Label cacheHit = label();
     reallocatingCases.append(branchTest8(NonZero, Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfReallocating())));
     load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfNewStructureID()), scratch2GPR);
-    load16(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOffset()), scratch3GPR);
-    auto replaceCase = branch32(Equal, scratch2GPR, scratch1GPR);
 
-    // We only support non-allocating transition. This means we do not need to nuke Structure* for transition here.
-    store32(scratch2GPR, Address(baseGPR, JSCell::structureIDOffset()));
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Flag-on (GIL-on; SPEC-jit §5.5 rows Write and Transition, OM E4-C).
+        // Replace: the tagged write predicate. Transition: the claim-first
+        // non-reallocating form - PreciseAllocation, copy-on-write and
+        // ArrayStorage sources refused at runtime (the probe is structure-
+        // agnostic), owner tag test, CAS StructureID S -> nuked(S) (a lost claim
+        // has written nothing), value store, fence, new StructureID. No
+        // thread-local-set watchpoints are needed: exclusion with every foreign
+        // writer is by the lane (they are cell-locked and claim first too).
+        // scratch3GPR still points at the entry until the claim commits; the
+        // entry cannot change under us GIL-on (fills run on the executing
+        // thread, or on another thread across a hand-off this straight-line
+        // code cannot make).
+        Jump isTransition = branch32(NotEqual, scratch2GPR, scratch1GPR);
+        load16(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOffset()), scratch3GPR);
+        storePropertyTagged(JSValueRegs { valueGPR }, baseGPR, scratch3GPR, scratch1GPR, scratch2GPR, slowCases);
+        Jump replaced = jump();
 
-    replaceCase.link(this);
-    storeProperty(valueGPR, baseGPR, scratch3GPR, scratch1GPR);
+        isTransition.link(this);
+        slowCases.append(branchTestPtr(NonZero, baseGPR, TrustedImm32(PreciseAllocation::halfAlignment))); // OM I36
+        load8(Address(baseGPR, JSCell::indexingTypeAndMiscOffset()), scratch2GPR);
+        slowCases.append(branchTest32(NonZero, scratch2GPR, TrustedImm32(CopyOnWrite))); // OM I35
+        and32(TrustedImm32(IndexingShapeMask), scratch2GPR);
+        slowCases.append(branch32(AboveOrEqual, scratch2GPR, TrustedImm32(ArrayStorageShape))); // OM I31
+        load64(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        loadButterflyTIDTag(scratch1GPR);
+        xor64(scratch2GPR, scratch1GPR);
+        urshift64(TrustedImm32(butterflyTIDShift), scratch1GPR); // the 16 tag bits: (currentTID, SW=0) <=> zero
+        slowCases.append(branchTest32(NonZero, scratch1GPR));
+        load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOldStructureID()), scratch1GPR);
+        move(scratch1GPR, scratch2GPR);
+        or32(TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
+        slowCases.append(branchAtomicStrongCAS32(Failure, scratch1GPR, scratch2GPR, Address(baseGPR, JSCell::structureIDOffset())));
+        // Committed: the lane is ours; nothing below can fail. The word of a
+        // claimed owner-tagged SW=0 instance cannot move, so re-derive the
+        // (possibly absent) butterfly from a fresh load.
+        load64(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), scratch2GPR);
+        load16(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOffset()), scratch1GPR);
+        load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfNewStructureID()), scratch3GPR);
+        Jump isInline = branch32(LessThan, scratch1GPR, TrustedImm32(firstOutOfLineOffset));
+        neg32(scratch1GPR);
+        signExtend32ToPtr(scratch1GPR, scratch1GPR);
+        store64(valueGPR, BaseIndex(scratch2GPR, scratch1GPR, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+        Jump stored = jump();
+        isInline.link(this);
+        store64(valueGPR, BaseIndex(baseGPR, scratch1GPR, TimesEight, JSObject::offsetOfInlineStorage()));
+        stored.link(this);
+        storeFence();
+        store32(scratch3GPR, Address(baseGPR, JSCell::structureIDOffset())); // un-nukes with S'
+        replaced.link(this);
+    } else {
+        load16(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOffset()), scratch3GPR);
+        auto replaceCase = branch32(Equal, scratch2GPR, scratch1GPR);
+        // We only support non-allocating transition. This means we do not need to nuke Structure* for transition here.
+        store32(scratch2GPR, Address(baseGPR, JSCell::structureIDOffset()));
+
+        replaceCase.link(this);
+        storeProperty(valueGPR, baseGPR, scratch3GPR, scratch1GPR);
+    }
     auto done = jump();
 
     // Secondary cache lookup
@@ -1346,6 +1492,28 @@ void AssemblyHelpers::emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned 
     slowPath.append(branch32(BelowOrEqual, Address(allocatorGPR, static_cast<int32_t>(VMLite::offsetOfTlcTableBound())), TrustedImm32(static_cast<int32_t>(tlcSlot))));
     loadPtr(Address(allocatorGPR, static_cast<int32_t>(VMLite::offsetOfTlcTable())), allocatorGPR);
     loadPtr(Address(allocatorGPR, static_cast<int32_t>(tlcSlot * sizeof(void*))), allocatorGPR);
+}
+
+void AssemblyHelpers::emitAllocateVariableSizedGILOff(GPRReg resultGPR, CompleteSubspace& subspace, GPRReg allocationSize, GPRReg scratchGPR1, GPRReg scratchGPR2, JumpList& slowPath)
+{
+    static_assert(sizeof(Allocator) == sizeof(void*));
+    unsigned base = subspace.tlcIndexBase();
+    if (base == BlockDirectory::invalidTlcIndex) {
+        slowPath.append(jump());
+        return;
+    }
+    unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
+    addPtr(TrustedImm32(MarkedSpace::sizeStep - 1), allocationSize, scratchGPR1);
+    urshiftPtr(TrustedImm32(stepShift), scratchGPR1);
+    slowPath.append(branchPtr(Above, scratchGPR1, TrustedImmPtr(MarkedSpace::largeCutoff >> stepShift)));
+    // sizeClassToIndex(size) == (size + sizeStep - 1) >> stepShift.
+    add32(TrustedImm32(static_cast<int32_t>(base)), scratchGPR1);
+    JIT_COMMENT(*this, "TLC lite-relative allocator for runtime slot");
+    loadVMLite(scratchGPR2);
+    slowPath.append(branch32(BelowOrEqual, Address(scratchGPR2, static_cast<int32_t>(VMLite::offsetOfTlcTableBound())), scratchGPR1));
+    loadPtr(Address(scratchGPR2, static_cast<int32_t>(VMLite::offsetOfTlcTable())), scratchGPR2);
+    loadPtr(BaseIndex(scratchGPR2, scratchGPR1, TimesEight), scratchGPR1);
+    emitAllocate(resultGPR, JITAllocator::variable(), scratchGPR1, scratchGPR2, slowPath, SlowAllocationResult::UndefinedBehavior);
 }
 
 void AssemblyHelpers::emitResolveProfiledAllocator(VM& vm, GPRReg allocatorGPR, GPRReg scratchGPR)

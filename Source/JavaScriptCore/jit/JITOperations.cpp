@@ -1315,6 +1315,18 @@ JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPoi
     PropertyOffset offset = entry->m_offset;
 
     ASSERT(oldStructure == entry->m_oldStructureID.decode());
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Flag-on a reallocating transition installs a new butterfly, which is a
+        // tagged-word publication with its owner/claim protocol (SPEC-objectmodel
+        // E4 / E4-C / §4.3): go through it, and take the generic add when it asks
+        // for a RESTART (a racing writer settled the object elsewhere).
+        Structure* expected = entry->m_oldStructureID.decode();
+        if (oldStructure != expected || !baseObject->tryCompleteCachedTransitionConcurrent(vm, expected, newStructure, offset, JSValue::decode(encodedValue))) {
+            PutPropertySlot slot(baseObject);
+            baseObject->putDirect(vm, Identifier::fromUid(vm, entry->m_uid.get()), JSValue::decode(encodedValue), slot);
+        }
+        OPERATION_RETURN(scope);
+    }
     Butterfly* newButterfly = baseObject->allocateMoreOutOfLineStorage(vm, oldStructure->outOfLineCapacity(), newStructure->outOfLineCapacity());
     baseObject->nukeStructureAndSetButterfly(vm, StructureID::encode(oldStructure), newButterfly);
     baseObject->putDirectOffset(vm, offset, JSValue::decode(encodedValue));
@@ -4821,16 +4833,26 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
-    // Under useJSThreads tryCachePutBy never creates a Transition access case,
-    // so no handler reaches this operation. The copy-grow below carries no
-    // TID/SW predicate and must stay unreachable flag-on.
-    RELEASE_ASSERT(!Options::useJSThreads());
-
     size_t newSize = handler->newSize() / sizeof(JSValue);
     size_t oldSize = handler->oldSize() / sizeof(JSValue);
     PropertyOffset offset = handler->offset();
     Structure* oldStructure = WTF::opaque(handler->structureID().decode());
     Structure* newStructure = WTF::opaque(handler->newStructureID().decode());
+
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Flag-on (r17): the (re)allocating transition installs a new butterfly,
+        // a tagged-word publication with its owner/claim protocol (SPEC-objectmodel
+        // E4 / E4-C / §4.3). The handler's inline path sends its non-owner,
+        // allocation-failure and lost-claim cases here; go through the protocol
+        // and take the generic add on RESTART.
+        if (baseObject->structure() != oldStructure || !baseObject->tryCompleteCachedTransitionConcurrent(vm, oldStructure, newStructure, offset, JSValue::decode(encodedValue))) {
+            PutPropertySlot slot(baseObject);
+            baseObject->putDirect(vm, Identifier::fromUid(vm, handler->uid()), JSValue::decode(encodedValue), slot);
+        }
+        ensureStillAliveHere(oldStructure);
+        ensureStillAliveHere(newStructure);
+        return;
+    }
 
     ASSERT(oldStructure == baseObject->structure());
     Butterfly* newButterfly = baseObject->allocateMoreOutOfLineStorage(vm, oldSize, newSize);
@@ -4838,6 +4860,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     baseObject->putDirectOffset(vm, offset, JSValue::decode(encodedValue));
     baseObject->setStructure(vm, newStructure);
 
+    ensureStillAliveHere(oldStructure);
+    ensureStillAliveHere(newStructure);
+}
+
+// Flag-on only (r17): a per-case-compiled (re)allocating Transition access
+// case (one with conditions to check) completes the put here, through the
+// object-model protocols; the shared transition handlers use
+// operationReallocateButterflyAndTransition with the handler's fields instead,
+// which a per-case-compiled stub's handler does not carry.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPutByTransitionReallocatingConcurrent, void, (VM* vmPointer, JSObject* baseObject, EncodedJSValue encodedValue, AccessCase* accessCase))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    RELEASE_ASSERT(Options::useJSThreads());
+
+    Structure* oldStructure = accessCase->structure();
+    Structure* newStructure = accessCase->newStructure();
+    JSValue value = JSValue::decode(encodedValue);
+    if (baseObject->structure() != oldStructure || !baseObject->tryCompleteCachedTransitionConcurrent(vm, oldStructure, newStructure, accessCase->offset(), value)) {
+        PutPropertySlot slot(baseObject);
+        baseObject->putDirect(vm, Identifier::fromUid(vm, accessCase->uid()), value, slot);
+    }
     ensureStillAliveHere(oldStructure);
     ensureStillAliveHere(newStructure);
 }

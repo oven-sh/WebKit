@@ -6424,6 +6424,17 @@ private:
     // ALWAYS (E3/D6/I14(a)); no TID check on reads. Conditions are computed
     // branchlessly and OR-folded into one slowCondition; the caller
     // dispatches it (OSR exit or branch to an existing slow block).
+    // SPEC-jit §5.5 Read row / OM I41: GIL-off, a lane loaded under an Int32
+    // array mode may hold any JSValue (its owner can relabel Int32->Contiguous
+    // without a stop); verify it before it is typed Int32. Holes (all-zero) pass;
+    // the callers' hole handling is unchanged. No-op GIL-on / flag-off.
+    void speculateInt32LaneIfRelabellable(bool isInt32Mode, LValue lane)
+    {
+        if (!(isInt32Mode && Options::useJSThreads() && !Options::useThreadGIL())) [[likely]]
+            return;
+        speculate(BadType, noValue(), nullptr, m_out.bitAnd(m_out.notZero64(lane), isNotInt32(lane)));
+    }
+
     ThreadedButterflyAccess threadedButterflyLoadForRead(LValue base, const ThreadedButterflyPlan& plan)
     {
         ASSERT(Options::useJSThreads());
@@ -7109,8 +7120,10 @@ IGNORE_CLANG_WARNINGS_END
                         m_graph, m_node, arrayMode.type() == Array::Contiguous, arrayMode.type());
                     result = m_out.select(
                         isHole, m_out.constInt64(JSValue::encode(jsUndefined())), result);
-                } else
+                } else {
                     speculate(LoadFromHole, noValue(), nullptr, isHole);
+                    speculateInt32LaneIfRelabellable(arrayMode.type() == Array::Int32, result);
+                }
                 // We have to keep base alive to keep content in storage alive.
                 if (arrayMode.type() == Array::Contiguous)
                     ensureStillAliveHere(base);
@@ -7129,6 +7142,8 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock lastNext = m_out.appendTo(fastCase, slowCase);
 
             LValue fastResultValue = m_out.load64(baseIndexWithProvenValue(heap, storage, index, m_graph.varArgChild(m_node, 1)));
+            if (arrayMode.isOutOfBoundsSaneChain())
+                speculateInt32LaneIfRelabellable(arrayMode.type() == Array::Int32, fastResultValue); // typed Int32|Other below; the effectful form is HeapTop and needs nothing
             ValueFromBlock fastResult = m_out.anchor(fastResultValue);
             m_out.branch(
                 m_out.isZero64(fastResultValue), rarely(slowCase), usually(continuation));
@@ -7686,6 +7701,7 @@ IGNORE_CLANG_WARNINGS_END
                     } else {
                         result = m_out.load64(baseIndexWithProvenValue(heap, butterfly, index, indexEdge));
                         isHole = m_out.isZero64(result);
+                        speculateInt32LaneIfRelabellable(expectedType == ArrayWithInt32, result);
                     }
 
                     LValue finalResult = nullptr;
@@ -7746,6 +7762,8 @@ IGNORE_CLANG_WARNINGS_END
                     m_out.branch(m_out.doubleNotEqualOrUnordered(doubleValue, doubleValue), rarely(slowCase), usually(continuation));
                 } else {
                     LValue result = m_out.load64(baseIndexWithProvenValue(heap, butterfly, index, indexEdge));
+                    if (arrayMode.isOutOfBoundsSaneChain())
+                        speculateInt32LaneIfRelabellable(expectedType == ArrayWithInt32, result);
                     results.append(m_out.anchor(result));
                     m_out.branch(m_out.isZero64(result), rarely(slowCase), usually(continuation));
                 }
@@ -9327,9 +9345,21 @@ IGNORE_CLANG_WARNINGS_END
             // When we emit an ArraySlice, we dominate the use of the array by a CheckStructure
             // to ensure the incoming array is one to be one of the original array structures
             // with one of the following indexing shapes: Int32, Contiguous, Double.
+            LValue int32ResultStructure = weakStructure(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32)));
+            if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+                // OM I41 / SPEC-jit history §29: GIL-off an Int32-labelled copy is
+                // sound only for a source this thread owns (a foreign owner may
+                // relabel Int32->Contiguous between our storage load and this
+                // byte, then store cells into the lanes we copy); a foreign-owned
+                // Int32 source produces a Contiguous-labelled result.
+                LValue word = m_out.load64(sourceArray, m_heaps.JSObject_butterfly);
+                LValue owned = m_out.isZero64(m_out.bitAnd(m_out.bitXor(word, loadButterflyTIDTag()), m_out.constInt64(butterflyTagMask)));
+                int32ResultStructure = m_out.select(owned, int32ResultStructure,
+                    weakStructure(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous))));
+            }
             LValue structure = m_out.select(
                 m_out.equal(indexingType, m_out.constInt32(ArrayWithInt32)),
-                weakStructure(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32))),
+                int32ResultStructure,
                 m_out.select(m_out.equal(indexingType, m_out.constInt32(ArrayWithContiguous)),
                     weakStructure(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous))),
                     weakStructure(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithDouble)))));
@@ -12245,21 +12275,15 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileAllocatePropertyStorage()
     {
-        // SPEC-jit section 5.5 / Task 10 (mirrors Task 9's DFG fail-fast):
-        // the FTL never implements transition semantics flag-on (E4 is not
-        // emitted by this tier). All creation sites (ByteCodeParser
-        // handlePutById + handlePutPrivateName, ConstantFoldingPhase
-        // emitPutByOffset) are gated under Options::useJSThreads(), so
-        // emission here is a logic error: the raw butterfly install below
-        // would claim tag (0,0) and bypass the OM's transition protocol.
-        RELEASE_ASSERT(!Options::useJSThreads());
+        // Flag-on: pure allocation; the install is NukeStructureAndSetButterfly
+        // (claim-first tagged form, SPEC-jit §5.5 Transition).
         LValue object = lowCell(m_node->child1());
         setStorage(allocatePropertyStorage(object, m_node->transition()->previous.get()));
     }
 
     void compileReallocatePropertyStorage()
     {
-        RELEASE_ASSERT(!Options::useJSThreads()); // SPEC-jit section 5.5 / Task 10 (see compileAllocatePropertyStorage)
+        // Flag-on: copies from the MASKED old storage the GetButterfly child yields.
         Transition* transition = m_node->transition();
         LValue object = lowCell(m_node->child1());
         LValue oldStorage = lowStorage(m_node->child2());
@@ -12271,7 +12295,10 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileNukeStructureAndSetButterfly()
     {
-        RELEASE_ASSERT(!Options::useJSThreads()); // SPEC-jit section 5.5 / Task 10 (see compileAllocatePropertyStorage)
+        if (Options::useJSThreads()) [[unlikely]] {
+            nukeStructureAndSetButterflyConcurrent(lowStorage(m_node->child2()), lowCell(m_node->child1()));
+            return;
+        }
         nukeStructureAndSetButterfly(lowStorage(m_node->child2()), lowCell(m_node->child1()));
     }
 
@@ -13793,7 +13820,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         StorageAccessData& data = m_node->storageAccessData();
 
-        if (Options::useJSThreads() && isOutOfLineOffset(data.offset)) [[unlikely]] {
+        if (Options::useJSThreads() && isOutOfLineOffset(data.offset) && !putByOffsetStoresIntoFreshTransitionStorage(m_node)) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10 (mirrors the DFG
             // compilePutByOffset conversion, Task 9): out-of-line stores
             // re-load the TAGGED butterfly from the base (child2) and run the
@@ -13918,22 +13945,13 @@ IGNORE_CLANG_WARNINGS_END
                     m_origin.semantic.codeOriginOwner(),
                     variant.oldStructureForTransition(), variant.newStructure());
 
-                if (Options::useJSThreads()) [[unlikely]] {
-                    // SPEC-jit §5.5 Transition: the parser admitted only
-                    // non-reallocating variants with watched sets and planted a
-                    // CheckTransitionOwner before this node, so this thread is
-                    // the instance owner (tag == ours, SW=0): inline slot, or the
-                    // existing out-of-line storage through the masked word.
-                    RELEASE_ASSERT(!variant.reallocatesStorage());
-                    if (isInlineOffset(variant.offset()))
-                        storage = base;
-                    else
-                        storage = m_out.bitAnd(m_out.loadPtr(base, m_heaps.JSObject_butterfly), m_out.constIntPtr(butterflyPointerMask));
-                } else {
-                    storage = storageForTransition(
-                        base, variant.offset(),
-                        variant.oldStructureForTransition(), variant.newStructure());
-                }
+                // Flag-on (SPEC-jit §5.5 Transition): the parser admitted only
+                // variants with watched sets and planted a CheckTransitionOwner
+                // before this node; storageForTransition masks the word and
+                // installs a grown storage claim-first.
+                storage = storageForTransition(
+                    base, variant.offset(),
+                    variant.oldStructureForTransition(), variant.newStructure());
             }
 
             if (m_node->child2().useKind() == DoubleRepUse)
@@ -22191,26 +22209,37 @@ IGNORE_CLANG_WARNINGS_END
         LValue object, PropertyOffset offset,
         Structure* previousStructure, Structure* nextStructure)
     {
-        // SPEC-jit section 5.5 / Task 10: transition sequences are
-        // unreachable flag-on (sole caller is MultiPutByOffset's Transition
-        // arm, filtered at graph construction; see compileMultiPutByOffset).
-        RELEASE_ASSERT(!Options::useJSThreads());
         if (isInlineOffset(offset))
             return object;
 
+        // Flag-on (SPEC-jit §5.5 Transition): the caller planted a
+        // CheckTransitionOwner, so this thread owns the instance (tag ours,
+        // SW=0): existing storage through the masked word; a (re)allocating
+        // transition copies from it and installs the tagged word
+        // (nukeStructureAndSetButterflyConcurrent) before the caller's value
+        // store.
+        bool threaded = Options::useJSThreads();
+        auto loadExisting = [&] {
+            LValue word = m_out.loadPtr(object, m_heaps.JSObject_butterfly);
+            return threaded ? m_out.bitAnd(word, m_out.constIntPtr(butterflyPointerMask)) : word;
+        };
+
         if (previousStructure->outOfLineCapacity() == nextStructure->outOfLineCapacity())
-            return m_out.loadPtr(object, m_heaps.JSObject_butterfly);
+            return loadExisting();
 
         LValue result;
         if (!previousStructure->outOfLineCapacity())
             result = allocatePropertyStorage(object, previousStructure);
         else {
             result = reallocatePropertyStorage(
-                object, m_out.loadPtr(object, m_heaps.JSObject_butterfly),
+                object, loadExisting(),
                 previousStructure, nextStructure);
         }
 
-        nukeStructureAndSetButterfly(result, object);
+        if (threaded) [[unlikely]]
+            nukeStructureAndSetButterflyConcurrent(result, object);
+        else
+            nukeStructureAndSetButterfly(result, object);
         return result;
     }
 
@@ -29123,6 +29152,20 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
+    }
+
+    // Flag-on install of a (re)allocated out-of-line storage by the instance
+    // OWNER under the four watched thread-local sets (SPEC-jit §5.5
+    // Transition, (re)allocating form; OM E4): see the DFG's
+    // compileNukeStructureAndSetButterfly - plain publication order, tagged
+    // word; the InvalidationPoint after the allocation is the only exit.
+    void nukeStructureAndSetButterflyConcurrent(LValue butterfly, LValue object)
+    {
+        LValue structureID = m_out.load32(object, m_heaps.JSCell_structureID);
+        m_out.store32(m_out.bitOr(structureID, m_out.constInt32(StructureID::nukedStructureIDBit)), object, m_heaps.JSCell_structureID);
+        m_out.fence(&m_heaps.root, nullptr);
+        m_out.store64(m_out.bitOr(butterfly, loadButterflyTIDTag()), object, m_heaps.JSObject_butterfly);
+        m_out.fence(&m_heaps.root, nullptr);
     }
 
     void nukeStructureAndSetButterfly(LValue butterfly, LValue object)

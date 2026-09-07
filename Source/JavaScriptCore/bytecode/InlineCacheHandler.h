@@ -122,6 +122,7 @@ public:
     }
 
     AccessCase* accessCase() const { return m_accessCase.get(); }
+    UniquedStringImpl* uid() const { return m_uid; }
     void setAccessCase(RefPtr<AccessCase>&& accessCase)
     {
         m_accessCase = WTF::move(accessCase);

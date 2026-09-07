@@ -724,6 +724,112 @@ public:
     // new table is allocated before the lock is taken. The lock holder then
     // checks that the table it planned against is still current.
 
+    // ---- Validated lock-free reads (GIL off; SPEC-runtime Map/Set) ----
+    //
+    // Every writer holds the current table's lock, and rehash needs the old
+    // table's lock too, so at most one writer runs per owner at a time; each
+    // brackets its mutation (insert, delete, clear, the rehash fill+scribble+
+    // publish) with owner->m_versionGILOff odd -> even (seqlock). A reader
+    // loads the version (even, acquire), the table pointer, walks the chain
+    // WITHOUT the lock, then re-checks the version after a load-load fence: an
+    // unchanged even version means no writer overlapped any of its loads, so
+    // what it read was one consistent state of one table (possibly a table a
+    // later rehash retired - a read linearized before that rehash). While it
+    // walks, everything it reads may be torn or belong to a table being
+    // scribbled into a deleted-entries list, so before validation nothing read
+    // is trusted: every index is checked against the cell's immutable length,
+    // slot 0 turning into a cell (obsolete table) aborts, non-int32 links
+    // abort, chains are bounded, and keys are compared only through
+    // areKeysEqual on genuine JSValues (slots are always whole JSValues:
+    // int32 indices, keys, values, the deleted sentinel or empty). An abort or
+    // a changed version retries a few times, then takes the locked path.
+    struct LockFreeFindResult {
+        bool valid { false }; // false => caller takes the locked path
+        bool found { false };
+        JSValue value { };
+        TableSize aliveCount { 0 };
+    };
+    static void beginWriteGILOff(HashTable* owner)
+    {
+        owner->m_versionGILOff.fetch_add(1, std::memory_order_relaxed); // odd: writer inside
+        WTF::storeStoreFence();
+    }
+    static void endWriteGILOff(HashTable* owner)
+    {
+        WTF::storeStoreFence();
+        owner->m_versionGILOff.fetch_add(1, std::memory_order_release); // even again
+    }
+    enum class LockFreeQuery { Find, Size };
+    template<LockFreeQuery query>
+    static LockFreeFindResult tryReadLockFreeGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, TableSize hash)
+    {
+        VM* vm = globalObject ? &getVM(globalObject) : nullptr; // Size queries pass no global object and never look at keys
+        for (unsigned attempt = 0; attempt < 4; ++attempt) {
+            uint32_t v1 = owner->m_versionGILOff.load(std::memory_order_acquire);
+            if (v1 & 1) {
+                Thread::yield();
+                continue;
+            }
+            Storage* storage = owner->m_storage.get();
+            if (!storage)
+                return { true, false, JSValue(), 0 };
+            WTF::loadLoadFence();
+            LockFreeFindResult result;
+            result.valid = [&]() -> bool {
+                unsigned length = storage->length();
+                auto load = [&](TableIndex index, JSValue& out) -> bool {
+                    if (static_cast<unsigned>(index) >= length)
+                        return false;
+                    out = get(*storage, index);
+                    return true;
+                };
+                JSValue aliveValue;
+                if (!load(aliveEntryCountIndex(), aliveValue) || !aliveValue.isInt32())
+                    return false; // obsolete (slot 0 is the next table) or torn
+                result.aliveCount = toNumber(aliveValue);
+                if constexpr (query == LockFreeQuery::Size)
+                    return true;
+                if (!result.aliveCount) {
+                    result.found = false;
+                    return true;
+                }
+                JSValue capacityValue;
+                if (!load(capacityIndex(), capacityValue) || !capacityValue.isInt32())
+                    return false;
+                TableSize tableCapacity = toNumber(capacityValue);
+                if (tableCapacity < InitialCapacity || (tableCapacity & (tableCapacity - 1)))
+                    return false; // capacities are powers of two; anything else is a scribbled header
+                JSValue link;
+                if (!load(Helper::bucketIndex(tableCapacity, hash), link))
+                    return false;
+                for (unsigned steps = 0; !link.isEmpty(); ++steps) {
+                    if (!link.isInt32() || steps > length)
+                        return false;
+                    TableIndex entryKeyIndex = toNumber(link);
+                    JSValue entryKey;
+                    if (!load(entryKeyIndex, entryKey))
+                        return false;
+                    if (!entryKey.isEmpty() && !isDeleted(*vm, entryKey) && areKeysEqual(globalObject, normalizedKey, entryKey)) {
+                        result.found = true;
+                        if constexpr (Traits::hasValueData) {
+                            if (!load(entryKeyIndex + 1, result.value))
+                                return false;
+                        }
+                        return true;
+                    }
+                    if (!load(entryKeyIndex + ChainOffset, link))
+                        return false;
+                }
+                result.found = false;
+                return true;
+            }();
+            WTF::loadLoadFence();
+            if (result.valid && owner->m_versionGILOff.load(std::memory_order_relaxed) == v1)
+                return result;
+        }
+        return { };
+    }
+
     // Calls func(table) with the owner's current table locked. The owner must
     // have a table.
     template<typename Func>
@@ -823,6 +929,7 @@ public:
             return;
         if (aliveEntryCount(base) > dataCapacity(newCapacity))
             return;
+        beginWriteGILOff(owner); // the fill scribbles base's header (deleted-entries list)
         {
             Locker freshLocker { fresh->cellLock() };
             fillTableGILOff<UpdateDeletedEntries::Yes>(globalObject, base, *fresh);
@@ -830,6 +937,7 @@ public:
         WTF::storeStoreFence();
         setNextTable(vm, base, fresh);
         owner->m_storage.set(vm, owner, fresh);
+        endWriteGILOff(owner);
     }
 
     // Adds an entry that find() did not find. The table has room.
@@ -867,7 +975,7 @@ public:
                 auto result = find(globalObject, *base, normalizedKey, hash);
                 if (isValidTableIndex(result.entryKeyIndex)) {
                     if constexpr (Traits::hasValueData)
-                        setKeyOrValueData(vm, *base, result.entryKeyIndex + 1, value);
+                        setKeyOrValueData(vm, *base, result.entryKeyIndex + 1, value); // one whole-JSValue store: lock-free readers see old or new
                     return;
                 }
 
@@ -876,7 +984,9 @@ public:
                 TableSize dataCapacity = Helper::dataCapacity(capacity);
                 TableSize deletedEntryCount = Helper::deletedEntryCount(*base);
                 if (aliveEntryCount(*base) + deletedEntryCount < dataCapacity) {
+                    beginWriteGILOff(owner);
                     insertGILOff(vm, *base, normalizedKey, value, hash);
+                    endWriteGILOff(owner);
                     return;
                 }
                 TableSize expansionFactor = capacity < LargeCapacity ? 4 : 2;
@@ -905,11 +1015,13 @@ public:
             auto result = find(globalObject, storage, normalizedKey, hash);
             if (!isValidTableIndex(result.entryKeyIndex))
                 return false;
+            beginWriteGILOff(owner);
             deleteData(vm, storage, result.entryKeyIndex);
             if constexpr (Traits::hasValueData)
                 deleteData(vm, storage, result.entryKeyIndex + 1);
             incrementDeletedEntryCount(storage);
             decrementAliveEntryCount(storage);
+            endWriteGILOff(owner);
 
             // The same shrink policy as shrinkIfNeeded.
             TableSize capacity = Helper::capacity(storage);
@@ -939,9 +1051,11 @@ public:
         releaseFreshTableGILOff(*fresh);
         WTF::storeStoreFence();
         withCurrentTableLockedGILOff(owner, [&](Storage& base) {
+            beginWriteGILOff(owner);
             setClearedTableSentinel(base);
             setNextTable(vm, base, fresh);
             owner->m_storage.set(vm, owner, fresh);
+            endWriteGILOff(owner);
         });
     }
 

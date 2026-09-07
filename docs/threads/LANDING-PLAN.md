@@ -18,8 +18,8 @@ rebased onto `main` at `491b5cc236e9`, plus the review fixes from
 oven-sh/WebKit#549 and the fixes the rebase needed.
 
 The table below is the state before the safety round of 2026-09-02. For the
-state after it, see "Results (2026-09-02)", "Results, second round" and
-"Results, third round" at the end of Part 1.
+state after it, see the "Results" sections at the end of Part 1 (one per
+round; the sixth, 2026-09-07, is the latest).
 
 The results in this table come from one configuration: Linux x86-64, Debug,
 ASAN, `-DPORT=JSCOnly`, the `build.ts` flags. Nothing had been measured in
@@ -2147,83 +2147,407 @@ class (a thread in a long native loop delays other threads' stops, as it
 delays GC in the stock engine) is a property, not a bug count, and is
 recorded there too.
 
+### Results, sixth round (2026-09-07)
+
+One goal: performance, without giving back any of the safety the earlier
+rounds established. The tasks were PERF-RESULTS §5's list in its order —
+stop-free indexing-shape relabels and in-place growth for owned arrays,
+owner transitions that survive the F2 fire, the megamorphic and JSON caches
+GIL on, `Map`/`Set` reads without the table lock GIL off, the reallocating
+transition in the JIT tiers — and each was done as protocol work first
+(SPEC-objectmodel rev 17, history §25-§26 and addendum; SPEC-jit §5.5 rows and
+history §29-§31; SPEC-ungil §N.1 and its history; SPEC-heap §10B.5 and history
+§27), then C++ and every JIT tier, then a test that fails on the fifth-round
+binary and passes now, then the corpus in four modes. Looking for the cost
+found defects that had been in the tree since the second to fifth rounds —
+a GIL-off crash class (F25), two performance defects each large enough to
+dominate a benchmark (F26, F27), a GIL-off deadlock (F28) — which are
+reported with the task that led to them, and the final passes found three
+more that are recorded and not fixed (F29-F31). Numbers are Release, Linux
+x86-64; "before" is the fifth-round final binary. Net, JetStream (PERF-RESULTS
+§3): GIL on 0.77 -> 0.89 of flag off; flag off 0.97 of `main` (unchanged);
+GIL off 229 -> 236 absolute, with one test 4x down for a stated reason.
+
+**B1. Indexing-shape relabels of owned arrays without a stop (SPEC-objectmodel
+T4-O, history §25).** Flag on, every Int32-to-Double, Int32-to-Contiguous and
+Double-to-Contiguous relabel of an array — one thread or many — was a
+stop-the-world (4,000 stops for 4,000 relabels in the test below), and no
+butterfly ever grew in place. The revision first records why the proposed
+"owner-only copy-convert whose publication order lets a racy reader misread a
+lane only as a double" cannot be had: a GIL-off reader's shape check may be
+arbitrarily stale (the DFG hoists it across polls), so no publication order —
+not even a double-word CAS — prevents it pairing the OLD shape with the NEW
+storage, and an Int32-keyed reader over Double storage reads raw double bits
+as a JSValue. What can be had: GIL on, every typed-source relabel in place
+(no thread runs between another's polls); GIL off, Int32-to-Contiguous in
+place (an Int32 lane IS a valid JSValue lane), Int32-to-Double executed as
+Int32-to-Contiguous (the array simply never becomes a Double array; the
+value is boxed), Double-to-Contiguous keeps its stop. The consequence GIL off
+is I41: a reader keyed on a stale Int32 shape may now see a non-Int32
+JSValue in a lane, so the DFG/FTL Int32-mode loads verify the lane (one
+compare, GIL off only), the C++ Int32 fast paths tolerate it, the
+copy-by-`memcpy` paths that assumed Int32 lanes check them when the source is
+foreign-owned, and the collector visits Int32 butterflies GIL off. The relabel
+itself is the claim-first form (CAS StructureID S -> nuked S, rewrite lanes,
+fence, store S'), lock-free while the structure's sets are valid and under
+the cell lock once they are dead (the rev-16 hole this closes: two owners of
+one segmented word could otherwise both relabel). In-place growth of owned
+butterflies (`canReallocInPlace`, M8) is back GIL on.
+`objectmodel/typed-owner-relabel-no-stop.js` (stops per relabel kind, shapes,
+a foreign reader/copier racing the owner's relabels and stores): "4000 stops"
+on the fifth-round binary in both modes, passes now. JetStream GIL on:
+`stanford-crypto-pbkdf2` 0.40 -> 0.84 of flag off, `-sha256` 0.37 -> 0.84,
+`Air` 0.67 -> 0.91, `ai-astar` 0.66 -> 0.92 (PERF-RESULTS §3; the target was
+0.9: `pbkdf2`'s remainder is its `Array.prototype.concat`/`slice` traffic
+through the flag-on C++ copies; `Air` and `ai-astar` owe most of their
+movement to B3 and B5). GIL off the same tests went 3.4x UP (`pbkdf2`,
+`sha256`) and one went 4x DOWN: `stanford-crypto-aes`, whose double-valued
+literals give it Double arrays next to the Contiguous ones the GIL-off
+Int32->"Double" substitution produces, so the DFG arrayifies Double to
+Contiguous at the shared sites — the one relabel that keeps its stop GIL off
+(PERF-RESULTS §3 and §5 item 1; SPEC-objectmodel history §26 addendum 2 has
+the analysis and the fix candidates).
+
+- **F25 (GIL off, since the second round). `Array.prototype.join`'s two-pass
+  joiner overran its buffer when a foreign writer replaced strings between
+  the measuring pass and the copying pass** (`std::span::first` assertion /
+  `RELEASE_ASSERT`, 3 of 3 on a 2,048-element array with a writer flipping
+  every lane between a short and a long string). Found while auditing the
+  Int32 fast paths for I41. GIL off the empty-separator and
+  `JSOnlyStringsAndInt32sJoiner` fast paths are skipped (the general joiner
+  measures and copies each element once). `objectmodel/join-two-pass-vs-
+  foreign-writer.js`: 3 of 3 abort before, 0 of 20 after.
+
+**B2. Owner transitions after the F2 fire: claim-first everywhere
+(SPEC-objectmodel E4-C, history §26).** The fifth round left "F2 is per
+structure" open: the first cross-thread transition of any object of a shape
+retired that shape's claim-free owner path for every object and every
+thread, for good, and nothing cached the transition again (a `{}.a.b.c.d`
+loop 20x slower on the main thread after another thread extended ONE such
+object). The fire has to stay (it is what makes the claim-free owner window
+sound), but the post-fire regime does not: once every writer of an object's
+StructureID lane CLAIMS it before writing anything another claimant can
+reach, the lane itself is the exclusion. Two things were missing and are now
+in: the cell-locked writers (§4.3's stay-flat legs, locked N2) stored the
+value before their nuke CAS and asserted the CAS — they now claim first and
+RESTART on a lost claim; and the owner had no claim-first leg once the sets
+were dead — E4-C (owner tag test, CAS S -> nuked S, word re-check, store,
+fence, S'). In the JITs the inline caches' butterfly-bearing transition leg
+now claims like the butterfly-less one, so a cached transition watches no
+thread-local set and stays valid after the fire, and `tryCachePutBy` accepts
+fired sources; the DFG keeps its claim-free inline form under watched sets
+and otherwise plants the IC. `objectmodel/owner-transitions-after-fire-
+claim-first.js` counts cell-locked transitions after the fire (a new `$vm`
+counter): 10 M owner transitions, 0 locked (every one before); and races
+owner adds (JIT, claim-first) against foreign adds (locked, claim-first) on
+the same 2,000 objects with no add lost. The 2 M-iteration loop after the
+fire: 619 -> 88 ms GIL on (31 ms before the fire: what remains is inline-DFG
+versus inline-cache, not locked versus lock-free). The scaling suite's
+Richards "second thread after the first" figure that motivated the item
+turned out to be dominated by B3's megamorphic cache and by run order, not by
+F2 (PERF-RESULTS §2).
+
+**B3. The megamorphic cache and the JSON fast paths GIL on (SPEC-jit history
+§30).** The VM-global `MegamorphicCache` and `Structure::forEachProperty`'s
+lock-free walk (the `JSON.stringify` fast path, `Object.assign`) were disabled
+per flag; the reason — unsynchronized multi-word fills — exists only GIL off.
+They are now disabled per process mode. The probes learned the tagged
+butterfly (`loadPropertyTagged`, `storePropertyTagged`), and the store probe's
+transition arm is B2's claimed sequence with runtime refusals
+(PreciseAllocation, copy-on-write, ArrayStorage), so it needs no per-structure
+watchpoints; its reallocating arm's operation completes through the
+object-model protocols. Micro rows GIL on against the polling baseline:
+`megamorphic-access` 1.27 -> 0.94, `json-stringify` 1.44 -> 1.05; JetStream
+`FlightPlanner` 0.41 -> 0.83 of flag off, `Babylon` 0.53 -> 0.83,
+`typescript` 0.46 -> 0.81 (with B5), `json-stringify-inspector` 0.94 -> 1.07.
+GIL off keeps the caches off; the per-thread cache design is recorded in the
+history entry, not built.
+
+**B4. `Map`/`Set` reads without the table lock GIL off (SPEC-ungil §N.1 and
+history; AUDIT PRE-1's recorded follow-up).** `has`/`get`/`size` are
+seqlock-validated lock-free reads: an owner version word that every writer
+brackets under the table lock, a reader that trusts nothing until the
+version re-check (bounds from the cell's immutable length, obsolete and
+scribbled-header detection, int32-only links, a chain bound) and falls back
+to the lock after four tries. Four threads reading one shared Map: 2,022 ->
+318 ms (one thread: 187). `shared-objects/map-lock-free-readers.js` (torn-read
+freedom against a writer that inserts, overwrites, deletes, clears and
+rehashes; read scaling 16x -> 1.5x of one reader). The other half of the item,
+"string-keyed puts do not scale", was pinned down and is not about strings:
+see Open items (shared tier-up counters).
+
+**B5. Reallocating transitions in every tier (SPEC-jit §5.5 (RE)ALLOCATING
+form, history §31); PERF-RESULTS §5 item 7.** The add that grows or first
+installs out-of-line storage was C++-only flag-on in every tier; profiles of
+`typescript`, `Babylon` and `ai-astar` GIL on had it on top. Now cached in
+the inline caches (claim-first, with a word re-check under the claim because
+the grown storage is copied before it) and inlined by DFG/FTL under the
+watched sets (E4's plain order, an `InvalidationPoint` between allocation and
+install; the value store into the fresh storage uses it directly and never
+exits; GIL off the caches allocate through the thread's TLC slot and the FTL
+`MultiPutByOffset` keeps refusing reallocating variants). The ai-astar-shaped
+micro (construct, six adds of which two allocate, five rounds of replaces):
+7.0x -> 1.2x of flag off GIL on with top-level functions; 3.6x when the
+constructor and helper are closures made per run (poly-proto structures,
+so the handlers are compiled per case, and the per-case allocating form
+still calls out — PERF-RESULTS §1.2).
+
+Found by B5's profiles, all older than this round:
+
+- **F26 (every mode, since the second round). An out-of-line Replace never
+  cached in baseline or DFG-generic code.** The flag-on `put_by_id` call-site
+  fast path stored inline offsets only and sent out-of-line ones to the
+  handler chain, but a monomorphic Replace handler is installed as the site's
+  inlined handler, not into the chain; so every out-of-line replace called
+  the optimize operation, whose new Replace case was refused as a duplicate,
+  forever (10x on a loop of out-of-line replaces to the thread's own
+  objects). The call-site fast path now handles out-of-line offsets with a
+  scratch-free owner test (x86-64: the TID tag xor'ed from thread-local
+  storage as a memory operand), and where that form does not exist such a
+  Replace goes into the chain. `jit/put-by-id-replace-out-of-line-cached.js`
+  (two shapes, FTL off): 7.9x -> 1.0x of the inline-offset loop.
+- **F27 (GIL off, since the fifth round's fence change). The shared heap raised
+  the "mutator should be fenced" flag when it became shared and only the end
+  of the first collection's marking lowered it**, so every JIT write barrier
+  took its store-load-fenced slow path from start-up to the first GC (2.2-2.5x
+  on a put loop that never collects; SPEC-heap history §27). The flip keeps the
+  idle value on x86. `scaling/write-barrier-idle-fence.js`: 2.5x before, 1.0x
+  after.
+- **F28 (GIL off, since the fifth round). A jettison reached from the shared
+  collector's conductor took the GIL-off compilation lock and deadlocked**:
+  `installCode` skips that lock when the world is stopped, but tested the
+  per-VM stop flag, which is false inside a shared-server stop the current
+  thread conducts as mutator; a Class-A watchpoint fire from the conductor's
+  end-phase work jettisoned a CodeBlock, `installCode` spun on the lock, and
+  its holder was another thread parked for that very stop inside
+  `prepareForExecution` (Debug corpus, `cve/mc-tdwn-tid-recycle-storm.js`,
+  1 hang in 8 runs on the fifth-round binary too). The exemption now also
+  covers "all clients stopped and this thread is doing the GC work", the
+  test `stopTheWorldAndRun` itself uses for its inline-execution licence.
+  0 of 30 after.
+
+Found by the final passes and NOT fixed (both predate the round; see Open
+items):
+
+- **F29 (GIL off, multi-VM). `VMManager::enterStopTheWorldParticipation`
+  release-asserted `m_numberOfStoppedVMs + m_numberOfBlockedVMs <=
+  m_numberOfActiveVMs`** on the keep-alive thread's `Atomics.load` poll while
+  Bun `worker_threads` came and went (the Bun GIL-off pass, once in four runs
+  of `node/worker_threads`; reproduced with a 60-worker `process.exit(0)`
+  script 1-4 of 8, and equally on the fifth-round Bun binary). A stop census
+  (`m_numberOfActiveVMs`) taken while a worker VM that is inside a blocking
+  scope is torn down is the suspect; VMManager's multi-VM accounting was not
+  otherwise exercised by this branch's shell tests, which run one VM.
+- **F30 (GIL off). The fourth round's `cve/mc-grow-s4-detach-nullvec-repro.js`
+  SIGTRAP recurred** twice in about 3,000 amplified runs of that test (it did
+  not in the fifth round's 990). The core files identify it: `FTLCrash` from
+  `safelyInvalidateAfterTermination` — execution reached a block the FTL
+  emitted as unreachable because its abstract interpreter had proven the
+  preceding node exits — in three threads at once at the same address of
+  the test's shared hot function, while a typed array's buffer was being
+  transferred on another thread. The seeds do not reproduce it (0 of 6). An
+  abstract-interpreter proof taken from concurrently mutable state (the
+  view's length/vector during the detach race) without a watchpoint is the
+  hypothesis; not confirmed.
+
+Caught inside the round by its own verification, on code the round had just
+written (recorded because the mechanisms are instructive, not as findings):
+the megamorphic load probe's tagged read wrote its result register — which
+in the data-IC handlers is `handlerGPR`, dereferenced by the fall-through —
+before its slow-case branch (Release corpus, four tests GIL on); the
+`convert*` family's Debug shape assertions and `tryCachePutBy`'s "structure
+is the transition target" assertion became reachable through legal races
+(Debug corpus); and E4-C's growth path re-loaded the butterfly word inside
+`allocateMoreOutOfLineStorage` (asserting it flat) while, with the sets dead,
+a foreign thread may segment the object at any moment, and §4.2's conversion
+still stored the new value into a possibly ALIASED fragment before its claim
+— together an aliased add (`o.g` reading the foreign thread's `o.f` value)
+that the Release mirror pass found on `stress/regress-187060.js` and two
+other files; fixed by growing from the loaded word and by moving the
+conversion's value store after its claim, with
+`objectmodel/e4c-growth-vs-foreign-segmentation.js` (6 of 6 before, 0 of 10
+after, also with the JITs off). And the first cut of B5's DFG/FTL install put
+`NukeStructureAndSetButterfly` before the value store: when the value is a
+sunk allocation, its materialization — an allocation, hence a possible
+collection — then ran with the object's header nuked (the GIL-on suite's
+`ftl-eager` run of `stress/materialize-past-butterfly-allocation.js`: "GC
+scan found object in bad state: structureID is nuked"); the install now
+follows the value store with the `InvalidationPoint` immediately before it,
+and `jit/realloc-transition-inline-vs-materialization-gc.js` (that test's body
+under the flag and the heap verifier) aborts before, passes after.
+
+**Verification on the final tree** (Linux x86-64; the tree includes every fix
+above and the findings sections' tests).
+
+- The corpus (`Tools/threads/run-tests.sh`, default and `--cve`, GIL on and
+  off): Release 309 + 326 + 48 + 62 pass, 0 fail; Debug+ASAN the same four
+  counts, 0 fail; TSanJIT the same four counts, 0 fail, 0 reports (one new
+  suppression, TSAN-RESULTS "Sixth round"). The corpus was also run after each
+  task on that task's tree; the failures those intermediate runs produced are
+  the in-round catches listed above.
+- Touched-area tests under the amplifier, 500 seeded runs each, both modes:
+  `typed-owner-relabel-no-stop`, `join-two-pass-vs-foreign-writer`,
+  `owner-transitions-after-fire-claim-first`, `e4c-growth-vs-foreign-
+  segmentation`, `put-by-id-replace-out-of-line-cached`, `write-barrier-idle-
+  fence`, `map-lock-free-readers`, and the older `map-set-shared-writers`,
+  `i03-i37-same-shape-add-storm`, `structure-only-transition-races`,
+  `transition-ic-owner-and-foreign`, `no-torn-shapes`: no crash, timeout or
+  unexpected exit in any run. The four tests that assert a time ratio
+  (`owner-transitions-…`, `put-by-id-replace-…`, `write-barrier-idle-fence`,
+  `map-lock-free-readers`) diverge in output under injected yields by
+  construction, like the `scaling/` set; their non-timing assertions held.
+- Amplifier campaign, four modes in parallel for 1 h 53 min on the Release
+  build with core dumps on: default set GIL on 19 passes and GIL off 15, CVE
+  set GIL on 56 and GIL off 49, ten seeds per test per pass — about 165,000
+  amplified runs. No timeout, no unexpected exit code. Two crashes, both
+  `cve/mc-grow-s4-detach-nullvec-repro.js` GIL off (F30 above, pre-existing).
+  Divergent-output flags: the fifth round's list unchanged (the six `scaling/`
+  workloads, `heap-bench-allocation.js`, `jit/int-gate-stop-budget.js`,
+  `vmstate/dump-registers-gil-on-vm-in-gil-off-process.js`, the seven
+  interleaving-dependent CVE tests), plus this round's five timing-assertion
+  tests, whose diagnostic prints were made deterministic afterwards.
+- Mirror harness, Release, eval mode, every `JSTests/stress` file on two
+  threads: 5,752 files; 3,475 completed, 2,223 threw (the test's own
+  assertions under two copies; which files throw varies run to run by
+  hundreds), 34 spun to the deadline, 20 others — the fifth round's artefact
+  list exactly (seven `$vm`-hook and three type-profiler tests, nine
+  `waitAsync`/agent files blocked, one exiting 1). No engine finding on the
+  final tree; the pass on the tree before the last E4-C fix is what found the
+  aliased add above.
+- JSC suites (`run-jsc-stress-tests`, Release, the same seven collections,
+  24 children, with the Bun tests and the amplifier running beside them):
+flag off 583 failures against the fifth round's 580 (three FFI `ftl-eager-no-cjit`
+  entries that move every round, `re-enter-resolve-rope-string.js.no-ftl` and
+  `regress-174463162.js.dfg-eager` killed by the OOM killer under the
+  concurrent load); GIL on 855 against 856 (FFI `ftl-eager-no-cjit` moves and
+  two load-sensitive configurations of `int8-repeat-in-then-out-of-bounds.js`,
+  five old ones passing); GIL off 1,200 against 1,196 (five FFI moves, three
+  `int8-repeat` configurations, four old FFI entries passing). The GIL-on run
+  on the tree before the last install-order fix had two more,
+  `materialize-past-butterfly-allocation.js.ftl-eager` and
+  `.ftl-eager-no-cjit` — the catch described above; they pass on the final tree.
+- Bun (Debug, `bun run build:local` against this tree with the nine-change
+  patch, twelve test directories, the second-thread preload GIL on and off):
+flag off / GIL on / GIL off per directory, this round then (fifth round):
+  `bun/jsc` 262-2 / 262-2 / 244-20 (261-3 / 259-5 / 241-23), `bun/ffi` 232-0
+  in all three (same), `bun/util` 2038-6 / 2038-6 / 1879-13 (same), `node/vm`
+  292-0 / 292-0 / 291-1 (same), `node/util` crashes flag off already (rc 139;
+  rc 1 in both flag-on modes; same), `web/timers` 69-4 / 69-4 / 67-6 (same),
+  `node/worker_threads` 156-0 in all three (same; one of the four GIL-off runs
+  made this round aborted on F29), `web/workers` 455-2 / 455-2 / 451-6 (same),
+  `node/fs` 817-2 / 818-1 / 816-3 (817-2 / 817-2 / 816-3), `node/http` 698-4 /
+  698-4 / 696-5 (697-4 / 697-4 / 696-5), `web/fetch` 11417-4 / 11412-9 /
+  11379-42 (11417-4 / 11417-4 / 11381-40; the GIL-on run's five extra are
+  network-timeout tests — `should work with ipv6 localhost`, `simultaneous
+  HTTPS fetch`, TLS-extension and shutdown timing — that ran while the JSC
+  suites loaded the machine), `bun/http` 2814-2 / 2814-2 / — (2814-2 / 2814-2 /
+  2805-11): the GIL-off `bun/http` run ended in a Bun panic, F31 below. GIL on
+  with a second thread alive stays flag-off to within a test or two per
+  directory; GIL off the extra failures are the fifth round's classes
+  (WebAssembly-dependent tests, collection-polling leak tests in the Debug
+  build, `heapStats` string counts with the keep-alive thread allocating).
+
+- **F31 (GIL off, Bun-side; recorded, not an engine change). A Bun cell
+  type's destructor ran on the thread that conducted a shared collection**:
+  the keep-alive thread swept a test-runner `Expect` object whose Rust
+  `RefPtr` is thread-locked to the main thread, and Bun panicked
+  ("`ThreadLock` is locked by thread A, not thread B", `bun/http` GIL off).
+  With the shared heap any client thread can conduct a collection and run
+  destructors and unconditional finalizers (SPEC-heap §10; SPEC-nativeaffinity
+  exempts finalizers from the native lock by design), so an embedder's cell
+  destructors must not assume the allocating thread — the destructor half of
+  the "Bun natives on JSC-spawned threads" open item, which so far listed
+  only host-function calls.
+- Performance: PERF-RESULTS §1-§3 and §5 re-measured on the final tree
+  (quiet machine, medians of 5-10 runs): JetStream `main` 352.2, flag off
+  342.1 (0.971), GIL on 305.4 (0.893 of flag off; fifth round 0.768), GIL off
+  235.5 (0.771 of GIL on); the micro table's flag-off column 0.98-1.12 of
+  `main`; the scaling suite's serial ratios and GIL-off speedups within noise
+  of the fifth round's except raytrace-like at 8 threads (4.24 -> 4.53).
+
+**Flag-off changes.** None of the above changes flag-off code generation:
+every new emitter arm is behind the flag test the site already had; the C++
+changes are in flag-on branches or (F25, the `Map` version word, the heap
+flip) in GIL-off ones; `JSMap`/`JSSet` grow by one word; `InlineCacheHandler`
+gains an accessor; two x86-64 assembler forms were added (`xorq` with an
+absolute address, used fs-relative). The flag-off column of PERF-RESULTS §1
+and §3 was re-measured (§ there).
+
 ### Open items
 
-Work that is not done, after the fifth round. Each item says why. The items
+Work that is not done, after the sixth round. Each item says why. The items
 that the rounds closed are in their "Results" sections.
 
 - **Bun needs nine changes to build and run against this branch**, kept as a
-  patch outside this tree: the seven of the earlier rounds plus this round's
-  client-`IsoSubspace` registration and the API lock in
-  `resetDateCachesAfterTimeZoneChange` (fifth round, A3).
-- **Bun natives on JSC-spawned threads.** Bun's host functions reach their
-  `VirtualMachine` through a thread-local that a spawned JS thread does not
-  have, so they crash there; behind that the per-VM singletons they use are
-  unsynchronized, and Bun's client `IsoSubspace`s are per VM where the shared
-  heap wants them per client (a spawned thread allocating a Bun cell type
-  would share the main thread's allocator). A Bun-side policy decision
-  (refuse with an exception, or route); the entry points are listed in the
-  patch notes. The engine refuses `import()` and `bun:ffi` on spawned threads
-  already; nothing else in the engine depends on the decision.
-- **Bun's accept loop has no bound** (`us_internal_dispatch_ready_poll`); as in
-  the third round.
-- **F2 is per structure** (SPEC-objectmodel history §24, open item). The first
-  cross-thread transition of any object retires the structure's cached
-  transitions for every object of that structure, once; the fifth round
-  removed the case where this happened to thread-local objects, not the
-  mechanism. Measured this round: a second thread running the same
-  constructor-heavy code as the first (the scaling suite's Richards, whose
-  shapes are poly-proto) runs it 1.4x slower than either thread alone, and
-  both stay on the locked transition path afterwards. This is now the
-  largest flag-on cost with a known cause. Per-instance demotion (SW=1 on the
-  instance, claim-first transitions everywhere) is designed there and not
-  implemented.
-- **String-keyed puts do not scale GIL off** (scaling suite string-heavy,
-  0.75-0.86x at 2-8 threads; PERF-RESULTS §2): suspected serialization on the
-  process atom-string table and shared literals' refcounts; not confirmed.
-- **ArrayStorage `shift()` is O(n) flag-on** (in-place element move) where
-  flag-off is O(1) (head move). Making the head move legal needs an owner test
-  on ArrayStorage reads in every tier (SPEC-objectmodel §4.6 AS-INPLACE note).
-- **Reallocating property-add transitions are C++-only flag-on** (out-of-line
-  storage growth; SPEC-jit §5.5 R3). The common non-reallocating adds are
-  cached in every tier.
-- **Flag-on costs with a known cause and no fix this round** (PERF-RESULTS
-  §1.2-1.3): polling traps on tight loops (inherent to I21), the disabled
-  megamorphic and JSON fast-path caches, `Map`/`Set` reads under the cell lock
-  GIL off, polymorphic construct through `operationCreateThis`; global
-  property WRITES (`put_to_scope` GlobalProperty) and the
-  GlobalProperty-to-GlobalLexicalVar rewrite still take the slow path flag-on
-  (their metadata stays frozen: the put fast path needs the butterfly write
-  predicate first), and non-x86-64 targets keep global property reads frozen
-  too until their LLInt/Baseline fast paths order the two metadata loads
-  (SPEC-jit history §28).
-- **GIL-off latency class.** A thread in a long C++ loop with heap access held
-  (a large `sort`, a long-running RegExp, `JSON.parse` of a big document)
-  delays every other thread's stop request until it returns to a poll, as it
-  delays that engine's own GC in stock JSC. Under a machine load above 60 the
-  Debug build's 30 s stop watchdog fired in four mirror files and in
-  `scaling/lock-fairness.js`; none reproduces on an idle machine. Recorded,
-  not changed; a production embedder would set the watchdog by policy.
-- **Debug-build collection cost GIL off.** A shared-heap collection marks
-  the conservative window-witness root set (SPEC-heap I12); in the Debug+ASAN
-  build a continuous-collection loop runs ten times slower GIL off than GIL
-  on (Release shows no difference), which pushes Bun's collection-polling
-  leak tests past their limits in that build (A3). A cost of the current root
-  set, not a defect; narrowing the witness set is SPEC-heap work.
-- **`bun:ffi` with the GIL off** stays refused on spawned threads (decided).
-- **The park-under-lock rule**, **racy by design, recorded**, **paths with no
-  test in the jsc shell**: as after the fourth round, plus this round's F7,
-  F11 and F19 (read and fixed; F7 and F11 reproduce only inside the mirror
-  harness, F19 only inside Bun). Newly recorded racy-by-design, from the
-  final TSanJIT mirror pass (TSAN-RESULTS): the idempotent lazy caches
-  `JSBoundFunction::m_canConstruct`, `JSBigInt::m_hash`, the collator's ASCII
-  flag and `RegExpCache::m_emptyRegExp` (suppressed; converting them to the
-  `racyLoad`/`racyStore` accessors is tidiness, not correctness), and the
-  construct-then-publish reports on Intl objects, executables and scoped
-  arguments.
-- **WebAssembly**, **fuzzers**, **other platforms**: unchanged. arm64 notes
-  accumulate in AUDIT PRE-17 (thunk fence) and SPEC-objectmodel M8 (the fenced
-  barrier stays forced there).
+  patch outside this tree (unchanged from the fifth round; no Bun change was
+  needed this round).
+- **Bun natives on JSC-spawned threads**, **Bun's accept loop has no bound**:
+  as after the fifth round; F31 adds the destructor side (a Bun cell's C++
+  destructor runs on whichever client thread conducts a shared collection).
+- **Shared tier-up counters GIL off** (found this round while pinning down
+  "string-keyed puts do not scale"; SPEC-ungil history, sixth round). N
+  threads running one function below FTL share its CodeBlock's execution
+  counters and baseline profiles; the per-back-edge counter add bounces one
+  cache line between cores (a two-instruction DFG loop 5.6x slower at two
+  threads), tier-up arrives later, and the code stays in the counting tiers
+  longer. The scaling suite's string-heavy (0.75x at 4 threads) and any
+  short multi-threaded run of shared functions pay it; long-running code
+  reaches FTL, which has no counters, and does not. A thread-local 256:1
+  prescaler fixed the scaling (string-heavy at 4 threads 958 -> 343 ms) and
+  was not landed: it costs single-threaded DFG-tier loops 2x on this
+  hardware (an fs-relative or freshly-based add-to-memory loses the
+  memory-renaming fast path the `[jitData + offset]` add has) and prescaling
+  the sites whose own crossing gates OSR entry starves entry. Options:
+  per-thread counter lines in `JITData`; or count only on the thread that
+  first ran the code and let the others enter through the trigger byte.
+- **F2 after the fire, DFG tier.** Owner transitions of a fired shape now run
+  claim-first in C++ and in the inline caches (B2); the DFG still plants the
+  IC rather than an inline claimed sequence, so a `{}.a.b.c.d` loop after the
+  fire is 3-5x the inlined loop instead of 20x. An inline claimed form needs a
+  transition node that claims and cannot exit between claim and
+  `PutStructure` (the (re)allocating form's shape, B5).
+- **The megamorphic cache GIL off** stays disabled (per-thread cache with a
+  global epoch, designed in SPEC-jit history §30, not built); GIL on it is on.
+- **Double arrays GIL off.** Double-to-Contiguous keeps its stop GIL off
+  (SPEC-objectmodel T4-O: a stale Double-keyed reader over JSValue lanes would
+  box an impure NaN) and Int32-to-Double is executed as Int32-to-Contiguous;
+  a program that also has Double arrays from double-valued literals and their
+  copies then has sites that see both shapes, and the DFG's arrayify converts
+  every Double array reaching them through that stop (`stanford-crypto-aes`
+  GIL off 4x down this round; PERF-RESULTS §5 item 1 has the two fixes:
+  Contiguous results for copies from Double sources GIL off, or validated
+  Double reads). `pbkdf2`'s remaining 0.84 GIL on is its `concat`/`slice`
+  traffic through the flag-on C++ copies.
+- **ArrayStorage `shift()` is O(n) flag-on**: as after the fifth round.
+- **Flag-on costs with a known cause and no fix this round**: polling traps on
+  tight loops (I21), polymorphic construct through `operationCreateThis`,
+  global property WRITES and the GlobalProperty-to-GlobalLexicalVar rewrite
+  (SPEC-jit history §28), `JSON.parse`'s remaining 1.5x GIL on (its
+  per-identifier structure adds go through the C++ transition path; the
+  literal parser's own fast table is on), non-x86-64 targets. The flag-off
+  3 % on JetStream was not broken down this round (item 8 of PERF-RESULTS §5).
+- **F29, VMManager stop accounting with several VMs GIL off** (this round's Bun
+  pass; a release assertion, so a Release Bun would abort too): a worker VM
+  torn down inside a blocking scope versus the stop census is the suspect.
+  **F30, the FTL "unreachable" trap under the typed-array detach race**
+  (fourth round's open SIGTRAP, now identified as `FTLCrash` after an
+  AI-terminated node; about 1 in 1,500 amplified runs of one test, GIL off).
+  Both need a VMManager / DFG-AI reading session of their own.
+- **Two concurrent indirect evals declaring the same global function** (mirror
+  eval mode): a call in one copy can find the binding `undefined` for a moment
+  ("foo is not a function", 3 of 4 runs of `stress/activation-sink.js` under
+  the harness, the same on the fifth-round binary). Whether that interleaving
+  is permitted (declaration instantiation racing a reader) or an F4-class
+  atomicity gap was not decided this round.
+- **GIL-off latency class**, **Debug-build collection cost GIL off**,
+  **`bun:ffi` GIL off refused**, **the park-under-lock rule / racy by design /
+  paths with no shell test**, **WebAssembly, fuzzers, other platforms**: as
+  after the fifth round. Newly suppressed in TSAN with reasoning this round:
+  the unlinked code block's bytecode-generation products read by an LLInt
+  slow path on another thread (publication through JIT/LLInt call linkage;
+  TSAN-RESULTS sixth round) — exposed, not caused, by the write-barrier
+  fence change (F27), which removed an incidental happens-before edge the
+  fenced slow path's lock had given every pair of threads.
 
 ## Part 2: Performance
 

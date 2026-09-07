@@ -217,16 +217,20 @@ public:
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
 
-    // With useJSThreads the cache is inert: the inline probes
-    // (AssemblyHelpers::{load,store,has}MegamorphicProperty) bail, and a fill
-    // is a multi-word entry write including a RefPtr<UniquedStringImpl>
-    // reassignment that concurrent mutators cannot share, so fills and epoch
-    // bumps are no-ops and no entry is ever live. Flag-off this costs one
+    // GIL-off (useJSThreads in a GIL-off process) the VM-global cache is
+    // inert: a fill is a multi-word entry write including a RefPtr
+    // reassignment that N unsynchronized mutators cannot share, so the inline
+    // probes bail (AssemblyHelpers::findMegamorphicCacheEntry), fills and epoch
+    // bumps are no-ops and no entry is ever live; a per-thread cache is the
+    // recorded follow-up. GIL-on (r17) the cache is live as flag-off: one
+    // mutator of the VM runs at a time and the GIL is handed off only inside
+    // blocking calls, never inside a probe or a fill. Flag-off this costs one
     // predicted-false byte test on already-slow paths.
-    ALWAYS_INLINE static bool fillsDisabledUnderJSThreads()
+    ALWAYS_INLINE static bool disabledForProcess()
     {
-        return Options::useJSThreads();
+        return Options::useJSThreads() && g_jscConfig.gilOffProcess;
     }
+    ALWAYS_INLINE static bool fillsDisabledUnderJSThreads() { return disabledForProcess(); }
 
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
@@ -271,6 +275,14 @@ public:
     {
         if (fillsDisabledUnderJSThreads()) [[unlikely]]
             return;
+        // Flag-on the probe's transition arm is the claim-first form and refuses
+        // PreciseAllocation, copy-on-write and ArrayStorage instances at runtime
+        // (SPEC-jit §5.5); sources of those shapes are not worth an entry.
+        if (Options::useJSThreads()) [[unlikely]] {
+            IndexingType mode = oldStructureID.decode()->indexingMode();
+            if (hasAnyArrayStorage(mode) || isCopyOnWrite(mode))
+                return;
+        }
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(oldStructureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {

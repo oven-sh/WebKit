@@ -1115,3 +1115,22 @@ fences are conditional on it, and under concurrent shared marking, whose
 in-window per-client raise/lower is not yet rerouted to the emitted code);
 `VM` no longer forces `forceFencedBarrier` GIL on. Measured in SPEC-objectmodel
 history §24.4.
+
+### 27. Sixth landing round: no fence raise at the sticky flip on x86
+
+§26(d) made `setMutatorShouldBeFenced` follow marking on x86 instead of
+pinning the fenced barrier for the shared heap's lifetime, but the sticky
+flip itself (`noteSharedServerSticky`, §10B.5 "always-fenced once shared")
+still called it with `true`, and nothing lowers the flag before the first
+collection's `endMarking`. So a GIL-off process - which goes shared at
+start-up - ran every JIT write barrier through the store-load-fenced slow
+path until its first GC: 2.2-2.5x on a barrier-heavy put loop that never
+collects, and a visible share of short benchmarks' warm-up. The flip now
+passes the current (legacy idle) value: `setMutatorShouldBeFenced` still
+raises it where it is load-bearing before the first marking - weakly-ordered
+targets (allocation-publication ordering, T5b) and GIL-off concurrent shared
+marking (the JIT reads the server flag, F19) - and elsewhere the flag only
+orders barrier stores against CONCURRENT marking, none of which runs at the
+flip (attach quiescence), and `beginMarking` raises it as in the single-
+mutator engine. Test: `scaling/write-barrier-idle-fence.js` (the put loop
+before any collection vs after one; GIL off 31 -> 13 ms).

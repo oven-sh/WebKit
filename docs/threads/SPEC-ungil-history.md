@@ -8810,3 +8810,57 @@ map-MC-PRIM.md fix-queue item 2.
    — see SPEC-jit-history.md §21 and CVE-AUDIT-STATUS.md (2026-06-10
    closure round, item 2 correction). Post-fix the family is green at
    default AND forced thresholds.
+
+## Sixth landing round: Map/Set reads GIL off without the table lock
+
+§N.1 had every Map/Set operation take the current table's cell lock GIL off,
+reads included (AUDIT PRE-1's recorded follow-up: "a validated lock-free read
+is the fix"). Measured: four threads reading one shared Map took 10x one
+thread (2022 ms vs 187) because every `get`/`has` serialized on the lock. The
+table's writers were already the right shape for a seqlock: at most one runs
+per owner at a time (each holds the current table's lock, and a rehash needs
+the old table's lock, so writers on successive tables are ordered through it),
+and a rehash or clear publishes a fresh table and never writes the old one
+again - except that the rehash fill scribbles the old table's header into a
+deleted-entries list before publishing, which is why a lock-free reader can
+trust nothing it reads until it has validated. Rule now (§N.1 text): an owner
+version word (`m_versionGILOff`) bumped odd/even around every mutation that a
+reader could observe torn (insert = count + chain + key + value; delete;
+clear; rehash fill+publish), NOT around a value overwrite of an existing key
+(one atomic JSValue store, old-or-new is linearizable); the reader validates
+after a load-load fence and otherwise defends itself structurally (bounds from
+the cell's immutable length, obsolete/scribbled-header detection, int32-only
+links, a chain bound) so that a torn walk can neither fault nor loop; keys are
+compared only through `sameValue` on genuine JSValues (slots always hold whole
+JSValues), and the search key was normalized and hashed - rope resolved -
+before the walk, so nothing in it allocates or parks. Four attempts, then the
+locked path (a writer storm cannot starve a reader into spinning). Measured
+after: four readers of one Map 1.5-1.7x one reader; the writer paths are
+unchanged but for the two increments. Test:
+`shared-objects/map-lock-free-readers.js` (torn-read freedom against a writer
+that inserts, overwrites, deletes, clears and rehashes both ways; read
+scaling). WeakMap/WeakSet keep the lock (their reads interact with the
+collector's pruning; not measured hot).
+
+Two more GIL-off scaling findings from the same task, one fixed, one recorded.
+(1) The shared heap raised the "mutator should be fenced" flag at the moment
+it became shared and lowered it only at the end of the first collection's
+marking, so until a program's first GC every JIT write barrier took its
+store-load-fenced slow path (2.2-2.5x on a put loop; the flag is only
+load-bearing on x86 while marking runs concurrently - SPEC-heap history §27).
+(2) "String-keyed puts don't scale" (string-heavy 0.75x) is not about strings:
+N threads running one function below FTL share its CodeBlock's execution and
+tier-up counters (and baseline profiles), the per-back-edge counter add
+bounces one cache line between cores (a two-instruction loop measured 5.6x
+slower at two threads), counting slows, FTL entry - whose OSR-entry thresholds
+back off on failed attempts - arrives later, and the code stays in the
+counting tiers longer: string-heavy at four threads was 5x one thread while a
+long single loop (which enters FTL at once) scaled perfectly. A thread-local
+256:1 prescaler for the counters fixed the scaling (string-heavy 4 threads
+958 -> 343 ms) but cost single-threaded DFG-tier loops 2x on this hardware -
+an fs-relative or freshly-based add-to-memory loses the memory-renaming fast
+path the `[jitData + offset]` add enjoys - and prescaling the sites whose own
+crossing gates OSR entry starved entry (JetStream GIL off halved); it was not
+landed. Recorded in LANDING-PLAN Open items with the options (per-thread
+counter lines in JITData; counting only on the thread that first ran the
+code plus trigger-byte entry for the others).

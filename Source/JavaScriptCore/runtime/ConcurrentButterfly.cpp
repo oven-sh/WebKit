@@ -515,9 +515,16 @@ void validatePartiallyAliasedSpine(const ButterflySpine* spine, Butterfly* flat,
 // changed under the stop), the structure changed before/under the lock, a
 // racing conversion already published a spine (re-dispatch lands on §4.3), or
 // the butterfly vanished/was replaced incompatibly.
+// Diagnostic ($vm.jsThreadsLockedTransitionCount): cell-locked property
+// transitions performed so far (§4.2 conversions, §4.3, locked N2). Bumped only
+// on those already-slow paths.
+static std::atomic<uint64_t> s_lockedTransitionCount { 0 };
+uint64_t lockedTransitionCount() { return s_lockedTransitionCount.load(std::memory_order_relaxed); }
+
 ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* object, Structure* expectedSourceOrNull, Structure* newStructureOrNull, PropertyOffset offset, JSValue value)
 {
     RELEASE_ASSERT(Options::useJSThreads());
+    s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
     RELEASE_ASSERT(offset == invalidOffset || isOutOfLineOffset(offset)); // Inline adds are N2 (tryStructureOnlyTransition), never §4.2 step 4.
     ASSERT(newStructureOrNull || offset == invalidOffset); // A value store needs the transition that exposes it.
@@ -770,17 +777,10 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             else
                 validatePartiallyAliasedSpine(spine, flat, aliasedOutOfLineCapacity, hasIndexingHeader);
 
-            // ---- Step 4: the trigger adds a property => release-store its
-            // value into the fragment slot BEFORE the type/structure publish
-            // (M2/I9: a reader seeing the new StructureID sees the value).
-            if (newStructureOrNull && offset != invalidOffset) {
-                uint64_t outOfLineIndex = outOfLineButterflyIndex(offset);
-                RELEASE_ASSERT(outOfLineIndex < static_cast<uint64_t>(butterflyFragmentSlots) * totalOutOfLineFragments); // I33 by construction.
-                WriteBarrierBase<Unknown>* slot = spine->outOfLineSlot(static_cast<unsigned>(outOfLineIndex));
-                reinterpret_cast<Atomic<uint64_t>*>(slot)->store(JSValue::encode(value), std::memory_order_release);
-                if (verifyConcurrentButterflyEnabled()) [[unlikely]]
-                    RELEASE_ASSERT(reinterpret_cast<Atomic<uint64_t>*>(slot)->load(std::memory_order_relaxed) == JSValue::encode(value)); // I9/M2 witness (Task 10): value lands BEFORE the type publish.
-            }
+            // (Step 4 - the new property's value - is stored AFTER the claim
+            // below: its fragment slot may ALIAS the live flat butterfly (I7),
+            // i.e. storage the owner's claim-first lock-free leg (E4-C, r17)
+            // also writes; before the claim it is not ours to write.)
 
             // ---- Step 5: nuke + publish under the §3.0 discipline.
             // Publication debug-assert (I11/E1, steps 0/3 made this so): never
@@ -800,12 +800,34 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
             spine->tsanPublish(); // V7: last pre-publication store done; pairs with tsanConsume() in every segmented* reader (Butterfly.h rationale).
             uint64_t spineWord = encodeSegmentedButterfly(spine); // (notTTLTID, SW=1, spine) - I3.
 
-            // Nuke: 32-bit CAS structureID -> nuke(old) (M5). The lane holds
-            // no volatile bytes and we own the semantic bytes under the lock
-            // (E4 transitioners are excluded - the source's sets are fired -
-            // so failure is a logic error, §3.0 step 4).
+            // Claim: 32-bit CAS structureID -> nuke(old) (M5). r17 (history
+            // §26): the OWNER of an SW=0 instance may hold this lane through a
+            // claim-first lock-free leg that no longer requires the sets to be
+            // valid (relabel, sets-dead transitions, the megamorphic and
+            // claimed-transition stubs), so under the lock a lost claim is a
+            // legal race, not a logic error: nothing of ours is published or
+            // written to shared storage yet (step 4 follows the claim), RESTART
+            // on the settled state. Every other semantic divergence stays
+            // taxonomy (d).
             uint32_t previousIDBits = structureIDAtomic(object)->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits());
-            RELEASE_ASSERT(previousIDBits == sourceID.bits());
+            if (previousIDBits != sourceID.bits()) {
+                restart = true;
+                break;
+            }
+
+            // ---- Step 4 (r17 order: after the claim): the trigger adds a
+            // property => release-store its value into the fragment slot BEFORE
+            // the type/structure publish (M2/I9: a reader seeing the new
+            // StructureID sees the value). The lane is ours, so no other
+            // claimant writes this (possibly aliased) slot now.
+            if (newStructureOrNull && offset != invalidOffset) {
+                uint64_t outOfLineIndex = outOfLineButterflyIndex(offset);
+                RELEASE_ASSERT(outOfLineIndex < static_cast<uint64_t>(butterflyFragmentSlots) * totalOutOfLineFragments); // I33 by construction.
+                WriteBarrierBase<Unknown>* slot = spine->outOfLineSlot(static_cast<unsigned>(outOfLineIndex));
+                reinterpret_cast<Atomic<uint64_t>*>(slot)->store(JSValue::encode(value), std::memory_order_release);
+                if (verifyConcurrentButterflyEnabled()) [[unlikely]]
+                    RELEASE_ASSERT(reinterpret_cast<Atomic<uint64_t>*>(slot)->load(std::memory_order_relaxed) == JSValue::encode(value)); // I9/M2 witness (Task 10): value lands BEFORE the type publish.
+            }
 
             bool reenterStep3 = false;
 
@@ -1002,6 +1024,7 @@ enum class TransitionFlavor : uint8_t {
 bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* expectedSource, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
     RELEASE_ASSERT(Options::useJSThreads());
+    s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(expectedSource && newStructure);
     RELEASE_ASSERT(offset == invalidOffset || isOutOfLineOffset(offset)); // Inline adds are N2 (tryStructureOnlyTransition).
@@ -1214,6 +1237,7 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
 
             uint64_t desiredWord = 0;
             bool desiredPayloadIsFreshFlatCopy = false;
+            Atomic<uint64_t>* deferredSharedSlot = nullptr;
             storedValue = false;
 
             if (flavor == TransitionFlavor::FirstInstall) {
@@ -1268,8 +1292,12 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
                 if (offset != invalidOffset) {
                     unsigned outOfLineIndex = outOfLineButterflyIndex(offset);
                     RELEASE_ASSERT(outOfLineIndex < newOutOfLineCapacity);
-                    reinterpret_cast<Atomic<uint64_t>*>(storage->propertyStorage() - (outOfLineIndex + 1))->store(JSValue::encode(value), std::memory_order_release); // Step 4 (M2/I9)
-                    storedValue = true;
+                    auto* slot = reinterpret_cast<Atomic<uint64_t>*>(storage->propertyStorage() - (outOfLineIndex + 1));
+                    if (newButterfly) {
+                        slot->store(JSValue::encode(value), std::memory_order_release); // Step 4 (M2/I9): private copy, store now.
+                        storedValue = true;
+                    } else
+                        deferredSharedSlot = slot; // Existing storage: store only once the lane is claimed (r17 claim-first, history §26).
                 }
                 desiredWord = encodeButterfly(storage, currentButterflyTID(), false); // Stays (t, 0) - I27-compatible.
             } else if (flavor == TransitionFlavor::StayFlatShared) {
@@ -1283,8 +1311,10 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
                 if (offset != invalidOffset) {
                     unsigned outOfLineIndex = outOfLineButterflyIndex(offset);
                     RELEASE_ASSERT(outOfLineIndex < newOutOfLineCapacity);
-                    reinterpret_cast<Atomic<uint64_t>*>(flat->propertyStorage() - (outOfLineIndex + 1))->store(JSValue::encode(value), std::memory_order_release); // Step 4 (M2/I9)
-                    storedValue = true;
+                    // r17 claim-first (history §26): the slot lives in storage the
+                    // OWNER can reach through a lock-free claim-first leg, so it is
+                    // written only after our claim below wins.
+                    deferredSharedSlot = reinterpret_cast<Atomic<uint64_t>*>(flat->propertyStorage() - (outOfLineIndex + 1));
                 }
                 // Preserve the original installer's TID (we are NOT taking
                 // ownership); set SW=1 - this IS a foreign/shared write. The
@@ -1363,16 +1393,24 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
                 }
             }
 
-            // ---- Step 5: nuke + publish under the §3.0 discipline (M5/M3).
-            // The semantic structureID lane is lock-owned here (E4
-            // transitioners are excluded: either the sets are fired, or we ARE
-            // the single owner thread; the indexed installers — AB18-S3,
-            // createInitialIndexedStorageConcurrent / createArrayStorageConcurrent —
-            // publish either under this same cell lock, under a §10.6 stop, or
-            // inside an owner poll-free sets-valid window, all of which exclude
-            // this locked window), so the nuke CAS must succeed.
+            // ---- Step 5: CLAIM, then value, then publish (§3.0/M5/M3). r17
+            // (history §26): the lane is claimed by CAS S -> nuked(S) BEFORE any
+            // store into storage another claimant can reach. The owner of an
+            // SW=0 instance may be running a lock-free claim-first leg on this
+            // very object (its legality no longer depends on the source's sets),
+            // and both sides ordering "claim, then write" is what makes a lost
+            // claim harmless: the loser has written nothing shared and RESTARTs
+            // on the winner's settled structure. Under the lock every other
+            // semantic divergence is still taxonomy (d).
             uint32_t previousIDBits = structureIDAtomic(object)->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits());
-            RELEASE_ASSERT(previousIDBits == sourceID.bits());
+            if (previousIDBits != sourceID.bits()) {
+                restart = true;
+                break;
+            }
+            if (deferredSharedSlot) {
+                deferredSharedSlot->store(JSValue::encode(value), std::memory_order_release); // Step 4 (M2/I9), now that the lane is ours.
+                storedValue = true;
+            }
 
             StructureID newStructureID = newStructure->id();
             bool reenterStep3 = false;
@@ -1535,6 +1573,7 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
 bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value, const PropertyTable* plannedTable, uint32_t plannedEditCount)
 {
     RELEASE_ASSERT(Options::useJSThreads());
+    s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(expectedSource && newStructure);
     RELEASE_ASSERT(inlineOffset == invalidOffset || isInlineOffset(inlineOffset)); // Out-of-line adds touch the butterfly: §4.3.
@@ -1579,30 +1618,38 @@ bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSou
     }
     ASSERT(newStructure->outOfLineCapacity() == source->outOfLineCapacity());
 
-    // Release-store the inline value FIRST (no holes, I9): any reader that
-    // sees the new StructureID sees the value. Existing-slot inline access
-    // stays lock-free (§2.1 N2) - this slot only becomes live with the new
+    // r17 claim-first (history §26): CLAIM the StructureID lane (CAS S ->
+    // nuked(S)) before the inline slot is written. The instance's owner may be
+    // running a lock-free claim-first leg on this object (N2-LF no longer
+    // requires the source's sets to be valid), and its new property would take
+    // the same offset: writing the value first could clobber the winner's
+    // slot. A lost claim has written nothing: unlock, RESTART.
+    if (structureIDAtomic(object)->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) != sourceID.bits()) {
+        unlockCellChecked(cellLock);
+        return false; // RESTART: the owner's lock-free leg (or a racing locked writer) won the lane.
+    }
+    expectedHeader = cellHeaderAtomic(object)->load(std::memory_order_seq_cst); // Freshest volatile bytes; ID lane nuked by us.
+
+    // Release-store the inline value (no holes, I9): any reader that sees the
+    // new StructureID sees the value. Existing-slot inline access stays
+    // lock-free (§2.1 N2) - this slot only becomes live with the new
     // structure, published below.
     if (inlineOffset != invalidOffset)
         reinterpret_cast<Atomic<uint64_t>*>(&object->inlineStorage()[offsetInInlineStorage(inlineOffset)])->store(JSValue::encode(value), std::memory_order_release); // M2
 
-    // ONE 64-bit header CAS under the §3.0 merge discipline. No nuke: the
-    // butterfly word is untouched, so there is no {structure, butterfly}
-    // pairing to protect (GC's structureID+maxOffset re-check -> didRace
-    // covers visitation). The CAS is 8B-aligned at the cell base, so it is
-    // legal on PA cells too (I36 forbids only the 16B DCAS).
+    // ONE 64-bit header CAS from the nuked header under the §3.0 merge
+    // discipline (un-nukes with the new ID). The butterfly word is untouched,
+    // so there is no {structure, butterfly} pairing to protect. The CAS is
+    // 8B-aligned at the cell base, so it is legal on PA cells too (I36 forbids
+    // only the 16B DCAS).
     uint64_t desiredHeader = headerForPublication(expectedHeader, newStructure->id(), newStructure);
     while (true) {
         uint64_t previousHeader = cellHeaderAtomic(object)->compareExchangeStrong(expectedHeader, desiredHeader, std::memory_order_seq_cst);
         if (previousHeader == expectedHeader)
             break;
-        // Under the cell lock the semantic bytes are ours alone (E4
-        // transitioners were excluded by step 0 / ownership; the indexed
-        // installers publish locked / under a stop / in an owner poll-free
-        // sets-valid window — AB18-S3; foreign SW
-        // DCASes touch only the butterfly word); only the volatile bytes (GC
-        // cellState CAS, lock parked bit - GT#2) may move. Anything else is
-        // taxonomy (d): logic error (§3.0 step 4).
+        // With the lane claimed (nuked) under the cell lock the semantic bytes
+        // are ours alone; only the volatile bytes (GC cellState CAS, lock
+        // parked bit - GT#2) may move. Anything else is taxonomy (d).
         RELEASE_ASSERT(headerDiffersOnlyInVolatileBits(expectedHeader, previousHeader));
         expectedHeader = mergeVolatileHeaderBits(expectedHeader, previousHeader);
         desiredHeader = mergeVolatileHeaderBits(desiredHeader, previousHeader);
@@ -1811,7 +1858,8 @@ bool tryMaterializeCopyOnWriteButterflyForSharedWrite(VM& vm, JSObjectWithButter
         // of this lane is cell-locked and serialized with us - so the CAS
         // must succeed.
         uint32_t previousIDBits = structureIDAtomic(object)->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits());
-        RELEASE_ASSERT(previousIDBits == sourceID.bits());
+        if (previousIDBits != sourceID.bits())
+            break; // r17: a claim-first leg holds the lane (none targets CoW sources today; kept uniform with §4.2/§4.3) - RESTART.
 
         if (!isPA) {
             // 128-bit DCAS {nuked header, CoW word} -> {writable header,
@@ -2639,14 +2687,56 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
         unsigned propertyCapacity = structure->outOfLineCapacity();
 
         // ---- T1: owner-only lock-free copying resize, expected tag exactly
-        // (currentButterflyTID(), 0) (I27). Always a FRESH allocation flag-on:
-        // a published flat vectorLength is immutable (no in-place growth even
-        // when the size class has slack - see the header note on
-        // ensureLengthSlowConcurrent), and M8 disables in-place butterfly
-        // reallocs.
+        // (currentButterflyTID(), 0) (I27). GIL-off always a FRESH allocation:
+        // a published flat vectorLength is immutable there (a lock-free foreign
+        // reader bounds by it) and a reallocation would free storage a stale
+        // reader may still load from. GIL-on (r17, history §25): no other
+        // mutator runs between this thread's instructions, so the flag-off
+        // in-place forms are back - size-class slack raises vectorLength in
+        // place, and a property-less PreciseAllocation-backed butterfly grows
+        // through the allocator's realloc (which may move it and frees the old
+        // block at once); the tag is re-stamped on the possibly moved base.
         unsigned newVectorLength = Butterfly::optimalContiguousVectorLength(
             propertyCapacity, std::min<size_t>(nextLength(length), MAX_STORAGE_VECTOR_LENGTH));
         GCDeferralContext deferralContext(vm);
+        if (!vm.gilOff()) {
+            auto clearNewLanes = [&](Butterfly* target, unsigned from, unsigned to) {
+                if (hasDouble(type)) {
+                    for (unsigned i = from; i < to; ++i)
+                        target->indexingPayload<double>()[i] = PNaN;
+                } else {
+                    for (unsigned i = from; i < to; ++i)
+                        target->indexingPayload<WriteBarrier<Unknown>>()[i].clear();
+                }
+            };
+            unsigned availableOldLength = Butterfly::availableContiguousVectorLength(propertyCapacity, oldVectorLength);
+            if (availableOldLength >= length) {
+                AssertNoGC assertNoGC;
+                clearNewLanes(butterfly, oldVectorLength, availableOldLength);
+                WTF::storeStoreFence(); // Cleared lanes before the raised bound (concurrent marker).
+                butterfly->setVectorLength(availableOldLength);
+                return true;
+            }
+            void* oldBase = butterfly->base(0, propertyCapacity);
+            if (!propertyCapacity && !vm.heap.mutatorShouldBeFenced() && std::bit_cast<HeapCell*>(oldBase)->isPreciseAllocation()) {
+                size_t newSize = Butterfly::totalSize(0, 0, true, static_cast<size_t>(newVectorLength) * sizeof(EncodedJSValue));
+                void* newBase = vm.auxiliarySpace().reallocatePreciseAllocationNonVirtual(vm, std::bit_cast<HeapCell*>(oldBase), newSize, &deferralContext, AllocationFailureMode::ReturnNull);
+                if (!newBase)
+                    return false;
+                AssertNoGC assertNoGC;
+                Butterfly* grown = Butterfly::fromBase(newBase, 0, 0);
+                clearNewLanes(grown, oldVectorLength, newVectorLength);
+                grown->setVectorLength(newVectorLength);
+                WTF::storeStoreFence(); // Contents before publication.
+                // The old block is gone, so this is a store, not a CAS: GIL-on no
+                // foreign SW flip can interleave (it would run at a hand-off,
+                // never inside this window); the word we loaded is still current.
+                RELEASE_ASSERT(butterflyWordAtomic(object)->load(std::memory_order_relaxed) == word);
+                butterflyWordAtomic(object)->store(encodeButterfly(grown, currentButterflyTID(), false), std::memory_order_release);
+                vm.writeBarrier(object);
+                return true;
+            }
+        }
         Butterfly* newButterfly = Butterfly::tryCreateUninitialized(
             vm, object, 0, propertyCapacity, true, static_cast<size_t>(newVectorLength) * sizeof(EncodedJSValue), &deferralContext);
         if (!newButterfly) [[unlikely]]

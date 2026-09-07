@@ -477,7 +477,7 @@ public:
                     if (!slot)
                         return JSValue();
                     JSValue result = slot->get();
-                    ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result);
+                    ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result || butterflyWordMayBeRelabelledConcurrently(word)); // I41: a foreign owner may relabel Int32->Contiguous under us GIL-off
                     return result; // empty => caller's generic path
                 }
                 const Butterfly* flatButterfly = untaggedButterfly(word);
@@ -488,7 +488,7 @@ public:
                 // can race past THIS snapshot's storage.
                 if (i < flatButterfly->publicLength() && i < flatButterfly->vectorLength()) {
                     JSValue result = flatButterfly->contiguous().at(this, i).get();
-                    ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result);
+                    ASSERT(!hasInt32(indexingType()) || result.isInt32() || !result || butterflyWordMayBeRelabelledConcurrently(word)); // I41: a foreign owner may relabel Int32->Contiguous under us GIL-off
                     return result;
                 }
                 return JSValue();
@@ -1534,6 +1534,12 @@ private:
     // WHOLE operation from a fresh structureID/tag (§2 dispatch). Defined in
     // JSObjectInlines.h.
     inline bool tryPutDirectTransitionConcurrent(VM&, Structure* expectedSource, StructureID sourceID, Structure* newStructure, PropertyOffset, JSValue);
+public:
+    // Flag-on entry for JIT operations that complete a cached transition in C++
+    // (the megamorphic reallocating arm): the E4 / E4-C / locked protocols;
+    // false => RESTART, the caller performs the generic add.
+    JS_EXPORT_PRIVATE bool tryCompleteCachedTransitionConcurrent(VM&, Structure* expectedSource, Structure* newStructure, PropertyOffset, JSValue);
+private:
     // SPEC-objectmodel §6 L4-K (kind change under a stop). GIL off, a
     // defineOwnProperty that turns an existing property of a cacheable
     // structure from a data property into an accessor (or a custom) or back

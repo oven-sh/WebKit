@@ -32,6 +32,7 @@
 #include "CCallHelpers.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
+#include "ConcurrentButterfly.h"
 #include "DFGJITCompiler.h"
 #include "ICStats.h"
 #include "InlineAccess.h"
@@ -372,11 +373,30 @@ static void generatePutByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
         auto doNotInlineAccess = emitPackedInlineAccessCheckThreaded(jit, propertyCacheGPR, baseGPR, scratch1GPR, scratch3GPR);
         // SPEC-jit section 5.5 (Task 8): inline-offset stores are
         // cell-internal and need no predicate; out-of-line stores need the
-        // WRITE choke point, but this register file leaves no GPR pair for
-        // {storage, TID tag} with baseGPR preserved on the miss path - so
-        // out-of-line offsets dispatch to the putByIdReplaceHandler (which
-        // carries the full predicate). Inventory: INTEGRATE-jit.md Task 8.
+        // WRITE choke point's owner leg with baseGPR preserved on the miss
+        // path. This register file has no GPR pair for {storage, TID tag}, so
+        // where the tag can be xor'ed from thread-local storage as a memory
+        // operand (x86-64) the owner test runs in place on scratch3GPR - an
+        // owner-tagged SW=0 word xor the tag IS the untagged pointer - and
+        // everything else (foreign, shared-written, segmented) dispatches to
+        // the handler chain, whose putByIdReplaceHandler carries the full
+        // predicate. Without that form out-of-line offsets always dispatch
+        // (and prependHandler keeps such a Replace in the chain).
         outSlowCases.append(doNotInlineAccess);
+        if (CCallHelpers::supportsXorButterflyTIDTagInPlace()) {
+            auto isInline = jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset));
+            jit.load64(CCallHelpers::Address(baseJSR.payloadGPR(), JSObject::butterflyOffset()), scratch3GPR);
+            jit.xorButterflyTIDTagInPlace(scratch3GPR);
+            outSlowCases.append(jit.branch64(CCallHelpers::AboveOrEqual, scratch3GPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(1ull << butterflyTIDShift))));
+            jit.neg32(scratch1GPR);
+            jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
+            jit.storeValue(valueJSR, CCallHelpers::BaseIndex(scratch3GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+            auto done = jit.jump();
+            isInline.link(&jit);
+            jit.storeValue(valueJSR, CCallHelpers::BaseIndex(baseJSR.payloadGPR(), scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+            done.link(&jit);
+            return;
+        }
         outSlowCases.append(jit.branch32(CCallHelpers::GreaterThanOrEqual, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset)));
         jit.storeProperty(valueGPR, baseGPR, scratch1GPR, scratch2GPR);
         return;

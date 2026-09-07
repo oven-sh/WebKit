@@ -4228,6 +4228,20 @@ CString nodeValuePairListDump(const T& nodeValuePairList, DumpContext* context =
     return out.toCString();
 }
 
+
+// Flag-on (SPEC-jit §5.5 Transition, (re)allocating form): a PutByOffset whose
+// storage child is the transition's own Allocate/ReallocatePropertyStorage
+// stores into storage this thread allocated for an object it owns and has not
+// installed yet (the parser planted CheckTransitionOwner and inlines only under
+// the watched thread-local sets; NukeStructureAndSetButterfly follows): no
+// re-load, no write predicate, never exits, and does not clobber exit state.
+inline bool putByOffsetStoresIntoFreshTransitionStorage(Node* node)
+{
+    ASSERT(node->op() == PutByOffset);
+    Node* storage = node->child1().node();
+    return storage->op() == AllocatePropertyStorage || storage->op() == ReallocatePropertyStorage;
+}
+
 } } // namespace JSC::DFG
 
 namespace WTF {

@@ -155,8 +155,12 @@ void Structure::forEachProperty(VM& vm, const Functor& functor)
     // recursive and the functor may re-enter forEachProperty on this very
     // structure (the JSON fast stringifier descends into nested objects that
     // share the shape of their parent) or take another structure's m_lock.
-    // Flag-off: the lock-free walk below.
-    if (Options::useJSThreads()) [[unlikely]] {
+    // GIL-on the flag-off walk is used too (r17): another mutator of the VM
+    // runs only across a GIL hand-off inside a blocking call, and no functor
+    // passed here runs JS (they copy structure data), so nothing can mutate,
+    // rehash or steal the table mid-walk - the same reason the flag-off walk
+    // needs no lock against re-entrant JS. Flag-off: the lock-free walk below.
+    if (Options::useJSThreads() && g_jscConfig.gilOffProcess) [[unlikely]] {
         Vector<PropertyTableEntry, 16> entries;
         while (true) {
             PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);

@@ -935,3 +935,22 @@ covered or JavaScript-level races of the doubled test. Debug and Release
 mirror passes on the same tree found F20-F22 (LANDING-PLAN); the TSanJIT
 pass's non-report exits were the shared `$vm`/type-profiler/agent artefacts,
 one JIT-pool-exhaustion test and one 4,000-realm test killed by memory.
+
+### Sixth round (2026-09-07)
+
+A performance round (LANDING-PLAN "Results, sixth round"); the TSAN evidence is
+the corpus under the TSanJIT build in both GIL modes, default and CVE sets, on
+the final tree: 309 (GIL on) + 326 (GIL off) + 48 + 62 files pass, 0 reports,
+0 failures. One new suppression, with its reason in the file:
+
+| Signature (first frames) | Files | Disposition |
+|---|---|---|
+| `InstructionStream::size` / `BaseRef::unwrap` in `CodeBlock::bytecodeOffset` (`CallFrame::setCurrentVPC` from `llint_slow_path_create_lexical_environment`) vs `InstructionStreamWriter::finalize` / `SymbolTable` construction inside `BytecodeGenerator::generate` on the thread that first prepared the function | 1 (`giloff-prologue-tiers-up-frame-code-block.js`, 6 of 6 runs) | Publication: the unlinked code block's bytecode-generation products are written under the GIL-off compilation lock before the CodeBlock that points at them exists, and published with the CodeBlock by `installCode`'s release stores; the reader reached the CodeBlock through JIT/LLInt call linkage, which TSAN cannot pair — the class already suppressed for the CodeBlock's own constructor (`race:JSC::CodeBlock::CodeBlock`). Suppressed on the writer (`BytecodeGenerator::generate`, `generateUnlinkedFunctionCodeBlock`). It surfaced this round because the write barrier no longer takes its fenced slow path before the first collection (F27): that slow path's lock had given TSAN an incidental happens-before edge between every pair of threads GIL off, which had masked it (0 of 6 runs report on the fifth-round binary). |
+
+The round's protocol changes (claim-first owner transitions, the claimed
+inline-cache transition legs, the megamorphic probes GIL on, the lock-free
+`Map`/`Set` reads, the (re)allocating transition installs) produced no report:
+their shared words are the ones the existing racy-accessor and publication
+entries already cover (`structureID` CAS, the butterfly word, JSValue slots),
+and the `Map`/`Set` reader touches table slots only through the whole-JSValue
+`get` accessor and validates through an acquire load of the owner's version.
