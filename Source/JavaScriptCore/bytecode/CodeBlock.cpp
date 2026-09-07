@@ -613,7 +613,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 JSScope* environment = scope;
                 for (unsigned i = 0; i < outerHops && environment; ++i)
                     environment = environment->next();
-                auto* symbolTableObject = environment ? dynamicDowncast<JSSymbolTableObject>(environment) : nullptr;
+                auto* symbolTableObject = environment ? dynamicDowncast<JSLexicalEnvironment>(environment) : nullptr;
                 bool found = symbolTableObject && symbolTableObject->symbolTable()->contains(ident.impl());
                 ASSERT_WITH_MESSAGE(found, "bytecode optimizer resolved %s statically to a scope that does not hold it", ident.utf8().data());
                 if (found) [[likely]] {

@@ -227,10 +227,10 @@ void BytecodeGeneratorification::run()
         jumpTable.m_branchOffsets = FixedVector<int32_t>(m_yields.size() + 1);
         std::ranges::fill(jumpTable.m_branchOffsets, 0);
         jumpTable.add(0, nextToEnterPoint.offset());
-        for (unsigned i = 0; i < m_yields.size(); ++i) {
-            if (m_yields[i].found)
-                jumpTable.add(i + 1, m_yields[i].point);
-        }
+        // A yield the bytecode optimizer removed as unreachable can never be resumed at; give its state the default
+        // target so the table has no holes (a 0 entry would be rebased into a jump to op_enter).
+        for (unsigned i = 0; i < m_yields.size(); ++i)
+            jumpTable.add(i + 1, m_yields[i].found ? m_yields[i].point : nextToEnterPoint.offset());
         jumpTable.m_defaultOffset = nextToEnterPoint.offset();
 
         rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {

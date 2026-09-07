@@ -183,6 +183,8 @@ public:
 
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const { return m_parentScopeTDZVariables; }
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { ensureRareData().m_parentDeclaredNames = WTF::move(names); }
+    // Taken by the first code block generated for this executable (call or construct); a second specialization of
+    // the same function is generated without static scope information.
     RefPtr<DeclaredNamesLink> takeParentDeclaredNames()
     {
         if (!m_rareData || !m_rareData->m_parentDeclaredNames)

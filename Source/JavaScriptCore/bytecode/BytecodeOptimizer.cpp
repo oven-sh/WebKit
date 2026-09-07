@@ -82,6 +82,10 @@ struct Insn {
     bool hasSrcDst { false };
     // If valid, "mov copyTo, dst" is emitted right after this instruction (a fresh register caching its result).
     VirtualRegister copyTo;
+    // Operands known to hold the value of a constant register (from copy propagation). Analysis-only: constants are
+    // never substituted into operands other than a mov/ret source, because LLInt reads some operands as raw frame
+    // slots (op_jeq_ptr/op_jneq_ptr's value, scope and iterator operands, ...).
+    Vector<std::pair<VirtualRegister, VirtualRegister>, 1> knownConstants;
     // Statically resolved scope accesses: resolve_scope gets resolveType = firstStaticClosureVarResolveType + hops
     // beyond the function's own scope; get_from_scope gets ResolvedClosureVar with a known slot.
     std::optional<unsigned> staticOuterHops;
@@ -147,7 +151,6 @@ static bool isPure(const Insn& insn)
     switch (insn.opcode) {
     case op_mov:
     case op_get_scope:
-    case op_resolve_scope:
     case op_is_empty:
     case op_typeof_is_undefined:
     case op_typeof_is_object:
@@ -178,6 +181,11 @@ static bool isPure(const Insn& insn)
     case op_get_argument:
     case op_argument_count:
         return true;
+    case op_resolve_scope: {
+        // A Dynamic resolution can walk into a `with` object, whose lookup (Proxy has trap) is observable.
+        ResolveType type = insn.instruction->as<OpResolveScope>().m_resolveType;
+        return insn.staticOuterHops || type == GlobalProperty || type == GlobalPropertyWithVarInjectionChecks || type == ModuleVar;
+    }
     case op_get_from_scope:
         return insn.staticScopeOffset || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
     default:
@@ -440,6 +448,7 @@ void BytecodeOptimizerAccess::replaceWith(Insn& insn, Insn::Kind kind, VirtualRe
         insn.targets.shrink(0);
     insn.useMap.shrink(0);
     insn.defMap.shrink(0);
+    insn.knownConstants.shrink(0);
     insn.staticOuterHops = std::nullopt;
     insn.staticScopeOffset = std::nullopt;
     computeUseDef(insn);
@@ -844,6 +853,10 @@ std::optional<bool> BytecodeOptimizerAccess::evaluateConstantBranch(const Insn& 
             if (pair.first == original)
                 reg = pair.second;
         }
+        for (auto& pair : insn.knownConstants) {
+            if (pair.first == reg)
+                reg = pair.second;
+        }
         return constantValue(reg);
     };
     auto numbers = [&](VirtualRegister lhsReg, VirtualRegister rhsReg, auto compare) -> std::optional<bool> {
@@ -1172,6 +1185,8 @@ bool BytecodeOptimizerAccess::propagateCopies()
         copies.remove(r.offset());
         copies.removeIf([&](auto& entry) { return entry.value == r.offset(); });
     };
+    for (auto& insn : m_insns)
+        insn.knownConstants.shrink(0);
 
     auto transfer = [&](Block& block, CopyMap& copies, bool apply) -> bool {
         bool changed = false;
@@ -1213,6 +1228,11 @@ bool BytecodeOptimizerAccess::propagateCopies()
                     // operand must never live inside the region the instruction clobbers.
                     if (insn.clobbers(source))
                         continue;
+                    if (source.isConstant() && insn.kind == Insn::Original && insn.opcode != op_mov) {
+                        if (insn.isBranchOrSwitch() && !insn.knownConstants.contains(std::pair { r, source }))
+                            insn.knownConstants.append({ r, source });
+                        continue;
+                    }
                     if (insn.kind == Insn::SynthMov || insn.kind == Insn::SynthRet)
                         insn.synthSrc = source;
                     else {
@@ -1247,7 +1267,8 @@ bool BytecodeOptimizerAccess::propagateCopies()
             if (insn.isMov() && insn.defs.size() == 1 && insn.uses.size() == 1) {
                 VirtualRegister d = insn.defs[0];
                 VirtualRegister s = insn.uses[0];
-                if (isLocal(d) && d != s && (s.isLocal() || s.isArgument() || s.isConstant()))
+                bool propagatable = s.isLocal() || s.isArgument() || (s.isConstant() && (constantValue(s) || m_codeBlock->constantSourceCodeRepresentation(s) == SourceCodeRepresentation::LinkTimeConstant));
+                if (isLocal(d) && d != s && propagatable)
                     copies.set(d.offset(), s.offset());
             }
         }
@@ -1772,8 +1793,13 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                 if (insn.copyTo.isValid())
                     setRegBinding(insn.copyTo.offset(), newBinding->second);
             }
-            if (stored)
+            if (stored) {
+                removeLocalIf([&](int key, int) {
+                    auto it = regBinding.find(key);
+                    return it != regBinding.end() && it->value == *stored;
+                });
                 checked.add(*stored); // A store that completes leaves the binding initialized.
+            }
         }
         return changed;
     };

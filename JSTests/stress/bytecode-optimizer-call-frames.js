@@ -68,3 +68,26 @@ for (const v of custom) { if (v === 1) break; }
 shouldBe(custom.closed, true, "iterator return on break");
 const [p, , q = 5, ...tail] = [1, 2, undefined, 4, 5].map(v => v);
 shouldBe([p, q, tail], "1,5,4,5", "array destructuring through iterator ops");
+
+// An unreachable yield/await removed by the optimizer must leave a well-formed generator dispatch table once the body
+// tiers up (a hole used to be rebased into a jump to op_enter, which DFG turned into a self-loop).
+function* holey(x) { if (false) yield -1; const s = yield x; return s + x; }
+let sum = 0;
+for (let i = 0; i < 100000; i++) { const g = holey(i); g.next(); sum += g.next(i).value; }
+shouldBe(sum, 9999900000, "generator with an unreachable yield, hot");
+async function holeyAsync(x) { if (false) await 0; while (false) await 1; return (await x) + 1; }
+let asyncSum = 0, asyncFailure2;
+(async () => { for (let i = 0; i < 20000; i++) asyncSum += await holeyAsync(i); shouldBe(asyncSum, 199990000 + 20000, "async function with unreachable awaits, hot"); })().catch(e => { asyncFailure2 = e; });
+drainMicrotasks();
+if (asyncFailure2)
+    throw asyncFailure2;
+
+// Copy propagation must not feed a constant register to op_jneq_ptr (LLInt reads its operand as a frame slot) ...
+function notArray(n) { const Array = "notArray"; try { return "constructed " + typeof new Array(n); } catch (e) { return e.constructor.name; } }
+for (let i = 0; i < 3; i++)
+    shouldBe(notArray(3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, Array), "TypeError", "jneq_ptr with a shadowed Array");
+// ... nor propagate the TDZ empty value into arithmetic that later tiers up.
+function selfTDZ(a) { try { let keep = [a >= keep]; } catch (e) { return e.constructor.name; } }
+let last;
+for (let i = 0; i < 1e4; i++) last = selfTDZ(i);
+shouldBe(last, "ReferenceError", "let initializer reading itself");
