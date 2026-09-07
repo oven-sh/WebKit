@@ -1566,7 +1566,8 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                 case op_resolve_scope: {
                     auto bytecode = insn.instruction->as<OpResolveScope>();
                     ScopeValue base = scopeValueOf(mappedUse(insn, bytecode.m_scope));
-                    if (base.via == UINT_MAX && insn.defs.size() == 1)
+                    bool singleDst = insn.defs.size() == 1 || (insn.defs.size() == 2 && insn.copyTo.isValid());
+                    if (base.via == UINT_MAX && singleDst)
                         newScope = { { insn.defs[0].offset(), ScopeValue { base.base, bytecode.m_var } } };
                     break;
                 }
@@ -2152,8 +2153,20 @@ void BytecodeOptimizerAccess::run()
                         rows.append({ static_cast<int>(s_after[i]) - static_cast<int>(s_before[i]), i });
                 }
                 std::sort(rows.begin(), rows.end());
-                for (auto& row : rows)
+                size_t metadataBefore = 0;
+                size_t metadataAfter = 0;
+                unsigned valueProfilesBefore = 0;
+                unsigned valueProfilesAfter = 0;
+                for (auto& row : rows) {
                     dataLogLn("  ", opcodeNames[row.second], " ", s_before[row.second].load(), " ", s_after[row.second].load(), " ", row.first);
+                    if (row.second < NUMBER_OF_BYTECODE_WITH_METADATA) {
+                        metadataBefore += s_before[row.second].load() * metadataSize(static_cast<OpcodeID>(row.second));
+                        metadataAfter += s_after[row.second].load() * metadataSize(static_cast<OpcodeID>(row.second));
+                    }
+                }
+                dataLogLn("BytecodeOptimizer metadata bytes (if every function were linked once): ", metadataBefore, " -> ", metadataAfter);
+                UNUSED_VARIABLE(valueProfilesBefore);
+                UNUSED_VARIABLE(valueProfilesAfter);
             });
         });
         static std::array<std::atomic<unsigned>, 8> s_movKinds;
@@ -2167,7 +2180,7 @@ void BytecodeOptimizerAccess::run()
         for (unsigned i = 0; i < m_insns.size(); ++i) {
             auto& insn = m_insns[i];
             OpcodeID opcode = insn.effectiveOpcode();
-            s_before[opcode]++;
+            s_before[insn.opcode]++; // every IR instruction started life as an original one; insn.opcode keeps that
             if (insn.live)
                 s_after[opcode]++;
             if (!insn.live || opcode != op_mov || insn.uses.size() != 1 || insn.defs.size() != 1)
