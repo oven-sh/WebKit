@@ -368,10 +368,10 @@ namespace JSC {
     public:
         typedef DeclarationStacks::FunctionStack FunctionStack;
 
-        BytecodeGenerator(VM&, ProgramNode*, UnlinkedProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*);
-        BytecodeGenerator(VM&, FunctionNode*, UnlinkedFunctionCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*);
-        BytecodeGenerator(VM&, EvalNode*, UnlinkedEvalCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*);
-        BytecodeGenerator(VM&, ModuleProgramNode*, UnlinkedModuleProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*);
+        BytecodeGenerator(VM&, ProgramNode*, UnlinkedProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, FunctionNode*, UnlinkedFunctionCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, EvalNode*, UnlinkedEvalCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, ModuleProgramNode*, UnlinkedModuleProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
 
         ~BytecodeGenerator();
         
@@ -396,15 +396,14 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No)
+        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
         {
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]
                 before = MonotonicTime::now();
 
             DeferGC deferGC(vm);
-            auto bytecodeGenerator = makeUnique<BytecodeGenerator>(vm, node, unlinkedCodeBlock, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, privateNameEnvironment);
-            bytecodeGenerator->m_optimizeBytecode = optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer();
+            auto bytecodeGenerator = makeUnique<BytecodeGenerator>(vm, node, unlinkedCodeBlock, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, privateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
             unsigned size;
             auto result = bytecodeGenerator->generate(size);
 
@@ -1108,7 +1107,6 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
-        OptimizeBytecode optimizeBytecode() const { return m_optimizeBytecode ? OptimizeBytecode::Yes : OptimizeBytecode::No; }
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1344,7 +1342,8 @@ namespace JSC {
         unsigned localScopeCount() const { return m_localScopeCount; }
     private:
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
-        bool m_optimizeBytecode { false };
+        bool m_optimizeBytecode;
+        RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
 
         struct LexicalScopeStackEntry {
             SymbolTable* m_symbolTable;
@@ -1357,7 +1356,6 @@ namespace JSC {
         RefPtr<TDZEnvironmentLink> m_cachedParentTDZ;
         const FixedVector<Identifier>* m_generatorOrAsyncWrapperFunctionParameterNames { nullptr };
         Vector<TDZStackEntry> m_TDZStack;
-        RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
         Vector<PrivateNameEnvironment> m_privateNamesStack;
         std::optional<size_t> m_varScopeLexicalScopeStackIndex;
         void pushTDZVariables(const VariableEnvironment&, TDZCheckOptimization, TDZRequirement);

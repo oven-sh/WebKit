@@ -27,7 +27,6 @@
 #include "CodeCache.h"
 
 #include "BytecodeGenerator.h"
-#include "BytecodeOptimizer.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
 #include "ModuleProgramExecutable.h"
@@ -145,8 +144,7 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
         return nullptr;
 
     generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error, depth, optimize);
-    if (Options::reportBytecodeOptimizer()) [[unlikely]]
-        BytecodeOptimizer::reportInliningOpportunities(vm, unlinkedCodeBlock);
+    vm.m_pendingDeclaredNames.clear();
     return unlinkedCodeBlock;
 }
 
@@ -156,6 +154,7 @@ void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionEx
     UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode(), optimize);
     if (codeBlock)
         generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth, optimize);
+    vm.m_pendingDeclaredNames.clear();
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth, OptimizeBytecode optimize)

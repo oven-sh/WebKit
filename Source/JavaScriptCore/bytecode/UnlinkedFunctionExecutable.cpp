@@ -75,10 +75,10 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
-    vm.m_parentDeclaredNamesForNextGenerator = vm.m_pendingDeclaredNames.take(executable);
+    RefPtr<DeclaredNamesLink> parentDeclaredNames = (optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer()) ? vm.m_pendingDeclaredNames.take(executable) : nullptr;
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
     const PrivateNameEnvironment* parentPrivateNameEnvironment = executable->parentPrivateNameEnvironment();
-    error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize);
+    error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
 
     if (error.isValid())
         return nullptr;

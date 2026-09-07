@@ -284,11 +284,10 @@ public:
     static Ref<VM> createContextGroup(HeapType = HeapType::Small);
     JS_EXPORT_PRIVATE ~VM();
 
-    // Only while generating with OptimizeBytecode::Yes: the enclosing declarations of function
-    // executables that have been created but not generated yet (taken when the executable is generated), and the
-    // handoff from UnlinkedFunctionExecutable::unlinkedCodeBlockFor to the BytecodeGenerator it spawns.
+    // Only while generating with OptimizeBytecode::Yes: the enclosing declarations of function executables that have
+    // been created but not generated yet (taken when the executable is generated, cleared when the recursive
+    // generation that created them finishes).
     UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, RefPtr<DeclaredNamesLink>> m_pendingDeclaredNames;
-    RefPtr<DeclaredNamesLink> m_parentDeclaredNamesForNextGenerator;
 
     Watchdog* watchdog() { return m_watchdog.getIfExists(); }
     Watchdog& ensureWatchdog() { return m_watchdog.get(*this); }

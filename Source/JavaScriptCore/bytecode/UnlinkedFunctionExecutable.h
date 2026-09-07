@@ -62,7 +62,6 @@ class UnlinkedFunctionExecutable final : public JSCell {
 public:
     friend class CodeCache;
     friend class VM;
-    friend class BytecodeOptimizerAccess;
     friend class CachedFunctionExecutable;
 
     typedef JSCell Base;
