@@ -211,6 +211,8 @@ public:
     {
         if (!m_storage)
             return 0;
+        if (auto lockFree = Helper::template tryReadLockFreeGILOff<Helper::LockFreeQuery::Size>(nullptr, this, JSValue(), 0); lockFree.valid)
+            return lockFree.aliveCount;
         return Helper::withCurrentTableLockedGILOff(this, [](Storage& storage) {
             return Helper::aliveEntryCount(storage);
         });
@@ -225,6 +227,8 @@ public:
         JSValue normalizedKey = normalizeMapKey(key);
         uint32_t hash = jsMapHash(globalObject, vm, normalizedKey);
         RETURN_IF_EXCEPTION(scope, false);
+        if (auto lockFree = Helper::template tryReadLockFreeGILOff<Helper::LockFreeQuery::Find>(globalObject, this, normalizedKey, hash); lockFree.valid)
+            return lockFree.found;
         return Helper::withCurrentTableLockedGILOff(this, [&](Storage& storage) {
             return Helper::isValidTableIndex(Helper::find(globalObject, storage, normalizedKey, hash).entryKeyIndex);
         });
@@ -243,6 +247,7 @@ public:
     }
 
     WriteBarrier<Storage> m_storage;
+    std::atomic<uint32_t> m_versionGILOff { 0 }; // GIL off: writers' seqlock for the validated lock-free readers (helper)
 };
 
 class JSOrderedHashMap : public JSOrderedHashTable<MapTraits> {
@@ -369,6 +374,8 @@ public:
     {
         if (!m_storage)
             return { };
+        if (auto lockFree = Helper::template tryReadLockFreeGILOff<Helper::LockFreeQuery::Find>(globalObject, this, normalizedKey, hash); lockFree.valid)
+            return lockFree.found ? lockFree.value : JSValue();
         return Helper::withCurrentTableLockedGILOff(this, [&](Storage& storage) -> JSValue {
             auto result = Helper::find(globalObject, storage, normalizedKey, hash);
             if (!Helper::isValidTableIndex(result.entryKeyIndex))

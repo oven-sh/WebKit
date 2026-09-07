@@ -212,8 +212,19 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
     //    lock — same licensing rule as stopTheWorldAndRun's R1.h
     //    foreign-thread guard.
     // (Short-circuit keeps the §A.3 predicate calls off the flag-off/GIL-on path.)
+    //  - the conductor of a SHARED-server GC stop (sixth round): a Class-A
+    //    fire reached from that conductor's end-phase work jettisons with a
+    //    non-GC reason and lands here while every other client is parked for
+    //    ITS stop - one of them possibly inside the locked region, as above.
+    //    vm.heap.worldIsStopped() is the per-VM legacy stop and reads false
+    //    for the shared stop, so test the server the way stopTheWorldAndRun's
+    //    inline-execution licence does (all clients stopped AND this thread is
+    //    the one doing the GC work). Observed as a hang of
+    //    cve/mc-tdwn-tid-recycle-storm.js, 1 run in 8, Debug.
+    JSC::Heap& gcStopServer = vm.clientHeap.server();
+    bool conductsSharedGCStop = vm.gilOffWithProcessGate() && gcStopServer.worldIsStoppedForAllClients() && gcStopServer.currentThreadIsDoingGCWork();
     GILOffCompilationLocker compilationLocker(vm,
-        vm.gilOffWithProcessGate() && !isGCDrivenInstall && !vm.heap.worldIsStopped()
+        vm.gilOffWithProcessGate() && !isGCDrivenInstall && !vm.heap.worldIsStopped() && !conductsSharedGCStop
         && !(jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor()));
 
     if (genericCodeBlock) {

@@ -302,6 +302,13 @@ public:
     // Note that these clobber offset.
     void loadProperty(GPRReg objectGPR, GPRReg offsetGPR, GPRReg resultGPR);
     void storeProperty(GPRReg valueGPR, GPRReg objectGPR, GPRReg offsetGPR, GPRReg scratchGPR);
+    // Flag-on (GIL-on) forms used by the megamorphic probes (SPEC-jit §5.5
+    // Read/Write rows): the butterfly word is TID-tagged, so the out-of-line
+    // leg masks it and sends segmented words to slowCases; the store also runs
+    // the write predicate (owner, or SW=1 on a non-ArrayStorage shape) and
+    // sends everything else to slowCases. Inline slots need neither.
+    void loadPropertyTagged(GPRReg object, GPRReg offset, GPRReg result, GPRReg storageScratch, JumpList& slowCases);
+    void storePropertyTagged(GPRReg value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg scratch2, JumpList& slowCases);
 
     JumpList loadMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
@@ -1778,6 +1785,14 @@ public:
     // slow-path branch. gilOff-mode emission ONLY — every call site is
     // behind a vm.gilOff() codegen gate (flag-off byte-identity).
     void emitLoadTLCAllocatorForSlot(GPRReg allocatorGPR, unsigned tlcSlot, JumpList& slowPath);
+    // GIL-off variable-sized form of the above for a CompleteSubspace: slot =
+    // tlcIndexBase + sizeClassIndex(allocationSize), computed at runtime from
+    // allocationSizeGPR; falls to slowPath past largeCutoff, past the lite's
+    // table bound, or when the subspace's index base is not reserved yet at
+    // emission time. Then emitAllocate (variable). GIL-on / flag-off callers use
+    // emitAllocateVariableSized.
+    void emitAllocateVariableSizedGILOff(GPRReg resultGPR, CompleteSubspace&, GPRReg allocationSize, GPRReg scratchGPR1, GPRReg scratchGPR2, JumpList& slowPath);
+
     // GIL-off companion for allocators loaded from an allocation profile
     // (op_new_object / op_create_this / DFG CreateThis): the profile word is a
     // LocalAllocator*, null, or Allocator::encodedTLCSlot (low bit set); the
@@ -1794,6 +1809,20 @@ public:
     // emitter below can call it from inside the emitAllocateJSObject*
     // templates (CCallHelpers / SpeculativeJIT inherit it unchanged).
     void loadButterflyTIDTag(GPRReg destGPR);
+    // destGPR ^= this thread's butterfly TID tag without a scratch register
+    // (x86-64 Linux: fs-relative memory operand). For an owner-tagged SW=0
+    // word the result IS the untagged pointer (top 16 bits zero); anything
+    // else leaves some of them set. supportsXorButterflyTIDTagInPlace() says
+    // whether this form exists on the target.
+    void xorButterflyTIDTagInPlace(GPRReg destGPR);
+    static constexpr bool supportsXorButterflyTIDTagInPlace()
+    {
+#if OS(LINUX) && CPU(X86_64)
+        return true;
+#else
+        return false;
+#endif
+    }
 
     // Task-8 (SPEC-objectmodel §2.1, SCALEBENCH §43 residual #2): TID-tag a
     // JIT inline-installed butterfly so the stored m_butterfly word matches

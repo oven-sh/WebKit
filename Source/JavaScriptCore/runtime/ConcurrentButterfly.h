@@ -147,6 +147,19 @@ ALWAYS_INLINE bool butterflyWordOwnedByCurrentThread(uint64_t tagged)
     return (tagged & butterflyTagMask) == encodeButterflyTag(currentButterflyTID(), false);
 }
 
+// §4.4 T4-O / I41 (r17): true iff ANOTHER thread owns this flat SW=0 word in a
+// GIL-off process — the one case where that owner may relabel the object's
+// indexing shape (Undecided->typed, Int32->Contiguous) at any instant without
+// a stop. Copy and read fast paths that key an Int32 (or not-yet-typed)
+// interpretation on the source's shape consult it: false => the shape they read
+// cannot move except inside a stop they would have to park for.
+ALWAYS_INLINE bool butterflyWordMayBeRelabelledConcurrently(uint64_t tagged)
+{
+    return g_jscConfig.gilOffProcess && !(tagged & butterflySWBit) && !butterflyWordOwnedByCurrentThread(tagged); // SW=0 also excludes segmented words (I3)
+}
+
+JS_EXPORT_PRIVATE uint64_t lockedTransitionCount(); // diagnostic: cell-locked property transitions so far ($vm)
+
 // The None word a fresh butterfly-less object is born with (I40).
 ALWAYS_INLINE uint64_t butterflyLessWordForCurrentThread()
 {

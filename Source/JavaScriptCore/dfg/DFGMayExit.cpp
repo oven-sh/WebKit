@@ -146,7 +146,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         // Inline stores are cell-internal and never checked; they must not
         // report Exits because ConstantFolding and ObjectAllocationSinking
         // place inline PutByOffset nodes at ExitInvalid positions.
-        if (Options::useJSThreads() && isOutOfLineOffset(node->storageAccessData().offset)) [[unlikely]]
+        if (Options::useJSThreads() && isOutOfLineOffset(node->storageAccessData().offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]]
             result = Exits;
         break;
 

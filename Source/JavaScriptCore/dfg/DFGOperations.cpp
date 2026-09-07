@@ -1844,7 +1844,9 @@ static ALWAYS_INLINE JSString* arrayJoinWithStringSeparator(JSGlobalObject* glob
 #endif // USE(BUN_JSC_ADDITIONS)
 
     unsigned length = array->length();
-    if (!separator->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
+    // GIL-off the two-pass joiner is skipped (see fastArrayJoin): a racing writer
+    // can make the second pass overrun the first pass's measure.
+    if (!separator->length() && !g_jscConfig.gilOffProcess && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
         Butterfly* butterfly = nullptr;
         unsigned joinLength = length;
         bool isFlat = true;
