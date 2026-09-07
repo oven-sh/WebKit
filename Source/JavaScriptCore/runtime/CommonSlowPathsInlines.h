@@ -130,13 +130,28 @@ inline void tryCachePutToScopeGlobal(
 inline void tryCacheGetFromScopeGlobal(
     JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpGetFromScope& bytecode, JSObject* scope, PropertySlot& slot, const Identifier& ident)
 {
-    // THREADS (SPEC-jit §5.5, review round 1): flag-on, scope metadata is
-    // frozen after CodeBlock linking; rewriting {getPutInfo, structureID,
-    // operand} as separate plain stores races the LLInt/Baseline fast-path
-    // readers. The owned llint/jit callers are already gated; this gate
-    // covers lol/ and future callers.
-    if (Options::useJSThreads()) [[unlikely]]
+    // THREADS (SPEC-jit §5.5): the LLInt/Baseline fast paths read
+    // {getPutInfo, structureID, operand} without a lock while this rewrites
+    // them, possibly from another thread. Flag-on the rewrite is ordered so a
+    // reader that sees a structureID sees the operand written before it
+    // (operand, store-store fence, structureID; the reader loads structureID,
+    // compares, then loads the operand): a matching structureID is never paired
+    // with an older operand, and a newer operand under an older matching
+    // structureID names the property's current slot (the global object moved to
+    // the structure this thread resolved against before the operand store; a
+    // stale slot is covered by offset quarantine, SPEC-objectmodel §6). That
+    // argument needs the reader's two loads ordered, which x86-64 gives for
+    // free; other targets keep the metadata frozen until their fast paths
+    // carry a load-load barrier. The GlobalProperty -> GlobalLexicalVar
+    // rewrite changes the operand's meaning together with the type and stays
+    // frozen flag-on (the site keeps taking the slow path); so does the put
+    // side (tryCachePutToScopeGlobal), whose fast path would also need the
+    // butterfly write predicate.
+    const bool threaded = Options::useJSThreads();
+#if !CPU(X86_64)
+    if (threaded) [[unlikely]]
         return;
+#endif
 
     auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_getPutInfo.resolveType();
@@ -157,6 +172,8 @@ inline void tryCacheGetFromScopeGlobal(
     case GlobalPropertyWithVarInjectionChecks: {
         // Global Lexical Binding Epoch is changed. Update op_get_from_scope from GlobalProperty to GlobalLexicalVar.
         if (scope->isGlobalLexicalEnvironment()) {
+            if (threaded) [[unlikely]]
+                return;
             cacheGlobalLexicalVar(codeBlock, metadata, uncheckedDowncast<JSGlobalLexicalEnvironment>(scope), ident);
             return;
         }
@@ -173,8 +190,14 @@ inline void tryCacheGetFromScopeGlobal(
             Structure* structure = scope->structure();
             {
                 ConcurrentJSLocker locker(codeBlock->m_lock);
-                metadata.m_structureID.setWithoutWriteBarrier(structure);
-                metadata.m_operand = slot.cachedOffset();
+                if (threaded) [[unlikely]] {
+                    WTF::atomicStore(&metadata.m_operand, static_cast<uintptr_t>(slot.cachedOffset()), std::memory_order_relaxed);
+                    WTF::storeStoreFence();
+                    metadata.m_structureID.setWithoutWriteBarrier(structure);
+                } else {
+                    metadata.m_structureID.setWithoutWriteBarrier(structure);
+                    metadata.m_operand = slot.cachedOffset();
+                }
             }
             vm.writeBarrier(codeBlock);
             structure->startWatchingPropertyForReplacements(vm, slot.cachedOffset());

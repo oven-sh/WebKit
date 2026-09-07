@@ -384,8 +384,22 @@ ALWAYS_INLINE JSValue JSCell::fastGetOwnProperty(VM& vm, Structure& structure, P
 {
     ASSERT(canUseFastGetOwnProperty(structure));
     PropertyOffset offset = structure.get(vm, name);
-    if (offset != invalidOffset)
-        return asObject(this)->locationForOffset(offset)->get();
+    if (offset != invalidOffset) {
+        JSValue value = asObject(this)->locationForOffset(offset)->get();
+        if (Options::useJSThreads()) [[unlikely]] {
+            // I34/M7(c): structure.get() can materialize a property table,
+            // which allocates and so can park this thread in another thread's
+            // stop; a defineProperty that changes this property's kind
+            // (SPEC-objectmodel §6 L4-K) or a delete and re-add can land in
+            // that stop. Re-check the raw structureID after the load, and never
+            // hand out an accessor cell or a hole from here; the caller then
+            // takes the full lookup, which re-derives everything.
+            WTF::loadLoadFence();
+            if (structureID() != structure.id() || !value || value.isGetterSetter() || value.isCustomGetterSetter())
+                return JSValue();
+        }
+        return value;
+    }
     return JSValue();
 }
 

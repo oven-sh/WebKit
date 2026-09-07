@@ -88,7 +88,7 @@ void StructureRareData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_previous);
-    if (thisObject->m_specialPropertyCache) {
+    if (thisObject->specialPropertyCachePointer()) {
         for (unsigned index = 0; index < numberOfCachedSpecialPropertyKeys; ++index)
             visitor.appendUnbarriered(thisObject->cachedSpecialProperty(static_cast<CachedSpecialPropertyKey>(index)));
     }
@@ -290,12 +290,25 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         auto& cache = ensureSpecialPropertyCache().m_cache[static_cast<unsigned>(key)];
         if (cache.m_value.get())
             return; // A racing installer (or a giveUp sentinel) won under the lock; keep its entry.
+        bool installed = true;
         for (ObjectPropertyCondition condition : conditionSet) {
             if (condition.condition().kind() == PropertyCondition::Presence) {
                 cache.m_equivalenceWatchpoint = makeUnique<CachedSpecialPropertyAdaptiveInferredPropertyValueWatchpoint>(equivCondition, this);
-                cache.m_equivalenceWatchpoint->install(vm);
+                installed &= cache.m_equivalenceWatchpoint->install(vm);
             } else
-                cache.m_missWatchpoints.add(condition, this)->install(vm);
+                installed &= cache.m_missWatchpoints.add(condition, this)->install(vm);
+            if (!installed)
+                break;
+        }
+        if (!installed) [[unlikely]] {
+            // Flag-on only: a condition stopped being watchable after the
+            // checks above (another thread transitioned a prototype). Drop the
+            // half-built entry (the watchpoint destructors unlink whatever was
+            // installed) and leave the slot empty so a later call retries.
+            ASSERT(Options::useJSThreads());
+            cache.m_missWatchpoints.clear();
+            cache.m_equivalenceWatchpoint = nullptr;
+            return;
         }
         // AUD1.N4(2): the JIT-read word is RELEASE-published LAST. Holding
         // ownStructure->lock() orders nothing for the foreign fast-path
@@ -420,7 +433,7 @@ void StructureRareData::clearCachedSpecialProperty(CachedSpecialPropertyKey key)
     if (key != CachedSpecialPropertyKey::ToJSON)
         setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState::Indeterminate);
 
-    auto* objectToStringCache = m_specialPropertyCache.get();
+    auto* objectToStringCache = specialPropertyCachePointer();
     if (!objectToStringCache)
         return;
     auto& cache = objectToStringCache->m_cache[static_cast<unsigned>(key)];
@@ -432,9 +445,9 @@ void StructureRareData::clearCachedSpecialProperty(CachedSpecialPropertyKey key)
 
 void StructureRareData::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
-    if (m_specialPropertyCache) {
+    if (specialPropertyCachePointer()) {
         auto clearCacheIfInvalidated = [&](CachedSpecialPropertyKey key) {
-            auto& cache = m_specialPropertyCache->m_cache[static_cast<unsigned>(key)];
+            auto& cache = specialPropertyCachePointer()->m_cache[static_cast<unsigned>(key)];
             if (cache.m_equivalenceWatchpoint) {
                 if (!cache.m_equivalenceWatchpoint->key().isStillLive(vm)) {
                     clearCachedSpecialProperty(key);

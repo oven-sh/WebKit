@@ -4710,6 +4710,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
         
+    case CheckTransitionOwner:
+        // Thread ownership is not an abstract-value fact; nothing to fold.
+        break;
+
     case CheckStructureImmediate: {
         // FIXME: This currently can only reason about one structure at a time.
         // https://bugs.webkit.org/show_bug.cgi?id=136988
@@ -5797,8 +5801,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         // and docs/threads/AUDIT-checktraps.md). GIL-on flag-on, and for the
         // (not expected) exitOK=false poll, keep the conservative mirror of
         // clobberize's write(Heap).
-        if (Options::useJSThreads()) [[unlikely]] {
-            if (!Options::useThreadGIL() && node->origin.exitOK) {
+        // GIL-on flag-on: nothing, as flag-off (see the CheckTraps case in
+        // DFGClobberize.h for why no other mutator can run at this poll).
+        if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+            if (node->origin.exitOK) {
                 m_state.setStructureClobberState(StructuresAreWatched);
                 m_state.observeInvalidationPoint();
             } else

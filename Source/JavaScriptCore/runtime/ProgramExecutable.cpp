@@ -30,6 +30,7 @@
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "JSCInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "SymbolTableInlines.h"
 #include "VMTrapsInlines.h"
 #include <wtf/text/MakeString.h>
@@ -116,6 +117,10 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
 
     if (error.isValid())
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
+
+    // The checks below and the binding creation after them are one step GIL
+    // off (JSGlobalObject::globalDeclarationLock()).
+    GILOffFirstUseLocker declarationLocker(JSGlobalObject::globalDeclarationLock(), vm, vm.gilOffWithProcessGate());
 
     JSValue nextPrototype = globalObject->getPrototypeDirect();
     while (nextPrototype && nextPrototype.isObject()) {

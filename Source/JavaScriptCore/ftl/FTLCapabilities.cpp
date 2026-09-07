@@ -373,6 +373,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case PhantomNewRegExp:
     case PutHint:
     case CheckStructureImmediate:
+    case CheckTransitionOwner:
     case MaterializeNewObject:
     case MaterializeNewArrayWithButterfly:
     case MaterializeCreateActivation:

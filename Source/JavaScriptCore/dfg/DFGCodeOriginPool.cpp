@@ -40,7 +40,7 @@ CallSiteIndex CodeOriginPool::addCodeOrigin(CodeOrigin codeOrigin)
 {
     if (m_codeOrigins.isEmpty()
         || m_codeOrigins.last() != codeOrigin)
-        m_codeOrigins.append(codeOrigin);
+        appendEntry(codeOrigin);
     unsigned index = m_codeOrigins.size() - 1;
     ASSERT(m_codeOrigins[index] == codeOrigin);
     return CallSiteIndex(index);
@@ -48,7 +48,7 @@ CallSiteIndex CodeOriginPool::addCodeOrigin(CodeOrigin codeOrigin)
 
 CallSiteIndex CodeOriginPool::addUniqueCallSiteIndex(CodeOrigin codeOrigin)
 {
-    m_codeOrigins.append(codeOrigin);
+    appendEntry(codeOrigin);
     unsigned index = m_codeOrigins.size() - 1;
     ASSERT(m_codeOrigins[index] == codeOrigin);
     return CallSiteIndex(index);
@@ -65,10 +65,12 @@ DisposableCallSiteIndex CodeOriginPool::addDisposableCallSiteIndex(CodeOrigin co
     if (!m_callSiteIndexFreeList.isEmpty()) {
         unsigned index = m_callSiteIndexFreeList.takeLast();
         m_codeOrigins[index] = codeOrigin;
+        if (Options::useJSThreads()) [[unlikely]]
+            m_published[index] = codeOrigin; // slot is free: no frame can name it (its routine died at a GC end)
         return DisposableCallSiteIndex(index);
     }
 
-    m_codeOrigins.append(codeOrigin);
+    appendEntry(codeOrigin);
     unsigned index = m_codeOrigins.size() - 1;
     ASSERT(m_codeOrigins[index] == codeOrigin);
     return DisposableCallSiteIndex(index);
@@ -79,12 +81,44 @@ void CodeOriginPool::removeDisposableCallSiteIndex(DisposableCallSiteIndex callS
     RELEASE_ASSERT(callSite.bits() < m_codeOrigins.size());
     m_callSiteIndexFreeList.append(callSite.bits());
     m_codeOrigins[callSite.bits()] = CodeOrigin();
+    if (Options::useJSThreads()) [[unlikely]]
+        m_published[callSite.bits()] = CodeOrigin();
 }
 
 void CodeOriginPool::shrinkToFit()
 {
     m_codeOrigins.shrinkToFit();
     m_callSiteIndexFreeList.shrinkToFit();
+    if (Options::useJSThreads()) [[unlikely]]
+        republish(); // shrinkToFit reallocated the Vector; keep the published copy exact (called at link, before sharing)
+}
+
+void CodeOriginPool::appendEntry(CodeOrigin codeOrigin)
+{
+    m_codeOrigins.append(codeOrigin);
+    if (!Options::useJSThreads()) [[likely]]
+        return;
+    // The published array always has room for m_codeOrigins.capacity()
+    // entries; a growth of the Vector republishes (copy + retire), otherwise
+    // the new entry is written in place (no reader can name its index yet).
+    if (!m_published || m_codeOrigins.size() > m_publishedCapacity)
+        republish();
+    else
+        m_published[m_codeOrigins.size() - 1] = codeOrigin;
+}
+
+void CodeOriginPool::republish()
+{
+    unsigned capacity = std::max<unsigned>(m_codeOrigins.capacity(), m_codeOrigins.size());
+    auto fresh = makeUniqueArray<CodeOrigin>(capacity ? capacity : 1);
+    for (unsigned i = 0; i < m_codeOrigins.size(); ++i)
+        fresh[i] = m_codeOrigins[i];
+    CodeOrigin* raw = fresh.get();
+    if (m_published)
+        m_retired.append(WTF::move(m_publishedOwner));
+    m_publishedOwner = WTF::move(fresh);
+    m_publishedCapacity = capacity ? capacity : 1;
+    WTF::atomicStore(&m_published, raw, std::memory_order_release);
 }
 
 } } // namespace JSC::DFG

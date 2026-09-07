@@ -33,6 +33,8 @@
 #include "BaselineJITRegisters.h"
 #include "BinarySwitch.h"
 #include "CCallHelpers.h"
+#include "ConcurrentButterfly.h"
+#include "PreciseAllocation.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
 #include "DOMJITCallDOMGetterSnippet.h"
@@ -1871,6 +1873,78 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
     return { };
 }
 
+// SPEC-jit §5.5 Transition, flag-on (OM E4 / N2-LF; OM history §23): the
+// non-reallocating transition with its runtime owner predicate. Register
+// discipline: only scratch1GPR/scratch2GPR are written before the transition
+// commits (every `slow` edge is taken with all IC operand registers intact, so
+// a data IC can fall through to its next handler); the value and StructureID
+// stores happen only after the last `slow` edge. Emits: PreciseAllocation
+// exclusion; ONE load of the tagged butterfly word; butterfly-bearing => the
+// (currentTID, SW=0) tag compare, value store (inline, or through the masked
+// butterfly), store fence, new StructureID; butterfly-less => the same owner
+// test (OM r16 N1-I: the word's tag names the instance owner), then the
+// StructureID lane is claimed with a 32-bit CAS old -> nuke(old) (a failed
+// claim has written nothing), value store to the inline slot, store fence, new
+// StructureID. No poll and no
+// allocation inside (OM I29). The functors materialize operands that the two
+// callers hold differently (handler fields vs. stub constants).
+template<typename LoadOffset, typename LoadOldStructureIDBits, typename StoreNewStructureID>
+static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelpers::JumpList& slow, GPRReg baseGPR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, const LoadOffset& loadOffset, const LoadOldStructureIDBits& loadOldStructureIDBits, const StoreNewStructureID& storeNewStructureID)
+{
+    JIT_COMMENT(jit, "concurrent transition: owner predicate");
+    slow.append(jit.branchTestPtr(CCallHelpers::NonZero, baseGPR, CCallHelpers::TrustedImm32(PreciseAllocation::halfAlignment))); // OM I36
+    jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+    // One owner test for every word (OM r16 N1-I): tag == (currentTID, SW=0).
+    jit.loadButterflyTIDTag(scratch1GPR);
+    jit.xor64(scratch2GPR, scratch1GPR);
+    jit.urshift64(CCallHelpers::TrustedImm32(butterflyTIDShift), scratch1GPR); // keeps the 16 tag bits (SW + TID)
+    slow.append(jit.branchTest32(CCallHelpers::NonZero, scratch1GPR));
+    jit.and64(CCallHelpers::TrustedImm64(butterflyPointerMask), scratch2GPR);
+    CCallHelpers::Jump hasButterfly = jit.branchTest64(CCallHelpers::NonZero, scratch2GPR);
+
+    {
+        JIT_COMMENT(jit, "butterfly-less: N2-LF claim");
+        loadOldStructureIDBits(scratch1GPR);
+        jit.move(scratch1GPR, scratch2GPR);
+        jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
+        slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
+        // Committed: the lane is ours (nuked); nothing below can fail.
+        loadOffset(scratch1GPR); // inline by construction (no butterfly)
+        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+        jit.storeFence();
+        storeNewStructureID();
+    }
+    CCallHelpers::Jump done = jit.jump();
+
+    hasButterfly.link(&jit);
+    {
+        JIT_COMMENT(jit, "butterfly-bearing: plain E4 sequence");
+        // Committed (scratch2GPR = untagged butterfly).
+        loadOffset(scratch1GPR);
+        CCallHelpers::Jump isInline = jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset));
+        jit.neg32(scratch1GPR);
+        jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
+        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+        CCallHelpers::Jump stored = jit.jump();
+        isInline.link(&jit);
+        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+        stored.link(&jit);
+        jit.storeFence();
+        storeNewStructureID();
+    }
+    done.link(&jit);
+}
+
+// Data IC handler form: operands come from the InlineCacheHandler.
+static void emitConcurrentNonReallocatingTransitionForHandler(CCallHelpers& jit, CCallHelpers::JumpList& slow, GPRReg baseGPR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR)
+{
+    emitConcurrentNonReallocatingTransition(jit, slow, baseGPR, valueJSR, scratch1GPR, scratch2GPR,
+        [&](GPRReg dest) { jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), dest); },
+        [&](GPRReg dest) { jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), dest); },
+        [&] { jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())); });
+}
+
+
 void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCase, CCallHelpers::JumpList& fallThrough)
 {
     SuperSamplerScope superSamplerScope(false);
@@ -3174,7 +3248,11 @@ void InlineCacheCompiler::generateWithoutGuard(unsigned index, AccessCase& acces
     generateWithConditionChecks(index, accessCase);
 }
 
-static void collectConditions(AccessCase& accessCase, Vector<ObjectPropertyCondition, 64>& watchedConditions, Vector<ObjectPropertyCondition, 64>& checkingConditions)
+// Returns false (flag-on only) when a condition that couldStillSucceed()
+// verified no longer holds: with JS threads another thread can transition the
+// condition's object (a shared prototype) between that check and generation.
+// The caller then gives the case up; the next repatch re-derives it.
+[[nodiscard]] static bool collectConditions(AccessCase& accessCase, Vector<ObjectPropertyCondition, 64>& watchedConditions, Vector<ObjectPropertyCondition, 64>& checkingConditions)
 {
     for (const ObjectPropertyCondition& condition : accessCase.conditionSet()) {
         RELEASE_ASSERT(!accessCase.polyProtoAccessChain());
@@ -3185,12 +3263,16 @@ static void collectConditions(AccessCase& accessCase, Vector<ObjectPropertyCondi
         }
 
         // For now, we only allow equivalence when it's watchable.
+        if (Options::useJSThreads() && condition.condition().kind() == PropertyCondition::Equivalence) [[unlikely]]
+            return false; // Was watchable at couldStillSucceed(); a foreign write since made it not.
         RELEASE_ASSERT(condition.condition().kind() != PropertyCondition::Equivalence);
 
         if (!condition.structureEnsuresValidityAssumingImpurePropertyWatchpoint(Concurrency::MainThread)) {
             // The reason why this cannot happen is that we require that PolymorphicAccess calls
             // AccessCase::generate() only after it has verified that
             // AccessCase::couldStillSucceed() returned true.
+            if (Options::useJSThreads()) [[unlikely]]
+                return false; // ... on this thread; another thread moved the object since.
 
             dataLog("This condition is no longer met: ", condition, "\n");
             RELEASE_ASSERT_NOT_REACHED();
@@ -3198,14 +3280,18 @@ static void collectConditions(AccessCase& accessCase, Vector<ObjectPropertyCondi
 
         checkingConditions.append(condition);
     }
+    return true;
 }
 
 void InlineCacheCompiler::generateWithConditionChecks(unsigned index, AccessCase& accessCase)
 {
     Vector<ObjectPropertyCondition, 64> checkingConditions;
-    collectConditions(accessCase, m_conditions, checkingConditions);
-
     CCallHelpers& jit = *m_jit;
+    if (!collectConditions(accessCase, m_conditions, checkingConditions)) [[unlikely]] {
+        m_failAndIgnore.append(jit.jump()); // Flag-on: the case is stale; this arm always misses.
+        return;
+    }
+
     GPRReg scratchGPR = m_scratchGPR;
     for (auto& condition : checkingConditions) {
         // We will emit code that has a weak reference that isn't otherwise listed anywhere.
@@ -3723,12 +3809,6 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     case AccessCase::IndexedTrueKeyTransition:
     case AccessCase::IndexedFalseKeyTransition: {
         ASSERT(!accessCase.viaGlobalProxy());
-        // A generated transition needs the transition predicate (compile-time
-        // transitionThreadLocal validity plus the runtime thread-tag /
-        // shared-write test), which this compiler does not emit; tryCachePutBy
-        // refuses to create Transition cases under useJSThreads, so this case
-        // must be unreachable flag-on.
-        RELEASE_ASSERT(!Options::useJSThreads());
         // AccessCase::createTransition() should have returned null if this wasn't true.
         RELEASE_ASSERT(GPRInfo::numberOfRegisters >= 6 || !accessCase.structure()->outOfLineCapacity() || accessCase.structure()->outOfLineCapacity() == accessCase.newStructure()->outOfLineCapacity());
 
@@ -3739,6 +3819,35 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
         bool allocatingInline = allocating && !accessCase.structure()->couldHaveIndexingHeader();
 
         auto allocator = makeDefaultScratchAllocator(scratchGPR);
+
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit §5.5 Transition (OM E4 / N2-LF): tryCachePutBy creates
+            // only non-reallocating Transition cases flag-on; emit them with
+            // the runtime owner predicate. A predicate failure takes the
+            // generic put (m_failAndIgnore), which performs the transition
+            // through the C++ protocols and fires F2 if this thread is foreign.
+            RELEASE_ASSERT(!allocating);
+            GPRReg scratch2GPR = allocator.allocateScratchGPR();
+            ScratchRegisterAllocator::PreservedState preservedState =
+                allocator.preserveReusedRegistersByPushing(jit, ScratchRegisterAllocator::ExtraStackSpace::NoExtraSpace);
+            CCallHelpers::JumpList slowPath;
+            StructureID sourceID = accessCase.structure()->id();
+            StructureID targetID = accessCase.newStructure()->id();
+            PropertyOffset offset = accessCase.m_offset;
+            emitConcurrentNonReallocatingTransition(jit, slowPath, baseGPR, valueRegs, scratchGPR, scratch2GPR,
+                [&](GPRReg dest) { jit.move(CCallHelpers::TrustedImm32(offset), dest); },
+                [&](GPRReg dest) { jit.move(CCallHelpers::TrustedImm32(sourceID.bits()), dest); },
+                [&] { jit.store32(CCallHelpers::TrustedImm32(std::bit_cast<uint32_t>(targetID)), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())); });
+            allocator.restoreReusedRegistersByPopping(jit, preservedState);
+            succeed();
+            if (allocator.didReuseRegisters()) {
+                slowPath.link(&jit);
+                allocator.restoreReusedRegistersByPopping(jit, preservedState);
+                m_failAndIgnore.append(jit.jump());
+            } else
+                m_failAndIgnore.append(slowPath);
+            return;
+        }
 
         GPRReg scratchGPR2 = InvalidGPRReg;
         GPRReg scratchGPR3 = InvalidGPRReg;
@@ -4789,6 +4898,15 @@ static Vector<WatchpointSet*, 3> collectAdditionalWatchpoints(VM& vm, AccessCase
 
     if (WatchpointSet* set  = accessCase.additionalSet())
         result.append(set);
+
+    if (Options::useJSThreads() && accessCase.isTransition()) [[unlikely]] {
+        // SPEC-jit §5.5 Transition: the four thread-local sets. A fire (always
+        // inside a stop, OM I13) retires this stub before any mutator resumes.
+        result.append(structure->transitionThreadLocalWatchpointSet().inflate());
+        result.append(structure->writeThreadLocalWatchpointSet().inflate());
+        result.append(accessCase.newStructure()->transitionThreadLocalWatchpointSet().inflate());
+        result.append(accessCase.newStructure()->writeThreadLocalWatchpointSet().inflate());
+    }
 
     if (structure
         && structure->hasRareData()
@@ -5856,14 +5974,22 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdReplaceHandler()
 
 // FIXME: We may need to implement it in offline asm eventually to share it with non JIT environment.
 template<bool allocating, bool reallocating>
-static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpList& allocationFailure, GPRReg baseGPR, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg scratch4GPR)
+static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpList& allocationFailure, GPRReg baseGPR, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg scratch4GPR, CCallHelpers::JumpList* concurrentSlow = nullptr)
 {
     if (Options::useJSThreads()) [[unlikely]] {
-        // SPEC-jit section 5.5 (Task 8): generated transitions are illegal
-        // flag-on (no transitionThreadLocal/writeThreadLocal sets to watch
-        // yet; OM E4). bytecode/Repatch.cpp gates transition-handler
-        // creation, so this shared thunk is unreachable; trap rather than
-        // emit an unguarded butterfly install if it ever runs.
+        if constexpr (!allocating) {
+            // Only scratch1GPR/scratch2GPR are touched before the transition
+            // commits, so a predicate failure can still fall through to the
+            // next handler with every operand register intact (the put_by_val
+            // callers pass live registers as scratch3GPR/scratch4GPR).
+            UNUSED_PARAM(scratch3GPR);
+            UNUSED_PARAM(scratch4GPR);
+            RELEASE_ASSERT(concurrentSlow);
+            emitConcurrentNonReallocatingTransitionForHandler(jit, *concurrentSlow, baseJSR.payloadGPR(), valueJSR, scratch1GPR, scratch2GPR);
+            return;
+        }
+        // Reallocating transitions are never cached flag-on (Repatch.cpp);
+        // trap rather than emit an unguarded butterfly install.
         jit.breakpoint();
         return;
     }
@@ -5951,7 +6077,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByIdTransitionHandlerImpl(VM& vm
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    transitionHandlerImpl<allocating, reallocating>(vm, jit, allocationFailure, baseGPR, valueGPR, scratch1GPR, scratch2GPR, scratch3GPR, scratch4GPR);
+    transitionHandlerImpl<allocating, reallocating>(vm, jit, allocationFailure, baseGPR, valueGPR, scratch1GPR, scratch2GPR, scratch3GPR, scratch4GPR, &fallThrough);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6639,7 +6765,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValNonStringPrimitiveKeyTransi
     fallThrough.append(emitNonStringPrimitiveKeyCheck<keyType>(jit, propertyGPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    transitionHandlerImpl<allocating, reallocating>(vm, jit, allocationFailure, baseGPR, valueGPR, scratch1GPR, scratch2GPR, propertyGPR, profileGPR);
+    transitionHandlerImpl<allocating, reallocating>(vm, jit, allocationFailure, baseGPR, valueGPR, scratch1GPR, scratch2GPR, propertyGPR, profileGPR, &fallThrough);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6899,8 +7025,10 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValTransitionHandlerImpl(VM& v
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyGPR, scratch1GPR));
 
     // At this point, we will not go to slow path, so clobbering the other registers are fine.
-    // We use propertyGPR and profileGPR for scratch register purpose.
-    transitionHandlerImpl<allocating, reallocating>(vm, jit, allocationFailure, baseGPR, valueGPR, scratch1GPR, scratch2GPR, propertyGPR, profileGPR);
+    // We use propertyGPR and profileGPR for scratch register purpose. (Flag-on
+    // the non-allocating form can still fall through until it commits and
+    // touches only scratch1GPR/scratch2GPR before that.)
+    transitionHandlerImpl<allocating, reallocating>(vm, jit, allocationFailure, baseGPR, valueGPR, scratch1GPR, scratch2GPR, propertyGPR, profileGPR, &fallThrough);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -7518,7 +7646,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::Load: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7545,7 +7674,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::Miss: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             auto code = vm.getCTIStub(CommonJITThunkID::GetByIdMissHandler).retagged<JITStubRoutinePtrTag>();
                             auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
@@ -7568,7 +7698,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                                 break;
                         }
 
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7596,7 +7727,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::Getter: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7667,7 +7799,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     bool allocating = accessCase.newStructure()->outOfLineCapacity() != accessCase.structure()->outOfLineCapacity();
                     bool reallocating = allocating && accessCase.structure()->outOfLineCapacity();
                     bool allocatingInline = allocating && !accessCase.structure()->couldHaveIndexingHeader();
-                    collectConditions(accessCase, watchedConditions, checkingConditions);
+                    if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                        return AccessGenerationResult::GaveUp;
                     if (checkingConditions.isEmpty()) {
                         MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                         if (!allocating)
@@ -7688,7 +7821,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::CustomValueSetter: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7711,7 +7845,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::Setter: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7742,7 +7877,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::InHit:
                 case AccessCase::InMiss: {
                     ASSERT(!accessCase.viaGlobalProxy());
-                    collectConditions(accessCase, watchedConditions, checkingConditions);
+                    if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                        return AccessGenerationResult::GaveUp;
                     if (checkingConditions.isEmpty()) {
                         bool isHit = accessCase.m_type == AccessCase::InHit;
                         auto code = vm.getCTIStub(isHit ? CommonJITThunkID::InByIdHitHandler : CommonJITThunkID::InByIdMissHandler).retagged<JITStubRoutinePtrTag>();
@@ -7796,7 +7932,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::InstanceOfHit:
                 case AccessCase::InstanceOfMiss: {
                     ASSERT(!accessCase.viaGlobalProxy());
-                    collectConditions(accessCase, watchedConditions, checkingConditions);
+                    if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                        return AccessGenerationResult::GaveUp;
                     if (checkingConditions.isEmpty()) {
                         auto code = vm.getCTIStub(accessCase.m_type == AccessCase::InstanceOfHit ? CommonJITThunkID::InstanceOfHitHandler : CommonJITThunkID::InstanceOfMissHandler).retagged<JITStubRoutinePtrTag>();
                         auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
@@ -7822,7 +7959,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::IndexedFalseKeyLoad: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7888,7 +8026,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::IndexedFalseKeyMiss: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             switch (accessCase.m_type) {
@@ -7930,7 +8069,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                                 break;
                         }
 
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -7966,7 +8106,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::Getter: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -8038,7 +8179,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     bool allocating = accessCase.newStructure()->outOfLineCapacity() != accessCase.structure()->outOfLineCapacity();
                     bool reallocating = allocating && accessCase.structure()->outOfLineCapacity();
                     bool allocatingInline = allocating && !accessCase.structure()->couldHaveIndexingHeader();
-                    collectConditions(accessCase, watchedConditions, checkingConditions);
+                    if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                        return AccessGenerationResult::GaveUp;
                     if (checkingConditions.isEmpty()) {
                         auto selectTransitionHandler = [&](CommonJITThunkID nonAlloc, CommonJITThunkID reallocOOL, CommonJITThunkID newlyAlloc, CommonJITThunkID realloc) -> MacroAssemblerCodeRef<JITStubRoutinePtrTag> {
                             if (!allocating)
@@ -8083,7 +8225,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::CustomValueSetter: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -8113,7 +8256,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::Setter: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
-                        collectConditions(accessCase, watchedConditions, checkingConditions);
+                        if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                            return AccessGenerationResult::GaveUp;
                         if (checkingConditions.isEmpty()) {
                             Structure* currStructure = accessCase.structure();
                             if (auto* object = accessCase.tryGetAlternateBase())
@@ -8146,7 +8290,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::InHit:
                 case AccessCase::InMiss: {
                     ASSERT(!accessCase.viaGlobalProxy());
-                    collectConditions(accessCase, watchedConditions, checkingConditions);
+                    if (!collectConditions(accessCase, watchedConditions, checkingConditions)) [[unlikely]]
+                        return AccessGenerationResult::GaveUp;
                     if (checkingConditions.isEmpty()) {
                         MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                         if (accessCase.uid()->isSymbol())

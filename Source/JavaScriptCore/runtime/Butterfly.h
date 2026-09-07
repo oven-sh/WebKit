@@ -29,6 +29,7 @@
 #include "IndexingHeader.h"
 #include "IndexingType.h"
 #include "PropertyStorage.h"
+#include "Options.h"
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/FastMalloc.h>
@@ -395,16 +396,19 @@ static_assert(butterflyAliasEquationsHold(), "I8: the §4.1 equations reproduce 
 // (ConcurrentButterfly.cpp segmented* wrappers) calls tsanConsume(), which
 // pair via TSAN_ANNOTATE_HAPPENS_BEFORE/AFTER on the spine address. Both are
 // no-ops outside TSAN builds.
+// racyLoad/racyStore: relaxed atomics under TSAN, plain otherwise (these
+// helpers also run flag-off, e.g. Butterfly::tryCreate's header store, where an
+// atomic would keep the compiler from folding the fresh-butterfly stores).
 template<typename T>
 ALWAYS_INLINE T butterflyConcurrentLoad(const T* location)
 {
-    return WTF::atomicLoad(const_cast<T*>(location), std::memory_order_relaxed);
+    return racyLoad(*location);
 }
 
 template<typename T>
 ALWAYS_INLINE void butterflyConcurrentStore(T* location, T value)
 {
-    WTF::atomicStore(location, value, std::memory_order_relaxed);
+    racyStore(*location, value);
 }
 
 // THREADS/TSAN-gated bulk copy/zero of butterfly payload words. A fresh (or
@@ -423,7 +427,14 @@ ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size
     for (size_t i = 0; i < bytes / sizeof(uint64_t); ++i)
         WTF::atomicStore(&to[i], WTF::atomicLoad(const_cast<uint64_t*>(&from[i]), std::memory_order_relaxed), std::memory_order_relaxed);
 #else
-    memcpy(dst, src, bytes);
+    // Flag-on: 64-bit-unit copy (never byte-granular) - the SOURCE may be
+    // receiving a racing 8-byte store from another thread (its first store
+    // lands before the SW publication), and a torn lane would be a torn
+    // JSValue. Flag-off: today's memcpy.
+    if (Options::useJSThreads()) [[unlikely]]
+        gcSafeMemcpy(static_cast<uint64_t*>(dst), static_cast<const uint64_t*>(src), bytes);
+    else
+        memcpy(dst, src, bytes);
 #endif
 }
 
