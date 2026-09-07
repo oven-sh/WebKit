@@ -901,13 +901,16 @@ std::optional<bool> BytecodeOptimizerAccess::evaluateConstantBranch(const Insn& 
         bool nullish = value->isUndefinedOrNull();
         return (insn.opcode == op_jeq_null || insn.opcode == op_jundefined_or_null) ? nullish : !nullish;
     }
-    case op_jstricteq:
-    case op_jnstricteq: {
+    case op_jstricteq: {
         auto bytecode = insn.instruction->as<OpJstricteq>();
+        return strictEqual(bytecode.m_lhs, bytecode.m_rhs);
+    }
+    case op_jnstricteq: {
+        auto bytecode = insn.instruction->as<OpJnstricteq>();
         auto equal = strictEqual(bytecode.m_lhs, bytecode.m_rhs);
         if (!equal)
             return std::nullopt;
-        return insn.opcode == op_jstricteq ? *equal : !*equal;
+        return !*equal;
     }
     case op_jless:
         return numbers(insn.instruction->as<OpJless>().m_lhs, insn.instruction->as<OpJless>().m_rhs, [](double a, double b) { return a < b; });
@@ -1966,6 +1969,14 @@ void BytecodeOptimizerAccess::emit()
     JSInstructionStreamWriter newWriter;
     bool finalPass = false;
     for (unsigned iteration = 0; ; ++iteration) {
+        if (iteration == 16) {
+            // Each pass can widen as little as one branch; rather than iterate once per branch on a pathological
+            // chain, force every branch wide, after which offsets settle within a pass or two.
+            for (auto& insn : m_insns) {
+                if (insn.isBranchOrSwitch() || insn.isJmp())
+                    insn.minimumSize = OpcodeSize::Wide32;
+            }
+        }
         RELEASE_ASSERT(iteration < 64);
         JSInstructionStreamWriter writer;
         m_codeBlock->metadata().restartForReemit();

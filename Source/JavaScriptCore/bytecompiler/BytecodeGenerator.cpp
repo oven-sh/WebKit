@@ -3423,7 +3423,8 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
         }
         frames = node;
     }
-    bool hasSloppyEval = m_codeType == EvalCode || (m_scopeNode->usesEval() && !m_ecmaMode.isStrict());
+    // Not m_ecmaMode: class bodies temporarily force it strict while their members' executables are created.
+    bool hasSloppyEval = m_codeType == EvalCode || (m_scopeNode->usesEval() && !m_scopeNode->isStrictMode());
     if (hasSloppyEval)
         frames = DeclaredNamesLink::Frame::create(true, { }, WTF::move(frames)); // eval can add vars to the innermost var scope
     bool isDynamicBarrier = hasSloppyEval || (m_scopeNode->features() & WithFeature);
