@@ -29,6 +29,7 @@
 #include <wtf/text/StringImpl.h>
 
 #include <atomic>
+#include <wtf/MallocSpan.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SIMDUTF.h>
 #include <wtf/StdLibExtras.h>
@@ -368,7 +369,56 @@ char32_t NODELETE StringImpl::codePointAt(unsigned i)
     return span[i];
 }
 
-Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocale()
+// u_strToUpper and u_strToLower have the same signature.
+using ICUCaseConvertFunction = decltype(&u_strToUpper);
+
+// ICU takes UTF-16, so an 8-bit string is widened into buffer first. Returns nullopt when that
+// buffer cannot be allocated. StringView::upconvertedCharacters() crashes in that case, and its
+// Vector cannot hold the copy of a string with 2^30 or more characters.
+static std::optional<std::span<const char16_t>> charactersForICU(const StringImpl& string, MallocSpan<char16_t>& buffer)
+{
+    if (!string.is8Bit())
+        return string.span16();
+    if (!string.length())
+        return std::span<const char16_t> { };
+    buffer = MallocSpan<char16_t>::tryMalloc(string.length() * sizeof(char16_t));
+    if (!buffer)
+        return std::nullopt;
+    StringImpl::copyCharacters(buffer.mutableSpan(), string.span8());
+    return buffer.span();
+}
+
+// Runs u_strToUpper or u_strToLower over the whole string. The first attempt writes into
+// destination, which holds source.size() characters. Returns nullptr when the converted
+// string does not fit in a String.
+static RefPtr<StringImpl> tryConvertCaseWithICU(ICUCaseConvertFunction convert, const char* locale, std::span<const char16_t> source, Ref<StringImpl>&& destination, std::span<char16_t> destinationCharacters)
+{
+    ASSERT(destinationCharacters.size() == source.size());
+    if (source.empty())
+        return WTF::move(destination);
+
+    UErrorCode status = U_ZERO_ERROR;
+    int32_t convertedLength = convert(destinationCharacters.data(), destinationCharacters.size(), source.data(), source.size(), locale, &status);
+    if (U_SUCCESS(status) && static_cast<size_t>(convertedLength) == source.size())
+        return WTF::move(destination);
+
+    // U_BUFFER_OVERFLOW_ERROR means the converted string is longer than the source, and
+    // convertedLength is its length. ICU reports a converted string longer than INT32_MAX
+    // as U_INDEX_OUTOFBOUNDS_ERROR instead.
+    if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR)
+        return nullptr;
+
+    RefPtr<StringImpl> converted = StringImpl::tryCreateUninitialized(convertedLength, destinationCharacters);
+    if (!converted)
+        return nullptr;
+    status = U_ZERO_ERROR;
+    convert(destinationCharacters.data(), destinationCharacters.size(), source.data(), source.size(), locale, &status);
+    if (U_FAILURE(status))
+        return nullptr;
+    return converted;
+}
+
+RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithoutLocale()
 {
     // Note: At one time this was a hot function in the Dromaeo benchmark, specifically the
     // no-op code path that may return ourself if we find no upper case letters and no invalid
@@ -383,13 +433,20 @@ Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocale()
                 return convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(i);
         }
 
-        return *this;
+        return this;
     }
 
-    return convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(0);
+    return tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(0);
 }
 
-Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex)
+Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocale()
+{
+    RefPtr<StringImpl> lowercased = tryConvertToLowercaseWithoutLocale();
+    RELEASE_ASSERT(lowercased);
+    return lowercased.releaseNonNull();
+}
+
+RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex)
 {
     ASSERT(!is8Bit());
     auto span = span16();
@@ -413,34 +470,22 @@ Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingInde
     }
     // Nothing to do if the string is all ASCII with no uppercase.
     if (noUpper && !(ored & ~0x7F))
-        return *this;
+        return this;
+
+    std::span<char16_t> data16;
+    RefPtr<StringImpl> newImpl = tryCreateUninitialized(m_length, data16);
+    if (!newImpl)
+        return nullptr;
 
     if (!(ored & ~0x7F)) {
-        std::span<char16_t> data16;
-        auto newImpl = createUninitializedInternalNonEmpty(m_length, data16);
         copyCharacters(data16, span.first(failingIndex));
         for (unsigned i = failingIndex; i < span.size(); ++i)
             data16[i] = toASCIILower(span[i]);
         return newImpl;
     }
 
-    int32_t length = m_length;
-
     // Do a slower implementation for cases that include non-ASCII characters.
-    std::span<char16_t> data16;
-    auto newImpl = createUninitializedInternalNonEmpty(m_length, data16);
-
-    UErrorCode status = U_ZERO_ERROR;
-    int32_t realLength = u_strToLower(data16.data(), length, m_data16, m_length, "", &status);
-    if (U_SUCCESS(status) && realLength == length)
-        return newImpl;
-
-    newImpl = createUninitialized(realLength, data16);
-    status = U_ZERO_ERROR;
-    u_strToLower(data16.data(), realLength, m_data16, m_length, "", &status);
-    if (U_FAILURE(status))
-        return *this;
-    return newImpl;
+    return tryConvertCaseWithICU(u_strToLower, "", span, newImpl.releaseNonNull(), data16);
 }
 
 Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex)
@@ -471,7 +516,7 @@ Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingInde
     return newImpl;
 }
 
-Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocale()
+RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocale()
 {
     // This function could be optimized for no-op cases the way
     // convertToLowercaseWithoutLocale() is, but in empirical testing,
@@ -487,18 +532,27 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocale()
         for (unsigned i = 0; i < span.size(); ++i) {
             Latin1Character character = span[i];
             if (!isASCII(character) || isASCIILower(character)) [[unlikely]]
-                return convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(i);
+                return tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(i);
         }
-        return *this;
+        return this;
     }
-    return convertToUppercaseWithoutLocaleUpconvert();
+    return tryConvertToUppercaseWithoutLocaleUpconvert();
 }
 
-Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex)
+Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocale()
+{
+    RefPtr<StringImpl> uppercased = tryConvertToUppercaseWithoutLocale();
+    RELEASE_ASSERT(uppercased);
+    return uppercased.releaseNonNull();
+}
+
+RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex)
 {
     ASSERT(is8Bit());
     std::span<Latin1Character> destination;
-    auto newImpl = createUninitialized(m_length, destination);
+    RefPtr<StringImpl> newImpl = tryCreateUninitialized(m_length, destination);
+    if (!newImpl)
+        return nullptr;
 
     auto span = span8();
     copyCharacters(destination, span.first(failingIndex));
@@ -533,7 +587,7 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingInde
         char16_t upper = u_toupper(character);
         if (!isLatin1(upper)) [[unlikely]] {
             // Since this upper-cased character does not fit in an 8-bit string, we need to take the 16-bit path.
-            return convertToUppercaseWithoutLocaleUpconvert();
+            return tryConvertToUppercaseWithoutLocaleUpconvert();
         }
         destination[i] = static_cast<Latin1Character>(upper);
     }
@@ -542,9 +596,10 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingInde
         return newImpl;
 
     // We have numberSSCharacters sharp-s characters, but none of the other special characters.
-    if ((m_length + numberSharpSCharacters) > MaxLength)
-        return *this;
-    newImpl = createUninitialized(m_length + numberSharpSCharacters, destination);
+    // Enough of them take the new length past MaxLength, and then tryCreateUninitialized() gives nullptr.
+    newImpl = tryCreateUninitialized(static_cast<size_t>(m_length) + numberSharpSCharacters, destination);
+    if (!newImpl)
+        return nullptr;
 
     size_t destinationIndex = 0;
     for (unsigned i = 0; i < span.size(); ++i) {
@@ -561,13 +616,16 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingInde
     return newImpl;
 }
 
-Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleUpconvert()
+RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocaleUpconvert()
 {
-    auto upconvertedCharacters = StringView(*this).upconvertedCharacters();
-    return convertToUppercaseWithoutLocale16Bit(upconvertedCharacters.span(), 0);
+    MallocSpan<char16_t> buffer;
+    auto source16 = charactersForICU(*this, buffer);
+    if (!source16)
+        return nullptr;
+    return tryConvertToUppercaseWithoutLocale16Bit(*source16, 0);
 }
 
-Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex)
+RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex)
 {
     ASSERT(!is8Bit());
     auto span = span16();
@@ -577,15 +635,17 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingInde
         ASSERT(!isASCIILower(span[i]));
     }
 #endif
-    return convertToUppercaseWithoutLocale16Bit(span, failingIndex);
+    return tryConvertToUppercaseWithoutLocale16Bit(span, failingIndex);
 }
 
-Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocale16Bit(std::span<const char16_t> source16, unsigned failingIndex)
+RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocale16Bit(std::span<const char16_t> source16, unsigned failingIndex)
 {
     ASSERT(source16.size() == m_length);
 
     std::span<char16_t> data16;
-    auto newImpl = createUninitialized(source16.size(), data16);
+    RefPtr<StringImpl> newImpl = tryCreateUninitialized(source16.size(), data16);
+    if (!newImpl)
+        return nullptr;
 
     // Characters before the failing index are already known to be ASCII that upper-casing leaves
     // alone, so they can be copied across without being tested or converted.
@@ -602,16 +662,7 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocale16Bit(std::span<const
         return newImpl;
 
     // Do a slower implementation for cases that include non-ASCII characters.
-    UErrorCode status = U_ZERO_ERROR;
-    int32_t realLength = u_strToUpper(data16.data(), m_length, source16.data(), source16.size(), "", &status);
-    if (U_SUCCESS(status) && realLength == static_cast<int32_t>(m_length))
-        return newImpl;
-    newImpl = createUninitialized(realLength, data16);
-    status = U_ZERO_ERROR;
-    u_strToUpper(data16.data(), data16.size(), source16.data(), source16.size(), "", &status);
-    if (U_FAILURE(status))
-        return *this;
-    return newImpl;
+    return tryConvertCaseWithICU(u_strToUpper, "", source16, newImpl.releaseNonNull(), data16);
 }
 
 static inline bool NODELETE needsTurkishCasingRules(const AtomString& locale)
@@ -638,75 +689,62 @@ static inline bool NODELETE needsLithuanianCasingRules(const AtomString& locale)
         && (locale.length() == 2 || locale[2] == '-');
 }
 
-Ref<StringImpl> StringImpl::convertToLowercaseWithLocale(const AtomString& localeIdentifier)
+static RefPtr<StringImpl> tryConvertCaseWithLocale(const StringImpl& string, ICUCaseConvertFunction convert, const char* locale)
+{
+    MallocSpan<char16_t> buffer;
+    auto source16 = charactersForICU(string, buffer);
+    if (!source16)
+        return nullptr;
+    std::span<char16_t> data16;
+    RefPtr<StringImpl> newString = StringImpl::tryCreateUninitialized(source16->size(), data16);
+    if (!newString)
+        return nullptr;
+    return tryConvertCaseWithICU(convert, locale, *source16, newString.releaseNonNull(), data16);
+}
+
+RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithLocale(const AtomString& localeIdentifier)
 {
     // Use the more-optimized code path most of the time.
-    const char* locale;
     if (needsTurkishCasingRules(localeIdentifier)) {
         // Passing in the hardcoded locale "tr" is more efficient than
         // allocating memory just to turn localeIdentifier into a C string, and we assume
         // there is no difference between the lowercasing for "tr" and "az" locales.
         // FIXME: Could optimize further by looking for the three sequences that have locale-specific lowercasing.
-        locale = "tr";
-    } else if (needsLithuanianCasingRules(localeIdentifier))
-        locale = "lt";
-    else
-        return convertToLowercaseWithoutLocale();
-
-    // FIXME: Could share more code with convertToLowercaseWithoutLocale.
-
-    if (m_length > MaxLength)
-        CRASH();
-
-    auto upconvertedCharacters = StringView(*this).upconvertedCharacters();
-    auto source16 = upconvertedCharacters.span();
-    std::span<char16_t> data16;
-    auto newString = createUninitialized(source16.size(), data16);
-    UErrorCode status = U_ZERO_ERROR;
-    size_t realLength = u_strToLower(data16.data(), data16.size(), source16.data(), source16.size(), locale, &status);
-    if (U_SUCCESS(status) && realLength == source16.size())
-        return newString;
-    newString = createUninitialized(realLength, data16);
-    status = U_ZERO_ERROR;
-    u_strToLower(data16.data(), data16.size(), source16.data(), source16.size(), locale, &status);
-    if (U_FAILURE(status))
-        return *this;
-    return newString;
+        return tryConvertCaseWithLocale(*this, u_strToLower, "tr");
+    }
+    if (needsLithuanianCasingRules(localeIdentifier))
+        return tryConvertCaseWithLocale(*this, u_strToLower, "lt");
+    return tryConvertToLowercaseWithoutLocale();
 }
 
-Ref<StringImpl> StringImpl::convertToUppercaseWithLocale(const AtomString& localeIdentifier)
+Ref<StringImpl> StringImpl::convertToLowercaseWithLocale(const AtomString& localeIdentifier)
+{
+    RefPtr<StringImpl> lowercased = tryConvertToLowercaseWithLocale(localeIdentifier);
+    RELEASE_ASSERT(lowercased);
+    return lowercased.releaseNonNull();
+}
+
+RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithLocale(const AtomString& localeIdentifier)
 {
     // Use the more-optimized code path most of the time.
-    const char* locale;
     if (needsTurkishCasingRules(localeIdentifier) && find('i') != notFound) {
         // Passing in the hardcoded locale "tr" is more efficient than
         // allocating memory just to turn localeIdentifier into a C string, and we assume
         // there is no difference between the uppercasing for "tr" and "az" locales.
-        locale = "tr";
-    } else if (needsGreekUppercasingRules(localeIdentifier))
-        locale = "el";
-    else if (needsLithuanianCasingRules(localeIdentifier))
-        locale = "lt";
-    else
-        return convertToUppercaseWithoutLocale();
+        return tryConvertCaseWithLocale(*this, u_strToUpper, "tr");
+    }
+    if (needsGreekUppercasingRules(localeIdentifier))
+        return tryConvertCaseWithLocale(*this, u_strToUpper, "el");
+    if (needsLithuanianCasingRules(localeIdentifier))
+        return tryConvertCaseWithLocale(*this, u_strToUpper, "lt");
+    return tryConvertToUppercaseWithoutLocale();
+}
 
-    if (m_length > MaxLength)
-        CRASH();
-
-    auto upconvertedCharacters = StringView(*this).upconvertedCharacters();
-    auto source16 = upconvertedCharacters.span();
-    std::span<char16_t> data16;
-    auto newString = createUninitialized(source16.size(), data16);
-    UErrorCode status = U_ZERO_ERROR;
-    size_t realLength = u_strToUpper(data16.data(), data16.size(), source16.data(), source16.size(), locale, &status);
-    if (U_SUCCESS(status) && realLength == source16.size())
-        return newString;
-    newString = createUninitialized(realLength, data16);
-    status = U_ZERO_ERROR;
-    u_strToUpper(data16.data(), data16.size(), source16.data(), source16.size(), locale, &status);
-    if (U_FAILURE(status))
-        return *this;
-    return newString;
+Ref<StringImpl> StringImpl::convertToUppercaseWithLocale(const AtomString& localeIdentifier)
+{
+    RefPtr<StringImpl> uppercased = tryConvertToUppercaseWithLocale(localeIdentifier);
+    RELEASE_ASSERT(uppercased);
+    return uppercased.releaseNonNull();
 }
 
 Ref<StringImpl> StringImpl::foldCase()
