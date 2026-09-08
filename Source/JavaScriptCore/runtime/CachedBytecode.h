@@ -76,6 +76,9 @@ public:
     size_t rootOffset() const { return m_rootOffset; }
     void setRootOffset(size_t offset) { m_rootOffset = offset; }
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
+    bool payloadIntegrityIsPreVerified() const { return m_payload.isIntegrityPreVerified(); }
+    bool payloadIsOwnedOrPersistent() const { return m_payload.isOwnedOrPersistent(); }
+    void setPayloadIntegrityIsPreVerified() { m_payload.setIsIntegrityPreVerified(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
     size_t sizeForUpdate() const { return m_size; }
 

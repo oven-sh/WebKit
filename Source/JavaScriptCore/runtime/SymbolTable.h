@@ -45,6 +45,8 @@
 namespace JSC {
 
 class CodeBlock;
+class CachedSymbolTable;
+class Decoder;
 class SymbolTable;
 struct DebuggerLocation;
 
@@ -449,14 +451,36 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    // You must hold the lock until after you're done with the iterator.
-    Map::iterator find(const ConcurrentJSLocker&, UniquedStringImpl* key)
+    // Options::useLazySymbolTableConstants(): a table decoded from the bytecode cache, or cloned from one, keeps its
+    // entries in the cache payload until they are first read; until then m_map is empty. They are decoded only on the
+    // mutator, outside GC phases, with m_lock held. A compiler thread (or heap analysis during marking) holding m_lock
+    // therefore sees either the complete map or no entries; the accessors such a thread may use on a pending table are
+    // begin/end/localToEntry (entryFor), and their callers — Graph::tryGetConstantClosureVar ("no entry" = not a
+    // constant; a pending entry cannot be watched), JSLexicalEnvironment::analyzeHeap, FTL validation — treat "no
+    // entries" conservatively. Every other accessor asserts the entries are in. (DesiredGlobalProperties reads the
+    // global lexical environment's table, which never comes from the cache.)
+    bool hasCachedEntriesPending() const { return !!m_cachedEntries; }
+    void materializeCachedEntriesIfPossible(const ConcurrentJSLockerBase&) const
     {
+        if (m_cachedEntries) [[unlikely]]
+            const_cast<SymbolTable*>(this)->materializeCachedEntries();
+    }
+    void materializeCachedEntriesIfNeeded(const ConcurrentJSLockerBase& locker) const
+    {
+        materializeCachedEntriesIfPossible(locker);
+        ASSERT(!m_cachedEntries);
+    }
+
+    // You must hold the lock until after you're done with the iterator.
+    Map::iterator find(const ConcurrentJSLocker& locker, UniquedStringImpl* key)
+    {
+        materializeCachedEntriesIfNeeded(locker);
         return m_map.find(key);
     }
     
-    Map::iterator find(const GCSafeConcurrentJSLocker&, UniquedStringImpl* key)
+    Map::iterator find(const GCSafeConcurrentJSLocker& locker, UniquedStringImpl* key)
     {
+        materializeCachedEntriesIfNeeded(locker);
         return m_map.find(key);
     }
     
@@ -468,23 +492,27 @@ public:
 
     SymbolTableEntry::Fast inlineGet(UniquedStringImpl* key);
     
-    Map::iterator begin(const ConcurrentJSLocker&)
+    Map::iterator begin(const ConcurrentJSLocker& locker)
     {
+        materializeCachedEntriesIfPossible(locker);
         return m_map.begin();
     }
     
-    Map::iterator end(const ConcurrentJSLocker&)
+    Map::iterator end(const ConcurrentJSLocker& locker)
     {
+        materializeCachedEntriesIfPossible(locker);
         return m_map.end();
     }
     
-    Map::iterator end(const GCSafeConcurrentJSLocker&)
+    Map::iterator end(const GCSafeConcurrentJSLocker& locker)
     {
+        materializeCachedEntriesIfPossible(locker);
         return m_map.end();
     }
     
-    size_t size(const ConcurrentJSLocker&) const
+    size_t size(const ConcurrentJSLocker& locker) const
     {
+        materializeCachedEntriesIfNeeded(locker);
         return m_map.size();
     }
     
@@ -543,8 +571,9 @@ public:
     }
     
     template<typename Entry>
-    void add(const ConcurrentJSLocker&, UniquedStringImpl* key, Entry&& entry)
+    void add(const ConcurrentJSLocker& locker, UniquedStringImpl* key, Entry&& entry)
     {
+        materializeCachedEntriesIfNeeded(locker);
         RELEASE_ASSERT(!m_localToEntry);
         didUseVarOffset(entry.varOffset());
         Map::AddResult result = m_map.add(key, std::forward<Entry>(entry));
@@ -559,8 +588,9 @@ public:
     }
 
     template<typename Entry>
-    void set(const ConcurrentJSLocker&, UniquedStringImpl* key, Entry&& entry)
+    void set(const ConcurrentJSLocker& locker, UniquedStringImpl* key, Entry&& entry)
     {
+        materializeCachedEntriesIfNeeded(locker);
         RELEASE_ASSERT(!m_localToEntry);
         didUseVarOffset(entry.varOffset());
         m_map.set(key, std::forward<Entry>(entry));
@@ -596,8 +626,9 @@ public:
         return false;
     }
 
-    bool contains(const ConcurrentJSLocker&, UniquedStringImpl* key)
+    bool contains(const ConcurrentJSLocker& locker, UniquedStringImpl* key)
     {
+        materializeCachedEntriesIfNeeded(locker);
         return m_map.contains(key);
     }
     
@@ -714,6 +745,11 @@ private:
     DECLARE_DEFAULT_FINISH_CREATION;
     JS_EXPORT_PRIVATE SymbolTableRareData& ensureRareDataSlow();
 
+    // `record` is inside decoder's payload; scopePartOnly makes the eventual decode keep only VarKind::Scope entries
+    // (what cloneScopePart copies).
+    void setCachedEntries(Decoder&, const CachedSymbolTable* record, bool scopePartOnly);
+    JS_EXPORT_PRIVATE void materializeCachedEntries(); // Caller holds m_lock.
+
     Map m_map;
     ScopeOffset m_maxScopeOffset;
 public:
@@ -724,8 +760,11 @@ private:
     unsigned m_nestedLexicalScope : 1; // Non-function LexicalScope.
     unsigned m_scopeType : 3; // ScopeType
     PropagateCloneInvalidationToOriginal m_propagateCloneInvalidationToOriginal : 1 { PropagateCloneInvalidationToOriginal::No };
+    unsigned m_cachedEntriesScopePartOnly : 1 { 0 };
 
     std::unique_ptr<SymbolTableRareData> m_rareData;
+    RefPtr<Decoder> m_cachedEntriesDecoder;
+    const CachedSymbolTable* m_cachedEntries { nullptr }; // See hasCachedEntriesPending().
 
     WriteBarrier<ScopedArgumentsTable> m_arguments;
     WriteBarrier<SymbolTable> m_clonedFrom;

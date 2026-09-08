@@ -44,6 +44,8 @@ bool mightInlineFunctionForCall(JITType, CodeBlock*);
 bool mightInlineFunctionForClosureCall(JITType, CodeBlock*);
 bool mightInlineFunctionForConstruct(JITType, CodeBlock*);
 bool NODELETE canUseOSRExitFuzzing(CodeBlock*);
+// The mutator has completed the lazily materialized state of this inlinee (or, when the DFG runs on the mutator, does so now).
+bool isLazyStatePreparedForInlining(CodeBlock*);
 #else // ENABLE(DFG_JIT)
 inline bool mightCompileEval(CodeBlock*) { return false; }
 inline bool mightCompileProgram(CodeBlock*) { return false; }
@@ -53,6 +55,7 @@ inline bool mightInlineFunctionForCall(JITType, CodeBlock*) { return false; }
 inline bool mightInlineFunctionForClosureCall(JITType, CodeBlock*) { return false; }
 inline bool mightInlineFunctionForConstruct(JITType, CodeBlock*) { return false; }
 inline bool canUseOSRExitFuzzing(CodeBlock*) { return false; }
+inline bool isLazyStatePreparedForInlining(CodeBlock*) { return true; }
 #endif // ENABLE(DFG_JIT)
 
 inline CapabilityLevel evalCapabilityLevel(CodeBlock* codeBlock)
@@ -146,6 +149,10 @@ inline bool mightInlineFunction(JITType jitType, CodeBlock* codeBlock)
 
 inline CapabilityLevel inlineFunctionForCapabilityLevel(JITType jitType, CodeBlock* codeBlock, CodeSpecializationKind kind, bool isClosureCall)
 {
+    // Usually called on a compiler thread: the inlinee's bytecode, metadata and constants are about to be parsed there,
+    // so they must be complete (CodeBlock::prepareLazyStateForConcurrentCompilation).
+    if (Options::useLazyCodeBlockStateCompilerFence() && !isLazyStatePreparedForInlining(codeBlock))
+        return CannotCompile;
     if (isClosureCall) {
         if (kind != CodeSpecializationKind::CodeForCall)
             return CannotCompile;

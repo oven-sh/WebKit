@@ -53,6 +53,8 @@ void ArrayAllocationProfile::updateProfile()
     // So for now, we update the allocation profile only from the main thread.
     
     ASSERT(!isCompilationThread());
+    if (!m_storage.pointer())
+        return; // nothing to fold in (and a zero-filled profile, see isInitialized(), stays untouched)
     Storage storage = std::exchange(m_storage, Storage(nullptr, m_storage.type()));
     JSArray* lastArray = storage.pointer();
     IndexingTypeAndVectorLength current = storage.type();

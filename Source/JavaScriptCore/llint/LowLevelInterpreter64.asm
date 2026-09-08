@@ -2472,6 +2472,12 @@ end
 
 # t5 holds metadata.
 macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, dstVirtualRegister, prepareCall, invokeCall, prepareSlowCall, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCountIncludingThis)
+    # A lazily linked CodeBlock (Options::useLazyCodeBlockLink) leaves this CallLinkInfo zero-filled until the call
+    # first executes; the call thunks below need its owner, call type and code origin, so have the slow path fill it in.
+    btpnz %opcodeStruct%::Metadata::m_callLinkInfo.m_owner[t5], .callLinkInfoReady
+    callSlowPath(_llint_slow_path_link_call_link_info)
+    metadata(t5, t0)
+.callLinkInfoReady:
     getCallee(t1)
 
     loadConstantOrVariable(size, t1, t0)
@@ -2807,7 +2813,9 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
         return(t0)
     end
 
+    # globalObject is m_constantScope; null in a lazily linked (still zero-filled) entry, which must take the slow path.
     macro globalLexicalBindingEpochCheck(slowPath, globalObject, scratch)
+        btpz globalObject, slowPath
         loadi OpResolveScope::Metadata::m_globalLexicalBindingEpoch[t5], scratch
         bineq JSGlobalObject::m_globalLexicalBindingEpoch[globalObject], scratch, slowPath
     end

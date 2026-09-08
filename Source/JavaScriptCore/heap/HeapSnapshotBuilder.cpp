@@ -29,10 +29,13 @@
 #include "DeferGCInlines.h"
 #include "Heap.h"
 #include "HeapProfiler.h"
+#include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
 #include "JSCInlines.h"
 #include "JSCast.h"
 #include "PreventCollectionScope.h"
+#include "SubspaceInlines.h"
+#include "SymbolTable.h"
 #include "VM.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -68,6 +71,16 @@ void HeapSnapshotBuilder::buildSnapshot()
     PreventCollectionScope preventCollectionScope(m_profiler.vm().heap);
 
     m_snapshot = makeUnique<HeapSnapshot>(m_profiler.mostRecentSnapshot());
+    {
+        // analyzeVariableNameEdge needs SymbolTable entries, which cannot be faulted in from inside marking.
+        VM& vm = m_profiler.vm();
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.symbolTableSpace.forEachLiveCell([](HeapCell* cell, HeapCell::Kind) {
+            SUPPRESS_MEMORY_UNSAFE_CAST auto* symbolTable = static_cast<SymbolTable*>(cell);
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            symbolTable->materializeCachedEntriesIfNeeded(locker);
+        });
+    }
     {
         ASSERT(!m_profiler.activeHeapAnalyzer());
         m_profiler.setActiveHeapAnalyzer(this);

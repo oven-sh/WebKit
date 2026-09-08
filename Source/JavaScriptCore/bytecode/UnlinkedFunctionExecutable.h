@@ -84,9 +84,23 @@ public:
     ~UnlinkedFunctionExecutable();
 
     const Identifier& name() const;
-    const Identifier& ecmaName() const { return m_ecmaName; }
+    const Identifier& ecmaName() const
+    {
+        if (m_nameIsDeferred) [[unlikely]]
+            materializeDeferredNameSlow();
+        return m_ecmaName;
+    }
+    // For threads other than the mutator (compiler-thread dumps): null while the name is still only in the bytecode cache.
+    const Identifier* tryGetEcmaNameConcurrently() const
+    {
+        if (WTF::atomicLoad(const_cast<bool*>(&m_nameIsDeferred), std::memory_order_acquire))
+            return nullptr;
+        return &m_ecmaName;
+    }
     void setEcmaName(const Identifier& name)
     {
+        if (m_nameIsDeferred) [[unlikely]]
+            materializeDeferredNameSlow();
         ASSERT(!m_hasName || name == m_ecmaName);
         m_ecmaName = name;
     }
@@ -95,6 +109,7 @@ public:
 
     SourceCode classSource() const
     {
+        materializeDeferredMembersIfNeeded();
         if (m_rareData)
             return m_rareData->m_classSource;
         return SourceCode();
@@ -102,6 +117,17 @@ public:
     void setClassSource(const SourceCode& source)
     {
         ensureRareData().m_classSource = source;
+        m_isClass = !source.isNull();
+    }
+
+    // Options::useThinChildExecutables(): an executable decoded from a bytecode cache leaves its ecmaName, parent scope
+    // TDZ variables and rare data in the cache until something asks for them (name reflection, generating bytecode for
+    // it, toString of a class, re-encoding). Only the mutator materializes; a CodeBlock for this executable implies the
+    // name is materialized (unlinkedCodeBlockFor() does it), so compiler threads that reach it through a CodeBlock are safe.
+    void materializeDeferredMembersIfNeeded() const
+    {
+        if (m_membersAreDeferred) [[unlikely]]
+            materializeDeferredMembersSlow();
     }
 
     bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
@@ -172,18 +198,18 @@ public:
         }
         return false;
     }
-    bool isClass() const
-    {
-        if (!m_rareData)
-            return false;
-        return !m_rareData->m_classSource.isNull();
-    }
+    bool isClass() const { return m_isClass; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
-    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const { return m_parentScopeTDZVariables; }
+    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
+    {
+        materializeDeferredMembersIfNeeded();
+        return m_parentScopeTDZVariables;
+    }
 
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames() const
     {
+        materializeDeferredMembersIfNeeded();
         if (!m_rareData)
             return nullptr;
         return &m_rareData->m_generatorOrAsyncWrapperFunctionParameterNames;
@@ -191,6 +217,7 @@ public:
 
     const PrivateNameEnvironment* parentPrivateNameEnvironment() const
     {
+        materializeDeferredMembersIfNeeded();
         if (!m_rareData)
             return nullptr;
         return &m_rareData->m_parentPrivateNameEnvironment;
@@ -208,12 +235,14 @@ public:
 
     String sourceURLDirective() const
     {
+        materializeDeferredMembersIfNeeded();
         if (m_rareData)
             return m_rareData->m_sourceURLDirective;
         return String();
     }
     String sourceMappingURLDirective() const
     {
+        materializeDeferredMembersIfNeeded();
         if (m_rareData)
             return m_rareData->m_sourceMappingURLDirective;
         return String();
@@ -260,6 +289,7 @@ public:
 
     const FixedVector<ClassElementDefinition>* classElementDefinitions() const
     {
+        materializeDeferredMembersIfNeeded();
         if (m_rareData)
             return &m_rareData->m_classElementDefinitions;
         return nullptr;
@@ -279,6 +309,8 @@ private:
     DECLARE_VISIT_CHILDREN;
 
     void decodeCachedCodeBlocks(VM&);
+    JS_EXPORT_PRIVATE void materializeDeferredNameSlow() const;
+    JS_EXPORT_PRIVATE void materializeDeferredMembersSlow() const;
 
     bool codeBlockEdgeMayBeWeak() const
     {
@@ -318,6 +350,10 @@ private:
     uint8_t m_inlineAttribute : 1;
     uint8_t m_evalContextType : 2;
     uint8_t m_hasName : 1;
+    uint8_t m_isClass : 1;
+    // Own bytes, not bits of the group above: the mutator clears these late, while compiler threads read that group.
+    bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
+    bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;
@@ -333,17 +369,24 @@ private:
     };
 
     Identifier m_ecmaName;
-    RefPtr<TDZEnvironmentLink> m_parentScopeTDZVariables;
+    union {
+        RefPtr<TDZEnvironmentLink> m_parentScopeTDZVariables;
+        RefPtr<Decoder> m_deferredMembersDecoder; // m_membersAreDeferred
+    };
 
     RareData& ensureRareData()
     {
+        materializeDeferredMembersIfNeeded();
         if (m_rareData) [[likely]]
             return *m_rareData;
         return ensureRareDataSlow();
     }
     RareData& ensureRareDataSlow();
 
-    std::unique_ptr<RareData> m_rareData;
+    union {
+        std::unique_ptr<RareData> m_rareData;
+        const CachedFunctionExecutable* m_deferredMembersRecord; // m_membersAreDeferred; lives in m_deferredMembersDecoder's payload
+    };
 
 public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);

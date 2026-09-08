@@ -374,7 +374,7 @@ void dump(const char* reason)
 
     // ---- Decode summary ----
     {
-        uint64_t blocks = s.decodes.size(), functionBlocks = 0, identifiers = 0, identifiersTouched = 0, identifiersInDead = 0, deadBlocks = 0, children = 0, withName = 0, withTDZ = 0, constants = 0, symbolTables = 0, symbolTableEntries = 0, stringConstants = 0, neverLinked = 0, instructionBytes = 0;
+        uint64_t blocks = s.decodes.size(), functionBlocks = 0, identifiers = 0, identifiersTouched = 0, identifiersInDead = 0, deadBlocks = 0, children = 0, withName = 0, withTDZ = 0, constants = 0, symbolTables = 0, symbolTableEntries = 0, stringConstants = 0, stringConstantCellsCreated = 0, neverLinked = 0, instructionBytes = 0;
         uint64_t identifiersNeverLinkedBlocks = 0;
         for (auto& d : s.decodes) {
             functionBlocks += d->isFunctionCode;
@@ -391,6 +391,7 @@ void dump(const char* reason)
             symbolTables += d->symbolTableConstants;
             symbolTableEntries += d->symbolTableEntries;
             stringConstants += d->stringConstants;
+            stringConstantCellsCreated += d->stringConstantCellsCreated;
             instructionBytes += d->instructionBytes;
             if (!d->everLinked) {
                 neverLinked++;
@@ -404,7 +405,7 @@ void dump(const char* reason)
             (unsigned long long)identifiers, (unsigned long long)identifiersTouched, identifiers ? 100.0 * identifiersTouched / identifiers : 0.0,
             (unsigned long long)(identifiers - identifiersTouched), identifiers ? 100.0 * (identifiers - identifiersTouched) / identifiers : 0.0,
             (identifiers - identifiersTouched) * 8.0 / (1024 * 1024));
-        out.printf("  constants decoded: %llu (SymbolTable constants: %llu with %llu entries; string constants: %llu)\n", (unsigned long long)constants, (unsigned long long)symbolTables, (unsigned long long)symbolTableEntries, (unsigned long long)stringConstants);
+        out.printf("  constants decoded: %llu (SymbolTable constants: %llu with %llu entries; string constants: %llu, of which %llu created a shared-table cell)\n", (unsigned long long)constants, (unsigned long long)symbolTables, (unsigned long long)symbolTableEntries, (unsigned long long)stringConstants, (unsigned long long)stringConstantCellsCreated);
         out.printf("  child UnlinkedFunctionExecutables decoded eagerly: %llu (with name: %llu, with TDZ vars: %llu, with rare data: %llu)\n",
             (unsigned long long)s.childrenDecoded, (unsigned long long)s.childrenDecodedWithName, (unsigned long long)s.childrenDecodedWithTDZ, (unsigned long long)s.childrenDecodedWithRareData);
         uint64_t wasted = s.childrenDecoded - s.childrenLinked;

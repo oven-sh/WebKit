@@ -91,9 +91,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \
+    v(Bool, useLazySymbolTableConstants, true, Normal, "If true, a SymbolTable constant decoded from the bytecode cache (and its per-CodeBlock clone) leaves its entries in the cache payload until they are first read."_s) \
     v(Bool, useBorrowedBytecodeFromCache, true, Normal, "If true, instruction streams and expression info decoded from a persistent (mmap'd/embedded) bytecode cache alias the cache instead of copying it."_s) \
+    v(Bool, useThinChildExecutables, true, Normal, "If true, an UnlinkedFunctionExecutable decoded from an owned or persistent bytecode cache payload leaves its name, parent scope TDZ variables and rare data in the payload until first use."_s) \
+    v(Bool, useLazyHeapConstants, true, Normal, "Cheaper string-constant decode from the bytecode cache (nothing is actually deferred): shared-table string cells are registered for GC visiting once per constant pool instead of under a lock per string, 3-character constants skip the atom table, and the atom-table reservation no longer counts the constant pool."_s) \
+    v(Bool, useConstantLinkStringPassThrough, true, Normal, "If true, CodeBlock::setConstantRegisters recognizes string constants by their MarkedBlock's subspace and copies them without loading the cell header."_s) \
     v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so useBorrowedBytecodeFromCache applies to them."_s) \
-    v(Bool, verifyBytecodeCacheChecksums, true, Normal, "check each code block's CRC when it is decoded from a bytecode cache and fall back to generating it from source on a mismatch"_s)
+    v(Bool, verifyBytecodeCacheChecksums, true, Normal, "check each code block's CRC when it is decoded from a bytecode cache and fall back to generating it from source on a mismatch"_s) \
+    v(Bool, useTrustedEmbeddedBytecodeIntegrity, true, Normal, "If true, a bytecode cache payload the embedder marked integrity-pre-verified (e.g. a section of the running executable) is decoded without per-code-block bounds/checksum checks."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
@@ -327,6 +332,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxDFGNodesInBasicBlockForPreciseAnalysis, 20000, Normal, "Disable precise but costly analysis and give conservative results if the number of DFG nodes in a block exceeds this threshold"_s) \
     \
     v(Bool, useConcurrentJIT, true, Normal, "allows the DFG / FTL compilation in threads other than the executing JS thread"_s) \
+    v(Bool, useLazyCodeBlockStateCompilerFence, true, Normal, "If true, the DFG only inlines CodeBlocks whose lazily materialized link-time state the mutator has completed (CodeBlock::prepareLazyStateForConcurrentCompilation), and DFG::compile prepares the likely inlinees up front."_s) \
     v(Unsigned, minNumberOfWorklistThreads, computeNumberOfWorkerThreads(3, 2), Normal, nullptr) \
     v(Unsigned, maxNumberOfWorklistThreads, computeNumberOfWorkerThreads(3, 2), Normal, nullptr) \
     v(Unsigned, numberOfBaselineCompilerThreads, computeNumberOfWorkerThreads(3, 2), Normal, nullptr) \
@@ -696,6 +702,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseExecutablePoolAllocation, false, Normal, nullptr) \
     v(Bool, useHandlerICInFTL, false, Normal, nullptr) \
     v(Bool, useLLIntICs, true, Normal, "Use property and call ICs in LLInt code."_s) \
+    v(Bool, useLazyCodeBlockLink, true, Normal, "If true, creating a CodeBlock does not walk its instruction stream: metadata stays zero-filled and scope resolution, call link infos and allocation profiles are set up when an instruction first executes (or before the block is handed to a JIT). Eval code and blocks with debugger/profiler opcodes still link eagerly."_s) \
     v(Bool, useBaselineJITCodeSharing, jitEnabledByDefault(), Normal, nullptr) \
     v(Bool, libpasScavengeContinuously, false, Normal, nullptr) \
     v(Unsigned, libpasForcePGMWithRate, 0, Normal, "Forces on probablistic guard malloc and guards allocations with a rate 1/N (0 is disabled)"_s) \

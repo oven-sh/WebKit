@@ -8520,9 +8520,15 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
         case op_new_object: {
             auto bytecode = currentInstruction->as<OpNewObject>();
-            set(bytecode.m_dst,
-                addToGraph(NewObject,
-                    OpInfo(m_graph.registerStructure(bytecode.metadata(codeBlock).m_objectAllocationProfile.structure()))));
+            Structure* structure = bytecode.metadata(codeBlock).m_objectAllocationProfile.structure();
+            if (!structure) [[unlikely]] {
+                // Lazily linked block whose profile was never set up (CodeBlock::prepareLazyStateForConcurrentCompilation
+                // did not run for it); a structure cannot be made on this thread.
+                addToGraph(ForceOSRExit);
+                set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantNull)));
+                NEXT_OPCODE(op_new_object);
+            }
+            set(bytecode.m_dst, addToGraph(NewObject, OpInfo(m_graph.registerStructure(structure))));
             NEXT_OPCODE(op_new_object);
         }
 
@@ -10421,8 +10427,10 @@ void ByteCodeParser::parseBlock(unsigned limit)
             JSScope* constantScope = nullptr;
             JSCell* lexicalEnvironment = nullptr;
             SymbolTable* symbolTable = nullptr;
+            bool linked = true;
             {
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
+                linked = !m_inlineStackTop->m_profiledBlock->linksLazily() || isScopeMetadataLinked(metadata);
                 resolveType = metadata.m_resolveType;
                 depth = metadata.m_localScopeDepth;
                 switch (resolveType) {
@@ -10445,6 +10453,15 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 default:
                     break;
                 }
+            }
+
+            if (!linked) {
+                // Lazily linked block, and this instruction has never executed (nor could the mutator resolve it ahead
+                // of this compilation): nothing is known, so treat it like any other unprofiled code.
+                addToGraph(Phantom, get(bytecode.m_scope));
+                addToGraph(ForceOSRExit);
+                set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantNull)));
+                NEXT_OPCODE(op_resolve_scope);
             }
 
             if (needsDynamicLookup(resolveType, op_resolve_scope)) {
@@ -10553,6 +10570,14 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
                     structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
+            }
+
+            if (m_inlineStackTop->m_profiledBlock->linksLazily() && !getPutInfo.isLinkedMetadata()) {
+                // Never executed in a lazily linked block; see op_resolve_scope.
+                addToGraph(Phantom, get(bytecode.m_scope));
+                addToGraph(ForceOSRExit);
+                set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+                NEXT_OPCODE(op_get_from_scope);
             }
 
             if (needsDynamicLookup(resolveType, op_get_from_scope)) {
@@ -10732,6 +10757,14 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
                     structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
+            }
+
+            if (m_inlineStackTop->m_profiledBlock->linksLazily() && !getPutInfo.isLinkedMetadata()) {
+                // Never executed in a lazily linked block; see op_resolve_scope.
+                addToGraph(Phantom, get(bytecode.m_scope));
+                addToGraph(Phantom, get(bytecode.m_value));
+                addToGraph(ForceOSRExit);
+                NEXT_OPCODE(op_put_to_scope);
             }
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();

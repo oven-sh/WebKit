@@ -44,6 +44,8 @@ class BytecodeCacheError;
 class CachedBytecode;
 class SourceCodeKey;
 class SourceProvider;
+class CachedSymbolTable;
+class SymbolTable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
@@ -119,8 +121,14 @@ public:
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
     // The one JSString this VM uses for the string constant with this ordinal (single characters come from SmallStrings
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
-    // table visits it for as long as the VM lives.
+    // table visits it for as long as the VM lives. Mutator only, GC deferred; see flushPendingCells.
     JSString* jsStringFor(VM&, uint32_t ordinal);
+    // Options::useLazyHeapConstants(): jsStringFor does not register the cells it creates with visitStrongReferences one
+    // lock at a time; the constant-pool decode that called it does, in one go, before its DeferGC scope can end. In
+    // between a new cell is kept alive by GC being deferred plus the barriered store into the pool's (newly allocated)
+    // owner. Every jsStringFor call must therefore sit inside a CachedJSValuePool::decode (Decoder's destructor flushes
+    // as a backstop; ~DecoderStringTable asserts nothing was left pending).
+    void flushPendingCells();
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
 private:
@@ -131,18 +139,19 @@ private:
         bool is8Bit;
     };
     Record record(uint32_t ordinal) const;
+    static Ref<StringImpl> createImpl(const Record&);
     // A slot is empty, a StringImpl* (+1 ref held by the table), or a JSString* tagged with cellTag whose value is that
     // StringImpl. empty -> impl -> cell, never backwards.
     static constexpr uintptr_t cellTag = 1;
     static bool isCell(uintptr_t slot) { return slot & cellTag; }
     static JSString* cell(uintptr_t slot) { return std::bit_cast<JSString*>(slot & ~cellTag); }
     static StringImpl* impl(uintptr_t slot);
-    StringImpl* ensureImpl(uint32_t ordinal);
 
     std::span<const uint8_t> m_bytes;
     uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
+    Vector<uint32_t, 32> m_pendingCellOrdinals; // mutator only
     Lock m_cellsLock;
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
@@ -194,6 +203,7 @@ class Decoder : public RefCounted<Decoder> {
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool canDeferIntoPayload() const; // decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
@@ -201,15 +211,26 @@ public:
     bool payloadContains(const void* start, size_t size) const;
     std::span<const uint8_t> payloadSpan() const;
     bool verifiesChecksums() const;
+    // The embedder pre-verified the payload (Options::useTrustedEmbeddedBytecodeIntegrity): code blocks skip their checksum
+    // and the up-front walk over their child records; the O(1) bounds checks stay.
+    bool trustsPayloadIntegrity() const { return m_trustsPayloadIntegrity; }
     // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
     // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
     static Ref<AtomStringImpl> atomForInlineString(VM&, std::span<const uint8_t, 4> slot);
     Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot) { return atomForInlineString(m_vm, slot); }
+    // The same slot as a string constant: a 3-character one need not be an atom.
+    JSString* jsStringForInlineString(std::span<const uint8_t, 4> slot);
     // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
+    // Only for CachedJSValuePool::decode: see DecoderStringTable::flushPendingCells.
     JSString* jsStringForExternalString(uint32_t ordinal);
+    void flushPendingStringCells()
+    {
+        if (m_externalStrings)
+            m_externalStrings->flushPendingCells();
+    }
 
     ~Decoder();
 
@@ -242,6 +263,7 @@ private:
     Vector<std::function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
+    bool m_trustsPayloadIntegrity { false };
 };
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
@@ -266,6 +288,10 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
+
+// Options::useLazySymbolTableConstants(): fill in the entries of a SymbolTable whose CachedSymbolTable record was left
+// undecoded (SymbolTable::materializeCachedEntries). Mutator only; allocates no GC cells.
+void decodeSymbolTableEntries(Decoder&, const CachedSymbolTable&, SymbolTable&, bool scopePartOnly);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

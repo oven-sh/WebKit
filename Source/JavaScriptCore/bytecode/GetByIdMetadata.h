@@ -80,6 +80,16 @@ union GetByIdModeMetadata {
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
     }
 
+    // A lazily linked CodeBlock (Options::useLazyCodeBlockLink()) leaves this zero-filled instead of constructing it:
+    // that reads as ProtoLoad with a null StructureID, which no cell matches (so the LLInt takes the slow path) and which
+    // setProtoLoadMode() never produces. The slow path then runs the constructor before using the entry.
+    bool isZeroFilled() const { return mode == GetByIdMode::ProtoLoad && !protoLoadMode.structureID; }
+    void initializeIfZeroFilled()
+    {
+        if (isZeroFilled()) [[unlikely]]
+            new (this) GetByIdModeMetadata;
+    }
+
     void clearToDefaultModeWithoutCache();
     void setUnsetMode(Structure*);
     void setArrayLengthMode();

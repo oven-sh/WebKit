@@ -36,6 +36,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class JSScope;
+
 class VM;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MetadataTable);
@@ -73,6 +75,10 @@ public:
     struct LinkingData {
         Ref<UnlinkedMetadataTable> unlinkedMetadata;
         std::atomic<unsigned> refCount;
+        // Options::useLazyCodeBlockLink() state of the owning CodeBlock(s); see CodeBlock::ensureScopeOpsResolved().
+        bool lazyLinkWalked { false }; // everything but (some) scope ops is initialized
+        bool lazyLinkComplete { false }; // nothing left zero-filled / unresolved
+        JSScope* lazyLinkScope { nullptr }; // the scope the block was created for, or another live instance of it; weak, cleared by CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
     };
 
     ~UnlinkedMetadataTable();

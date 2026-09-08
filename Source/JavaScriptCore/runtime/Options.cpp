@@ -851,6 +851,14 @@ void Options::notifyOptionsChanged()
     Options::useHandlerICInFTL() = false; // Currently, it is not completed. Disable forcefully.
     Options::forceUnlinkedDFG() = false; // Currently, IC is rapidly changing. We disable this until we get the final form of Data IC.
 
+    // A compiler thread must never parse a CodeBlock whose lazy link-time state is incomplete.
+    if (Options::useLazyCodeBlockLink() || Options::useThinChildExecutables()
+#if USE(BUN_JSC_ADDITIONS)
+        || Options::useLazySymbolTableConstants()
+#endif
+        )
+        Options::useLazyCodeBlockStateCompilerFence() = true;
+
     if (!Options::allowDoubleShape())
         Options::useJIT() = false; // We don't support JIT with !allowDoubleShape. So disable it.
 

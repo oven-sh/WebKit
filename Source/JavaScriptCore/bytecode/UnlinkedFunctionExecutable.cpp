@@ -120,10 +120,14 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_inlineAttribute(static_cast<unsigned>(inlineAttribute))
     , m_evalContextType(static_cast<unsigned>(evalContextType))
     , m_hasName(!node->ident().isNull())
+    , m_isClass(false)
+    , m_nameIsDeferred(false)
+    , m_membersAreDeferred(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
     , m_ecmaName(node->ecmaName())
     , m_parentScopeTDZVariables(WTF::move(parentScopeTDZVariables))
+    , m_rareData()
 {
     ASSERT(node->ident().isNull() || node->ident() == node->ecmaName());
     // Make sure these bitfields are adequately wide.
@@ -150,7 +154,7 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
 const Identifier& UnlinkedFunctionExecutable::name() const
 {
     if (m_hasName)
-        return m_ecmaName;
+        return ecmaName();
     return vm().propertyNames->nullIdentifier;
 }
 
@@ -158,6 +162,12 @@ UnlinkedFunctionExecutable::~UnlinkedFunctionExecutable()
 {
     if (m_isCached)
         m_decoder.~RefPtr();
+    if (m_membersAreDeferred)
+        m_deferredMembersDecoder.~RefPtr();
+    else {
+        m_parentScopeTDZVariables.~RefPtr();
+        m_rareData.~unique_ptr();
+    }
 }
 
 void UnlinkedFunctionExecutable::destroy(JSCell* cell)
@@ -250,6 +260,8 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode)
 {
+    if (m_nameIsDeferred)
+        materializeDeferredNameSlow(); // CodeBlock::inferredName() is read on compiler threads
     if (m_isCached)
         decodeCachedCodeBlocks(vm);
     switch (specializationKind) {

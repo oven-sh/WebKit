@@ -30,6 +30,7 @@
 #include "ArrayPrototypeInlines.h"
 #include "BytecodeStructs.h"
 #include "ClonedArguments.h"
+#include "CodeBlockInlines.h"
 #include "CommonSlowPathsInlines.h"
 #include "DefinePropertyAttributes.h"
 #include "DirectArguments.h"
@@ -1390,6 +1391,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    if (codeBlock->linksLazily()) {
+        codeBlock->linkLazily(callFrame, bytecode);
+        if (JSScope* resolvedScope = CommonSlowPaths::tryResolveScopeForLinkedMetadata(codeBlock, metadata, scope))
+            RETURN(resolvedScope);
+    }
     JSObject* resolvedScope = JSScope::resolve(globalObject, scope, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     CHECK_EXCEPTION();
@@ -1635,6 +1641,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_new_array_with_species)
     auto& metadata = bytecode.metadata(codeBlock);
     auto& arrayAllocationProfile = metadata.m_arrayAllocationProfile;
     auto& arrayProfile = metadata.m_arrayProfile;
+    if (codeBlock->linksLazily())
+        arrayAllocationProfile.initializeIfZeroFilled(ArrayWithUndecided);
 
     arrayProfile.observeStructureID(array->structureID());
     std::pair<SpeciesConstructResult, JSObject*> speciesResult = speciesConstructArray(globalObject, array, length);
@@ -1663,6 +1671,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_new_array_buffer)
     ASSERT(bytecode.m_immutableButterfly.isConstant());
     JSCellButterfly* immutableButterfly = std::bit_cast<JSCellButterfly*>(GET_C(bytecode.m_immutableButterfly).jsValue().asCell());
     auto& profile = bytecode.metadata(codeBlock).m_arrayAllocationProfile;
+    if (codeBlock->linksLazily())
+        profile.initializeIfZeroFilled(bytecode.m_recommendedIndexingType);
 
     IndexingType indexingMode = profile.selectIndexingType();
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingMode);

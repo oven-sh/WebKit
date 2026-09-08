@@ -29,6 +29,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "CodeBlock.h"
+#include "CodeBlockCreationStats.h"
 #include "DFGCommon.h"
 #include "ExecutableBaseInlines.h"
 #include "JSCellInlines.h"
@@ -46,6 +47,22 @@ bool isSupported()
 bool isSupportedForInlining(CodeBlock* codeBlock)
 {
     return codeBlock->ownerExecutable()->isInliningCandidate();
+}
+
+bool isLazyStatePreparedForInlining(CodeBlock* codeBlock)
+{
+    CodeBlock* baseline = codeBlock->baselineAlternative();
+    if (baseline->isLazyStatePreparedForConcurrentCompilation())
+        return true;
+    if (!isCompilationThread()) {
+        baseline->prepareLazyStateForConcurrentCompilation();
+        return true;
+    }
+    // DFG::compile prepares the likely inlinees up front (prepareLazyStateOfInlineCandidates); this one was linked since.
+    if (CodeBlockCreationStats::enabled()) [[unlikely]]
+        CodeBlockCreationStats::add(CodeBlockCreationStats::Bucket::JITInlineeRefusedUnprepared, 0);
+    dataLogLnIf(Options::verboseDFGFailure(), "Not inlining ", *baseline, ": lazy link-time state not prepared by the mutator.");
+    return false;
 }
 
 bool mightCompileEval(CodeBlock* codeBlock)

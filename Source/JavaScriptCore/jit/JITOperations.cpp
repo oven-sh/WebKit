@@ -4520,11 +4520,18 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     auto bytecode = pc->as<OpResolveScope>();
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* environment = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    auto& metadata = bytecode.metadata(codeBlock);
+    if (codeBlock->linksLazily()) {
+        // Baseline code is compiled from, and shared by blocks with, whatever had executed by then; an entry that had not
+        // is resolved here on first execution and then served the way the LLInt fast path would serve it.
+        codeBlock->linkLazily(callFrame, bytecode);
+        if (JSScope* resolvedScope = CommonSlowPaths::tryResolveScopeForLinkedMetadata(codeBlock, metadata, environment))
+            OPERATION_RETURN(scope, JSValue::encode(resolvedScope));
+    }
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_resolveType;
 
     // ModuleVar does not keep the scope register value alive in DFG.
@@ -4573,6 +4580,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject*
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSObject* environment = uncheckedDowncast<JSObject>(callFrame->uncheckedR(bytecode.m_scope).jsValue());
     GetPutInfo& getPutInfo = bytecode.metadata(codeBlock).m_getPutInfo;
+    if (codeBlock->linksLazily()) {
+        codeBlock->linkLazily(callFrame, bytecode);
+        JSValue result;
+        if (CommonSlowPaths::tryGetFromScopeForLinkedMetadata(codeBlock, bytecode.metadata(codeBlock), environment, result))
+            OPERATION_RETURN(scope, JSValue::encode(result));
+    }
 
     // ModuleVar is always converted to ClosureVar for get_from_scope.
     ASSERT(getPutInfo.resolveType() != ModuleVar);
@@ -4613,10 +4626,18 @@ JSC_DEFINE_JIT_OPERATION(operationPutToScope, void, (JSGlobalObject* globalObjec
     auto bytecode = pc->as<OpPutToScope>();
     auto& metadata = bytecode.metadata(codeBlock);
 
-    const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSObject* jsScope = uncheckedDowncast<JSObject>(callFrame->uncheckedR(bytecode.m_scope).jsValue());
     JSValue value = callFrame->r(bytecode.m_value).jsValue();
     GetPutInfo& getPutInfo = metadata.m_getPutInfo;
+    if (codeBlock->linksLazily()) {
+        codeBlock->linkLazily(callFrame, bytecode);
+        if (CommonSlowPaths::tryPutToScopeForLinkedMetadata(codeBlock, metadata, jsScope, value))
+            OPERATION_RETURN(scope);
+        if (getPutInfo.resolveType() == ModuleVar) {
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+            OPERATION_RETURN(scope);
+        }
+    }
 
     // ModuleVar does not keep the scope register value alive in DFG.
     ASSERT(getPutInfo.resolveType() != ModuleVar);
@@ -4629,6 +4650,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutToScope, void, (JSGlobalObject* globalObjec
         OPERATION_RETURN(scope);
     }
 
+    const Identifier& ident = codeBlock->identifier(bytecode.m_var); // only a ResolvedClosureVar put can be anonymous (m_var == UINT_MAX)
     bool hasProperty = jsScope->hasProperty(globalObject, ident);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (hasProperty

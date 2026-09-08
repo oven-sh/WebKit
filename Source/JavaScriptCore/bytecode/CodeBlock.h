@@ -73,6 +73,10 @@ class UnaryArithProfile;
 class UnlinkedCodeBlock;
 
 struct OpCatch;
+struct OpGetFromScope;
+struct OpPutToScope;
+struct OpResolveScope;
+struct ResolveOp;
 struct SimpleJumpTable;
 struct StringJumpTable;
 
@@ -201,7 +205,7 @@ public:
 
     bool couldBeTainted() const { return m_couldBeTainted; }
 
-    unsigned numberOfArgumentsToSkip() const { return m_numberOfArgumentsToSkip; }
+    unsigned numberOfArgumentsToSkip() const { ASSERT(didWalkInstructionsForLink()); return m_numberOfArgumentsToSkip; } // lazy link: only JIT tiers ask, after ensureScopeOpsResolved()
 
     unsigned numCalleeLocals() const { return m_numCalleeLocals; }
 
@@ -342,7 +346,7 @@ public:
     size_t predictedMachineCodeSize();
 
     unsigned instructionsSize() const { return instructions().size(); }
-    unsigned bytecodeCost() const;
+    unsigned bytecodeCost() const; // a lazily linked block computes it on first use (mutator) or in ensureScopeOpsResolved()
 
     // Exactly equivalent to codeBlock->ownerExecutable()->newReplacementCodeBlockFor(codeBlock->specializationKind())
     CodeBlock* newReplacement();
@@ -779,6 +783,71 @@ public:
 
     bool isJettisoned() const { return m_isJettisoned; }
 
+    // ---- Lazily materialized state vs. concurrent compilers (shared hook) -----------------------------------------
+    // Link-time state that is now built on first execution instead (scope-op metadata, child FunctionExecutables,
+    // SymbolTable constants; each behind its own option) is completed here, on the mutator, before this block gets JIT
+    // code of any tier (JITPlan(), setupWithUnlinkedBaselineCode()) and before an optimizing CodeBlock copies it
+    // (newReplacement()); DFG::compile also prepares the blocks the parser is likely to inline, and the parser refuses one
+    // that is not (DFG::inlineFunctionForCapabilityLevel). That covers state *owned by this block* only: lazy state a
+    // compiler thread reaches through the heap instead (an outer function's SymbolTable via a scope object, the
+    // FunctionExecutable of a callee it does not inline) needs its own compiler-thread-safe "not materialized" answer.
+    // Idempotent; mutator only; defers GC and termination while the ensure* functions run.
+    void prepareLazyStateForConcurrentCompilation()
+    {
+        // Scope ops an earlier prepare could not resolve (no live scope then) are retried; see hasUnlinkedLazyScopeOps().
+        if (m_isLazyStatePreparedForConcurrentCompilation && !hasUnlinkedLazyScopeOps()) [[likely]]
+            return;
+        prepareLazyStateForConcurrentCompilationSlow();
+    }
+    JS_EXPORT_PRIVATE void prepareLazyStateForConcurrentCompilationSlow();
+    // Any thread. Acquire-ordered against everything prepare published.
+    bool isLazyStatePreparedForConcurrentCompilation() const
+    {
+        bool prepared = m_isLazyStatePreparedForConcurrentCompilation;
+        WTF::loadLoadFence();
+        return prepared;
+    }
+    // One per lazy item. An item defines JSC_CODEBLOCK_HAS_<name> right below and supplies the body; otherwise the empty
+    // default in CodeBlock.cpp (shared-hook block) applies. Each must leave the block exactly as eager linking would
+    // have, watchpoints included.
+    void ensureScopeOpsResolved(); // op_resolve_scope / op_get_from_scope / op_put_to_scope metadata, m_bytecodeCost
+    void ensureFunctionExecutablesMaterialized(); // m_functionDecls / m_functionExprs
+    void ensureSymbolTableConstantsMaterialized(); // no-op for useLazySymbolTableConstants: SymbolTable::materializeCachedEntries declines off the mutator and concurrent readers take a pending table as having no entries
+#define JSC_CODEBLOCK_HAS_ensureScopeOpsResolved 1
+    // The callees this block's call and accessor ICs (and, for an optimizing block, its recorded statuses) currently name,
+    // with the kind of call site that named them. Caller defers GC.
+    void collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializationKind>, 16>&);
+    // ---- end shared hook ----------------------------------------------------------------------------------------------
+
+    // ---- Lazy link (Options::useLazyCodeBlockLink()) ---------------------------------------------------------------
+    // finishCreation() does not walk the instruction stream. The MetadataTable stays zero-filled, and the work the walk
+    // used to do per instruction happens the first time the LLInt (or a Baseline / LOL slow-path operation) executes that
+    // instruction: scope resolution for op_resolve_scope / op_get_from_scope / op_put_to_scope, DataOnlyCallLinkInfo
+    // set-up for the call opcodes, GetByIdModeMetadata defaults, object / array allocation profiles. Every other Metadata
+    // is valid zero-filled. ensureScopeOpsResolved() finishes whatever has not executed yet (plus m_bytecodeCost /
+    // m_numberOfArgumentsToSkip) before a compiler thread reads the block; it resolves against the scope the block was
+    // created for, which MetadataTable::lazyLinkScope() remembers weakly and frames running the block refresh.
+    // Invariant: a block only gets JIT code (its own or shared) with every scope op resolved; only an LLInt-only block
+    // prepared as a DFG inlinee while no instance of its scope was alive can have unresolved entries after prepare, and
+    // those are the only Metadata words that change after prepare (under m_lock; the DFG parser plants OSR exits for them).
+    bool linksLazily() const { return m_linksLazily; }
+    bool didWalkInstructionsForLink() const { return !!m_bytecodeCost; } // m_bytecodeCost / m_numberOfArgumentsToSkip are set (any instruction walk sets both; the cost is never 0)
+    bool hasUnlinkedLazyScopeOps() const { return m_linksLazily && m_metadata && !m_metadata->isLazyLinkComplete(); }
+    // Shared Baseline code specializes ClosureVar / ModuleVar scope ops on resolved metadata without re-checking it.
+    bool canAdoptSharedBaselineCode()
+    {
+        prepareLazyStateForConcurrentCompilation();
+        return !hasUnlinkedLazyScopeOps();
+    }
+    void noteLazyLinkScope(JSScope*);
+    JSScope* noteLazyLinkScopeFromFrame(CallFrame*); // the frame's callee scope; frame must be running this block
+    // Each is a no-op on an entry that is already linked (isScopeMetadataLinked(), CodeBlockInlines.h). Mutator only.
+    void linkLazily(CallFrame*, const OpResolveScope&);
+    void linkLazily(CallFrame*, const OpGetFromScope&);
+    void linkLazily(CallFrame*, const OpPutToScope&);
+    void linkCallLinkInfoLazily(const JSInstruction*); // any FOR_EACH_OPCODE_WITH_CALL_LINK_INFO opcode
+    // ---- end lazy link ------------------------------------------------------------------------------------------------
+
     enum SteppingMode {
         SteppingModeDisabled,
         SteppingModeEnabled
@@ -823,6 +892,8 @@ public:
     bool m_didFailFTLCompilation : 1;
     bool m_hasBeenCompiledWithFTL : 1;
     bool m_isJettisoned : 1;
+    bool m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // mutator-written like the rest of this byte (m_didFailFTLCompilation is likewise read by compiler threads); see prepareLazyStateForConcurrentCompilation()
+    bool m_linksLazily : 1 { false }; // set once in finishCreation(); see linksLazily()
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
@@ -837,6 +908,10 @@ public:
         Vector<HandlerInfo> m_exceptionHandlers;
 
         DirectEvalCodeCache m_directEvalCodeCache;
+
+        // Module environments an op_resolve_scope<ModuleVar> got lazily linked to once the constant pool could no longer
+        // grow (CodeBlock::linkResolveScope); visited strongly. Mutated under m_lock.
+        UncheckedKeyHashSet<JSModuleEnvironment*> m_stronglyReferencedModuleEnvironments;
     };
 
     void clearExceptionHandlers()
@@ -962,6 +1037,12 @@ private:
     }
 
     void insertBasicBlockBoundariesForControlFlowProfiler();
+    void linkResolveScope(VM&, const OpResolveScope&, JSScope*);
+    void linkGetFromScope(VM&, const OpGetFromScope&, JSScope*);
+    void linkPutToScope(VM&, const OpPutToScope&, JSScope*);
+    void invalidateClosureVarWatchpointForPut(VM&, const ResolveOp&, const Identifier&);
+    ConcurrentJSLock* lockForLazyLink() { return m_isLazyStatePreparedForConcurrentCompilation ? &m_lock : nullptr; } // no compiler thread reads an unprepared block
+    unsigned computeBytecodeCostSlow() const;
     void ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&, BytecodeIndex);
 
     template<typename Func>
@@ -987,7 +1068,7 @@ private:
             unsigned m_numBreakpoints : 30;
         };
     };
-    unsigned m_bytecodeCost { 0 };
+    mutable unsigned m_bytecodeCost { 0 }; // 0 = instructions not walked yet (lazy link); see bytecodeCost()
     VirtualRegister m_scopeRegister;
     mutable CodeBlockHash m_hash;
 

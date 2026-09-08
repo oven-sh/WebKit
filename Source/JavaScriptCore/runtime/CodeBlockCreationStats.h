@@ -57,12 +57,15 @@ namespace CodeBlockCreationStats {
     v(DecodeChildName, "decode:   of which child ecmaName atomize") \
     v(DecodeChildTDZ, "decode:   of which child parentScopeTDZVariables") \
     v(DecodeChildRareData, "decode:   of which child rare data") \
+    v(DecodeChildNameLazy, "decode: child ecmaName atomized on first use (useThinChildExecutables; count = executables)") \
+    v(DecodeChildMembersLazy, "decode: child TDZ variables + rare data decoded on first use (useThinChildExecutables; count = executables)") \
     v(DecodeOwnMembers, "decode: derived-class members (program/module var declarations etc.)") \
     v(DecodeTotal, "decode: TOTAL per UnlinkedCodeBlock (inclusive)") \
     v(DecodeFunctionCodeBlockLazy, "decode: lazy UnlinkedFunctionCodeBlock decode calls (inclusive, subset of DecodeTotal)") \
     v(LinkMetadataCreate, "link: CodeBlock ctor incl. MetadataTable allocation") \
     v(LinkConstants, "link: constant registers (SymbolTable clone, Set constants)") \
     v(LinkConstantSymbolTableClone, "link:   of which SymbolTable cloneScopePart") \
+    v(MaterializeSymbolTableEntriesLazy, "lazy: SymbolTable entry decode on first read (useLazySymbolTableConstants; count = tables; also inside whichever decode/link lap is open)") \
     v(LinkFunctions, "link: function decl/expr FunctionExecutable creation") \
     v(LinkHandlers, "link: exception handlers") \
     v(LinkInstructionWalk, "link: instruction-stream walk (metadata init, scope resolution)") \
@@ -70,6 +73,9 @@ namespace CodeBlockCreationStats {
     v(LinkProfiledOpcodeMetadata, "link:   count only: plain LINK() metadata entries placement-new'd (get_by_id, call, ...); time = walk - scope") \
     v(LinkTemplateObjects, "link: template objects + tail") \
     v(LinkTotal, "link: TOTAL CodeBlock::CodeBlock+finishCreation (inclusive)") \
+    v(JITPrepareLazyState, "jit: prepareLazyStateForConcurrentCompilation slow path (mutator, before a JIT tier / replacement / inlining)") \
+    v(JITPrepareInlineCandidates, "jit: DFG::compile inline-candidate pre-walk (mutator, inclusive of the above)") \
+    v(JITInlineeRefusedUnprepared, "jit:   count only: DFG inlinees refused because their lazy state was not prepared") \
 
 enum class Bucket : uint8_t {
 #define DECLARE_BUCKET(name, desc) name,
@@ -126,6 +132,7 @@ struct DecodeRecord {
     unsigned symbolTableConstants { 0 };
     unsigned symbolTableEntries { 0 };
     unsigned stringConstants { 0 };
+    unsigned stringConstantCellsCreated { 0 }; // DecoderStringTable::jsStringFor made a new cell (the rest were table hits, SmallStrings or inline)
     unsigned handlers { 0 };
     bool isFunctionCode { false };
     // filled when the UnlinkedCodeBlock dies, or at dump time
