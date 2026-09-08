@@ -2104,7 +2104,7 @@ inline EncodedJSValue genericTypedArrayViewProtoFuncWith(VM& vm, JSGlobalObject*
                 fromValue = PNaN;
             if (index == replaceIndex)
                 fromValue = nativeValue;
-            else if (thisObject->canGetIndexQuickly(index))
+            else if (thisObject->inBounds(index))
                 fromValue = thisObject->getIndexQuicklyAsNativeValue(index);
             result->setIndexQuicklyToNativeValue(index, fromValue);
         }
