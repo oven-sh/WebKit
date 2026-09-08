@@ -1504,10 +1504,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     haveStackSpace.link(&jit);
     jit.move(GPRInfo::regT2, CCallHelpers::stackPointerRegister);
 
-    // Set `this` to undefined
-    // NOTE: needs concensus in TC39 (https://github.com/tc39/proposal-shadowrealm/issues/328)
     jit.store32(GPRInfo::regT1, CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis));
-    jit.storeTrustedValue(jsUndefined(), CCallHelpers::calleeArgumentSlot(0));
 
     constexpr GPRReg valueGPR = GPRInfo::regT4;
 
@@ -1529,12 +1526,28 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
 
     CCallHelpers::JumpList exceptionChecks;
 
+    // |this| can be a JSScope: that is what bytecode passes for an identifier call like `f()`, and it means undefined.
+    // This is JSValue::toThis() with ECMAMode::strict(), as in remoteFunctionCallForJSFunction.
+    {
+        jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)), valueGPR);
+        CCallHelpers::JumpList thisIsNotScope;
+        thisIsNotScope.append(jit.branchIfNotCell(valueGPR, DoNotHaveTagRegisters));
+        thisIsNotScope.append(jit.branchIfNotType(valueGPR, JSTypeRange { JSType(FirstScopeType), JSType(LastScopeType) }));
+        jit.storeTrustedValue(jsUndefined(), CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)));
+        thisIsNotScope.link(&jit);
+    }
+
     // Argument processing loop:
-    // For each argument (order should not be observable):
+    // For each argument in order, and then for |this| (https://tc39.es/proposal-shadowrealm/#sec-ordinary-wrapped-function-call):
     //     if the value is a Primitive, copy it into the new call frame arguments, otherwise
     //     perform wrapping logic. If the wrapping logic results in a new JSRemoteFunction,
     //     copy it into the new call frame's arguments, otherwise it must have thrown a TypeError.
-    CCallHelpers::Jump done = jit.branchSub32(CCallHelpers::Zero, CCallHelpers::TrustedImm32(1), GPRInfo::regT1);
+    // The order is observable: wrapping a callable reads its "length" and "name".
+    // regT1 is the index of the slot being processed, where slot 0 is |this|. It goes 1, 2, ..., argumentCount, 0.
+    jit.sub32(CCallHelpers::TrustedImm32(1), GPRInfo::regT1);
+    CCallHelpers::Jump hasNoArguments = jit.branchTest32(CCallHelpers::Zero, GPRInfo::regT1);
+    jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::regT1);
+    hasNoArguments.link(&jit);
     {
         CCallHelpers::Label loop = jit.label();
         jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)).indexedBy(GPRInfo::regT1, CCallHelpers::TimesEight), valueGPR);
@@ -1559,7 +1572,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
 
         valueIsPrimitive.link(&jit);
         jit.storeValue(valueGPR, CCallHelpers::calleeArgumentSlot(0).indexedBy(GPRInfo::regT1, CCallHelpers::TimesEight));
-        jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(1), GPRInfo::regT1).linkTo(loop, &jit);
+
+        // Slot 0, |this|, is the last one.
+        CCallHelpers::Jump done = jit.branchTest32(CCallHelpers::Zero, GPRInfo::regT1);
+        jit.add32(CCallHelpers::TrustedImm32(1), GPRInfo::regT1);
+        jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT2);
+        jit.branch32(CCallHelpers::NotEqual, GPRInfo::regT1, GPRInfo::regT2).linkTo(loop, &jit);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::regT1);
+        jit.jump().linkTo(loop, &jit);
 
         done.link(&jit);
     }
