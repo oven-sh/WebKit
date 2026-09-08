@@ -104,7 +104,8 @@ constexpr uint8_t promiseReactionJobAsyncContextFlag = 0x80;
 
 // True for the contiguous block of module-loader pipeline tasks plus
 // PromiseFulfillWithoutHandlerJob (used only by JSPromise::pipeFrom, which
-// itself is called only by the loader). These are the reactions that
+// is called only by the loader and by import() to settle the promise it
+// returns; neither runs user code). These are the reactions that
 // VM::m_synchronousModuleQueue is allowed to divert; everything else
 // (AsyncFunctionResume, AsyncGenerator*, user .then() handlers) must keep
 // going through the global microtask queue so require(esm) doesn't observably
