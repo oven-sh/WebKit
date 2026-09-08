@@ -497,8 +497,9 @@ JSPromise* JSModuleLoader::importModule(JSGlobalObject* globalObject, JSString* 
     }
 #if USE(BUN_JSC_ADDITIONS)
     if (!attributes.isEmpty()) {
-        if (!fetchParams)
-            fetchParams = ScriptFetchParameters::create(ScriptFetchParameters::Type::None);
+        // The attributes map is per-request state: never set it on a shared per-type instance.
+        if (!fetchParams || fetchParams->type() != ScriptFetchParameters::Type::HostDefined)
+            fetchParams = ScriptFetchParameters::createUnique(fetchParams ? fetchParams->type() : ScriptFetchParameters::Type::None);
         fetchParams->setAttributes(WTF::move(attributes));
     }
 #endif
