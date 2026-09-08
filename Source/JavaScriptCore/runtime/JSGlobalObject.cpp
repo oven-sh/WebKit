@@ -69,6 +69,7 @@
 #include "ChainedWatchpoint.h"
 #include "ClonedArguments.h"
 #include "CodeBlock.h"
+#include "CodeBlockCreationStats.h"
 #include "CodeBlockSetInlines.h"
 #include "ConsoleClient.h"
 #include "ConsoleObjectInlines.h"
@@ -2546,6 +2547,7 @@ template void JSGlobalObject::createGlobalFunctionBinding<BindingCreationContext
 
 void JSGlobalObject::addSymbolTableEntry(const Identifier& ident)
 {
+    invalidateGlobalResolveMemo();
     ConcurrentJSLocker locker(symbolTable()->m_lock);
     ASSERT(!symbolTable()->contains(locker, ident.impl()));
 
@@ -3022,6 +3024,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #endif
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
+    visitor.append(thisObject->m_globalResolveMemoStructure);
     visitor.append(thisObject->m_globalScopeExtension);
     visitor.append(thisObject->m_globalCallee);
     visitor.append(thisObject->m_evalCallee);
@@ -3319,6 +3322,7 @@ void JSGlobalObject::addStaticGlobals(std::span<GlobalPropertyInfo> globals)
         }
         symbolTablePutTouchWatchpointSet(vm(), this, global.identifier, global.value, variable, watchpointSet);
     }
+    invalidateGlobalResolveMemo();
 }
 
 bool JSGlobalObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -3772,6 +3776,7 @@ void JSGlobalObject::setName(const String& name)
 
 void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 {
+    invalidateGlobalResolveMemo(); // a global lexical binding now shadows what resolved to the global object
     if (++m_globalLexicalBindingEpoch == Options::thresholdForGlobalLexicalBindingEpoch()) {
         // Since the epoch overflows, we should rewrite all the CodeBlock to adjust to the newly started generation.
         m_globalLexicalBindingEpoch = 1;
@@ -3781,6 +3786,34 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
             codeBlock->notifyLexicalBindingUpdate();
         });
     }
+}
+
+void JSGlobalObject::invalidateGlobalResolveMemo()
+{
+    if (!m_globalResolveMemo)
+        return;
+    if (CodeBlockCreationStats::enabled()) [[unlikely]]
+        CodeBlockCreationStats::add(CodeBlockCreationStats::Bucket::GlobalResolveMemoInvalidate, 0);
+    m_globalResolveMemo->clear();
+}
+
+GlobalResolveMemo* JSGlobalObject::globalResolveMemoForResolve(VM& vm)
+{
+    ASSERT(!isCompilationThread() && vm.currentThreadIsHoldingAPILock());
+    if (!m_globalResolveMemo) [[unlikely]]
+        m_globalResolveMemo = makeUnique<GlobalResolveMemo>();
+    Structure* structure = this->structure();
+    if (m_globalResolveMemoStructure.get() != structure || m_globalResolveMemoMaxOffset != structure->maxOffset() || m_globalResolveMemoStructureIsDictionary != structure->isDictionary()) {
+        // Property offsets, cacheability and "not an own property" were read off the old structure / shape; symbol-table
+        // decided entries (GlobalVar, GlobalLexicalVar, Dynamic) do not depend on it.
+        if (CodeBlockCreationStats::enabled()) [[unlikely]]
+            CodeBlockCreationStats::add(CodeBlockCreationStats::Bucket::GlobalResolveMemoInvalidate, 0);
+        m_globalResolveMemo->clearStructureDecidedEntries();
+        m_globalResolveMemoStructure.set(vm, this, structure);
+        m_globalResolveMemoMaxOffset = structure->maxOffset();
+        m_globalResolveMemoStructureIsDictionary = structure->isDictionary();
+    }
+    return m_globalResolveMemo.get();
 }
 
 void JSGlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& globalObject, JSC::QueuedTask&& task)

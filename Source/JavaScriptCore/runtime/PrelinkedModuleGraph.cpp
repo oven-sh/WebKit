@@ -146,17 +146,33 @@ Identifier PrelinkedModuleGraph::identifier(uint32_t sid) const
     if (sid == starNamespaceSid)
         return m_vm.propertyNames->starNamespacePrivateName;
     RELEASE_ASSERT(sid < m_stringSlots.size(), sid, m_stringSlots.size());
-    // External strings are cached in the DecoderStringTable's slot; 1-3 character names are re-derived from the slot.
-    RefPtr<AtomStringImpl> atom = m_strings.atomForSlot(m_vm, m_stringSlots[sid]);
-    RELEASE_ASSERT(atom, sid, m_stringSlots[sid]);
-    return Identifier::fromUid(m_vm, atom.get());
+    // Each sid is resolved through the string table once (its slot cache, or the atom table for a 1-3 character name)
+    // and then served from here: request specifiers and resolved names repeat across the graph's modules and edges.
+    if (m_identifiers.isEmpty()) [[unlikely]]
+        m_identifiers.grow(m_stringSlots.size());
+    Identifier& cached = m_identifiers[sid];
+    if (cached.isNull()) [[unlikely]] {
+        RefPtr<AtomStringImpl> atom = m_strings.atomForSlot(m_vm, m_stringSlots[sid]);
+        RELEASE_ASSERT(atom, sid, m_stringSlots[sid]);
+        cached = Identifier::fromUid(m_vm, atom.get());
+    }
+    return cached;
 }
 
 bool PrelinkedModuleGraph::nameEquals(uint32_t sid, UniquedStringImpl& name) const
 {
+    ASSERT(!isCompilationThread() && !name.isSymbol());
     if (sid >= m_stringSlots.size())
         return false;
-    return identifier(sid).impl() == &name;
+    if (sid < m_identifiers.size() && !m_identifiers[sid].isNull())
+        return m_identifiers[sid].impl() == &name;
+    // By contents, so that a lookup never creates an atom; on a match `name` is the atom identifier(sid) would make.
+    if (!m_strings.slotEquals(m_stringSlots[sid], name))
+        return false;
+    if (m_identifiers.isEmpty()) [[unlikely]]
+        m_identifiers.grow(m_stringSlots.size());
+    m_identifiers[sid] = Identifier::fromUid(m_vm, &name);
+    return true;
 }
 
 template<typename Entry, uint32_t Entry::*nameSid>

@@ -187,8 +187,11 @@ public:
         auto* impl = key.impl();
         if (auto entry = m_moduleMap.get({ impl, ScriptFetchParameters::Type::JavaScript }))
             return entry.get();
-        for (auto& [k, entry] : m_moduleMap) {
-            if (k.first == impl)
+        if (!m_nonJavaScriptEntryCount) [[likely]]
+            return nullptr; // a miss is common (require(esm), "is it registered yet?")
+        using Type = ScriptFetchParameters::Type;
+        for (Type type : { Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::None }) {
+            if (auto entry = m_moduleMap.get({ impl, type }))
                 return entry.get();
         }
         return nullptr;
@@ -199,16 +202,24 @@ public:
         // Bun's registry is conceptually flat (one entry per specifier), so
         // delete every (specifier, type) variant — text/json/HostDefined etc.
         auto* impl = key.impl();
+        Locker locker { cellLock() }; // visitChildren iterates these
         forgetPrelinkedRecordsWithKey(impl);
         m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
-        return m_moduleMap.removeIf([&](auto& entry) { return entry.key.first == impl; });
+        return m_moduleMap.removeIf([&](auto& entry) {
+            if (entry.key.first != impl)
+                return false;
+            didRemoveModuleMapEntry(entry.key.second);
+            return true;
+        });
     }
     void clearAll()
     {
+        Locker locker { cellLock() };
         forgetPrelinkedRecordsWithKey(nullptr);
         m_loadedModules.clear();
         m_moduleMap.clear();
+        m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
@@ -252,7 +263,25 @@ private:
     RefPtr<PrelinkedModuleGraph> m_prelinkedGraph;
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
     BitVector m_prelinkedRecordRemoved; // empty until the first removal
+    unsigned m_nonJavaScriptEntryCount { 0 }; // m_moduleMap entries whose type is not JavaScript, for registryEntry()'s by-specifier fallback
 #endif
+    void didAddModuleMapEntry(ScriptFetchParameters::Type type)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        m_nonJavaScriptEntryCount += type != ScriptFetchParameters::Type::JavaScript;
+#else
+        UNUSED_PARAM(type);
+#endif
+    }
+    void didRemoveModuleMapEntry(ScriptFetchParameters::Type type)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(type == ScriptFetchParameters::Type::JavaScript || m_nonJavaScriptEntryCount);
+        m_nonJavaScriptEntryCount -= type != ScriptFetchParameters::Type::JavaScript;
+#else
+        UNUSED_PARAM(type);
+#endif
+    }
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;

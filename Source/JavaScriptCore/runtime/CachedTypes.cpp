@@ -57,6 +57,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <wtf/text/AtomStringTable.h>
 #include "CodeBlockCreationStats.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -484,6 +485,7 @@ DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
     Record result;
     result.length = header[0] & 0x7fffffffu;
     result.is8Bit = header[0] >> 31;
+    static_assert(recordHashOffset == sizeof(header[0]));
     result.hash = header[1];
     result.characters = std::bit_cast<const uint8_t*>(header + 2);
     size_t byteLength = static_cast<size_t>(result.length) * (result.is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
@@ -510,30 +512,114 @@ static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, ui
     return AtomStringImpl::add(hashed).releaseNonNull();
 }
 
-void DecoderStringTable::prefetchSlow(VM& vm, uint32_t ordinal, PrefetchStage stage) const
+const DecoderStringTable* Decoder::stringsToPrefetch()
 {
-    ASSERT(ordinal < m_count && stage != PrefetchStage::Slot);
-    uintptr_t slot = m_slots[ordinal];
-    if (stage == PrefetchStage::String) {
+#if USE(BUN_JSC_ADDITIONS)
+    if (!Options::useFastCachedAtoms())
+        return nullptr;
+    if (!m_lookedUpExternalStrings) [[unlikely]] { // ahead of externalStrings(), so that a Decoder's first (usually biggest) block is covered too
+        m_lookedUpExternalStrings = true;
+        if (!m_externalStrings)
+            m_externalStrings = m_vm.clientData ? m_vm.clientData->decoderStringTable() : nullptr;
+    }
+    return m_externalStrings;
+#else
+    return nullptr;
+#endif
+}
+
+ALWAYS_INLINE void DecoderStringTable::prefetchSlot(uint32_t ordinal) const
+{
+    if (ordinal >= m_count)
+        return;
+    __builtin_prefetch(m_slots + ordinal);
+    __builtin_prefetch(offsets() + ordinal); // wasted on a populated slot; for an empty one, a miss taken alongside the slot's instead of after it (unmeasured trade)
+}
+
+template<DecoderStringTable::PrefetchFor use>
+ALWAYS_INLINE void DecoderStringTable::prefetchTarget(uint32_t ordinal) const
+{
+    if (ordinal >= m_count)
+        return;
+    if (uintptr_t slot = m_slots[ordinal]) {
+        if (!isCell(slot))
+            __builtin_prefetch(std::bit_cast<const void*>(slot), 1); // the header atomFor ref()s / jsStringFor hands to a new cell
+        else if (use == PrefetchFor::Atom)
+            __builtin_prefetch(cell(slot)); // atomFor reads the cell's value; jsStringFor just returns the pointer
+    } else if (size_t offset = offsets()[ordinal]; offset < m_bytes.size())
+        __builtin_prefetch(m_bytes.data() + offset); // the record
+}
+
+ALWAYS_INLINE void DecoderStringTable::prefetchLookup(AtomStringTable& atoms, uint32_t ordinal) const
+{
+    if (ordinal >= m_count)
+        return;
+    if (uintptr_t slot = m_slots[ordinal]) {
         if (isCell(slot))
-            __builtin_prefetch(cell(slot)); // the StringImpl header behind it stays a dependent miss
-        else if (slot)
-            __builtin_prefetch(std::bit_cast<const void*>(slot), 1); // the header atomFor's hit ref()s
-        else if (size_t offset = offsets()[ordinal]; offset < m_bytes.size())
-            __builtin_prefetch(m_bytes.data() + offset); // the record header atomFor's miss reads
+            __builtin_prefetch(impl(slot), 1); // atomFor's isAtom() and ref()
         return;
     }
-    if (slot)
-        return;
-    // atomFor's miss probes the atom table with the record's stored hash.
     size_t offset = offsets()[ordinal];
-    if (offset > m_bytes.size() || m_bytes.size() - offset < 2 * sizeof(uint32_t))
+    if (offset > m_bytes.size() || m_bytes.size() - offset < recordHashOffset + sizeof(uint32_t))
         return;
     uint32_t hash;
-    memcpy(&hash, m_bytes.data() + offset + sizeof(uint32_t), sizeof(hash));
+    std::memcpy(&hash, m_bytes.data() + offset + recordHashOffset, sizeof(hash)); // without record()'s checks: a bad record only wastes a prefetch here
     if (AtomStringImpl::isValidPrecomputedHash(hash))
-        vm.atomStringTable()->table().prefetchForHash(hash);
+        atoms.table().prefetchForHash(hash);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// One DecoderStringTable::prefetch* pass over elements [begin, end) of a run; ordinalAt(i) is element i's table ordinal.
+template<typename OrdinalAt>
+static ALWAYS_INLINE void prefetchStringSlots(const DecoderStringTable& table, unsigned begin, unsigned end, const OrdinalAt& ordinalAt)
+{
+    for (unsigned i = begin; i < end; ++i)
+        table.prefetchSlot(ordinalAt(i));
+}
+template<DecoderStringTable::PrefetchFor use, typename OrdinalAt>
+static ALWAYS_INLINE void prefetchStringTargets(const DecoderStringTable& table, unsigned begin, unsigned end, const OrdinalAt& ordinalAt)
+{
+    for (unsigned i = begin; i < end; ++i)
+        table.prefetchTarget<use>(ordinalAt(i));
+}
+template<typename OrdinalAt>
+static ALWAYS_INLINE void prefetchStringLookups(VM& vm, const DecoderStringTable& table, unsigned begin, unsigned end, const OrdinalAt& ordinalAt)
+{
+    AtomStringTable& atoms = *vm.atomStringTable();
+    for (unsigned i = begin; i < end; ++i)
+        table.prefetchLookup(atoms, ordinalAt(i));
+}
+#endif
+
+// Which of the passes decodeWithStringPrefetch makes over the first prefetchWindow elements the caller already made,
+// earlier, with other work since for distance.
+enum class HeadPrefetch : uint8_t { None, Slots, All };
+
+#if USE(BUN_JSC_ADDITIONS)
+// decodeAt(i) over [0, size) a prefetchWindow at a time: a window's slots are prefetched while the previous window
+// decodes (the first window's up front), its targets and, For::Atom, lookups in bursts right before it.
+template<DecoderStringTable::PrefetchFor use, typename OrdinalAt, typename DecodeAt>
+static ALWAYS_INLINE void decodeWithStringPrefetch(VM& vm, const DecoderStringTable& table, unsigned size, HeadPrefetch head, const OrdinalAt& ordinalAt, const DecodeAt& decodeAt)
+{
+    constexpr unsigned window = DecoderStringTable::prefetchWindow;
+    if (head == HeadPrefetch::None)
+        prefetchStringSlots(table, 0, std::min(size, window), ordinalAt);
+    for (unsigned begin = 0; begin < size; begin += window) {
+        unsigned end = std::min(size, begin + window);
+        if (begin || head != HeadPrefetch::All) {
+            prefetchStringTargets<use>(table, begin, end, ordinalAt);
+            if constexpr (use == DecoderStringTable::PrefetchFor::Atom)
+                prefetchStringLookups(vm, table, begin, end, ordinalAt);
+            else
+                UNUSED_PARAM(vm);
+        }
+        if (end < size)
+            prefetchStringSlots(table, end, std::min(size, end + window), ordinalAt);
+        for (unsigned i = begin; i < end; ++i)
+            decodeAt(i);
+    }
+}
+#endif
 
 // A slot holds the one StringImpl this VM uses for that string: an atom once an identifier has asked for it, or the
 // plain StringImpl a string constant made first (which atomFor then promotes or replaces).
@@ -603,6 +689,43 @@ std::optional<uint32_t> DecoderStringTable::hashForSlot(uint32_t slot) const
         return record(slot >> 2).hash;
     default:
         return std::nullopt;
+    }
+}
+
+bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) const
+{
+    ASSERT(!isCompilationThread());
+    if (string.isSymbol())
+        return false; // the table only ever yields plain atoms
+    if (slot == VariableLengthObjectBase::emptySentinel)
+        return !string.length();
+    switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
+    case VariableLengthObjectBase::inlineStringTag: {
+        unsigned length = (slot >> 2) & 3;
+        if (!length || string.length() != length)
+            return false;
+        auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
+        return equal(&string, std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+    }
+    case VariableLengthObjectBase::externalStringTag: {
+        uint32_t ordinal = slot >> 2;
+        if (ordinal >= m_count)
+            return false;
+        if (StringImpl* existing = m_slots[ordinal] ? impl(m_slots[ordinal]) : nullptr) {
+            if (existing == &string)
+                return true;
+            if (existing->isAtom() && string.isAtom())
+                return false;
+        }
+        Record r = record(ordinal);
+        if (r.length != string.length())
+            return false;
+        return r.is8Bit
+            ? equal(&string, std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length })
+            : equal(&string, std::span { std::bit_cast<const char16_t*>(r.characters), r.length });
+    }
+    default:
+        return false;
     }
 }
 
@@ -1670,16 +1793,15 @@ public:
         src = decode(decoder);
     }
 
-    // For a loop that decodes many of these in a row: see DecoderStringTable::prefetch. No-op for any other encoding.
-    void prefetch(Decoder& decoder, DecoderStringTable::PrefetchStage stage) const
+    // The DecoderStringTable ordinal this decodes through, for a loop that decodes many in a row to hand to
+    // DecoderStringTable::prefetchSlot etc.; out of their range (ignored) for any other encoding.
+    uint32_t externalStringOrdinal() const
     {
         if constexpr (CachedPtr<T, Source>::holdsString) {
             if (m_ptr.hasExternalString())
-                decoder.prefetchExternalString(m_ptr.externalStringOrdinal(), stage);
-        } else {
-            UNUSED_PARAM(decoder);
-            UNUSED_PARAM(stage);
+                return m_ptr.externalStringOrdinal();
         }
+        return DecoderStringTable::noOrdinal;
     }
 
 private:
@@ -1937,66 +2059,46 @@ public:
     void decodeIf(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map, const Keep& keep) const
     {
         auto entries = m_entries.elements();
+        auto decodeEntry = [&](const auto& entry) {
+            if (!keep(entry.second()))
+                return;
+            SourceType<Key> key;
+            ::JSC::decode(decoder, entry.first(), key);
+            SourceType<Value> value;
+            ::JSC::decode(decoder, entry.second(), value);
+            map.add(WTF::move(key), WTF::move(value));
+        };
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (requires(const Key& key) { key.externalStringOrdinal(); }) {
+            if (const DecoderStringTable* table = decoder.stringsToPrefetch()) {
+                // See DecoderStringTable::prefetchSlot. A rejected entry's key is never decoded, so its slot is left alone too.
+                auto ordinalAt = [&](unsigned i) { return keep(entries[i].second()) ? entries[i].first().externalStringOrdinal() : DecoderStringTable::noOrdinal; };
+                unsigned size = entries.size();
+                prefetchStringSlots(*table, 0, std::min(size, DecoderStringTable::prefetchWindow), ordinalAt); // the count and the map's allocation below are its distance
+                unsigned kept = 0;
+                for (auto& entry : entries)
+                    kept += !!keep(entry.second());
+                if (!kept)
+                    return;
+                map.reserveInitialCapacity(kept);
+                decodeWithStringPrefetch<DecoderStringTable::PrefetchFor::Atom>(decoder.vm(), *table, size, HeadPrefetch::Slots, ordinalAt, [&](unsigned i) { decodeEntry(entries[i]); });
+                return;
+            }
+        }
+#endif
         unsigned kept = 0;
         for (auto& entry : entries)
             kept += !!keep(entry.second());
         if (!kept)
             return;
         map.reserveInitialCapacity(kept);
-#if USE(BUN_JSC_ADDITIONS)
-        // Kept entries only: a rejected entry's key is never decoded, so touching its slot would only widen the footprint.
-        const bool prefetch = keyPrefetches && Options::useFastCachedAtoms();
-        auto prefetchAhead = [&](size_t index, DecoderStringTable::PrefetchStage stage) {
-            index += DecoderStringTable::prefetchDistance(stage);
-            if (index < entries.size() && keep(entries[index].second()))
-                prefetchKey(decoder, entries[index].first(), stage);
-        };
-        if (prefetch) {
-            for (auto stage : { DecoderStringTable::PrefetchStage::Slot, DecoderStringTable::PrefetchStage::String, DecoderStringTable::PrefetchStage::AtomBucket }) {
-                for (size_t i = 0; i < std::min<size_t>(entries.size(), DecoderStringTable::prefetchDistance(stage)); ++i) {
-                    if (keep(entries[i].second()))
-                        prefetchKey(decoder, entries[i].first(), stage);
-                }
-            }
-        }
-        size_t index = 0;
-#endif
-        for (auto& entry : entries) {
-#if USE(BUN_JSC_ADDITIONS)
-            if (prefetch) {
-                prefetchAhead(index, DecoderStringTable::PrefetchStage::Slot);
-                prefetchAhead(index, DecoderStringTable::PrefetchStage::String);
-                prefetchAhead(index, DecoderStringTable::PrefetchStage::AtomBucket);
-            }
-            ++index;
-#endif
-            if (!keep(entry.second()))
-                continue;
-            SourceType<Key> key;
-            ::JSC::decode(decoder, entry.first(), key);
-            SourceType<Value> value;
-            ::JSC::decode(decoder, entry.second(), value);
-            map.add(WTF::move(key), WTF::move(value));
-        }
+        for (auto& entry : entries)
+            decodeEntry(entry);
     }
 
     unsigned entryCount() const { return m_entries.size(); }
 
 private:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool keyPrefetches = requires(const Key& key, Decoder& decoder) { key.prefetch(decoder, DecoderStringTable::PrefetchStage::Slot); };
-    static void prefetchKey(Decoder& decoder, const Key& key, DecoderStringTable::PrefetchStage stage)
-    {
-        if constexpr (keyPrefetches)
-            key.prefetch(decoder, stage);
-        else {
-            UNUSED_PARAM(decoder);
-            UNUSED_PARAM(key);
-            UNUSED_PARAM(stage);
-        }
-    }
-#endif
-
     CachedVector<CachedPair<Key, Value>> m_entries;
 };
 
@@ -2205,7 +2307,7 @@ public:
         dst = decode(decoder);
     }
 
-    void prefetch(Decoder& decoder, DecoderStringTable::PrefetchStage stage) const { m_impl.prefetch(decoder, stage); }
+    uint32_t externalStringOrdinal() const { return m_impl.externalStringOrdinal(); }
 
 private:
     CachedRefPtr<CachedUniquedStringImpl> m_impl;
@@ -2233,7 +2335,7 @@ public:
         ident = decode(decoder);
     }
 
-    void prefetch(Decoder& decoder, DecoderStringTable::PrefetchStage stage) const { m_string.prefetch(decoder, stage); }
+    uint32_t externalStringOrdinal() const { return m_string.externalStringOrdinal(); }
 
 private:
     CachedString m_string;
@@ -3097,30 +3199,43 @@ struct CachedJSValuePool {
         return result.offset();
     }
 
-    static void decode(Decoder& decoder, const uint8_t* pool, unsigned count, WriteBarrier<Unknown>* out, const JSCell* owner)
+#if USE(BUN_JSC_ADDITIONS)
+    // See DecoderStringTable::prefetchSlot: the table ordinal of element i if it is a table string, else noOrdinal.
+    static auto stringOrdinals(const uint8_t* pool, unsigned count)
+    {
+        return [pool, slot = slots(pool, count)](unsigned i) {
+            if (static_cast<CachedJSValue::Kind>(pool[i]) == CachedJSValue::Kind::String && slot[i].hasExternalString())
+                return slot[i].externalStringOrdinal();
+            return DecoderStringTable::noOrdinal;
+        };
+    }
+    // The passes decode() makes over the pool's first window, one at a time, for a caller with work to put after each.
+    static void prefetchHeadSlots(const DecoderStringTable& table, const uint8_t* pool, unsigned count)
+    {
+        prefetchStringSlots(table, 0, std::min(count, DecoderStringTable::prefetchWindow), stringOrdinals(pool, count));
+    }
+    static void prefetchHeadTargets(const DecoderStringTable& table, const uint8_t* pool, unsigned count)
+    {
+        prefetchStringTargets<DecoderStringTable::PrefetchFor::JSString>(table, 0, std::min(count, DecoderStringTable::prefetchWindow), stringOrdinals(pool, count));
+    }
+#endif
+
+    static void decode(Decoder& decoder, const uint8_t* pool, unsigned count, WriteBarrier<Unknown>* out, const JSCell* owner, HeadPrefetch head = HeadPrefetch::None)
     {
         ASSERT(decoder.vm().heap.isDeferred()); // new string cells are rooted only by the barriered stores into `owner` until the flush below
         const CachedJSValue* slot = slots(pool, count);
 #if USE(BUN_JSC_ADDITIONS)
-        // See DecoderStringTable::prefetch: jsStringFor's slot (and, when an identifier got there first, the header it adopts).
-        if (Options::useFastCachedAtoms()) {
-            using Stage = DecoderStringTable::PrefetchStage;
-            auto prefetch = [&](unsigned i, Stage stage) {
-                if (i < count && static_cast<CachedJSValue::Kind>(pool[i]) == CachedJSValue::Kind::String && slot[i].hasExternalString())
-                    decoder.prefetchExternalString(slot[i].externalStringOrdinal(), stage);
-            };
-            for (Stage stage : { Stage::Slot, Stage::String }) {
-                for (unsigned i = 0; i < std::min(count, DecoderStringTable::prefetchDistance(stage)); ++i)
-                    prefetch(i, stage);
-            }
-            for (unsigned i = 0; i < count; ++i) {
-                prefetch(i + DecoderStringTable::prefetchDistance(Stage::Slot), Stage::Slot);
-                prefetch(i + DecoderStringTable::prefetchDistance(Stage::String), Stage::String);
+        if (const DecoderStringTable* table = decoder.stringsToPrefetch()) {
+            // jsStringFor reads the slot and returns the cell it holds without touching it, or else reads the record
+            // (and the StringImpl an identifier left there, if any): two hops, no atom table.
+            decodeWithStringPrefetch<DecoderStringTable::PrefetchFor::JSString>(decoder.vm(), *table, count, head, stringOrdinals(pool, count), [&](unsigned i) {
                 out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
-            }
+            });
             decoder.flushPendingStringCells();
             return;
         }
+#else
+        UNUSED_PARAM(head);
 #endif
         for (unsigned i = 0; i < count; ++i)
             out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
@@ -3226,35 +3341,42 @@ static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// See DecoderStringTable::prefetchSlot: element i's table ordinal, for an array of CachedIdentifier / CachedString.
+template<typename T>
+static auto stringOrdinals(const T* buffer)
+{
+    return [buffer](unsigned i) { return buffer[i].externalStringOrdinal(); };
+}
+#endif
+
 template<typename T, typename Container, typename... Args>
-static void decodeArrayFromTail(Decoder& decoder, const void* elements, unsigned size, Container& out, Args... args)
+static ALWAYS_INLINE void decodeArrayFromTail(Decoder& decoder, HeadPrefetch head, const void* elements, unsigned size, Container& out, Args... args)
 {
     if (!size)
         return;
     out = Container(size);
     const T* buffer = static_cast<const T*>(elements);
 #if USE(BUN_JSC_ADDITIONS)
-    // See DecoderStringTable::prefetch. Identifier tables are the bulk of atomFor's populated-slot hits.
-    using Stage = DecoderStringTable::PrefetchStage;
-    if constexpr (requires { buffer[0].prefetch(decoder, Stage::Slot); }) {
-        if (Options::useFastCachedAtoms()) {
-            for (Stage stage : { Stage::Slot, Stage::String, Stage::AtomBucket }) {
-                for (unsigned i = 0; i < std::min(size, DecoderStringTable::prefetchDistance(stage)); ++i)
-                    buffer[i].prefetch(decoder, stage);
-            }
-            for (unsigned i = 0; i < size; ++i) {
-                for (Stage stage : { Stage::Slot, Stage::String, Stage::AtomBucket }) {
-                    if (i + DecoderStringTable::prefetchDistance(stage) < size)
-                        buffer[i + DecoderStringTable::prefetchDistance(stage)].prefetch(decoder, stage);
-                }
+    if constexpr (requires { buffer[0].externalStringOrdinal(); }) {
+        if (const DecoderStringTable* table = decoder.stringsToPrefetch()) {
+            decodeWithStringPrefetch<DecoderStringTable::PrefetchFor::Atom>(decoder.vm(), *table, size, head, stringOrdinals(buffer), [&](unsigned i) {
                 ::JSC::decode(decoder, buffer[i], out[i], args...);
-            }
+            });
             return;
         }
     }
+#else
+    UNUSED_PARAM(head);
 #endif
     for (unsigned i = 0; i < size; ++i)
         ::JSC::decode(decoder, buffer[i], out[i], args...);
+}
+
+template<typename T, typename Container, typename... Args>
+static void decodeArrayFromTail(Decoder& decoder, const void* elements, unsigned size, Container& out, Args... args)
+{
+    decodeArrayFromTail<T>(decoder, HeadPrefetch::None, elements, size, out, args...);
 }
 
 class CachedSourceOrigin : public CachedObject<SourceOrigin> {
@@ -3984,6 +4106,23 @@ public:
 
     static Record* create(Encoder&, const CodeBlockType&);
     void decode(Decoder&, UnlinkedCodeBlock&, const Tail&) const;
+    // DecoderStringTable::prefetchSlot over the constant pool's and the identifier table's first windows. Call before
+    // constructing the cell: its metadata table and instruction stream are the distance these need before decode().
+    void prefetchStringTableSlots(Decoder& decoder, const Tail& tail) const
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        const DecoderStringTable* strings = decoder.stringsToPrefetch();
+        if (!strings)
+            return;
+        const Layout& layout = tail.layout;
+        if (layout.constants.count)
+            CachedJSValuePool::prefetchHeadSlots(*strings, at<uint8_t>(layout, layout.constants), layout.constants.count);
+        prefetchStringSlots(*strings, 0, std::min(layout.identifiers.count, DecoderStringTable::prefetchWindow), stringOrdinals(at<CachedIdentifier>(layout, layout.identifiers)));
+#else
+        UNUSED_PARAM(decoder);
+        UNUSED_PARAM(tail);
+#endif
+    }
 
     // `limit` bounds the parse for the integrity check; once the region is verified it is read unbounded.
     Tail readTail(const uint8_t* limit = nullptr) const;
@@ -4351,6 +4490,20 @@ template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, UnlinkedCodeBlock& codeBlock, const Tail& tail) const
 {
     const Layout& layout = tail.layout;
+    // See prefetchStringTableSlots(): the constant pool's and the identifier table's first windows had their slots
+    // prefetched before the cell was constructed. Their targets go now, ahead of the atom-table reserve and the pool's
+    // allocation; the identifiers' lookups after the pool, ahead of DecodeMisc. (With reportCodeBlockCreationCosts on,
+    // these passes fall between the laps: DecodeTotal counts them, no bucket does.)
+    const DecoderStringTable* strings = decoder.stringsToPrefetch();
+#if USE(BUN_JSC_ADDITIONS)
+    auto identifierOrdinals = stringOrdinals(at<CachedIdentifier>(layout, layout.identifiers));
+    unsigned identifiersHead = std::min(layout.identifiers.count, DecoderStringTable::prefetchWindow);
+    if (strings) {
+        if (layout.constants.count)
+            CachedJSValuePool::prefetchHeadTargets(*strings, at<uint8_t>(layout, layout.constants), layout.constants.count);
+        prefetchStringTargets<DecoderStringTable::PrefetchFor::Atom>(*strings, 0, identifiersHead, identifierOrdinals);
+    }
+#endif
     // Most identifiers become atoms; let the table grow once for this block rather than as they trickle in. String
     // constants do not (jsStringFor / jsStringForInlineString), so counting the constant pool only over-grows the table.
     unsigned expectedAtoms = layout.identifiers.count;
@@ -4363,8 +4516,12 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (layout.constants.count) {
         DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstants, layout.constants.count);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
-        CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock);
+        CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock, strings ? HeadPrefetch::All : HeadPrefetch::None);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (strings)
+        prefetchStringLookups(decoder.vm(), *strings, 0, identifiersHead, identifierOrdinals);
+#endif
     {
         DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeMisc);
         decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
@@ -4374,7 +4531,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     }
     {
         DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeIdentifiers, layout.identifiers.count);
-        decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+        decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
     }
     if (CodeBlockCreationStats::enabled()) [[unlikely]]
         CodeBlockCreationStats::noteIdentifierTableCreated(&codeBlock, layout.identifiers.count);
@@ -4394,6 +4551,7 @@ UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
     if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
+    prefetchStringTableSlots(decoder, tail);
     UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
@@ -4414,6 +4572,7 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
+    prefetchStringTableSlots(decoder, tail);
     UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
@@ -4434,6 +4593,7 @@ UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
     if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
+    prefetchStringTableSlots(decoder, tail);
     UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
@@ -4454,6 +4614,7 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
+    prefetchStringTableSlots(decoder, tail);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);

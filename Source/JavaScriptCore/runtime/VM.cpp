@@ -744,14 +744,14 @@ void VM::primitiveGigacageDisabled()
     requestEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
 }
 
-void VM::endStartupJITDeferral()
+void VM::endStartupJITDeferral(const char* reason)
 {
     if (m_startupJITDeferralScale == 1)
         return;
     // No CodeBlock walk: counters armed during the window were clipped to re-check within one
     // normal threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their
     // next slow-path visit.
-    dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window (scale was ", m_startupJITDeferralScale, ")");
+    dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: ", reason ? reason : "embedder", " (scale was ", m_startupJITDeferralScale, ")");
     m_startupJITDeferralScale = 1;
 }
 

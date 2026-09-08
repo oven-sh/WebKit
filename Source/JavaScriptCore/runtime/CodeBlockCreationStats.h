@@ -75,6 +75,10 @@ namespace CodeBlockCreationStats {
     v(LinkProfiledOpcodeMetadata, "link:   count only: plain LINK() metadata entries placement-new'd (get_by_id, call, ...); time = walk - scope") \
     v(LinkTemplateObjects, "link: template objects + tail") \
     v(LinkTotal, "link: TOTAL CodeBlock::CodeBlock+finishCreation (inclusive)") \
+    v(LinkBatchedLazy, "lazy: whole-block scope-op link on the first scope-op slow path (useBatchedLazyLink; count = blocks; inclusive of abstractResolve)") \
+    v(GlobalResolveMemoHit, "resolve: count only: abstractResolve answered from the global resolve memo (useGlobalResolveMemo)") \
+    v(GlobalResolveMemoRecord, "resolve: count only: global-level resolutions computed and recorded in the memo (misses)") \
+    v(GlobalResolveMemoInvalidate, "resolve: count only: memo invalidations (structure-decided entries dropped on a global structure change, or everything on a symbol table / epoch change)") \
     v(JITPrepareLazyState, "jit: prepareLazyStateForConcurrentCompilation slow path (mutator, before a JIT tier / replacement / inlining)") \
     v(JITPrepareInlineCandidates, "jit: DFG::compile inline-candidate pre-walk (mutator, inclusive of the above)") \
     v(JITInlineeRefusedUnprepared, "jit:   count only: DFG inlinees refused because their lazy state was not prepared") \

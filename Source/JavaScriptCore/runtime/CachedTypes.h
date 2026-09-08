@@ -122,6 +122,10 @@ public:
     // StringImpl::hash() of the string atomForSlot(slot) would return, without creating it; nullopt where atomForSlot
     // returns null (a record with bad bounds crashes in both).
     std::optional<uint32_t> hashForSlot(uint32_t slot) const;
+    // atomForSlot(vm, slot) would return `string`'s atom, decided without creating it (by the slot's cached pointer when
+    // it has one, else by contents); false for a symbol and where atomForSlot returns null (a record with bad bounds
+    // crashes in both). Mutator only.
+    bool slotEquals(uint32_t slot, const StringImpl&) const;
     // The one JSString this VM uses for the string constant with this ordinal (single characters come from SmallStrings
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives. Mutator only, GC deferred; see flushPendingCells.
@@ -134,25 +138,24 @@ public:
     void flushPendingCells();
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
-    // Options::useFastCachedAtoms(): an atomFor hit is two dependent cache misses (the slot, then the string header it
-    // ref()s); a miss is the slot, the record header, then the atom table's bucket. A loop over many ordinals runs each
-    // stage a fixed distance ahead of the decode, each reading only what the previous stage prefetched. For the short
-    // arrays that are the common case this simply puts every miss in flight before the first decode.
-    enum class PrefetchStage : uint8_t { Slot, String, AtomBucket };
-    static constexpr unsigned prefetchDistance(PrefetchStage stage) { return 16u >> static_cast<unsigned>(stage); } // 16, 8, 4: unmeasured
-    void prefetch(VM& vm, uint32_t ordinal, PrefetchStage stage) const
-    {
-        if (ordinal >= m_count)
-            return;
-        if (stage == PrefetchStage::Slot) {
-            __builtin_prefetch(m_slots + ordinal);
-            return;
-        }
-        prefetchSlow(vm, ordinal, stage);
-    }
+    // Options::useFastCachedAtoms(): unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
+    // header, or slot -> offsets[] -> record -> atom-table bucket) and jsStringFor's miss is three. A caller about to
+    // resolve a run of ordinals makes one pass per hop over the run first; each pass is a burst of independent loads, so
+    // its misses overlap instead of queueing behind each other inside the decode:
+    //   prefetchSlot   - the slot and its offsets[] entry; address arithmetic only, issue as early as the run is known;
+    //   prefetchTarget - reads the slot: the StringImpl (For::Atom: or JSString) it holds, else (reads offsets[]) the record;
+    //   prefetchLookup - For::Atom only; reads that: a cell's StringImpl header, or an empty slot's atom-table bucket
+    //                    by stored hash.
+    // noOrdinal (CachedRefPtr::externalStringOrdinal() for a non-table string), or any ordinal out of range, is ignored
+    // by all three. Defined in CachedTypes.cpp, their only user.
+    enum class PrefetchFor : uint8_t { Atom, JSString }; // atomFor / jsStringFor: the latter touches neither a held cell nor the atom table
+    static constexpr unsigned prefetchWindow = 32; // ordinals per burst: about what stays in flight at once, and still cached when the decode reaches the last
+    static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
+    void prefetchSlot(uint32_t ordinal) const;
+    template<PrefetchFor> void prefetchTarget(uint32_t ordinal) const;
+    void prefetchLookup(AtomStringTable&, uint32_t ordinal) const;
 private:
-    void prefetchSlow(VM&, uint32_t ordinal, PrefetchStage) const;
-
+    static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
         const uint8_t* characters;
         uint32_t length;
@@ -249,12 +252,9 @@ public:
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     // Only for CachedJSValuePool::decode: see DecoderStringTable::flushPendingCells.
     JSString* jsStringForExternalString(uint32_t ordinal);
-    // See DecoderStringTable::prefetch. Nothing to prefetch into before this Decoder's first atomFor has found the table.
-    void prefetchExternalString(uint32_t ordinal, DecoderStringTable::PrefetchStage stage)
-    {
-        if (DecoderStringTable* table = m_externalStrings)
-            table->prefetch(m_vm, ordinal, stage);
-    }
+    // See DecoderStringTable::prefetchSlot. Null with useFastCachedAtoms off or no embedder table (a payload that then
+    // names a table string still fails in atomForExternalString, not here).
+    const DecoderStringTable* stringsToPrefetch();
     void flushPendingStringCells()
     {
         if (m_externalStrings)
@@ -286,6 +286,7 @@ private:
     const Ref<CachedBytecode> m_cachedBytecode;
     Vector<AtomStringImpl*> m_atomsByOrdinal;
     DecoderStringTable* m_externalStrings { nullptr };
+    bool m_lookedUpExternalStrings { false }; // stringsToPrefetch asked the embedder (m_externalStrings may still be null)
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;

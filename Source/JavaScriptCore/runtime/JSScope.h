@@ -28,6 +28,7 @@
 #include "GetPutInfo.h"
 #include "JSObject.h"
 #include "VariableEnvironment.h"
+#include <array>
 
 namespace JSC {
 
@@ -36,6 +37,53 @@ class SymbolTable;
 class WatchpointSet;
 
 using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+
+// Options::useGlobalResolveMemo(): per-realm, mutator-only memo of what JSScope::abstractResolve() decides at the global
+// lexical environment / global object, which is the same for every scope chain of the realm. Symbol-table-decided
+// entries (GlobalVar, GlobalLexicalVar, read-only -> Dynamic) live until JSGlobalObject::invalidateGlobalResolveMemo()
+// (global symbol table / lexical binding added); structure-decided ones (GlobalProperty, UnresolvedProperty) also die
+// when the global object's structure, maxOffset or dictionary kind moves on (JSGlobalObject::globalResolveMemoFor-
+// Resolve(), which keeps that Structure alive so a recycled one cannot validate them). Whatever else an entry stands for
+// is re-checked when the linked instruction runs, as for a CodeBlock linked earlier. Entries reference no GC cell.
+class GlobalResolveMemo {
+    WTF_MAKE_NONCOPYABLE(GlobalResolveMemo);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(GlobalResolveMemo);
+public:
+    GlobalResolveMemo() = default;
+    enum class Depth : uint8_t { Zero, GlobalLexicalEnvironment, GlobalObject }; // ResolveOp::depth is 0 / the global lexical environment's / one more
+    struct Entry {
+        ResolveType type;
+        Depth depth;
+        bool hasStructure; // ResolveOp::structure is the global object's (memo-wide) structure
+        InlineWatchpointSet* watchpointSet;
+        uintptr_t operand;
+        bool isStructureDecided() const { return type == GlobalProperty || type == GlobalPropertyWithVarInjectionChecks || type == UnresolvedProperty || type == UnresolvedPropertyWithVarInjectionChecks; }
+    };
+    using Map = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Entry, IdentifierRepHash>;
+    Map& map(GetOrPut getOrPut, bool needsVarInjectionChecks) { return m_maps[(getOrPut == Put ? 2 : 0) | (needsVarInjectionChecks ? 1 : 0)]; }
+    void add(Map& map, UniquedStringImpl* ident, const Entry& entry)
+    {
+        map.add(ident, entry);
+        m_hasStructureDecidedEntries |= entry.isStructureDecided();
+    }
+    void clear()
+    {
+        for (auto& map : m_maps)
+            map.clear();
+        m_hasStructureDecidedEntries = false;
+    }
+    void clearStructureDecidedEntries()
+    {
+        if (!m_hasStructureDecidedEntries)
+            return;
+        for (auto& map : m_maps)
+            map.removeIf([](auto& keyValue) { return keyValue.value.isStructureDecided(); });
+        m_hasStructureDecidedEntries = false;
+    }
+private:
+    std::array<Map, 4> m_maps;
+    bool m_hasStructureDecidedEntries { false };
+};
 
 class JSScope : public JSNonFinalObject {
 public:

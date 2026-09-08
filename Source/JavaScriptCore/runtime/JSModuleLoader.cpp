@@ -803,6 +803,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         mapEntry = ModuleRegistryEntry::create(vm, resolved, type, scriptFetcher);
         Locker locker { cellLock() };
         m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
+        didAddModuleMapEntry(type);
     }
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
@@ -1127,6 +1128,7 @@ ModuleRegistryEntry* JSModuleLoader::ensureRegistered(JSGlobalObject* globalObje
 
     Locker locker { cellLock() };
     m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, entry));
+    didAddModuleMapEntry(type);
 
     return entry;
 }
@@ -1205,6 +1207,7 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
         return;
     Locker locker { cellLock() };
     m_moduleMap.remove(iter);
+    didRemoveModuleMapEntry(moduleMapKey.second);
 }
 
 void JSModuleLoader::addResolutionFailure(VM& vm, const ResolutionMapKey& key, JSValue error)

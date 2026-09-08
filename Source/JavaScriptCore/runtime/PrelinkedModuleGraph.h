@@ -193,7 +193,9 @@ public:
     // The specifier / fetch parameters a ModuleRequest for `request` carries. Parameters are shared per FetchKind.
     RefPtr<ScriptFetchParameters> fetchParameters(const Request&);
 
-    // By-name lookups over the hash-sorted arrays; null when the module has no such entry. Symbols never match.
+    // By-name lookups over the hash-sorted arrays (binary search on the name's existing hash, then a pointer compare
+    // against the sid's cached atom or, until it has one, a character compare; nothing is atomized); null when the
+    // module has no such entry. Symbols never match. Mutator only.
     const Import* findImport(const Module&, UniquedStringImpl* localName) const;
     const Export* findExport(const Module&, UniquedStringImpl* exportName) const;
 
@@ -213,6 +215,7 @@ private:
     std::span<const Export> m_exports;
     std::span<const uint32_t> m_starExports;
     RefPtr<ScriptFetchParameters> m_fetchParameters[4]; // by FetchKind, JavaScript..JSON (None is null)
+    mutable Vector<Identifier> m_identifiers; // by sid: the atom once identifier() made it or a by-name lookup met it; mutator only
     bool m_hashesVerified { true }; // the producer's name hashes agree with this build's StringHasher; else lookups scan
 };
 

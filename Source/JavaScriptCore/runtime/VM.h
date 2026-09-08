@@ -1030,10 +1030,10 @@ public:
             return 1;
         if (ApproximateTime::now() < m_startupJITDeferralDeadline)
             return m_startupJITDeferralScale;
-        endStartupJITDeferral();
+        endStartupJITDeferral("deadline");
         return 1;
     }
-    JS_EXPORT_PRIVATE void endStartupJITDeferral();
+    JS_EXPORT_PRIVATE void endStartupJITDeferral(const char* reason = "embedder"); // `reason` is only logged (Options::verboseOSR)
 
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);

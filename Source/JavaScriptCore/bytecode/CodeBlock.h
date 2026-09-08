@@ -826,7 +826,8 @@ public:
     // One per lazy item. An item defines JSC_CODEBLOCK_HAS_<name> right below and supplies the body; otherwise the empty
     // default in CodeBlock.cpp (shared-hook block) applies. Each must leave the block exactly as eager linking would
     // have, watchpoints included.
-    void ensureScopeOpsResolved(); // op_resolve_scope / op_get_from_scope / op_put_to_scope metadata, m_bytecodeCost
+    enum class LazyLinkWalk : uint8_t { Everything, ScopeOpsOnly }; // ScopeOpsOnly: linkAllLazily(); leaves call link infos / profiles / m_bytecodeCost to first execution or a later Everything walk
+    void ensureScopeOpsResolved(LazyLinkWalk = LazyLinkWalk::Everything); // op_resolve_scope / op_get_from_scope / op_put_to_scope metadata, m_bytecodeCost
     void ensureFunctionExecutablesMaterialized(); // m_functionDecls / m_functionExprs
     void ensureSymbolTableConstantsMaterialized(); // no-op for useLazySymbolTableConstants: SymbolTable::materializeCachedEntries declines off the mutator and concurrent readers take a pending table as having no entries
 #define JSC_CODEBLOCK_HAS_ensureScopeOpsResolved 1
@@ -859,10 +860,15 @@ public:
     void noteLazyLinkScope(JSScope*);
     JSScope* noteLazyLinkScopeFromFrame(CallFrame*); // the frame's callee scope; frame must be running this block
     // Each is a no-op on an entry that is already linked (isScopeMetadataLinked(), CodeBlockInlines.h). Mutator only.
+    // With Options::useBatchedLazyLink() the first of them a block reaches links every scope op of the block (linkAllLazily()).
     void linkLazily(CallFrame*, const OpResolveScope&);
     void linkLazily(CallFrame*, const OpGetFromScope&);
     void linkLazily(CallFrame*, const OpPutToScope&);
     void linkCallLinkInfoLazily(const JSInstruction*); // any FOR_EACH_OPCODE_WITH_CALL_LINK_INFO opcode
+    // useBatchedLazyLink: links every scope op (only those: LazyLinkWalk::ScopeOpsOnly) against the frame's callee scope
+    // the first time any scope op of the block takes its slow path, so the remaining ones start out linked and stay on
+    // the fast paths. Returns false (did nothing) when the option is off or the block has nothing left to link.
+    bool linkAllLazily(CallFrame*);
     // ---- end lazy link ------------------------------------------------------------------------------------------------
 
     enum SteppingMode {

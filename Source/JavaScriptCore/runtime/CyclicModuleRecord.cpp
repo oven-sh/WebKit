@@ -444,6 +444,29 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useDirectModuleEnvironmentInitialization()) {
+        // The same stores as the symbolTablePut loop below, with one lookup per name under one lock: undefined needs no
+        // write barrier, and a set to touch exists only if something already linked a put to this (fresh) table.
+        Vector<std::pair<InlineWatchpointSet*, UniquedStringImpl*>, 4> touched;
+        {
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+                auto iter = symbolTable->find(locker, variable.key.get());
+                if (iter == symbolTable->end(locker))
+                    continue;
+                VarOffset offset = iter->value.varOffset();
+                if (!offset.isScope() || !env->isValidScopeOffset(offset.scopeOffset()))
+                    continue;
+                env->variableAt(offset.scopeOffset()).setUndefined();
+                if (InlineWatchpointSet* set = iter->value.watchpointSet()) [[unlikely]]
+                    touched.append({ set, variable.key.get() });
+            }
+        }
+        for (auto [set, name] : touched) // a set, once made, lives as long as its SymbolTableEntry
+            VariableWriteFireDetail::touch(vm, set, env, Identifier::fromUid(vm, name));
+    } else
+#endif
     for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
         // 21.a. For each element dn of the BoundNames of d, do
         // 21.a.i. If declaredVarNames does not contain dn, then
@@ -475,8 +498,22 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
+#if USE(BUN_JSC_ADDITIONS)
+        VarOffset offset;
+        InlineWatchpointSet* watchpointSet = nullptr;
+        if (Options::useDirectModuleEnvironmentInitialization()) {
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            auto iter = symbolTable->find(locker, unlinkedFunctionExecutable->name().impl());
+            if (iter == symbolTable->end(locker))
+                continue; // not a binding of this environment: nothing to initialize (the put below would not find it either)
+            offset = iter->value.varOffset();
+            watchpointSet = iter->value.watchpointSet(); // still the entry's set at the store: nothing links code against this fresh table in between
+        } else
+            offset = symbolTable->get(unlinkedFunctionExecutable->name().impl()).varOffset();
+#else
         SymbolTableEntry::Fast entry = symbolTable->get(unlinkedFunctionExecutable->name().impl());
         VarOffset offset = entry.varOffset();
+#endif
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
             ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
@@ -501,6 +538,13 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 function = JSFunction::create(vm, globalObject, executable, env);
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
+#if USE(BUN_JSC_ADDITIONS)
+            if (Options::useDirectModuleEnvironmentInitialization()) {
+                if (offset.isScope() && env->isValidScopeOffset(offset.scopeOffset())) [[likely]]
+                    symbolTablePutTouchWatchpointSet(vm, env, unlinkedFunctionExecutable->name(), function, &env->variableAt(offset.scopeOffset()), watchpointSet);
+                continue;
+            }
+#endif
             bool putResult = false;
             symbolTablePutTouchWatchpointSet(env, globalObject, unlinkedFunctionExecutable->name(), function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());

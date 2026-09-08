@@ -1191,9 +1191,25 @@ void CodeBlock::linkPutToScope(VM& vm, const OpPutToScope& bytecode, JSScope* sc
     metadata.m_getPutInfo = GetPutInfo(getPutInfo.resolveMode(), op.type, getPutInfo.initializationMode(), getPutInfo.ecmaMode()).asLinkedMetadata();
 }
 
+bool CodeBlock::linkAllLazily(CallFrame* callFrame)
+{
+    if (!Options::useBatchedLazyLink() || !hasUnlinkedLazyScopeOps())
+        return false;
+    // The frame is running this block, so its callee scope is an instance of the scope every scope op in the block
+    // resolves against; with it noted the walk leaves no scope op unresolved (isLazyLinkComplete()), so this runs at
+    // most once per block. Call link infos, mode metadata and allocation profiles stay per-instruction lazy.
+    noteLazyLinkScopeFromFrame(callFrame);
+    CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::LinkBatchedLazy);
+    ensureScopeOpsResolved(LazyLinkWalk::ScopeOpsOnly);
+    ASSERT(!hasUnlinkedLazyScopeOps());
+    return true;
+}
+
 void CodeBlock::linkLazily(CallFrame* callFrame, const OpResolveScope& bytecode)
 {
     if (!m_linksLazily || isScopeMetadataLinked(bytecode.metadata(this)))
+        return;
+    if (linkAllLazily(callFrame) && isScopeMetadataLinked(bytecode.metadata(this)))
         return;
     linkResolveScope(vm(), bytecode, noteLazyLinkScopeFromFrame(callFrame));
 }
@@ -1201,6 +1217,8 @@ void CodeBlock::linkLazily(CallFrame* callFrame, const OpResolveScope& bytecode)
 void CodeBlock::linkLazily(CallFrame* callFrame, const OpGetFromScope& bytecode)
 {
     if (!m_linksLazily || isScopeMetadataLinked(bytecode.metadata(this)))
+        return;
+    if (linkAllLazily(callFrame) && isScopeMetadataLinked(bytecode.metadata(this)))
         return;
     // A ResolvedClosureVar access carries its slot and does not look at the scope.
     JSScope* scope = bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar ? nullptr : noteLazyLinkScopeFromFrame(callFrame);
@@ -1210,6 +1228,8 @@ void CodeBlock::linkLazily(CallFrame* callFrame, const OpGetFromScope& bytecode)
 void CodeBlock::linkLazily(CallFrame* callFrame, const OpPutToScope& bytecode)
 {
     if (!m_linksLazily || isScopeMetadataLinked(bytecode.metadata(this)))
+        return;
+    if (linkAllLazily(callFrame) && isScopeMetadataLinked(bytecode.metadata(this)))
         return;
     // A ResolvedClosureVar put carries its SymbolTable constant instead of a scope depth and does not look at the scope.
     JSScope* scope = bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar ? nullptr : noteLazyLinkScopeFromFrame(callFrame);
@@ -1247,11 +1267,15 @@ static void initializeGetByIdModeMetadata(OpIteratorNext::Metadata& metadata)
 // The part of finishCreation's instruction walk that lazy linking deferred, for every instruction that has not executed
 // yet. Runs (via prepareLazyStateForConcurrentCompilation) before this block gets JIT code or is parsed by a compiler
 // thread, so it is only paid by blocks that tier up.
-void CodeBlock::ensureScopeOpsResolved()
+void CodeBlock::ensureScopeOpsResolved(LazyLinkWalk walk)
 {
     if (!m_linksLazily)
         return;
-    if ((!m_metadata || m_metadata->isLazyLinkComplete()) && didWalkInstructionsForLink())
+    bool scopeOpsOnly = walk == LazyLinkWalk::ScopeOpsOnly;
+    if (scopeOpsOnly) {
+        if (!m_metadata || m_metadata->isLazyLinkComplete())
+            return;
+    } else if ((!m_metadata || (m_metadata->isLazyLinkComplete() && m_metadata->didLazyLinkWalk())) && didWalkInstructionsForLink())
         return;
     VM& vm = *m_vm;
     DeferGC deferGC(vm);
@@ -1261,7 +1285,7 @@ void CodeBlock::ensureScopeOpsResolved()
     // an inlinee, not tiering up itself). Scope ops that never ran stay unresolved: the slow paths resolve them when they
     // do run, the DFG plants ForceOSRExit for them as for any never-executed code, and a later prepare retries.
     JSScope* scope = m_metadata ? m_metadata->lazyLinkScope() : nullptr;
-    if (!scope && m_metadata && m_metadata->didLazyLinkWalk() && didWalkInstructionsForLink())
+    if (!scope && (scopeOpsOnly || (m_metadata && m_metadata->didLazyLinkWalk() && didWalkInstructionsForLink())))
         return; // nothing new could be resolved
     bool complete = true;
 
@@ -1269,6 +1293,8 @@ void CodeBlock::ensureScopeOpsResolved()
     unsigned numberOfArgumentsToSkip = m_numberOfArgumentsToSkip;
     for (const auto& instruction : instructions()) {
         OpcodeID opcodeID = instruction->opcodeID();
+        if (scopeOpsOnly && opcodeID != op_resolve_scope && opcodeID != op_get_from_scope && opcodeID != op_put_to_scope)
+            continue;
         bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
 #define CASE(Op) \
@@ -1351,10 +1377,13 @@ void CodeBlock::ensureScopeOpsResolved()
             break;
         }
     }
-    m_numberOfArgumentsToSkip = numberOfArgumentsToSkip;
-    m_bytecodeCost = bytecodeCost;
+    if (!scopeOpsOnly && !didWalkInstructionsForLink()) { // else already published (same values) and a compiler thread may be reading them
+        m_numberOfArgumentsToSkip = numberOfArgumentsToSkip;
+        m_bytecodeCost = bytecodeCost;
+    }
     if (m_metadata) {
-        m_metadata->setDidLazyLinkWalk();
+        if (!scopeOpsOnly)
+            m_metadata->setDidLazyLinkWalk();
         if (complete)
             m_metadata->setLazyLinkComplete();
     }
@@ -3023,7 +3052,7 @@ void CodeBlock::prepareLazyStateForConcurrentCompilationSlow()
 // Defaults for items that are not compiled in; an item defines JSC_CODEBLOCK_HAS_<name> next to the declaration in
 // CodeBlock.h and supplies the real body.
 #if !defined(JSC_CODEBLOCK_HAS_ensureScopeOpsResolved)
-void CodeBlock::ensureScopeOpsResolved() { }
+void CodeBlock::ensureScopeOpsResolved(LazyLinkWalk) { }
 #endif
 #if !defined(JSC_CODEBLOCK_HAS_ensureFunctionExecutablesMaterialized)
 void CodeBlock::ensureFunctionExecutablesMaterialized() { }
