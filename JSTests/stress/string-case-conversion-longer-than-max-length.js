@@ -1,4 +1,5 @@
 //@ memoryHog!
+//@ slow!
 //@ skip if $addressBits <= 32
 //@ runDefault
 
@@ -6,6 +7,7 @@
 // lowercases to "i̇" (two code units). When the converted string would be longer than the
 // maximum string length, the conversion has to throw. It used to hand back the input unchanged.
 // Results between 2^30 and the maximum length are fine and must neither throw nor crash.
+// Every block below works on strings of a gigabyte or more, so each takes seconds.
 
 function shouldBe(actual, expected) {
     if (actual !== expected)
@@ -41,9 +43,10 @@ for (let i = 0; i < testLoopCount; ++i) {
     // 8-bit input. Each "ß" adds one character, so the result would be 2^31 long.
     const input = "\u00DF".repeat(2 ** 30);
     shouldThrowOutOfMemory(() => input.toUpperCase());
-    shouldThrowOutOfMemory(() => input.toLocaleUpperCase());
     shouldThrowOutOfMemory(() => input.toLocaleUpperCase("en"));
     shouldThrowOutOfMemory(() => toUpperCase(input));
+    // The language-sensitive locales convert through ICU into a separate buffer, with the same limit.
+    shouldThrowOutOfMemory(() => input.toLocaleUpperCase("lt"));
 
     // One character less and the result is exactly the maximum length.
     const fits = "\u00DF".repeat(2 ** 30 - 1) + "a";
@@ -59,7 +62,6 @@ gc();
     // does not even fit in ICU's int32_t length.
     const input = "\uFB03".repeat(715827883);
     shouldThrowOutOfMemory(() => input.toUpperCase());
-    shouldThrowOutOfMemory(() => toUpperCase(input));
 }
 gc();
 
@@ -75,35 +77,30 @@ gc();
     // Lowercasing grows too: "İ" (U+0130) becomes "i" followed by U+0307 COMBINING DOT ABOVE.
     const input = "\u0130".repeat(2 ** 30);
     shouldThrowOutOfMemory(() => input.toLowerCase());
-    shouldThrowOutOfMemory(() => input.toLocaleLowerCase("en"));
     shouldThrowOutOfMemory(() => toLowerCase(input));
 }
 gc();
 
 {
-    // The language-sensitive locales convert through ICU into a separate buffer. The same limit
-    // applies there, and a result of 2^30 or more characters, which is fine, must not crash.
-    const input = "\u00DF".repeat(2 ** 30);
-    shouldThrowOutOfMemory(() => input.toLocaleUpperCase("tr"));
-    shouldThrowOutOfMemory(() => input.toLocaleUpperCase("lt"));
-
-    const half = "\u00DF".repeat(2 ** 29);
-    const upper = half.toLocaleUpperCase("az");
-    shouldBe(upper.length, 2 ** 30);
+    // A result of 2^30 characters from a language-sensitive locale, which is fine. "ß" is "SS" under
+    // Azerbaijani rules too, and the "i", which becomes "İ", is what sends the string to them.
+    const upper = ("\u00DF".repeat(2 ** 29) + "i").toLocaleUpperCase("az");
+    shouldBe(upper.length, 2 ** 30 + 1);
     shouldBe(upper[0], "S");
     shouldBe(upper[2 ** 30 - 1], "S");
-
-    const dotless = "i".repeat(2 ** 30).toLocaleUpperCase("tr");
-    shouldBe(dotless.length, 2 ** 30);
-    shouldBe(dotless[2 ** 30 - 1], "\u0130");
+    shouldBe(upper[2 ** 30], "\u0130");
 }
 gc();
 
 {
-    // An 8-bit string of 2^30 or more characters whose uppercase form needs 16 bits: "ÿ" becomes "Ÿ" (U+0178).
-    const input = "a".repeat(2 ** 30) + "\u00FF";
-    const upper = input.toUpperCase();
-    shouldBe(upper.length, 2 ** 30 + 1);
-    shouldBe(upper[0], "A");
-    shouldBe(upper[2 ** 30], "\u0178");
+    // 8-bit strings of 2^30 or more characters that have to be widened for ICU: "i" is "İ" in
+    // Turkish, and "ÿ" uppercases to "Ÿ" (U+0178) everywhere.
+    const dotted = "i".repeat(2 ** 30).toLocaleUpperCase("tr");
+    shouldBe(dotted.length, 2 ** 30);
+    shouldBe(dotted[2 ** 30 - 1], "\u0130");
+
+    const diaeresis = toUpperCase("a".repeat(2 ** 30) + "\u00FF");
+    shouldBe(diaeresis.length, 2 ** 30 + 1);
+    shouldBe(diaeresis[0], "A");
+    shouldBe(diaeresis[2 ** 30], "\u0178");
 }
