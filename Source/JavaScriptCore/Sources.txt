@@ -214,6 +214,7 @@ bytecode/ArrayProfile.cpp
 bytecode/BytecodeBasicBlock.cpp
 bytecode/BytecodeDumper.cpp
 bytecode/BytecodeGeneratorification.cpp
+bytecode/BytecodeOptimizer.cpp
 bytecode/BytecodeIndex.cpp
 bytecode/BytecodeIntrinsicRegistry.cpp
 bytecode/BytecodeLivenessAnalysis.cpp

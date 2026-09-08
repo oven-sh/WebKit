@@ -53,7 +53,7 @@ const ClassInfo UnlinkedFunctionExecutable::s_info = { "UnlinkedFunctionExecutab
 static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& source,
     CodeSpecializationKind kind, OptionSet<CodeGenerationMode> codeGenerationMode,
-    UnlinkedFunctionKind functionKind, ParserError& error, SourceParseMode parseMode)
+    UnlinkedFunctionKind functionKind, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
     JSParserBuiltinMode builtinMode = executable->isBuiltinFunction() ? JSParserBuiltinMode::Builtin : JSParserBuiltinMode::NotBuiltin;
     JSParserScriptMode scriptMode = executable->scriptMode();
@@ -75,9 +75,10 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
+    RefPtr<DeclaredNamesLink> parentDeclaredNames = executable->takeParentDeclaredNames();
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
     const PrivateNameEnvironment* parentPrivateNameEnvironment = executable->parentPrivateNameEnvironment();
-    error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment);
+    error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
 
     if (error.isValid())
         return nullptr;
@@ -244,7 +245,7 @@ UnlinkedFunctionExecutable* UnlinkedFunctionExecutable::fromGlobalCode(
 
 UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
-    OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode)
+    OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
     if (m_isCached)
         decodeCachedCodeBlocks(vm);
@@ -262,7 +263,7 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
         vm, this, source, specializationKind, codeGenerationMode, 
         isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, 
-        error, parseMode);
+        error, parseMode, optimize);
     
     if (error.isValid())
         return nullptr;

@@ -65,6 +65,7 @@
 #include "JSModuleEnvironment.h"
 #include "JSSet.h"
 #include "JSString.h"
+#include "JSSymbolTableObject.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "LLIntData.h"
 #include "LLIntEntrypoint.h"
@@ -603,7 +604,32 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             const Identifier& ident = identifier(bytecode.m_var);
             RELEASE_ASSERT(bytecode.m_resolveType != ResolvedClosureVar);
 
-            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_resolveType, InitializationMode::NotInitialization);
+            ResolveType unlinkedResolveType = bytecode.m_resolveType;
+            if (isStaticClosureVarResolveType(unlinkedResolveType)) [[unlikely]] {
+                // Only bytecode from an optimized cache image carries these: the variable lives |outerHops| environment
+                // records out from this function's scope, so link it as ClosureVar with a pointer walk instead of the
+                // name lookups abstractResolve() would do at every level.
+                unsigned outerHops = staticClosureVarHops(unlinkedResolveType);
+                JSScope* environment = scope;
+                for (unsigned i = 0; i < outerHops && environment; ++i)
+                    environment = environment->next();
+                // The paired get_from_scope already carries the slot, so a scope that does not hold the name here
+                // would mean a silently wrong read there: check cheaply and fail hard rather than fall back.
+                auto* symbolTableObject = environment ? dynamicDowncast<JSLexicalEnvironment>(environment) : nullptr;
+                RELEASE_ASSERT(symbolTableObject && symbolTableObject->symbolTable()->contains(ident.impl()), outerHops, bytecode.m_localScopeDepth);
+                metadata.m_resolveType = ClosureVar;
+                metadata.m_localScopeDepth = bytecode.m_localScopeDepth + outerHops;
+                metadata.m_symbolTable.set(vm, this, symbolTableObject->symbolTable());
+                if (Options::validateBytecodeOptimizerStaticScopes()) [[unlikely]] {
+                    ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, GlobalProperty, InitializationMode::NotInitialization);
+                    RELEASE_ASSERT(op.type == ClosureVar, op.type, outerHops);
+                    RELEASE_ASSERT(op.depth == metadata.m_localScopeDepth, op.depth, bytecode.m_localScopeDepth, outerHops);
+                    RELEASE_ASSERT(op.lexicalEnvironment == environment);
+                }
+                break;
+            }
+
+            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, unlinkedResolveType, InitializationMode::NotInitialization);
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
