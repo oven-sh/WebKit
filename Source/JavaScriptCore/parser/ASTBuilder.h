@@ -396,11 +396,6 @@ public:
         return node;
     }
 
-    YieldExprNode* createYield(const JSTokenLocation& location)
-    {
-        return new (m_parserArena) YieldExprNode(location, nullptr, /* delegate */ false);
-    }
-
     YieldExprNode* createYield(const JSTokenLocation& location, ExpressionNode* argument, bool delegate, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
     {
         YieldExprNode* node = new (m_parserArena) YieldExprNode(location, argument, delegate);
@@ -1540,12 +1535,16 @@ ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int 
 {
     switch (token) {
     case COALESCE:
+        // The control flow profiler ends the right operand's basic block at this offset.
+        setEndOffset(rhs.first, rhs.second.end.offset);
         return makeCoalesceNode(location, lhs.first, rhs.first);
 
     case OR:
+        setEndOffset(rhs.first, rhs.second.end.offset);
         return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::Or);
 
     case AND:
+        setEndOffset(rhs.first, rhs.second.end.offset);
         return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::And);
 
     case BITOR:

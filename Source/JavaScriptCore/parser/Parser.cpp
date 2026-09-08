@@ -4505,7 +4505,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseYieldExpress
     SavePoint savePoint = createSavePoint(context);
     next();
     if (m_lexer->hasLineTerminatorBeforeToken())
-        return context.createYield(location);
+        return context.createYield(location, 0, false, divotStart, divotStart, lastTokenEndPosition());
 
     bool delegate = consume(TIMES);
     JSTextPosition argumentStart = tokenStartPosition();
@@ -4513,7 +4513,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseYieldExpress
     if (!argument) {
         restoreSavePoint(context, savePoint);
         next();
-        return context.createYield(location);
+        return context.createYield(location, 0, false, divotStart, divotStart, lastTokenEndPosition());
     }
     return context.createYield(location, argument, delegate, divotStart, argumentStart, lastTokenEndPosition());
 }
