@@ -209,13 +209,21 @@ public:
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToASCIILowercase() const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToASCIIUppercase() const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocale() const;
-    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
-    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocale() const;
-    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const;
-    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithLocale(const AtomString& localeIdentifier) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithLocale(const AtomString& localeIdentifier) const;
+
+    // Full case mapping can make a string longer. The functions that start with "try" return a null
+    // string when the converted string cannot be allocated, for example because it would be longer
+    // than MaxLength. Their namesakes above without "try" crash in that case.
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToLowercaseWithoutLocale() const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToUppercaseWithoutLocale() const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToLowercaseWithLocale(const AtomString& localeIdentifier) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToUppercaseWithLocale(const AtomString& localeIdentifier) const;
 
     [[nodiscard]] WTF_EXPORT_PRIVATE String simplifyWhiteSpace(CodeUnitMatchFunction) const;
 
