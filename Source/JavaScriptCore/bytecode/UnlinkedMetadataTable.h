@@ -85,6 +85,9 @@ public:
 
     unsigned addEntry(OpcodeID);
     unsigned addValueProfile();
+    // Forget all entries and value profiles added so far (only valid before finalize()); used when the
+    // instruction stream is re-emitted by the bytecode optimizer.
+    void restartForReemit();
 
     size_t sizeInBytesForGC();
 

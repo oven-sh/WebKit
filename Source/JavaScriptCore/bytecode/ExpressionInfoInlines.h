@@ -29,6 +29,37 @@
 
 namespace JSC {
 
+template<typename MapFunc>
+void ExpressionInfo::Encoder::rebuild(const MapFunc& mapInstPC)
+{
+    RELEASE_ASSERT(!m_numberOfEncodedInfoExtensions);
+    if (m_expressionInfoEncodedInfo.isEmpty())
+        return;
+
+    Vector<Entry> entries;
+    {
+        Decoder decoder(m_expressionInfoEncodedInfo);
+        while (decoder.decode() != IterationStatus::Done)
+            entries.append(decoder.entry());
+    }
+
+    m_expressionInfoEncodedInfo.shrink(0);
+    m_expressionInfoChapters.shrink(0);
+    m_currentChapterStartIndex = 0;
+    m_entry.reset();
+
+    InstPC lastInstPC = 0;
+    for (unsigned i = 0; i < entries.size(); ++i) {
+        InstPC instPC = mapInstPC(entries[i].instPC);
+        if (i + 1 < entries.size() && mapInstPC(entries[i + 1].instPC) == instPC)
+            continue;
+        RELEASE_ASSERT(instPC >= lastInstPC);
+        lastInstPC = instPC;
+        auto& entry = entries[i];
+        encode(instPC, entry.divot, entry.startOffset, entry.endOffset, entry.lineColumn);
+    }
+}
+
 template<typename RemapFunc>
 void ExpressionInfo::Encoder::remap(Vector<unsigned>&& adjustmentLabelPoints, RemapFunc remapFunc)
 {
