@@ -75,11 +75,10 @@ function importValue(specifier, exportName)
         @throwTypeError("`%ShadowRealm%.importValue requires that the |exportName| argument be a string");
 
     var lookupBinding = (module) => {
-        var lookup = module[exportName]
-        if (lookup === @undefined)
+        if (!(exportName in module))
             @throwTypeError("%ShadowRealm%.importValue requires |exportName| to exist in the |specifier|");
 
-        return @wrapRemoteValue(true, this, lookup);
+        return @wrapRemoteValue(true, this, module[exportName]);
     };
 
     return @importInRealm(this, specifierString).@then(lookupBinding, @crossRealmThrow);
