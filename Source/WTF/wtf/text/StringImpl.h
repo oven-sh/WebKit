@@ -483,7 +483,7 @@ public:
     // when the converted string cannot be allocated, for example because it would be longer than
     // MaxLength. Their namesakes above without "try" crash in that case.
     WTF_EXPORT_PRIVATE RefPtr<StringImpl> tryConvertToLowercaseWithoutLocale();
-    WTF_EXPORT_PRIVATE Ref<StringImpl> convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned);
+    WTF_EXPORT_PRIVATE RefPtr<StringImpl> tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned);
     WTF_EXPORT_PRIVATE RefPtr<StringImpl> tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned);
     WTF_EXPORT_PRIVATE RefPtr<StringImpl> tryConvertToUppercaseWithoutLocale();
     WTF_EXPORT_PRIVATE RefPtr<StringImpl> tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned);

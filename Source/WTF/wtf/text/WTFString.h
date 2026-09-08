@@ -219,7 +219,7 @@ public:
     // string when the converted string cannot be allocated, for example because it would be longer
     // than MaxLength. Their namesakes above without "try" crash in that case.
     [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToLowercaseWithoutLocale() const;
-    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToUppercaseWithoutLocale() const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const;
