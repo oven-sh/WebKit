@@ -3905,7 +3905,7 @@ JSC_DEFINE_JIT_OPERATION(operationToLowerCase, JSString*, (JSGlobalObject* globa
     if (!inputString->length())
         OPERATION_RETURN(scope, vm.smallStrings.emptyString());
 
-    String lowercasedString = inputString->is8Bit() ? inputString->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : inputString->tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex);
+    String lowercasedString = inputString->is8Bit() ? inputString->tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : inputString->tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex);
     if (lowercasedString.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         OPERATION_RETURN(scope, nullptr);
