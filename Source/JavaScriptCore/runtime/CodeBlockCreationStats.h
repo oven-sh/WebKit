@@ -27,9 +27,10 @@
 
 #include <array>
 #include <wtf/FastMalloc.h>
+#include <wtf/Platform.h>
 #include <wtf/StdLibExtras.h>
 
-#if CPU(X86_64)
+#if CPU(X86_64) && !OS(WINDOWS)
 #include <x86intrin.h>
 #endif
 
@@ -99,15 +100,16 @@ JS_EXPORT_PRIVATE void initialize(); // reads Options, installs exit hooks
 
 ALWAYS_INLINE bool enabled() { return g_enabled; }
 
+JS_EXPORT_PRIVATE uint64_t nowSlow();
+
 ALWAYS_INLINE uint64_t now()
 {
-#if CPU(X86_64)
+#if CPU(X86_64) && !OS(WINDOWS)
     return __rdtsc();
 #else
     return nowSlow();
 #endif
 }
-JS_EXPORT_PRIVATE uint64_t nowSlow();
 
 JS_EXPORT_PRIVATE void add(Bucket, uint64_t ticks, uint64_t count = 1);
 
