@@ -85,6 +85,20 @@ JSC_DEFINE_HOST_FUNCTION(importInRealm, (JSGlobalObject* globalObject, CallFrame
     return JSValue::encode(promise);
 }
 
+// https://tc39.es/proposal-shadowrealm/#sec-import-value-error-functions
+// The rejection handler importValue puts on importInRealm's promise. |error| is whatever the shadow
+// realm's module graph was rejected with, so it must not reach this realm, and none of its code may
+// run while it is replaced: CreateTypeErrorCopy, the same as for a value thrown out of evaluate().
+JSC_DEFINE_HOST_FUNCTION(crossRealmThrow, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* typeError = createTypeErrorCopy(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return throwVMError(globalObject, scope, typeError);
+}
+
 JSC_DEFINE_HOST_FUNCTION(evalInRealm, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

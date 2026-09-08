@@ -2141,6 +2141,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::importInRealm)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "importInRealm"_s, importInRealm, ImplementationVisibility::Private));
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::crossRealmThrow)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "crossRealmThrow"_s, crossRealmThrow, ImplementationVisibility::Private));
+        });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::evalFunction)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, init.vm.propertyNames->eval.string(), globalFuncEval, ImplementationVisibility::Public));
         });
