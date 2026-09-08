@@ -555,8 +555,9 @@ static TemporalResult<std::optional<NudgeWindow>> computeNudgeWindow(
         if (!startResult) [[unlikely]]
             return makeUnexpected(startResult.error());
         auto start = *startResult;
-        double startDayCount = dateToDaysFrom1970(start.year(), static_cast<int>(start.month()) - 1, static_cast<int>(start.day()));
-        if (std::abs(startDayCount) > 1e8)
+        // CalendarDateAdd step 3: If ISODateWithinLimits(result) is false, throw a RangeError.
+        // isoDateAdd already does this; the ICU path of calendarDateAdd only bounds the year.
+        if (!ISO8601::isDateTimeWithinLimits(start.year(), start.month(), start.day(), 12, 0, 0, 0, 0, 0)) [[unlikely]]
             return makeUnexpected(rangeError("date is outside the representable range"_s));
         auto startNsResult = epochNanosecondsForDateAndTime(start, isoTime, timeZone);
         if (!startNsResult)
@@ -568,8 +569,7 @@ static TemporalResult<std::optional<NudgeWindow>> computeNudgeWindow(
     if (!endResult) [[unlikely]]
         return makeUnexpected(endResult.error());
     auto end = *endResult;
-    double endDayCount = dateToDaysFrom1970(end.year(), static_cast<int>(end.month()) - 1, static_cast<int>(end.day()));
-    if (std::abs(endDayCount) > 1e8)
+    if (!ISO8601::isDateTimeWithinLimits(end.year(), end.month(), end.day(), 12, 0, 0, 0, 0, 0)) [[unlikely]]
         return makeUnexpected(rangeError("date is outside the representable range"_s));
     // Steps 10-12: CombineISODateAndTimeRecord (step 10) + GetUTCEpochNanoseconds/GetEpochNanosecondsFor
     //              (steps 11/12) fused into epochNanosecondsForDateAndTime — avoids an intermediate endDateTime record.
