@@ -476,6 +476,9 @@ public:
     }
 
     inline static std::optional<double> tryExtractDouble(JSValue); // Defined in JSBigIntInlines.h
+    // Unlike toBigInt64 / toBigUInt64, which wrap modulo 2^64, these fail when the BigInt is out of range.
+    inline static std::optional<int64_t> tryExtractInt64(JSValue); // Defined in JSBigIntInlines.h
+    inline static std::optional<uint64_t> tryExtractUInt64(JSValue); // Defined in JSBigIntInlines.h
 
     inline bool isZero() const
     {
@@ -510,6 +513,8 @@ private:
     }
 
     JS_EXPORT_PRIVATE unsigned NODELETE hashSlow();
+
+    inline static std::optional<uint64_t> absoluteAsUInt64(JSBigInt*); // Defined in JSBigIntInlines.h
 
     static JSBigInt* tryCreateFromImpl(JSGlobalObject*, uint64_t value, bool sign);
 
