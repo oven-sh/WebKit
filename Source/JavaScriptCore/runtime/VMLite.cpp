@@ -26,6 +26,8 @@
 #include "config.h"
 #include "VMLite.h"
 
+#include "JSThreadsCounters.h"
+
 #include "Allocator.h"           // sizeof/triviality asserts on the TLC table element the emitters index.
 #include "GCThreadLocalCache.h"  // table()/tableBound(): the source of the lite's tlcTable mirror.
 #include "Heap.h"                // GCClient::Heap::currentThreadClient / threadLocalCache.
@@ -514,8 +516,10 @@ void jsThreadsBumpStopGeneration()
 
 void jsThreadsSyncToStopGenerationBeforeJITEntry()
 {
+    JSTHREADS_COUNT(syncToStopGeneration);
     uint64_t generation = s_jsThreadsStopGeneration.load(std::memory_order_relaxed); // ISB1.5: relaxed + compare.
     if (generation != t_jsThreadsStopGenerationSeen) [[unlikely]] {
+        JSTHREADS_COUNT(syncToStopGenerationFenced);
         WTF::crossModifyingCodeFence(); // arm64 ISB / x86-64 serializing instruction, BEFORE any JIT entry.
         t_jsThreadsStopGenerationSeen = generation;
     }

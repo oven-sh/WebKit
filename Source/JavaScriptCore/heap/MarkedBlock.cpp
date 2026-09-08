@@ -26,6 +26,8 @@
 #include "config.h"
 #include "MarkedBlock.h"
 
+#include "JSThreadsCounters.h"
+
 #include "AlignedMemoryAllocator.h"
 #include "FreeListInlines.h"
 #include "JSCJSValueInlines.h"
@@ -55,8 +57,13 @@ static size_t balance;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlock);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlockHandle);
 
+static std::atomic<uint64_t> s_markedBlocksCreated { 0 };
+uint64_t MarkedBlock::blocksCreatedForTesting() { return s_markedBlocksCreated.load(std::memory_order_relaxed); }
+
 MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)
 {
+    JSTHREADS_COUNT(markedBlockAllocated);
+    s_markedBlocksCreated.fetch_add(1, std::memory_order_relaxed);
     if (computeBalance) {
         balance++;
         if (!(balance % 10))

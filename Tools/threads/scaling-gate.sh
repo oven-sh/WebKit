@@ -162,6 +162,9 @@ WORKLOADS=()
 for f in "$SCALING_DIR"/*.js; do
     base="$(basename "$f")"
     [[ "$base" == "harness.js" || "$base" == "lock-fairness.js" ]] && continue
+    # Only files that print a SCALING line are workloads; the directory also
+    # holds corpus tests that live here for their subject (write-barrier-idle-fence.js).
+    grep -q 'runScalingWorkload\|scalingMain\|SCALING_THREADS' "$f" || continue
     WORKLOADS+=("$f")
 done
 [[ ${#WORKLOADS[@]} -gt 0 ]] || die "no workloads found in $SCALING_DIR"

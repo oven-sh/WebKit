@@ -367,7 +367,13 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
         vm->regExpCache()->addToStrongCache(this);
-        m_state = ByteCode;
+        // Flag-off this provisional "will at least have bytecode" state is
+        // invisible (one thread). GIL off, m_state is read lock-free by other
+        // threads' compileIfNecessary as "code exists", so it may only name code
+        // that has been published: the real store comes after the compile
+        // below (JITCode) or at the end (ByteCode), fenced by RacyRegExpState.
+        if (!vm->gilOff()) [[likely]]
+            m_state = ByteCode;
     }
 
 #if ENABLE(YARR_JIT)
@@ -381,6 +387,7 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
         Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
+            publishCodeGILOff(charSize == Yarr::CharSize::Char8 ? PublishedJIT8 : PublishedJIT16);
             return;
         }
     }
@@ -405,6 +412,7 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
     }
     WTF::storeStoreFence();
     m_state = ByteCode;
+    publishCodeGILOff(PublishedInterpretAll);
 }
 
 const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPosition position)
@@ -583,7 +591,13 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
         vm->regExpCache()->addToStrongCache(this);
-        m_state = ByteCode;
+        // Flag-off this provisional "will at least have bytecode" state is
+        // invisible (one thread). GIL off, m_state is read lock-free by other
+        // threads' compileIfNecessary as "code exists", so it may only name code
+        // that has been published: the real store comes after the compile
+        // below (JITCode) or at the end (ByteCode), fenced by RacyRegExpState.
+        if (!vm->gilOff()) [[likely]]
+            m_state = ByteCode;
     }
 
 #if ENABLE(YARR_JIT)
@@ -597,6 +611,7 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
         Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
+            publishCodeGILOff(charSize == Yarr::CharSize::Char8 ? PublishedJIT8MatchOnly : PublishedJIT16MatchOnly);
             return;
         }
     }
@@ -629,6 +644,7 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
     }
     WTF::storeStoreFence();
     m_state = ByteCode;
+    publishCodeGILOff(PublishedInterpretAll);
 }
 
 MatchResult RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset)
@@ -656,6 +672,7 @@ void RegExp::deleteCode()
     if (!hasCode())
         return;
     m_state = NotCompiled;
+    m_publishedCodeGILOff.store(0); // deleteAllCode only: world-stopped GIL off.
     WTF::atomicStore(&m_specificPattern, Yarr::SpecificPattern::None, std::memory_order_relaxed); // THREADS: see specificPattern().
 #if ENABLE(YARR_JIT)
     if (m_regExpJITCode)

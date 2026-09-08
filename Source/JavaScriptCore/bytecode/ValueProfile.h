@@ -86,6 +86,13 @@ struct ValueProfileBase {
     void storeBucketConcurrently(unsigned i, EncodedJSValue value)
     {
         ASSERT(i < totalNumberOfBuckets);
+        // Write-avoidance (SPEC-ungil §5.7, seventh round): with several
+        // threads running one CodeBlock's lower tiers, an unconditional store
+        // keeps the profile's cache line bouncing between cores even when it
+        // records nothing new; skip the store when the bucket already holds
+        // this value. One compare flag-off.
+        if (WTF::atomicLoad(&m_buckets[i], std::memory_order_relaxed) == value)
+            return;
         WTF::atomicStore(&m_buckets[i], value, std::memory_order_relaxed);
     }
 

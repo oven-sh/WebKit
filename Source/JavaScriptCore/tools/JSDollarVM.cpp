@@ -29,6 +29,8 @@
 
 #include "JSDollarVM.h"
 
+#include "JSThreadsCounters.h"
+
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
 #include "BuiltinNames.h"
@@ -2169,6 +2171,29 @@ JSC_DEFINE_HOST_FUNCTION(functionJSThreadsLockedTransitionCount, (JSGlobalObject
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(static_cast<double>(lockedTransitionCount())));
+}
+
+// $vm.markedBlocksCreated(): marked blocks minted by the process so far
+// (MarkedBlock::blocksCreatedForTesting); block-retention tests read it twice.
+static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlocksCreated);
+JSC_DEFINE_HOST_FUNCTION(functionMarkedBlocksCreated, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(static_cast<double>(MarkedBlock::blocksCreatedForTesting())));
+}
+
+// $vm.jsThreadsCounter(name): one of the --reportJSThreadsCounters=1
+// diagnostic counters (JSThreadsCounters), 0 when the option is off or the
+// name is unknown.
+static JSC_DECLARE_HOST_FUNCTION(functionJSThreadsCounter);
+JSC_DEFINE_HOST_FUNCTION(functionJSThreadsCounter, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsNumber(static_cast<double>(JSThreadsCounters::valueByName(name.utf8().data()))));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(functionCurrentButterflyTID);
@@ -5656,6 +5681,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "currentButterflyTID"_s, functionCurrentButterflyTID, 0);
     addFunction(vm, allowIfNotFuzz, "jsThreadsStopRequestCount"_s, functionJSThreadsStopRequestCount, 0);
     addFunction(vm, allowIfNotFuzz, "jsThreadsLockedTransitionCount"_s, functionJSThreadsLockedTransitionCount, 0);
+    addFunction(vm, allowIfNotFuzz, "markedBlocksCreated"_s, functionMarkedBlocksCreated, 0);
+    addFunction(vm, allowIfNotFuzz, "jsThreadsCounter"_s, functionJSThreadsCounter, 1);
     addFunction(vm, allowIfNotFuzz, "butterflyOwnerTID"_s, functionButterflyOwnerTID, 1);
     addFunction(vm, allowIfNotFuzz, "structureThreadLocalSetsValid"_s, functionStructureThreadLocalSetsValid, 1);
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);

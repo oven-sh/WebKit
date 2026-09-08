@@ -328,6 +328,18 @@ inline void JIT::emitValueProfilingSite(const Bytecode& bytecode, BytecodeIndex 
         return;
 
     ptrdiff_t offset = -static_cast<ptrdiff_t>(valueProfileOffsetFor<Bytecode>(bytecode, bytecodeIndex.checkpoint())) * sizeof(ValueProfile) + ValueProfile::offsetOfFirstBucket() - sizeof(UnlinkedMetadataTable::LinkingData);
+#if USE(JSVALUE64)
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-ungil §5.7 write-avoidance (seventh round): N threads share this
+        // CodeBlock's metadata; an unconditional store per execution keeps the
+        // profile line bouncing between cores. Store only a value the bucket
+        // does not already hold. Flag-off: the plain store below, unchanged.
+        Jump same = branch64(Equal, Address(GPRInfo::metadataTableRegister, offset), value.payloadGPR());
+        storeValue(value, Address(GPRInfo::metadataTableRegister, offset));
+        same.link(this);
+        return;
+    }
+#endif
     storeValue(value, Address(GPRInfo::metadataTableRegister, offset));
 }
 
@@ -342,6 +354,14 @@ inline void JIT::emitArrayProfilingSiteWithCell(const Bytecode& bytecode, ptrdif
 {
     if (shouldEmitProfiling()) {
         load32(Address(cellGPR, JSCell::structureIDOffset()), scratchGPR);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-ungil §5.7 write-avoidance: skip the store when the profile
+            // already names this structure (see emitValueProfilingSite).
+            Jump same = branch32ToMetadata(Equal, bytecode, offsetOfArrayProfile, scratchGPR);
+            store32ToMetadata(scratchGPR, bytecode, offsetOfArrayProfile);
+            same.link(this);
+            return;
+        }
         store32ToMetadata(scratchGPR, bytecode, offsetOfArrayProfile);
     }
 }
@@ -356,6 +376,12 @@ inline void JIT::emitArrayProfilingSiteWithCellAndProfile(RegisterID cellGPR, Re
 {
     if (shouldEmitProfiling()) {
         load32(Address(cellGPR, JSCell::structureIDOffset()), scratchGPR);
+        if (Options::useJSThreads()) [[unlikely]] {
+            Jump same = branch32(Equal, Address(profileGPR, ArrayProfile::offsetOfLastSeenStructureID()), scratchGPR); // write-avoidance, as above
+            store32(scratchGPR, Address(profileGPR, ArrayProfile::offsetOfLastSeenStructureID()));
+            same.link(this);
+            return;
+        }
         store32(scratchGPR, Address(profileGPR, ArrayProfile::offsetOfLastSeenStructureID()));
     }
 }
@@ -533,6 +559,12 @@ template <typename Bytecode>
 ALWAYS_INLINE void JIT::store32ToMetadata(GPRReg value, const Bytecode& bytecode, size_t offset)
 {
     store32(value, Address(GPRInfo::metadataTableRegister, m_profiledCodeBlock->metadataTable()->offsetInMetadataTable(bytecode) + offset));
+}
+
+template <typename Bytecode>
+ALWAYS_INLINE MacroAssembler::Jump JIT::branch32ToMetadata(RelationalCondition condition, const Bytecode& bytecode, size_t offset, GPRReg value)
+{
+    return branch32(condition, Address(GPRInfo::metadataTableRegister, m_profiledCodeBlock->metadataTable()->offsetInMetadataTable(bytecode) + offset), value);
 }
 
 template <typename Bytecode>

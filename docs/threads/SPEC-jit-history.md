@@ -728,3 +728,203 @@ slow-case branch; in the data-IC handlers the result register IS
 `handlerGPR`, which the fall-through path dereferences to find the next
 handler - a shared-written or segmented base crashed there (four corpus tests
 GIL on). The probe now stages the word in the dead entry register.
+
+## §32. Virtual calls GIL off: `installCode` publishes the arity mirror (§5.8; seventh landing round)
+
+Counted in the seventh round's cost ledger (PERF-RESULTS §6): GIL off,
+`operationVirtualCall` ran 31 M times in gbemu, 15 M in WSL, 6.7 M in
+typescript, 2.4 M in Basic, 272 K in Air - against 0-2,600 GIL on - and its
+C++ path (`virtualForWithFunction`, `sanitizeStackForVM`, the entry-token
+check, `addressForCall`) was 550 ms of gbemu's 1,400 ms GIL-off deficit.
+Cause: the sixth round's answer to the torn (entry, CodeBlock) pair - keep the
+executable's arity-check mirror null GIL off so the thunk's fast path never
+engages for script functions - is sound but turns every virtual call into a
+C++ round trip. What made the mirror untrustworthy was not that it lives in
+the executable but WHO wrote it: `entrypointFor`'s lazy refill, a reader-side
+write that could land after a later install had retracted the slot. With the
+refill gone, `installCode` can publish the mirror itself as the last store of
+an install (retract first, CodeBlock slot, fence, mirror), and the thunks'
+existing read-mirror / read-CodeBlock / re-read-mirror sequence becomes a
+sound pairing GIL off: retirements of code are world-stopped and cannot
+interleave a poll-free thunk, tier-up installs bracket their CodeBlock store
+with null-then-new mirror stores, so equal non-null mirror reads around the
+CodeBlock load exclude a completed install in between. A first version of
+this change instead added the entry to the CodeBlock (over its size cap) and
+then to the `JITCode` base object (a fourth dependent load into a cold
+object: the thunk itself went from 64 to 195 ms of gbemu's samples); the
+mirror form touches the same two objects GIL on does. Test:
+`jit/virtual-call-fast-path-gil-off.js` (a call site over 64 distinct
+function executables, so it settles virtual; counts `operationVirtualCall`
+through the diagnostic counters and times the loop against a monomorphic
+twin, main and spawned thread): 2.2 M slow calls and 16x before, under a
+hundred and 3x after (GIL on: 3x).
+
+## §33. Dictionary flattening requested from under the IC lock, run after it (seventh landing round; WITHDRAWN in the same round, see the end of this section)
+
+GIL off an inline-cache path never flattens a dictionary: flattening is a
+stop-the-world (SPEC-objectmodel F3) and the path runs under the CodeBlock's
+lock with heap access held, so a stop requested there would wedge the
+conductor's quiescence predicate (fifth round, O2/GT11). The fifth round's
+rule "report the chain uncacheable instead" turned out to be the largest
+single GIL-off cost of the ML benchmark: `prepareChainForCaching` met an
+unflattened dictionary PROTOTYPE (a class prototype that had left the
+transition chain), returned "uncacheable", the site was repatched to the
+GaveUp operation, and every later access through that prototype - 15 M loads
+and 9 M stores per run - took the generic C++ path (GIL on flattens the
+prototype once, at the first IC attempt, and caches). Now the IC path records
+the object in a `DeferredDictionaryFlattenScope` that its lock-free caller
+(`repatchGetBy` / `PutBy` / `InBy` / `DeleteBy` / `InstanceOf` / the private-brand
+entries) opened before calling it, returns retry-later instead of give-up, and
+the scope's close - after `tryCache*` has released the lock, still inside the
+operation, the object alive on the caller's stack - flattens through the
+existing stop protocol; the site caches on its next execution. One stop per
+dictionary object ever (`hasBeenFlattenedBefore`). ML GIL off: 24.4 M GaveUp
+calls -> 17 K, score 0.49 -> 0.66 of GIL on. Test:
+`jit/dictionary-prototype-flatten-gil-off.js` (a live prototype grown past
+`s_maxTransitionLength`, two loads through it per call, 2 M calls; generic
+loads counted through the diagnostic counters and the loop timed against an
+own-property twin, main and spawned thread): 4 M generic loads and 12x
+before, 0 and 1.0x after (GIL on: 0, 1.0x).
+
+WITHDRAWN before the round closed. With the deferred flatten in place the
+amplifier (random yields at polls, parks and lock sites) crashed about 1 run
+in 50 of `jit/ic-condition-stale-at-generation.js` and 1 in 100 of
+`jit/global-property-cache-vs-global-transitions.js` GIL off - one thread
+generating inline caches across a prototype chain while another reshapes the
+prototypes: a stub read an out-of-line slot through a null butterfly, and a
+DFG plan's adaptive watchpoint install found no replacement set at its offset.
+Bisection over the round's binaries puts both on this change (0 in 150 on the
+binary before it, 3-4 in 150 with it, 0 in 150 with it reverted). The flatten
+itself runs world-stopped (Structure::flattenDictionaryStructureUnderStop),
+but it keeps the StructureID while renumbering offsets and possibly dropping
+the butterfly, so whatever a second thread derived from the pre-flatten layout
+of that prototype - a case being generated, a plan being finalized - survives
+the stop; flag-off and GIL on never flatten a structure another thread is
+mid-way through caching. The refusal of the sixth round is restored (GIL off
+never flattens from the IC path; such chains stay generic) and the JetStream
+cost with it (`Air`'s 401 k generic loads per run); the diagnostic counter name
+`icFlattenSkippedGILOff` stays declared but has no site. A sound version needs the flatten to invalidate like a
+transition (fire the structure's transition set inside the stop, or give the
+flattened structure a new ID); recorded in LANDING-PLAN Open items. The
+install-side null check that the second signature led to
+(AdaptiveInferredPropertyValueWatchpointBase::install refusing when the
+structure it re-reads has no set at the offset) is kept: it is the documented
+flag-on contract of that function (a refused install returns false), and
+costs nothing.
+
+## §34. GIL off: the DFG stops minting Double arrays that are converted on arrival (seventh landing round; OM history §27)
+
+Two DFG-side halves of SPEC-objectmodel r18. (1) `ArraySlice` (the inlined
+`Array.prototype.slice`) copies lanes word for word into a result labelled
+like the source; GIL off a copy of a Double source must be a boxed Contiguous
+array (OM T4-C), which that loop cannot produce, so the intrinsic is not
+planted on a Double-typed site (the call reaches `JSArray::fastSlice`, which
+boxes) and its structure check omits the two Double array structures, so a
+Double array at an Int32/Contiguous-typed site exits `BadCache` and the
+existing exit-site rule compiles the site as a call next time. (2) `NewArray`
+and `NewArrayWithSize` compiled from an allocation profile that recommends
+Double GIL off store their result into the profile's last-array word (five
+instructions after the inline allocation; the FTL emits a load, mask, or,
+store on the absolute address) and the compilation watches the profile's
+demotion set (OM T4-P); when the profile sees those arrays converted it fires
+the set and the code is jettisoned and recompiled with the new
+recommendation. Flag-off and GIL-on: no store, no watchpoint, Double admitted
+as before.
+
+## §35. Map/Set `get`/`has` inlined GIL off, validated against the table's seqlock (seventh landing round)
+
+Since the fifth round the DFG refused every hash-table intrinsic GIL off: the
+inline `MapGet` probe walks the table with no lock and hands its consumer a
+raw slot pointer, and neither survives a concurrent writer. So `map.get(k)`
+compiled to a generic call into `mapProtoFuncGet` and the runtime's
+validated lock-free reader - measured at 23 M calls per run of JetStream's
+Basic (350 ms of its 1.0 s GIL-off deficit), 8 M in WSL. The runtime reader
+(SPEC-ungil §N.1, sixth round) already had the right shape: the owner's
+version word is odd while a writer is inside, and a reader that sees the same
+even version before and after its walk read one consistent state of one
+table. The seventh round gives the FTL's inline probe the same discipline and
+admits `Map.prototype.get`/`has` and `Set.prototype.has` GIL off (the
+mutating and iterating intrinsics stay calls):
+
+- FTL `MapGet` GIL off: load the owner's version (acquire; odd -> slow path),
+  then the storage; bound every index it follows by the storage cell's
+  immutable vector length (the bucket index from a possibly scribbled
+  capacity, each entry index with room for its value and chain slots) and the
+  number of links followed by that length; compare keys as before (slots only
+  ever hold whole JSValues, so a mis-walked slot is still a genuine value);
+  once the answer is formed - found with its slot, or not found - re-read the
+  version behind a load-load fence and take the slow path if it moved. The
+  slow path (`operationMapGet`/`operationSetGet`) GIL off returns the slot
+  from `getKeySlotGILOff`: the runtime's validated walk (which now records
+  the slot it found) or the table lock.
+- The slot survives to `LoadMapValue`: after validation the entry's value slot
+  can only be overwritten whole by a `set` of the same key (old or new value),
+  turned into the deleted sentinel by a `delete` (GIL off `LoadMapValue` reads
+  the sentinel or an empty slot as `undefined`), or left untouched in a table a
+  rehash retired (the value as of the rehash); each is a linearizable answer,
+  and the storage cell stays alive while the interior pointer is held
+  (conservative root). `IsEmptyStorage` (`has`) needs nothing more.
+- DFG tier GIL off: `MapGet` calls the operation directly (no JS call, no
+  callee or arity checks); the inline probe is FTL-only.
+- Flag-off / GIL on: unchanged code.
+
+Measured: Basic GIL off 467 -> 521 (GIL on 881); WSL, Air, OfflineAssembler
+within noise (their tables are hit through `set`, iteration and `size`, still
+calls). Test: `jit/map-get-has-inlined-gil-off.js` - FTL readers of a shared
+Map and Set race a writer that inserts, overwrites, deletes, clears and forces
+rehashes both ways, and every `get` returns a value that key could have held
+or `undefined`, never a sentinel, an index or another key's value; and a
+single-threaded FTL `get` loop no longer reaches the runtime reader (its
+counter: one per call before, a handful after).
+
+Follow-up in the same round (two defects in the first form, both GIL off
+only). (a) The three fences were emitted as B3 fences that READ the heap and
+write nothing - B3's store-store fence - so B3 was free to hoist the table
+loads above the first version load and, worse, to fold the version re-load
+into the first load (common-subexpression elimination across an effect that
+writes nothing): the compiled probe validated nothing. Confirmed in the B3
+dump (no second load of the version word) and fixed by emitting them as
+fences that WRITE the heap (B3's load-load fence, no instruction on x86-64).
+(b) A key slot can hold the EMPTY value while a writer is inside (an add
+reserves the entry before the key store lands, a delete/clear/rehash passes
+through it), and a torn walk can index a value or chain slot; empty passes
+`isCell()` and the string/BigInt type checks then loaded through a null cell
+(SIGSEGV in about 1 run in 15 of `shared-objects/map-lock-free-readers.js`).
+The probe now sends an empty entry key to the runtime reader before any type
+check. The version re-check alone cannot cover this: it runs after the answer
+is formed, and the type check faults before it.
+
+## §36. A Class-A set nobody watches fires without a stop (seventh landing round; §5.6)
+
+§5.6 sends every fire of a code-invalidating (Class-A) watchpoint set through
+a stop-the-world, because firing runs the members' callbacks - jettisons,
+stub clearing, adaptive re-installs - which patch code other threads may be
+running. The classification is static, set at construction; whether anyone
+is watching is not. Many Class-A sets are armed `IsWatched` with no member at
+all: the property-replacement sets that property ICs and the scope caches arm
+on every structure they cache (so that a later compile MAY constant-fold the
+property), an inflated set whose watchpoints were all removed. Firing such a
+set changes one byte and patches nothing, yet it stopped the world: the
+scaling suite's string-heavy workload at four threads took 376 such stops per
+run ("Property did get replaced"), each parking three threads and, through the
+heap-fact epoch, jettisoning their optimized code on resume; JetStream's
+typescript GIL on requested 3,460 stops per run, Babylon 226, nearly all of
+this kind.
+
+Rule (r15): in `WatchpointSet::fireAllSlow`, a Class-A fire whose set has no
+members takes the membership lock, re-checks emptiness and `IsWatched` under
+it, and stores `IsInvalidated` (fenced as `fireAllNow` fences) without a stop.
+Atomicity with `add()`: `add()` links members only while holding the same lock
+and refuses a set it finds `IsInvalidated` (its compilation is then
+invalidated at link), so a member is either visible here - and the fire takes
+the stop path - or never added. Compiler threads that read `isStillValid()`
+lock-free and register lazily are covered by that refusal, as for every other
+fire. Nothing else distinguishes a watched from an unwatched Class-A set, so no
+consumer can depend on the stop having happened. Flag-off never reaches this
+code (Class-A routing is flag-on). Counted as `watchpointFireWatcherless`.
+Measured: string-heavy's Class-A stops 376 -> 2 at four threads; typescript
+GIL on 3,460 -> 171 stop requests. Test:
+`jit/watcherless-watchpoint-fire-no-stop.js` (five threads run the string-heavy
+inner-loop shape; stop requests in the threaded phase 6,445 -> 0 GIL on, values
+conserved in every mode).
+

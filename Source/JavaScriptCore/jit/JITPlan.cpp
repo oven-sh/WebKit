@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "JITPlan.h"
+
+#include "JSThreadsCounters.h"
 #include "DFGCommon.h"
 
 #if ENABLE(JIT)
@@ -291,6 +293,15 @@ void JITPlan::compileInThread(JITWorklistThread* thread)
 
     CompilationPath path = compileInThreadImpl();
     RELEASE_ASSERT((path == CancelPath) == (m_stage == JITPlanStage::Canceled));
+
+    if (JSThreadsCounters::enabled()) [[unlikely]] {
+        if (isFTL())
+            JSTHREADS_COUNT(compileFTL);
+        else if (mode() == JITCompilationMode::Baseline)
+            JSTHREADS_COUNT(compileBaseline);
+        else
+            JSTHREADS_COUNT(compileDFG);
+    }
 
     if (!computeCompileTimes) [[likely]]
         return;

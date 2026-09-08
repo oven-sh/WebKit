@@ -1263,6 +1263,40 @@ public:
     
     void purifyNaN(FPRReg, FPRReg);
 
+    // OM T4-P (GIL off): record `array` as the last allocation of the profile
+    // whose packed {JSArray* : 48, type : 16} word lives at wordAddress. One
+    // racy read-modify-write of the advisory word (SPEC-ungil §5.7): the type
+    // half is re-stored as read, the pointer half replaced.
+    // Part 1 loads the word and tests the PREVIOUSLY reported array: the
+    // returned jump is taken when that array exists and is no longer
+    // Double-shaped (the caller's slow path lets the profile fold it in now);
+    // part 2 stores. scratch1 holds the loaded word between the two parts.
+    Jump loadAllocationProfileLastArrayAndTestGILOff(const void* wordAddress, GPRReg scratch1, GPRReg scratch2)
+    {
+        move(TrustedImmPtr(wordAddress), scratch2);
+        load64(Address(scratch2), scratch1);
+        move(scratch1, scratch2);
+        and64(TrustedImm64((1ull << 48) - 1), scratch2);
+        Jump none = branchTest64(Zero, scratch2);
+        load8(Address(scratch2, JSCell::indexingTypeAndMiscOffset()), scratch2);
+        and32(TrustedImm32(IndexingShapeMask), scratch2);
+        Jump notDouble = branch32(NotEqual, scratch2, TrustedImm32(DoubleShape));
+        none.link(this);
+        return notDouble;
+    }
+    void storeLastArrayToAllocationProfileGILOff(const void* wordAddress, GPRReg array, GPRReg scratch1, GPRReg scratch2)
+    {
+        // Re-load the type half here rather than reusing part 1's word: the
+        // slow path in between may have just moved the recommendation off
+        // Double, and re-storing the stale half would undo that.
+        move(TrustedImmPtr(wordAddress), scratch2);
+        load64(Address(scratch2), scratch1);
+        urshift64(TrustedImm32(48), scratch1);
+        lshift64(TrustedImm32(48), scratch1);
+        or64(array, scratch1);
+        store64(scratch1, Address(scratch2));
+    }
+
     // These methods convert between doubles, and doubles boxed and JSValues.
     GPRReg boxDouble(FPRReg fpr, GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {

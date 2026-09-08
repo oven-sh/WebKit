@@ -260,7 +260,12 @@ private:
     JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
     intptr_t m_stackOffset { 0 };
     ArrayProfile m_dummyArrayProfile { };
+    // Same isolation as BaselineJITData::m_executeCounter: every thread
+    // running this DFG code bumps the tier-up counter; nothing read-mostly may
+    // share its line.
+    char m_padBeforeCounter[64];
     UpperTierExecutionCounter m_tierUpCounter;
+    char m_padAfterCounter[64];
     FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
     FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
     ExitVector m_exits;

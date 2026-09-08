@@ -26,6 +26,8 @@
 #include "config.h"
 #include "DFGByteCodeParser.h"
 
+#include "JSThreadsCounters.h"
+
 #if ENABLE(DFG_JIT)
 
 #include "ArithProfile.h"
@@ -1540,6 +1542,32 @@ private:
     void pruneUnreachableNodes();
 
     VM* const m_vm;
+
+    // OM T4-P (history §27): GIL off, an allocation compiled with a Double
+    // recommendation depends on the profile keeping it (the profile fires the
+    // set when its arrays are seen converted) and reports its arrays to it.
+    // Returns whether the allocation node must report its arrays (call
+    // recordDoubleAllocationGILOff after creating it). May rewrite
+    // indexingType: a Double recommendation read from a profile whose set has
+    // already fired is a racy leftover (the advisory word can be re-stored by
+    // an optimized allocation's report); the settled recommendation is not
+    // Double, so compile Contiguous rather than Double-without-a-watch.
+    bool watchDoubleAllocationProfileGILOff(ArrayAllocationProfile& profile, IndexingType& indexingType)
+    {
+        if (!m_vm->gilOff() || !hasDouble(indexingType)) [[likely]]
+            return false;
+        if (!profile.gilOffDoubleDemotionSet().isStillValid()) {
+            indexingType = (indexingType & ~IndexingShapeMask) | ContiguousShape;
+            return false;
+        }
+        m_graph.watchpoints().addLazily(profile.gilOffDoubleDemotionSet());
+        return true;
+    }
+    void recordDoubleAllocationGILOff(bool watched, ArrayAllocationProfile& profile, Node* allocation)
+    {
+        if (watched) [[unlikely]]
+            m_graph.m_gilOffDoubleAllocationProfiles.add(allocation, &profile);
+    }
     CodeBlock* const m_codeBlock;
     CodeBlock* const m_profiledBlock;
     Graph& m_graph;
@@ -2961,8 +2989,14 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         return CallOptimizationResult::DidNothing;
     }
 
-    if (m_vm->gilOff() && isHashTableIntrinsic(intrinsic)) [[unlikely]] {
+    // GIL off, Map/Set `get`/`has` are inlined (seventh round, SPEC-jit history
+    // §35: the FTL probe validates against the table's seqlock, the DFG calls
+    // the validated reader); the mutating and iterating hash-table intrinsics
+    // still go through the runtime (their inline forms write or walk the
+    // table with no lock).
+    if (m_vm->gilOff() && isHashTableIntrinsic(intrinsic) && intrinsic != JSMapGetIntrinsic && intrinsic != JSMapHasIntrinsic && intrinsic != JSSetHasIntrinsic) [[unlikely]] {
         VERBOSE_LOG("    Failing because hash table operations are not inlined with the GIL off.\n");
+        JSTHREADS_COUNT(hashTableIntrinsicRefusedGILOff);
         return CallOptimizationResult::DidNothing;
     }
 
@@ -3181,6 +3215,14 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (!arrayMode.isJSArrayWithOriginalStructure())
                 return CallOptimizationResult::DidNothing;
 
+            // OM T4-C (history §27): GIL off a slice of a Double source must be
+            // a Contiguous (boxed) copy, which the inline word copy cannot make;
+            // Double-typed sites call the runtime (fastSlice boxes) and the
+            // structure check below stops admitting Double arrays elsewhere.
+            const bool noDoubleSliceGILOff = m_vm->gilOff();
+            if (noDoubleSliceGILOff && arrayMode.type() == Array::Double)
+                return CallOptimizationResult::DidNothing;
+
             switch (arrayMode.type()) {
             case Array::Double:
             case Array::Int32:
@@ -3218,10 +3260,12 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                     StructureSet structureSet;
                     structureSet.add(globalObject->originalArrayStructureForIndexingType(ArrayWithInt32));
                     structureSet.add(globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous));
-                    structureSet.add(globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
                     structureSet.add(globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithInt32));
                     structureSet.add(globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous));
-                    structureSet.add(globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithDouble));
+                    if (!noDoubleSliceGILOff) [[likely]] {
+                        structureSet.add(globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
+                        structureSet.add(globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithDouble));
+                    }
                     addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(structureSet)), array);
 
                     addVarArgChild(array);
@@ -8771,7 +8815,10 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     break;
                 }
             }
-            set(bytecode.m_dst, addToGraph(Node::VarArg, NewArray, OpInfo(indexingType), OpInfo(vectorLengthHint)));
+            const bool watched = watchDoubleAllocationProfileGILOff(profile, indexingType);
+            Node* newArray = addToGraph(Node::VarArg, NewArray, OpInfo(indexingType), OpInfo(vectorLengthHint));
+            recordDoubleAllocationGILOff(watched, profile, newArray);
+            set(bytecode.m_dst, newArray);
             NEXT_OPCODE(op_new_array);
         }
 
@@ -8801,7 +8848,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_new_array_with_size: {
             auto bytecode = currentInstruction->as<OpNewArrayWithSize>();
             ArrayAllocationProfile& profile = bytecode.metadata(codeBlock).m_arrayAllocationProfile;
-            set(bytecode.m_dst, addToGraph(NewArrayWithSize, OpInfo(profile.selectIndexingTypeConcurrently()), OpInfo(profile.vectorLengthHintConcurrently()), get(bytecode.m_length)));
+            IndexingType indexingType = profile.selectIndexingTypeConcurrently();
+            const bool watched = watchDoubleAllocationProfileGILOff(profile, indexingType);
+            Node* newArray = addToGraph(NewArrayWithSize, OpInfo(indexingType), OpInfo(profile.vectorLengthHintConcurrently()), get(bytecode.m_length));
+            recordDoubleAllocationGILOff(watched, profile, newArray);
+            set(bytecode.m_dst, newArray);
             NEXT_OPCODE(op_new_array_with_size);
         }
 

@@ -1386,15 +1386,22 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                                 && structure->pinnedPropertyTableForConcurrentReadStamp() == plannedTable
                                 && (!plannedTable || plannedTable->concurrentEditCount() == plannedEditCount)) {
                                 uint64_t desiredHeader = (expectedHeader & ~0xffffffffULL) | static_cast<uint64_t>(attributeChanged->id().bits());
+                                published = true;
                                 while (true) {
                                     uint64_t previousHeader = headerAtomic->compareExchangeStrong(expectedHeader, desiredHeader, std::memory_order_seq_cst);
                                     if (previousHeader == expectedHeader)
                                         break;
-                                    RELEASE_ASSERT(headerDiffersOnlyInVolatileBits(expectedHeader, previousHeader));
+                                    // A dictionary source has no lock-free owner leg (E4-C
+                                    // excludes dictionaries), so only volatile bytes should
+                                    // move here; a semantic move is treated as a lost lane
+                                    // and RESTARTs like deletePropertyNamedConcurrent (F33).
+                                    if (!headerDiffersOnlyInVolatileBits(expectedHeader, previousHeader)) {
+                                        published = false;
+                                        break;
+                                    }
                                     expectedHeader = mergeVolatileHeaderBits(expectedHeader, previousHeader);
                                     desiredHeader = mergeVolatileHeaderBits(desiredHeader, previousHeader);
                                 }
-                                published = true;
                             }
                         }
                         if (!published)

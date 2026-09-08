@@ -1422,6 +1422,11 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     IndexingType otherType = otherArray->indexingType();
     bool allowPromotion = false;
     IndexingType copyType = mergeIndexingTypeForCopying(otherType, allowPromotion);
+    // OM T4-C (r18): GIL off, Double lanes appended to a fresh (Undecided) or a
+    // Contiguous array are boxed; the destination never becomes Double here.
+    const bool boxDoubleSource = otherType == ArrayWithDouble && (type == ArrayWithUndecided || type == ArrayWithContiguous) && vm.gilOff();
+    if (boxDoubleSource) [[unlikely]]
+        copyType = ArrayWithContiguous;
     if (type == ArrayWithUndecided && copyType != NonArray) {
         if (copyType == ArrayWithInt32)
             convertUndecidedToInt32(vm);
@@ -1433,6 +1438,7 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
             ASSERT(copyType == ArrayWithUndecided);
             return true;
         }
+        type = indexingType();
     } else if (type != copyType)
         return false;
 
@@ -1506,6 +1512,8 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
             for (unsigned i = startIndex; i < newLength; ++i)
                 butterfly->contiguousInt32().at(this, i).setWithoutWriteBarrier(JSValue());
         }
+    } else if (boxDoubleSource) [[unlikely]] {
+        butterflyConcurrentCopyDoubleLanesBoxed(selfButterfly->contiguous().data() + startIndex, otherButterfly->contiguousDouble().data(), sizeof(JSValue) * otherLength);
     } else if (type == ArrayWithInt32 && butterflyWordMayBeRelabelledConcurrently(otherArray->taggedButterflyWord())) [[unlikely]] {
         // I41: GIL-off a foreign owner may relabel the Int32 source to
         // Contiguous at any instant (not only at our park points), so lanes
@@ -2176,12 +2184,14 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
         if (startIndex + count > sourceButterfly->vectorLength())
             return nullptr;
 
-        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(arrayType);
+        // T4-C (r18): GIL off a fresh copy of a Double source is Contiguous.
+        const bool boxDoubleLanes = hasDouble(arrayType) && vm.gilOff();
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(boxDoubleLanes ? ArrayWithContiguous : arrayType);
         IndexingType indexingType = resultStructure->indexingType();
         if (hasAnyArrayStorage(indexingType)) [[unlikely]]
             return nullptr;
 
-        if (isCopyOnWrite(source->indexingMode())) {
+        if (isCopyOnWrite(source->indexingMode()) && !boxDoubleLanes) {
             if (!startIndex && count == sourceButterfly->publicLength())
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(source->indexingMode()), sourceButterfly);
         }
@@ -2218,7 +2228,9 @@ JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint
             if (hasInt32(indexingType) && butterflyWordMayBeRelabelledConcurrently(sourceWord)) [[unlikely]] {
                 if (!butterflyConcurrentCopyInt32LanesChecked(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength))
                     return nullptr; // The unpublished butterfly drops unreferenced; the caller's generic slice re-reads every element.
-            } else
+            } else if (boxDoubleLanes) [[unlikely]]
+                butterflyConcurrentCopyDoubleLanesBoxed(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
+            else
                 butterflyConcurrentCopyWords(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);
         } else
             memcpy(butterfly->contiguous().data(), sourceButterfly->contiguous().data() + startIndex, sizeof(JSValue) * initialLength);

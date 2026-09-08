@@ -27,6 +27,8 @@
 #include "config.h"
 #include "Structure.h"
 
+#include "JSThreadsCounters.h"
+
 #include "BrandedStructure.h"
 #include "BuiltinNames.h"
 #include "DumpContext.h"
@@ -879,6 +881,7 @@ Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, Proper
 
 Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    JSTHREADS_COUNT(structureTransition);
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
     // SPEC-objectmodel L6/I37 (Task 3c): flag-on, the caller's existing-transition
@@ -1714,6 +1717,7 @@ bool Structure::isFrozen(VM& vm)
 
 Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
 {
+    JSTHREADS_COUNT(dictionaryFlatten);
     ASSERT(!isCompilationThread());
     checkOffsetConsistency();
     ASSERT(isDictionary());
@@ -1886,7 +1890,7 @@ Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* obje
             if (triggerIsShared
                 && (m_transitionThreadLocalWatchpointSet.isStillValid() || m_writeThreadLocalWatchpointSet.isStillValid()))
                 fireTransitionThreadLocal(vm, "F3: flattenDictionaryStructure on a shared structure/object");
-        }));
+        }), "OM flattenDictionary");
         if (!needsRefit) {
             // The impl's under-lock revalidation bails (nullptr) only when it
             // runs OUTSIDE a stop; inside this stop butterflyWorldIsStopped()
@@ -2049,10 +2053,14 @@ void Structure::fireThreadLocalSetsWithChainUnderStop(VM& vm, const char* reason
     ASSERT(butterflyWorldIsStopped(vm));
 
     auto fireOne = [&](Structure* structure) {
-        if (alsoFireTransitionThreadLocal && structure->m_transitionThreadLocalWatchpointSet.isStillValid())
+        if (alsoFireTransitionThreadLocal && structure->m_transitionThreadLocalWatchpointSet.isStillValid()) {
+            JSTHREADS_COUNT(f2ThreadLocalSetFire);
             structure->m_transitionThreadLocalWatchpointSet.fireAll(vm, reason);
-        if (structure->m_writeThreadLocalWatchpointSet.isStillValid())
+        }
+        if (structure->m_writeThreadLocalWatchpointSet.isStillValid()) {
+            JSTHREADS_COUNT(f1SharedWriteFire);
             structure->m_writeThreadLocalWatchpointSet.fireAll(vm, reason);
+        }
     };
 
     // r16: fire exactly this structure's sets (F1/F2/F3 name S, or S and the
@@ -2105,7 +2113,7 @@ void Structure::fireTTLWatchpointSetsAfterPinning(VM& vm, const Structure* sourc
     // stub runs the closure inline under the GIL.
     jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
         fireTransitionThreadLocal(vm, "F3: pinned-table transition from a structure with fired thread-locality sets");
-    }));
+    }), "OM TTL fire after pinning");
 }
 
 void Structure::allocateRareData(VM& vm)

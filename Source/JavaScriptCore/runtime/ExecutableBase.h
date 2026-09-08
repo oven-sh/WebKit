@@ -188,16 +188,15 @@ public:
         // cannot distinguish from a fresh one (value-recurrence/ABA: arity
         // entrypoints are addresses inside long-lived JITCode objects and
         // recur across jettison/reinstall of the same CodeBlock). Under the
-        // process gate we therefore NEVER write the lazy cache and
-        // null-check the racy jit-code read: script executables keep a
-        // permanently-null arity mirror gilOff (installCode/clearCode only
-        // ever store null to it), so the virtual-call thunks' fast path
-        // simply never engages for them and every virtual call derives a
-        // matched (entrypoint, CodeBlock) pair through the CodeBlock
-        // snapshot in the C++ slow path (RepatchInlines.h linkFor /
-        // virtualForWithFunction). Host executables publish both mirrors
-        // once at construction (NativeExecutable.cpp) and never retract, so
-        // they keep the thunk fast path with no torn pair possible.
+        // process gate we therefore NEVER write the lazy cache here and
+        // null-check the racy jit-code read. The mirror is instead published
+        // by installCode itself, last, for the CodeBlock it just installed
+        // (SPEC-jit §5.8 r15): with retract-first / publish-last there and
+        // every code-retiring slot write world-stopped, the thunks'
+        // load-mirror / load-CodeBlock / re-compare sequence pairs them
+        // soundly, so virtual calls keep the thunk fast path GIL off. Host
+        // executables publish both mirrors once at construction
+        // (NativeExecutable.cpp) and never retract.
         // Flag-off: one predicted-false byte test on the read-only Config
         // page; byte-identical behavior otherwise.
         if (g_jscConfig.gilOffProcess) [[unlikely]] {

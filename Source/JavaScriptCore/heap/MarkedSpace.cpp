@@ -21,6 +21,8 @@
 #include "config.h"
 #include "MarkedSpace.h"
 
+#include "JSThreadsCounters.h"
+
 #include "BlockDirectoryInlines.h"
 #include "HeapInlines.h"
 #include "IncrementalSweeper.h"
@@ -470,6 +472,7 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
+    JSTHREADS_COUNT(markedBlockFreed);
     m_capacity.fetch_sub(MarkedBlock::blockSize, std::memory_order_relaxed); // §5.4/F3.
     m_blocks.remove(&block->block());
     delete block;
@@ -477,6 +480,7 @@ void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 
 void MarkedSpace::shrink()
 {
+    JSTHREADS_COUNT(gcShrink);
     // SharedGC (T8, MC-SAFE S4): frees empty blocks (registry + weak-set
     // unlinks + physical fastFree of the block). WORLD-STOPPED ONLY once
     // shared: MSPL is not a sufficient shield because sibling mutators
@@ -489,6 +493,16 @@ void MarkedSpace::shrink()
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.shrink();
             return IterationStatus::Continue;
+        });
+}
+
+void MarkedSpace::shrinkToCapacity(size_t targetCapacity)
+{
+    JSTHREADS_COUNT(gcShrink);
+    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients()); // Same world-stopped-only rule as shrink().
+    forEachDirectory(
+        [&] (BlockDirectory& directory) -> IterationStatus {
+            return directory.shrinkWhileCapacityAbove(targetCapacity) ? IterationStatus::Done : IterationStatus::Continue;
         });
 }
 

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "DeferredWorkTimer.h"
 #include "Options.h"
 #include "Strong.h"
@@ -392,6 +394,11 @@ class ThreadManager final {
     WTF_MAKE_NONCOPYABLE(ThreadManager);
 public:
     JS_EXPORT_PRIVATE static ThreadManager& singleton();
+    // Live spawned JS threads (main/carrier threads not counted), lock-free
+    // and approximate; used to scale per-CodeBlock heuristics that N threads
+    // sharing one CodeBlock reach N times faster (OSR-exit reoptimization
+    // thresholds, SPEC-ungil §5.7).
+    static unsigned liveSpawnedThreadCountApproximate() { return s_liveSpawnedThreadCount.load(std::memory_order_relaxed); }
 
     static constexpr uint16_t mainThreadTID = 0;
     static constexpr uint16_t notTTLTID = 0x7fff; // reserved
@@ -605,6 +612,7 @@ private:
     // TID allocation under m_lock, post-resume on a mutator).
     void completeRebiasIfPendingLocked() WTF_REQUIRES_LOCK(m_lock);
 
+    JS_EXPORT_PRIVATE static std::atomic<unsigned> s_liveSpawnedThreadCount;
     Lock m_lock; // rank 1 (SPEC-api 5.9)
     UncheckedKeyHashMap<uint16_t, Ref<ThreadState>> m_threads WTF_GUARDED_BY_LOCK(m_lock); // spawned only
     Deque<uint16_t> m_freeTIDs WTF_GUARDED_BY_LOCK(m_lock); // spawned-range recycle list; fed ONLY by §D.1 rebias phase 3 (U-T12; empty GIL-on/flag-off — Dev 10)

@@ -3,7 +3,9 @@
 // (Int32->Double, Int32->Contiguous, Double->Contiguous) on an array the
 // calling thread owns no longer stop the world. GIL on all three run in place;
 // GIL off Int32->Contiguous does, an Int32->Double request is served as
-// Int32->Contiguous, and Double->Contiguous keeps its stop. Checks: (1) stop
+// Int32->Contiguous, and Double->Contiguous keeps its stop - but since r18
+// (T4-C) the `slice()` of a Double source used here is Contiguous GIL off, so
+// there is nothing left to relabel on that leg either. Checks: (1) stop
 // requests stay near zero across thousands of owned relabels with a second
 // thread running (before: one stop per relabel); (2) GIL off an Int32 array
 // that takes a double ends up Contiguous, not Double; (3) a foreign thread
@@ -52,8 +54,7 @@ if (results.d2c.sum !== 4000 * 2.5) throw new Error("d2c sum " + results.d2c.sum
 // A few stops may come from elsewhere (collections, first-use fires).
 if (results.i2d.stops > 100) throw new Error("owned Int32->Double relabels requested " + results.i2d.stops + " stops");
 if (results.i2c.stops > 100) throw new Error("owned Int32->Contiguous relabels requested " + results.i2c.stops + " stops");
-if (gilOn && results.d2c.stops > 100) throw new Error("owned Double->Contiguous relabels requested " + results.d2c.stops + " stops GIL on");
-if (!gilOn && results.d2c.stops < 2000) throw new Error("GIL off Double->Contiguous is expected to keep its stop; saw only " + results.d2c.stops);
+if (results.d2c.stops > 100) throw new Error("owned Double->Contiguous relabels requested " + results.d2c.stops + " stops (GIL off the slice of a Double source is Contiguous since r18, so no relabel happens)");
 
 // (2) Shapes.
 {
@@ -64,6 +65,10 @@ if (!gilOn && results.d2c.stops < 2000) throw new Error("GIL off Double->Contigu
     if (a[1] !== 0.5 || a[0] + a[2] !== 4) throw new Error("values after relabel: " + a);
     const u = new Array(3); u[0] = 1.5; // Undecided -> Double stays Double in both modes
     if (!/Double/.test(shapeOf(u))) throw new Error("Undecided + double should be Double, got " + shapeOf(u));
+    const c = doubleBase.slice(); // r18 T4-C: a fresh copy of a Double source is Contiguous GIL off, Double GIL on
+    if (gilOn && !/Double/.test(shapeOf(c))) throw new Error("GIL on: slice of Double should be Double, got " + shapeOf(c));
+    if (!gilOn && !/Contiguous/.test(shapeOf(c))) throw new Error("GIL off: slice of Double should be Contiguous, got " + shapeOf(c));
+    if (c[0] !== 1.5 || c.length !== 3) throw new Error("slice values " + c);
 }
 
 // (3) Foreign reader / copier while the owner relabels Int32 arrays and stores strings.

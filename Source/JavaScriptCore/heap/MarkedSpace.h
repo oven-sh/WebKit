@@ -130,6 +130,7 @@ public:
     template<typename Functor> void forEachSubspace(const Functor&);
 
     void shrink();
+    void shrinkToCapacity(size_t targetCapacity); // SPEC-heap §10E: free empty blocks only while capacity() > targetCapacity.
     void freeBlock(MarkedBlock::Handle*);
 
     void didAddBlock(MarkedBlock::Handle*);

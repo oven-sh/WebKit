@@ -167,7 +167,9 @@ PerfLog& PerfLog::singleton()
 PerfLog::PerfLog()
 {
     {
-        m_file = FileSystem::createDumpFile(makeString("jit-"_s, ProfilerSupport::getCurrentThreadID(), "-"_s, WTF::getCurrentProcessID()), ".dump"_s, String::fromUTF8(Options::jitDumpDirectory()));
+        // perf(1)'s jitdump support (perf inject --jit) recognises the marker
+        // mmap only when the file is named jit-<pid>.dump.
+        m_file = FileSystem::createDumpFile(makeString("jit-"_s, WTF::getCurrentProcessID()), ".dump"_s, String::fromUTF8(Options::jitDumpDirectory()));
         RELEASE_ASSERT(m_file);
 
         if (Options::useIRDump())

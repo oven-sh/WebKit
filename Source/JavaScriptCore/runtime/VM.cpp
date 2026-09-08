@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "VM.h"
+#include "JSThreadsCounters.h"
 
 #include "ConcurrentButterfly.h"
 #include "PropertyTable.h"
@@ -416,6 +417,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     // Arm the race amplifier (no-op unless --randomYieldPeriod is set).
     // Idempotent across VM constructions; see runtime/RaceAmplifier.h.
     RaceAmplifier::initialize();
+    JSThreadsCounters::registerDumpAtExit();
 
     // Set up lazy initializers.
     {
@@ -1991,6 +1993,7 @@ void VM::throwTerminationExceptionIfNeeded()
 
 Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
 {
+    JSTHREADS_COUNT(exceptionThrown);
     // The TerminationException should never be overridden.
     if (hasPendingTerminationException())
         return group3Primitives().m_exception; // UNGIL §A.1.3 mode split.

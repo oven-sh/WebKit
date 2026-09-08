@@ -26,6 +26,8 @@
 #include "config.h"
 #include "FTLOSRExitCompiler.h"
 
+#include "JSThreadsCounters.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AssemblyHelpersSpoolers.h"
@@ -854,6 +856,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
     dataLogLnIf(shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseFTLOSRExit(), "Compiling OSR exit with exitID = ", exitID);
 
     VM& vm = callFrame->deprecatedVM();
+    JSTHREADS_COUNT(osrExitFTLOperation);
     // Don't need an ActiveScratchBufferScope here because we DeferGCForAWhile below.
 
     if constexpr (validateDFGDoesGC) {
@@ -929,7 +932,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         // round-trips are noise.
         OSRExitGenerationLocker locker(vm, callFrame);
         if (!exit.m_code) {
-            compileStub(vm, exitID, jitCode, exit, exitValues, codeBlock);
+            JSTHREADS_COUNT(osrExitFTLCompile);
+            JSTHREADS_COUNT(osrExitFTLCompile);
+    compileStub(vm, exitID, jitCode, exit, exitValues, codeBlock);
             jsThreadsBumpStopGeneration(); // before the publish below: "saw the pointer" implies "saw the bump"
             WTF::atomicStore(&exit.m_codePtrForConcurrentReaders, exit.m_code.code().taggedPtr(), std::memory_order_release);
         } else {

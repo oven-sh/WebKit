@@ -29,6 +29,8 @@
 
 #include "config.h"
 #include "CodeBlock.h"
+#include "JSThreadsCounters.h"
+#include "ThreadManager.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -2639,6 +2641,24 @@ DFG::CapabilityLevel CodeBlock::computeCapabilityLevel()
 
 void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mode, const FireDetail* detail)
 {
+    JSTHREADS_COUNT(jettison);
+    if (JSThreadsCounters::enabled()) [[unlikely]] {
+        static const char* const names[] = { "jettison[NotJettisoned]", "jettison[WeakReference]", "jettison[DebuggerBreakpoint]", "jettison[DebuggerStepping]", "jettison[BaselineLoopReoptimizationTrigger]", "jettison[BaselineLoopReoptimizationTriggerOnOSREntryFail]", "jettison[OSRExit]", "jettison[UnprofiledWatchpoint]", "jettison[OldAge]", "jettison[VMTraps]" };
+        JSThreadsCounters::countNamed(static_cast<unsigned>(reason) < std::size(names) ? names[reason] : "jettison[?]", 0);
+        if (reason == Profiler::JettisonDueToUnprofiledWatchpoint && detail) {
+            StringPrintStream out;
+            out.print("jettison detail: ", *detail);
+            CString text = out.toCString();
+            // Keep a bounded set of distinct detail strings alive for the table.
+            static Lock lock; static Vector<CString>* kept;
+            Locker locker { lock };
+            if (!kept) kept = new Vector<CString>();
+            const char* name = nullptr;
+            for (auto& k : *kept) { if (k == text) { name = k.data(); break; } }
+            if (!name && kept->size() < 40) { kept->append(text); name = kept->last().data(); }
+            if (name) JSThreadsCounters::countNamed(name, 0);
+        }
+    }
 #if !ENABLE(DFG_JIT)
     UNUSED_PARAM(mode);
     UNUSED_PARAM(detail);
@@ -3316,14 +3336,29 @@ uint32_t CodeBlock::adjustedExitCountThreshold(uint32_t desiredThreshold)
     return result;
 }
 
+// GIL off, every JS thread running this CodeBlock's optimized code takes the
+// same speculation failure once before the code can be replaced, and all of
+// them count against one exit counter; a threshold sized for one thread then
+// reoptimizes (and doubles the next warm-up) after a single round of exits.
+// Scale by the live thread count so a round of N identical exits weighs what
+// one exit weighs single-threaded (SPEC-ungil §5.7, seventh round; measured on
+// the scaling suite's string-heavy: 23 jettisons -> 6, 1.2x -> 2.5x at four
+// threads). Flag-off / GIL-on: multiplier 1.
+static unsigned exitCountThreadMultiplier()
+{
+    if (!g_jscConfig.gilOffProcess) [[likely]]
+        return 1;
+    return 1 + ThreadManager::liveSpawnedThreadCountApproximate();
+}
+
 uint32_t CodeBlock::exitCountThresholdForReoptimization()
 {
-    return adjustedExitCountThreshold(Options::osrExitCountForReoptimization() * codeTypeThresholdMultiplier());
+    return adjustedExitCountThreshold(Options::osrExitCountForReoptimization() * codeTypeThresholdMultiplier() * exitCountThreadMultiplier());
 }
 
 uint32_t CodeBlock::exitCountThresholdForReoptimizationFromLoop()
 {
-    return adjustedExitCountThreshold(Options::osrExitCountForReoptimizationFromLoop() * codeTypeThresholdMultiplier());
+    return adjustedExitCountThreshold(Options::osrExitCountForReoptimizationFromLoop() * codeTypeThresholdMultiplier() * exitCountThreadMultiplier());
 }
 
 bool CodeBlock::shouldReoptimizeNow()

@@ -460,6 +460,20 @@ ALWAYS_INLINE bool butterflyConcurrentCopyInt32LanesChecked(void* dst, const voi
     return true;
 }
 
+// SPEC-objectmodel T4-C (r18): GIL off, a COPY of Double lanes into a FRESH
+// array boxes them into Contiguous lanes (PNaN and any other NaN read from a
+// racing lane become holes; the result never carries raw-double storage).
+ALWAYS_INLINE void butterflyConcurrentCopyDoubleLanesBoxed(void* dst, const void* src, size_t bytes)
+{
+    ASSERT(!(bytes % sizeof(uint64_t)));
+    uint64_t* to = static_cast<uint64_t*>(dst);
+    const uint64_t* from = static_cast<const uint64_t*>(src);
+    for (size_t i = 0; i < bytes / sizeof(uint64_t); ++i) {
+        double d = std::bit_cast<double>(WTF::atomicLoad(const_cast<uint64_t*>(&from[i]), std::memory_order_relaxed));
+        WTF::atomicStore(&to[i], d == d ? static_cast<uint64_t>(JSValue::encode(JSValue(JSValue::EncodeAsDouble, d))) : 0, std::memory_order_relaxed);
+    }
+}
+
 // The in-place element move of an array this thread owns (fastShift, shift and
 // unshift on flat storage, copyWithin): another thread's FIRST store to the
 // array can land during the move (the window before that store publishes

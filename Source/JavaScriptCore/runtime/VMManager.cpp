@@ -26,6 +26,8 @@
 #include "config.h"
 #include "VMManager.h"
 
+#include "JSThreadsCounters.h"
+
 #include "Heap.h" // UNGIL §A.3 (U-T5): Heap::JSThreadsStopScope (GCL bracket), GCClient::Heap access sampling.
 #include "JSCConfig.h"
 #include "JSLock.h"
@@ -483,6 +485,8 @@ void jsThreadsParkForStopWindow(VM& vm)
     // window's stop word gates.
     if (jsThreadsCurrentThreadIsStopConductor())
         return; // HBT3.2: a conductor never parks on its own window.
+    JSTHREADS_COUNT(park);
+    JSThreadsCountedDuration parkDuration(JSThreadsCounters::singleton().parkNanoseconds);
     auto& stripe = jsThreadsCurrentThreadParkStripe();
     for (;;) {
         // Generation-validated untimed wait (stripe banner): the resume path
@@ -590,6 +594,8 @@ void jsThreadsParkForModeStop(VM& vm)
     // Mode::RunOne transition, context-switch retarget and representative
     // tenure drop, and the last-VM-destruction RunAll fix-up — all
     // bump-then-notify, so the untimed wait cannot hang on a stale gate.
+    JSTHREADS_COUNT(park);
+    JSThreadsCountedDuration parkDuration(JSThreadsCounters::singleton().parkNanoseconds);
     auto& stripe = jsThreadsCurrentThreadParkStripe();
     for (;;) {
         uint64_t generation = stripe.generation.load(std::memory_order_seq_cst);

@@ -75,6 +75,10 @@ public:
     void NODELETE snapshotUnsweptForFullCollection();
     void sweep();
     void shrink();
+    // Frees empty, non-destructible, not-in-use blocks while the space's
+    // capacity exceeds targetCapacity; returns true if it stopped because the
+    // target was reached (SPEC-heap §10E).
+    bool shrinkWhileCapacityAbove(size_t targetCapacity);
     void assertNoUnswept();
     size_t cellSize() const { return m_cellSize; }
     CellAttributes attributes() const { return m_attributes; }

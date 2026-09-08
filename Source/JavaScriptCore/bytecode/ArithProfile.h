@@ -129,7 +129,12 @@ public:
     }
     ALWAYS_INLINE ArithProfileBits& operator=(BitfieldType bits)
     {
-        m_bits.storeRelaxed(bits);
+        // Write-avoidance (SPEC-ungil §5.7, seventh round): the observe*
+        // paths recompute the whole word on every profiled operation; storing
+        // it back unchanged is what made a shared CodeBlock's arith profiles a
+        // contended cache line under several threads. Store only a change.
+        if (m_bits.loadRelaxed() != bits)
+            m_bits.storeRelaxed(bits);
         return *this;
     }
     ALWAYS_INLINE ArithProfileBits& operator|=(BitfieldType mask)
@@ -143,7 +148,9 @@ public:
         // non-atomic `or` anyway, so an RMW here would buy no real
         // guarantee). This matches the family convention used by
         // mergeSpeculationConcurrently, ValueProfile, and ArrayProfile.
-        m_bits.storeRelaxed(m_bits.loadRelaxed() | mask);
+        BitfieldType bits = m_bits.loadRelaxed();
+        if ((bits | mask) != bits)
+            m_bits.storeRelaxed(bits | mask);
         return *this;
     }
     ALWAYS_INLINE operator BitfieldType() const { return loadRelaxed(); }

@@ -1134,3 +1134,72 @@ orders barrier stores against CONCURRENT marking, none of which runs at the
 flip (attach quiescence), and `beginMarking` raises it as in the single-
 mutator engine. Test: `scaling/write-barrier-idle-fence.js` (the put loop
 before any collection vs after one; GIL off 31 -> 13 ms).
+
+### 28. Seventh landing round: retain the steady-state block set (§10E)
+
+The cycle-end reclamation added with the shared server (code comment "T4(d)":
+restore decommit, because a shared server never returned a marked block and
+committed capacity was monotone) had two arms: after every conducted cycle,
+`shrink()` when `capacity() > m_maxHeapSize`; after a Full cycle, a
+synchronous whole-heap sweep plus shrink when capacity carried 50 % slack
+over the live size. Counting `MarkedSpace::shrink` against collections on
+the JetStream tests GIL off gave 67/68, 73/74, 33/34, 20/21 ... - the
+every-cycle arm fires after nearly every eden collection, because the blocks
+that held the cycle's eden garbage are still committed when the test runs and
+`m_maxHeapSize` (live size plus the eden budget, in cell bytes) is below that
+by the blocks' internal slack; and `shrink()` then frees every empty block,
+not the excess. So each cycle minted its whole eden again: marked blocks
+created per run were 5x-56x the non-shared heap's (raytrace 65,545 against
+2,161; ML 121,507 against 2,366; `aes` 127,156 against 2,270), through
+`tryFastCompactAlignedMalloc`, the page-warming helper thread and first-touch
+faults, 100-400 ms per benchmark and present in 20 of 24. The Full arm's
+synchronous sweep ran on every Full in a fragmented heap (splay: 11 sweeps,
+130 ms) and its shrink leg freed everything again. The non-shared heap does
+neither: it frees empty blocks only from the idle-time incremental sweeper,
+so a busy program keeps its block set.
+
+The replacement (§10E) keeps the world-stopped reclamation point and the
+decommit guarantee but retains the working set: the budget is the largest of
+the heap size at the start of the last eden cycle, at the start of the last
+Full cycle (together: the size the program reaches within a Full period -
+keying on the post-Full live size alone, or on the last cycle's start size
+alone, still freed a periodic program's whole block set once per Full,
+measured: a loop cycling between 3 MB live and 80 MB peak kept minting
+2,800-3,500 blocks per period) and the recomputed allocation budget; nothing
+is freed
+while committed capacity is within 1.5x of it, and above that only the excess
+down to 1.25x is freed, empties first-found-first, never destructible or
+in-use blocks. The synchronous
+sweep is gone from this path (the finalize-time `shouldSweepSynchronously()`
+sweep for critical memory and mini mode is unchanged). What this costs: peak
+committed capacity between Full collections can sit at up to 1.5x the budget
+instead of 1.0x; measured on the scaling suite at 8 threads (the
+configuration T4(d) was written for) in PERF-RESULTS §2. Test:
+`heap-shared-retains-blocks.js` counts marked blocks minted across a
+steady allocation loop after warm-up (thousands before, tens after).
+
+Follow-up in the same round (RSS). The first form of §10E also counted the
+heap size at the start of the last FULL collection into the retained working
+size, so that the blocks of a Full period's peak survived into the next
+period. On the scaling suite's splay-like at eight threads that held 932 MB
+resident against 254 MB under the sixth round's shrink-every-cycle policy.
+The rule now keys the working size on the last EDEN start (plus the budget
+and the floor) and, above 1.25x of it, frees half of the excess per cycle:
+splay-like's peak RSS is 301 MB, JetStream's splay GIL off mints 37 k blocks
+per run (94 k under the sixth round's policy, 13 k when the peak was held) and
+scores within 5 % of the peak-holding form; Basic and raytrace are unchanged.
+
+Second follow-up (the embedder's idle server). With the Full-cycle synchronous
+sweep gone as well, a heap dominated by destructible cells never returned
+blocks at all at this site: eden cycles do not sweep destructible blocks, so
+they never count as empty for the retention arm, and the one path that swept
+them (the Full-cycle slack rule of the sixth round) had been removed with the
+per-eden shrink. Bun's `serve-body-leak` tests GIL off measured the server
+process at 3.0 GB resident where the sixth round stayed under 0.8 GB. The Full
+arm is restored exactly (capacity above 1.5x the Full's live size ->
+synchronous sweep and full shrink); the eden arm keeps the retention rule.
+JetStream `splay` GIL off, which runs about eighteen Full collections per run,
+gives back part of P1's gain with it (37 k -> 70 k blocks minted per run, 94 k
+under the sixth round's policy); `Basic` and the other allocation-heavy tests
+run few Full collections and keep theirs.
+

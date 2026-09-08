@@ -24,6 +24,7 @@
  */
 
 #pragma once
+#include "JSThreadsCounters.h"
 
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/GCMemoryOperations.h>
@@ -747,6 +748,7 @@ public:
         bool valid { false }; // false => caller takes the locked path
         bool found { false };
         JSValue value { };
+        JSValue* keySlot { nullptr }; // when found: the key slot in the table the walk validated against (DFG/FTL slow path)
         TableSize aliveCount { 0 };
     };
     static void beginWriteGILOff(HashTable* owner)
@@ -763,6 +765,7 @@ public:
     template<LockFreeQuery query>
     static LockFreeFindResult tryReadLockFreeGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, TableSize hash)
     {
+        JSTHREADS_COUNT(mapReadLockFreeGILOff);
         VM* vm = globalObject ? &getVM(globalObject) : nullptr; // Size queries pass no global object and never look at keys
         for (unsigned attempt = 0; attempt < 4; ++attempt) {
             uint32_t v1 = owner->m_versionGILOff.load(std::memory_order_acquire);
@@ -811,6 +814,7 @@ public:
                         return false;
                     if (!entryKey.isEmpty() && !isDeleted(*vm, entryKey) && areKeysEqual(globalObject, normalizedKey, entryKey)) {
                         result.found = true;
+                        result.keySlot = slot(*storage, entryKeyIndex);
                         if constexpr (Traits::hasValueData) {
                             if (!load(entryKeyIndex + 1, result.value))
                                 return false;
@@ -956,6 +960,7 @@ public:
 
     NEVER_INLINE static void addNormalizedGILOff(JSGlobalObject* globalObject, HashTable* owner, JSValue normalizedKey, JSValue value, TableSize hash)
     {
+        JSTHREADS_COUNT(mapSetAddGILOff);
         VM& vm = getVM(globalObject);
         DeferTerminationForAWhile noTermination(vm);
         auto scope = DECLARE_THROW_SCOPE(vm);

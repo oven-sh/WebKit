@@ -367,6 +367,7 @@ public:
     static_assert(endAtom - firstPayloadRegionAtom == numberOfPayloadAtoms);
 
     static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*);
+    JS_EXPORT_PRIVATE static uint64_t blocksCreatedForTesting(); // process-wide count of marked blocks ever minted ($vm.markedBlocksCreated)
         
     Handle& handle();
     const Handle& handle() const;

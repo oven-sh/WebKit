@@ -261,19 +261,19 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
     if (Options::useJSThreads()) [[unlikely]] {
         // ANNEX CBI item 3 (AB17c F4; AB17d amendment): the (arity-check
         // entrypoint, CodeBlock) pair above is two independent racy loads
-        // against a live tier-up installCode on another thread. AB17d
-        // closed the value-recurrence/ABA hole in the original slot-
-        // recompare scheme at the source: gilOff-process, entrypointFor
-        // NEVER refills the arity mirror (ExecutableBase.h), and
-        // installCode/clearCode only ever store null to it, so for a
-        // SCRIPT executable the slot is permanently null gilOff and the
-        // non-null gate above already routed every script callee to the
-        // slow path (virtualForWithFunction), which derives a matched pair
-        // through one CodeBlock snapshot. Host executables set the slot
-        // once at construction and never retract — no install can race.
-        // The recompare below is therefore belt-and-braces for any future
-        // writer, not the load-bearing defense. Flag-off: thunk bytes
-        // unchanged.
+        // against a live tier-up installCode on another thread. GIL off
+        // (SPEC-jit §5.8 r15) installCode retracts the mirror FIRST, then
+        // publishes the CodeBlock, then publishes the mirror for that
+        // CodeBlock LAST (entrypointFor never refills it lazily), and every
+        // slot write that retires code is world-stopped, which this
+        // poll-free thunk cannot span; so if the re-read below still equals
+        // the first read, no install completed in between and the CodeBlock
+        // loaded between the two reads is the one that mirror value was
+        // published for. A mismatch (or a null first read mid-install) takes
+        // the slow path, which derives the pair from one CodeBlock snapshot.
+        // The recompare is load-bearing GIL off and belt-and-braces GIL on.
+        // Host executables set the slot once at construction and never
+        // retract. Flag-off: thunk bytes unchanged.
         slowCase.append(jit.branchPtr(
             CCallHelpers::NotEqual,
             CCallHelpers::Address(GPRInfo::regT0, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)),

@@ -26,6 +26,8 @@
 #include "config.h"
 #include "VMTraps.h"
 
+#include "JSThreadsCounters.h"
+
 #include "CallFrameInlines.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
@@ -648,6 +650,7 @@ CONCURRENT_SAFE void VMTraps::notifySyncWaiterOfTermination()
 
 CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
 {
+    JSTHREADS_COUNT(updateThreadStopRequest);
     {
         Locker locker { *m_trapSignalingLock };
         PerLiteTrapSignalingLockDepthScope signalingDepthScope { m_liteOwnerVM }; // Finding (h).

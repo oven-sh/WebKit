@@ -3132,20 +3132,18 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
     loadp offsetOfCodeBlock[t5], t0
     # The (arity-check entrypoint, codeBlock) pair above is two independent
-    # loads. A gilOff tier-up on another thread cannot tear it, because a
-    # script executable's arity-check mirror is permanently null in a gilOff
-    # process (ExecutableBase::entrypointFor never refills it there and
-    # installCode/clearCode only store null), so the btpz above already
-    # routes every script callee to the slow path, which derives a matched
-    # pair from one codeBlock snapshot (virtualForWithFunction). Host
-    # executables publish both mirrors once at construction and skip this
-    # block (not FunctionExecutableType). The recompare below is therefore
-    # reached only GIL-on, where no install can interleave; it is
-    # belt-and-braces for a future mirror writer, not the defense, and the
-    # two plain loads carry no acquire ordering. Mirrors the JIT thunk in
-    # jit/ThunkGenerators.cpp. Mismatch restores the slowCase register
-    # contract (t0 = callee, reloaded from the callee frame). Flag-off: one
-    # not-taken branch.
+    # loads that a gilOff tier-up install on another thread can interleave.
+    # installCode retracts the mirror first, publishes the codeBlock, then
+    # publishes the mirror for that codeBlock last (SPEC-jit section 5.8
+    # r15), and code-retiring slot writes are world-stopped, which this
+    # poll-free path cannot span; so an unchanged mirror on the re-read
+    # below means no install completed between the two reads and the pair
+    # matches. A mismatch takes the slow path (virtualForWithFunction, one
+    # codeBlock snapshot). Host executables publish both mirrors once at
+    # construction and skip this block (not FunctionExecutableType). Mirrors
+    # the JIT thunk in jit/ThunkGenerators.cpp. Mismatch restores the
+    # slowCase register contract (t0 = callee, reloaded from the callee
+    # frame). Flag-off: one not-taken branch.
     ifJSThreadsBranch(t3, .threadsRevalidatePair)
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]

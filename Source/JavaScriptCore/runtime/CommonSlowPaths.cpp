@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CommonSlowPaths.h"
+#include "JSThreadsCounters.h"
 
 #include "ArithProfile.h"
 #include "ArrayPrototypeInlines.h"
@@ -160,6 +161,7 @@ namespace JSC {
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_this)
 {
+    JSTHREADS_COUNT(createThis);
     BEGIN();
     auto bytecode = pc->as<OpCreateThis>();
     JSObject* result = nullptr;

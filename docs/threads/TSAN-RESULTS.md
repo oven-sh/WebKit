@@ -954,3 +954,26 @@ their shared words are the ones the existing racy-accessor and publication
 entries already cover (`structureID` CAS, the butterfly word, JSValue slots),
 and the `Map`/`Set` reader touches table slots only through the whole-JSValue
 `get` accessor and validates through an acquire load of the owner's version.
+
+### Seventh round (2026-09-08)
+
+A performance round again (LANDING-PLAN "Results, seventh round"). Evidence:
+the corpus under the TSanJIT build in both GIL modes, default and CVE sets, on
+the final tree: 317 (GIL on) + 334 (GIL off) + 48 + 62 files pass, 0 failures,
+0 reports on the final pass (one intermediate pass produced the concat report
+below, 1 of 8 TSanJIT GIL-off passes this round). What TSAN saw of the round's
+changes, and what it saw that predates them:
+
+| Signature (first frames) | Files | Disposition |
+|---|---|---|
+| Relaxed loads of `RegExp::m_state` and the Yarr code block's `MacroAssemblerCodeRef`s in `RegExp::compileIfNecessary` (the first, fence-based form of the lock-free "has code" read) vs the compiling thread's stores | 1 (`shared-objects/regexp-first-match-publication-race.js`, 2 of 6 runs) | Rewritten, not suppressed: TSAN does not pair `storeStoreFence`/`loadLoadFence`. The compile now ORs per-width bits into an `Atomic<uint8_t>` with release semantics after the code pointers, the matcher acquire-loads it (SPEC-ungil history, seventh round). 0 of 20 after. |
+| `operationReallocateButterflyAndTransition` (the FTL's reallocating-transition operation, sixth round B5) reading the property IC handler's `newStructureID`/offsets vs the compiling thread's handler construction | 1 (`gc-stress/congc-t4-satb-structure-transition.js`, GIL off) | Publication through the handler's code pointer that the JIT called through; `TSAN_ANNOTATE_HAPPENS_AFTER(handler)` at the operation entry, pairing with the HAPPENS_BEFORE at handler installation. |
+| `copyArrayElements` (`Array.prototype.concat`'s flat memcpy) reading the lanes of a fresh array vs the relaxed atomic lane stores of the thread that built it (`JSArray::fastSlice`'s word copy) | 1 (`objectmodel/typed-owner-relabel-no-stop.js`, 1 of 8 passes) | Fresh butterfly contents published through a JS property store in JIT code; same class as the `growArrayRight` entry. Suppressed (`race:JSC::copyArrayElements`), reason in the file. |
+| `JSON.stringify` (`FastStringifier::append` reading a `PropertyTableEntry` inside `Structure::forEachProperty`'s locked snapshot; in another run `StringBuilder::appendQuotedJSONString` reading a rope's `StringImpl` pointer) vs `FreeCell::makeLast` in `MarkedBlock::Handle::specializedSweep<IsEmpty, SweepToFreeList>` on the other thread's `JSRopeString` allocation slow path | 1 (`objectmodel/json-stringify-vs-concurrent-transition.js`; about 1 run in 20-60, the same rate on the sixth-round binary) | NOT suppressed, not root-caused (F32, LANDING-PLAN Open items). For: a use-after-free would need a reachable cell in a block swept as empty. Against: `--scribbleFreeCells` 0 of 100 functional failures, `--useJIT=0` 0 of 30, `--forceGCSlowPaths=1` 0 of 40, which is the signature of a cell allocated and initialized in JIT code (unseen by TSAN) and read in C++ on another thread, TSAN pairing the read with the last instrumented write to that address (the sweep that built the free list). Left visible until one of the two is shown. |
+
+The watcher-less Class-A fire, the profile write-avoidance, the counter
+padding, the exit-threshold scaling, T4-C/T4-P (including the DFG slow-path
+fix), the Map/Set inline probe GIL off (both its defects were found by
+reading B3 output and by a SIGSEGV, not by TSAN - the probe is JIT code), the
+block-retention policy and the F33 delete-leg RESTART produced no report.
+

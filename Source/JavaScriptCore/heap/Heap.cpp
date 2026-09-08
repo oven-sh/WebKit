@@ -21,6 +21,8 @@
 #include "config.h"
 #include "Heap.h"
 
+#include "JSThreadsCounters.h"
+
 #include "JSCJSValueInlines.h"
 
 #include "BaselineJITCode.h"
@@ -1887,6 +1889,8 @@ void Heap::sweepSynchronously()
         dataLog("Full sweep: ", capacity() / 1024, "kb ");
         before = MonotonicTime::now();
     }
+    JSTHREADS_COUNT(gcSyncFullSweep);
+    JSThreadsCountedDuration sweepDuration(JSThreadsCounters::singleton().gcSyncFullSweepNanoseconds);
     m_objectSpace.sweepBlocks();
     // SharedGC (MC-SAFE S4 / SPEC-heap §11): physical block reclamation must
     // be world-stopped (or epoch-quarantined). When this sweep runs
@@ -2809,6 +2813,13 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
     m_totalGCTime += m_lastGCEndTime - m_lastGCStartTime;
     if (endingCollectionScope == CollectionScope::Full)
         m_lastFullGCEndTime = m_lastGCEndTime;
+    if (JSThreadsCounters::enabled()) [[unlikely]] {
+        if (endingCollectionScope == CollectionScope::Full)
+            JSTHREADS_COUNT(gcFull);
+        else
+            JSTHREADS_COUNT(gcEden);
+        JSThreadsCounters::singleton().gcStoppedNanoseconds.fetch_add(static_cast<uint64_t>((m_lastGCEndTime - m_lastGCStartTime).nanoseconds()), std::memory_order_relaxed);
+    }
     return changePhase(conn, CollectorPhase::NotRunning);
 }
 
@@ -4668,6 +4679,7 @@ void Heap::forEachCodeBlockIgnoringJITPlansImpl(const AbstractLocker& locker, co
 
 void Heap::writeBarrierSlowPath(const JSCell* from)
 {
+    JSTHREADS_COUNT(writeBarrierSlowPath);
     if (mutatorShouldBeFenced()) [[unlikely]] {
         // In this case, the barrierThreshold is the tautological threshold, so from could still be
         // not black. But we can't know for sure until we fire off a fence.
@@ -7293,67 +7305,45 @@ void Heap::conductSharedCollection(GCClient::Heap& conductorClient) WTF_IGNORES_
 
 void Heap::reclaimSharedGCMemoryAtCycleEnd()
 {
-    // T4(d) — decommit restoration for the shared server. Before this
-    // landed, capacity was monotone once ISS: MarkedSpace::shrink() (the
-    // only OS-return path for marked blocks) is world-stopped-only when
-    // shared (MC-SAFE S4), and the only world-stopped sweep/shrink sites
-    // were shouldSweepSynchronously() (critical-memory/mini-mode only) and
-    // teardown — so the steady state NEVER returned a block (rss profile:
-    // 12,481MB of 13,430MB RSS was marked-live committed capacity vs ~378MB
-    // true live; an explicit full GC reclaimed 1MB). This runs once per
-    // drained ticket batch, inside the final stop window of the batch's last
-    // cycle (whose scope m_lastCollectionScope reports):
-    //  - every cycle: m_objectSpace.shrink() — frees the blocks already
-    //    judged empty by this cycle's marking (BlockDirectory::endMarking's
-    //    empty = live & ~markingNotEmpty), skipping destructible and inUse
-    //    blocks (allocator-held blocks carry inUse from resumeAllocating's
-    //    re-take, so a TLC-held free list can never be freed under it).
-    //    Cheap: a per-directory bitvector scan plus the frees themselves.
-    //  - full cycles whose committed capacity carries >= 50% slack over the
-    //    marked size: a full synchronous sweep first (sweepSynchronously —
-    //    MSPL is safely takeable while stopped, and its shrink leg is
-    //    world-stopped here), which runs destructors so DESTRUCTIBLE empty
-    //    blocks (excluded from plain shrink) and the weak-bearing blocks
-    //    skipped by mutator-concurrent sweeps also become reclaimable. The
-    //    slack gate keeps the full-sweep cost off tight steady-state loops;
-    //    once capacity tracks live size again the gate stays closed.
-    // Conductor context: same license as finalize()'s conductor-side
-    // synchronous sweeps (the main VM's atom table is installed for the
-    // stopped region; destructors may deref Identifiers).
+    // SPEC-heap §10E (history §28). Physical reclamation of empty marked
+    // blocks is world-stopped only once shared, so this end-of-conducted-cycle
+    // point is the shared steady state's one reclamation site. Retain the
+    // block set the program demonstrably cycles through - the heap size at the
+    // start of the last eden collection (live data plus one eden, which the
+    // next eden fills again) or the allocation budget, whichever is larger -
+    // and shed what lies above it gradually: when committed capacity exceeds
+    // 1.25x of that working size, free half of the excess this cycle. A steady
+    // allocate-collect oscillation keeps its blocks (no mmap/munmap churn); a
+    // peak the program does not return to (the run-up to a Full collection, a
+    // wide parallel phase followed by a narrow one) decays over a few cycles
+    // instead of being held. isSharedServer()-only path: flag-off never
+    // reaches here.
     RELEASE_ASSERT(isSharedServer());
     RELEASE_ASSERT(worldIsStoppedForAllClients());
+    // Full cycles keep the sixth round's slack rule: when committed capacity
+    // carries 50 % or more over the live size a Full collection just
+    // measured, sweep synchronously (destructors run, so destructible and
+    // weak-bearing empty blocks become reclaimable too) and free every empty
+    // block. Full collections are where a program that went quiet - an idle
+    // server after a burst - gets its memory back; without this arm an
+    // embedder's server process kept 3 GB resident where the sixth round kept
+    // under 0.8 GB (Bun's serve-body-leak tests, GIL off). Eden cycles, which
+    // carry the steady-state churn P1 measured, use the retention rule below.
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         size_t slackBase = std::max(m_sizeAfterLastCollect, minHeapSize(m_heapType, m_ramSize));
-        if (capacity() > slackBase + slackBase / 2) {
-            sweepSynchronously(); // Includes the world-stopped shrink leg.
+        if (m_objectSpace.capacity() > slackBase + slackBase / 2) {
+            sweepSynchronously(); // includes the world-stopped shrink of every empty block
             return;
         }
     }
-    // B2-serial-eden-block-churn (b): RETAIN the steady-state empty-block set
-    // across cycles instead of mmap/munmap-churning it. The unconditional
-    // every-cycle shrink() below was the T4(d) decommit-restoration fix for
-    // the monotone-capacity bug; with the (a) arm above now keying
-    // m_maxHeapSize on a single-client base, a serial section's per-cycle
-    // budget is bounded again, so committed capacity tracks m_maxHeapSize
-    // and shrinking it every cycle just frees blocks that the very next
-    // cycle re-mints via tryAllocateBlock -> MarkedBlock::tryCreate ->
-    // bmalloc mmap (kernel page-fault: _raw_spin_lock + asm_exc_page_fault +
-    // sync_regs + __list_del_entry + __free_one_page = ~2900M cycles of the
-    // §28 W=16 1875ms penalty). When committed capacity already fits inside
-    // the next cycle's m_maxHeapSize budget, KEEP the empties: endMarking
-    // has set canAllocate = live & ~markingRetired on them, so the stripe
-    // leg's tryAllocateFromOwnDirectory picks them up next cycle with NO
-    // fresh page (the "recycles a steady-state block set" goal). Only shrink
-    // when capacity overshoots the budget (genuine over-commit — e.g. the
-    // first cycle after a wide parallel section collapses to serial), so RSS
-    // stays bounded by ~m_maxHeapSize and the original T4(d) decommit
-    // guarantee is preserved at the bound. m_maxHeapSize was just assigned by
-    // updateAllocationLimits (this runs strictly after it in the conducted
-    // cycle's final stop window). isSharedServer()-only path (RELEASE_ASSERT
-    // above): flag-off never reaches here.
-    if (m_objectSpace.capacity() <= m_maxHeapSize)
+    size_t budget = std::max({ m_sizeBeforeLastEdenCollect, m_maxHeapSize, minHeapSize(m_heapType, m_ramSize) });
+    size_t capacity = m_objectSpace.capacity();
+    size_t allowed = budget + budget / 4;
+    bool shrinks = capacity > allowed;
+    dataLogLnIf(Options::logGC(), "[GC<", RawPointer(this), ">: cycle-end retention: capacity ", capacity / 1024, "kb working ", budget / 1024, "kb", shrinks ? " -> shrink" : "", "]");
+    if (!shrinks)
         return;
-    m_objectSpace.shrink();
+    m_objectSpace.shrinkToCapacity(capacity - (capacity - budget) / 2);
 }
 
 void Heap::runSafepointHooksAndReclaim()

@@ -10997,6 +10997,37 @@ IGNORE_CLANG_WARNINGS_END
             setJSValue(vmCall(pointerType(), operationNewSymbolWithDescription, weakPointer(globalObject), lowJSValue(m_node->child1())));
     }
 
+    // OM T4-P (history §27): GIL off, report this allocation to the profile
+    // that recommended Double (racy advisory word: keep the type half, replace
+    // the JSArray* half).
+    void recordArrayAllocationGILOff(LValue array)
+    {
+        ArrayAllocationProfile* profile = m_graph.gilOffDoubleAllocationProfileFor(m_node);
+        if (!profile) [[likely]]
+            return;
+        TypedPointer word = m_out.absolute(reinterpret_cast<const char*>(profile) + ArrayAllocationProfile::offsetOfLastArrayWord());
+        LValue loaded = m_out.load64(word);
+        LValue previous = m_out.bitAnd(loaded, m_out.constInt64((1ull << 48) - 1));
+
+        LBasicBlock checkPrevious = m_out.newBlock();
+        LBasicBlock sawConversion = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(m_out.isZero64(previous), unsure(continuation), unsure(checkPrevious));
+
+        LBasicBlock lastNext = m_out.appendTo(checkPrevious, sawConversion);
+        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(previous, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+        m_out.branch(m_out.equal(shape, m_out.constInt32(DoubleShape)), usually(continuation), rarely(sawConversion));
+
+        m_out.appendTo(sawConversion, continuation);
+        vmCall(Int64, operationArrayAllocationProfileSawConversionGILOff, m_vmValue, m_out.constIntPtr(profile), array);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        // Re-load: the slow path may have just moved the recommendation off Double.
+        LValue typeHalf = m_out.bitAnd(m_out.load64(word), m_out.constInt64(0xffff000000000000ull));
+        m_out.store64(m_out.bitOr(typeHalf, array), word);
+    }
+
     void compileNewArray()
     {
         // First speculate appropriately on all of the children. Do this unconditionally up here
@@ -11050,6 +11081,7 @@ IGNORE_CLANG_WARNINGS_END
                 }
             }
 
+            recordArrayAllocationGILOff(arrayValues.array);
             setJSValue(arrayValues.array);
             mutatorFence();
             return;
@@ -11900,9 +11932,10 @@ IGNORE_CLANG_WARNINGS_END
 
         if (!globalObject->isHavingABadTime() && !hasAnyArrayStorage(m_node->indexingType())) {
             IndexingType indexingType = m_node->indexingType();
-            setJSValue(
-                allocateJSArray(
-                    publicLength, publicLength, weakPointer(globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType)), m_out.constInt32(indexingType)).array);
+            LValue array = allocateJSArray(
+                publicLength, publicLength, weakPointer(globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType)), m_out.constInt32(indexingType)).array;
+            recordArrayAllocationGILOff(array);
+            setJSValue(array);
             mutatorFence();
             return;
         }
@@ -18041,30 +18074,86 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue hash = lowInt32(m_node->child3());
 
+        // GIL off (SPEC-jit history §35; SPEC-ungil §N.1): the probe below runs
+        // without the table lock against a table another thread may be
+        // mutating, exactly like the runtime's tryReadLockFreeGILOff: read the
+        // owner's seqlock version first (odd = writer inside -> slow path),
+        // trust no loaded index (bounds against the storage cell's immutable
+        // length, a step bound), and after the answer is formed re-read the
+        // version behind a load-load fence; a change sends the whole lookup
+        // to the runtime (validated reader / table lock). Slots always hold
+        // whole JSValues, so key comparison on a mis-walked slot is type-safe.
+        const bool validateGILOff = vm().gilOff();
+        LBasicBlock gilOffChecked = validateGILOff ? m_out.newBlock() : nullptr;
+        LBasicBlock gilOffValidateFound = validateGILOff ? m_out.newBlock() : nullptr;
+        LBasicBlock gilOffValidateNotFound = validateGILOff ? m_out.newBlock() : nullptr;
+        LValue version = nullptr;
+        if (validateGILOff) {
+            version = m_out.load32(m_out.address(m_heaps.root, map, MapOrSet::offsetOfVersionGILOff()));
+            // Load-load fence. In B3 that is a Fence that WRITES the heap and
+            // reads nothing (B3FenceValue.h): it emits no instruction on x86
+            // but is an effect no load may cross, so the table loads below stay
+            // after this version load and the re-load at the end cannot be
+            // folded into this one. (A Fence that only reads is a store-store
+            // fence and would let B3 do both.)
+            m_out.fence(nullptr, &m_heaps.root);
+            m_out.branch(m_out.testIsZero32(version, m_out.int32One), usually(gilOffChecked), rarely(slowPath));
+            m_out.appendTo(gilOffChecked);
+        }
+
         // Get the JSCellButterfly first.
         LValue mapStorage = m_out.loadPtr(map, m_heaps.JSSet_storage);
-        m_out.branch(m_out.isNull(mapStorage), unsure(notPresentInTable), unsure(indexSetUp));
+        m_out.branch(m_out.isNull(mapStorage), unsure(validateGILOff ? gilOffValidateNotFound : notPresentInTable), unsure(indexSetUp));
 
         // Compute the bucketCount = Capacity and bucketIndex = hashTableStartIndex + (hash & bucketCount - 1).
         LBasicBlock lastNext = m_out.appendTo(indexSetUp, loopStart);
         LValue mapStorageData = toButterfly(mapStorage);
+        LValue storageLength = validateGILOff ? m_out.load32(mapStorageData, m_heaps.Butterfly_vectorLength) : nullptr; // immutable for a table's storage cell
         LValue bucketCount = m_out.load32(m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.constIntPtr(MapOrSet::Helper::capacityIndex())));
         LValue bucketIndex = m_out.add(m_out.constInt32(MapOrSet::Helper::hashTableStartIndex()), m_out.bitAnd(hash, m_out.sub(bucketCount, m_out.int32One)));
+        if (validateGILOff) {
+            LBasicBlock bucketInBounds = m_out.newBlock();
+            m_out.branch(m_out.aboveOrEqual(bucketIndex, storageLength), rarely(slowPath), usually(bucketInBounds)); // scribbled / torn capacity
+            m_out.appendTo(bucketInBounds, loopStart);
+        }
 
         // Get the entryKeyIndex JSValue.
         ValueFromBlock entryKeyIndexStart = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.zeroExt(bucketIndex, Int64))));
+        ValueFromBlock stepsStart = validateGILOff ? m_out.anchor(m_out.int32Zero) : ValueFromBlock();
         m_out.jump(loopStart);
 
         // Try to find the matched entryKey in the chain located in the bucketIndex.
         m_out.appendTo(loopStart, notEmptyEntry);
         LValue entryKeyIndexValue = m_out.phi(Int64, entryKeyIndexStart);
-        m_out.branch(m_out.isZero64(entryKeyIndexValue), unsure(notPresentInTable), unsure(notEmptyEntry));
+        LValue steps = validateGILOff ? m_out.phi(Int32, stepsStart) : nullptr;
+        m_out.branch(m_out.isZero64(entryKeyIndexValue), unsure(validateGILOff ? gilOffValidateNotFound : notPresentInTable), unsure(notEmptyEntry));
 
         // Get the entryKey JSValue.
         m_out.appendTo(notEmptyEntry, notDeletedKey);
         LValue entryKeyIndex = m_out.castToInt32(entryKeyIndexValue);
+        if (validateGILOff) {
+            // The index must leave room for the value and chain slots of this
+            // entry inside the storage; a link followed too many times is a torn
+            // walk. Either sends the lookup to the runtime.
+            LBasicBlock entryInBounds = m_out.newBlock();
+            LValue outOfBounds = m_out.aboveOrEqual(m_out.add(entryKeyIndex, m_out.constInt32(MapOrSet::Helper::ChainOffset)), storageLength);
+            LValue tooManySteps = m_out.above(steps, storageLength);
+            m_out.branch(m_out.bitOr(outOfBounds, tooManySteps), rarely(slowPath), usually(entryInBounds));
+            m_out.appendTo(entryInBounds, notDeletedKey);
+        }
         TypedPointer entryKeySlot = m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.zeroExt(entryKeyIndex, Int64));
         LValue entryKey = m_out.load64(entryKeySlot);
+        if (validateGILOff) {
+            // A racing writer (add before the key store lands, delete, rehash,
+            // clear) can expose the EMPTY value in a key slot, and an index
+            // read from a torn walk can land on a value or chain slot. Empty
+            // (all bits zero) passes isCell() and the type checks below would
+            // load through a null cell: send it to the runtime, which is what
+            // the version re-check would do anyway.
+            LBasicBlock entryKeyNotEmpty = m_out.newBlock();
+            m_out.branch(m_out.isZero64(entryKey), rarely(slowPath), usually(entryKeyNotEmpty));
+            m_out.appendTo(entryKeyNotEmpty, notDeletedKey);
+        }
 
         // Check wether the current entryKey is a deleted one.
         m_out.branch(m_out.equal(entryKey,  weakPointer(vm().orderedHashTableDeletedValue())), unsure(loopAround), unsure(notDeletedKey));
@@ -18170,27 +18259,51 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(loopAround, presentInTable);
         LValue nextEntry = m_out.load64(m_out.address(m_heaps.OrderedHashTableData, entryKeySlot.value(), MapOrSet::Helper::ChainOffset * sizeof(EncodedJSValue)));
         m_out.addIncomingToPhi(entryKeyIndexValue, m_out.anchor(nextEntry));
+        if (validateGILOff)
+            m_out.addIncomingToPhi(steps, m_out.anchor(m_out.add(steps, m_out.int32One)));
         m_out.jump(loopStart);
 
         // Found a matched entryKey.
         m_out.appendTo(presentInTable, slowPath);
-        ValueFromBlock entryValueResult = m_out.anchor(entryKeySlot.value());
-        m_out.jump(done);
+        Vector<ValueFromBlock, 4> results;
+        if (validateGILOff)
+            m_out.jump(gilOffValidateFound);
+        else {
+            results.append(m_out.anchor(entryKeySlot.value()));
+            m_out.jump(done);
+        }
 
         // The slow path should call the operation.
         m_out.appendTo(slowPath, notPresentInTable);
         auto operation = std::is_same<MapOrSet, JSMap>::value ? operationMapGet : operationSetGet;
-        ValueFromBlock slowPathResult = m_out.anchor(vmCall(Int64, operation, weakPointer(globalObject), map, key, hash));
+        results.append(m_out.anchor(vmCall(Int64, operation, weakPointer(globalObject), map, key, hash)));
         m_out.jump(done);
 
         // Didn't find a matched entryKey.
-        m_out.appendTo(notPresentInTable, done);
-        ValueFromBlock notPresentResult = m_out.anchor(m_out.constInt64(0));
+        m_out.appendTo(notPresentInTable, validateGILOff ? gilOffValidateFound : done);
+        results.append(m_out.anchor(m_out.constInt64(0)));
         m_out.jump(done);
+
+        if (validateGILOff) {
+            // Re-read the version behind a load-load fence; unchanged (and it
+            // was even) means no writer overlapped any load above, so the answer
+            // is one consistent state of one table.
+            m_out.appendTo(gilOffValidateFound, gilOffValidateNotFound);
+            m_out.fence(nullptr, &m_heaps.root); // load-load, as above
+            LValue versionAfterFound = m_out.load32(m_out.address(m_heaps.root, map, MapOrSet::offsetOfVersionGILOff()));
+            results.append(m_out.anchor(entryKeySlot.value()));
+            m_out.branch(m_out.equal(versionAfterFound, version), usually(done), rarely(slowPath));
+
+            m_out.appendTo(gilOffValidateNotFound, done);
+            m_out.fence(nullptr, &m_heaps.root); // load-load, as above
+            LValue versionAfterMiss = m_out.load32(m_out.address(m_heaps.root, map, MapOrSet::offsetOfVersionGILOff()));
+            results.append(m_out.anchor(m_out.constInt64(0)));
+            m_out.branch(m_out.equal(versionAfterMiss, version), usually(done), rarely(slowPath));
+        }
 
         // Done.
         m_out.appendTo(done, lastNext);
-        setStorage(m_out.phi(Int64, entryValueResult, slowPathResult, notPresentResult));
+        setStorage(m_out.phi(Int64, results));
     }
 
     void compileMapGet()
@@ -18217,7 +18330,12 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(done);
 
         m_out.appendTo(presentInTable, done);
-        ValueFromBlock presentResult = m_out.anchor(m_out.load64(m_out.address(m_heaps.OrderedHashTableData, mapKeySlot, sizeof(EncodedJSValue))));
+        LValue loaded = m_out.load64(m_out.address(m_heaps.OrderedHashTableData, mapKeySlot, sizeof(EncodedJSValue)));
+        if (vm().gilOff()) [[unlikely]] { // SPEC-jit history §35: a delete since the slot was found stores the deleted sentinel there.
+            LValue gone = m_out.bitOr(m_out.isZero64(loaded), m_out.equal(loaded, weakPointer(vm().orderedHashTableDeletedValue())));
+            loaded = m_out.select(gone, m_out.constInt64(JSValue::encode(jsUndefined())), loaded);
+        }
+        ValueFromBlock presentResult = m_out.anchor(loaded);
         m_out.jump(done);
 
         m_out.appendTo(done, lastNext);

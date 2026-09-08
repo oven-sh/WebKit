@@ -47,6 +47,8 @@
 
 namespace JSC {
 
+std::atomic<unsigned> ThreadManager::s_liveSpawnedThreadCount { 0 };
+
 // ---------------- AsyncTicket ----------------
 
 AsyncTicket::AsyncTicket(VM& vm, Ref<DeferredWorkTimer::Ticket>&& ticket, Ref<ThreadState>&& registrant, JSObject* extraDependency)
@@ -365,6 +367,7 @@ RefPtr<ThreadState> ThreadManager::allocateSpawnedThreadState(VM& vm)
         if (tid) {
             state = ThreadState::create(*tid, true);
             m_threads.add(*tid, Ref { *state });
+            s_liveSpawnedThreadCount.fetch_add(1, std::memory_order_relaxed);
         }
         // UNGIL §D.1 trigger (U-T12): arm at >=75% consumption; seal eagerly
         // if dead TIDs are already waiting (spawn-storm shape: arm + seal
@@ -390,6 +393,7 @@ void ThreadManager::unregisterThread(ThreadState& state)
 {
     Locker locker { m_lock };
     m_threads.remove(state.tid);
+    s_liveSpawnedThreadCount.fetch_sub(1, std::memory_order_relaxed);
     // UNGIL §D.1 (U-T12): under gilOffProcess the TID is retired into the
     // rebias pipeline (dead from here: no m_threads entry, and TM never
     // reissues before the post-resume release — ANNEX D1 soundness). The

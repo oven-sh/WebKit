@@ -239,6 +239,9 @@ namespace JSC {
         void store32ToMetadata(GPRReg, const Bytecode&, size_t offset);
 
         template <typename Bytecode>
+        Jump branch32ToMetadata(RelationalCondition, const Bytecode&, size_t offset, GPRReg);
+
+        template <typename Bytecode>
         void storePtrToMetadata(GPRReg, const Bytecode&, size_t offset);
 
         template <typename Bytecode>

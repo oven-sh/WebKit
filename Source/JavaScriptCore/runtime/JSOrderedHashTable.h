@@ -79,6 +79,27 @@ public:
         return nullptr;
     }
 
+    // GIL off (seventh landing round; SPEC-jit history §35): the DFG/FTL MapGet
+    // slow path. The slot returned belongs to a table state that either the
+    // validated lock-free walk or the table lock witnessed; the caller's later
+    // value load through it reads that entry's value slot, which afterwards can
+    // only be overwritten whole (a set of the same key: old-or-new), cleared by
+    // a delete (empty: read as undefined), or left untouched in a table a
+    // rehash retired (the value as of the rehash) - all linearizable answers.
+    // The storage cell stays alive while the caller holds the interior pointer
+    // (conservative root).
+    NEVER_INLINE JSValue* getKeySlotGILOff(JSGlobalObject* globalObject, JSValue normalizedKey, uint32_t hash)
+    {
+        if (!m_storage)
+            return nullptr;
+        if (auto lockFree = Helper::template tryReadLockFreeGILOff<Helper::LockFreeQuery::Find>(globalObject, this, normalizedKey, hash); lockFree.valid)
+            return lockFree.found ? lockFree.keySlot : nullptr;
+        return Helper::withCurrentTableLockedGILOff(this, [&](Storage& storage) -> JSValue* {
+            auto result = Helper::find(globalObject, storage, normalizedKey, hash);
+            return Helper::isValidTableIndex(result.entryKeyIndex) ? result.entryKeySlot : nullptr;
+        });
+    }
+
     ALWAYS_INLINE bool has(JSGlobalObject* globalObject, JSValue key)
     {
         if (getVM(globalObject).gilOff()) [[unlikely]]
@@ -247,7 +268,10 @@ public:
     }
 
     WriteBarrier<Storage> m_storage;
-    std::atomic<uint32_t> m_versionGILOff { 0 }; // GIL off: writers' seqlock for the validated lock-free readers (helper)
+    std::atomic<uint32_t> m_versionGILOff { 0 }; // GIL off: writers' seqlock for the validated lock-free readers (helper, and the FTL's inline MapGet)
+public:
+    static ptrdiff_t offsetOfVersionGILOff() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_versionGILOff); }
+private:
 };
 
 class JSOrderedHashMap : public JSOrderedHashTable<MapTraits> {
