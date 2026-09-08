@@ -95,19 +95,34 @@ function makeViews(constructor, elements) {
     return views;
 }
 
-function run() {
-    for (let [elements, needle, expected] of int64Cases) {
-        for (let view of makeViews(BigInt64Array, elements))
-            test(view, needle, expected);
-    }
-    for (let [elements, needle, expected] of uint64Cases) {
-        for (let view of makeViews(BigUint64Array, elements))
-            test(view, needle, expected);
-    }
+let rows = [];
+for (let [elements, needle, expected] of int64Cases) {
+    for (let view of makeViews(BigInt64Array, elements))
+        rows.push([view, needle, expected]);
+}
+for (let [elements, needle, expected] of uint64Cases) {
+    for (let view of makeViews(BigUint64Array, elements))
+        rows.push([view, needle, expected]);
 }
 
-for (let i = 0; i < 200; ++i)
-    run();
+for (let i = 0; i < Math.max(testLoopCount, rows.length); ++i) {
+    let [view, needle, expected] = rows[i % rows.length];
+    test(view, needle, expected);
+}
+
+// A repeated element: indexOf finds the first match, lastIndexOf the last, and a wrapped needle neither.
+for (let constructor of [BigInt64Array, BigUint64Array]) {
+    for (let view of makeViews(constructor, [7n, 3n, 7n, 7n, 3n])) {
+        let name = constructor.name + " repeated 7n";
+        shouldBe(view.indexOf(7n), 0, name + " indexOf");
+        shouldBe(view.lastIndexOf(7n), 3, name + " lastIndexOf");
+        shouldBe(view.indexOf(7n, 1), 2, name + " indexOf fromIndex 1");
+        shouldBe(view.lastIndexOf(7n, -3), 2, name + " lastIndexOf fromIndex -3");
+        shouldBe(view.indexOf(7n + 2n ** 64n), -1, name + " wrapped indexOf");
+        shouldBe(view.lastIndexOf(7n + 2n ** 64n), -1, name + " wrapped lastIndexOf");
+        shouldBe(view.includes(7n + 2n ** 64n), false, name + " wrapped includes");
+    }
+}
 
 // A non-BigInt needle never matches a BigInt element, and a BigInt needle never matches a Number element.
 {
