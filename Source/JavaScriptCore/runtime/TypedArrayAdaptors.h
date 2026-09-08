@@ -168,7 +168,11 @@ struct FloatTypedArrayAdaptor {
 
     static std::optional<Type> toNativeFromInt32WithoutCoercion(int32_t value)
     {
-        return static_cast<Type>(value);
+        // An int32 with magnitude above 2^24 can round when converted to float.
+        Type valueResult = static_cast<Type>(value);
+        if (static_cast<double>(valueResult) != value)
+            return std::nullopt;
+        return valueResult;
     }
 
     static std::optional<Type> toNativeFromDoubleWithoutCoercion(double value)
@@ -400,7 +404,11 @@ struct Float16Adaptor {
 
     static std::optional<Type> toNativeFromInt32WithoutCoercion(int32_t value)
     {
-        return static_cast<double>(value);
+        // An int32 with magnitude above 2^11 can round when converted to half, and one at or above 65520 becomes an infinity.
+        Type valueResult { static_cast<double>(value) };
+        if (static_cast<double>(valueResult) != value)
+            return std::nullopt;
+        return valueResult;
     }
 
     static std::optional<Type> toNativeFromDoubleWithoutCoercion(double value)
