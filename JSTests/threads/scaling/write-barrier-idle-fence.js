@@ -19,7 +19,11 @@ function run() {
     for (let i = 0; i < 4e6; ++i) setx(objs[i & 511], objs[(i + 1) & 511]);
     return preciseTime() - t0;
 }
-run(); // tier up
+// Tier up until the loop's time is stable, so that a loaded machine whose JIT
+// threads lag does not put compile latency into "before" (seventh round: the
+// fixed two warm-up runs measured 5x under a parallel test load, Debug).
+let prev = run();
+for (let i = 0; i < 12; ++i) { const t = run(); const stable = t > prev * 0.8 && t < prev * 1.25; prev = t; if (stable) break; }
 const before = Math.min(run(), run());
 fullGC();
 const after = Math.min(run(), run());

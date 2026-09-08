@@ -1524,3 +1524,125 @@ JIT allocations, which follow the profile to Contiguous once the site has
 seen one; or (b) a validated (structure re-checked after the load) Double
 read in every tier GIL off, which would let Double->Contiguous publish a
 fresh boxed butterfly without a stop.
+
+## §27. Rev 18 (seventh landing round): why GIL off kept converting Double arrays, and the two feedback paths that stop it (T4-C, T4-P)
+
+§26 addendum 2 left `stanford-crypto-aes` GIL off at 0.19-0.25 of GIL on with
+up to 1.5 M Double->Contiguous stops per run and named two candidate fixes.
+The seventh round measured before choosing, and the measurement changed the
+picture:
+
+1. The run is bimodal. The same binary scores 218 (6 k stops) or 56 (1.5 M
+   stops) depending on compile timing. So the engine CAN converge; what keeps
+   it from converging is a stable state it sometimes falls into.
+2. Every converted array in the bad state has `length 4, vectorLength 4`, is
+   owned, SW=0, not copy-on-write: a fresh 4-word AES state. They are not made
+   by an array-literal site (T4-P below was built first on that assumption and
+   changed nothing: 3.9 k profile updates, still 1.5 M stops). They are the
+   results of `Array.prototype.slice` and `concat` on a Double source - sjcl's
+   `bitArray` copies word arrays with `slice(0)`/`concat` constantly - and a
+   copy inherits the source's Double shape. Half came through the C++
+   `fastSlice`, half through the DFG's inline `ArraySlice`.
+3. Why GIL on does not convert them: GIL on, the arrays these copies flow into
+   sites together with are Double too (Int32 arrays that received a large word
+   became Double in place). GIL off T4-O turns those into Contiguous instead,
+   the shared use site's profile is {Double, Contiguous}, the DFG picks
+   Contiguous-with-conversion, and converts every Double copy on arrival - a
+   stop each (T4). Nothing feeds that back to where the copies are made, so
+   the state is stable.
+
+Making the owner's Double->Contiguous relabel itself stop-free was designed
+(copy-publish plus NaN-checked racy reads) and rejected in review before any
+code shipped: a stale Double-keyed reader over boxed storage does not only
+risk boxing an impure NaN (which a NaN check stops), it also reads a cell
+pointer's bits as a subnormal double - an address disclosure to script under
+a race. Excluding that needs the storage itself to say "raw doubles" in the
+word the reader already loads (a tag bit), which touches every allocation path
+in every tier; recorded as the follow-up if boxed arithmetic on demoted arrays
+ever shows up as the remaining cost. Rev 18 instead removes the SOURCES of
+the doomed Double arrays, which are all fresh objects nobody else can have
+read:
+
+- T4-C (copies). GIL off, a fresh array made by copying lanes of a Double
+  source is created Contiguous with the lanes boxed during the copy (a hole or
+  any NaN read from a racing lane becomes a hole): `JSArray::fastSlice`, the
+  `concat` fast paths (`concatAppendOne`, the multi-source memcpy path), and
+  the DFG `ArraySlice` intrinsic, which GIL off is not planted on a
+  Double-typed site (the call reaches `fastSlice`) and whose structure check no
+  longer admits Double arrays on other sites (a Double array there exits
+  `BadCache`, after which the site is compiled as a call - the existing rule).
+  The source keeps its shape; only the copy is demoted. New object, no reader,
+  no publication hazard. GIL-on / flag-off: unchanged (raw copies, Double
+  results).
+- T4-P (profiles). The same stable state can arise from an array-LITERAL site
+  whose allocation profile says Double once the site is in DFG/FTL code:
+  optimized allocations never report to the profile (`lastArray` is written by
+  the LLInt/Baseline paths only) and nothing recompiles the site when the
+  profile's recommendation changes. GIL off: (a) DFG/FTL `NewArray` /
+  `NewArrayWithSize` compiled from a profile recommending Double store their
+  result into the profile's last-array word (one racy read-modify-write of the
+  advisory word, SPEC-ungil §5.7: type half kept, pointer half replaced), so
+  the next profile update (Baseline allocation or GC finalization) sees whether
+  those arrays were converted; (b) such a compilation watches a new per-profile
+  `InlineWatchpointSet`, which `updateLastAllocation` fires (Class-A, or inline
+  when already world-stopped in GC finalization) when the recommendation
+  leaves Double; the recompile reads the new recommendation and allocates what
+  the arrays become. Flag-off / GIL-on: the set is never watched or fired and
+  no store is planted.
+
+The Double->Contiguous relabel of an array that genuinely changes
+representation after being published (a program stores a string into a
+double array) keeps the per-event stop (T4, I28 unchanged).
+
+Measured (JetStream `stanford-crypto-aes`, GIL off, same machine, one run
+each, verification load in the background so absolute numbers are low):
+before 56-77 with 1.48-1.50 M stops (6.5-6.7 s in the conductor); with
+`fastSlice` alone 82-86 with 742 k stops; with `concat` and the DFG intrinsic
+as well 215-218 with 3.9 k stops (17 ms). GIL on: 344-359. The remaining
+distance is boxed arithmetic on the demoted arrays and is measured with the
+rest of the suite in PERF-RESULTS. Tests:
+`objectmodel/double-copies-are-contiguous-gil-off.js` (slice/concat of a
+Double array feeding a site that also sees Contiguous arrays: stop count per
+iteration before ~1, after 0; results and holes correct in all three modes) and
+`objectmodel/double-allocation-profile-feedback-gil-off.js` (an FTL-compiled
+literal site whose arrays are converted downstream stops converting after the
+profile fires; asserts the stop count stays bounded and the values are right).
+
+Follow-up in the same round (T4-P, DFG tier). The DFG's report of a fresh
+array to its allocation profile keeps the array in a temporary register across
+the rare call that demotes the profile; the DFG's silent spill preserves live
+values, not temporaries, so the first implementation returned a clobbered
+register as the node's result whenever that call ran - a wild pointer used as
+an array (SIGSEGV or heap corruption GIL off; found by the GIL-off stress
+suite's `double-to-int32-NaN.js` and by the mirror harness, 23 of 30 runs, not
+by the T4-P test, whose site demotes once before the DFG compiles it). The
+operation now takes and returns the array and the call's result is the
+register. Test: `jit/double-allocation-profile-slow-path-keeps-result.js` (an
+allocation site `[x, x|0]` compiled Double whose arrays leave Double now and
+then because x is sometimes NaN; 3 of 3 runs crash before, 0 after; GIL on and
+flag off run the same checks).
+
+Follow-up in the same round (F33: the delete leg after E4-C). r17 let the
+owner of an object whose shape's thread-local sets are dead keep
+transitioning it without the cell lock, claim-first (E4-C), and rewrote the
+cell-locked writers to claim the StructureID lane themselves and RESTART on
+a lost claim (§4.3 step 4/5, N2 (ii), I38). The cell-locked DELETE leg
+(`deletePropertyNamedConcurrent`, structure-only transition published by one
+header CAS) was not rewritten: it still asserted that under the cell lock only
+the volatile header bytes move, which stopped being true the moment an owner
+could claim without the lock. An owner adding properties to its object while
+another thread deletes one from it aborted the process (release assertion) -
+6 of 6 runs of the new test on the sixth-round binary; found this round by
+the mirror harness on `stress/delete-by-val-ftl.js` at 3 in 100. Rule: the
+delete leg treats a header whose ID bits are not S at CAS time, or a CAS that
+fails on more than the volatile bytes, as a lost lane and RESTARTs (the loop
+top re-reads the structure once the owner publishes); the attribute-change
+leg, which has the same shape but only runs on dictionary sources (no
+lock-free owner leg), gets the same treatment defensively. The doomed slot
+already holds undefined at that point (D1), which is the transient any reader
+of a property being deleted may see. Test:
+`objectmodel/delete-vs-owner-claim-first-transition.js` (the owner adds four
+properties per object to 20,000 objects while a second thread deletes one;
+abort 6/6 before, PASS with 3,000-5,000 lost-lane restarts per run after;
+every object is checked).
+

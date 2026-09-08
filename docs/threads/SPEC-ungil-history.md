@@ -8864,3 +8864,86 @@ crossing gates OSR entry starved entry (JetStream GIL off halved); it was not
 landed. Recorded in LANDING-PLAN Open items with the options (per-thread
 counter lines in JITData; counting only on the thread that first ran the
 code plus trigger-byte entry for the others).
+
+## Seventh landing round: RegExp "has code" read lock-free GIL off
+
+AUD1.N2 residual (A) (fifth round) made `RegExp::compileIfNecessary` and its
+match-only twin take the RegExp's cell lock GIL off around {has-code check,
+compile}, because the lock-free check had no acquire edge to the compile's
+publication of `m_regExpBytecode` / `m_regExpJITCode` / `m_atom` (a reader
+could see `m_state == ByteCode` with the bytecode pointer still null). That
+put a lock acquire and release on EVERY match, compiled or not: 27 M per run
+of JetStream's OfflineAssembler, 8 M regexp, 3 M UniPoker, 1.9 M
+FlightPlanner; `~Locker<JSCellLock>` was 8.5 % of OfflineAssembler's samples
+(PERF-RESULTS §6). The check is now an acquire/release publication of its
+own: the RegExp carries a byte of "published code" bits (JIT 8-bit, JIT
+16-bit, the two match-only entries, and "interpret everything" = the state
+settled on ByteCode), each set with a release `or` by the compile that holds
+the cell lock, after the code it names and `m_state` are stored; the GIL-off
+reader loads the byte with acquire and, if its width (or interpret-all) is
+there, matches without the lock - the acquire orders every later read of the
+state, the code block and the bytecode after the compile's writes, for the
+hardware and for TSAN alike. Only a needed compile takes the cell lock and
+re-checks under it. The bits only accumulate; `deleteCode` (debugger /
+memory-pressure discard, world-stopped GIL off) clears them. Two more things
+changed for "state names code" to hold outside the lock: the compile bodies no
+longer store the provisional `ByteCode` state that stock JSC sets before
+compiling anything (harmless under one thread or under the lock; GIL off a
+second thread read it as "has code", found no bytecode and reported no
+match - the new test's Part 1 caught exactly this in the first cut), and
+`YarrCodeBlock::has8BitCode` and kin test the code pointer the matcher calls
+through rather than the CodeRef's size via its executable-memory handle.
+Flag-off and GIL on never read the byte and never took the lock; their path is
+unchanged but for the one `or` per compile. JetStream GIL off: lock
+acquisitions per `regexp` run 27.7 M -> 0; single-test runs read 0.87 ->
+0.96 of GIL on when the change was made, but the round's final five-run suite
+medians have `regexp` at 0.73 of GIL on before and after, and single-test
+runs of the same binaries span 330-415 - the uncontended lock was below what
+the benchmark resolves (PERF-RESULTS §3). Test:
+`shared-objects/regexp-first-match-publication-race.js` (eight threads race
+the first matches of freshly created RegExps in both widths and check every
+result; then 200,000 matches of a compiled RegExp must not take its cell lock:
+200,000 acquisitions before, 0 after).
+
+## Seventh landing round: shared profiling under N threads - write-avoidance, counter isolation, exit thresholds
+
+§5.7 blesses racy profiling: value profiles, arith profiles, array profiles,
+IC state bytes and execution counters of a CodeBlock are advisory words
+written by every thread that runs it. Racy is not free: with four threads in
+one function's LLInt/Baseline code every such STORE moves the profile's cache
+line to the storing core, whether or not it changes anything, and the lines
+also hold what the same code READS on every operation (the IC's other fields,
+the JIT data's global object and constant pool beside the execute counter).
+Measured on the scaling suite's string-heavy held in Baseline with profiling:
+one thread 464 ms, four threads 2,594 ms for four times the work (0.72x).
+Three rules, all flag-on-neutral in what they compute:
+- Write-avoidance. A profiling store that would write the value already there
+  is skipped: `ValueProfile::storeBucketConcurrently`, `ArithProfileBits`
+  assignment and or-in, the IC racy cells (`tookSlowPath`, `countdown`, ...),
+  `ArrayProfile`'s last-seen structure, flags and observed modes (a test
+  before the locked or), and - flag-on only, so flag-off code is unchanged -
+  the Baseline JIT's value-profile and array-profile stores (a compare and a
+  branch before the store). Steady state becomes reads of shared lines.
+- Counter isolation. `BaselineJITData::m_executeCounter` and
+  `DFG::JITData::m_tierUpCounter`, which every thread increments at loop
+  back-edges and returns, get 64 bytes of padding on both sides so the global
+  object, the stack offset and the trailing constant pool loaded by nearly
+  every slow-path call of the same code do not share their line (padding, not
+  alignment: the object sits at an unaligned offset inside its ButterflyArray
+  allocation). Costs 128 bytes per JIT data.
+- Exit thresholds scale with the thread count GIL off. N threads running one
+  optimized CodeBlock each take the same speculation failure once before the
+  code can be replaced and all count against one exit counter, so
+  `exitCountThresholdForReoptimization[FromLoop]` multiply by 1 + live spawned
+  threads (a lock-free count kept by `ThreadManager`); one round of N identical
+  exits then weighs what one exit weighs single-threaded instead of tripping
+  reoptimization and doubling the next warm-up. Flag-off / GIL on: factor 1.
+Measured after all three (same workload, Baseline-held): four threads
+2,594 -> 1,894 ms; the remaining distance to linear there is the locked RMW on
+the execution counters themselves and structure/atom-table creation under
+contention (PERF-RESULTS §6.6), not addressed here. The tiered run of
+string-heavy is governed by something else again - whether the four threads,
+which call the workload function once and can only change tier by OSR entry,
+find a function-entry FTL replacement installed when they start - and is
+reported as measured, not as fixed (PERF-RESULTS §2).
+

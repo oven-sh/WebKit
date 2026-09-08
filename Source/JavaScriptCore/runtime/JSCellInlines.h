@@ -382,7 +382,12 @@ inline const MethodTable* JSCell::methodTable() const
 // Options::useJSThreads() is on.
 ALWAYS_INLINE JSValue JSCell::fastGetOwnProperty(VM& vm, Structure& structure, PropertyName name)
 {
-    ASSERT(canUseFastGetOwnProperty(structure));
+    // Flag-on the caller's canUseFastGetOwnProperty() check and this point can
+    // straddle a park (the callers atomize the key in between), and a dictionary
+    // structure's getter/setter flag is set IN PLACE by a racing defineProperty
+    // kind change (SPEC-objectmodel §6 L4-K); the re-validation below is what
+    // keeps the answer right, so the entry assertion is single-thread-only.
+    ASSERT(canUseFastGetOwnProperty(structure) || Options::useJSThreads());
     PropertyOffset offset = structure.get(vm, name);
     if (offset != invalidOffset) {
         JSValue value = asObject(this)->locationForOffset(offset)->get();

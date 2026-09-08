@@ -26,6 +26,8 @@
 #include "config.h"
 #include "PropertyInlineCache.h"
 
+#include "JSThreadsCounters.h"
+
 #include "CCallHelpers.h"
 #include "BaselineJITRegisters.h"
 #include "CacheableIdentifierInlines.h"
@@ -294,8 +296,10 @@ AccessGenerationResult PropertyInlineCache::addAccessCase(const GCSafeConcurrent
     // inlined packed self word (setInlinedHandler), which is only fed from
     // handlers admitted here. The mirroring LLInt rule lives in
     // LLIntSlowPaths.cpp (threaded publish gates).
-    if (Options::useJSThreads() && accessCase->structure() && accessCase->structure()->isDictionary()) [[unlikely]]
+    if (Options::useJSThreads() && accessCase->structure() && accessCase->structure()->isDictionary()) [[unlikely]] {
+        JSTHREADS_COUNT(icDictionaryStructureRefused);
         return AccessGenerationResult::GaveUp;
+    }
 
     AccessGenerationResult result = ([&](Ref<AccessCase>&& accessCase) -> AccessGenerationResult {
         dataLogLnIf(PropertyInlineCacheInternal::verbose, "Adding access case: ", accessCase);

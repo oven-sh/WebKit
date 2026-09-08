@@ -26,6 +26,9 @@
 #include "config.h"
 #include "Watchpoint.h"
 
+#include <wtf/StringPrintStream.h>
+#include "JSThreadsCounters.h"
+
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include "CachedSpecialPropertyAdaptiveStructureWatchpoint.h"
 #include "ChainedWatchpoint.h"
@@ -314,6 +317,19 @@ void WatchpointSet::drainClassAFireQueue(VM& vm)
 
 void WatchpointSet::fireAllUnderClassAStop(VM& vm, const FireDetail& detail)
 {
+    if (JSThreadsCounters::enabled()) [[unlikely]] { // diagnostic: which sets fire under a stop
+        StringPrintStream out;
+        out.print("classA fire: ", detail);
+        CString text = out.toCString();
+        if (text.length() > 90) text = CString(std::span<const char>(text.data(), 90));
+        static Lock lock; static Vector<CString>* kept;
+        Locker locker { lock };
+        if (!kept) kept = new Vector<CString>();
+        const char* name = nullptr;
+        for (auto& k : *kept) { if (k == text) { name = k.data(); break; } }
+        if (!name && kept->size() < 30) { kept->append(text); name = kept->last().data(); }
+        if (name) JSThreadsCounters::countNamed(name, 0);
+    }
     ASSERT(Options::useJSThreads());
     ASSERT(invalidatesCompiledCode());
 
@@ -365,6 +381,7 @@ void WatchpointSet::fireAllNow(VM& vm, const FireDetail& detail)
 
 void WatchpointSet::fireAllSlow(VM& vm, const FireDetail& detail)
 {
+    JSTHREADS_COUNT(watchpointFireAll);
     ASSERT(state() == IsWatched);
 
     // SPEC-jit section 5.6: flag on, Class-A fires ALWAYS run world-stopped —
@@ -372,6 +389,29 @@ void WatchpointSet::fireAllSlow(VM& vm, const FireDetail& detail)
     // synchronize with an in-flight inline fire). Class-B sets and data-only
     // FireDetails (rare-site override) fire exactly as today.
     if (Options::useJSThreads() && m_invalidatesCode.loadRelaxed() && !detail.fireIsDataOnly()) [[unlikely]] {
+        // §5.6 watcher-less fast path (seventh landing round, history §36):
+        // the stop exists to run the members' code-patching fires with every
+        // other mutator parked. A Class-A set that nobody watches — the
+        // property-replacement sets the get ICs arm, an inflated set whose
+        // watchpoints were all removed — has nothing to run: firing it is
+        // the state flip alone, which needs no stop. Deciding "nobody" is
+        // atomic with add(): under the membership lock, add() re-checks the
+        // state and refuses an IsInvalidated set, and links members only
+        // while holding it, so a member either is in m_set here (take the
+        // stop) or its add() fails (its compilation is invalidated at link).
+        // Measured: a four-thread string workload took 376 such stops per run,
+        // each parking three threads and (through the heap-fact epoch)
+        // jettisoning their optimized code.
+        if (!m_setIsNotEmpty.loadRelaxed()) {
+            MembershipLocker locker;
+            if (m_set.isEmpty() && m_state.loadRelaxed() == IsWatched) {
+                JSTHREADS_COUNT(watchpointFireWatcherless);
+                WTF::storeStoreFence();
+                m_state.storeRelaxed(IsInvalidated);
+                WTF::storeStoreFence();
+                return;
+            }
+        }
         fireAllUnderClassAStop(vm, detail);
         return;
     }

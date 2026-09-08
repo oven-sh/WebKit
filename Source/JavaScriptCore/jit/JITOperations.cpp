@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JITOperations.h"
 
+#include "JSThreadsCounters.h"
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(JIT)
@@ -478,6 +480,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphic, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icGetByIdMegamorphicMiss);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -492,6 +495,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphic, EncodedJSValue, (EncodedJS
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphicGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
 {
+    JSTHREADS_COUNT(icGetByIdMegamorphicMiss);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -505,6 +509,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphicGeneric, EncodedJSValue, (JS
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdGaveUp, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icGetByIdGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -527,6 +532,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdGaveUp, EncodedJSValue, (EncodedJSValue
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
 {
+    JSTHREADS_COUNT(icGetByIdGeneric);
     SuperSamplerScope superSamplerScope(false);
     
     VM& vm = globalObject->vm();
@@ -546,6 +552,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdGeneric, EncodedJSValue, (JSGlobalObjec
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdOptimize, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icGetByIdOptimize);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -669,6 +676,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdWithThisMegamorphicGeneric, EncodedJSVa
 
 JSC_DEFINE_JIT_OPERATION(operationInByIdGaveUp, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icInByGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -891,6 +899,7 @@ JSC_DEFINE_JIT_OPERATION(operationInByValOptimize, EncodedJSValue, (EncodedJSVal
 
 JSC_DEFINE_JIT_OPERATION(operationInByValGaveUp, EncodedJSValue, (EncodedJSValue base, EncodedJSValue key, PropertyInlineCache* propertyCache, ArrayProfile* arrayProfile))
 {
+    JSTHREADS_COUNT(icInByGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1135,6 +1144,7 @@ JSC_DEFINE_JIT_OPERATION(operationHasPrivateBrandGaveUp, EncodedJSValue, (Encode
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icPutByIdGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1156,6 +1166,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictGaveUp, void, (EncodedJSValue enc
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icPutByIdGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1238,6 +1249,7 @@ ALWAYS_INLINE static void putByIdMegamorphic(JSGlobalObject* globalObject, VM& v
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictMegamorphic, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icPutByIdMegamorphicMiss);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1256,6 +1268,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictMegamorphic, void, (EncodedJSValu
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictMegamorphicGeneric, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedBase, uintptr_t rawCacheableIdentifier))
 {
+    JSTHREADS_COUNT(icPutByIdMegamorphicMiss);
     SuperSamplerScope superSamplerScope(false);
 
     VM& vm = globalObject->vm();
@@ -1273,6 +1286,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictMegamorphicGeneric, void, (JSGlob
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyMegamorphic, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icPutByIdMegamorphicMiss);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1291,6 +1305,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyMegamorphic, void, (EncodedJSValu
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyMegamorphicGeneric, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedBase, uintptr_t rawCacheableIdentifier))
 {
+    JSTHREADS_COUNT(icPutByIdMegamorphicMiss);
     SuperSamplerScope superSamplerScope(false);
 
     VM& vm = globalObject->vm();
@@ -1387,6 +1402,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectSloppyGaveUp, void, (EncodedJSVal
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icPutByIdOptimize);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1420,6 +1436,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictOptimize, void, (EncodedJSValue e
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSTHREADS_COUNT(icPutByIdOptimize);
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -1937,6 +1954,7 @@ JSC_DEFINE_JIT_OPERATION(operationDirectPutByValSloppyOptimize, void, (EncodedJS
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValStrictGaveUp, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSTHREADS_COUNT(icPutByValGaveUp);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -1958,6 +1976,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValStrictGaveUp, void, (EncodedJSValue en
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValStrictGeneric, void, (JSGlobalObject* globalObject, EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue))
 {
+    JSTHREADS_COUNT(icPutByValGaveUp);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -1976,6 +1995,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValStrictGeneric, void, (JSGlobalObject* 
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyGaveUp, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSTHREADS_COUNT(icPutByValGaveUp);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -1997,6 +2017,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyGaveUp, void, (EncodedJSValue en
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyGeneric, void, (JSGlobalObject* globalObject, EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue))
 {
+    JSTHREADS_COUNT(icPutByValGaveUp);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2497,6 +2518,7 @@ JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalStrictTaintedByWithScope, Encode
 
 JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
 {
+    JSTHREADS_COUNT(callLinkPolymorphic);
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     // vmConcurrentProbe: owner may sit on a freshly (re-)handed-out
     // MarkedBlock (residual-2 recycled-block class); the TSAN-only
@@ -2524,6 +2546,7 @@ JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* cal
 
 JSC_DEFINE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
 {
+    JSTHREADS_COUNT(callVirtualSlow);
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     // vmConcurrentProbe: owner may sit on a freshly (re-)handed-out
     // MarkedBlock (residual-2 recycled-block class); the TSAN-only
@@ -2546,6 +2569,7 @@ JSC_DEFINE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame* calleeF
 
 JSC_DEFINE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
 {
+    JSTHREADS_COUNT(callLinkSlow);
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     // vmConcurrentProbe: owner may sit on a freshly (re-)handed-out
     // MarkedBlock (residual-2 recycled-block class); the TSAN-only
@@ -3697,6 +3721,7 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValGaveUp, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSTHREADS_COUNT(icGetByValGaveUp);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -3717,6 +3742,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValGaveUp, EncodedJSValue, (EncodedJSValu
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValOptimize, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSTHREADS_COUNT(icGetByValOptimize);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -3946,6 +3972,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphic, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSTHREADS_COUNT(icGetByValGeneric);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -3958,6 +3985,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphic, EncodedJSValue, (EncodedJ
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphicGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedSubscript))
 {
+    JSTHREADS_COUNT(icGetByValGeneric);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -3968,6 +3996,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphicGeneric, EncodedJSValue, (J
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedSubscript))
 {
+    JSTHREADS_COUNT(icGetByValGeneric);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -4917,6 +4946,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    // TSAN only: the handler pointer arrives from JIT'd code that loaded it
+    // through the chain PropertyInlineCache::prependHandler published with a
+    // fence (its HAPPENS_BEFORE is keyed on the handler); this is the AFTER
+    // side for the handler-field reads below, the one operation that is handed
+    // the handler itself rather than its PropertyInlineCache. No-op otherwise.
+    TSAN_ANNOTATE_HAPPENS_AFTER(handler);
 
     size_t newSize = handler->newSize() / sizeof(JSValue);
     size_t oldSize = handler->oldSize() / sizeof(JSValue);

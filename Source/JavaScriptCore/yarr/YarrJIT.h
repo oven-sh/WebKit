@@ -296,8 +296,12 @@ public:
     std::optional<JITFailureReason> failureReason() { return m_failureReason; }
 
     size_t codeSize() const { return m_ref8.size() + m_ref16.size() + m_matchOnly8.size() + m_matchOnly16.size(); }
-    bool has8BitCode() { return m_ref8.size(); }
-    bool has16BitCode() { return m_ref16.size(); }
+    // One-word tests (the code pointer), so a lock-free reader on another
+    // thread (RegExp::compileIfNecessary GIL off) that sees code for a width
+    // reads the very word it will call through, never a second field of the
+    // CodeRef that a racing compile of the other width may still be storing.
+    bool has8BitCode() { return !!m_ref8.code(); }
+    bool has16BitCode() { return !!m_ref16.code(); }
     void set8BitCode(MacroAssemblerCodeRef<Yarr8BitPtrTag> ref, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_ref8 = ref;
@@ -309,8 +313,8 @@ public:
         saveMaps(WTF::move(maps));
     }
 
-    bool has8BitCodeMatchOnly() { return m_matchOnly8.size(); }
-    bool has16BitCodeMatchOnly() { return m_matchOnly16.size(); }
+    bool has8BitCodeMatchOnly() { return !!m_matchOnly8.code(); }
+    bool has16BitCodeMatchOnly() { return !!m_matchOnly16.code(); }
     void set8BitCodeMatchOnly(MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag> matchOnly, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_matchOnly8 = matchOnly;

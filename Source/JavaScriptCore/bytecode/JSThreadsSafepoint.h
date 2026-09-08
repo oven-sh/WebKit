@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include "JSThreadsCounters.h"
+
 #include "Options.h"
 #include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
@@ -330,8 +332,10 @@ public:
     {
         if (!m_shouldLock) [[likely]]
             return;
+        JSTHREADS_COUNT(gilOffCompilationLock);
         if (gilOffCompilationLock().tryLock()) [[likely]]
             return;
+        JSTHREADS_COUNT(gilOffCompilationLockContended);
         lockGILOffCompilationLockContended(vm);
     }
 
