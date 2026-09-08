@@ -652,7 +652,6 @@ void JIT::emitMaterializeMetadataAndConstantPoolRegisters()
 void JIT::emitMaterializeMetadataAndConstantPoolRegisters(CCallHelpers& jit)
 {
     jit.loadPtr(addressFor(CallFrameSlot::codeBlock), GPRInfo::jitDataRegister);
-    jit.store8(TrustedImm32(1), Address(GPRInfo::jitDataRegister, CodeBlock::offsetOfEnteredSinceLastGCEnd()));
     static_assert(static_cast<ptrdiff_t>(CodeBlock::offsetOfJITData() + sizeof(void*)) == CodeBlock::offsetOfMetadataTable());
     jit.loadPairPtr(Address(GPRInfo::jitDataRegister, CodeBlock::offsetOfJITData()), GPRInfo::jitDataRegister, GPRInfo::metadataTableRegister);
 }

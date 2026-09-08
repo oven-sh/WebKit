@@ -1461,7 +1461,7 @@ void CodeBlock::visitChildren(Visitor& visitor)
 
     // Update profiles from concurrent markers to reduce the cost of update at the GC end phase as its execution is serialized.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
-        if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType()) && (m_enteredSinceLastGCEnd || m_isProfiledByDFG || !Options::useExecutedOnlyCodeBlockGCWalks())) {
+        if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType())) {
             updateAllNonLazyValueProfilePredictions();
             updateAllLazyValueProfilePredictions();
         }
@@ -2114,19 +2114,8 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 
     // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
-    bool foldProfiles = JITCode::isBaselineCode(jitType());
-    // Without DFG code profiling into it, only this block's own frames write its profiles, and each set the flag in its prologue (CodeBlockSet re-arms frames that outlive this end phase): unset means every profile is still empty.
-    if (foldProfiles && Options::useExecutedOnlyCodeBlockGCWalks() && !m_isProfiledByDFG)
-        foldProfiles = std::exchange(m_enteredSinceLastGCEnd, false);
-    if (foldProfiles)
+    if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions();
-#if ASSERT_ENABLED
-    else if (JITCode::isBaselineCode(jitType())) {
-        unsigned liveProfiles, samples;
-        updateAllNonLazyValueProfilePredictionsAndCountLiveness(liveProfiles, samples);
-        ASSERT(!samples);
-    }
-#endif
 
     if (JITCode::couldBeInterpreted(jitType())) {
         reconcileLLIntInlineCachesAtGCEnd();
@@ -3432,10 +3421,12 @@ size_t CodeBlock::numberOfDFGIdentifiers() const
     return m_jitCode->dfgCommon()->m_dfgIdentifiers.size();
 }
 
-const Identifier& CodeBlock::dfgIdentifier(int index) const
+const Identifier& CodeBlock::identifier(int index) const
 {
-    size_t unlinkedIdentifiers = m_unlinkedCode->numberOfIdentifiers();
-    ASSERT(static_cast<unsigned>(index) >= unlinkedIdentifiers);
+    UnlinkedCodeBlock* unlinkedCode = m_unlinkedCode.get();
+    size_t unlinkedIdentifiers = unlinkedCode->numberOfIdentifiers();
+    if (static_cast<unsigned>(index) < unlinkedIdentifiers)
+        return unlinkedCode->identifier(index);
     ASSERT(JSC::JITCode::isOptimizingJIT(jitType()));
     return m_jitCode->dfgCommon()->m_dfgIdentifiers[index - unlinkedIdentifiers];
 }

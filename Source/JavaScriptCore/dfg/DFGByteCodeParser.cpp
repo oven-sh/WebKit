@@ -11536,9 +11536,7 @@ ByteCodeParser::InlineStackEntry::InlineStackEntry(
     , m_returnValue(returnValue)
     , m_caller(byteCodeParser->m_inlineStackTop)
 {
-    m_profiledBlock->setIsProfiledByDFG();
     {
-        m_profiledBlock->assertLLIntInlineCachesReadableFromThisThread();
         m_exitProfile.initialize(m_profiledBlock->unlinkedCodeBlock());
         m_lazyOperands.initialize(m_profiledBlock->lazyValueProfiles());
         m_specFailValueProfileBuckets = m_profiledBlock->lazyValueProfiles().speculationFailureValueProfileBucketsMap();

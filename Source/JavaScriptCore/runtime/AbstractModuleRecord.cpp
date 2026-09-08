@@ -125,7 +125,6 @@ size_t AbstractModuleRecord::estimatedSize(JSCell* cell, VM& vm)
     // OrderedHashMap does not expose byteSize(); approximate with capacity * entry size.
     size += thisObject->m_exportEntries.capacity() * (sizeof(RefPtr<UniquedStringImpl>) + sizeof(ExportEntry));
     size += thisObject->m_importEntries.capacity() * (sizeof(RefPtr<UniquedStringImpl>) + sizeof(ImportEntry));
-    size += thisObject->m_scopeResolutions.capacity() * sizeof(ScopeResolutions::KeyValuePairType);
 #if USE(BUN_JSC_ADDITIONS)
     size += thisObject->m_prelinkedRequested.capacity() * sizeof(WriteBarrier<AbstractModuleRecord>);
     size += thisObject->m_prelinkedImportResolutions.size() * sizeof(Resolution);

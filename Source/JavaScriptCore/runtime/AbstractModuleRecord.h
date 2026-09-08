@@ -42,7 +42,6 @@
 namespace JSC {
 
 class CyclicModuleRecord;
-class JSLexicalEnvironment;
 class JSModuleEnvironment;
 class JSModuleNamespaceObject;
 class JSMap;
@@ -254,25 +253,6 @@ public:
     Resolution resolveExportByName(JSGlobalObject*, const Identifier& exportName);
     Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName);
 
-    // Options::useModuleEnvironmentResolveCache(). Mutator only, not visited: environments in it are this record's or ones m_loadedModules / m_prelinkedRequested retain.
-    struct ScopeResolution {
-        enum class Kind : uint8_t { Local, Import, Above };
-        JSLexicalEnvironment* lexicalEnvironment { nullptr };
-        RefPtr<UniquedStringImpl> importedName;
-        uint32_t operand { 0 };
-        Kind kind { Kind::Above };
-        uint8_t skip { 0 };
-    };
-    using ScopeResolutions = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, ScopeResolution, IdentifierRepHash>;
-    ScopeResolutions& scopeResolutionsForGlobalLexicalBindingCount(size_t globalLexicalBindingCount) LIFETIME_BOUND
-    {
-        if (globalLexicalBindingCount != m_scopeResolutionsBindingCount) [[unlikely]] {
-            m_scopeResolutions.clear();
-            m_scopeResolutionsBindingCount = globalLexicalBindingCount;
-        }
-        return m_scopeResolutions;
-    }
-
     AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
 
@@ -409,9 +389,6 @@ private:
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
-
-    ScopeResolutions m_scopeResolutions;
-    size_t m_scopeResolutionsBindingCount { 0 };
 
 protected:
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;

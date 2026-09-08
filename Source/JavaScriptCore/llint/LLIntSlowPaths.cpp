@@ -769,7 +769,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_direct)
 
             if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
                 {
-                    ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+                    ConcurrentJSLocker locker(codeBlock->m_lock);
                     metadata.m_structureID = structure->id();
                     metadata.m_offset = slot.cachedOffset();
                 }
@@ -839,7 +839,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     ASSERT_UNUSED(result, result.isNewEntry);
 
     {
-        ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+        ConcurrentJSLocker locker(codeBlock->m_lock);
         if (slot.isUnset())
             metadata.setUnsetMode(structure);
         else {
@@ -892,7 +892,7 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
         JSCell* baseCell = baseValue.asCell();
         Structure* structure = baseCell->structure();
         if (slot.isValue() && slot.slotBase() == baseValue) {
-            ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+            ConcurrentJSLocker locker(codeBlock->m_lock);
             // Start out by clearing out the old cache.
             metadata.clearToDefaultModeWithoutCache();
 
@@ -1129,7 +1129,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                             ASSERT(chain);
                         }
 
-                        ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+                        ConcurrentJSLocker locker(codeBlock->m_lock);
                         metadata.m_oldStructureID = oldStructure->id();
                         metadata.m_offset = slot.cachedOffset();
                         metadata.m_newStructureID = newStructure->id();
@@ -1148,7 +1148,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                 RELEASE_ASSERT(newStructure == oldStructure);
                 newStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
                 {
-                    ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+                    ConcurrentJSLocker locker(codeBlock->m_lock);
                     metadata.m_oldStructureID = newStructure->id();
                     metadata.m_offset = slot.cachedOffset();
                 }
@@ -1290,7 +1290,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_private_name)
 
             if (!structure->isUncacheableDictionary()) {
                 {
-                    ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+                    ConcurrentJSLocker locker(codeBlock->m_lock);
                     metadata.m_structureID = structure->id();
                     metadata.m_offset = slot.cachedOffset();
 
@@ -1436,7 +1436,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
                     if (result != InvalidPrototypeChain && !sawPolyProto) {
                         ASSERT(oldStructure->isObject());
 
-                        ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+                        ConcurrentJSLocker locker(codeBlock->m_lock);
                         metadata.m_oldStructureID = oldStructure->id();
                         metadata.m_offset = slot.cachedOffset();
                         metadata.m_newStructureID = newStructure->id();
@@ -1454,7 +1454,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
                 RELEASE_ASSERT(newStructure == oldStructure);
                 newStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
                 {
-                    ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
+                    ConcurrentJSLocker locker(codeBlock->m_lock);
                     metadata.m_oldStructureID = newStructure->id();
                     metadata.m_offset = slot.cachedOffset();
                     metadata.m_property.set(vm, codeBlock, subscript.asCell());
@@ -1485,7 +1485,7 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
     LLINT_CHECK_EXCEPTION();
 
     if (Options::useLLIntICs() && !oldStructure->isDictionary()) {
-        GCSafeConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate(), vm);
+        GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
         Structure* newStructure = baseObject->structure();
 
         ASSERT(oldStructure == newStructure->previousID());
@@ -1528,7 +1528,7 @@ LLINT_SLOW_PATH_DECL(slow_path_check_private_brand)
     // rely on StructureID even if it's an uncacheable dictionary.
     Structure* structure = baseObject->structure();
     if (Options::useLLIntICs()) {
-        GCSafeConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate(), vm);
+        GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
 
         metadata.m_structureID = structure->id();
         metadata.m_brand.set(vm, codeBlock, brand.asCell());

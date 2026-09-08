@@ -79,8 +79,6 @@ namespace CodeBlockCreationStats {
     v(LinkHandlers, "link: exception handlers") \
     v(LinkInstructionWalk, "link: instruction-stream walk (metadata init, scope resolution)") \
     v(LinkScopeResolution, "link:   of which resolve_scope/get_from_scope/put_to_scope cases (abstractResolve)") \
-    v(ModuleResolveCacheHit, "link:   count only: abstractResolve reads answered at a module environment from its record's resolve cache (useModuleEnvironmentResolveCache)") \
-    v(ModuleResolveCacheMiss, "link:   count only: abstractResolve reads that reached a module environment and missed that cache (first occurrence of the name in the module)") \
     v(LinkProfiledOpcodeMetadata, "link:   count only: plain LINK() metadata entries placement-new'd (get_by_id, call, ...); time = walk - scope") \
     v(LinkTemplateObjects, "link: template objects + tail") \
     v(LinkTotal, "link: TOTAL CodeBlock::CodeBlock+finishCreation (inclusive)") \
