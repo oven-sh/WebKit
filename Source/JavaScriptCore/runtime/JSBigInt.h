@@ -457,8 +457,12 @@ public:
     static JSValue asUintN(JSGlobalObject*, uint64_t numberOfBits, int32_t bigIntAsInt32);
 #endif
 
+    // ToBigUint64 / ToBigInt64: the value modulo 2^64.
     inline static uint64_t toBigUInt64(JSValue); // Defined in JSBigIntInlines.h
     inline static int64_t toBigInt64(JSValue); // Defined in JSBigIntInlines.h
+    // nullopt instead of wrapping when the value is not representable.
+    inline static std::optional<uint64_t> tryGetAsUint64(JSValue); // Defined in JSBigIntInlines.h
+    inline static std::optional<int64_t> tryGetAsInt64(JSValue); // Defined in JSBigIntInlines.h
 
     Digit digit(unsigned) const;
     void setDigit(unsigned, Digit); // Use only when initializing.

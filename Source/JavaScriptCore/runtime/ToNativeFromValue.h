@@ -63,10 +63,11 @@ std::optional<typename Adaptor::Type> toNativeFromValueWithoutCoercion(JSValue v
     if constexpr (std::is_same_v<Adaptor, BigInt64Adaptor> || std::is_same_v<Adaptor, BigUint64Adaptor>) {
         if (!value.isBigInt())
             return std::nullopt;
+        // Not toBigInt64 / toBigUInt64: a BigInt the element type cannot represent matches no element, even one it is congruent to modulo 2^64.
         if constexpr (std::is_same_v<Adaptor, BigInt64Adaptor>)
-            return JSBigInt::toBigInt64(value);
+            return JSBigInt::tryGetAsInt64(value);
         else
-            return JSBigInt::toBigUInt64(value);
+            return JSBigInt::tryGetAsUint64(value);
     } else {
         if (!value.isNumber())
             return std::nullopt;

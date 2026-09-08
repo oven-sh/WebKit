@@ -60,6 +60,40 @@ inline int64_t JSBigInt::toBigInt64(JSValue bigInt)
     return static_cast<int64_t>(toBigUInt64Heap(bigInt.asHeapBigInt()));
 }
 
+inline std::optional<uint64_t> JSBigInt::tryGetAsUint64(JSValue bigInt)
+{
+    ASSERT(bigInt.isBigInt());
+#if USE(BIGINT32)
+    if (bigInt.isBigInt32()) {
+        int32_t value = bigInt.bigInt32AsInt32();
+        if (value < 0)
+            return std::nullopt;
+        return static_cast<uint64_t>(value);
+    }
+#endif
+    JSBigInt* heapBigInt = bigInt.asHeapBigInt();
+    if (heapBigInt->sign() || heapBigInt->length() > sizeof(uint64_t) / sizeof(Digit))
+        return std::nullopt;
+    return toBigUInt64Heap(heapBigInt);
+}
+
+inline std::optional<int64_t> JSBigInt::tryGetAsInt64(JSValue bigInt)
+{
+    ASSERT(bigInt.isBigInt());
+#if USE(BIGINT32)
+    if (bigInt.isBigInt32())
+        return static_cast<int64_t>(bigInt.bigInt32AsInt32());
+#endif
+    JSBigInt* heapBigInt = bigInt.asHeapBigInt();
+    if (heapBigInt->length() > sizeof(uint64_t) / sizeof(Digit))
+        return std::nullopt;
+    // The magnitude is below 2^64 here, so the wrapped value has the BigInt's sign exactly when the BigInt is in [-2^63, 2^63 - 1].
+    int64_t value = static_cast<int64_t>(toBigUInt64Heap(heapBigInt));
+    if ((value < 0) != heapBigInt->sign())
+        return std::nullopt;
+    return value;
+}
+
 ALWAYS_INLINE std::optional<double> JSBigInt::tryExtractDouble(JSValue value)
 {
     if (value.isNumber())
