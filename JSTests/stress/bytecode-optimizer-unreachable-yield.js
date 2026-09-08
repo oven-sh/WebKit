@@ -77,7 +77,7 @@ for (let i = 0; i < 3000; i++) {
 }
 check("finallyCount", holeInTry.finallyCount);
 {
-    const it = holeInTry(5); it.next(); it.next();
+    const it = holeInTry(5); it.next(); // suspended at `yield x` inside the try: return() must run the finally
     check("returnThroughFinally", JSON.stringify(it.return("r")) + holeInTry.finallyCount);
     const it2 = holeMiddle(1); it2.next();
     let thrown; try { it2.throw(new Error("x")); } catch (e) { thrown = e.message; }

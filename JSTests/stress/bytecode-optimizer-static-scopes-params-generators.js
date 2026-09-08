@@ -34,11 +34,11 @@ print(outer());
 }
 
 // --- arrow functions capturing this/new.target/arguments/super incl. derived constructors
-section("07-arrow-this.js", ["[object Object]|bmoxox"]);
+section("07-arrow-this.js", ["v,true,ox,arg|bmoxox"]);
 {
 function outer() {
   let x = "ox";
-  function F() { this.v = "v"; const a = () => () => [this.v, new.target === F, x, arguments[0]].join(","); return a()(); }
+  function F() { this.v = "v"; const a = () => () => [this.v, new.target === F, x, arguments[0]].join(","); this.r = a()(); this.toString = () => this.r; }
   class B { m() { return "bm"; } }
   class D extends B { m() { const a = () => (() => super.m() + x)(); return a(); } constructor() { const pre = () => x; pre(); super(); this.k = (() => this.m() + x)(); } }
   return [new F("arg"), new D().k].join("|");
