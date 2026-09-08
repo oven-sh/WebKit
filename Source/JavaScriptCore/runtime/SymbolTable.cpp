@@ -29,6 +29,7 @@
 #include "config.h"
 #include "SymbolTable.h"
 
+#include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "DebuggerLocation.h"
 #include "JSCJSValueInlines.h"
@@ -90,8 +91,9 @@ void SymbolTable::visitChildrenImpl(JSCell* thisCell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(SymbolTable);
 
-const SymbolTable::LocalToEntryVec& SymbolTable::localToEntry(const ConcurrentJSLocker&)
+const SymbolTable::LocalToEntryVec& SymbolTable::localToEntry(const ConcurrentJSLocker& locker)
 {
+    materializeCachedEntriesIfPossible(locker);
     if (!m_localToEntry) [[unlikely]] {
         unsigned size = 0;
         for (auto& entry : m_map) {
@@ -149,6 +151,12 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOri
 
     bool hasScopedArgumentWatchpoints = !varOffsetToArgIndexMap.isEmpty();
 
+    if (m_cachedEntries) {
+        // A cached ScopedArgumentsTable has no watchpoint sets, and one only gets them via find(), which materializes.
+        ASSERT(!hasScopedArgumentWatchpoints);
+        result->setCachedEntries(*m_cachedEntriesDecoder, m_cachedEntries, true); // m_map is empty; nothing to copy below
+    }
+
     for (auto iter = m_map.begin(), end = m_map.end(); iter != end; ++iter) {
         if (!iter->value.varOffset().isScope())
             continue;
@@ -205,11 +213,12 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOri
     return result;
 }
 
-void SymbolTable::prepareForTypeProfiling(const ConcurrentJSLocker&)
+void SymbolTable::prepareForTypeProfiling(const ConcurrentJSLocker& locker)
 {
     if (m_rareData)
         return;
 
+    materializeCachedEntriesIfNeeded(locker);
     auto& rareData = ensureRareData();
 
     for (auto iter = m_map.begin(), end = m_map.end(); iter != end; ++iter) {
@@ -320,6 +329,29 @@ bool SymbolTable::hasScopedWatchpointSet(InlineWatchpointSet* watchpointSet)
 }
 #endif
 
+void SymbolTable::setCachedEntries(Decoder& decoder, const CachedSymbolTable* record, bool scopePartOnly)
+{
+    ASSERT(m_map.isEmpty() && !m_cachedEntries);
+    m_cachedEntriesDecoder = &decoder;
+    m_cachedEntries = record;
+    m_cachedEntriesScopePartOnly = scopePartOnly;
+}
+
+void SymbolTable::materializeCachedEntries()
+{
+    ASSERT(m_cachedEntries && m_map.isEmpty());
+    VM& vm = this->vm();
+    // Decoding atomizes keys (and may swap JSString contents to atoms): mutator only, and not from inside a GC phase
+    // the mutator is running itself (heap snapshot analysis). See hasCachedEntriesPending(). No GC allocation.
+    if (isCompilationThread() || vm.heap.currentThreadIsDoingGCWork()) [[unlikely]]
+        return;
+    ASSERT(Thread::currentSingleton().atomStringTable() == vm.atomStringTable());
+    RefPtr<Decoder> decoder = std::exchange(m_cachedEntriesDecoder, nullptr);
+    const CachedSymbolTable* record = std::exchange(m_cachedEntries, nullptr);
+    decodeSymbolTableEntries(*decoder, *record, *this, m_cachedEntriesScopePartOnly);
+    m_localToEntry = nullptr; // A compiler thread may have built it from the empty map.
+}
+
 SymbolTable::SymbolTableRareData& SymbolTable::ensureRareDataSlow()
 {
     auto rareData = makeUnique<SymbolTableRareData>();
@@ -335,6 +367,8 @@ void SymbolTable::dump(PrintStream& out) const
 
     CommaPrinter comma;
     out.print(" <"_s);
+    if (m_cachedEntries)
+        out.print(comma, "<entries pending>"_s);
     for (auto& iter : m_map)
         out.print(comma, *iter.key, ": "_s, iter.value.varOffset());
     out.println(">"_s);

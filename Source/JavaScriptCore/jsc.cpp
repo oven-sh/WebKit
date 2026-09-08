@@ -1857,6 +1857,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
         memcpySpan(std::span { copy, bytes->size() }, bytes->span());
         Ref<CachedBytecode> persistent = CachedBytecode::create(std::span { copy, bytes->size() }, [](const void*) { }, { });
         persistent->setPayloadIsPersistent();
+        persistent->setPayloadIntegrityIsPreVerified();
         executable = decodeBuiltinFunction(vm, WTF::move(persistent), *source.provider(), stamp);
         if (!executable)
             return throwVMError(globalObject, scope, "decodeBuiltinFunction rejected the payload"_s);
@@ -1937,6 +1938,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     // GC heap past this call, so the CachedBytecode is kept for the rest of the process, as diskCachePayloadIsPersistentForTesting does.
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [size](const void* p) { munmap(const_cast<void*>(p), size); }, { });
     cachedBytecode->setPayloadIsPersistent();
+    cachedBytecode->setPayloadIntegrityIsPreVerified();
     // Kept for the rest of the process even if the decode below is rejected: decodeCodeBlock materializes the block (which
     // aliases the mapping) before it compares source keys, so the mapping may already have borrowers on the GC heap.
     cachedBytecode->ref();

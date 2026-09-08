@@ -331,7 +331,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 22. Let lexDeclarations be the LexicallyScopedDeclarations of code.
     // 23. Let privateEnv be null.
     // 24. For each element d of lexDeclarations, do
-    for (size_t i = 0, numberOfFunctions = unlinkedCodeBlock->numberOfFunctionDecls(); i < numberOfFunctions; ++i) {
+    // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
+    // create, so do not look those up by name (the name may still be in the bytecode cache).
+    size_t numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
+    for (size_t i = 0; i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then
         // 24.a.i.1. Perform ! env.CreateImmutableBinding(dn, true).
@@ -340,6 +343,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
         SymbolTableEntry::Fast entry = symbolTable->get(unlinkedFunctionExecutable->name().impl());
         VarOffset offset = entry.varOffset();
+        ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
             ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {

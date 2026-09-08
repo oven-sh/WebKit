@@ -1222,7 +1222,8 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
             //    import "B";
             //    import "A";
             //
-            m_codeBlock->addFunctionDecl(makeFunction(function));
+            unsigned index = m_codeBlock->addFunctionDecl(makeFunction(function));
+            codeBlock->setNumberOfHeapAllocatedFunctionDecls(index + 1);
         } else {
             // Stack allocated functions can be allocated when executing the module's body.
             m_functionsToInitialize.append(std::make_pair(function, NormalFunctionVariable));

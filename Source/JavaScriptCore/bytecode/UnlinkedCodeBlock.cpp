@@ -30,6 +30,7 @@
 #include "BaselineJITCode.h"
 #include "BytecodeLivenessAnalysis.h"
 #include "BytecodeStructs.h"
+#include "CachedTypes.h"
 #include "ClassInfo.h"
 #include "ExecutableInfo.h"
 #include "InstructionStream.h"
@@ -108,6 +109,8 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendValues(thisObject->m_constantRegisters.span());
     // Borrowed (cache-backed) instruction streams and expression info count here as if generated, so the collector
     // paces a program the same whether or not its bytecode came from a cache; estimatedSize() below reports what is owned.
+    // The exception is expression info not yet decoded from a persistent cache (m_cachedExpressionInfo): its size is
+    // only known once its cold record is read, so it counts from the collection after its first use.
     size_t extraMemory = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
         extraMemory += thisObject->m_instructions->sizeInBytes();
@@ -151,14 +154,26 @@ size_t UnlinkedCodeBlock::RareData::sizeInBytes(const AbstractLocker&) const
     return size;
 }
 
+ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
+{
+    ConcurrentJSLocker locker(m_lock);
+    if (!m_expressionInfo) {
+        RELEASE_ASSERT(m_cachedExpressionInfo);
+        std::unique_ptr<ExpressionInfo> expressionInfo = decodeBorrowedExpressionInfo(m_cachedExpressionInfo, m_cachedExpressionInfoBytes);
+        WTF::storeStoreFence(); // expressionInfo() and visitChildren read m_expressionInfo without m_lock
+        m_expressionInfo = WTF::move(expressionInfo);
+    }
+    return *m_expressionInfo;
+}
+
 LineColumn UnlinkedCodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    return m_expressionInfo->lineColumnForInstPC(bytecodeIndex.offset());
+    return expressionInfo().lineColumnForInstPC(bytecodeIndex.offset());
 }
 
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    return m_expressionInfo->entryForInstPC(bytecodeIndex.offset());
+    return expressionInfo().entryForInstPC(bytecodeIndex.offset());
 }
 
 #ifndef NDEBUG
@@ -187,7 +202,7 @@ void UnlinkedCodeBlock::dumpExpressionInfo()
     size_t index = 0;
     dataLogF("UnlinkedCodeBlock %p expressionInfo[] {\n", this);
 
-    ExpressionInfo::Decoder decoder(*m_expressionInfo);
+    ExpressionInfo::Decoder decoder(expressionInfo());
     while (decoder.decode() != IterationStatus::Done) {
         dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.lineColumn(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
         index++;

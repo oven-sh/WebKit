@@ -26,14 +26,20 @@
 #include "config.h"
 #include "DFGDriver.h"
 
+#include "CallVariant.h"
 #include "CodeBlock.h"
+#include "DFGCapabilities.h"
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
 #include "DFGPlan.h"
 #include "DFGThunks.h"
+#include "DeferGCInlines.h"
 #include "FunctionAllowlist.h"
+#include "FunctionCodeBlock.h"
+#include "FunctionExecutable.h"
 #include "JITCode.h"
 #include "JITWorklist.h"
+#include "JSCellInlines.h"
 #include "Options.h"
 #include "ThunkGenerators.h"
 #include "TypeProfilerLog.h"
@@ -49,6 +55,63 @@ unsigned getNumCompilations()
 }
 
 #if ENABLE(DFG_JIT)
+// Mutator-side half of the fence in inlineFunctionForCapabilityLevel(): complete the lazily materialized state
+// (CodeBlock::prepareLazyStateForConcurrentCompilation) of every block the ByteCodeParser may inline into this plan --
+// the callees the profiled blocks name so far, transitively, within the inliner's depth and size limits (this mirrors
+// InliningPlan::surveyCallSites plus the accessor and recorded-status callees the parser also reaches). A callee that
+// gets linked after this ran is just not inlined by this compilation.
+static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, CodeBlock* profiledDFGCodeBlock, JITCompilationMode mode)
+{
+    if (!Options::useLazyCodeBlockStateCompilerFence())
+        return;
+    if (!Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables())
+        return; // every block is born prepared
+    DeferGCForAWhile deferGC(vm); // raw CodeBlock* / callee cells are held across the ensure*() allocations below
+    JITType jitType = isFTL(mode) ? JITType::FTLJIT : JITType::DFGJIT;
+
+    struct Entry {
+        CodeBlock* block;
+        unsigned depth; // inline depth of `block`; the root is 0, as in InliningPlan
+    };
+    Vector<Entry, 16> worklist;
+    UncheckedKeyHashSet<CodeBlock*> seen;
+    auto push = [&](CodeBlock* block, unsigned depth) {
+        if (block && seen.add(block).isNewEntry)
+            worklist.append({ block, depth });
+    };
+    CodeBlock* rootBaseline = codeBlock->baselineAlternative();
+    push(rootBaseline, 0);
+    push(profiledDFGCodeBlock, 0);
+    // InlineStackEntry also consults the optimized replacement's IC maps.
+    if (CodeBlock* replacement = rootBaseline->replacement(); replacement && JITCode::isOptimizingJIT(replacement->jitType()))
+        push(replacement, 0);
+
+    Vector<std::pair<JSCell*, CodeSpecializationKind>, 16> callees;
+    unsigned blocksVisited = 0;
+    while (!worklist.isEmpty()) {
+        Entry entry = worklist.takeLast();
+        entry.block->baselineAlternative()->prepareLazyStateForConcurrentCompilation();
+        if (++blocksVisited >= Options::maximumGlobalInliningPlanSites())
+            break;
+        if (entry.depth + 1 >= Options::maximumInliningDepth())
+            continue; // InliningPlan::priceCandidate rejects depth >= maximumInliningDepth, where the root's callees are depth 1
+
+        callees.shrink(0);
+        entry.block->collectProfiledCallees(callees);
+        for (auto [callee, kind] : callees) {
+            FunctionExecutable* executable = callee ? CallVariant(callee).functionExecutable() : nullptr;
+            if (!executable)
+                continue;
+            CodeBlock* calleeBlock = executable->baselineCodeBlockFor(kind);
+            if (!calleeBlock || !mightInlineFunctionFor(jitType, calleeBlock, kind))
+                continue;
+            push(calleeBlock, entry.depth + 1);
+            if (CodeBlock* replacement = calleeBlock->replacement(); replacement && JITCode::isOptimizingJIT(replacement->jitType()))
+                push(replacement, entry.depth + 1);
+        }
+    }
+}
+
 static CompilationResult compileImpl(
     VM& vm, CodeBlock* codeBlock, CodeBlock* profiledDFGCodeBlock, JITCompilationMode mode,
     BytecodeIndex osrEntryBytecodeIndex, Operands<std::optional<JSValue>>&& mustHandleValues,
@@ -86,7 +149,9 @@ static CompilationResult compileImpl(
     
     if (vm.typeProfiler())
         vm.typeProfilerLog()->processLogEntries(vm, "Preparing for DFG compilation."_s);
-    
+
+    prepareLazyStateOfInlineCandidates(vm, codeBlock, profiledDFGCodeBlock, mode);
+
     Ref<Plan> plan = adoptRef(*new Plan(codeBlock, profiledDFGCodeBlock, mode, osrEntryBytecodeIndex, WTF::move(mustHandleValues)));
 
     plan->setCallback(WTF::move(callback));

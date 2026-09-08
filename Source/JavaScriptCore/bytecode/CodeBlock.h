@@ -527,11 +527,27 @@ public:
     ALWAYS_INLINE SourceCodeRepresentation constantSourceCodeRepresentation(unsigned index) const { return m_unlinkedCode->constantSourceCodeRepresentation(index); }
     static constexpr ptrdiff_t offsetOfConstantsVectorBuffer() { return OBJECT_OFFSETOF(CodeBlock, m_constantRegisters) + decltype(m_constantRegisters)::dataMemoryOffset(); }
 
-    FunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
-    int numberOfFunctionDecls() { return m_functionDecls.size(); }
-    std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { return m_functionDecls.span(); }
-    FunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
+    // Options::useLazyFunctionExecutables(): an entry is created the first time it is asked for (new_func* slow paths,
+    // mutator only); compiler threads use the *IfMaterialized form and only parse blocks
+    // ensureFunctionExecutablesMaterialized() completed. A module's heap-allocated declarations never get an entry
+    // (firstLazilyMaterializedFunctionDecl()).
+    FunctionExecutable* functionDecl(unsigned index)
+    {
+        if (FunctionExecutable* executable = m_functionDecls[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionDeclSlow(index);
+    }
+    unsigned numberOfFunctionDecls() { return m_functionDecls.size(); }
+    std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { ASSERT(!m_numberOfUnmaterializedFunctionExecutables); return m_functionDecls.span(); } // EvalCode links eagerly
+    FunctionExecutable* functionExpr(unsigned index)
+    {
+        if (FunctionExecutable* executable = m_functionExprs[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionExprSlow(index);
+    }
     size_t numberOfFunctionExprs() const { return m_functionExprs.size(); }
+    FunctionExecutable* functionDeclIfMaterialized(unsigned index) { return m_functionDecls[index].get(); }
+    FunctionExecutable* functionExprIfMaterialized(unsigned index) { return m_functionExprs[index].get(); }
     
     const BitVector& bitVector(size_t i) LIFETIME_BOUND { return m_unlinkedCode->bitVector(i); }
 
@@ -779,6 +795,35 @@ public:
 
     bool isJettisoned() const { return m_isJettisoned; }
 
+    // Lazily materialized state vs. concurrent compilers: link-time state that is now built on first use instead
+    // (child FunctionExecutables, thin child executables; each behind its own option) is completed here, on the mutator, before this block gets JIT
+    // code of any tier (JITPlan(), setupWithUnlinkedBaselineCode()) and before an optimizing CodeBlock copies it
+    // (newReplacement()); DFG::compile also prepares the blocks the parser is likely to inline, and the parser refuses one
+    // that is not (DFG::inlineFunctionForCapabilityLevel). That covers state *owned by this block* only: lazy state a
+    // compiler thread reaches through the heap instead (an outer function's SymbolTable via a scope object, the
+    // FunctionExecutable of a callee it does not inline) needs its own compiler-thread-safe "not materialized" answer.
+    // Idempotent; mutator only; defers GC while the ensure* functions run.
+    void prepareLazyStateForConcurrentCompilation()
+    {
+        if (m_isLazyStatePreparedForConcurrentCompilation) [[likely]]
+            return;
+        prepareLazyStateForConcurrentCompilationSlow();
+    }
+    JS_EXPORT_PRIVATE void prepareLazyStateForConcurrentCompilationSlow();
+    // Any thread. Acquire-ordered against everything prepare published.
+    bool isLazyStatePreparedForConcurrentCompilation() const
+    {
+        bool prepared = m_isLazyStatePreparedForConcurrentCompilation;
+        WTF::loadLoadFence();
+        return prepared;
+    }
+    // useLazySymbolTableConstants needs no hook and does not gate the prepared bit: SymbolTable::materializeCachedEntries
+    // declines off the mutator and concurrent readers take a pending table as having no entries (SymbolTable.h).
+    void ensureFunctionExecutablesMaterialized(); // m_functionDecls / m_functionExprs
+    // The callees this block's call and accessor ICs (and, for an optimizing block, its recorded statuses) currently name,
+    // with the kind of call site that named them. Caller defers GC.
+    void collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializationKind>, 16>&);
+
     enum SteppingMode {
         SteppingModeDisabled,
         SteppingModeEnabled
@@ -823,6 +868,7 @@ public:
     bool m_didFailFTLCompilation : 1;
     bool m_hasBeenCompiledWithFTL : 1;
     bool m_isJettisoned : 1;
+    bool m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // mutator-written like the rest of this byte (m_didFailFTLCompilation is likewise read by compiler threads); see prepareLazyStateForConcurrentCompilation()
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
@@ -1024,6 +1070,11 @@ private:
     Vector<WriteBarrier<Unknown>> m_constantRegisters;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
+    unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
+    unsigned firstLazilyMaterializedFunctionDecl() const;
+    FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
+    FunctionExecutable* materializeFunctionExprSlow(unsigned index);
+    FunctionExecutable* materializeFunctionExecutable(WriteBarrier<FunctionExecutable>&, UnlinkedFunctionExecutable*);
 
     WriteBarrier<CodeBlock> m_alternative;
 

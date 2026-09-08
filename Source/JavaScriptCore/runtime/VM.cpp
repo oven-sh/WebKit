@@ -682,6 +682,13 @@ VM::~VM()
         }
         m_cachedBytecodeTwoCharacterAtoms = nullptr;
     }
+    if (m_cachedBytecodeThreeCharacterAtoms) {
+        for (AtomStringImpl* atom : *m_cachedBytecodeThreeCharacterAtoms) {
+            if (atom)
+                atom->deref();
+        }
+        m_cachedBytecodeThreeCharacterAtoms = nullptr;
+    }
 
     delete propertyNames;
     if (vmType != VMType::Default)
@@ -2271,6 +2278,13 @@ AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
     if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]]
         m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
     return m_cachedBytecodeTwoCharacterAtoms->data();
+}
+
+AtomStringImpl** VM::ensureCachedBytecodeThreeCharacterAtoms()
+{
+    if (!m_cachedBytecodeThreeCharacterAtoms) [[unlikely]]
+        m_cachedBytecodeThreeCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>>();
+    return m_cachedBytecodeThreeCharacterAtoms->data();
 }
 
 } // namespace JSC
