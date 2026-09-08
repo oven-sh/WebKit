@@ -151,6 +151,8 @@ static CompilationResult compileImpl(
         vm.typeProfilerLog()->processLogEntries(vm, "Preparing for DFG compilation."_s);
 
     prepareLazyStateOfInlineCandidates(vm, codeBlock, profiledDFGCodeBlock, mode);
+    if (mode != JITCompilationMode::FTLForOSREntry)
+        codeBlock->baselineAlternative()->ensureCatchLivenessIsComputedForExecutedCatches(); // the parser makes a catch OSR entrypoint only where the buffer exists
 
     Ref<Plan> plan = adoptRef(*new Plan(codeBlock, profiledDFGCodeBlock, mode, osrEntryBytecodeIndex, WTF::move(mustHandleValues)));
 

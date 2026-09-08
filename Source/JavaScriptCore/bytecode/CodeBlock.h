@@ -869,6 +869,7 @@ public:
     bool m_hasBeenCompiledWithFTL : 1;
     bool m_isJettisoned : 1;
     bool m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // mutator-written like the rest of this byte (m_didFailFTLCompilation is likewise read by compiler threads); see prepareLazyStateForConcurrentCompilation()
+    bool m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // written and read on the mutator (this byte may also be RMW'd by a Baseline compile thread via m_capabilityLevelState; a lost bit only re-defers the buffer); Options::useLazyCatchLiveness()
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
@@ -899,7 +900,15 @@ public:
 
     DisposableCallSiteIndex newExceptionHandlingCallSiteIndex(CallSiteIndex originalCallSite);
 
-    void ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex);
+    // Null while Options::useLazyCatchLiveness() defers creating the buffer; op_catch does not profile until then.
+    ValueProfileAndVirtualRegisterBuffer* ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex);
+    // Mutator only, on the baseline block, before a DFG / FTL plan parses it: creates the buffers useLazyCatchLiveness deferred. True if it created one.
+    bool ensureCatchLivenessIsComputedForExecutedCatches()
+    {
+        if (m_hasCatchThatExecutedWithoutBuffer) [[unlikely]]
+            return ensureCatchLivenessIsComputedForExecutedCatchesSlow();
+        return false;
+    }
 
     bool hasTailCalls() const { return m_unlinkedCode->hasTailCalls(); }
 
@@ -1008,7 +1017,8 @@ private:
     }
 
     void insertBasicBlockBoundariesForControlFlowProfiler();
-    void ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&, BytecodeIndex);
+    ValueProfileAndVirtualRegisterBuffer* ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&, BytecodeIndex);
+    bool ensureCatchLivenessIsComputedForExecutedCatchesSlow();
 
     template<typename Func>
     void forEachPropertyInlineCache(Func);
