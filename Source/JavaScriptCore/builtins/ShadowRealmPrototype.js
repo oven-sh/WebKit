@@ -59,7 +59,11 @@ function crossRealmThrow(error)
     "use strict";
 
     // re-throw because import issues raise errors using the realm's global object
-    @throwTypeError(@toString(error));
+    var message = @toString(error);
+
+    // An empty message asserts in the error constructor, and reports a TypeError with no text at
+    // all. A module that runs `throw ""` lands here.
+    @throwTypeError(message || "Error encountered during import");
 }
 
 function importValue(specifier, exportName)
