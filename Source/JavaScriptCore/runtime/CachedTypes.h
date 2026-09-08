@@ -130,6 +130,13 @@ public:
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
+    // StringImpl::hash() of the string atomForSlot(slot) would return, without creating it; nullopt where atomForSlot
+    // returns null (a record with bad bounds crashes in both).
+    std::optional<uint32_t> hashForSlot(uint32_t slot) const;
+    // atomForSlot(vm, slot) would return `string`'s atom, decided without creating it (by the slot's cached pointer when
+    // it has one, else by contents); false for a symbol and where atomForSlot returns null (a record with bad bounds
+    // crashes in both). Mutator only.
+    bool slotEquals(uint32_t slot, const StringImpl&) const;
     // The one JSString this VM uses for the string constant with this ordinal (single characters come from SmallStrings
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives.

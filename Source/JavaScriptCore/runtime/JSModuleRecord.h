@@ -58,6 +58,12 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
     static JSModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier&, const SourceCode&, CodeFeatures);
+#if USE(BUN_JSC_ADDITIONS)
+    // Module `moduleIndex` of the graph: features, TLA/TypeScript flags and requested modules come from the graph; no
+    // import/export entries are added (AbstractModuleRecord::isPrelinked()). With Options::usePrelinkedModuleInfo() off
+    // the result is instead an ordinary record whose entries were copied out of the graph.
+    JS_EXPORT_PRIVATE static JSModuleRecord* createPrelinked(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey, const SourceCode&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
+#endif
 
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
 

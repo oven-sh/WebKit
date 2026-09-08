@@ -1640,6 +1640,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ParseInt.h
     runtime/PinballCompletion.h
     runtime/PlainGregorianDateTime.h
+    runtime/PrelinkedModuleGraph.h
     runtime/PrivateFieldPutKind.h
     runtime/PrivateName.h
     runtime/ProfilerSupport.h

@@ -98,7 +98,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useThinChildExecutables, true, Normal, "If true, an UnlinkedFunctionExecutable decoded from an owned or persistent bytecode cache payload leaves its name, parent scope TDZ variables, rare data and the source positions only introspection reads in the payload until first use."_s) \
     v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so useBorrowedBytecodeFromCache applies to them."_s) \
     v(Bool, verifyBytecodeCacheChecksums, true, Normal, "check each code block's CRC when it is decoded from a bytecode cache and fall back to generating it from source on a mismatch"_s) \
-    v(Bool, useTrustedEmbeddedBytecodeIntegrity, true, Normal, "If true, a bytecode cache payload the embedder marked integrity-pre-verified (e.g. a section of the running executable) is decoded without per-code-block bounds/checksum checks."_s)
+    v(Bool, useTrustedEmbeddedBytecodeIntegrity, true, Normal, "If true, a bytecode cache payload the embedder marked integrity-pre-verified (e.g. a section of the running executable) is decoded without per-code-block bounds/checksum checks."_s) \
+    v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
+    v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)

@@ -53,6 +53,20 @@ JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Str
     return instance;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSModuleRecord* JSModuleRecord::createPrelinked(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, Ref<PrelinkedModuleGraph>&& graph, uint32_t moduleIndex)
+{
+    const PrelinkedModuleGraph::Module& module = graph->module(moduleIndex);
+    CodeFeatures features = (module.flags & PrelinkedModuleGraph::Module::HasImportMeta) ? ImportMetaFeature : NoFeatures;
+    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, features);
+    instance->finishCreation(globalObject, vm);
+    instance->initializePrelinked(vm, WTF::move(graph), moduleIndex);
+    if (!Options::usePrelinkedModuleInfo()) [[unlikely]]
+        instance->convertPrelinkedToEager();
+    return instance;
+}
+#endif
+
 JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
     : Base(vm, structure, moduleKey, SourceProviderSourceType::Module)
     , m_sourceCode(sourceCode)

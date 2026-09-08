@@ -590,6 +590,64 @@ RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
     }
 }
 
+std::optional<uint32_t> DecoderStringTable::hashForSlot(uint32_t slot) const
+{
+    if (slot == VariableLengthObjectBase::emptySentinel)
+        return emptyAtom().impl()->hash();
+    switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
+    case VariableLengthObjectBase::inlineStringTag: {
+        unsigned length = (slot >> 2) & 3;
+        if (!length)
+            return std::nullopt;
+        auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
+        return StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+    }
+    case VariableLengthObjectBase::externalStringTag:
+        if (slot >> 2 >= m_count)
+            return std::nullopt;
+        return record(slot >> 2).hash;
+    default:
+        return std::nullopt;
+    }
+}
+
+bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) const
+{
+    ASSERT(!isCompilationThread());
+    if (string.isSymbol())
+        return false; // the table only ever yields plain atoms
+    if (slot == VariableLengthObjectBase::emptySentinel)
+        return !string.length();
+    switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
+    case VariableLengthObjectBase::inlineStringTag: {
+        unsigned length = (slot >> 2) & 3;
+        if (!length || string.length() != length)
+            return false;
+        auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
+        return equal(&string, std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+    }
+    case VariableLengthObjectBase::externalStringTag: {
+        uint32_t ordinal = slot >> 2;
+        if (ordinal >= m_count)
+            return false;
+        if (StringImpl* existing = m_slots[ordinal] ? impl(m_slots[ordinal]) : nullptr) {
+            if (existing == &string)
+                return true;
+            if (existing->isAtom() && string.isAtom())
+                return false;
+        }
+        Record r = record(ordinal);
+        if (r.length != string.length())
+            return false;
+        return r.is8Bit
+            ? equal(&string, std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length })
+            : equal(&string, std::span { std::bit_cast<const char16_t*>(r.characters), r.length });
+    }
+    default:
+        return false;
+    }
+}
+
 JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
