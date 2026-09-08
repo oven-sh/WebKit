@@ -92,13 +92,16 @@ bool hasCapacityToUseLargeGigacage();
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \
     v(Bool, useLazySymbolTableConstants, true, Normal, "If true, a SymbolTable constant decoded from the bytecode cache (and its per-CodeBlock clone) leaves its entries in the cache payload until they are first read."_s) \
+    v(Bool, useFastCachedAtoms, true, Normal, "Cheaper shared-string-table decode (nothing deferred; trusts the table's stored hashes to match its characters): strings created from the table carry its stored hash, long atoms alias the table with that hash instead of being rehashed, 3-character inline names hit a small cache before the atom table, bulk decoders (identifier tables, SymbolTable entries, constant pools) prefetch the table slot / string header / atom-table bucket ahead of use, and module code skips re-cloning its module-environment SymbolTable constant."_s) \
     v(Bool, useBorrowedBytecodeFromCache, true, Normal, "If true, instruction streams and expression info decoded from a persistent (mmap'd/embedded) bytecode cache alias the cache instead of copying it."_s) \
-    v(Bool, useThinChildExecutables, true, Normal, "If true, an UnlinkedFunctionExecutable decoded from an owned or persistent bytecode cache payload leaves its name, parent scope TDZ variables and rare data in the payload until first use."_s) \
+    v(Bool, useThinChildExecutables, true, Normal, "If true, an UnlinkedFunctionExecutable decoded from an owned or persistent bytecode cache payload leaves its name, parent scope TDZ variables, rare data and the source positions only introspection reads in the payload until first use."_s) \
     v(Bool, useLazyHeapConstants, true, Normal, "Cheaper string-constant decode from the bytecode cache (nothing is actually deferred): shared-table string cells are registered for GC visiting once per constant pool instead of under a lock per string, 3-character constants skip the atom table, and the atom-table reservation no longer counts the constant pool."_s) \
     v(Bool, useConstantLinkStringPassThrough, true, Normal, "If true, CodeBlock::setConstantRegisters recognizes string constants by their MarkedBlock's subspace and copies them without loading the cell header."_s) \
     v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so useBorrowedBytecodeFromCache applies to them."_s) \
     v(Bool, verifyBytecodeCacheChecksums, true, Normal, "check each code block's CRC when it is decoded from a bytecode cache and fall back to generating it from source on a mismatch"_s) \
-    v(Bool, useTrustedEmbeddedBytecodeIntegrity, true, Normal, "If true, a bytecode cache payload the embedder marked integrity-pre-verified (e.g. a section of the running executable) is decoded without per-code-block bounds/checksum checks."_s)
+    v(Bool, useTrustedEmbeddedBytecodeIntegrity, true, Normal, "If true, a bytecode cache payload the embedder marked integrity-pre-verified (e.g. a section of the running executable) is decoded without per-code-block bounds/checksum checks."_s) \
+    v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
+    v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
@@ -419,6 +422,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, dfgThresholdScaleForFewPerformanceCores, 2.0, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the DFG tier-up thresholds (thresholdForOptimize*) by this factor."_s) \
     v(Double, ftlThresholdScaleForFewPerformanceCores, 1.5, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
+    v(Double, startupJITDeferralScale, 1, Normal, "While the VM's startup window is active, LLInt->Baseline and Baseline->DFG tier-up require this multiple of the normal execution-count threshold (1 = off)."_s) \
+    v(Unsigned, startupJITDeferralMaxMs, 0, Normal, "Wall-clock length of the startup JIT deferral window, measured from VM creation; the embedder may end it earlier with VM::endStartupJITDeferral() (0 = window lasts until endStartupJITDeferral / $vm.endStartupJITDeferral())."_s) \
     v(Int32, thresholdForJITAfterWarmUp, 500, Normal, nullptr) \
     v(Int32, thresholdForJITSoon, 100, Normal, nullptr) \
     \
@@ -713,6 +718,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useSyntheticModuleScope, false, Normal, "Module code: keep only exported bindings and what hoisted exported function declarations reference in the JSModuleEnvironment; other top-level bindings go to registers or a lexical environment created at body entry"_s) \
     v(Bool, dumpModuleScopePartition, false, Normal, "Module code: log per module how its top-level bindings partition (exported / kept for hoisted closures / movable captured / movable uncaptured)"_s) \
     v(Bool, useLazyCodeBlockLink, true, Normal, "If true, creating a CodeBlock does not walk its instruction stream: metadata stays zero-filled and scope resolution, call link infos and allocation profiles are set up when an instruction first executes (or before the block is handed to a JIT). Eval code and blocks with debugger/profiler opcodes still link eagerly."_s) \
+    v(Bool, useLazyFunctionExecutables, true, Normal, "If true, a CodeBlock creates the FunctionExecutable for a function declaration / expression the first time that new_func* executes (or before a JIT compiles the block) instead of creating all of them when the CodeBlock is linked; a module body never creates one for its heap-allocated declarations (the module environment already did)."_s) \
     v(Bool, useBaselineJITCodeSharing, jitEnabledByDefault(), Normal, nullptr) \
     v(Bool, libpasScavengeContinuously, false, Normal, nullptr) \
     v(Unsigned, libpasForcePGMWithRate, 0, Normal, "Forces on probablistic guard malloc and guards allocations with a rate 1/N (0 is disabled)"_s) \

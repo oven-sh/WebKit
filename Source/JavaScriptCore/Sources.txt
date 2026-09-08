@@ -1032,6 +1032,7 @@ runtime/PageCount.cpp
 runtime/PinballCompletion.cpp
 runtime/PinballHandlerContext.cpp
 runtime/PredictionFileCreatingFuzzerAgent.cpp
+runtime/PrelinkedModuleGraph.cpp
 runtime/PrivateFieldPutKind.cpp
 runtime/ProfilerSupport.cpp
 runtime/ProgramExecutable.cpp

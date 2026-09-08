@@ -651,6 +651,9 @@ public:
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy 65536-entry [c0|c1<<8] -> atom table for the bulk of minified identifiers, shared by every Decoder.
     AtomStringImpl** ensureCachedBytecodeTwoCharacterAtoms();
+    // And a direct-mapped cache for 3-character ones (Decoder::atomForInlineString); entries hold a ref, hits verify the characters.
+    static constexpr unsigned cachedBytecodeThreeCharacterAtomsLog2Size = 12;
+    AtomStringImpl** ensureCachedBytecodeThreeCharacterAtoms();
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;
 
@@ -1018,6 +1021,20 @@ public:
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
+    // Options::startupJITDeferralScale: while the startup window is active, LLInt->Baseline and
+    // Baseline->DFG compile thresholds behave as if multiplied by this. Mutator-only (tier-up slow
+    // paths); the deadline is observed lazily, on the next such slow path after it passes.
+    double startupJITDeferralScale()
+    {
+        if (m_startupJITDeferralScale == 1) [[likely]]
+            return 1;
+        if (ApproximateTime::now() < m_startupJITDeferralDeadline)
+            return m_startupJITDeferralScale;
+        endStartupJITDeferral();
+        return 1;
+    }
+    JS_EXPORT_PRIVATE void endStartupJITDeferral();
+
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
 
@@ -1320,6 +1337,7 @@ private:
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
     std::unique_ptr<std::array<AtomStringImpl*, 65536>> m_cachedBytecodeTwoCharacterAtoms;
+    std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
@@ -1389,6 +1407,9 @@ public:
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
 private:
 #endif
+
+    double m_startupJITDeferralScale { 1 };
+    ApproximateTime m_startupJITDeferralDeadline;
 
     bool m_hasSideData { false };
     bool m_hasTerminationRequest { false };

@@ -159,15 +159,6 @@ bool Decoder::canBorrowPayload() const
 #endif
 }
 
-bool Decoder::canDeferIntoPayload() const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    return Options::useThinChildExecutables() && m_cachedBytecode->payloadIsOwnedOrPersistent();
-#else
-    return false;
-#endif
-}
-
 // Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
 // are small or zero in almost every function, and they are read exactly once, into the object being constructed.
 class VarintWriter {
@@ -312,7 +303,7 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
     m_atomsByOrdinal[ordinal] = &atom;
 }
 
-// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 goes to the atom table each time.
+// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters) a small direct-mapped cache in front of the atom table.
 Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
@@ -329,6 +320,22 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
         entry = atom.ptr();
         return atom;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useFastCachedAtoms()) {
+        uint32_t packed = characters[0] | characters[1] << 8 | characters[2] << 16;
+        AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
+        if (entry && entry->length() == 3 && entry->is8Bit()) [[likely]] {
+            auto cached = entry->span8();
+            if (cached[0] == characters[0] && cached[1] == characters[1] && cached[2] == characters[2]) [[likely]]
+                return *entry;
+        }
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
+        atom->ref();
+        if (AtomStringImpl* evicted = std::exchange(entry, atom.ptr()))
+            evicted->deref();
+        return atom;
+    }
+#endif
     return AtomStringImpl::add(characters).releaseNonNull();
 }
 
@@ -452,12 +459,18 @@ StringImpl* DecoderStringTable::impl(uintptr_t slot)
 // A record as a plain, non-atom string.
 Ref<StringImpl> DecoderStringTable::createImpl(const Record& r)
 {
-    if (r.is8Bit) {
-        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
+    auto create = [&](auto chars) {
         return r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
-    }
-    std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
-    return r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    };
+    Ref<StringImpl> result = r.is8Bit
+        ? create(std::span<const Latin1Character> { std::bit_cast<const Latin1Character*>(r.characters), r.length })
+        : create(std::span<const char16_t> { std::bit_cast<const char16_t*>(r.characters), r.length });
+#if USE(BUN_JSC_ADDITIONS)
+    // The hash a later atomFor promotion, property-key use or map insert would otherwise compute over the characters.
+    if (Options::useFastCachedAtoms() && AtomStringImpl::isValidPrecomputedHash(r.hash))
+        AtomStringImpl::adoptPrecomputedHash(result, r.hash);
+#endif
+    return result;
 }
 
 // The blob comes from an executable users sometimes edit; never read outside it.
@@ -481,11 +494,45 @@ DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
 template<typename CharacterType>
 static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, uint32_t hash)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (!AtomStringImpl::isValidPrecomputedHash(hash)) [[unlikely]] // an edited executable; never let it pick the bucket
+        return AtomStringImpl::add(characters).releaseNonNull();
+#endif
     // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
-    if (characters.size() >= 48)
-        return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
     WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
+    if (characters.size() >= 48) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (Options::useFastCachedAtoms()) // probes with the stored hash; allocates (a header only) just for a new atom
+            return AtomStringImpl::addWithoutCopying(hashed);
+#endif
+        return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
+    }
     return AtomStringImpl::add(hashed).releaseNonNull();
+}
+
+void DecoderStringTable::prefetchSlow(VM& vm, uint32_t ordinal, PrefetchStage stage) const
+{
+    ASSERT(ordinal < m_count && stage != PrefetchStage::Slot);
+    uintptr_t slot = m_slots[ordinal];
+    if (stage == PrefetchStage::String) {
+        if (isCell(slot))
+            __builtin_prefetch(cell(slot)); // the StringImpl header behind it stays a dependent miss
+        else if (slot)
+            __builtin_prefetch(std::bit_cast<const void*>(slot), 1); // the header atomFor's hit ref()s
+        else if (size_t offset = offsets()[ordinal]; offset < m_bytes.size())
+            __builtin_prefetch(m_bytes.data() + offset); // the record header atomFor's miss reads
+        return;
+    }
+    if (slot)
+        return;
+    // atomFor's miss probes the atom table with the record's stored hash.
+    size_t offset = offsets()[ordinal];
+    if (offset > m_bytes.size() || m_bytes.size() - offset < 2 * sizeof(uint32_t))
+        return;
+    uint32_t hash;
+    memcpy(&hash, m_bytes.data() + offset + sizeof(uint32_t), sizeof(hash));
+    if (AtomStringImpl::isValidPrecomputedHash(hash))
+        vm.atomStringTable()->table().prefetchForHash(hash);
 }
 
 // A slot holds the one StringImpl this VM uses for that string: an atom once an identifier has asked for it, or the
@@ -535,6 +582,27 @@ RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
         return atomFor(vm, slot >> 2);
     default:
         return nullptr;
+    }
+}
+
+std::optional<uint32_t> DecoderStringTable::hashForSlot(uint32_t slot) const
+{
+    if (slot == VariableLengthObjectBase::emptySentinel)
+        return emptyAtom().impl()->hash();
+    switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
+    case VariableLengthObjectBase::inlineStringTag: {
+        unsigned length = (slot >> 2) & 3;
+        if (!length)
+            return std::nullopt;
+        auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
+        return StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+    }
+    case VariableLengthObjectBase::externalStringTag:
+        if (slot >> 2 >= m_count)
+            return std::nullopt;
+        return record(slot >> 2).hash;
+    default:
+        return std::nullopt;
     }
 }
 
@@ -1116,6 +1184,7 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
     , m_provider(provider)
 #if USE(BUN_JSC_ADDITIONS)
     , m_trustsPayloadIntegrity(Options::useTrustedEmbeddedBytecodeIntegrity() && m_cachedBytecode->payloadIntegrityIsPreVerified())
+    , m_canDeferIntoPayload(Options::useThinChildExecutables() && m_cachedBytecode->payloadIsOwnedOrPersistent())
 #endif
 {
 }
@@ -1601,6 +1670,18 @@ public:
         src = decode(decoder);
     }
 
+    // For a loop that decodes many of these in a row: see DecoderStringTable::prefetch. No-op for any other encoding.
+    void prefetch(Decoder& decoder, DecoderStringTable::PrefetchStage stage) const
+    {
+        if constexpr (CachedPtr<T, Source>::holdsString) {
+            if (m_ptr.hasExternalString())
+                decoder.prefetchExternalString(m_ptr.externalStringOrdinal(), stage);
+        } else {
+            UNUSED_PARAM(decoder);
+            UNUSED_PARAM(stage);
+        }
+    }
+
 private:
     CachedPtr<T, Source> m_ptr;
 };
@@ -1862,7 +1943,33 @@ public:
         if (!kept)
             return;
         map.reserveInitialCapacity(kept);
+#if USE(BUN_JSC_ADDITIONS)
+        // Kept entries only: a rejected entry's key is never decoded, so touching its slot would only widen the footprint.
+        const bool prefetch = keyPrefetches && Options::useFastCachedAtoms();
+        auto prefetchAhead = [&](size_t index, DecoderStringTable::PrefetchStage stage) {
+            index += DecoderStringTable::prefetchDistance(stage);
+            if (index < entries.size() && keep(entries[index].second()))
+                prefetchKey(decoder, entries[index].first(), stage);
+        };
+        if (prefetch) {
+            for (auto stage : { DecoderStringTable::PrefetchStage::Slot, DecoderStringTable::PrefetchStage::String, DecoderStringTable::PrefetchStage::AtomBucket }) {
+                for (size_t i = 0; i < std::min<size_t>(entries.size(), DecoderStringTable::prefetchDistance(stage)); ++i) {
+                    if (keep(entries[i].second()))
+                        prefetchKey(decoder, entries[i].first(), stage);
+                }
+            }
+        }
+        size_t index = 0;
+#endif
         for (auto& entry : entries) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (prefetch) {
+                prefetchAhead(index, DecoderStringTable::PrefetchStage::Slot);
+                prefetchAhead(index, DecoderStringTable::PrefetchStage::String);
+                prefetchAhead(index, DecoderStringTable::PrefetchStage::AtomBucket);
+            }
+            ++index;
+#endif
             if (!keep(entry.second()))
                 continue;
             SourceType<Key> key;
@@ -1876,6 +1983,20 @@ public:
     unsigned entryCount() const { return m_entries.size(); }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool keyPrefetches = requires(const Key& key, Decoder& decoder) { key.prefetch(decoder, DecoderStringTable::PrefetchStage::Slot); };
+    static void prefetchKey(Decoder& decoder, const Key& key, DecoderStringTable::PrefetchStage stage)
+    {
+        if constexpr (keyPrefetches)
+            key.prefetch(decoder, stage);
+        else {
+            UNUSED_PARAM(decoder);
+            UNUSED_PARAM(key);
+            UNUSED_PARAM(stage);
+        }
+    }
+#endif
+
     CachedVector<CachedPair<Key, Value>> m_entries;
 };
 
@@ -1952,13 +2073,17 @@ public:
             if (!m_isSymbol) {
                 RefPtr<AtomStringImpl> atom;
                 // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
-                // only allocate the StringImpl header; AtomStringImpl::add adopts it in place unless the atom already exists.
-                if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
-                    atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) });
-                else {
-                    WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer, m_hash };
+                // only allocate the StringImpl header (with useFastCachedAtoms, only once the stored-hash probe found no atom).
+                WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer, m_hash };
+                if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload()) {
+#if USE(BUN_JSC_ADDITIONS)
+                    if (Options::useFastCachedAtoms())
+                        atom = AtomStringImpl::addWithoutCopying(hashed);
+                    else
+#endif
+                        atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) });
+                } else
                     atom = AtomStringImpl::add(hashed);
-                }
                 if (m_ordinal != noOrdinal)
                     decoder.setAtomForOrdinal(m_ordinal, *atom);
                 return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(atom.leakRef()));
@@ -2080,6 +2205,8 @@ public:
         dst = decode(decoder);
     }
 
+    void prefetch(Decoder& decoder, DecoderStringTable::PrefetchStage stage) const { m_impl.prefetch(decoder, stage); }
+
 private:
     CachedRefPtr<CachedUniquedStringImpl> m_impl;
 };
@@ -2093,17 +2220,20 @@ public:
 
     Identifier decode(Decoder& decoder) const
     {
-        String str = m_string.decode(decoder);
-        if (str.isNull())
+        RefPtr<StringImpl> impl = m_string.decode(decoder).releaseImpl();
+        if (!impl)
             return Identifier();
-
-        return Identifier::fromUid(decoder.vm(), (UniquedStringImpl*)str.impl());
+        if (impl->isAtom()) [[likely]] // hand over the reference decode took rather than ref/deref the header again
+            return Identifier::fromString(decoder.vm(), adoptRef(*static_cast<AtomStringImpl*>(impl.leakRef())));
+        return Identifier::fromUid(decoder.vm(), static_cast<UniquedStringImpl*>(impl.get()));
     }
 
     void decode(Decoder& decoder, Identifier& ident) const
     {
         ident = decode(decoder);
     }
+
+    void prefetch(Decoder& decoder, DecoderStringTable::PrefetchStage stage) const { m_string.prefetch(decoder, stage); }
 
 private:
     CachedString m_string;
@@ -2971,6 +3101,27 @@ struct CachedJSValuePool {
     {
         ASSERT(decoder.vm().heap.isDeferred()); // new string cells are rooted only by the barriered stores into `owner` until the flush below
         const CachedJSValue* slot = slots(pool, count);
+#if USE(BUN_JSC_ADDITIONS)
+        // See DecoderStringTable::prefetch: jsStringFor's slot (and, when an identifier got there first, the header it adopts).
+        if (Options::useFastCachedAtoms()) {
+            using Stage = DecoderStringTable::PrefetchStage;
+            auto prefetch = [&](unsigned i, Stage stage) {
+                if (i < count && static_cast<CachedJSValue::Kind>(pool[i]) == CachedJSValue::Kind::String && slot[i].hasExternalString())
+                    decoder.prefetchExternalString(slot[i].externalStringOrdinal(), stage);
+            };
+            for (Stage stage : { Stage::Slot, Stage::String }) {
+                for (unsigned i = 0; i < std::min(count, DecoderStringTable::prefetchDistance(stage)); ++i)
+                    prefetch(i, stage);
+            }
+            for (unsigned i = 0; i < count; ++i) {
+                prefetch(i + DecoderStringTable::prefetchDistance(Stage::Slot), Stage::Slot);
+                prefetch(i + DecoderStringTable::prefetchDistance(Stage::String), Stage::String);
+                out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
+            }
+            decoder.flushPendingStringCells();
+            return;
+        }
+#endif
         for (unsigned i = 0; i < count; ++i)
             out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
         decoder.flushPendingStringCells();
@@ -3082,6 +3233,26 @@ static void decodeArrayFromTail(Decoder& decoder, const void* elements, unsigned
         return;
     out = Container(size);
     const T* buffer = static_cast<const T*>(elements);
+#if USE(BUN_JSC_ADDITIONS)
+    // See DecoderStringTable::prefetch. Identifier tables are the bulk of atomFor's populated-slot hits.
+    using Stage = DecoderStringTable::PrefetchStage;
+    if constexpr (requires { buffer[0].prefetch(decoder, Stage::Slot); }) {
+        if (Options::useFastCachedAtoms()) {
+            for (Stage stage : { Stage::Slot, Stage::String, Stage::AtomBucket }) {
+                for (unsigned i = 0; i < std::min(size, DecoderStringTable::prefetchDistance(stage)); ++i)
+                    buffer[i].prefetch(decoder, stage);
+            }
+            for (unsigned i = 0; i < size; ++i) {
+                for (Stage stage : { Stage::Slot, Stage::String, Stage::AtomBucket }) {
+                    if (i + DecoderStringTable::prefetchDistance(stage) < size)
+                        buffer[i + DecoderStringTable::prefetchDistance(stage)].prefetch(decoder, stage);
+                }
+                ::JSC::decode(decoder, buffer[i], out[i], args...);
+            }
+            return;
+        }
+    }
+#endif
     for (unsigned i = 0; i < size; ++i)
         ::JSC::decode(decoder, buffer[i], out[i], args...);
 }
@@ -3534,7 +3705,10 @@ static_assert(sizeof(CachedFunctionExecutableRareData) == sizeof(uint32_t));
 //   [mutable metadata 8][checksum 4][extent 4]   updatable records (the jsc shell's disk cache patches them in place)
 //   [checksum 4][extent 4]                       checksummed but not updatable
 //   [call slot][construct slot][name][TDZ link][rare data]
-//   varint tail: flags, features, lexically scoped features, source positions, parameter count, [line info]
+//   varint tail, hot part (read when the cell is created): flags, lexically scoped features, parameter count, start
+//     offset, function start, source length, body start column, [first line offset]
+//   varint tail, cold part (read on first call / introspection, UnlinkedFunctionExecutable::m_scalarsAreDeferred):
+//     features, parameters start, function end, body end column, [line count]
 // A persistent payload (bun --compile) has none of the first two rows and only the slots it uses.
 class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable> {
     friend struct CachedFunctionExecutableOffsets;
@@ -3603,10 +3777,11 @@ public:
         const CachedRefPtr<CachedTDZEnvironmentLink>* tdz { nullptr };
         const CachedPtr<CachedFunctionExecutableRareData>* rareData { nullptr };
         const uint8_t* tail { nullptr };
-        const uint8_t* tailEnd { nullptr };
+        const uint8_t* tailEnd { nullptr }; // end of what was parsed: the hot part only for view(limit, HotScalarsOnly)
         Scalars scalars;
         bool intact { false };
     };
+    enum ScalarsToView { AllScalars, HotScalarsOnly };
 
     static size_t tailSize(const Encoder& encoder, const UnlinkedFunctionExecutable& executable)
     {
@@ -3617,8 +3792,9 @@ public:
     void encode(Encoder&, const UnlinkedFunctionExecutable&);
     UnlinkedFunctionExecutable* decode(Decoder&) const;
 
-    // `limit` bounds the parse; the payload end for an integrity check, unbounded once verified.
-    View view(const uint8_t* limit = nullptr) const;
+    // `limit` bounds the parse; the payload end for an integrity check, unbounded once verified. HotScalarsOnly leaves
+    // the cold part's Scalars members unset.
+    View view(const uint8_t* limit = nullptr, ScalarsToView = AllScalars) const;
     // view() without the scalars: locates the slots from the header word and stops at the tail (v.tail is null on overrun).
     View slotsView(const uint8_t* limit = nullptr) const;
 
@@ -4034,16 +4210,19 @@ private:
         Base::encodeOwnMembers(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+        m_numberOfHeapAllocatedFunctionDecls = codeBlock.m_numberOfHeapAllocatedFunctionDecls;
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
     {
         Base::decodeOwnMembers(decoder, codeBlock);
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+        codeBlock.m_numberOfHeapAllocatedFunctionDecls = m_numberOfHeapAllocatedFunctionDecls;
     }
 
     CachedVariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+    unsigned m_numberOfHeapAllocatedFunctionDecls; // cachedTypesFormatRevision 2
 };
 
 class CachedEvalCodeBlock : public CachedGlobalCodeBlock<UnlinkedEvalCodeBlock> {
@@ -4337,25 +4516,30 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
         | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << ExecutableNeedsClassFieldInitializerShift
         | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
         | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
+    executable.materializeDeferredScalarsIfNeeded();
+    bool hasLines = executable.m_firstLineOffset || executable.m_lineCount;
+    // Hot part: what link() (the FunctionExecutable's SourceCode), JSFunction structure selection, the first call
+    // (features, ScriptExecutable::newCodeBlockFor) and compiler threads (parameterCount) need. Source positions cluster
+    // around the function's start, so all but the first are deltas.
     writer.u32(flags);
-    writer.u32(executable.m_features);
     writer.u8(static_cast<uint8_t>(executable.m_lexicallyScopedFeatures));
-    // Source positions cluster around the function's start, so all but the first are deltas.
+    writer.u32(executable.m_features);
+    writer.u32(executable.m_parameterCount);
     unsigned start = executable.m_startOffset;
     writer.u32(start);
     writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionStart - start));
-    writer.i32(static_cast<int32_t>(executable.m_parametersStartOffset - start));
     writer.u32(executable.m_sourceLength);
-    writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionEnd - (start + executable.m_sourceLength)));
     // Columns are offsets from a line start; on one line the two differ by the same constant, so the second is a delta of the first.
     int32_t bodyStartColumnDelta = static_cast<int32_t>(executable.m_unlinkedBodyStartColumn - executable.m_unlinkedFunctionStart);
     writer.i32(bodyStartColumnDelta);
-    writer.i32(static_cast<int32_t>(executable.m_unlinkedBodyEndColumn - executable.m_unlinkedFunctionEnd) - bodyStartColumnDelta);
-    writer.u32(executable.m_parameterCount);
-    if (executable.m_firstLineOffset || executable.m_lineCount) {
+    if (hasLines)
         writer.u32(executable.m_firstLineOffset);
+    // Cold part (introspection only): see UnlinkedFunctionExecutable::materializeDeferredScalarsSlow().
+    writer.i32(static_cast<int32_t>(executable.m_parametersStartOffset - start));
+    writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionEnd - (start + executable.m_sourceLength)));
+    writer.i32(static_cast<int32_t>(executable.m_unlinkedBodyEndColumn - executable.m_unlinkedFunctionEnd) - bodyStartColumnDelta);
+    if (hasLines)
         writer.u32(executable.m_lineCount);
-    }
 }
 
 Vector<uint8_t, 64> CachedFunctionExecutable::packedTail(const UnlinkedFunctionExecutable& executable)
@@ -4430,7 +4614,7 @@ auto CachedFunctionExecutable::slotsView(const uint8_t* limit) const -> View
     return v;
 }
 
-auto CachedFunctionExecutable::view(const uint8_t* limit) const -> View
+auto CachedFunctionExecutable::view(const uint8_t* limit, ScalarsToView scalarsToView) const -> View
 {
     View v = slotsView(limit);
     if (!v.tail)
@@ -4453,25 +4637,24 @@ auto CachedFunctionExecutable::view(const uint8_t* limit) const -> View
     s.needsClassFieldInitializer = bits(ExecutableNeedsClassFieldInitializerShift);
     s.isBuiltinFunction = bits(ExecutableIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(ExecutableIsBuiltinDefaultClassConstructorShift);
-    s.features = static_cast<CodeFeatures>(reader.u32());
     s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
     s.hasCapturedVariables = v.header & HasCapturedVariables;
     s.sourceParseMode = static_cast<SourceParseMode>((v.header >> ParseModeShift) & 0xff);
+    s.features = static_cast<CodeFeatures>(reader.u32());
+    s.parameterCount = reader.u32();
     s.startOffset = reader.u32();
     s.unlinkedFunctionStart = s.startOffset + reader.i32();
-    s.parametersStartOffset = s.startOffset + reader.i32();
     s.sourceLength = reader.u32();
-    s.unlinkedFunctionEnd = s.startOffset + s.sourceLength + reader.i32();
     int32_t bodyStartColumnDelta = reader.i32();
     s.unlinkedBodyStartColumn = s.unlinkedFunctionStart + bodyStartColumnDelta;
-    s.unlinkedBodyEndColumn = s.unlinkedFunctionEnd + bodyStartColumnDelta + reader.i32();
-    s.parameterCount = reader.u32();
-    if (v.header & HasLines) {
-        s.firstLineOffset = reader.u32();
-        s.lineCount = reader.u32();
-    } else {
-        s.firstLineOffset = 0;
-        s.lineCount = 0;
+    s.firstLineOffset = (v.header & HasLines) ? reader.u32() : 0;
+    s.parametersStartOffset = s.unlinkedFunctionEnd = s.unlinkedBodyEndColumn = s.lineCount = 0;
+    if (scalarsToView == AllScalars) {
+        s.parametersStartOffset = s.startOffset + reader.i32();
+        s.unlinkedFunctionEnd = s.startOffset + s.sourceLength + reader.i32();
+        s.unlinkedBodyEndColumn = s.unlinkedFunctionEnd + bodyStartColumnDelta + reader.i32();
+        if (v.header & HasLines)
+            s.lineCount = reader.u32();
     }
     if (v.metadata) {
         // The jsc shell's disk cache patches these after a lazily compiled function joins the cache.
@@ -4495,7 +4678,26 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
         self->m_ecmaName = v.name->decode(*m_deferredMembersDecoder);
     }
     WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
-    if (!v.tdz && !v.rareData)
+    if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
+        materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
+}
+
+void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
+{
+    ASSERT(m_scalarsAreDeferred && m_membersAreDeferred);
+    ASSERT(!isCompilationThread() && !Thread::mayBeGCThread()); // the cold members share words with (mutator-only) flag bits
+    auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
+    CachedFunctionExecutable::View v;
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildScalarsLazy);
+        v = m_deferredMembersRecord->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
+        self->m_parametersStartOffset = v.scalars.parametersStartOffset;
+        self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
+        self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
+        self->m_lineCount = v.scalars.lineCount;
+        self->m_scalarsAreDeferred = false;
+    }
+    if (!m_nameIsDeferred && !v.tdz && !v.rareData)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
 
@@ -4503,6 +4705,12 @@ void UnlinkedFunctionExecutable::materializeDeferredMembersSlow() const
 {
     ASSERT(m_membersAreDeferred);
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+    // The name and the cold scalars are read from the record this lets go of; either may finish the job itself.
+    if (m_scalarsAreDeferred) {
+        materializeDeferredScalarsSlow();
+        if (!m_membersAreDeferred)
+            return;
+    }
     if (m_nameIsDeferred) {
         materializeDeferredNameSlow();
         if (!m_membersAreDeferred)
@@ -4612,24 +4820,27 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_isClass(false)
     , m_nameIsDeferred(false)
     , m_membersAreDeferred(false)
+    , m_scalarsAreDeferred(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
     , m_parentScopeTDZVariables()
     , m_rareData()
 {
-    CachedFunctionExecutable::View v = cachedExecutable.view();
+    bool defer = decoder.canDeferIntoPayload();
+    CachedFunctionExecutable::View v = cachedExecutable.view(nullptr, defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;
     m_features = scalars.features;
     m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
     m_isClass = !!(v.header & CachedFunctionExecutable::IsClass);
-    if ((v.name || v.tdz || v.rareData) && decoder.canDeferIntoPayload()) {
-        ASSERT(decoder.payloadContains(&cachedExecutable, v.tail - std::bit_cast<const uint8_t*>(&cachedExecutable)));
+    if (defer) {
+        ASSERT(decoder.payloadContains(&cachedExecutable, cachedExecutable.view().tailEnd - std::bit_cast<const uint8_t*>(&cachedExecutable))); // including the cold tail read later
         m_parentScopeTDZVariables.~RefPtr();
         new (&m_deferredMembersDecoder) RefPtr<Decoder>(&decoder);
         m_rareData.~unique_ptr();
         new (&m_deferredMembersRecord) const CachedFunctionExecutable*(&cachedExecutable);
         m_membersAreDeferred = true;
+        m_scalarsAreDeferred = true;
         m_nameIsDeferred = !!v.name;
         v.name = nullptr;
         v.tdz = nullptr;
@@ -4966,7 +5177,8 @@ public:
 protected:
     // Folded into the stored version so that reinterpreting existing record bits (which an embedder-supplied cache version
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
-    static constexpr uint32_t cachedTypesFormatRevision = 1;
+    // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part.
+    static constexpr uint32_t cachedTypesFormatRevision = 2;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5294,7 +5506,7 @@ static_assert(sizeof(CachedImmutableButterfly) == 12);
 static_assert(sizeof(CachedJSTextPosition) == 12);
 static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
-static_assert(sizeof(CachedModuleCodeBlock) == 44);
+static_assert(sizeof(CachedModuleCodeBlock) == 48);
 static_assert(sizeof(CachedProgramCodeBlock) == 56);
 static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);

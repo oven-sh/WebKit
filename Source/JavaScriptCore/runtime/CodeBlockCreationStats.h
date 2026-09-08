@@ -67,6 +67,8 @@ namespace CodeBlockCreationStats {
     v(LinkConstantSymbolTableClone, "link:   of which SymbolTable cloneScopePart") \
     v(MaterializeSymbolTableEntriesLazy, "lazy: SymbolTable entry decode on first read (useLazySymbolTableConstants; count = tables; also inside whichever decode/link lap is open)") \
     v(LinkFunctions, "link: function decl/expr FunctionExecutable creation") \
+    v(LinkFunctionsLazy, "lazy: FunctionExecutable created on first new_func* / before JIT (useLazyFunctionExecutables; count = executables)") \
+    v(DecodeChildScalarsLazy, "lazy: child cold scalars decoded on first call / introspection (useThinChildExecutables; count = executables)") \
     v(LinkHandlers, "link: exception handlers") \
     v(LinkInstructionWalk, "link: instruction-stream walk (metadata init, scope resolution)") \
     v(LinkScopeResolution, "link:   of which resolve_scope/get_from_scope/put_to_scope cases (abstractResolve)") \

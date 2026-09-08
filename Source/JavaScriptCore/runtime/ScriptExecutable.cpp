@@ -255,7 +255,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(vm.heap.isDeferred());
-    ASSERT(endColumn() != UINT_MAX);
+    ASSERT(type() == FunctionExecutableType || endColumn() != UINT_MAX); // a function's is computed on demand, possibly from the bytecode cache
 
     JSGlobalObject* globalObject = scope->realm();
 
@@ -311,11 +311,12 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 
             executable->parseMode());
-    recordParse(
-        executable->m_unlinkedExecutable->features(), 
+    // The (lastLine, endColumn) overload drops those two for a FunctionExecutable; computing them would pull the
+    // function's end position out of the bytecode cache (UnlinkedFunctionExecutable::materializeDeferredScalarsIfNeeded).
+    executable->recordParse(
+        executable->m_unlinkedExecutable->features(),
         executable->m_unlinkedExecutable->lexicallyScopedFeatures(),
-        executable->m_unlinkedExecutable->hasCapturedVariables(),
-        lastLine(), endColumn());
+        executable->m_unlinkedExecutable->hasCapturedVariables());
     if (!unlinkedCodeBlock) {
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;

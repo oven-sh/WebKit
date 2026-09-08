@@ -553,12 +553,12 @@ void dump(const char* reason)
                 if (didRun)
                     unlinkedRan.add(unlinked);
             };
-            for (int i = 0, n = codeBlock->numberOfFunctionDecls(); i < n; ++i)
-                visit(codeBlock->functionDecl(i));
+            for (unsigned i = 0, n = codeBlock->numberOfFunctionDecls(); i < n; ++i)
+                visit(codeBlock->functionDeclIfMaterialized(i));
             for (size_t i = 0, n = codeBlock->numberOfFunctionExprs(); i < n; ++i)
-                visit(codeBlock->functionExpr(i));
+                visit(codeBlock->functionExprIfMaterialized(i));
         }
-        out.printf("  FunctionExecutables created eagerly at link (children of live CodeBlocks): %llu (sizeof=%zu => %.2f MB); JSFunction allocations seen: %llu\n", (unsigned long long)total, sizeof(FunctionExecutable), total * static_cast<double>(sizeof(FunctionExecutable)) / (1024 * 1024), (unsigned long long)s.functionsInstantiated);
+        out.printf("  FunctionExecutables of live CodeBlocks (created at link, or at first new_func under useLazyFunctionExecutables): %llu (sizeof=%zu => %.2f MB); JSFunction allocations seen: %llu\n", (unsigned long long)total, sizeof(FunctionExecutable), total * static_cast<double>(sizeof(FunctionExecutable)) / (1024 * 1024), (unsigned long long)s.functionsInstantiated);
         out.printf("    got >=1 JSFunction (new_func ran): %llu (%.1f%%); NEVER instantiated: %llu (%.1f%%) => %.2f MB FunctionExecutable never used\n", (unsigned long long)instantiated, total ? 100.0 * instantiated / total : 0.0, (unsigned long long)(total - instantiated), total ? 100.0 * (total - instantiated) / total : 0.0, (total - instantiated) * static_cast<double>(sizeof(FunctionExecutable)) / (1024 * 1024));
         out.printf("    ever executed (has a CodeBlock): %llu (%.1f%%); instantiated but never called: %llu\n", (unsigned long long)ran, total ? 100.0 * ran / total : 0.0, (unsigned long long)(instantiated >= ran ? instantiated - ran : 0));
         out.printf("    in <=1x parent blocks: %llu, of which never instantiated: %llu\n", (unsigned long long)inColdBlocks, (unsigned long long)inColdNeverInstantiated);

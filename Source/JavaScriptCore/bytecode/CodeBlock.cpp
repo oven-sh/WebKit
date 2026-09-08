@@ -155,7 +155,7 @@ CString CodeBlock::inferredName() const
     case EvalCode:
         return "<eval>"_span;
     case FunctionCode:
-        return uncheckedDowncast<FunctionExecutable>(ownerExecutable())->ecmaName().utf8();
+        return uncheckedDowncast<FunctionExecutable>(ownerExecutable())->inferredNameForTools();
     case ModuleCode: {
 #if USE(BUN_JSC_ADDITIONS)
     if (m_ownerExecutable) {
@@ -364,6 +364,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_constantRegisters(other.m_constantRegisters)
     , m_functionDecls(other.m_functionDecls)
     , m_functionExprs(other.m_functionExprs)
+    , m_numberOfUnmaterializedFunctionExecutables(other.m_numberOfUnmaterializedFunctionExecutables)
     , m_creationTime(ApproximateTime::now())
 #if ASSERT_ENABLED
     , m_magic(CODEBLOCK_MAGIC)
@@ -371,6 +372,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
 {
     ASSERT(heap()->isDeferred());
     ASSERT(m_scopeRegister.isLocal());
+    ASSERT(!m_numberOfUnmaterializedFunctionExecutables); // CodeBlock::newReplacement() prepared `other`
     m_linksLazily = other.m_linksLazily; // we share other's MetadataTable
 
     ASSERT(source().provider());
@@ -534,7 +536,13 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     bool shouldUpdateFunctionHasExecutedCache = m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes();
     m_functionDecls = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionDecls());
-    for (size_t count = unlinkedCodeBlock->numberOfFunctionDecls(), i = 0; i < count; ++i) {
+    m_functionExprs = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionExprs());
+    // Eval declares its functions by name right after linking (Interpreter::executeEval) and the profilers want every
+    // function's range up front; everyone else creates an entry when new_func* first runs for it (functionDecl(i)).
+    bool linkFunctionsEagerly = !Options::useLazyFunctionExecutables() || codeType() == EvalCode || shouldUpdateFunctionHasExecutedCache;
+    if (!linkFunctionsEagerly)
+        m_numberOfUnmaterializedFunctionExecutables = static_cast<unsigned>(m_functionDecls.size() - firstLazilyMaterializedFunctionDecl() + m_functionExprs.size());
+    for (size_t count = linkFunctionsEagerly ? m_functionDecls.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
@@ -544,8 +552,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         m_functionDecls[i].set(vm, this, executable);
     }
 
-    m_functionExprs = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionExprs());
-    for (size_t count = unlinkedCodeBlock->numberOfFunctionExprs(), i = 0; i < count; ++i) {
+    for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
@@ -936,7 +943,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     RETURN_IF_EXCEPTION(throwScope, false);
 
     // Nothing was deferred, so there is nothing for prepareLazyStateForConcurrentCompilation() to do.
-    if (!m_linksLazily && !Options::useThinChildExecutables()
+    if (!m_linksLazily && !Options::useThinChildExecutables() && !m_numberOfUnmaterializedFunctionExecutables
 #if USE(BUN_JSC_ADDITIONS)
         && !Options::useLazySymbolTableConstants()
 #endif
@@ -944,6 +951,55 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         m_isLazyStatePreparedForConcurrentCompilation = true;
     return true;
 }
+
+// ---- Lazy FunctionExecutables (Options::useLazyFunctionExecutables()) ----------------------------------------------
+
+// A module's heap-allocated function declarations got their FunctionExecutable when the module environment was created
+// (moduleDeclarationInstantiation) and no new_func names them, so their entries stay null for good (the eager path
+// looks the existing one up instead, instantiatedModuleFunctionExecutable()).
+unsigned CodeBlock::firstLazilyMaterializedFunctionDecl() const
+{
+    if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
+        return unlinkedModuleProgramCodeBlock->numberOfHeapAllocatedFunctionDecls();
+    return 0;
+}
+
+FunctionExecutable* CodeBlock::materializeFunctionExecutable(WriteBarrier<FunctionExecutable>& slot, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    ASSERT(!slot && m_numberOfUnmaterializedFunctionExecutables);
+    RELEASE_ASSERT(!isCompilationThread()); // compiler threads only see blocks prepareLazyStateForConcurrentCompilation() completed
+    CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::LinkFunctionsLazy);
+    VM& vm = this->vm();
+    ScriptExecutable* ownerExecutable = this->ownerExecutable();
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, ownerExecutable->topLevelExecutable(), ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+    slot.set(vm, this, executable);
+    m_numberOfUnmaterializedFunctionExecutables--;
+    return executable;
+}
+
+FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
+{
+    ASSERT(index >= firstLazilyMaterializedFunctionDecl());
+    return materializeFunctionExecutable(m_functionDecls[index], m_unlinkedCode->functionDecl(index));
+}
+
+FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
+{
+    return materializeFunctionExecutable(m_functionExprs[index], m_unlinkedCode->functionExpr(index));
+}
+
+void CodeBlock::ensureFunctionExecutablesMaterialized()
+{
+    if (!m_numberOfUnmaterializedFunctionExecutables) [[likely]]
+        return;
+    for (unsigned i = firstLazilyMaterializedFunctionDecl(); i < m_functionDecls.size(); ++i)
+        functionDecl(i);
+    for (unsigned i = 0; i < m_functionExprs.size(); ++i)
+        functionExpr(i);
+    ASSERT(!m_numberOfUnmaterializedFunctionExecutables);
+}
+
+// ---- end lazy FunctionExecutables -----------------------------------------------------------------------------------
 
 // ---- Lazy link (Options::useLazyCodeBlockLink()) -------------------------------------------------------------------
 // Each link* below leaves the entry exactly as the corresponding case of finishCreation's walk does. They run on the
@@ -1615,6 +1671,16 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
         ConcurrentJSLocker locker(m_lock);
         m_constantRegisters.resizeToFit(count);
     }
+    // The module environment's SymbolTable was cloned (and prepared for type profiling) when the ModuleProgramExecutable
+    // was created and the constructor stores that clone over this register afterwards; cloning it again here only hands
+    // symbolTableCache a dead table. Independent of lazy SymbolTable constants; gated only so it can be A/B'd.
+    size_t moduleEnvironmentSymbolTableIndex = notFound;
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useFastCachedAtoms()) {
+        if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
+            moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
+    }
+#endif
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();
         SourceCodeRepresentation representation = constantsSourceCodeRepresentation[i];
@@ -1640,6 +1706,8 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                             ConcurrentJSLocker locker(symbolTable->m_lock);
                             symbolTable->prepareForTypeProfiling(locker);
                         }
+                        if (i == moduleEnvironmentSymbolTableIndex)
+                            break;
 
                         // We have to make sure to use a single code block for constant watchpointing.
                         // If we didn't then we could jettison a compilation because that constant changed
@@ -2945,6 +3013,8 @@ void CodeBlock::prepareLazyStateForConcurrentCompilationSlow()
     ensureFunctionExecutablesMaterialized();
     ensureSymbolTableConstantsMaterialized();
     ensureScopeOpsResolved();
+    if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(ownerExecutable()))
+        functionExecutable->unlinkedExecutable()->materializeDeferredScalarsIfNeeded(); // sourceCodeForTools() / dumpSource() from the compiler thread (bytecode profiler, verbose dumps)
     ASSERT(!vm.exceptionForInspection());
     WTF::storeStoreFence();
     m_isLazyStatePreparedForConcurrentCompilation = true;
@@ -3514,8 +3584,14 @@ bool CodeBlock::checkIfOptimizationThresholdReached()
     }
 #endif
 
-    if (auto* jitData = baselineJITData())
-        return jitData->executeCounter().checkIfThresholdCrossedAndSet(this);
+    if (auto* jitData = baselineJITData()) {
+        double startupDeferralScale = vm().startupJITDeferralScale();
+#if ENABLE(JIT)
+        if (startupDeferralScale != 1 && hasOptimizedReplacement())
+            startupDeferralScale = 1; // only spacing OSR-entry retries / reoptimization checks; the compile already happened
+#endif
+        return jitData->executeCounter().checkIfThresholdCrossedAndSet(this, startupDeferralScale);
+    }
     return false;
 }
 

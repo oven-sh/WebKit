@@ -531,11 +531,27 @@ public:
     ALWAYS_INLINE SourceCodeRepresentation constantSourceCodeRepresentation(unsigned index) const { return m_unlinkedCode->constantSourceCodeRepresentation(index); }
     static constexpr ptrdiff_t offsetOfConstantsVectorBuffer() { return OBJECT_OFFSETOF(CodeBlock, m_constantRegisters) + decltype(m_constantRegisters)::dataMemoryOffset(); }
 
-    FunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
-    int numberOfFunctionDecls() { return m_functionDecls.size(); }
-    std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { return m_functionDecls.span(); }
-    FunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
+    // Options::useLazyFunctionExecutables(): an entry is created the first time it is asked for (new_func* slow paths,
+    // mutator only); compiler threads use the *IfMaterialized form and only parse blocks
+    // ensureFunctionExecutablesMaterialized() completed. A module's heap-allocated declarations never get an entry
+    // (firstLazilyMaterializedFunctionDecl()).
+    FunctionExecutable* functionDecl(unsigned index)
+    {
+        if (FunctionExecutable* executable = m_functionDecls[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionDeclSlow(index);
+    }
+    unsigned numberOfFunctionDecls() { return m_functionDecls.size(); }
+    std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { ASSERT(!m_numberOfUnmaterializedFunctionExecutables); return m_functionDecls.span(); } // EvalCode links eagerly
+    FunctionExecutable* functionExpr(unsigned index)
+    {
+        if (FunctionExecutable* executable = m_functionExprs[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionExprSlow(index);
+    }
     size_t numberOfFunctionExprs() const { return m_functionExprs.size(); }
+    FunctionExecutable* functionDeclIfMaterialized(unsigned index) { return m_functionDecls[index].get(); }
+    FunctionExecutable* functionExprIfMaterialized(unsigned index) { return m_functionExprs[index].get(); }
     
     const BitVector& bitVector(size_t i) LIFETIME_BOUND { return m_unlinkedCode->bitVector(i); }
 
@@ -612,7 +628,7 @@ public:
 
     bool checkIfJITThresholdReached()
     {
-        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this);
+        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
     }
 
     void dontJITAnytimeSoon()
@@ -814,6 +830,7 @@ public:
     void ensureFunctionExecutablesMaterialized(); // m_functionDecls / m_functionExprs
     void ensureSymbolTableConstantsMaterialized(); // no-op for useLazySymbolTableConstants: SymbolTable::materializeCachedEntries declines off the mutator and concurrent readers take a pending table as having no entries
 #define JSC_CODEBLOCK_HAS_ensureScopeOpsResolved 1
+#define JSC_CODEBLOCK_HAS_ensureFunctionExecutablesMaterialized 1
     // The callees this block's call and accessor ICs (and, for an optimizing block, its recorded statuses) currently name,
     // with the kind of call site that named them. Caller defers GC.
     void collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializationKind>, 16>&);
@@ -1105,6 +1122,11 @@ private:
     Vector<WriteBarrier<Unknown>> m_constantRegisters;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
+    unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
+    unsigned firstLazilyMaterializedFunctionDecl() const;
+    FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
+    FunctionExecutable* materializeFunctionExprSlow(unsigned index);
+    FunctionExecutable* materializeFunctionExecutable(WriteBarrier<FunctionExecutable>&, UnlinkedFunctionExecutable*);
 
     WriteBarrier<CodeBlock> m_alternative;
 

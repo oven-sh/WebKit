@@ -123,12 +123,20 @@ public:
 
     // Options::useThinChildExecutables(): an executable decoded from a bytecode cache leaves its ecmaName, parent scope
     // TDZ variables and rare data in the cache until something asks for them (name reflection, generating bytecode for
-    // it, toString of a class, re-encoding). Only the mutator materializes; a CodeBlock for this executable implies the
-    // name is materialized (unlinkedCodeBlockFor() does it), so compiler threads that reach it through a CodeBlock are safe.
+    // it, toString of a class, re-encoding). Only the mutator materializes; calling the function does not, so compiler
+    // and GC threads use tryGetEcmaNameConcurrently() (FunctionExecutable::inferredNameForTools()).
     void materializeDeferredMembersIfNeeded() const
     {
         if (m_membersAreDeferred) [[unlikely]]
             materializeDeferredMembersSlow();
+    }
+    // Likewise for the source positions only introspection reads (toString, debugger, profilers, FunctionExecutable
+    // rare data): line count, parameters start, function end, body end column -- CachedFunctionExecutable's cold tail.
+    // Calling the function does not need them either.
+    void materializeDeferredScalarsIfNeeded() const
+    {
+        if (m_scalarsAreDeferred) [[unlikely]]
+            materializeDeferredScalarsSlow();
     }
 
     bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
@@ -136,17 +144,17 @@ public:
     ConstructorKind constructorKind() const { return static_cast<ConstructorKind>(m_constructorKind); }
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
 
-    unsigned lineCount() const { return m_lineCount; }
+    unsigned lineCount() const { materializeDeferredScalarsIfNeeded(); return m_lineCount; }
     unsigned linkedStartColumn(unsigned parentStartColumn) const { return m_unlinkedBodyStartColumn + (!m_firstLineOffset ? parentStartColumn : 1); }
-    unsigned linkedEndColumn(unsigned startColumn) const { return m_unlinkedBodyEndColumn + (!m_lineCount ? startColumn : 1); }
+    unsigned linkedEndColumn(unsigned startColumn) const { materializeDeferredScalarsIfNeeded(); return m_unlinkedBodyEndColumn + (!m_lineCount ? startColumn : 1); }
 
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
-    unsigned unlinkedFunctionEnd() const { return m_unlinkedFunctionEnd; }
+    unsigned unlinkedFunctionEnd() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedFunctionEnd; }
     unsigned unlinkedBodyStartColumn() const { return m_unlinkedBodyStartColumn; }
-    unsigned unlinkedBodyEndColumn() const { return m_unlinkedBodyEndColumn; }
+    unsigned unlinkedBodyEndColumn() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedBodyEndColumn; }
     unsigned startOffset() const { return m_startOffset; }
     unsigned sourceLength() { return m_sourceLength; }
-    unsigned parametersStartOffset() const { return m_parametersStartOffset; }
+    unsigned parametersStartOffset() const { materializeDeferredScalarsIfNeeded(); return m_parametersStartOffset; }
 
     UnlinkedFunctionCodeBlock* unlinkedCodeBlockFor(
         VM&, const SourceCode&, CodeSpecializationKind, OptionSet<CodeGenerationMode>,
@@ -335,6 +343,7 @@ private:
     void decodeCachedCodeBlocks(VM&);
     JS_EXPORT_PRIVATE void materializeDeferredNameSlow() const;
     JS_EXPORT_PRIVATE void materializeDeferredMembersSlow() const;
+    JS_EXPORT_PRIVATE void materializeDeferredScalarsSlow() const;
 
     bool codeBlockEdgeMayBeWeak() const
     {
@@ -351,14 +360,16 @@ private:
     unsigned m_isBuiltinFunction : 1;
     unsigned m_unlinkedBodyStartColumn : 31;
     unsigned m_isBuiltinDefaultClassConstructor : 1;
+    // m_lineCount, m_unlinkedBodyEndColumn, m_parametersStartOffset and m_unlinkedFunctionEnd may be written late
+    // (m_scalarsAreDeferred); the bit each shares its word with is one only the mutator reads.
     unsigned m_unlinkedBodyEndColumn : 31;
-    unsigned m_constructAbility: 1;
-    unsigned m_startOffset : 31;
-    unsigned m_scriptMode: 1; // JSParserScriptMode
-    unsigned m_sourceLength : 31;
     unsigned m_superBinding : 1;
-    unsigned m_parametersStartOffset : 31;
+    unsigned m_startOffset : 31;
     unsigned m_isCached : 1;
+    unsigned m_sourceLength : 31;
+    unsigned m_constructAbility: 1;
+    unsigned m_parametersStartOffset : 31;
+    unsigned m_scriptMode: 1; // JSParserScriptMode
     unsigned m_unlinkedFunctionEnd : 31;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_parameterCount : 30;
@@ -378,6 +389,7 @@ private:
     // Own bytes, not bits of the group above: the mutator clears these late, while compiler threads read that group.
     bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
     bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live
+    bool m_scalarsAreDeferred { false }; // the record's cold tail was not read yet (those four members are 0); implies m_membersAreDeferred (that state holds the record)
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;

@@ -32,6 +32,7 @@
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
 #include "ModuleMap.h"
+#include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC {
@@ -198,18 +199,41 @@ public:
         // Bun's registry is conceptually flat (one entry per specifier), so
         // delete every (specifier, type) variant — text/json/HostDefined etc.
         auto* impl = key.impl();
+        forgetPrelinkedRecordsWithKey(impl);
         m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
         return m_moduleMap.removeIf([&](auto& entry) { return entry.key.first == impl; });
     }
     void clearAll()
     {
+        forgetPrelinkedRecordsWithKey(nullptr);
         m_loadedModules.clear();
         m_moduleMap.clear();
         m_resolutionFailures.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
+
+    // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
+    // for each of its modules (null until that module is fetched). Prelinked records resolve their pre-resolved
+    // import bindings' module indices through this table.
+    PrelinkedModuleGraph* prelinkedModuleGraph() const { return m_prelinkedGraph.get(); }
+    JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(Ref<PrelinkedModuleGraph>&&);
+    AbstractModuleRecord* prelinkedRecord(uint32_t moduleIndex) const
+    {
+        return moduleIndex < m_prelinkedRecords.size() ? m_prelinkedRecords[moduleIndex].get() : nullptr;
+    }
+    JS_EXPORT_PRIVATE void setPrelinkedRecord(VM&, uint32_t moduleIndex, AbstractModuleRecord*);
+    // A second record now exists for that module's key: clear the slot and resolve bindings into it by name from now on.
+    JS_EXPORT_PRIVATE void forgetPrelinkedRecord(uint32_t moduleIndex);
+    // prelinkedRecord(), or null once that module's registry entry has ever been deleted: from then on the index may name
+    // a record other than the one an importer's own (retained) graph edges lead to, so bindings into it resolve by name.
+    AbstractModuleRecord* prelinkedRecordForResolution(uint32_t moduleIndex) const
+    {
+        if (moduleIndex < m_prelinkedRecordRemoved.size() && m_prelinkedRecordRemoved.quickGet(moduleIndex)) [[unlikely]]
+            return nullptr;
+        return prelinkedRecord(moduleIndex);
+    }
 #endif
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
@@ -222,6 +246,13 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
+#if USE(BUN_JSC_ADDITIONS)
+    void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
+
+    RefPtr<PrelinkedModuleGraph> m_prelinkedGraph;
+    Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
+    BitVector m_prelinkedRecordRemoved; // empty until the first removal
+#endif
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;

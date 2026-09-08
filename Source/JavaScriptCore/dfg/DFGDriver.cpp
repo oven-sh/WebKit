@@ -65,7 +65,7 @@ static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, Cod
 {
     if (!Options::useLazyCodeBlockStateCompilerFence())
         return;
-    if (!Options::useLazyCodeBlockLink() && !Options::useThinChildExecutables()
+    if (!Options::useLazyCodeBlockLink() && !Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables()
 #if USE(BUN_JSC_ADDITIONS)
         && !Options::useLazySymbolTableConstants()
 #endif

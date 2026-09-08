@@ -119,6 +119,9 @@ public:
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
+    // StringImpl::hash() of the string atomForSlot(slot) would return, without creating it; nullopt where atomForSlot
+    // returns null (a record with bad bounds crashes in both).
+    std::optional<uint32_t> hashForSlot(uint32_t slot) const;
     // The one JSString this VM uses for the string constant with this ordinal (single characters come from SmallStrings
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives. Mutator only, GC deferred; see flushPendingCells.
@@ -131,13 +134,32 @@ public:
     void flushPendingCells();
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
+    // Options::useFastCachedAtoms(): an atomFor hit is two dependent cache misses (the slot, then the string header it
+    // ref()s); a miss is the slot, the record header, then the atom table's bucket. A loop over many ordinals runs each
+    // stage a fixed distance ahead of the decode, each reading only what the previous stage prefetched. For the short
+    // arrays that are the common case this simply puts every miss in flight before the first decode.
+    enum class PrefetchStage : uint8_t { Slot, String, AtomBucket };
+    static constexpr unsigned prefetchDistance(PrefetchStage stage) { return 16u >> static_cast<unsigned>(stage); } // 16, 8, 4: unmeasured
+    void prefetch(VM& vm, uint32_t ordinal, PrefetchStage stage) const
+    {
+        if (ordinal >= m_count)
+            return;
+        if (stage == PrefetchStage::Slot) {
+            __builtin_prefetch(m_slots + ordinal);
+            return;
+        }
+        prefetchSlow(vm, ordinal, stage);
+    }
 private:
+    void prefetchSlow(VM&, uint32_t ordinal, PrefetchStage) const;
+
     struct Record {
         const uint8_t* characters;
         uint32_t length;
         uint32_t hash;
         bool is8Bit;
     };
+    const uint32_t* offsets() const { return std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t)); }
     Record record(uint32_t ordinal) const;
     static Ref<StringImpl> createImpl(const Record&);
     // A slot is empty, a StringImpl* (+1 ref held by the table), or a JSString* tagged with cellTag whose value is that
@@ -203,7 +225,7 @@ class Decoder : public RefCounted<Decoder> {
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
-    bool canDeferIntoPayload() const; // decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
+    bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
@@ -222,10 +244,17 @@ public:
     Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot) { return atomForInlineString(m_vm, slot); }
     // The same slot as a string constant: a 3-character one need not be an atom.
     JSString* jsStringForInlineString(std::span<const uint8_t, 4> slot);
-    // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
+    // Strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots): every non-empty,
+    // non-symbol string when encoding against a table; EncoderStringTable::slotFor (module_info) still inlines 1-3 chars.
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     // Only for CachedJSValuePool::decode: see DecoderStringTable::flushPendingCells.
     JSString* jsStringForExternalString(uint32_t ordinal);
+    // See DecoderStringTable::prefetch. Nothing to prefetch into before this Decoder's first atomFor has found the table.
+    void prefetchExternalString(uint32_t ordinal, DecoderStringTable::PrefetchStage stage)
+    {
+        if (DecoderStringTable* table = m_externalStrings)
+            table->prefetch(m_vm, ordinal, stage);
+    }
     void flushPendingStringCells()
     {
         if (m_externalStrings)
@@ -264,6 +293,7 @@ private:
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
     bool m_trustsPayloadIntegrity { false };
+    bool m_canDeferIntoPayload { false };
 };
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);

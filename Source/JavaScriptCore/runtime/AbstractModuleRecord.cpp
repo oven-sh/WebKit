@@ -109,6 +109,9 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_prelinkedRequested.begin(), thisObject->m_prelinkedRequested.end());
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(AbstractModuleRecord);
@@ -183,6 +186,9 @@ void AbstractModuleRecord::addExportEntry(const ExportEntry& entry)
 
 auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> std::optional<ImportEntry>
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ensurePrelinkedEntriesMaterialized();
+#endif
     const auto iterator = m_importEntries.find(localName);
     if (iterator == m_importEntries.end())
         return std::nullopt;
@@ -191,6 +197,9 @@ auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> st
 
 auto AbstractModuleRecord::tryGetExportEntry(UniquedStringImpl* exportName) -> std::optional<ExportEntry>
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ensurePrelinkedEntriesMaterialized();
+#endif
     const auto iterator = m_exportEntries.find(exportName);
     if (iterator == m_exportEntries.end())
         return std::nullopt;
@@ -231,8 +240,309 @@ AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalOb
 {
     if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
         return iter->value.m_module.get();
+#if USE(BUN_JSC_ADDITIONS)
+    // A prelinked record's requested modules were wired by index and are not in [[LoadedModules]] (until something
+    // materializes the by-name view); a record has tens of requests, so find the request and take its slot.
+    for (unsigned i = 0; i < m_prelinkedRequested.size(); ++i) {
+        const ModuleRequest& request = m_requestedModules[i];
+        if (request.m_specifier.impl() == moduleName.impl() && request.type() == moduleRequestType) {
+            if (AbstractModuleRecord* loaded = m_prelinkedRequested[i].get())
+                return loaded;
+        }
+    }
+#endif
     return nullptr;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void AbstractModuleRecord::initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&& graph, uint32_t moduleIndex)
+{
+    ASSERT(!m_prelinked && m_requestedModules.isEmpty());
+    m_prelinked = WTF::move(graph);
+    m_prelinkedIndex = m_prelinked->checkedModuleIndex(moduleIndex);
+    const auto& module = prelinkedModule();
+    m_isTypeScript = module.flags & PrelinkedModuleGraph::Module::IsTypeScript;
+    m_hasTLA = module.flags & PrelinkedModuleGraph::Module::HasTLA;
+    auto requests = m_prelinked->requests(module);
+    m_requestedModules = Vector<ModuleRequest>(requests.size(), [&](size_t i) {
+        const auto& request = requests[i];
+        return ModuleRequest { m_prelinked->identifier(request.specifierSid), m_prelinked->fetchParameters(request), request.isDeferred() ? ModulePhase::Defer : ModulePhase::Evaluation };
+    });
+    Locker locker { cellLock() };
+    m_prelinkedRequested.grow(requests.size());
+}
+
+// The eager form for when Options::usePrelinkedModuleInfo() is off: the by-name entry maps are built from the graph now
+// and the record then behaves exactly like one ModuleAnalyzer made ([[LoadedModules]] is filled by the loader as usual).
+void AbstractModuleRecord::convertPrelinkedToEager()
+{
+    ASSERT(m_prelinked && !m_prelinkedEntriesMaterialized && !hasAnyPrelinkedRequestedModule());
+    materializePrelinkedEntries();
+    Locker locker { cellLock() };
+    m_prelinkedRequested.clear();
+    m_prelinked = nullptr;
+    m_prelinkedEntriesMaterialized = false;
+}
+
+AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(unsigned requestIndex) const
+{
+    if (requestIndex >= m_prelinkedRequested.size())
+        return nullptr;
+    return m_prelinkedRequested[requestIndex].get();
+}
+
+AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(const ModuleRequest& request) const
+{
+    if (m_prelinkedRequested.isEmpty())
+        return nullptr;
+    // Graph walks hand us an element of requestedModules(): its position is the request index.
+    uintptr_t offset = std::bit_cast<uintptr_t>(&request) - std::bit_cast<uintptr_t>(m_requestedModules.span().data());
+    if (!(offset % sizeof(ModuleRequest)) && offset / sizeof(ModuleRequest) < m_requestedModules.size()) [[likely]]
+        return m_prelinkedRequested[offset / sizeof(ModuleRequest)].get();
+    // A copy (a top-level load's own request, or a caller that copied an element): match it the way ModuleRequestsEqual does.
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+        const ModuleRequest& candidate = m_requestedModules[i];
+        if (candidate.m_specifier.impl() == request.m_specifier.impl() && candidate.type() == request.type())
+            return m_prelinkedRequested[i].get();
+    }
+    return nullptr;
+}
+
+// GetImportedModule for request `requestIndex`: the record wired by index, else whatever the loader put in
+// [[LoadedModules]] for it (an external module JSC fetched itself), else null.
+AbstractModuleRecord* AbstractModuleRecord::importedModuleForPrelinkedRequest(unsigned requestIndex) const
+{
+    RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+    if (AbstractModuleRecord* wired = prelinkedRequestedModule(requestIndex))
+        return wired;
+    const ModuleRequest& request = m_requestedModules[requestIndex];
+    if (auto iter = m_loadedModules.find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != m_loadedModules.end())
+        return iter->value.m_module.get();
+    return nullptr;
+}
+
+void AbstractModuleRecord::setPrelinkedRequestedModule(VM& vm, unsigned requestIndex, AbstractModuleRecord* record)
+{
+    RELEASE_ASSERT(requestIndex < m_prelinkedRequested.size(), requestIndex, m_prelinkedRequested.size());
+    m_prelinkedRequested[requestIndex].set(vm, this, record);
+}
+
+bool AbstractModuleRecord::hasAllPrelinkedRequestedModules() const
+{
+    for (auto& slot : m_prelinkedRequested) {
+        if (!slot)
+            return false;
+    }
+    return true;
+}
+
+bool AbstractModuleRecord::hasAnyPrelinkedRequestedModule() const
+{
+    for (auto& slot : m_prelinkedRequested) {
+        if (slot)
+            return true;
+    }
+    return false;
+}
+
+// The by-name view the rest of the module machinery expects, built once from the graph: entry maps for dynamic by-name
+// resolution through star exports and reflection, and [[LoadedModules]] for code that walks it directly.
+void AbstractModuleRecord::materializePrelinkedEntries()
+{
+    ASSERT(m_prelinked && !m_prelinkedEntriesMaterialized);
+    m_prelinkedEntriesMaterialized = true;
+    VM& vm = this->vm();
+    PrelinkedModuleGraph& graph = *m_prelinked;
+    const auto& module = prelinkedModule();
+    auto requestType = [&](uint32_t requestIndex) {
+        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+        return m_requestedModules[requestIndex].type();
+    };
+    auto requestSpecifier = [&](uint32_t requestIndex) -> const Identifier& {
+        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+        return m_requestedModules[requestIndex].m_specifier;
+    };
+
+    auto imports = graph.imports(module);
+    m_importEntries.reserveInitialCapacity(imports.size());
+    for (const auto& import : imports) {
+        ImportEntryType type = ImportEntryType::Single;
+        ModulePhase phase = ModulePhase::Evaluation;
+        switch (import.kind()) {
+        case PrelinkedModuleGraph::ImportKind::Single:
+            break;
+        case PrelinkedModuleGraph::ImportKind::SingleTypeScript:
+            type = ImportEntryType::SingleTypeScript;
+            break;
+        case PrelinkedModuleGraph::ImportKind::NamespaceDefer:
+            phase = ModulePhase::Defer;
+            [[fallthrough]];
+        case PrelinkedModuleGraph::ImportKind::Namespace:
+            type = ImportEntryType::Namespace;
+            break;
+        }
+        addImportEntry(ImportEntry { type, phase, requestType(import.request()), requestSpecifier(import.request()), graph.identifier(import.importNameSid), graph.identifier(import.localSid) });
+    }
+
+    auto exports = graph.exports(module);
+    m_exportEntries.reserveInitialCapacity(exports.size());
+    for (const auto& entry : exports) {
+        Identifier exportName = graph.identifier(entry.exportSid);
+        switch (entry.kind()) {
+        case PrelinkedModuleGraph::ExportKind::Local:
+            addExportEntry(ExportEntry::createLocal(exportName, graph.identifier(entry.localOrImportSid)));
+            break;
+        case PrelinkedModuleGraph::ExportKind::Indirect:
+            if (entry.localOrImportSid == PrelinkedModuleGraph::starNamespaceSid)
+                addExportEntry(ExportEntry::createNamespace(exportName, requestSpecifier(entry.request()), requestType(entry.request())));
+            else
+                addExportEntry(ExportEntry::createIndirect(exportName, graph.identifier(entry.localOrImportSid), requestSpecifier(entry.request()), requestType(entry.request())));
+            break;
+        case PrelinkedModuleGraph::ExportKind::Namespace:
+            addExportEntry(ExportEntry::createNamespace(exportName, requestSpecifier(entry.request()), requestType(entry.request())));
+            break;
+        }
+    }
+
+    for (uint32_t requestIndex : graph.starExports(module))
+        addStarExportEntry(requestSpecifier(requestIndex), requestType(requestIndex));
+
+    Locker locker { cellLock() };
+    for (unsigned i = 0; i < m_prelinkedRequested.size(); ++i) {
+        AbstractModuleRecord* loaded = m_prelinkedRequested[i].get();
+        if (!loaded)
+            continue;
+        const ModuleRequest& request = m_requestedModules[i];
+        m_loadedModules.ensure(ModuleMapKey { request.m_specifier.impl(), request.type() }, [&] {
+            return LoadedModuleRequest { vm, request, loaded, this };
+        });
+    }
+}
+
+AbstractModuleRecord* AbstractModuleRecord::prelinkedRecordForResolution(JSGlobalObject*, uint32_t moduleIndex) const
+{
+    if (moduleIndex == m_prelinkedIndex)
+        return const_cast<AbstractModuleRecord*>(this);
+    JSModuleLoader* loader = globalObject()->moduleLoader();
+    if (loader->prelinkedModuleGraph() != m_prelinked.get())
+        return nullptr;
+    AbstractModuleRecord* record = loader->prelinkedRecordForResolution(moduleIndex);
+    // The bundler only resolves bindings into modules of the graph, so anything found here is prelinked itself (and a
+    // SyntheticModuleRecord's lazy exports are never reached this way).
+    ASSERT(!record || (record->prelinkedGraph() == m_prelinked.get() && record->prelinkedIndex() == moduleIndex));
+    return record;
+}
+
+// A pre-resolved (module, binding) as a Resolution; nullopt when the runtime has to resolve by name instead (then on
+// `requestIndex`'s module with `importNameSid`, which does not need this record's own entry maps either).
+auto AbstractModuleRecord::prelinkedResolution(JSGlobalObject* globalObject, PrelinkedModuleGraph::ResolutionKind kind, uint32_t resolvedModule, uint32_t resolvedLocalSid, uint32_t requestIndex, uint32_t importNameSid) -> std::optional<Resolution>
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    using ResolutionKind = PrelinkedModuleGraph::ResolutionKind;
+    switch (kind) {
+    case ResolutionKind::Binding:
+        if (AbstractModuleRecord* target = prelinkedRecordForResolution(globalObject, resolvedModule)) [[likely]]
+            return Resolution { Resolution::Type::Resolved, target, m_prelinked->identifier(resolvedLocalSid) };
+        break;
+    case ResolutionKind::Namespace:
+        if (AbstractModuleRecord* target = prelinkedRecordForResolution(globalObject, resolvedModule)) [[likely]]
+            return Resolution { Resolution::Type::Resolved, target, vm.propertyNames->starNamespacePrivateName };
+        break;
+    case ResolutionKind::NotFound:
+        return Resolution::notFound();
+    case ResolutionKind::Ambiguous:
+        return Resolution::ambiguous();
+    case ResolutionKind::Error:
+        return Resolution::error();
+    case ResolutionKind::Unresolved:
+        break;
+    }
+    AbstractModuleRecord* importedModule = importedModuleForPrelinkedRequest(requestIndex);
+    if (!importedModule) [[unlikely]]
+        return std::nullopt;
+    if (importNameSid == PrelinkedModuleGraph::starNamespaceSid)
+        return Resolution { Resolution::Type::Resolved, importedModule, vm.propertyNames->starNamespacePrivateName };
+    RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, m_prelinked->identifier(importNameSid)));
+}
+
+// ResolveImport answered from the graph: the entry is found by name in the hash-sorted import table and its resolution
+// is what ResolveExport on the imported module would have returned.
+auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const Identifier& localName) -> std::optional<Resolution>
+{
+    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(prelinkedModule(), localName.impl());
+    if (!import || import->isNamespace())
+        return Resolution::notFound();
+    return prelinkedResolution(globalObject, import->resolution(), import->resolvedModule, import->resolvedLocalSid, import->request(), import->importNameSid);
+}
+
+auto AbstractModuleRecord::tryResolveExportPrelinked(JSGlobalObject* globalObject, const PrelinkedModuleGraph::Export& entry) -> std::optional<Resolution>
+{
+    if (entry.kind() == PrelinkedModuleGraph::ExportKind::Local)
+        return Resolution { Resolution::Type::Resolved, this, m_prelinked->identifier(entry.localOrImportSid) };
+    auto kind = entry.resolution();
+    if (kind != PrelinkedModuleGraph::ResolutionKind::Binding && kind != PrelinkedModuleGraph::ResolutionKind::Namespace && kind != PrelinkedModuleGraph::ResolutionKind::Unresolved) {
+        // NotFound / Ambiguous / Error through an indirect export are re-derived by name so this module's star exports
+        // get their say and the error text names the right module.
+        return std::nullopt;
+    }
+    return prelinkedResolution(globalObject, kind, entry.resolvedModule, entry.resolvedLocalSid, entry.request(), entry.localOrImportSid);
+}
+
+auto AbstractModuleRecord::tryResolveExportPrelinked(JSGlobalObject* globalObject, const Identifier& exportName) -> std::optional<Resolution>
+{
+    VM& vm = globalObject->vm();
+    const auto& module = prelinkedModule();
+    const PrelinkedModuleGraph::Export* entry = m_prelinked->findExport(module, exportName.impl());
+    if (!entry) {
+        if (module.flags & PrelinkedModuleGraph::Module::HasStarExports)
+            return std::nullopt;
+        // resolveExportImpl with no local entry and no star exports.
+        if (exportName == vm.propertyNames->defaultKeyword)
+            return Resolution::error();
+        return Resolution::notFound();
+    }
+    return tryResolveExportPrelinked(globalObject, *entry);
+}
+
+// GetModuleNamespace's resolution list straight from the export table. False: this module has star exports (or a
+// resolution needs the by-name machinery) and the caller takes the generic path.
+bool AbstractModuleRecord::collectPrelinkedNamespaceResolutions(JSGlobalObject* globalObject, Vector<std::pair<Identifier, Resolution>>& resolutions)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto& module = prelinkedModule();
+    if (module.flags & PrelinkedModuleGraph::Module::HasStarExports)
+        return false;
+    auto exports = m_prelinked->exports(module);
+    resolutions.reserveInitialCapacity(exports.size());
+    for (const auto& entry : exports) {
+        std::optional<Resolution> resolution = tryResolveExportPrelinked(globalObject, entry);
+        RETURN_IF_EXCEPTION(scope, false);
+        Identifier exportName = m_prelinked->identifier(entry.exportSid);
+        if (!resolution) {
+            resolution = resolveExport(globalObject, exportName);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        switch (resolution->type) {
+        case Resolution::Type::NotFound:
+            if (m_isTypeScript)
+                break;
+            throwSyntaxError(globalObject, scope, makeString("Exported binding name '"_s, StringView(exportName.impl()), "' is not found."_s));
+            return false;
+        case Resolution::Type::Error:
+            throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
+            return false;
+        case Resolution::Type::Ambiguous:
+            break;
+        case Resolution::Type::Resolved:
+            resolutions.append({ WTF::move(exportName), *resolution });
+            break;
+        }
+    }
+    return true;
+}
+#endif // USE(BUN_JSC_ADDITIONS)
 
 void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const ModuleRequest& request, AbstractModuleRecord* record)
 {
@@ -253,6 +563,29 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
 }
 
 auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_prelinked) {
+        std::optional<Resolution> resolution = tryResolveImportPrelinked(globalObject, localName);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (resolution) [[likely]] {
+            if (!Options::validatePrelinkedModuleInfo()) [[likely]]
+                return *resolution;
+            Resolution expected = resolveImportByName(globalObject, localName);
+            RETURN_IF_EXCEPTION(scope, Resolution::error());
+            RELEASE_ASSERT(resolution->isEquivalentTo(expected), m_prelinkedIndex, static_cast<unsigned>(resolution->type), static_cast<unsigned>(expected.type));
+            return expected;
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolveImportByName(globalObject, localName));
+#else
+    return resolveImportByName(globalObject, localName);
+#endif
+}
+
+auto AbstractModuleRecord::resolveImportByName(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -804,6 +1137,31 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
 auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier& exportName) -> Resolution
 {
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_prelinked) {
+        std::optional<Resolution> resolution = tryResolveExportPrelinked(globalObject, exportName);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (resolution) [[likely]] {
+            if (!Options::validatePrelinkedModuleInfo()) [[likely]]
+                return *resolution;
+            Resolution expected = resolveExportByName(globalObject, exportName);
+            RETURN_IF_EXCEPTION(scope, Resolution::error());
+            RELEASE_ASSERT(resolution->isEquivalentTo(expected), m_prelinkedIndex, static_cast<unsigned>(resolution->type), static_cast<unsigned>(expected.type));
+            return expected;
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolveExportByName(globalObject, exportName));
+#else
+    return resolveExportByName(globalObject, exportName);
+#endif
+}
+
+// ResolveExport over the by-name entry maps (a prelinked record builds them first): the specification's algorithm, used
+// when the graph has no answer and as the reference under Options::validatePrelinkedModuleInfo().
+auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, const Identifier& exportName) -> Resolution
+{
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -852,6 +1210,15 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     } else if (m_moduleNamespaceObject)
         return m_moduleNamespaceObject.get();
 
+    Vector<std::pair<Identifier, Resolution>> resolutions;
+#if USE(BUN_JSC_ADDITIONS)
+    bool collected = false;
+    if (m_prelinked && !Options::validatePrelinkedModuleInfo()) {
+        collected = collectPrelinkedNamespaceResolutions(globalObject, resolutions);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (!collected) {
+#endif
     // Spec performs GetExportedNames() then per-name ResolveExport(), which walks the
     // star-export graph once per exported name (O(names * edges)). We instead walk the
     // graph once, recording each name's unique Local/Namespace binding. Any name with
@@ -862,7 +1229,6 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     Resolutions uniqueBindings;
     IdentifierSet rootShadowedNames;
     IdentifierSet slowPathNames;
-    Vector<std::pair<Identifier, Resolution>> resolutions;
 
     UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
     Vector<AbstractModuleRecord*, 8> pendingModules;
@@ -964,6 +1330,9 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             break;
         }
     }
+#if USE(BUN_JSC_ADDITIONS)
+    } // !collected
+#endif
 
     auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
     RETURN_IF_EXCEPTION(scope, nullptr);

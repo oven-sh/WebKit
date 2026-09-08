@@ -852,7 +852,7 @@ void Options::notifyOptionsChanged()
     Options::forceUnlinkedDFG() = false; // Currently, IC is rapidly changing. We disable this until we get the final form of Data IC.
 
     // A compiler thread must never parse a CodeBlock whose lazy link-time state is incomplete.
-    if (Options::useLazyCodeBlockLink() || Options::useThinChildExecutables()
+    if (Options::useLazyCodeBlockLink() || Options::useThinChildExecutables() || Options::useLazyFunctionExecutables()
 #if USE(BUN_JSC_ADDITIONS)
         || Options::useLazySymbolTableConstants()
 #endif

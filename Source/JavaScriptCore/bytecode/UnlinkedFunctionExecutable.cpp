@@ -99,13 +99,13 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_unlinkedBodyStartColumn(node->startColumn())
     , m_isBuiltinDefaultClassConstructor(isBuiltinDefaultClassConstructor)
     , m_unlinkedBodyEndColumn(m_lineCount ? node->endColumn() : node->endColumn() - node->startColumn())
-    , m_constructAbility(static_cast<unsigned>(constructAbility))
-    , m_startOffset(node->source().startOffset() - parentSource.startOffset())
-    , m_scriptMode(static_cast<unsigned>(scriptMode))
-    , m_sourceLength(node->source().length())
     , m_superBinding(static_cast<unsigned>(node->superBinding()))
-    , m_parametersStartOffset(node->parametersStart())
+    , m_startOffset(node->source().startOffset() - parentSource.startOffset())
     , m_isCached(false)
+    , m_sourceLength(node->source().length())
+    , m_constructAbility(static_cast<unsigned>(constructAbility))
+    , m_parametersStartOffset(node->parametersStart())
+    , m_scriptMode(static_cast<unsigned>(scriptMode))
     , m_unlinkedFunctionEnd(node->startStartOffset() + node->source().length() - 1)
     , m_needsClassFieldInitializer(static_cast<unsigned>(needsClassFieldInitializer))
     , m_parameterCount(node->parameterCount())
@@ -124,6 +124,7 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_isClass(false)
     , m_nameIsDeferred(false)
     , m_membersAreDeferred(false)
+    , m_scalarsAreDeferred(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
     , m_ecmaName(node->ecmaName())
@@ -261,8 +262,6 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
-    if (m_nameIsDeferred)
-        materializeDeferredNameSlow(); // CodeBlock::inferredName() is read on compiler threads
     if (m_isCached)
         decodeCachedCodeBlocks(vm);
     switch (specializationKind) {
