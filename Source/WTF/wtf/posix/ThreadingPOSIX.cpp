@@ -833,6 +833,22 @@ void Mutex::unlock()
     ASSERT_UNUSED(result, !result);
 }
 
+#if HAVE(PTHREAD_CONDATTR_SETCLOCK)
+ThreadCondition::ThreadCondition()
+{
+    // Count timed waits on CLOCK_MONOTONIC, the clock MonotonicTime::now() reads. With the default,
+    // CLOCK_REALTIME, the kernel holds an absolute wall-clock deadline, so setting the system clock
+    // back by N seconds while a thread waits makes a relative timeout last N seconds longer.
+    pthread_condattr_t attributes;
+    pthread_condattr_init(&attributes);
+    int result = pthread_condattr_setclock(&attributes, CLOCK_MONOTONIC);
+    ASSERT_UNUSED(result, !result);
+    result = pthread_cond_init(&m_condition, &attributes);
+    ASSERT_UNUSED(result, !result);
+    pthread_condattr_destroy(&attributes);
+}
+#endif
+
 ThreadCondition::~ThreadCondition()
 {
     pthread_cond_destroy(&m_condition);
@@ -844,8 +860,23 @@ void ThreadCondition::wait(Mutex& mutex)
     ASSERT_UNUSED(result, !result);
 }
 
+static timespec timespecFromSeconds(double rawSeconds)
+{
+    time_t timeSeconds = static_cast<time_t>(rawSeconds);
+    long timeNanoseconds = static_cast<long>((rawSeconds - timeSeconds) * 1E9);
+
+    timespec result;
+    result.tv_sec = timeSeconds;
+    result.tv_nsec = timeNanoseconds;
+    return result;
+}
+
 bool ThreadCondition::timedWait(Mutex& mutex, WallTime absoluteTime)
 {
+#if HAVE(PTHREAD_CONDATTR_SETCLOCK)
+    // The condition variable counts on the monotonic clock: measure how far away the deadline is now.
+    return timedWait(mutex, absoluteTime.approximate<MonotonicTime>());
+#else
     if (absoluteTime.isInfinity()) {
         if (absoluteTime == -WallTime::infinity())
             return false;
@@ -861,16 +892,42 @@ bool ThreadCondition::timedWait(Mutex& mutex, WallTime absoluteTime)
         return true;
     }
 
-    double rawSeconds = absoluteTime.secondsSinceEpoch().value();
-
-    time_t timeSeconds = static_cast<time_t>(rawSeconds);
-    long timeNanoseconds = static_cast<long>((rawSeconds - timeSeconds) * 1E9);
-
-    timespec targetTime;
-    targetTime.tv_sec = timeSeconds;
-    targetTime.tv_nsec = timeNanoseconds;
-
+    timespec targetTime = timespecFromSeconds(absoluteTime.secondsSinceEpoch().value());
     return pthread_cond_timedwait(&m_condition, &mutex.impl(), &targetTime) == 0;
+#endif
+}
+
+bool ThreadCondition::timedWait(Mutex& mutex, MonotonicTime absoluteTime)
+{
+#if HAVE(PTHREAD_CONDATTR_SETCLOCK) || OS(DARWIN)
+    if (absoluteTime.isInfinity()) {
+        if (absoluteTime == -MonotonicTime::infinity())
+            return false;
+        wait(mutex);
+        return true;
+    }
+
+    MonotonicTime currentTime = MonotonicTime::now();
+    if (absoluteTime < currentTime)
+        return false;
+
+    if (absoluteTime > MonotonicTime::fromRawSeconds(static_cast<double>(std::numeric_limits<time_t>::max()))) {
+        wait(mutex);
+        return true;
+    }
+
+#if OS(DARWIN)
+    // A Darwin condition variable cannot be put on the monotonic clock, but its relative wait
+    // counts on mach_absolute_time(), which is that clock.
+    timespec relativeTime = timespecFromSeconds((absoluteTime - currentTime).value());
+    return pthread_cond_timedwait_relative_np(&m_condition, &mutex.impl(), &relativeTime) == 0;
+#else
+    timespec targetTime = timespecFromSeconds(absoluteTime.secondsSinceEpoch().value());
+    return pthread_cond_timedwait(&m_condition, &mutex.impl(), &targetTime) == 0;
+#endif
+#else
+    return timedWait(mutex, absoluteTime.approximate<WallTime>());
+#endif
 }
 
 void ThreadCondition::signal()
