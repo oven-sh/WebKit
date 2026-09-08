@@ -1495,6 +1495,7 @@ macro prologue(osrSlowPath, traceSlowPath)
         addp maxFrameExtentForSlowPathCall, sp
     end
     loadp CodeBlock[cfr], t1
+    storeb 1, CodeBlock::m_enteredSinceLastGCEnd[t1]
     if not C_LOOP
         loadp CodeBlock::m_unlinkedCode[t1], t0
         baddis 5, (UnlinkedCodeBlock::m_llintExecuteCounter + BaselineExecutionCounter::m_counter)[t0], .continue

@@ -56,6 +56,7 @@ void GetByStatus::shrinkToFit()
 
 GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeIndex bytecodeIndex)
 {
+    profiledBlock->assertLLIntInlineCachesReadableFromThisThread();
     VM& vm = profiledBlock->vm();
     
     auto instruction = profiledBlock->instructions().at(bytecodeIndex.offset());

@@ -52,7 +52,7 @@ void cacheGlobalLexicalVar(CodeBlock* codeBlock, Metadata& metadata, JSGlobalLex
         watchpointSet = iter->value.watchpointSet();
         offset = iter->value.scopeOffset();
     }
-    ConcurrentJSLocker locker(codeBlock->m_lock);
+    ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
     metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
     metadata.m_watchpointSet = watchpointSet;
     metadata.m_operand = reinterpret_cast<uintptr_t>(globalLexicalEnvironment->variableAt(offset).slot());
@@ -72,7 +72,7 @@ inline void tryCachePutToScopeGlobal(
         if (scope->isGlobalObject()) {
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
-            ConcurrentJSLocker locker(codeBlock->m_lock);
+            ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
             metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
             break;
         }
@@ -111,7 +111,7 @@ inline void tryCachePutToScopeGlobal(
         structure->didCachePropertyReplacement(vm, slot.cachedOffset());
 
         {
-            ConcurrentJSLocker locker(codeBlock->m_lock);
+            ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
             metadata.m_structureID.setWithoutWriteBarrier(structure);
             metadata.m_operand = slot.cachedOffset();
         }
@@ -131,7 +131,7 @@ inline void tryCacheGetFromScopeGlobal(
         if (scope->isGlobalObject()) {
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
-            ConcurrentJSLocker locker(codeBlock->m_lock);
+            ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
             metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
             break;
         }
@@ -156,7 +156,7 @@ inline void tryCacheGetFromScopeGlobal(
         if (slot.isCacheableValue() && slot.slotBase() == scope && scope == globalObject && scope->structure()->propertyAccessesAreCacheable()) {
             Structure* structure = scope->structure();
             {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
+                ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
                 metadata.m_structureID.setWithoutWriteBarrier(structure);
                 metadata.m_operand = slot.cachedOffset();
             }

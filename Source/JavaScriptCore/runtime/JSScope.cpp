@@ -27,6 +27,7 @@
 #include "JSScope.h"
 
 #include "AbstractModuleRecord.h"
+#include "CodeBlockCreationStats.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
@@ -313,11 +314,56 @@ ResolveOp JSScope::abstractResolve(JSGlobalObject* globalObject, size_t depthOff
 
     bool needsVarInjectionChecks = JSC::needsVarInjectionChecks(unlinkedType);
     size_t depth = depthOffset;
+    using ScopeResolution = AbstractModuleRecord::ScopeResolution;
+    bool useResolveCache = getOrPut == Get && ident.impl() && Options::useModuleEnvironmentResolveCache();
+    AbstractModuleRecord::ScopeResolutions* pendingResolutions = nullptr;
+    JSModuleEnvironment* moduleEnvironment = nullptr;
+    size_t moduleEnvironmentDepth = 0;
     for (; scope; scope = scope->next()) {
+        if (useResolveCache && scope->type() == ModuleEnvironmentType) {
+            moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(scope);
+            moduleEnvironmentDepth = depth;
+            // Bindings enter the global lexical environment on the mutator only, so its count needs no lock here.
+            ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+            size_t globalLexicalBindingCount = globalObject->globalLexicalEnvironment()->symbolTable()->size(ConcurrentJSLocker(NoLockingNecessary));
+            AbstractModuleRecord::ScopeResolutions& resolutions = moduleEnvironment->moduleRecord()->scopeResolutionsForGlobalLexicalBindingCount(globalLexicalBindingCount);
+            auto iter = resolutions.find(ident.impl());
+            if (CodeBlockCreationStats::enabled()) [[unlikely]]
+                CodeBlockCreationStats::add(iter == resolutions.end() ? CodeBlockCreationStats::Bucket::ModuleResolveCacheMiss : CodeBlockCreationStats::Bucket::ModuleResolveCacheHit, 0);
+            if (iter == resolutions.end())
+                pendingResolutions = &resolutions;
+            else {
+                const ScopeResolution& known = iter->value;
+                if (known.kind != ScopeResolution::Kind::Above) {
+                    ResolveType type = known.kind == ScopeResolution::Kind::Import ? ModuleVar : makeType(ClosureVar, needsVarInjectionChecks);
+                    return ResolveOp(type, depth, nullptr, known.lexicalEnvironment, nullptr, known.operand, known.importedName.get());
+                }
+                for (unsigned i = 0; i < known.skip; ++i) {
+                    scope = scope->next();
+                    ++depth;
+                }
+            }
+        }
         bool success = abstractAccess(globalObject, scope, ident, getOrPut, depth, needsVarInjectionChecks, op, initializationMode);
         if (success)
             break;
         ++depth;
+    }
+
+    if (pendingResolutions) {
+        if (scope == moduleEnvironment) {
+            if (op.lexicalEnvironment) {
+                ASSERT(op.type == ModuleVar || op.type == ClosureVar || op.type == ClosureVarWithVarInjectionChecks);
+                ScopeResolution::Kind kind = op.type == ModuleVar ? ScopeResolution::Kind::Import : ScopeResolution::Kind::Local;
+                pendingResolutions->add(ident.impl(), ScopeResolution { op.lexicalEnvironment, op.importedName, static_cast<uint32_t>(op.operand), kind, 0 });
+            }
+        } else if (scope) {
+            JSScope* globalLexicalEnvironment = globalObject->globalScope();
+            bool onlySealedScopesSkipped = moduleEnvironment->next() == globalLexicalEnvironment && !moduleEnvironment->symbolTable()->usesSloppyEval()
+                && (scope == globalLexicalEnvironment || scope == globalLexicalEnvironment->next());
+            if (onlySealedScopesSkipped)
+                pendingResolutions->add(ident.impl(), ScopeResolution { nullptr, nullptr, 0, ScopeResolution::Kind::Above, static_cast<uint8_t>(depth - moduleEnvironmentDepth) });
+        }
     }
 
     return op;

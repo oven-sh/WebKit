@@ -51,6 +51,8 @@ bool CodeBlockSet::contains(const AbstractLocker&, void* candidateCodeBlock)
 void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
 {
     ASSERT(vm.heap.isInPhase(CollectorPhase::End));
+    for (CodeBlock* codeBlock : m_currentlyExecuting)
+        codeBlock->m_enteredSinceLastGCEnd = true;
     m_currentlyExecuting.clear();
     m_codeBlocks.removeIf([&](CodeBlock* codeBlock) {
         return !vm.heap.isMarked(codeBlock);

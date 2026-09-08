@@ -1409,14 +1409,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
             bool hasProperty = globalObject->hasProperty(globalObject, ident);
             CHECK_EXCEPTION();
             if (hasProperty) {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
+                ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
                 metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
                 metadata.m_globalObject.set(vm, codeBlock, globalObject);
                 metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
             }
         } else if (resolvedScope->isGlobalLexicalEnvironment()) {
             JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(resolvedScope);
-            ConcurrentJSLocker locker(codeBlock->m_lock);
+            ConcurrentJSLocker locker(codeBlock->lockForLLIntInlineCacheUpdate());
             metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalLexicalVarWithVarInjectionChecks : GlobalLexicalVar;
             metadata.m_globalLexicalEnvironment.set(vm, codeBlock, globalLexicalEnvironment);
         }

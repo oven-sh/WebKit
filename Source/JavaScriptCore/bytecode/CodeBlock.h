@@ -493,7 +493,13 @@ public:
 #if ENABLE(DFG_JIT)
     size_t numberOfIdentifiers() const { return m_unlinkedCode->numberOfIdentifiers() + numberOfDFGIdentifiers(); }
     size_t numberOfDFGIdentifiers() const;
-    const Identifier& identifier(int index) const;
+    const Identifier& identifier(int index) const
+    {
+        UnlinkedCodeBlock* unlinkedCode = m_unlinkedCode.get();
+        if (static_cast<unsigned>(index) < unlinkedCode->numberOfIdentifiers()) [[likely]]
+            return unlinkedCode->identifier(index);
+        return dfgIdentifier(index);
+    }
 #else
     size_t numberOfIdentifiers() const { return m_unlinkedCode->numberOfIdentifiers(); }
     const Identifier& identifier(int index) const { return m_unlinkedCode->identifier(index); }
@@ -856,6 +862,19 @@ public:
     // concurrent compilation threads finish what they're doing.
     mutable ConcurrentJSLock m_lock;
 
+    // Mutator only. Null until a compiler thread may read this block's metadata (prepareLazyStateForConcurrentCompilation);
+    // the GC's concurrent readers (propagateTransitions, finalizeLLIntInlineCaches) already tolerate unlocked writes.
+    ConcurrentJSLock* lockForLLIntInlineCacheUpdate()
+    {
+        if (m_isLazyStatePreparedForConcurrentCompilation || !Options::useLazyCodeBlockStateCompilerFence())
+            return &m_lock;
+        return nullptr;
+    }
+    void assertLLIntInlineCachesReadableFromThisThread() const
+    {
+        ASSERT(!isCompilationThread() || !Options::useLazyCodeBlockStateCompilerFence() || m_isLazyStatePreparedForConcurrentCompilation);
+    }
+
     bool m_shouldAlwaysBeInlined { true }; // Not a bitfield because the JIT wants to store to it.
 
     static constexpr ptrdiff_t offsetOfShouldAlwaysBeInlined() { return OBJECT_OFFSETOF(CodeBlock, m_shouldAlwaysBeInlined); }
@@ -986,6 +1005,8 @@ public:
     static Seconds timeToLive(JITType);
     // Start the execution-count aging lease from the counter's current value (call when a tier's code is installed).
     void snapshotExecutionCounterForAging(float count) { m_previousCounter = count; }
+    void setIsProfiledByDFG() { m_isProfiledByDFG = true; } // compiler thread, during parse; the GC end phase sees it because a plan counts as active (suspendCompilerThreads) from its mutator-side creation
+    static constexpr ptrdiff_t offsetOfEnteredSinceLastGCEnd() { return OBJECT_OFFSETOF(CodeBlock, m_enteredSinceLastGCEnd); }
 #if USE(BUN_JSC_ADDITIONS)
     // Optimizing code with no execution counter to read liveness off (FTL; DFG without tier-up checks): it ages once the mutator goes quiet instead.
     bool agesByMutatorQuietness();
@@ -1081,7 +1102,12 @@ private:
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
     unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
+    bool m_isProfiledByDFG { false }; // own byte: written by DFG::ByteCodeParser on a compiler thread
+    bool m_enteredSinceLastGCEnd { false }; // own byte: stored by the LLInt / Baseline prologues, re-armed for executing blocks and cleared at GC end
     unsigned firstLazilyMaterializedFunctionDecl() const;
+#if ENABLE(DFG_JIT)
+    const Identifier& dfgIdentifier(int index) const;
+#endif
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);
     FunctionExecutable* materializeFunctionExecutable(WriteBarrier<FunctionExecutable>&, UnlinkedFunctionExecutable*);
