@@ -1000,6 +1000,21 @@ void CodeBlock::linkResolveScope(VM& vm, const OpResolveScope& bytecode, JSScope
     const Identifier& ident = identifier(bytecode.m_var);
     RELEASE_ASSERT(bytecode.m_resolveType != ResolvedClosureVar);
 
+    if (isStaticClosureVarResolveType(bytecode.m_resolveType)) [[unlikely]] {
+        unsigned outerHops = staticClosureVarHops(bytecode.m_resolveType);
+        JSScope* environment = scope;
+        for (unsigned i = 0; i < outerHops && environment; ++i)
+            environment = environment->next();
+        auto* symbolTableObject = environment ? dynamicDowncast<JSLexicalEnvironment>(environment) : nullptr;
+        RELEASE_ASSERT(symbolTableObject && symbolTableObject->symbolTable()->contains(ident.impl()), outerHops, bytecode.m_localScopeDepth);
+        ConcurrentJSLocker locker(lockForLazyLink());
+        metadata.m_localScopeDepth = bytecode.m_localScopeDepth + outerHops;
+        metadata.m_symbolTable.set(vm, this, symbolTableObject->symbolTable());
+        WTF::storeStoreFence();
+        metadata.m_resolveType = ClosureVar;
+        return;
+    }
+
     ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_resolveType, InitializationMode::NotInitialization);
 
     if (op.lexicalEnvironment && op.type == ModuleVar) {
