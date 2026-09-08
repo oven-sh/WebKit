@@ -72,12 +72,12 @@ shouldBe([p, q, tail], "1,5,4,5", "array destructuring through iterator ops");
 // An unreachable yield/await removed by the optimizer must leave a well-formed generator dispatch table once the body
 // tiers up (a hole used to be rebased into a jump to op_enter, which DFG turned into a self-loop).
 function* holey(x) { if (false) yield -1; const s = yield x; return s + x; }
-let sum = 0;
-for (let i = 0; i < 100000; i++) { const g = holey(i); g.next(); sum += g.next(i).value; }
-shouldBe(sum, 9999900000, "generator with an unreachable yield, hot");
+let sum = 0, expectedSum = 0;
+for (let i = 0; i < testLoopCount; i++) { const g = holey(i); g.next(); sum += g.next(i).value; expectedSum += 2 * i; }
+shouldBe(sum, expectedSum, "generator with an unreachable yield, hot");
 async function holeyAsync(x) { if (false) await 0; while (false) await 1; return (await x) + 1; }
-let asyncSum = 0, asyncFailure2;
-(async () => { for (let i = 0; i < 20000; i++) asyncSum += await holeyAsync(i); shouldBe(asyncSum, 199990000 + 20000, "async function with unreachable awaits, hot"); })().catch(e => { asyncFailure2 = e; });
+let asyncSum = 0, expectedAsyncSum = 0, asyncFailure2;
+(async () => { for (let i = 0; i < testLoopCount; i++) { asyncSum += await holeyAsync(i); expectedAsyncSum += i + 1; } shouldBe(asyncSum, expectedAsyncSum, "async function with unreachable awaits, hot"); })().catch(e => { asyncFailure2 = e; });
 drainMicrotasks();
 if (asyncFailure2)
     throw asyncFailure2;
@@ -89,5 +89,5 @@ for (let i = 0; i < 3; i++)
 // ... nor propagate the TDZ empty value into arithmetic that later tiers up.
 function selfTDZ(a) { try { let keep = [a >= keep]; } catch (e) { return e.constructor.name; } }
 let last;
-for (let i = 0; i < 1e4; i++) last = selfTDZ(i);
+for (let i = 0; i < testLoopCount; i++) last = selfTDZ(i);
 shouldBe(last, "ReferenceError", "let initializer reading itself");

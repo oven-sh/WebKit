@@ -330,6 +330,7 @@ private:
     bool resolveScopesStatically();
     unsigned m_staticResolves { 0 };
     unsigned m_staticGets { 0 };
+    bool m_branchesHaveKnownConstants { false };
 };
 
 void BytecodeOptimizerAccess::dumpIR(const char* title)
@@ -1187,6 +1188,7 @@ bool BytecodeOptimizerAccess::propagateCopies()
     };
     for (auto& insn : m_insns)
         insn.knownConstants.shrink(0);
+    m_branchesHaveKnownConstants = false;
 
     auto transfer = [&](Block& block, CopyMap& copies, bool apply) -> bool {
         bool changed = false;
@@ -1229,8 +1231,10 @@ bool BytecodeOptimizerAccess::propagateCopies()
                     if (insn.clobbers(source))
                         continue;
                     if (source.isConstant() && insn.kind == Insn::Original && insn.opcode != op_mov) {
-                        if (insn.isBranchOrSwitch() && !insn.knownConstants.contains(std::pair { r, source }))
+                        if (insn.isBranchOrSwitch() && !insn.knownConstants.contains(std::pair { r, source })) {
                             insn.knownConstants.append({ r, source });
+                            m_branchesHaveKnownConstants = true;
+                        }
                         continue;
                     }
                     if (insn.kind == Insn::SynthMov || insn.kind == Insn::SynthRet)
@@ -2188,6 +2192,8 @@ void BytecodeOptimizerAccess::run()
             // liveness, so one liveness computation per round suffices; the movs they orphan die in the next round.
             changed |= coalesceDestinations();
             changed |= propagateCopies();
+            // Constants only reach branch operands as analysis facts; give simplifyJumps() a round to fold them.
+            changed |= m_branchesHaveKnownConstants && round < 2;
         }
         if (!changed)
             break;
