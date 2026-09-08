@@ -28,9 +28,11 @@
 #include "wtf/DebugHeap.h"
 #include <wtf/text/StringImpl.h>
 
+#include <array>
 #include <atomic>
 #include <wtf/MallocSpan.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/Nonmovable.h>
 #include <wtf/SIMDUTF.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/ZippedRange.h>
@@ -372,47 +374,87 @@ char32_t NODELETE StringImpl::codePointAt(unsigned i)
 // u_strToUpper and u_strToLower have the same signature.
 using ICUCaseConvertFunction = decltype(&u_strToUpper);
 
-// ICU takes UTF-16, so an 8-bit string is widened into buffer first. Returns nullopt when that
-// buffer cannot be allocated. StringView::upconvertedCharacters() crashes in that case, and its
-// Vector cannot hold the copy of a string with 2^30 or more characters.
-static std::optional<std::span<const char16_t>> charactersForICU(const StringImpl& string, MallocSpan<char16_t>& buffer)
+// The characters of a string as UTF-16, which is what ICU takes. An 8-bit string is widened into a
+// buffer: the inline one when it is short, as with StringView::upconvertedCharacters(), and a heap
+// allocation that is allowed to fail otherwise. upconvertedCharacters() itself would crash when
+// that allocation fails, and its Vector cannot hold 2^30 characters at all.
+class CharactersForICU {
+    WTF_MAKE_NONCOPYABLE(CharactersForICU);
+    WTF_MAKE_NONMOVABLE(CharactersForICU);
+public:
+    explicit CharactersForICU(const StringImpl&);
+
+    bool failed() const { return m_failed; }
+    std::span<const char16_t> span() const LIFETIME_BOUND { ASSERT(!m_failed); return m_characters; }
+
+private:
+    std::span<const char16_t> m_characters;
+    MallocSpan<char16_t> m_heapBuffer;
+    std::array<char16_t, 32> m_inlineBuffer;
+    bool m_failed { false };
+};
+
+CharactersForICU::CharactersForICU(const StringImpl& string)
 {
-    if (!string.is8Bit())
-        return string.span16();
-    if (!string.length())
-        return std::span<const char16_t> { };
-    buffer = MallocSpan<char16_t>::tryMalloc(string.length() * sizeof(char16_t));
-    if (!buffer)
-        return std::nullopt;
-    StringImpl::copyCharacters(buffer.mutableSpan(), string.span8());
-    return buffer.span();
+    if (!string.is8Bit()) {
+        m_characters = string.span16();
+        return;
+    }
+    auto characters8 = string.span8();
+    std::span<char16_t> buffer;
+    if (characters8.size() <= m_inlineBuffer.size())
+        buffer = std::span { m_inlineBuffer }.first(characters8.size());
+    else {
+        m_heapBuffer = MallocSpan<char16_t>::tryMalloc(characters8.size() * sizeof(char16_t));
+        if (!m_heapBuffer) {
+            m_failed = true;
+            return;
+        }
+        buffer = m_heapBuffer.mutableSpan();
+    }
+    StringImpl::copyCharacters(buffer, characters8);
+    m_characters = buffer;
 }
 
 // Runs u_strToUpper or u_strToLower over the whole string. The first attempt writes into
-// destination, which holds source.size() characters. Returns nullptr when the converted
-// string does not fit in a String.
-static RefPtr<StringImpl> tryConvertCaseWithICU(ICUCaseConvertFunction convert, const char* locale, std::span<const char16_t> source, Ref<StringImpl>&& destination, std::span<char16_t> destinationCharacters)
+// destination, a new string with one owner that holds source.size() characters. Returns nullptr
+// when the converted string does not fit in a String.
+static RefPtr<StringImpl> tryConvertCaseWithICU(ICUCaseConvertFunction convert, const char* locale, std::span<const char16_t> source, RefPtr<StringImpl>&& destination, std::span<char16_t> destinationCharacters)
 {
-    ASSERT(destinationCharacters.size() == source.size());
+    ASSERT(destination && destinationCharacters.size() == source.size());
     if (source.empty())
         return WTF::move(destination);
 
     UErrorCode status = U_ZERO_ERROR;
     int32_t convertedLength = convert(destinationCharacters.data(), destinationCharacters.size(), source.data(), source.size(), locale, &status);
-    if (U_SUCCESS(status) && static_cast<size_t>(convertedLength) == source.size())
-        return WTF::move(destination);
+    if (U_SUCCESS(status)) {
+        if (static_cast<size_t>(convertedLength) == source.size())
+            return WTF::move(destination);
+        // Shorter, which takes a mapping like the Turkish one from "I" U+0307 to "i". Keep the
+        // converted characters and give back the rest of the buffer.
+        char16_t* characters;
+        auto shrunk = StringImpl::tryReallocate(destination.releaseNonNull(), convertedLength, characters);
+        if (!shrunk)
+            return nullptr;
+        return WTF::move(*shrunk);
+    }
 
     // U_BUFFER_OVERFLOW_ERROR means the converted string is longer than the source, and
     // convertedLength is its length. ICU reports a converted string longer than INT32_MAX
     // as U_INDEX_OUTOFBOUNDS_ERROR instead.
-    if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR)
+    if (status != U_BUFFER_OVERFLOW_ERROR)
         return nullptr;
 
-    RefPtr<StringImpl> converted = StringImpl::tryCreateUninitialized(convertedLength, destinationCharacters);
+    // What the first attempt wrote is of no use. Free it before allocating the longer string.
+    destinationCharacters = { };
+    destination = nullptr;
+
+    std::span<char16_t> convertedCharacters;
+    RefPtr<StringImpl> converted = StringImpl::tryCreateUninitialized(convertedLength, convertedCharacters);
     if (!converted)
         return nullptr;
     status = U_ZERO_ERROR;
-    convert(destinationCharacters.data(), destinationCharacters.size(), source.data(), source.size(), locale, &status);
+    convert(convertedCharacters.data(), convertedCharacters.size(), source.data(), source.size(), locale, &status);
     if (U_FAILURE(status))
         return nullptr;
     return converted;
@@ -485,7 +527,7 @@ RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithoutLocaleStartingAtFaili
     }
 
     // Do a slower implementation for cases that include non-ASCII characters.
-    return tryConvertCaseWithICU(u_strToLower, "", span, newImpl.releaseNonNull(), data16);
+    return tryConvertCaseWithICU(u_strToLower, "", span, WTF::move(newImpl), data16);
 }
 
 Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex)
@@ -618,11 +660,10 @@ RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocaleStartingAtFaili
 
 RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocaleUpconvert()
 {
-    MallocSpan<char16_t> buffer;
-    auto source16 = charactersForICU(*this, buffer);
-    if (!source16)
+    CharactersForICU source16 { *this };
+    if (source16.failed())
         return nullptr;
-    return tryConvertToUppercaseWithoutLocale16Bit(*source16, 0);
+    return tryConvertToUppercaseWithoutLocale16Bit(source16.span(), 0);
 }
 
 RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex)
@@ -662,7 +703,7 @@ RefPtr<StringImpl> StringImpl::tryConvertToUppercaseWithoutLocale16Bit(std::span
         return newImpl;
 
     // Do a slower implementation for cases that include non-ASCII characters.
-    return tryConvertCaseWithICU(u_strToUpper, "", source16, newImpl.releaseNonNull(), data16);
+    return tryConvertCaseWithICU(u_strToUpper, "", source16, WTF::move(newImpl), data16);
 }
 
 static inline bool NODELETE needsTurkishCasingRules(const AtomString& locale)
@@ -691,15 +732,14 @@ static inline bool NODELETE needsLithuanianCasingRules(const AtomString& locale)
 
 static RefPtr<StringImpl> tryConvertCaseWithLocale(const StringImpl& string, ICUCaseConvertFunction convert, const char* locale)
 {
-    MallocSpan<char16_t> buffer;
-    auto source16 = charactersForICU(string, buffer);
-    if (!source16)
+    CharactersForICU source16 { string };
+    if (source16.failed())
         return nullptr;
     std::span<char16_t> data16;
-    RefPtr<StringImpl> newString = StringImpl::tryCreateUninitialized(source16->size(), data16);
+    RefPtr<StringImpl> newString = StringImpl::tryCreateUninitialized(source16.span().size(), data16);
     if (!newString)
         return nullptr;
-    return tryConvertCaseWithICU(convert, locale, *source16, newString.releaseNonNull(), data16);
+    return tryConvertCaseWithICU(convert, locale, source16.span(), WTF::move(newString), data16);
 }
 
 RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithLocale(const AtomString& localeIdentifier)
