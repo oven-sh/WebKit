@@ -764,6 +764,12 @@ namespace JSC {
         bool needsTDZCheck(const Variable&);
         void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope);
         void liftTDZCheckIfPossible(const Variable&);
+
+        struct ModuleScopePartition {
+            bool enabled { false };
+            UncheckedKeyHashSet<UniquedStringImpl*> kept;
+        };
+        ModuleScopePartition computeModuleScopePartition(ModuleProgramNode*, bool shouldCaptureAllOfTheThings);
         RegisterID* emitNewObject(RegisterID* dst);
         RegisterID* emitNewPromise(RegisterID* dst);
         RegisterID* emitNewGenerator(RegisterID* dst);

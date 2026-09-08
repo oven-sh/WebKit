@@ -1088,6 +1088,12 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     auto captures = [&] (UniquedStringImpl* uid) -> bool {
         return moduleProgramNode->captures(uid);
     };
+
+    ModuleScopePartition partition = computeModuleScopePartition(moduleProgramNode, shouldCaptureAllOfTheThings);
+    auto isMovable = [&] (UniquedStringImpl* uid) -> bool {
+        return partition.enabled && !partition.kept.contains(uid);
+    };
+
     auto lookUpVarKind = [&] (UniquedStringImpl* uid, const VariableEnvironmentEntry& entry) -> VarKind {
         // Allocate the exported variables in the module environment.
         if (entry.isExported())
@@ -1127,6 +1133,13 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     if (moduleProgramNode->features() & ImportMetaFeature)
         createVariable(m_vm.propertyNames->builtinNames().metaPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
 
+    // Under Options::useSyntheticModuleScope(), bindings that nothing outside this module's own
+    // evaluation can observe are declared in a lexical scope pushed at body entry instead of in the
+    // module environment. |syntheticEnvironment| collects them; `var`s become TDZ-free lets that are
+    // initialized to undefined before any code runs.
+    VariableEnvironment syntheticEnvironment;
+    Vector<UniquedStringImpl*> syntheticVarNames;
+
     for (auto& entry : moduleProgramNode->varDeclarations()) {
         ASSERT(!entry.value.isLet() && !entry.value.isConst());
         if (!entry.value.isVar()) // This is either a parameter or callee.
@@ -1136,10 +1149,36 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
         // the code block, we resolve the reference to the "ModuleVar".
         if (entry.value.isImported() && !entry.value.isImportedNamespace())
             continue;
+        if (isMovable(entry.key.get())) {
+            auto result = syntheticEnvironment.add(entry.key);
+            result.iterator->value.setIsLet();
+            if (entry.value.isCaptured() || captures(entry.key.get()))
+                result.iterator->value.setIsCaptured();
+            syntheticVarNames.append(entry.key.get());
+            continue;
+        }
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), lookUpVarKind(entry.key.get(), entry.value), moduleEnvironmentSymbolTable, IgnoreExisting);
     }
 
-    VariableEnvironment& lexicalVariables = moduleProgramNode->lexicalVariables();
+    VariableEnvironment& allLexicalVariables = moduleProgramNode->lexicalVariables();
+    VariableEnvironment keptLexicalVariables;
+    if (partition.enabled) {
+        for (auto& entry : allLexicalVariables) {
+            // Imported bindings stay in the module environment's VariableEnvironment: they are not
+            // allocated, but they must remain in the TDZ stack so nested functions check them.
+            bool isImportedBinding = entry.value.isImported() && !entry.value.isImportedNamespace();
+            if (!isImportedBinding && isMovable(entry.key.get())) {
+                auto result = syntheticEnvironment.add(entry.key);
+                result.iterator->value = entry.value;
+                if (captures(entry.key.get()))
+                    result.iterator->value.setIsCaptured();
+            } else
+                keptLexicalVariables.add(entry.key).iterator->value = entry.value;
+        }
+        if (auto* privateNames = allLexicalVariables.privateNameEnvironment())
+            RELEASE_ASSERT(!privateNames->size());
+    }
+    VariableEnvironment& lexicalVariables = partition.enabled ? keptLexicalVariables : allLexicalVariables;
     instantiateLexicalVariables(lexicalVariables, ScopeType::LetConstScope, moduleEnvironmentSymbolTable, ScopeRegisterType::Block, lookUpVarKind);
 
     // We keep the symbol table in the constant pool.
@@ -1169,7 +1208,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
         RELEASE_ASSERT(iterator != moduleProgramNode->lexicalVariables().end());
         RELEASE_ASSERT(!iterator->value.isImported());
 
-        VarKind varKind = lookUpVarKind(iterator->key.get(), iterator->value);
+        VarKind varKind = isMovable(iterator->key.get()) ? VarKind::Stack : lookUpVarKind(iterator->key.get(), iterator->value);
         if (varKind == VarKind::Scope) {
             // http://www.ecma-international.org/ecma-262/6.0/#sec-moduledeclarationinstantiation
             // Section 15.2.1.16.4, step 16-a-iv-1.
@@ -1220,6 +1259,126 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // cloned in the code block linking. After that, to create the module environment, we retrieve
     // the cloned symbol table from the linked code block by using this offset.
     codeBlock->setModuleEnvironmentSymbolTableConstantRegisterOffset(constantSymbolTable->index());
+
+    if (partition.enabled && syntheticEnvironment.size()) {
+        pushLexicalScopeInternal(syntheticEnvironment, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, TDZRequirement::UnderTDZ, ScopeType::LetConstScope, ScopeRegisterType::Block);
+        RefPtr<RegisterID> undefinedRegister;
+        for (UniquedStringImpl* uid : syntheticVarNames) {
+            Variable var = variable(Identifier::fromUid(m_vm, uid));
+            if (RegisterID* local = var.local())
+                emitLoad(local, jsUndefined());
+            else {
+                if (!undefinedRegister)
+                    undefinedRegister = emitLoad(newTemporary(), jsUndefined());
+                emitPutToScope(m_lexicalScopeStack.last().m_scope, var, undefinedRegister.get(), DoNotThrowIfNotFound, InitializationMode::Initialization);
+            }
+            liftTDZCheckIfPossible(var);
+        }
+    }
+}
+
+auto BytecodeGenerator::computeModuleScopePartition(ModuleProgramNode* moduleProgramNode, bool shouldCaptureAllOfTheThings) -> ModuleScopePartition
+{
+    ModuleScopePartition partition;
+    bool wanted = Options::useSyntheticModuleScope() || Options::dumpModuleScopePartition();
+    if (!wanted)
+        return partition;
+
+    ModuleScopeData& moduleScopeData = moduleProgramNode->moduleScopeData();
+    const auto& functionFreeVariables = moduleScopeData.functionDeclarationFreeVariables();
+
+    // Declared = every binding the module itself creates (imports other than namespace objects are
+    // aliases into another module's environment and are never allocated here).
+    UncheckedKeyHashSet<UniquedStringImpl*> declared;
+    UncheckedKeyHashSet<UniquedStringImpl*> functionDeclarations;
+    unsigned exported = 0;
+    auto consider = [&](const auto& entry) {
+        if (entry.value.isImported() && !entry.value.isImportedNamespace())
+            return;
+        declared.add(entry.key.get());
+        if (entry.value.isExported() || entry.value.isImportedNamespace()) {
+            partition.kept.add(entry.key.get());
+            ++exported;
+        }
+    };
+    for (auto& entry : moduleProgramNode->varDeclarations()) {
+        if (entry.value.isVar())
+            consider(entry);
+    }
+    for (auto& entry : moduleProgramNode->lexicalVariables())
+        consider(entry);
+    for (FunctionMetadataNode* function : moduleProgramNode->functionStack())
+        functionDeclarations.add(function->ident().impl());
+
+    bool haveFreeVariableInfo = functionDeclarations.isEmpty() || moduleScopeData.hasFunctionDeclarationFreeVariables();
+    bool possible = !shouldCaptureAllOfTheThings && !shouldEmitTypeProfilerHooks() && !shouldEmitDebugHooks() && haveFreeVariableInfo;
+
+    // H = hoisted closure: exported function declarations plus every function declaration reachable
+    // from them through free-variable references. Everything H references must live in the module
+    // environment because H's members are instantiated with that environment as their scope before
+    // any module in the graph evaluates.
+    Vector<UniquedStringImpl*> worklist;
+    UncheckedKeyHashSet<UniquedStringImpl*> hoisted;
+    for (UniquedStringImpl* name : functionDeclarations) {
+        if (partition.kept.contains(name)) {
+            hoisted.add(name);
+            worklist.append(name);
+        }
+    }
+    while (!worklist.isEmpty()) {
+        UniquedStringImpl* name = worklist.takeLast();
+        auto iterator = functionFreeVariables.find(name);
+        if (iterator == functionFreeVariables.end()) {
+            possible = possible && !functionDeclarations.contains(name);
+            continue;
+        }
+        for (auto& freeVariable : iterator->value) {
+            UniquedStringImpl* uid = freeVariable.get();
+            if (!declared.contains(uid))
+                continue;
+            partition.kept.add(uid);
+            if (functionDeclarations.contains(uid) && hoisted.add(uid).isNewEntry)
+                worklist.append(uid);
+        }
+    }
+
+    unsigned hoistedToday = 0;
+    unsigned movableCaptured = 0;
+    unsigned movableUncaptured = 0;
+    unsigned keptCaptured = 0;
+    auto classify = [&](const auto& entry) {
+        if (entry.value.isImported() && !entry.value.isImportedNamespace())
+            return;
+        bool captured = shouldCaptureAllOfTheThings || entry.value.isCaptured() || moduleProgramNode->captures(entry.key.get());
+        if (functionDeclarations.contains(entry.key.get()) && (captured || entry.value.isExported()))
+            ++hoistedToday;
+        if (partition.kept.contains(entry.key.get())) {
+            if (captured && !entry.value.isExported() && !entry.value.isImportedNamespace())
+                ++keptCaptured;
+            return;
+        }
+        if (captured)
+            ++movableCaptured;
+        else
+            ++movableUncaptured;
+    };
+    for (auto& entry : moduleProgramNode->varDeclarations()) {
+        if (entry.value.isVar())
+            classify(entry);
+    }
+    for (auto& entry : moduleProgramNode->lexicalVariables())
+        classify(entry);
+
+    partition.enabled = Options::useSyntheticModuleScope() && possible;
+
+    if (Options::dumpModuleScopePartition()) {
+        String url = moduleProgramNode->source().provider() ? moduleProgramNode->source().provider()->sourceURL() : String();
+        dataLogLn("[ModuleScopePartition] ", url, ": total=", declared.size(), " exported=", exported,
+            " keptForHoistedClosure=", partition.kept.size() - exported, " (captured ", keptCaptured, "; H=", hoisted.size(), " hoistedToday=", hoistedToday, " fnDecls=", functionDeclarations.size(), ")",
+            " movableCaptured=", movableCaptured, " movableUncaptured=", movableUncaptured,
+            " eligible=", possible, " captureAll=", shouldCaptureAllOfTheThings, " tla=", moduleProgramNode->usesAwait(), " applied=", partition.enabled);
+    }
+    return partition;
 }
 
 BytecodeGenerator::~BytecodeGenerator() = default;

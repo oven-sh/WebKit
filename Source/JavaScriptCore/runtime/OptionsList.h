@@ -702,6 +702,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseExecutablePoolAllocation, false, Normal, nullptr) \
     v(Bool, useHandlerICInFTL, false, Normal, nullptr) \
     v(Bool, useLLIntICs, true, Normal, "Use property and call ICs in LLInt code."_s) \
+    v(Bool, useSyntheticModuleScope, false, Normal, "Module code: keep only exported bindings and what hoisted exported function declarations reference in the JSModuleEnvironment; other top-level bindings go to registers or a lexical environment created at body entry"_s) \
+    v(Bool, dumpModuleScopePartition, false, Normal, "Module code: log per module how its top-level bindings partition (exported / kept for hoisted closures / movable captured / movable uncaptured)"_s) \
     v(Bool, useLazyCodeBlockLink, true, Normal, "If true, creating a CodeBlock does not walk its instruction stream: metadata stays zero-filled and scope resolution, call link infos and allocation profiles are set up when an instruction first executes (or before the block is handed to a JIT). Eval code and blocks with debugger/profiler opcodes still link eagerly."_s) \
     v(Bool, useBaselineJITCodeSharing, jitEnabledByDefault(), Normal, nullptr) \
     v(Bool, libpasScavengeContinuously, false, Normal, nullptr) \

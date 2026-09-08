@@ -57,11 +57,23 @@ public:
         exportBinding(localName, localName);
     }
 
+    // Free variables of each top-level function declaration (only collected under
+    // Options::useSyntheticModuleScope() / Options::dumpModuleScopePartition()).
+    const IdentifierAliasMap& functionDeclarationFreeVariables() const LIFETIME_BOUND { return m_functionDeclarationFreeVariables; }
+    bool hasFunctionDeclarationFreeVariables() const { return m_hasFunctionDeclarationFreeVariables; }
+    void setFunctionDeclarationFreeVariables(UniquedStringImpl* functionName, Vector<RefPtr<UniquedStringImpl>>&& freeVariables)
+    {
+        m_hasFunctionDeclarationFreeVariables = true;
+        m_functionDeclarationFreeVariables.set(functionName, WTF::move(freeVariables));
+    }
+
 private:
     ModuleScopeData() = default;
 
     IdentifierSet m_exportedNames { };
     IdentifierAliasMap m_exportedBindings { };
+    IdentifierAliasMap m_functionDeclarationFreeVariables { };
+    bool m_hasFunctionDeclarationFreeVariables { false };
 };
 
 } // namespace
