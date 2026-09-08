@@ -268,6 +268,29 @@ static bool forceICUFieldReresolution(UCalendar* cal)
     return U_SUCCESS(status);
 }
 
+// ICU4C-WORKAROUND: ICU 75 and later HebrewCalendar::add(UCAL_MONTH, n > 0) skips whole 19-year
+// cycles by taking multiples of 235 off a month total kept in UCAL_MONTH slots, where the empty
+// Adar I slot of a common year counts too. From Adar..Elul of a common year, a total that leaves
+// fewer than six slots after the skipped cycles lands one month late: 5720 Nisan 25 plus 463
+// months gives 5758 Tishri 25 instead of 5757 Elul 25. Take the whole cycles as years here
+// instead (a month slot and its year's leap status both recur every 19 years) and leave ICU a
+// remainder in [-12, 222], too small for any slot (at most 12) to reach that path. The year step
+// can pin day 30 to 29 in Heshvan or Kislev; every caller regulates the day from the original
+// afterwards. Subtraction takes a separate path in ICU that counts correctly.
+static bool addCalendarMonths(UCalendar* cal, CalendarID calendarId, int32_t months, UErrorCode& status)
+{
+    if (calendarId == hebrewCalendarID() && months > 222) {
+        static constexpr int32_t monthsPerCycle = 235;
+        static constexpr int32_t yearsPerCycle = 19;
+        int32_t cycles = static_cast<int32_t>((static_cast<int64_t>(months) + 12) / monthsPerCycle);
+        ucal_add(cal, UCAL_EXTENDED_YEAR, cycles * yearsPerCycle, &status);
+        months -= cycles * monthsPerCycle;
+    }
+    if (months)
+        ucal_add(cal, UCAL_MONTH, months, &status);
+    return U_SUCCESS(status);
+}
+
 static TemporalResult<void> validateRejectMode(UCalendar*, CalendarID, std::optional<ParsedMonthCode>, uint8_t day);
 
 // https://tc39.es/proposal-intl-era-monthcode/#sec-temporal-calendarintegerstoiso
@@ -1960,8 +1983,7 @@ TemporalResult<ISO8601::PlainDate> calendarDateAdd(CalendarID calendarId, const 
 
         // Add months. ICU balances year rollover implicitly.
         if (duration.months()) {
-            ucal_add(cal, UCAL_MONTH, clampTo<int32_t>(duration.months()), &status);
-            if (U_FAILURE(status)) [[unlikely]]
+            if (!addCalendarMonths(cal, calendarId, clampTo<int32_t>(duration.months()), status)) [[unlikely]]
                 return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
             if (!forceICUFieldReresolution(cal)) [[unlikely]]
                 return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
@@ -2007,7 +2029,8 @@ TemporalResult<ISO8601::PlainDate> calendarDateAdd(CalendarID calendarId, const 
 }
 
 // surpassesMonths — icu4x: SurpassesChecker::surpasses_months (components/calendar/src/calendar_arithmetic.rs)
-// Returns nullopt on ICU failure
+// For the calendars with a fixed month count (fixed-solar and islamic-*); the lunisolar ones count
+// months with lunarMonthsBetween below. Returns nullopt on ICU failure
 static std::optional<bool> surpassesMonths(
     UCalendar* trialCal,
     CalendarID calendarId,
@@ -2018,6 +2041,7 @@ static std::optional<bool> surpassesMonths(
     int32_t targetOrdinalMonth,
     int32_t targetDay)
 {
+    ASSERT(!calendarIsLunisolar(calendarId));
     UErrorCode status = U_ZERO_ERROR;
     if (calendarIsNonISOSolar(calendarId)) {
         auto yearField = calendarArithmeticYearField(calendarId);
@@ -2055,19 +2079,64 @@ static std::optional<bool> surpassesMonths(
     if (compareSurpassesLexicographic(sign, trialYear, *trialMonthCode, sourceDay, targetYear, targetMonthCode, targetDay))
         return true;
 
-    // Phase 2: constrain source monthCode to year y0, compare ordinally.
-    // trialCal is at the trial position, so its ordinal month equals resolveMonthCodeToOrdinal(calendarId, trialMonthCode, trialYear).
-    // Read it directly. computeFieldResolutionOrdinalMonth mutates trialCal (walks from year-start
-    // for lunisolar). save+restore epoch ms preserves the trial position for the next loop iteration.
-    double savedMs = ucal_getMillis(trialCal, &status);
-    if (U_FAILURE(status)) [[unlikely]]
-        return std::nullopt;
-    auto trialOrdinal = computeFieldResolutionOrdinalMonth(trialCal, calendarId);
-    UErrorCode restoreStatus = U_ZERO_ERROR;
-    ucal_setMillis(trialCal, savedMs, &restoreStatus);
-    if (!trialOrdinal || U_FAILURE(restoreStatus)) [[unlikely]]
+    // Phase 2: compare ordinally. No leap months here, so the ordinal month is UCAL_MONTH + 1.
+    auto trialOrdinal = computeOrdinalMonth(trialCal, calendarId);
+    if (!trialOrdinal) [[unlikely]]
         return std::nullopt;
     return compareSurpassesOrdinally(sign, trialYear, *trialOrdinal, sourceDay, targetYear, targetOrdinalMonth, targetDay);
+}
+
+// Mean days from one month start to the next in the lunisolar calendars, whose months follow the
+// moon and are all 29 or 30 days long. Only used to aim lunarMonthsBetween's first probe; ICU
+// settles the count.
+static double meanLunarMonthDays(CalendarID calendarId)
+{
+    ASSERT(calendarIsLunisolar(calendarId));
+    if (calendarId == hebrewCalendarID())
+        return 29 + (12 + 793 / 1080.0) / 24; // The molad interval, 29d 12h 793p (ICU4C HebrewCalendar MONTH_PARTS / DAY_PARTS).
+    return 29.530588853; // chinese/dangi months run new moon to new moon (ICU4C CalendarAstronomer::SYNODIC_MONTH).
+}
+
+// lunarMonthsBetween — no spec AO; stands in for icu4x's SurpassesChecker::surpasses_months walk
+// in the lunisolar calendars (chinese, dangi, hebrew): the signed n for which adding n months
+// carries the month starting at monthStartMs to the month starting at targetMonthStartMs, which
+// is the number of whole months NonISODateUntil's candidate loop would count one ICU month step at
+// a time. Each chinese/dangi step resolves fields through new-moon and solar-term astronomy, so the
+// walk cost grew with the span; here the epoch-day span over the mean month gives the count and
+// ICU confirms it, normally with the first probe. Leaves cal on the last probed month start.
+// Returns nullopt on ICU failure, or if no n lands on targetMonthStartMs (not a month start).
+static std::optional<int32_t> lunarMonthsBetween(UCalendar* cal, CalendarID calendarId, double monthStartMs, double targetMonthStartMs)
+{
+    auto epochDay = [](double epochMs) {
+        return std::floor(epochMs / millisecondsPerDay);
+    };
+    double targetEpochDay = epochDay(targetMonthStartMs);
+    double estimate = std::round((targetMonthStartMs - monthStartMs) / (meanLunarMonthDays(calendarId) * millisecondsPerDay));
+    // ucal_add takes int32_t; Temporal's date range spans under seven million lunar months.
+    if (!(std::abs(estimate) < INT32_MAX)) [[unlikely]]
+        return std::nullopt;
+    int32_t candidate = static_cast<int32_t>(estimate);
+    int32_t lastStep = 0;
+    // Month starts stray from the mean by a few days at most, far less than half a month, so the
+    // estimate is already the answer; the extra probes only absorb an ICU that disagrees with it.
+    for (unsigned probe = 0; probe < 8; ++probe) {
+        UErrorCode status = U_ZERO_ERROR;
+        ucal_setMillis(cal, monthStartMs, &status);
+        if (U_FAILURE(status) || !addCalendarMonths(cal, calendarId, candidate, status)) [[unlikely]]
+            return std::nullopt;
+        double trialMs = ucal_getMillis(cal, &status);
+        if (U_FAILURE(status)) [[unlikely]]
+            return std::nullopt;
+        double trialEpochDay = epochDay(trialMs);
+        if (trialEpochDay == targetEpochDay)
+            return candidate;
+        int32_t step = trialEpochDay < targetEpochDay ? 1 : -1;
+        if (lastStep && step != lastStep) [[unlikely]]
+            return std::nullopt; // Stepped across targetMonthStartMs without landing on it.
+        lastStep = step;
+        candidate += step;
+    }
+    return std::nullopt;
 }
 
 // setMonths — icu4x: SurpassesChecker::set_months (components/calendar/src/calendar_arithmetic.rs)
@@ -2091,7 +2160,8 @@ static std::optional<bool> setMonths(UCalendar* cal, int32_t sourceDay)
 
 // NonISODateUntil — temporal_rs: Calendar::date_until (src/builtins/core/calendar.rs)
 //   temporal_rs delegates to icu4x: AnyCalendar::until -> ArithmeticDate::until + SurpassesChecker (components/calendar/src/calendar_arithmetic.rs)
-//   ICU4C has no equivalent: fixed-solar calendars balance native fields directly; lunisolar calendars walk months with ucal_add.
+//   ICU4C has no equivalent: fixed-solar calendars balance native fields directly; lunisolar calendars count months from the
+//   epoch-day span and confirm the count with ucal_add; islamic-* walks months with ucal_add.
 // https://tc39.es/proposal-intl-era-monthcode/#sup-temporal-nonisodateuntil
 static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, const ISO8601::PlainDate& one, const ISO8601::PlainDate& two, TemporalUnit largestUnit)
 {
@@ -2104,9 +2174,11 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
         std::optional<int32_t> relatedYear;
         String monthCode;
         int32_t day { 0 };
-        int32_t ordinalMonth { 0 };
+        // Engaged only where a caller asked for it: for chinese/dangi it is a month walk from the
+        // year start, which the lunisolar month count below does without.
+        std::optional<int32_t> ordinalMonth;
     };
-    auto snapshotFields = [&](const ISO8601::PlainDate& date, bool needsRelatedYear) -> TemporalResult<DateSnapshot> {
+    auto snapshotFields = [&](const ISO8601::PlainDate& date, bool needsRelatedYear, bool needsOrdinalMonth) -> TemporalResult<DateSnapshot> {
         return withCalendar(calendarId, [&](UCalendar* cal) -> TemporalResult<DateSnapshot> {
             if (!cal) [[unlikely]]
                 return makeUnexpected(rangeError(icuOpenCalendarFailed));
@@ -2140,7 +2212,8 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
             if (hebrewY0Kislev) {
                 snapshot.monthCode = String("M03"_s);
                 snapshot.day = 30;
-                snapshot.ordinalMonth = 3;
+                if (needsOrdinalMonth)
+                    snapshot.ordinalMonth = 3;
                 return snapshot;
             }
             auto monthCodeOpt = getMonthCode(cal, calendarId);
@@ -2150,20 +2223,24 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
             snapshot.day = ucal_get(cal, UCAL_DAY_OF_MONTH, &status);
             if (U_FAILURE(status)) [[unlikely]]
                 return makeUnexpected(rangeError(icuReadCalendarFailed));
-            auto ordinalMonthOpt = computeFieldResolutionOrdinalMonth(cal, calendarId);
-            if (!ordinalMonthOpt) [[unlikely]]
-                return makeUnexpected(rangeError(icuReadCalendarFailed));
-            snapshot.ordinalMonth = *ordinalMonthOpt;
+            if (needsOrdinalMonth) {
+                auto ordinalMonthOpt = computeFieldResolutionOrdinalMonth(cal, calendarId);
+                if (!ordinalMonthOpt) [[unlikely]]
+                    return makeUnexpected(rangeError(icuReadCalendarFailed));
+                snapshot.ordinalMonth = *ordinalMonthOpt;
+            }
             return snapshot;
         });
     };
-    // Only the source's related year is consumed, and only by the year loop below.
-    auto targetOrError = snapshotFields(two, false);
+    // Ordinal months feed the year loop and the fixed-month-count paths; the lunisolar month count
+    // goes by month starts instead. Only the source's related year is consumed, and only by the year loop.
+    bool needsOrdinalMonth = largestUnit == TemporalUnit::Year || !calendarIsLunisolar(calendarId);
+    auto targetOrError = snapshotFields(two, false, needsOrdinalMonth);
     if (!targetOrError) [[unlikely]]
         return makeUnexpected(targetOrError.error());
     auto& target = *targetOrError;
 
-    auto sourceOrError = snapshotFields(one, largestUnit == TemporalUnit::Year);
+    auto sourceOrError = snapshotFields(one, largestUnit == TemporalUnit::Year, needsOrdinalMonth);
     if (!sourceOrError) [[unlikely]]
         return makeUnexpected(sourceOrError.error());
     auto& source = *sourceOrError;
@@ -2177,11 +2254,11 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
     // the target year/month; preserve the existing unregulated source-day comparison.
     if (calendarIsNonISOSolar(calendarId) && largestUnit == TemporalUnit::Month) {
         CheckedInt64 checkedMonths = (CheckedInt64(target.year) - source.year) * fixedSolarMonthsInYear(calendarId);
-        checkedMonths += target.ordinalMonth - source.ordinalMonth;
+        checkedMonths += *target.ordinalMonth - *source.ordinalMonth;
         if (checkedMonths.hasOverflowed()) [[unlikely]]
             return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
         int64_t months = checkedMonths;
-        if (compareSurpassesOrdinally(sign, target.year, target.ordinalMonth, source.day, target.year, target.ordinalMonth, target.day))
+        if (compareSurpassesOrdinally(sign, target.year, *target.ordinalMonth, source.day, target.year, *target.ordinalMonth, target.day))
             months -= sign;
 
         ISO8601::Duration monthDuration;
@@ -2207,7 +2284,7 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
     if (largestUnit == TemporalUnit::Year) {
         int64_t candidateYears = minYears ? minYears : sign;
         while (true) {
-            auto surpasses = nonISODateSurpasses(calendarId, sign, source.year, *source.relatedYear, source.monthCode, source.day, static_cast<int32_t>(candidateYears), target.year, target.monthCode, target.ordinalMonth, target.day);
+            auto surpasses = nonISODateSurpasses(calendarId, sign, source.year, *source.relatedYear, source.monthCode, source.day, static_cast<int32_t>(candidateYears), target.year, target.monthCode, *target.ordinalMonth, target.day);
             if (!surpasses) [[unlikely]]
                 return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
             if (*surpasses)
@@ -2228,7 +2305,7 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
         monthLoopStart = *advanced;
     }
 
-    // Month iteration on the cached calendar.
+    // Month phase on the cached calendar: count months from (one + years), then days by epoch ms.
     return withCalendar(calendarId, [&](UCalendar* cal) -> TemporalResult<ISO8601::Duration> {
         if (!cal) [[unlikely]]
             return makeUnexpected(rangeError(icuOpenCalendarFailed));
@@ -2236,28 +2313,47 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
             return makeUnexpected(rangeError(icuSetCalendarFailed));
 
         UErrorCode status = U_ZERO_ERROR;
-        // Lunisolar month counts vary. Fixed-solar calendars reach this loop only for
-        // largestUnit year, so direct construction is bounded to at most one native year.
-        int32_t candidateMonths = sign;
-        //    d. Set cal to (one + years) with day=1 for clamping-free month advancement.
         double startMs = ucal_getMillis(cal, &status);
         if (U_FAILURE(status)) [[unlikely]]
             return makeUnexpected(rangeError(icuReadCalendarFailed));
-        ucal_set(cal, UCAL_DAY_OF_MONTH, 1);
-        ucal_getMillis(cal, &status); // force ICU state resolution
-        if (U_FAILURE(status)) [[unlikely]]
-            return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
 
-        for (;;) {
-            auto surpasses = surpassesMonths(cal, calendarId, sign, source.day, target.year, target.monthCode, target.ordinalMonth, target.day);
-            if (!surpasses) [[unlikely]]
+        if (calendarIsLunisolar(calendarId)) {
+            // Every candidate short of the target's own month stays below it and every one past it
+            // surpasses, whatever the days, so the count of whole months from (one + years)'s month
+            // to the target's month decides every candidate but one: the target's month itself
+            // surpasses only on CompareSurpasses' day key.
+            int32_t startDay = ucal_get(cal, UCAL_DAY_OF_MONTH, &status);
+            if (U_FAILURE(status)) [[unlikely]]
+                return makeUnexpected(rangeError(icuReadCalendarFailed));
+            double monthStartMs = startMs - (startDay - 1) * millisecondsPerDay;
+            double targetMonthStartMs = target.epochMs - (target.day - 1) * millisecondsPerDay;
+            auto wholeMonths = lunarMonthsBetween(cal, calendarId, monthStartMs, targetMonthStartMs);
+            if (!wholeMonths) [[unlikely]]
                 return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
-            if (*surpasses)
-                break;
-            months = candidateMonths;
-            candidateMonths += sign;
-            // cal already advanced by surpassesMonths — no reset needed here.
-            // ucal_setMillis(cal, startMs) below resets it before applying the final months count.
+            months = *wholeMonths;
+            if (months && sign * (source.day - target.day) > 0)
+                months -= sign;
+        } else {
+            // Fixed-solar calendars reach this loop only for largestUnit year, so direct
+            // construction is bounded to at most one native year; islamic-* walks with ucal_add.
+            int32_t candidateMonths = sign;
+            //    d. Set cal to (one + years) with day=1 for clamping-free month advancement.
+            ucal_set(cal, UCAL_DAY_OF_MONTH, 1);
+            ucal_getMillis(cal, &status); // force ICU state resolution
+            if (U_FAILURE(status)) [[unlikely]]
+                return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
+
+            for (;;) {
+                auto surpasses = surpassesMonths(cal, calendarId, sign, source.day, target.year, target.monthCode, *target.ordinalMonth, target.day);
+                if (!surpasses) [[unlikely]]
+                    return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
+                if (*surpasses)
+                    break;
+                months = candidateMonths;
+                candidateMonths += sign;
+                // cal already advanced by surpassesMonths — no reset needed here.
+                // ucal_setMillis(cal, startMs) below resets it before applying the final months count.
+            }
         }
 
         // Restore cal to (one + years), then apply total months without undoing trial steps.
@@ -2279,8 +2375,7 @@ static TemporalResult<ISO8601::Duration> nonISODateUntil(CalendarID calendarId, 
                 if (!advancedExactly || !*advancedExactly) [[unlikely]]
                     return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
             } else {
-                ucal_add(cal, UCAL_MONTH, months, &status);
-                if (U_FAILURE(status)) [[unlikely]]
+                if (!addCalendarMonths(cal, calendarId, months, status)) [[unlikely]]
                     return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
                 if (!forceICUFieldReresolution(cal)) [[unlikely]]
                     return makeUnexpected(rangeError(icuCalendarArithmeticFailed));
