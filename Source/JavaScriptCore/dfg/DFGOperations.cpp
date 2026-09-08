@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "DFGOperations.h"
+#include "JSThreadsCounters.h"
 
 
 #include "ArrayPrototypeInlines.h"
@@ -429,6 +430,7 @@ JSC_DEFINE_JIT_OPERATION(operationReflectOwnKeysObject, JSArray*, (JSGlobalObjec
 
 JSC_DEFINE_JIT_OPERATION(operationCreateThis, JSCell*, (JSGlobalObject* globalObject, JSObject* constructor, uint32_t inlineCapacity))
 {
+    JSTHREADS_COUNT(createThis);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -5317,6 +5319,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNotifyWrite, void, (VM* vmPointer, In
     set->touch(vm, "Executed NotifyWrite");
 }
 
+// OM T4-P (history §27): an optimized Double allocation found that the array
+// it reported last time is no longer Double; let the profile fold that in now
+// (it fires its demotion set and this code is recompiled) instead of at the
+// next collection.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayAllocationProfileSawConversionGILOff, JSCell*, (VM* vmPointer, ArrayAllocationProfile* profile, JSCell* newArray))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    profile->updateProfile();
+    return newArray;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationThrowStackOverflowForVarargs, void, (JSGlobalObject* globalObject))
 {
     VM& vm = globalObject->vm();
@@ -6289,7 +6304,7 @@ JSC_DEFINE_JIT_OPERATION(operationMapGet, JSValue*, (JSGlobalObject* globalObjec
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSMap* map = uncheckedDowncast<JSMap>(cell);
-    JSValue* keySlot = map->getKeySlot(globalObject, JSValue::decode(key), hash);
+    JSValue* keySlot = vm.gilOff() ? map->getKeySlotGILOff(globalObject, JSValue::decode(key), hash) : map->getKeySlot(globalObject, JSValue::decode(key), hash);
     OPERATION_RETURN(scope, keySlot);
 }
 JSC_DEFINE_JIT_OPERATION(operationSetGet, JSValue*, (JSGlobalObject* globalObject, JSCell* cell, EncodedJSValue key, int32_t hash))
@@ -6299,7 +6314,7 @@ JSC_DEFINE_JIT_OPERATION(operationSetGet, JSValue*, (JSGlobalObject* globalObjec
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSSet* set = uncheckedDowncast<JSSet>(cell);
-    JSValue* keySlot = set->getKeySlot(globalObject, JSValue::decode(key), hash);
+    JSValue* keySlot = vm.gilOff() ? set->getKeySlotGILOff(globalObject, JSValue::decode(key), hash) : set->getKeySlot(globalObject, JSValue::decode(key), hash);
     OPERATION_RETURN(scope, keySlot);
 }
 

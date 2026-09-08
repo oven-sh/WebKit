@@ -24,6 +24,7 @@
  */
 
 #pragma once
+#include "JSThreadsCounters.h"
 
 #include "GetVM.h"
 #include "HeapCellInlines.h"
@@ -385,6 +386,7 @@ inline JSString* repeatCharacter(JSGlobalObject* globalObject, CharacterType cha
 
 inline NEVER_INLINE void JSRopeString::convertToNonRopeGILOff(String&& string, bool isAtom) const
 {
+    JSTHREADS_COUNT(ropeResolveGILOff);
     // GIL-off: multiple mutators can race to resolve the same rope, so this
     // transition must be idempotent. Serialize the one-pointer publish on
     // the cell lock; a loser observes the winner's publish under the lock,

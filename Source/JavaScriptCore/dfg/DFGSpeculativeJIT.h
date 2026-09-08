@@ -1664,6 +1664,7 @@ public:
     void compileCreateRest(Node*);
     void compileSpread(Node*);
     void compileNewArray(Node*);
+    void recordArrayAllocationGILOff(Node*, GPRReg resultGPR);
     void compileNewArrayWithSpread(Node*);
     void compileArraySlice(Node*);
     void compileArrayConcatArray(Node*);

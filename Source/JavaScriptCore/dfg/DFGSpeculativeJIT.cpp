@@ -9534,6 +9534,21 @@ void SpeculativeJIT::compileSpread(Node* node)
     }
 }
 
+void SpeculativeJIT::recordArrayAllocationGILOff(Node* node, GPRReg resultGPR)
+{
+    ArrayAllocationProfile* profile = m_graph.gilOffDoubleAllocationProfileFor(node);
+    if (!profile) [[likely]]
+        return;
+    GPRTemporary scratch1(this);
+    GPRTemporary scratch2(this);
+    const void* word = reinterpret_cast<const char*>(profile) + ArrayAllocationProfile::offsetOfLastArrayWord();
+    Jump sawConversion = loadAllocationProfileLastArrayAndTestGILOff(word, scratch1.gpr(), scratch2.gpr());
+    // resultGPR is a temporary, which the slow path's silent spill does not
+    // preserve: the operation hands the array back as its result instead.
+    addSlowPathGenerator(slowPathCall(sawConversion, this, operationArrayAllocationProfileSawConversionGILOff, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(profile), resultGPR));
+    storeLastArrayToAllocationProfileGILOff(word, resultGPR, scratch1.gpr(), scratch2.gpr());
+}
+
 void SpeculativeJIT::compileNewArray(Node* node)
 {
     JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
@@ -9594,6 +9609,7 @@ void SpeculativeJIT::compileNewArray(Node* node)
         // bigger problem will also likely fix the redundancy in reloading the storage
         // pointer that we currently have.
 
+        recordArrayAllocationGILOff(node, resultGPR);
         cellResult(resultGPR, node);
         return;
     }
@@ -15532,8 +15548,15 @@ void SpeculativeJIT::compileLoadMapValue(Node* node)
     GPRReg keySlotGPR = keySlot.gpr();
     GPRReg resultGPR = result.gpr();
 
-    Jump notPresentInTable = branchIfEmpty(keySlotGPR);
+    JumpList notPresentInTable;
+    notPresentInTable.append(branchIfEmpty(keySlotGPR));
     loadValue(Address(keySlotGPR, sizeof(EncodedJSValue)), resultGPR);
+    if (vm().gilOff()) [[unlikely]] {
+        // SPEC-jit history §35: the entry can have been deleted since the slot
+        // was found - delete stores the deleted sentinel into key and value.
+        notPresentInTable.append(branchIfEmpty(resultGPR));
+        notPresentInTable.append(branchLinkableConstant(JITCompiler::Equal, resultGPR, LinkableConstant(*this, vm().orderedHashTableDeletedValue())));
+    }
     Jump done = jump();
 
     notPresentInTable.link(this);
@@ -16401,6 +16424,7 @@ void SpeculativeJIT::compileNewArrayWithSize(Node* node)
         GPRReg resultGPR = result.gpr();
 
         compileAllocateNewArrayWithSize(node, resultGPR, sizeGPR, node->indexingType());
+        recordArrayAllocationGILOff(node, resultGPR);
         cellResult(resultGPR, node);
         return;
     }

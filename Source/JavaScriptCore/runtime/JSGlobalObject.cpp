@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "JSGlobalObject.h"
+#include "JSThreadsCounters.h"
 
 #include "AggregateError.h"
 #include "SuppressedError.h"
@@ -1055,6 +1056,7 @@ static ALWAYS_INLINE EncodedJSValue generatorClaimTokenForCurrentThread()
 
 JSC_DEFINE_HOST_FUNCTION(claimGeneratorResume, (JSGlobalObject*, CallFrame* callFrame))
 {
+    JSTHREADS_COUNT(generatorClaimResume);
     // The builtin callers gate on @isGenerator / the iterator-helper
     // generator field before calling.
     auto* generator = uncheckedDowncast<JSGenerator>(asObject(callFrame->uncheckedArgument(0)));

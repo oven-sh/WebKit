@@ -362,14 +362,27 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
     if (genericCodeBlock && vm.gilOffWithProcessGate()) [[unlikely]]
         WTF::storeStoreFence();
 
+    // SPEC-jit §5.8 r15 (history §32): GIL off, installCode itself publishes
+    // the arity-check mirror for the CodeBlock it just installed - LAST, after
+    // the CodeBlock slot (fenced above) - instead of leaving it null for
+    // entrypointFor's lazy refill (which stays disabled GIL off: a refill is a
+    // reader-side write that can land after a later install's retraction).
+    // With retract-first / publish-last here and every code-retiring slot
+    // write world-stopped (I8), the thunks' load-mirror / load-CodeBlock /
+    // re-compare-mirror sequence yields a matched pair GIL off as it does GIL
+    // on, so virtual calls to script functions take the thunk fast path again.
+    // Flag-off and GIL on store null here exactly as before.
+    CodePtr<JSEntryPtrTag> arityCheckEntry;
+    if (genericCodeBlock && vm.gilOffWithProcessGate()) [[unlikely]]
+        arityCheckEntry = genericCodeBlock->jitCode()->addressForCall(ArityCheckMode::MustCheckArity);
     switch (kind) {
     case CodeSpecializationKind::CodeForCall:
         m_jitCodeForCall = genericCodeBlock ? genericCodeBlock->jitCode() : RefPtr<JSC::JITCode>();
-        concurrentCodePtrStore(m_jitCodeForCallWithArityCheck, CodePtr<JSEntryPtrTag>());
+        concurrentCodePtrStore(m_jitCodeForCallWithArityCheck, arityCheckEntry);
         break;
     case CodeSpecializationKind::CodeForConstruct:
         m_jitCodeForConstruct = genericCodeBlock ? genericCodeBlock->jitCode() : RefPtr<JSC::JITCode>();
-        concurrentCodePtrStore(m_jitCodeForConstructWithArityCheck, CodePtr<JSEntryPtrTag>());
+        concurrentCodePtrStore(m_jitCodeForConstructWithArityCheck, arityCheckEntry);
         break;
     }
 

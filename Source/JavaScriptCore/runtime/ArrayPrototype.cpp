@@ -1655,6 +1655,8 @@ static JSArray* tryConcatAppendOneNonArray(JSGlobalObject* globalObject, VM& vm,
     
     if (type == NonArray)
         type = first->indexingType();
+    if (hasDouble(type) && vm.gilOff()) [[unlikely]]
+        type = (type & ~IndexingShapeMask) | ContiguousShape; // OM T4-C (r18).
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(type);
     JSArray* result = JSArray::tryCreate(vm, resultStructure, resultSize);
@@ -1725,9 +1727,14 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     if (!resultSize)
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
 
-    if (!secondArraySize && isCopyOnWrite(firstArray->indexingMode()))
+    // OM T4-C (r18): GIL off a fresh copy of Double sources is Contiguous (boxed below).
+    const bool boxDoubleLanes = type == ArrayWithDouble && vm.gilOff();
+    if (boxDoubleLanes) [[unlikely]]
+        type = ArrayWithContiguous;
+
+    if (!secondArraySize && isCopyOnWrite(firstArray->indexingMode()) && !boxDoubleLanes)
         return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(firstArray->indexingMode()), firstButterfly);
-    if (!firstArraySize && isCopyOnWrite(secondArray->indexingMode()))
+    if (!firstArraySize && isCopyOnWrite(secondArray->indexingMode()) && !boxDoubleLanes)
         return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(secondArray->indexingMode()), secondButterfly);
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(type);
@@ -1767,8 +1774,14 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
             copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
     } else if (type != ArrayWithUndecided) {
         WriteBarrier<Unknown>* buffer = butterfly->contiguous().data();
-        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, 0, firstButterfly->contiguous().data(), 0, firstArraySize, firstType);
-        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
+        if (firstType == ArrayWithDouble) [[unlikely]] // T4-C only (flag-off a Double source never reaches a Contiguous result here)
+            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, 0, firstButterfly->contiguousDouble().data(), 0, firstArraySize, firstType);
+        else
+            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, 0, firstButterfly->contiguous().data(), 0, firstArraySize, firstType);
+        if (secondType == ArrayWithDouble) [[unlikely]]
+            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguousDouble().data(), 0, secondArraySize, secondType);
+        else
+            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
     }
 
     Butterfly::clearRange(type, butterfly, resultSize, vectorLength);
@@ -1858,6 +1871,13 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
     if (!resultSize)
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
 
+    // OM T4-C (r18): GIL off a fresh copy of Double sources is Contiguous; the
+    // second pass then admits Double sources into the Contiguous result and
+    // boxes their lanes.
+    const bool boxDoubleLanes = type == ArrayWithDouble && vm.gilOff();
+    if (boxDoubleLanes) [[unlikely]]
+        type = ArrayWithContiguous;
+
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(type);
     ASSERT(!hasAnyArrayStorage(resultStructure->indexingType()));
 
@@ -1889,7 +1909,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
         IndexingType sourceType = array->indexingType();
         if (Options::useJSThreads()) [[unlikely]] {
             sourceSize = std::min(sourceSize, sourceButterfly->vectorLength());
-            if (sourceSize > resultSize - offset || mergeIndexingTypesForCopying(type, sourceType, /* allowPromotion */ true) != type)
+            if (sourceSize > resultSize - offset || (mergeIndexingTypesForCopying(type, sourceType, /* allowPromotion */ true) != type && !(boxDoubleLanes && sourceType == ArrayWithDouble)))
                 return false;
             // I41: a foreign-owned source not yet Double/Contiguous may be
             // relabelled by its owner at any instant GIL-off; its lanes cannot be
@@ -1917,7 +1937,10 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
                 copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
         } else if (type != ArrayWithUndecided) {
             WriteBarrier<Unknown>* buffer = butterfly->contiguous().data();
-            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
+            if (sourceType == ArrayWithDouble) [[unlikely]] // T4-C only
+                copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguousDouble().data(), 0, sourceSize, sourceType);
+            else
+                copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
         }
         offset += sourceSize;
         return true;

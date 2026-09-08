@@ -2558,6 +2558,17 @@ void SpeculativeJIT::compileMapGetImpl(Node* node)
     if (node->child2().useKind() != UntypedUse)
         speculate(node, node->child2());
 
+    if (vm().gilOff()) [[unlikely]] {
+        // SPEC-jit history §35: GIL off the DFG tier asks the runtime's
+        // validated reader for the slot (the inline probe with seqlock
+        // validation is FTL-only); still no JS call, no callee checks.
+        auto operation = std::same_as<MapOrSet, JSMap> ? operationMapGet : operationSetGet;
+        flushRegisters();
+        callOperation(operation, entryKeySlotGPR, LinkableConstant::globalObject(*this, node), mapGPR, keyGPR, hashGPR);
+        storageResult(entryKeySlotGPR, node);
+        return;
+    }
+
     JumpList notPresentInTable;
     JIT_COMMENT(*this, "Get the JSCellButterfly first.");
     loadPtr(Address(mapGPR, MapOrSet::offsetOfStorage()), mapStorageOrDataGPR);

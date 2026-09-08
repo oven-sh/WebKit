@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JSThreadsSafepoint.h"
 
+#include "JSThreadsCounters.h"
+
 #include "ConcurrentJSLock.h"
 #include "GCThreadLocalCache.h"
 
@@ -44,6 +46,14 @@
 #include <wtf/RecursiveLockAdapter.h> // B16 watchdog triage: gilOffCompilationLock / staticPropertyReificationLock isOwner() probe.
 #include <wtf/Seconds.h>
 #include <wtf/Threading.h> // B16 watchdog triage: ThreadSuspendLocker / PlatformRegisters for the fail-stop backtrace dump.
+
+namespace JSC { namespace JSThreadsSafepoint {
+// Thread-local so a wedged requester names the set IT is firing (concurrent
+// requesters cannot misattribute). Plain (non-atomic) is correct: written and
+// read only by the owning thread.
+static thread_local const void* t_pendingClassAStopContext { nullptr };
+static thread_local const char* t_pendingClassAStopContextDescription { nullptr };
+} }
 
 namespace JSC {
 
@@ -353,6 +363,7 @@ void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
         // the `work` closure), so they pass the guards above like any other
         // caller. See the scope's comments above.
         AlreadyStoppedWorldWitnessScope witnessScope(vm);
+        JSTHREADS_COUNT(stwRequestInline);
         work();
         // checktraps-dejank-invalidation-point (amend round): this inline
         // `work` ran under an OUTER stopped world (GC stop, shared-server
@@ -377,6 +388,7 @@ void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
     // worldIsStopped() disjunct above, so they run inline under the witness
     // scope (R1.h).
     s_stopTheWorldRequestCount.fetch_add(1, std::memory_order_relaxed);
+    JSTHREADS_COUNT(stwRequest);
     if (vm.gilOff()) [[unlikely]] {
         // checktraps-dejank-invalidation-point (review blocker fix, amend
         // round — see the BUMP-EDGE LAW comment above): bump the conductor
@@ -400,6 +412,14 @@ void stopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
                 noteConductorHeapFactRewrite();
         };
         ScopedLambda<void()> workThenBumpHeapFactRewriteEpoch(workThenBumpHeapFactRewriteEpochFunctor);
+        if (JSThreadsCounters::enabled()) [[unlikely]] {
+            MonotonicTime before = MonotonicTime::now();
+            jsThreadsThreadGranularStopTheWorldAndRun(vm, workThenBumpHeapFactRewriteEpoch);
+            uint64_t ns = static_cast<uint64_t>((MonotonicTime::now() - before).nanoseconds());
+            JSThreadsCounters::countNamed(t_pendingClassAStopContextDescription, ns);
+            JSThreadsCounters::singleton().stwNanoseconds.fetch_add(ns, std::memory_order_relaxed);
+            return;
+        }
         return jsThreadsThreadGranularStopTheWorldAndRun(vm, workThenBumpHeapFactRewriteEpoch);
     }
 
@@ -503,8 +523,7 @@ static Seconds stopTheWorldWatchdogTimeout()
 // Thread-local so a wedged requester names the set IT is firing (concurrent
 // requesters cannot misattribute). Plain (non-atomic) is correct: written and
 // read only by the owning thread.
-static thread_local const void* t_pendingClassAStopContext { nullptr };
-static thread_local const char* t_pendingClassAStopContextDescription { nullptr };
+// (t_pendingClassAStopContext / ...Description are defined near the top of the file.)
 
 ClassAStopWatchdogContext::ClassAStopWatchdogContext(const void* context, const char* description)
     : m_previousContext(t_pendingClassAStopContext)

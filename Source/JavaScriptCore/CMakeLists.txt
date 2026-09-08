@@ -1507,6 +1507,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSLexicalEnvironment.h
     runtime/JSLexicalEnvironmentInlines.h
     runtime/JSLock.h
+    runtime/JSThreadsCounters.h
     runtime/JSMap.h
     runtime/JSMapInlines.h
     runtime/JSMapIterator.h

@@ -557,6 +557,29 @@ void BlockDirectory::shrink()
     }
 }
 
+bool BlockDirectory::shrinkWhileCapacityAbove(size_t targetCapacity)
+{
+    // Same discipline as shrink() above (BVL for the scans, the free outside
+    // it, inUse taken around the free); stops as soon as the space is at or
+    // under the target. World-stopped only once shared, like shrink().
+    Locker locker(bitvectorLock());
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        if (markedSpace().capacity() <= targetCapacity)
+            return true;
+        index = (emptyBits() & ~destructibleBits() & ~inUseBits()).findBit(index, true);
+        if (index >= m_blocks.size())
+            break;
+        ASSERT(!isInUse(index));
+        setIsInUse(index, true);
+        {
+            DropLockForScope scope(locker);
+            markedSpace().freeBlock(m_blocks[index]);
+        }
+        setIsInUse(index, false);
+    }
+    return markedSpace().capacity() <= targetCapacity;
+}
+
 // FIXME: rdar://139998916
 MarkedBlock::Handle* BlockDirectory::findMarkedBlockHandleDebug(MarkedBlock* block)
 {

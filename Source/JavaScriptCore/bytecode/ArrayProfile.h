@@ -249,7 +249,13 @@ public:
     void addArrayProfileFlagsConcurrently(OptionSet<ArrayProfileFlag> flags)
     {
         static_assert(sizeof(m_arrayProfileFlags) == sizeof(uint32_t));
-        WTF::atomicExchangeOr(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), flags.toRaw(), std::memory_order_relaxed);
+        // Write-avoidance (SPEC-ungil §5.7, seventh round): the flags saturate
+        // quickly; test before the locked OR so steady-state observations from
+        // several threads are reads of a shared line, not a bouncing RMW.
+        uint32_t bits = flags.toRaw();
+        if ((WTF::atomicLoad(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), std::memory_order_relaxed) & bits) == bits)
+            return;
+        WTF::atomicExchangeOr(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), bits, std::memory_order_relaxed);
     }
 
     OptionSet<ArrayProfileFlag> arrayProfileFlagsConcurrently() const
@@ -283,13 +289,21 @@ public:
 
     // THREADS §5.7.5/§5.7.7: relaxed word-atomic last-writer-wins stores; the word is
     // advisory to every consumer (I12).
-    void observeStructureID(StructureID structureID) { WTF::atomicStore(&m_lastSeenStructureID, structureID, std::memory_order_relaxed); }
-    void observeStructure(Structure* structure) { WTF::atomicStore(&m_lastSeenStructureID, structure->id(), std::memory_order_relaxed); }
+    void observeStructureID(StructureID structureID)
+    {
+        if (WTF::atomicLoad(&m_lastSeenStructureID, std::memory_order_relaxed) != structureID) // write-avoidance, as above
+            WTF::atomicStore(&m_lastSeenStructureID, structureID, std::memory_order_relaxed);
+    }
+    void observeStructure(Structure* structure) { observeStructureID(structure->id()); }
 
     void NODELETE computeUpdatedPrediction(CodeBlock*);
     void computeUpdatedPrediction(CodeBlock*, Structure* lastSeenStructure);
     
-    void observeArrayMode(ArrayModes mode) { WTF::atomicExchangeOr(&m_observedArrayModes, mode, std::memory_order_relaxed); } // THREADS §5.7.5
+    void observeArrayMode(ArrayModes mode) // THREADS §5.7.5; write-avoidance as above
+    {
+        if ((WTF::atomicLoad(&m_observedArrayModes, std::memory_order_relaxed) & mode) != mode)
+            WTF::atomicExchangeOr(&m_observedArrayModes, mode, std::memory_order_relaxed);
+    }
     void NODELETE observeIndexedRead(JSCell*, unsigned index);
 
     ArrayModes observedArrayModes() const { return WTF::atomicLoad(const_cast<ArrayModes*>(&m_observedArrayModes), std::memory_order_relaxed); }

@@ -171,7 +171,7 @@ struct CellLockDepthScope {
 
 // ===== §10.6 stop-the-world veneer + witness (manifest entry 6) =====
 
-void jsThreadsStopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
+void jsThreadsStopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work, const char* why)
 {
     // Delegates to JSThreadsSafepoint::stopTheWorldAndRun, which runs `work`
     // inline under the GIL-on stub (raising its per-thread depth witness) or
@@ -188,7 +188,7 @@ void jsThreadsStopTheWorldAndRun(VM& vm, const ScopedLambda<void()>& work)
     // Watchdog context (review round): OM transition stops are the dominant
     // requester under property-write storms (e.g. counter-lock); a wedged
     // stop must name this requester class instead of crashing context-nil.
-    JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(&vm, "OM transition stop");
+    JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(&vm, why ? why : "OM transition stop");
     JSThreadsSafepoint::stopTheWorldAndRun(vm, work);
 }
 
@@ -587,7 +587,7 @@ ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* objec
                     if (newStructureOrNull
                         && (newStructureOrNull->transitionThreadLocalIsStillValid() || newStructureOrNull->writeThreadLocalIsStillValid()))
                         newStructureOrNull->fireTransitionThreadLocal(vm, "F2: flat->segmented conversion (transition target)");
-                }));
+                }), "OM segment (convertToSegmentedButterfly)");
             }
             return nullptr; // RESTART (after our stop, or the racing fire that abandoned ours - the world changed either way).
         }
@@ -1001,7 +1001,7 @@ void fireTTLSetsForSharedTransition(VM& vm, Structure* source, Structure* target
         if (target && target != source
             && (target->transitionThreadLocalIsStillValid() || target->writeThreadLocalIsStillValid()))
             target->fireTransitionThreadLocal(vm, reason);
-    }));
+    }), "OM shared transition TTL fire");
 }
 
 enum class TransitionFlavor : uint8_t {
@@ -1984,7 +1984,7 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
                 uint64_t previousWord = butterflyWordAtomic(object)->compareExchangeStrong(stoppedWord, stoppedWord | butterflySWBit, std::memory_order_seq_cst);
                 RELEASE_ASSERT(previousWord == stoppedWord);
                 flipped = true;
-            }));
+            }), "OM ensureSharedWriteBit (F1) a");
             if (flipped)
                 return;
             continue; // Re-dispatch on the post-stop state.
@@ -2025,7 +2025,7 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
                 jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
                     if (structure->writeThreadLocalIsStillValid()) // A racing fire may have got here first.
                         structure->fireWriteThreadLocal(vm, "F1: first foreign write to a flat thread-local-write instance");
-                }));
+                }), "OM ensureSharedWriteBit (F1) b");
             }
             continue; // Re-dispatch on the fresh word + structure after the stop (ours or the racing winner's).
         }
@@ -2618,7 +2618,7 @@ bool tryGrowSegmentedVectorLength(VM& vm, JSObjectWithButterfly* object, unsigne
         bool ok = casButterfly(object, word, encodeSegmentedButterfly(newSpine));
         RELEASE_ASSERT(ok);
         published = true;
-        }));
+        }), "OM grow segmented vector");
     } // Release the PerEventStopClaim before returning either way.
     if (!published)
         return false; // Re-dispatch on the fresh state.

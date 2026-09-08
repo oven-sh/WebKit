@@ -161,7 +161,19 @@ public:
 
     JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
     intptr_t m_stackOffset { 0 };
+    // The execute counter is incremented by every thread running this code's
+    // loop back-edges and returns (JS threads share CodeBlocks); the fields
+    // around it - the global object, the stack offset, and the trailing
+    // constant pool right after this object - are loaded by nearly every slow
+    // path call and IC of the same code. Keep the counter on a cache line of
+    // its own so those loads do not miss on every other thread's increment
+    // (measured: a four-thread run of one baseline function spent half its
+    // samples on the constant load following the counter's line). Padding,
+    // not alignas: the object's placement inside its ButterflyArray
+    // allocation is not line-aligned.
+    char m_padBeforeCounter[64];
     BaselineExecutionCounter m_executeCounter;
+    char m_padAfterCounter[64];
 };
 
 } // namespace JSC

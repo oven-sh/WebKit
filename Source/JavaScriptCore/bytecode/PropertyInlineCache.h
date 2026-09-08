@@ -208,7 +208,13 @@ public:
 
     ALWAYS_INLINE ICRacyCell& operator=(T value)
     {
-        icConcurrentRelaxedStore(m_value, value);
+        // Write-avoidance (SPEC-ungil §5.7, seventh round): these advisory
+        // cells sit in ICs shared by every thread running the CodeBlock; the
+        // operations set them (tookSlowPath = true, countdown, ...) on every
+        // call, mostly to the value they already hold. Store only a change so
+        // the IC's line - and whatever shares it - stays clean across cores.
+        if (icConcurrentRelaxedLoad(m_value) != value)
+            icConcurrentRelaxedStore(m_value, value);
         return *this;
     }
 

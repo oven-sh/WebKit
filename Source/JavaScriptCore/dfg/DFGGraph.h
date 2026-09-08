@@ -1439,6 +1439,12 @@ public:
     Bag<CallCustomAccessorData> m_callCustomAccessorData;
     Bag<GetByIdData> m_getByIdData;
     Bag<BitVector> m_bitVectors;
+
+    // GIL off (OM T4-P, history §27): allocation nodes compiled from a profile
+    // that recommended Double report their arrays into that profile so it can
+    // see them converted; empty flag-off / GIL-on.
+    UncheckedKeyHashMap<Node*, ArrayAllocationProfile*> m_gilOffDoubleAllocationProfiles;
+    ArrayAllocationProfile* gilOffDoubleAllocationProfileFor(Node* node) { return m_gilOffDoubleAllocationProfiles.isEmpty() ? nullptr : m_gilOffDoubleAllocationProfiles.get(node); }
     Vector<InlineVariableData, 4> m_inlineVariableData;
     UncheckedKeyHashMap<CodeBlock*, std::unique_ptr<FullBytecodeLiveness>> m_bytecodeLiveness;
     UncheckedKeyHashSet<std::pair<JSObject*, PropertyOffset>> m_safeToLoad;

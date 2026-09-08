@@ -244,15 +244,37 @@ private:
         NotCompiled
     };
     // m_state is written under the cell lock (compiles, deleteCode in a stop)
-    // and read lock-free by matchers on any thread (double-checked against the
-    // locked compile); one byte, so the racy read is a stale-or-current value.
-    // Relaxed atomic under TSAN, plain otherwise.
+    // and read lock-free by matchers on any thread; one byte, so the racy read
+    // is a stale-or-current value. The store is a PUBLICATION of the code the
+    // compile just installed (m_regExpBytecode / m_regExpJITCode / m_atom): a
+    // store-store fence precedes it and the GIL-off lock-free reader pairs it
+    // with a load-load fence (compileIfNecessary), so "has code" implies the
+    // code pointers are visible. Relaxed atomic under TSAN, plain otherwise.
     struct RacyRegExpState {
         RegExpState value;
         RacyRegExpState(RegExpState v) : value(v) { }
         operator RegExpState() const { return racyLoad(value); }
-        RacyRegExpState& operator=(RegExpState v) { racyStore(value, v); return *this; }
+        RacyRegExpState& operator=(RegExpState v) { WTF::storeStoreFence(); racyStore(value, v); return *this; }
     };
+
+    // GIL off (seventh landing round): what a match may use WITHOUT the cell
+    // lock. Each bit is set (release) by the compile that holds the cell lock,
+    // after the code it names is in place and m_state is stored; the lock-free
+    // "already compiled?" check in compileIfNecessary* loads it (acquire), so
+    // a reader that sees a bit also sees the code, the state and everything
+    // the compile wrote before it. InterpretAll = m_state settled on ByteCode
+    // (every width interprets m_regExpBytecode); it and the JIT bits only ever
+    // accumulate until deleteCode(), which runs world-stopped. Flag-off /
+    // GIL-on never read it.
+    enum PublishedCodeGILOff : uint8_t {
+        PublishedJIT8 = 1 << 0,
+        PublishedJIT16 = 1 << 1,
+        PublishedJIT8MatchOnly = 1 << 2,
+        PublishedJIT16MatchOnly = 1 << 3,
+        PublishedInterpretAll = 1 << 4,
+    };
+    void publishCodeGILOff(uint8_t bits) { m_publishedCodeGILOff.exchangeOr(bits, std::memory_order_release); }
+    bool hasPublishedCodeGILOff(uint8_t widthBit) const { return m_publishedCodeGILOff.load(std::memory_order_acquire) & (widthBit | PublishedInterpretAll); }
 
     Yarr::ErrorCode constructionErrorCode() const { return WTF::atomicLoad(const_cast<Yarr::ErrorCode*>(&m_constructionErrorCode), std::memory_order_relaxed); }
 
@@ -301,6 +323,7 @@ private:
     StringImpl* atomImplConcurrently() const { return racyLoad(*std::bit_cast<StringImpl* const*>(&m_atom)); }
     void publishAtom(String&&);
     RacyRegExpState m_state { NotCompiled };
+    Atomic<uint8_t> m_publishedCodeGILOff { 0 };
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };

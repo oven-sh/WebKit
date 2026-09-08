@@ -27,6 +27,7 @@
 
 #include "IndexingType.h"
 #include "JSArray.h"
+#include "Watchpoint.h"
 
 namespace JSC {
 
@@ -157,8 +158,22 @@ private:
     
     IndexingTypeAndVectorLength current() const { return m_storage.typeRelaxed(); }
 
+public:
+    // GIL off (SPEC-objectmodel T4-P, history §27): DFG/FTL code that baked a
+    // Double recommendation from this profile watches this set; the profile
+    // fires it when its recommendation leaves Double (its arrays were seen
+    // converted), so the allocation site recompiles to allocate what its arrays
+    // become instead of converting every one of them through a stop. Optimized
+    // allocations report their result into the last-array word GIL off so the
+    // profile sees them (offsetOfLastArrayWord). Flag-off / GIL-on: never
+    // fired, never watched.
+    InlineWatchpointSet& gilOffDoubleDemotionSet() { return m_gilOffDoubleDemotionSet; }
+    static constexpr ptrdiff_t offsetOfLastArrayWord() { return OBJECT_OFFSETOF(ArrayAllocationProfile, m_storage); }
+
+private:
     using Storage = CompactPointerTuple<JSArray*, uint16_t>;
     Storage m_storage;
+    InlineWatchpointSet m_gilOffDoubleDemotionSet { IsWatched };
 };
 
 } // namespace JSC
