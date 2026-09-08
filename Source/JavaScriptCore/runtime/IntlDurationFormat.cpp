@@ -140,8 +140,24 @@ static IntlDurationFormat::UnitData intlDurationUnitOptions(JSGlobalObject* glob
         }
     }
 
+    // https://tc39.es/ecma402/#sec-getdurationunitoptions
+    // 4. If style is "numeric" and IsFractionalSecondUnitName(unit) is true, then
+    //     a. Set style to "fractional".
+    //     b. Set displayDefault to "auto".
+    // "fractional" is represented as Numeric on a sub-second unit.
+    bool isFractional = style == IntlDurationFormat::UnitStyle::Numeric && (unit == TemporalUnit::Millisecond || unit == TemporalUnit::Microsecond || unit == TemporalUnit::Nanosecond);
+    if (isFractional)
+        displayDefault = IntlDurationFormat::Display::Auto;
+
     IntlDurationFormat::Display display = intlOption<IntlDurationFormat::Display>(globalObject, options, displayName, { { "auto"_s, IntlDurationFormat::Display::Auto }, { "always"_s, IntlDurationFormat::Display::Always } }, "display name must be either \"auto\" or \"always\""_s, displayDefault);
     RETURN_IF_EXCEPTION(scope, { });
+
+    // https://tc39.es/ecma402/#sec-validatedurationunitstyle
+    // 1. If display is "always" and style is "fractional", throw a RangeError exception.
+    if (isFractional && display == IntlDurationFormat::Display::Always) {
+        throwRangeError(globalObject, scope, makeString(String(displayName.uid()), " must be \"auto\" when "_s, String(propertyName.uid()), " is \"numeric\""_s));
+        return { };
+    }
 
     if (prevStyle && (prevStyle.value() == IntlDurationFormat::UnitStyle::Numeric || prevStyle.value() == IntlDurationFormat::UnitStyle::TwoDigit)) {
         if (style != IntlDurationFormat::UnitStyle::Numeric && style != IntlDurationFormat::UnitStyle::TwoDigit) {
@@ -359,21 +375,16 @@ static DurationSignType NODELETE getDurationSign(ISO8601::Duration duration)
     return DurationSignType::Zero;
 }
 
-static String int128ToString(Int128 value)
+static String unsignedInt128ToString(Int128 value)
 {
+    ASSERT(value >= 0);
     Vector<Latin1Character> resultString;
-    bool isNegative = value < 0;
-    if (isNegative)
-        value = -value;
 
-    while (value) {
+    do {
         Int128 digit = value % 10;
         resultString.append(static_cast<char>('0' + digit));
         value /= 10;
-    }
-
-    if (isNegative)
-        resultString.append('-');
+    } while (value);
 
     std::ranges::reverse(resultString);
 
@@ -398,13 +409,19 @@ static String buildDecimalFormat(TemporalUnit unit, Int128 ns)
         exponent = Int128(1000);
     }
 
+    // The sign is emitted separately: integer division truncates toward zero, so a value in (-1, 0)
+    // has integerPart == 0 and would otherwise lose its sign.
+    bool isNegative = ns < 0;
+    if (isNegative)
+        ns = -ns;
     Int128 integerPart = ns / exponent;
-    ASSERT(ns % exponent >= std::numeric_limits<int64_t>::min() && ns % exponent <= std::numeric_limits<int64_t>::max());
-    int64_t fractionalPart = std::abs(static_cast<int64_t>(ns % exponent));
+    int64_t fractionalPart = static_cast<int64_t>(ns % exponent);
 
     StringBuilder builder;
 
-    builder.append(int128ToString(integerPart));
+    if (isNegative)
+        builder.append('-');
+    builder.append(unsignedInt128ToString(integerPart));
     builder.append("."_s);
 
     String fractionalString = String::number(fractionalPart);
@@ -498,9 +515,18 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
         if (style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric)
             skeletonBuilder.append(" group-off"_s);
 
-        // 3.l. If value is not 0 or display is not "auto", then
+        // https://tc39.es/ecma402/#sec-partitiondurationformatpattern
+        // 4.h.ii.1. Set value to value + ComputeFractionalDigits(durationFormat, duration).
+        // When the next unit is fractional, totalNanosecondsValue holds that sum exactly and `value`
+        // is only this unit's integer field, so the zero and sign tests read the former.
         value = purifyNaN(value);
-        if (value || unitData.display() != IntlDurationFormat::Display::Auto || style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric) {
+        bool valueIsZero = totalNanosecondsValue ? !totalNanosecondsValue.value() : !value;
+        auto valueIsNegative = [&]() -> bool {
+            return std::signbit(value) || (totalNanosecondsValue && totalNanosecondsValue.value() < 0);
+        };
+
+        // 4.h.iii. If display is "always" or value is not 0, then
+        if (!valueIsZero || unitData.display() != IntlDurationFormat::Display::Auto || style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric) {
             auto formatToString = [&](UFormattedNumber* formattedNumber) -> String {
                 auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -520,7 +546,7 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
             bool suppressSign = needsSignDisplay;
 
             auto adjustSignDisplay = [&]() -> void {
-                if (!needsSignDisplay && !value) {
+                if (!needsSignDisplay && valueIsZero) {
                     if (!durationSign)
                         durationSign = getDurationSign(duration);
                     if (durationSign == DurationSignType::Negative) {
@@ -613,13 +639,13 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
                     auto formatted = formatToString(formattedNumber.get());
                     RETURN_IF_EXCEPTION(scope, { });
 
-                    elements.append({ ElementType::Element, std::signbit(value), unit, WTF::move(formatted), WTF::move(formattedNumber) });
+                    elements.append({ ElementType::Element, valueIsNegative(), unit, WTF::move(formatted), WTF::move(formattedNumber) });
                 }
 
                 if (needsSeparator) {
                     if (separator.isNull())
                         separator = retrieveSeparator(durationFormat->dataLocaleWithExtensions(), durationFormat->numberingSystem());
-                    elements.append({ ElementType::Literal, std::signbit(value), unit, separator, nullptr });
+                    elements.append({ ElementType::Literal, valueIsNegative(), unit, separator, nullptr });
                 }
 
                 break;
@@ -647,11 +673,11 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
                 auto formatted = formatToString(formattedNumber.get());
                 RETURN_IF_EXCEPTION(scope, { });
 
-                elements.append({ ElementType::Element, std::signbit(value), unit, WTF::move(formatted), WTF::move(formattedNumber) });
+                elements.append({ ElementType::Element, valueIsNegative(), unit, WTF::move(formatted), WTF::move(formattedNumber) });
                 break;
             }
             }
-            if (value)
+            if (!valueIsZero)
                 needsSignDisplay = true;
         }
     }
