@@ -2460,19 +2460,45 @@ DisposableCallSiteIndex CodeBlock::newExceptionHandlingCallSiteIndex(CallSiteInd
 
 
 
-void CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex bytecodeIndex)
+ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
     ASSERT(JITCode::isBaselineCode(jitType()));
     auto& instruction = instructions().at(bytecodeIndex);
     OpCatch op = instruction->as<OpCatch>();
     auto& metadata = op.metadata(this);
     if (!!metadata.m_buffer)
-        return;
+        return metadata.m_buffer;
 
-    ensureCatchLivenessIsComputedForBytecodeIndexSlow(op, bytecodeIndex);
+    if (Options::useLazyCatchLiveness()) {
+        if (!metadata.m_hasExecutedWithoutBuffer) {
+            metadata.m_hasExecutedWithoutBuffer = true;
+            m_hasCatchThatExecutedWithoutBuffer = true;
+        }
+        return nullptr;
+    }
+
+    return ensureCatchLivenessIsComputedForBytecodeIndexSlow(op, bytecodeIndex);
 }
 
-void CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch& op, BytecodeIndex bytecodeIndex)
+bool CodeBlock::ensureCatchLivenessIsComputedForExecutedCatchesSlow()
+{
+    ASSERT(!isCompilationThread());
+    ASSERT(!JITCode::isOptimizingJIT(jitType()));
+    m_hasCatchThatExecutedWithoutBuffer = false;
+    bool createdBuffer = false;
+    for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
+        BytecodeIndex bytecodeIndex(exceptionHandler(i).target);
+        OpCatch op = instructions().at(bytecodeIndex)->as<OpCatch>(); // every handler targets an op_catch
+        auto& metadata = op.metadata(this);
+        if (metadata.m_hasExecutedWithoutBuffer && !metadata.m_buffer) {
+            ensureCatchLivenessIsComputedForBytecodeIndexSlow(op, bytecodeIndex);
+            createdBuffer = true;
+        }
+    }
+    return createdBuffer;
+}
+
+ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch& op, BytecodeIndex bytecodeIndex)
 {
     BytecodeLivenessAnalysis& bytecodeLiveness = livenessAnalysis();
 
@@ -2505,6 +2531,7 @@ void CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch&
     WTF::storeStoreFence();
 
     op.metadata(this).m_buffer = profiles;
+    return profiles;
 }
 
 void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSiteIndex)

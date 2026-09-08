@@ -62,6 +62,11 @@ namespace CodeBlockCreationStats {
     v(DecodeChildNameLazy, "decode: child ecmaName atomized on first use (useThinChildExecutables; count = executables)") \
     v(DecodeChildMembersLazy, "decode: child TDZ variables + rare data decoded on first use (useThinChildExecutables; count = executables)") \
     v(DecodeOwnMembers, "decode: derived-class members (program/module var declarations etc.)") \
+    v(ExternalAtomSlotHit, "decode:   count only: DecoderStringTable::atomFor answered from its slot (string already atomized on this thread; folded in per decoded block)") \
+    v(ExternalAtomPromoted, "decode:   count only: DecoderStringTable::atomFor promoted the plain string a constant left in the slot (atom-table insert)") \
+    v(ExternalAtomCreated, "decode:   count only: DecoderStringTable::atomFor atomized a table string for the first time on a thread (atom-table insert)") \
+    v(AtomTableGrew, "decode:   count only: decoded blocks after which the thread's atom string table had more buckets than at the previous check (each transition is also logged)") \
+    v(AtomTableShrank, "decode:   count only: ... fewer buckets (a removal shrank it below 1/6 load; the regrowth that follows is rehash work reserveCapacityForCurrentThread caused)") \
     v(DecodeTotal, "decode: TOTAL per UnlinkedCodeBlock (inclusive)") \
     v(DecodeFunctionCodeBlockLazy, "decode: lazy UnlinkedFunctionCodeBlock decode calls (inclusive, subset of DecodeTotal)") \
     v(LinkMetadataCreate, "link: CodeBlock ctor incl. MetadataTable allocation") \

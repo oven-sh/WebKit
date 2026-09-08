@@ -6,8 +6,8 @@ function shouldBe(actual, expected, what) {
         throw new Error(what + ': bad value: ' + actual);
 }
 
-// Each LLInt call adds 25 to the execution counter (15 prologue + 10 epilogue); the normal
-// LLInt->Baseline threshold is 500 (20 calls), so inside an 8x window it is 4000 (160 calls).
+// Each LLInt call adds 15 to the execution counter (5 prologue + 10 epilogue); the normal
+// LLInt->Baseline threshold is 500 (34 calls), so inside an 8x window it is 4000 (267 calls).
 function probe() { return $vm.llintTrue(); }
 noInline(probe);
 
@@ -20,7 +20,7 @@ if ($vm.useJIT()) {
     shouldBe($vm.endStartupJITDeferral(), true, "window was active");
     shouldBe($vm.endStartupJITDeferral(), false, "idempotent");
 
-    // Deferred counters re-check within max(threshold, maximumExecutionCountsBetweenCheckpoints) = 1000 counts = 40 calls.
+    // Deferred counters re-check at most maximumExecutionCountsBetweenCheckpoints = 1000 counts after the deferred check (here 600 counts = 40 calls away).
     for (let i = 0; i < 60; ++i)
         last = probe();
     shouldBe(last, false, "compiled promptly once the window ended");

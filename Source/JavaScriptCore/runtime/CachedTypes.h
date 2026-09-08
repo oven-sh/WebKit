@@ -36,6 +36,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <array>
 #include <optional>
 
 namespace JSC {
@@ -45,6 +46,7 @@ class CachedBytecode;
 class SourceCodeKey;
 class SourceProvider;
 class CachedSymbolTable;
+class ExpressionInfo;
 class SymbolTable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
@@ -116,6 +118,19 @@ public:
     JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>);
     JS_EXPORT_PRIVATE ~DecoderStringTable();
     Ref<AtomStringImpl> atomFor(VM&, uint32_t ordinal);
+    // How many of `lookups` coming atomFor calls to expect to insert into the thread's atom table, going by the calls so
+    // far (all of them until there is a history). For AtomStringImpl::reserveCapacityForCurrentThread: reserving for
+    // every lookup once most are slot hits grows the table past what its key count keeps (HashTable shrinks on the next
+    // removal below 1/6 load, then regrows).
+    unsigned expectedAtomTableInserts(unsigned lookups) const
+    {
+        if (m_atomForCalls < 1024)
+            return lookups;
+        return static_cast<unsigned>(static_cast<uint64_t>(lookups) * (m_atomsPromoted + m_atomsCreated) / m_atomForCalls);
+    }
+    // Options::reportCodeBlockCreationCosts(): fold atomFor's outcomes since the last call into their count-only buckets
+    // and log the thread's atom table capacity if it changed (a drop means a removal shrank it). Mutator only.
+    void reportStats(VM&) const;
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
@@ -170,6 +185,12 @@ private:
     uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
+    // atomFor's outcomes so far (mutator only): expectedAtomTableInserts scales by them, reportStats folds them into buckets.
+    uint32_t m_atomForCalls { 0 };
+    uint32_t m_atomsPromoted { 0 };
+    uint32_t m_atomsCreated { 0 };
+    mutable std::array<uint32_t, 3> m_reportedOutcomes { }; // reportStats: hits / promoted / created already added to the buckets
+    mutable unsigned m_reportedAtomTableCapacity { 0 };
     Lock m_cellsLock;
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
@@ -308,6 +329,9 @@ JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionC
 // Options::useLazySymbolTableConstants(): fill in the entries of a SymbolTable whose CachedSymbolTable record was left
 // undecoded (SymbolTable::materializeCachedEntries). Mutator only; allocates no GC cells.
 void decodeSymbolTableEntries(Decoder&, const CachedSymbolTable&, SymbolTable&, bool scopePartOnly);
+// Options::useLazyCachedExpressionInfo(): the ExpressionInfo for a CachedExpressionInfo record left unread in a persistent
+// payload that ends `payloadBytesLeft` past it (UnlinkedCodeBlock::expressionInfo). Any thread; allocates no GC cells.
+std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo, uint32_t payloadBytesLeft);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

@@ -615,10 +615,12 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
     uintptr_t& slot = m_slots[ordinal];
+    m_atomForCalls++;
     if (slot) [[likely]] {
         StringImpl* existing = impl(slot);
         if (existing->isAtom()) [[likely]]
             return *static_cast<AtomStringImpl*>(existing);
+        m_atomsPromoted++;
         Ref<AtomStringImpl> atom = AtomStringImpl::add(existing).releaseNonNull(); // makes `existing` the atom unless one already exists
         if (atom.ptr() != existing) {
             if (isCell(slot))
@@ -631,6 +633,7 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
         }
         return atom;
     }
+    m_atomsCreated++;
     Record r = record(ordinal);
     Ref<AtomStringImpl> atom = r.is8Bit
         ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
@@ -638,6 +641,24 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
     atom->ref();
     slot = std::bit_cast<uintptr_t>(static_cast<StringImpl*>(atom.ptr()));
     return atom;
+}
+
+void DecoderStringTable::reportStats(VM& vm) const
+{
+    std::array<uint32_t, 3> outcomes { m_atomForCalls - m_atomsPromoted - m_atomsCreated, m_atomsPromoted, m_atomsCreated };
+    constexpr std::array buckets { CodeBlockCreationStats::Bucket::ExternalAtomSlotHit, CodeBlockCreationStats::Bucket::ExternalAtomPromoted, CodeBlockCreationStats::Bucket::ExternalAtomCreated };
+    for (unsigned i = 0; i < 3; ++i) {
+        if (uint32_t delta = outcomes[i] - m_reportedOutcomes[i])
+            CodeBlockCreationStats::add(buckets[i], 0, delta);
+    }
+    m_reportedOutcomes = outcomes;
+    auto& table = vm.atomStringTable()->table();
+    unsigned capacity = table.capacity();
+    if (capacity == m_reportedAtomTableCapacity)
+        return;
+    CodeBlockCreationStats::add(capacity > m_reportedAtomTableCapacity ? CodeBlockCreationStats::Bucket::AtomTableGrew : CodeBlockCreationStats::Bucket::AtomTableShrank, 0);
+    dataLogLn("CodeBlockCreationStats: atom table ", m_reportedAtomTableCapacity, " -> ", capacity, " buckets at ", table.size(), " keys (", m_atomsCreated, " created + ", m_atomsPromoted, " promoted by the string table so far)");
+    m_reportedAtomTableCapacity = capacity;
 }
 
 RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
@@ -2545,10 +2566,16 @@ public:
     // A damaged one decodes as "no expression info" (stack traces lose line/column for that function) rather than failing the function.
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
-        const uint8_t* base = std::bit_cast<const uint8_t*>(this);
+        if (!decoder.payloadContains(this, sizeof(uint32_t) + 1))
+            return ExpressionInfo::createUninitialized(0, 0, 0);
         auto payload = decoder.payloadSpan();
-        const uint8_t* limit = payload.data() + payload.size();
-        if (!decoder.payloadContains(base, sizeof(uint32_t) + 1))
+        return decode(payload.data() + payload.size(), decoder.verifiesChecksums(), decoder.canBorrowPayload());
+    }
+    // `this` lies inside a payload that ends at `limit` (the caller checked); nothing past it is read.
+    std::unique_ptr<ExpressionInfo> decode(const uint8_t* limit, bool verifyChecksum, bool borrow) const
+    {
+        const uint8_t* base = std::bit_cast<const uint8_t*>(this);
+        if (limit < base || static_cast<size_t>(limit - base) < sizeof(uint32_t) + 1)
             return ExpressionInfo::createUninitialized(0, 0, 0);
         VarintReader reader(base + sizeof(uint32_t), limit);
         uint8_t flags = reader.u8();
@@ -2560,9 +2587,9 @@ public:
         size_t payloadAt = roundUpToMultipleOf<4>(reader.position() - base);
         size_t payloadBytes = ExpressionInfo::payloadSizeInBytes(chapters, encodedInfo, extensions);
         size_t total = payloadAt + payloadBytes + ((flags & HasChecksum) ? sizeof(uint32_t) : 0);
-        if (!decoder.payloadContains(base, total))
+        if (total > static_cast<size_t>(limit - base))
             return ExpressionInfo::createUninitialized(0, 0, 0);
-        if ((flags & HasChecksum) && decoder.verifiesChecksums()) {
+        if ((flags & HasChecksum) && verifyChecksum) {
             uint32_t stored;
             memcpy(&stored, base + payloadAt + payloadBytes, sizeof(stored));
             if (stored != ~crc32c(~0u, std::span { base, payloadAt + payloadBytes })) {
@@ -2571,7 +2598,7 @@ public:
             }
         }
         const unsigned* words = reinterpret_cast<const unsigned*>(base + payloadAt);
-        if (decoder.canBorrowPayload() && payloadBytes)
+        if (borrow && payloadBytes)
             return ExpressionInfo::createBorrowed(chapters, encodedInfo, extensions, words);
         auto info = ExpressionInfo::createUninitialized(chapters, encodedInfo, extensions);
         if (payloadBytes)
@@ -4461,8 +4488,9 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
         prefetchStringTargets<DecoderStringTable::PrefetchFor::Atom>(*strings, 0, identifiersHead, identifierOrdinals);
     }
 #endif
-    // Most identifiers and many constants become atoms; let the table grow once for this block rather than as they trickle in.
-    if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
+    // Let the atom table grow once for this block rather than as its identifiers trickle in. With a shared string table
+    // string constants never enter it (jsStringFor) and most identifiers are already atoms after the first modules.
+    if (unsigned expected = strings ? strings->expectedAtomTableInserts(layout.identifiers.count) : layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
         DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstants, layout.constants.count);
@@ -4476,7 +4504,16 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     {
         DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeMisc);
         decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
-        codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
+#if USE(BUN_JSC_ADDITIONS)
+        // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
+        // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
+        if (auto* record = Options::useLazyCachedExpressionInfo() && decoder.canBorrowPayload() ? m_expressionInfo.getIfInPayload(decoder) : nullptr) {
+            auto payload = decoder.payloadSpan();
+            codeBlock.m_cachedExpressionInfo = record;
+            codeBlock.m_cachedExpressionInfoBytes = static_cast<uint32_t>(std::min<size_t>(payload.data() + payload.size() - std::bit_cast<const uint8_t*>(record), UINT32_MAX));
+        } else
+#endif
+            codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
         if (auto* e = extras(layout))
             e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
     }
@@ -4491,6 +4528,8 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
         decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
         decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
     }
+    if (CodeBlockCreationStats::enabled() && strings) [[unlikely]]
+        strings->reportStats(decoder.vm());
 }
 
 UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
@@ -5215,9 +5254,9 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     Record* record = new (result.buffer()) Record();
     writer.copyTo(record->tailBytes());
     ptrdiff_t trailerOffset = result.offset() + sizeof(Record) + writer.size();
-    encoder.deferCold([record, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
+    encoder.deferCold([record, &encoder, &codeBlock] {
         // Self-checksummed and position-independent, so an identical one written earlier is reused.
-        auto bytes = CachedExpressionInfo::pack(*expressionInfo, encoder.checksums());
+        auto bytes = CachedExpressionInfo::pack(codeBlock.expressionInfo(), encoder.checksums());
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes.span()) ^ static_cast<unsigned>(bytes.size());
         ptrdiff_t at;
         if (auto existing = encoder.existingIdenticalArray(bytes.span(), hash, alignof(CachedExpressionInfo)))
@@ -5654,6 +5693,12 @@ void decodeSymbolTableEntries(Decoder& decoder, const CachedSymbolTable& cachedS
 {
     ASSERT(!isCompilationThread());
     cachedSymbolTable.decodeEntries(decoder, symbolTable, scopePartOnly);
+}
+
+std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo, uint32_t payloadBytesLeft)
+{
+    // A persistent payload is never checksummed on decode (Decoder::verifiesChecksums) and may always be borrowed.
+    return static_cast<const CachedExpressionInfo*>(cachedExpressionInfo)->decode(static_cast<const uint8_t*>(cachedExpressionInfo) + payloadBytesLeft, false, true);
 }
 
 } // namespace JSC
