@@ -136,10 +136,9 @@ String String::tryConvertToLowercaseWithoutLocale() const
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToLowercaseWithoutLocale() : String { };
 }
 
-String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
+String String::tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
 {
-    // FIXME: Should this function, and the many others like it, be inlined?
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
 }
 
 String String::tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const

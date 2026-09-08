@@ -472,7 +472,7 @@ RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithoutLocale()
         for (unsigned i = 0; i < span.size(); ++i) {
             Latin1Character character = span[i];
             if (!isASCII(character) || isASCIIUpper(character)) [[unlikely]]
-                return convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(i);
+                return tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(i);
         }
 
         return this;
@@ -530,11 +530,13 @@ RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithoutLocaleStartingAtFaili
     return tryConvertCaseWithICU(u_strToLower, "", span, WTF::move(newImpl), data16);
 }
 
-Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex)
+RefPtr<StringImpl> StringImpl::tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex)
 {
     ASSERT(is8Bit());
     std::span<Latin1Character> data8;
-    auto newImpl = createUninitializedInternalNonEmpty(m_length, data8);
+    RefPtr<StringImpl> newImpl = tryCreateUninitialized(m_length, data8);
+    if (!newImpl)
+        return nullptr;
 
     auto span = span8();
     copyCharacters(data8, span.first(failingIndex));
