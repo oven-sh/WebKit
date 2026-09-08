@@ -128,14 +128,8 @@ public:
     bool slotEquals(uint32_t slot, const StringImpl&) const;
     // The one JSString this VM uses for the string constant with this ordinal (single characters come from SmallStrings
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
-    // table visits it for as long as the VM lives. Mutator only, GC deferred; see flushPendingCells.
+    // table visits it for as long as the VM lives.
     JSString* jsStringFor(VM&, uint32_t ordinal);
-    // Options::useLazyHeapConstants(): jsStringFor does not register the cells it creates with visitStrongReferences one
-    // lock at a time; the constant-pool decode that called it does, in one go, before its DeferGC scope can end. In
-    // between a new cell is kept alive by GC being deferred plus the barriered store into the pool's (newly allocated)
-    // owner. Every jsStringFor call must therefore sit inside a CachedJSValuePool::decode (Decoder's destructor flushes
-    // as a backstop; ~DecoderStringTable asserts nothing was left pending).
-    void flushPendingCells();
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
     // Options::useFastCachedAtoms(): unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
@@ -176,7 +170,6 @@ private:
     uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
-    Vector<uint32_t, 32> m_pendingCellOrdinals; // mutator only
     Lock m_cellsLock;
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
@@ -245,21 +238,13 @@ public:
     // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
     static Ref<AtomStringImpl> atomForInlineString(VM&, std::span<const uint8_t, 4> slot);
     Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot) { return atomForInlineString(m_vm, slot); }
-    // The same slot as a string constant: a 3-character one need not be an atom.
-    JSString* jsStringForInlineString(std::span<const uint8_t, 4> slot);
     // Strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots): every non-empty,
     // non-symbol string when encoding against a table; EncoderStringTable::slotFor (module_info) still inlines 1-3 chars.
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
-    // Only for CachedJSValuePool::decode: see DecoderStringTable::flushPendingCells.
     JSString* jsStringForExternalString(uint32_t ordinal);
     // See DecoderStringTable::prefetchSlot. Null with useFastCachedAtoms off or no embedder table (a payload that then
     // names a table string still fails in atomForExternalString, not here).
     const DecoderStringTable* stringsToPrefetch();
-    void flushPendingStringCells()
-    {
-        if (m_externalStrings)
-            m_externalStrings->flushPendingCells();
-    }
 
     ~Decoder();
 

@@ -314,10 +314,6 @@ public:
     }
 
     void initialize(VM&, CodeBlock*, CallType, CodeOrigin);
-
-    // A lazily linked CodeBlock (Options::useLazyCodeBlockLink()) leaves this zero-filled (reads as an unlinked Mode::Init
-    // call) until the LLInt first executes the call: CodeBlock::linkCallLinkInfoLazily(), keyed on m_owner from the asm too.
-    bool isInitialized() const { return !!m_owner; }
 };
 
 struct UnlinkedCallLinkInfo { };

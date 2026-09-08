@@ -59,8 +59,6 @@ JITPlan::JITPlan(JITCompilationMode mode, CodeBlock* codeBlock)
     ASSERT(!isCompilationThread());
     // Every plan is created on the mutator; the block it will read on a compiler thread is completed here at the latest.
     codeBlock->baselineAlternative()->prepareLazyStateForConcurrentCompilation();
-    // Its scope ops are resolved: this block is running (its frames refreshed the link scope) or already has Baseline code.
-    ASSERT(!codeBlock->baselineAlternative()->hasUnlinkedLazyScopeOps());
     m_vm->changeNumberOfActiveJITPlans(1);
 }
 

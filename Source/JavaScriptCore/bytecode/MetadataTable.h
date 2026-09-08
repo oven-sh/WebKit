@@ -137,14 +137,6 @@ public:
         return !unlinkedMetadataPtr;
     }
 
-    // Options::useLazyCodeBlockLink() bookkeeping for the owning CodeBlock; see UnlinkedMetadataTable::LinkingData.
-    JSScope* lazyLinkScope() const { return linkingData().lazyLinkScope; }
-    void setLazyLinkScope(JSScope* scope) { linkingData().lazyLinkScope = scope; }
-    bool didLazyLinkWalk() const { return linkingData().lazyLinkWalked; }
-    void setDidLazyLinkWalk() { linkingData().lazyLinkWalked = true; }
-    bool isLazyLinkComplete() const { return linkingData().lazyLinkComplete; }
-    void setLazyLinkComplete() { linkingData().lazyLinkComplete = true; }
-
 private:
     MetadataTable(UnlinkedMetadataTable&);
 

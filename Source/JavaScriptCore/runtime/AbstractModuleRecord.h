@@ -34,6 +34,7 @@
 #endif
 #include "ScriptFetchParameters.h"
 #include "ScriptFetcher.h"
+#include <wtf/FixedVector.h>
 #include <wtf/OrderedHashMap.h>
 #include <wtf/OrderedHashSet.h>
 #include <wtf/RefPtr.h>
@@ -411,6 +412,9 @@ protected:
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRequested; // by request index; visited under cellLock()
+    // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already
+    // reachable through m_prelinkedRequested / the loader's table, like m_resolutionCache); { Resolved, null } = unfilled.
+    FixedVector<Resolution> m_prelinkedImportResolutions;
 #endif
 };
 

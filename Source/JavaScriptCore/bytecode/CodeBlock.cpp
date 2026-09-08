@@ -48,7 +48,6 @@
 #include "DFGCapabilities.h"
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
-#include "DeferTermination.h"
 #include "EvalCodeBlock.h"
 #include "FullCodeOrigin.h"
 #include "FunctionCodeBlock.h"
@@ -114,8 +113,8 @@ const ClassInfo CodeBlock::s_info = {
     CREATE_METHOD_TABLE(CodeBlock)
 };
 
-static uint64_t s_lastMetadataLinkTicksForStats;
-static CodeBlockCreationStats::LinkRecord* s_currentLinkRecordForStats;
+static thread_local uint64_t s_lastMetadataLinkTicksForStats;
+static thread_local CodeBlockCreationStats::LinkRecord* s_currentLinkRecordForStats;
 
 struct LinkSubLapForStats {
     LinkSubLapForStats(CodeBlockCreationStats::LinkRecord* record, CodeBlockCreationStats::Bucket bucket)
@@ -373,7 +372,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     ASSERT(heap()->isDeferred());
     ASSERT(m_scopeRegister.isLocal());
     ASSERT(!m_numberOfUnmaterializedFunctionExecutables); // CodeBlock::newReplacement() prepared `other`
-    m_linksLazily = other.m_linksLazily; // we share other's MetadataTable
 
     ASSERT(source().provider());
     constexpr bool allocateArgumentValueProfiles = false;
@@ -580,19 +578,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     statsLap(StatsBucket::LinkHandlers);
 
-    // Lazy link: leave the MetadataTable zero-filled and skip the instruction walk below; see CodeBlock::linkLazily() and
-    // ensureScopeOpsResolved(). The type/control-flow profiler and debugger opcodes need genuinely link-time work
-    // (type locations, basic block boundaries, m_hasDebuggerStatement), so a block compiled with them links eagerly.
-    // So does eval code: lazy resolution takes the scope from the frame's callee, and the shared eval callee only
-    // carries it around op_enter (Interpreter::executeEval).
-    m_linksLazily = Options::useLazyCodeBlockLink()
-        && codeType() != EvalCode
-        && !m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes()
-        && !m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()
-        && !m_unlinkedCode->wasCompiledWithDebuggingOpcodes();
-    if (m_linksLazily)
-        noteLazyLinkScope(scope);
-
     // Bookkeep the strongly referenced module environments.
     UncheckedKeyHashSet<JSModuleEnvironment*> stronglyReferencedModuleEnvironments;
 
@@ -632,7 +617,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     }
 
     const auto& instructionStream = instructions();
-    if (!m_linksLazily) { // (loop body left at its old indentation)
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
@@ -810,9 +794,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), op.type, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
             if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
                 metadata.m_watchpointSet = op.watchpointSet;
-            else if (op.type == ClosureVar || op.type == ClosureVarWithVarInjectionChecks)
-                invalidateClosureVarWatchpointForPut(vm, op, ident);
-            else if (op.structure)
+            else if (op.type == ClosureVar || op.type == ClosureVarWithVarInjectionChecks) {
+                if (op.watchpointSet)
+                    op.watchpointSet->invalidate(vm, PutToScopeFireDetail(this, ident));
+            } else if (op.structure)
                 metadata.m_structureID.set(vm, this, op.structure);
             metadata.m_operand = op.operand;
             break;
@@ -920,7 +905,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             break;
         }
     }
-    } // !m_linksLazily
 
 #undef CASE
 #undef INITIALIZE_METADATA
@@ -943,11 +927,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     RETURN_IF_EXCEPTION(throwScope, false);
 
     // Nothing was deferred, so there is nothing for prepareLazyStateForConcurrentCompilation() to do.
-    if (!m_linksLazily && !Options::useThinChildExecutables() && !m_numberOfUnmaterializedFunctionExecutables
-#if USE(BUN_JSC_ADDITIONS)
-        && !Options::useLazySymbolTableConstants()
-#endif
-        )
+    if (!Options::useThinChildExecutables() && !m_numberOfUnmaterializedFunctionExecutables)
         m_isLazyStatePreparedForConcurrentCompilation = true;
     return true;
 }
@@ -1000,413 +980,6 @@ void CodeBlock::ensureFunctionExecutablesMaterialized()
 }
 
 // ---- end lazy FunctionExecutables -----------------------------------------------------------------------------------
-
-// ---- Lazy link (Options::useLazyCodeBlockLink()) -------------------------------------------------------------------
-// Each link* below leaves the entry exactly as the corresponding case of finishCreation's walk does. They run on the
-// mutator: from an LLInt / Baseline slow path the first time the instruction executes (linkLazily), or from
-// ensureScopeOpsResolved(). Once a compiler thread may read this block (lockForLazyLink()), metadata stores happen under
-// m_lock, and the discriminating word (m_resolveType / m_getPutInfo) is always published last, so a reader sees an entry
-// either still zero-filled or completely linked, never in between.
-
-void CodeBlock::invalidateClosureVarWatchpointForPut(VM& vm, const ResolveOp& op, const Identifier& ident)
-{
-    ASSERT(op.type == ClosureVar || op.type == ClosureVarWithVarInjectionChecks);
-    InlineWatchpointSet* set = op.watchpointSet;
-    if (!set && op.lexicalEnvironment && Options::useLazyCodeBlockLink()) {
-        // A put from an inner function kills the "written once" inference on the variable for good. Eager linking could
-        // rely on the declaring function's own link having created the set before any inner function existed; with lazy
-        // linking the declaring function's put_to_scope may not have run yet, so create the set here (invalidated) rather
-        // than let a later prepareToWatch() start inferring while this site writes without notifying it.
-        SymbolTable* symbolTable = op.lexicalEnvironment->symbolTable();
-        ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto iter = symbolTable->find(locker, ident.impl());
-        if (iter != symbolTable->end(locker)) {
-            iter->value.prepareToWatch();
-            set = iter->value.watchpointSet();
-        }
-    }
-    if (set)
-        set->invalidate(vm, PutToScopeFireDetail(this, ident));
-}
-
-void CodeBlock::noteLazyLinkScope(JSScope* scope)
-{
-    if (!m_linksLazily || !m_metadata || !scope)
-        return;
-    ASSERT(scope->globalObject() == globalObject());
-    m_metadata->setLazyLinkScope(scope); // weak; see reconcileLLIntInlineCachesAtGCEnd()
-}
-
-JSScope* CodeBlock::noteLazyLinkScopeFromFrame(CallFrame* callFrame)
-{
-    // The callee slot is valid in every tier and after OSR exit (the scope register need not be live here), and its
-    // scope is what ScriptExecutable::prepareForExecution created this block against, or another instance of it:
-    // JSFunction::scope() for function code, the global scope / module environment held by the JSCallee for program /
-    // module code. Eval code links eagerly (finishCreation).
-    ASSERT(m_linksLazily && codeType() != EvalCode);
-    JSScope* scope = uncheckedDowncast<JSCallee>(callFrame->jsCallee())->scope();
-    RELEASE_ASSERT(scope);
-    noteLazyLinkScope(scope);
-    return scope;
-}
-
-void CodeBlock::linkResolveScope(VM& vm, const OpResolveScope& bytecode, JSScope* scope)
-{
-    auto& metadata = bytecode.metadata(this);
-    const Identifier& ident = identifier(bytecode.m_var);
-    RELEASE_ASSERT(bytecode.m_resolveType != ResolvedClosureVar);
-
-    if (isStaticClosureVarResolveType(bytecode.m_resolveType)) [[unlikely]] {
-        unsigned outerHops = staticClosureVarHops(bytecode.m_resolveType);
-        JSScope* environment = scope;
-        for (unsigned i = 0; i < outerHops && environment; ++i)
-            environment = environment->next();
-        auto* symbolTableObject = environment ? dynamicDowncast<JSLexicalEnvironment>(environment) : nullptr;
-        RELEASE_ASSERT(symbolTableObject && symbolTableObject->symbolTable()->contains(ident.impl()), outerHops, bytecode.m_localScopeDepth);
-        ConcurrentJSLocker locker(lockForLazyLink());
-        metadata.m_localScopeDepth = bytecode.m_localScopeDepth + outerHops;
-        metadata.m_symbolTable.set(vm, this, symbolTableObject->symbolTable());
-        WTF::storeStoreFence();
-        metadata.m_resolveType = ClosureVar;
-        return;
-    }
-
-    ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_resolveType, InitializationMode::NotInitialization);
-
-    if (op.lexicalEnvironment && op.type == ModuleVar) {
-        // Keep the linked module environment strongly referenced, in the constant pool like eager linking does unless a
-        // compiler thread may already be reading that pool (it must not reallocate then); m_lock covers the GC either way.
-        auto* moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment);
-        if (!m_isLazyStatePreparedForConcurrentCompilation) {
-            ConcurrentJSLocker locker(m_lock);
-            bool isKnown = false;
-            for (size_t i = m_unlinkedCode->constantRegisters().size(); !isKnown && i < m_constantRegisters.size(); ++i)
-                isKnown = m_constantRegisters[i].get() == JSValue(moduleEnvironment); // only these linked-in environments follow the UnlinkedCodeBlock's constants
-            if (!isKnown)
-                addConstant(locker, moduleEnvironment);
-        } else {
-            createRareDataIfNecessary();
-            bool isNewEntry;
-            {
-                ConcurrentJSLocker locker(m_lock);
-                isNewEntry = m_rareData->m_stronglyReferencedModuleEnvironments.add(moduleEnvironment).isNewEntry;
-            }
-            if (isNewEntry)
-                vm.writeBarrier(this, moduleEnvironment);
-        }
-    }
-
-    ConcurrentJSLocker locker(lockForLazyLink());
-    metadata.m_localScopeDepth = op.depth;
-    if (op.lexicalEnvironment) {
-        if (op.type == ModuleVar)
-            metadata.m_lexicalEnvironment.set(vm, this, op.lexicalEnvironment);
-        else
-            metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
-    } else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
-        metadata.m_constantScope.set(vm, this, constantScope);
-        if (op.type == GlobalProperty || op.type == GlobalPropertyWithVarInjectionChecks)
-            metadata.m_globalLexicalBindingEpoch = m_globalObject->globalLexicalBindingEpoch();
-    } else
-        metadata.m_globalObject.clear();
-    WTF::storeStoreFence();
-    metadata.m_resolveType = op.type; // last: this word (with m_constantScope for GlobalProperty) is what isScopeMetadataLinked() and the JITs key on
-    ASSERT(isScopeMetadataLinked(metadata));
-}
-
-void CodeBlock::linkGetFromScope(VM& vm, const OpGetFromScope& bytecode, JSScope* scope)
-{
-    auto& metadata = bytecode.metadata(this);
-    GetPutInfo getPutInfo = bytecode.m_getPutInfo;
-    ASSERT(!isInitialization(getPutInfo.initializationMode()));
-
-    if (getPutInfo.resolveType() == ResolvedClosureVar) {
-        ConcurrentJSLocker locker(lockForLazyLink());
-        metadata.m_watchpointSet = nullptr;
-        metadata.m_operand = bytecode.m_offset;
-        WTF::storeStoreFence();
-        metadata.m_getPutInfo = GetPutInfo(getPutInfo.resolveMode(), ClosureVar, getPutInfo.initializationMode(), getPutInfo.ecmaMode()).asLinkedMetadata();
-        return;
-    }
-
-    const Identifier& ident = identifier(bytecode.m_var);
-    ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, getPutInfo.resolveType(), InitializationMode::NotInitialization);
-
-    ConcurrentJSLocker locker(lockForLazyLink());
-    metadata.m_watchpointSet = nullptr;
-    if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
-        metadata.m_watchpointSet = op.watchpointSet;
-    else if (op.structure)
-        metadata.m_structureID.set(vm, this, op.structure);
-    metadata.m_operand = op.operand;
-    // get_from_scope reads a module import straight out of the imported environment's slot.
-    ResolveType type = op.type == ModuleVar ? ClosureVar : op.type;
-    WTF::storeStoreFence();
-    metadata.m_getPutInfo = GetPutInfo(getPutInfo.resolveMode(), type, getPutInfo.initializationMode(), getPutInfo.ecmaMode()).asLinkedMetadata();
-}
-
-void CodeBlock::linkPutToScope(VM& vm, const OpPutToScope& bytecode, JSScope* scope)
-{
-    auto& metadata = bytecode.metadata(this);
-    GetPutInfo getPutInfo = bytecode.m_getPutInfo;
-
-    if (getPutInfo.resolveType() == ResolvedClosureVar) {
-        InlineWatchpointSet* set = nullptr;
-        // Only do watching if the property we're putting to is not anonymous.
-        if (bytecode.m_var != UINT_MAX) {
-            SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(getConstant(bytecode.m_symbolTableOrScopeDepth.symbolTable()));
-            const Identifier& ident = identifier(bytecode.m_var);
-            ConcurrentJSLocker locker(symbolTable->m_lock);
-            auto iter = symbolTable->find(locker, ident.impl());
-            ASSERT(iter != symbolTable->end(locker));
-            if (getPutInfo.initializationMode() == InitializationMode::ScopedArgumentInitialization) {
-                ASSERT(bytecode.m_value.isArgument());
-                unsigned argumentIndex = bytecode.m_value.toArgument() - 1;
-                symbolTable->prepareToWatchScopedArgument(iter->value, argumentIndex);
-            } else
-                iter->value.prepareToWatch();
-            set = iter->value.watchpointSet();
-        }
-        ConcurrentJSLocker locker(lockForLazyLink());
-        metadata.m_watchpointSet = set;
-        metadata.m_operand = bytecode.m_offset;
-        WTF::storeStoreFence();
-        metadata.m_getPutInfo = getPutInfo.asLinkedMetadata();
-        return;
-    }
-
-    const Identifier& ident = identifier(bytecode.m_var);
-    ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_symbolTableOrScopeDepth.scopeDepth(), scope, ident, Put, getPutInfo.resolveType(), getPutInfo.initializationMode());
-    if (op.type == ClosureVar || op.type == ClosureVarWithVarInjectionChecks)
-        invalidateClosureVarWatchpointForPut(vm, op, ident);
-
-    ConcurrentJSLocker locker(lockForLazyLink());
-    metadata.m_watchpointSet = nullptr;
-    if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
-        metadata.m_watchpointSet = op.watchpointSet;
-    else if (op.structure && op.type != ClosureVar && op.type != ClosureVarWithVarInjectionChecks)
-        metadata.m_structureID.set(vm, this, op.structure);
-    metadata.m_operand = op.operand;
-    WTF::storeStoreFence();
-    metadata.m_getPutInfo = GetPutInfo(getPutInfo.resolveMode(), op.type, getPutInfo.initializationMode(), getPutInfo.ecmaMode()).asLinkedMetadata();
-}
-
-bool CodeBlock::linkAllLazily(CallFrame* callFrame)
-{
-    if (!Options::useBatchedLazyLink() || !hasUnlinkedLazyScopeOps())
-        return false;
-    // The frame is running this block, so its callee scope is an instance of the scope every scope op in the block
-    // resolves against; with it noted the walk leaves no scope op unresolved (isLazyLinkComplete()), so this runs at
-    // most once per block. Call link infos, mode metadata and allocation profiles stay per-instruction lazy.
-    noteLazyLinkScopeFromFrame(callFrame);
-    CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::LinkBatchedLazy);
-    ensureScopeOpsResolved(LazyLinkWalk::ScopeOpsOnly);
-    ASSERT(!hasUnlinkedLazyScopeOps());
-    return true;
-}
-
-void CodeBlock::linkLazily(CallFrame* callFrame, const OpResolveScope& bytecode)
-{
-    if (!m_linksLazily || isScopeMetadataLinked(bytecode.metadata(this)))
-        return;
-    if (linkAllLazily(callFrame) && isScopeMetadataLinked(bytecode.metadata(this)))
-        return;
-    linkResolveScope(vm(), bytecode, noteLazyLinkScopeFromFrame(callFrame));
-}
-
-void CodeBlock::linkLazily(CallFrame* callFrame, const OpGetFromScope& bytecode)
-{
-    if (!m_linksLazily || isScopeMetadataLinked(bytecode.metadata(this)))
-        return;
-    if (linkAllLazily(callFrame) && isScopeMetadataLinked(bytecode.metadata(this)))
-        return;
-    // A ResolvedClosureVar access carries its slot and does not look at the scope.
-    JSScope* scope = bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar ? nullptr : noteLazyLinkScopeFromFrame(callFrame);
-    linkGetFromScope(vm(), bytecode, scope);
-}
-
-void CodeBlock::linkLazily(CallFrame* callFrame, const OpPutToScope& bytecode)
-{
-    if (!m_linksLazily || isScopeMetadataLinked(bytecode.metadata(this)))
-        return;
-    if (linkAllLazily(callFrame) && isScopeMetadataLinked(bytecode.metadata(this)))
-        return;
-    // A ResolvedClosureVar put carries its SymbolTable constant instead of a scope depth and does not look at the scope.
-    JSScope* scope = bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar ? nullptr : noteLazyLinkScopeFromFrame(callFrame);
-    linkPutToScope(vm(), bytecode, scope);
-}
-
-void CodeBlock::linkCallLinkInfoLazily(const JSInstruction* instruction)
-{
-    if (!m_linksLazily)
-        return;
-    switch (instruction->opcodeID()) {
-#define CASE(Op) \
-    case Op::opcodeID: { \
-        auto& callLinkInfo = instruction->as<Op>().metadata(this).m_callLinkInfo; \
-        if (!callLinkInfo.isInitialized()) \
-            callLinkInfo.initialize(vm(), this, CallLinkInfo::callTypeFor(Op::opcodeID), CodeOrigin { bytecodeIndex(instruction) }); \
-        break; \
-    }
-    FOR_EACH_OPCODE_WITH_CALL_LINK_INFO(CASE)
-#undef CASE
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-template<typename Metadata> static void initializeGetByIdModeMetadata(Metadata&) { }
-static void initializeGetByIdModeMetadata(OpIteratorOpen::Metadata& metadata) { metadata.m_modeMetadata.initializeIfZeroFilled(); }
-static void initializeGetByIdModeMetadata(OpAsyncIteratorOpen::Metadata& metadata) { metadata.m_modeMetadata.initializeIfZeroFilled(); }
-static void initializeGetByIdModeMetadata(OpIteratorNext::Metadata& metadata)
-{
-    metadata.m_doneModeMetadata.initializeIfZeroFilled();
-    metadata.m_valueModeMetadata.initializeIfZeroFilled();
-}
-
-// The part of finishCreation's instruction walk that lazy linking deferred, for every instruction that has not executed
-// yet. Runs (via prepareLazyStateForConcurrentCompilation) before this block gets JIT code or is parsed by a compiler
-// thread, so it is only paid by blocks that tier up.
-void CodeBlock::ensureScopeOpsResolved(LazyLinkWalk walk)
-{
-    if (!m_linksLazily)
-        return;
-    bool scopeOpsOnly = walk == LazyLinkWalk::ScopeOpsOnly;
-    if (scopeOpsOnly) {
-        if (!m_metadata || m_metadata->isLazyLinkComplete())
-            return;
-    } else if ((!m_metadata || (m_metadata->isLazyLinkComplete() && m_metadata->didLazyLinkWalk())) && didWalkInstructionsForLink())
-        return;
-    VM& vm = *m_vm;
-    DeferGC deferGC(vm);
-    ASSERT(!isCompilationThread());
-
-    // Null if every noted instance of the scope this block was created for has died (this block is then being prepared as
-    // an inlinee, not tiering up itself). Scope ops that never ran stay unresolved: the slow paths resolve them when they
-    // do run, the DFG plants ForceOSRExit for them as for any never-executed code, and a later prepare retries.
-    JSScope* scope = m_metadata ? m_metadata->lazyLinkScope() : nullptr;
-    if (!scope && (scopeOpsOnly || (m_metadata && m_metadata->didLazyLinkWalk() && didWalkInstructionsForLink())))
-        return; // nothing new could be resolved
-    bool complete = true;
-
-    unsigned bytecodeCost = 0;
-    unsigned numberOfArgumentsToSkip = m_numberOfArgumentsToSkip;
-    for (const auto& instruction : instructions()) {
-        OpcodeID opcodeID = instruction->opcodeID();
-        if (scopeOpsOnly && opcodeID != op_resolve_scope && opcodeID != op_get_from_scope && opcodeID != op_put_to_scope)
-            continue;
-        bytecodeCost += opcodeLengths[opcodeID] + 1;
-        switch (opcodeID) {
-#define CASE(Op) \
-        case Op::opcodeID: { \
-            auto& metadata = instruction->as<Op>().metadata(this); \
-            if (!metadata.m_callLinkInfo.isInitialized()) \
-                metadata.m_callLinkInfo.initialize(vm, this, CallLinkInfo::callTypeFor(Op::opcodeID), CodeOrigin { instruction.index() }); \
-            initializeGetByIdModeMetadata(metadata); \
-            break; \
-        }
-        FOR_EACH_OPCODE_WITH_CALL_LINK_INFO(CASE)
-#undef CASE
-        case op_get_by_id:
-            instruction->as<OpGetById>().metadata(this).m_modeMetadata.initializeIfZeroFilled();
-            break;
-        case op_get_length:
-            instruction->as<OpGetLength>().metadata(this).m_modeMetadata.initializeIfZeroFilled();
-            break;
-        case op_instanceof: {
-            auto& metadata = instruction->as<OpInstanceof>().metadata(this);
-            metadata.m_hasInstanceModeMetadata.initializeIfZeroFilled();
-            metadata.m_prototypeModeMetadata.initializeIfZeroFilled();
-            break;
-        }
-        case op_new_object: {
-            auto bytecode = instruction->as<OpNewObject>();
-            auto& profile = bytecode.metadata(this).m_objectAllocationProfile;
-            if (profile.isNull())
-                profile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
-            break;
-        }
-        case op_new_array_buffer: {
-            auto bytecode = instruction->as<OpNewArrayBuffer>();
-            bytecode.metadata(this).m_arrayAllocationProfile.initializeIfZeroFilled(bytecode.m_recommendedIndexingType);
-            break;
-        }
-        case op_new_array:
-            instruction->as<OpNewArray>().metadata(this).m_arrayAllocationProfile.initializeIfZeroFilled(ArrayWithUndecided);
-            break;
-        case op_new_array_with_size:
-            instruction->as<OpNewArrayWithSize>().metadata(this).m_arrayAllocationProfile.initializeIfZeroFilled(ArrayWithUndecided);
-            break;
-        case op_new_array_with_species:
-            instruction->as<OpNewArrayWithSpecies>().metadata(this).m_arrayAllocationProfile.initializeIfZeroFilled(ArrayWithUndecided);
-            break;
-        case op_resolve_scope: {
-            auto bytecode = instruction->as<OpResolveScope>();
-            if (isScopeMetadataLinked(bytecode.metadata(this)))
-                break;
-            if (scope)
-                linkResolveScope(vm, bytecode, scope);
-            else
-                complete = false;
-            break;
-        }
-        case op_get_from_scope: {
-            auto bytecode = instruction->as<OpGetFromScope>();
-            if (isScopeMetadataLinked(bytecode.metadata(this)))
-                break;
-            if (scope || bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar)
-                linkGetFromScope(vm, bytecode, scope);
-            else
-                complete = false;
-            break;
-        }
-        case op_put_to_scope: {
-            auto bytecode = instruction->as<OpPutToScope>();
-            if (isScopeMetadataLinked(bytecode.metadata(this)))
-                break;
-            if (scope || bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar)
-                linkPutToScope(vm, bytecode, scope);
-            else
-                complete = false;
-            break;
-        }
-        case op_create_rest:
-            numberOfArgumentsToSkip = instruction->as<OpCreateRest>().m_numParametersToSkip;
-            break;
-        default:
-            break;
-        }
-    }
-    if (!scopeOpsOnly && !didWalkInstructionsForLink()) { // else already published (same values) and a compiler thread may be reading them
-        m_numberOfArgumentsToSkip = numberOfArgumentsToSkip;
-        m_bytecodeCost = bytecodeCost;
-    }
-    if (m_metadata) {
-        if (!scopeOpsOnly)
-            m_metadata->setDidLazyLinkWalk();
-        if (complete)
-            m_metadata->setLazyLinkComplete();
-    }
-}
-
-unsigned CodeBlock::computeBytecodeCostSlow() const
-{
-    ASSERT(m_linksLazily);
-    ASSERT(!isCompilationThread()); // compiler threads only see blocks ensureScopeOpsResolved() already walked
-    unsigned bytecodeCost = 0;
-    unsigned numberOfArgumentsToSkip = m_numberOfArgumentsToSkip;
-    for (const auto& instruction : instructions()) {
-        OpcodeID opcodeID = instruction->opcodeID();
-        bytecodeCost += opcodeLengths[opcodeID] + 1;
-        if (opcodeID == op_create_rest)
-            numberOfArgumentsToSkip = instruction->as<OpCreateRest>().m_numParametersToSkip;
-    }
-    const_cast<CodeBlock*>(this)->m_numberOfArgumentsToSkip = numberOfArgumentsToSkip;
-    m_bytecodeCost = bytecodeCost;
-    return bytecodeCost;
-}
-
-// ---- end lazy link ---------------------------------------------------------------------------------------------------
 
 #if ENABLE(JIT)
 void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
@@ -1724,12 +1297,6 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
             if (!constant.isEmpty()) {
                 if (constant.isCell()) {
                     JSCell* cell = constant.asCell();
-#if USE(BUN_JSC_ADDITIONS)
-                    // String constants (never ropes here) need nothing below; when they are shared cells created by a much
-                    // earlier decode their header is cold and their MarkedBlock's is not. Unmeasured: own option to A/B.
-                    if (Options::useConstantLinkStringPassThrough() && cell->subspace() == &vm.heap.stringSpace)
-                        break;
-#endif
                     if (SymbolTable* symbolTable = dynamicDowncast<SymbolTable>(cell)) {
                         if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes()) {
                             ConcurrentJSLocker locker(symbolTable->m_lock);
@@ -2268,9 +1835,6 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
     VM& vm = *m_vm;
 
     if (m_metadata) {
-        if (JSScope* scope = m_metadata->lazyLinkScope(); scope && !vm.heap.isMarked(scope))
-            m_metadata->setLazyLinkScope(nullptr);
-
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=166418
         // We need to add optimizations for op_resolve_scope_for_hoisting_func_decl_in_eval to do link time scope resolution.
 
@@ -2735,11 +2299,8 @@ void CodeBlock::stronglyVisitStrongReferences(const ConcurrentJSLocker& locker, 
     visitor.append(m_globalObject);
     visitor.append(m_ownerExecutable); // This is extra important since it causes the Executable -> CodeBlock edge activated.
     visitor.append(m_unlinkedCode);
-    if (m_rareData) {
+    if (m_rareData)
         m_rareData->m_directEvalCodeCache.visitAggregate(visitor);
-        for (JSModuleEnvironment* moduleEnvironment : m_rareData->m_stronglyReferencedModuleEnvironments)
-            visitor.appendUnbarriered(moduleEnvironment);
-    }
     visitor.appendValues(m_constantRegisters.span().data(), m_constantRegisters.size());
     for (auto& functionExpr : m_functionExprs)
         visitor.append(functionExpr);
@@ -3027,8 +2588,7 @@ CodeBlock* CodeBlock::newReplacement()
     return ownerExecutable()->newReplacementCodeBlockFor(specializationKind());
 }
 
-// ---- Lazily materialized state vs. concurrent compilers (shared hook; see the declarations in CodeBlock.h) ---------
-
+// See "Lazily materialized state vs. concurrent compilers" in CodeBlock.h.
 void CodeBlock::prepareLazyStateForConcurrentCompilationSlow()
 {
     VM& vm = this->vm();
@@ -3037,29 +2597,13 @@ void CodeBlock::prepareLazyStateForConcurrentCompilationSlow()
     ASSERT(!vm.exceptionForInspection());
     CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::JITPrepareLazyState);
     DeferGCForAWhile deferGC(vm); // callers hold raw, not yet installed CodeBlock*s across this
-    DeferTerminationForAWhile deferTermination(vm); // scope resolution runs under a ThrowScope and no caller can propagate an exception
-    // Executables and constants first: resolving scope ops may consult the block's SymbolTable constants.
     ensureFunctionExecutablesMaterialized();
-    ensureSymbolTableConstantsMaterialized();
-    ensureScopeOpsResolved();
     if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(ownerExecutable()))
         functionExecutable->unlinkedExecutable()->materializeDeferredScalarsIfNeeded(); // sourceCodeForTools() / dumpSource() from the compiler thread (bytecode profiler, verbose dumps)
     ASSERT(!vm.exceptionForInspection());
     WTF::storeStoreFence();
     m_isLazyStatePreparedForConcurrentCompilation = true;
 }
-
-// Defaults for items that are not compiled in; an item defines JSC_CODEBLOCK_HAS_<name> next to the declaration in
-// CodeBlock.h and supplies the real body.
-#if !defined(JSC_CODEBLOCK_HAS_ensureScopeOpsResolved)
-void CodeBlock::ensureScopeOpsResolved(LazyLinkWalk) { }
-#endif
-#if !defined(JSC_CODEBLOCK_HAS_ensureFunctionExecutablesMaterialized)
-void CodeBlock::ensureFunctionExecutablesMaterialized() { }
-#endif
-#if !defined(JSC_CODEBLOCK_HAS_ensureSymbolTableConstantsMaterialized)
-void CodeBlock::ensureSymbolTableConstantsMaterialized() { }
-#endif
 
 void CodeBlock::collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializationKind>, 16>& out)
 {
@@ -3131,8 +2675,6 @@ void CodeBlock::collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializat
 #endif
 #endif
 }
-
-// ---- end shared hook --------------------------------------------------------------------------------------------------
 
 CodeBlock* CodeBlock::replacement()
 {
@@ -4140,8 +3682,6 @@ void CodeBlock::notifyLexicalBindingUpdate()
         case op_resolve_scope: {
             auto bytecode = instruction->as<OpResolveScope>();
             auto& metadata = bytecode.metadata(this);
-            if (m_linksLazily && !isScopeMetadataLinked(metadata))
-                break; // resolves against the current epoch when it first runs
             ResolveType originalResolveType = metadata.m_resolveType;
             if (originalResolveType == GlobalProperty || originalResolveType == GlobalPropertyWithVarInjectionChecks) {
                 const Identifier& ident = identifier(bytecode.m_var);
@@ -4598,16 +4138,13 @@ CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSL
 
 unsigned CodeBlock::bytecodeCost() const
 {
-    unsigned bytecodeCost = m_bytecodeCost;
-    if (!bytecodeCost) [[unlikely]]
-        bytecodeCost = computeBytecodeCostSlow();
 #if ENABLE(FTL_JIT)
     if (jitType() == JITType::FTLJIT) {
         if (auto* jitCode = static_cast<FTL::JITCode*>(m_jitCode.get()))
-            return std::min(static_cast<unsigned>(jitCode->numberOfCompiledDFGNodes() * Options::ratioFTLNodesToBytecodeCost()), bytecodeCost);
+            return std::min(static_cast<unsigned>(jitCode->numberOfCompiledDFGNodes() * Options::ratioFTLNodesToBytecodeCost()), m_bytecodeCost);
     }
 #endif
-    return bytecodeCost;
+    return m_bytecodeCost;
 }
 
 bool CodeBlock::hasInstalledVMTrapsBreakpoints() const

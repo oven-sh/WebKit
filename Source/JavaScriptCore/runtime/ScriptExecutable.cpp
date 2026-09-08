@@ -410,7 +410,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 
     bool installedUnlinkedBaselineCode = false;
 #if ENABLE(JIT)
-    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode; baselineRef && codeBlock->canAdoptSharedBaselineCode()) {
+    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
     }

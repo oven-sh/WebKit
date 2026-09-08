@@ -80,10 +80,6 @@ JIT::JIT(VM& vm, BaselineJITPlan& plan, CodeBlock* codeBlock)
     , m_profiledCodeBlock(codeBlock)
     , m_unlinkedCodeBlock(codeBlock->unlinkedCodeBlock())
 {
-    // Not expected (JITPlan() resolves them), but code specialized on unresolved scope-op metadata would send every
-    // other block's ClosureVar accesses to the slow path, so keep it to this block.
-    if (codeBlock->hasUnlinkedLazyScopeOps()) [[unlikely]]
-        m_isShareable = false;
 }
 
 JIT::~JIT() = default;

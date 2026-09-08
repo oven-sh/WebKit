@@ -35,24 +35,6 @@ namespace JSC {
 
 #define CODEBLOCK_MAGIC 0xc0deb10c
 
-// Lazy link (Options::useLazyCodeBlockLink()): whether a scope op's Metadata has been resolved yet, vs. the zero-filled
-// state the MetadataTable starts in. Zero reads as GlobalProperty; a resolved GlobalProperty always has its constant scope
-// (the global object) set, and resolved get/put entries carry GetPutInfo::isLinkedMetadataBit.
-inline bool isScopeMetadataLinked(const OpResolveScope::Metadata& metadata)
-{
-    return metadata.m_resolveType != GlobalProperty || !!metadata.m_constantScope;
-}
-
-inline bool isScopeMetadataLinked(const OpGetFromScope::Metadata& metadata)
-{
-    return metadata.m_getPutInfo.isLinkedMetadata();
-}
-
-inline bool isScopeMetadataLinked(const OpPutToScope::Metadata& metadata)
-{
-    return metadata.m_getPutInfo.isLinkedMetadata();
-}
-
 template<typename Functor>
 void CodeBlock::forEachValueProfile(const Functor& func)
 {
@@ -97,12 +79,8 @@ template<typename Functor>
 void CodeBlock::forEachLLIntOrBaselineCallLinkInfo(const Functor& func)
 {
     if (m_metadata) {
-        // A lazily linked block's never-executed call sites are zero-filled: no code origin, nothing linked or profiled.
 #define VISIT(__op) \
-    m_metadata->forEach<__op>([&] (auto& metadata) { \
-        if (!m_linksLazily || metadata.m_callLinkInfo.isInitialized()) \
-            func(metadata.m_callLinkInfo); \
-    });
+    m_metadata->forEach<__op>([&] (auto& metadata) { func(metadata.m_callLinkInfo); });
 
         FOR_EACH_OPCODE_WITH_CALL_LINK_INFO(VISIT)
 

@@ -138,7 +138,7 @@ RefPtr<ScriptFetchParameters> PrelinkedModuleGraph::fetchParameters(const Reques
     return shared;
 }
 
-Identifier PrelinkedModuleGraph::identifier(uint32_t sid) const
+const Identifier& PrelinkedModuleGraph::identifier(uint32_t sid) const
 {
     ASSERT(!isCompilationThread());
     if (sid == starDefaultSid)

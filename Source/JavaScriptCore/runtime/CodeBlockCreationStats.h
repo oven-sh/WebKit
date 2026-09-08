@@ -41,9 +41,11 @@ class UnlinkedCodeBlock;
 class UnlinkedFunctionExecutable;
 
 // Options::reportCodeBlockCreationCosts(): cheap counters for where per-function creation time goes
-// (bytecode-cache decode of UnlinkedCodeBlocks and CodeBlock linking). Measurement aid, not hardened: assumes one
-// mutator thread (the "current decode/link" cursors are process-global), identifies cells by address, and the dump
-// dereferences CodeBlocks that have not been destructed yet. Intended for exit-time dumps of single-VM processes.
+// (bytecode-cache decode of UnlinkedCodeBlocks and CodeBlock linking). Measurement aid, not hardened: the "current
+// decode/link" cursors are per thread and the totals are shared by every VM in the process, cells are identified by
+// address, and a dump (periodic or at exit) reads other threads' in-flight records and their live CodeBlocks (execute
+// counters, JIT type, identifiers) without synchronizing with those VMs. Intended for exit-time dumps; periodic dumps
+// are meaningful with a single VM only.
 namespace CodeBlockCreationStats {
 
 #define FOR_EACH_CODEBLOCK_CREATION_BUCKET(v) \
@@ -75,10 +77,6 @@ namespace CodeBlockCreationStats {
     v(LinkProfiledOpcodeMetadata, "link:   count only: plain LINK() metadata entries placement-new'd (get_by_id, call, ...); time = walk - scope") \
     v(LinkTemplateObjects, "link: template objects + tail") \
     v(LinkTotal, "link: TOTAL CodeBlock::CodeBlock+finishCreation (inclusive)") \
-    v(LinkBatchedLazy, "lazy: whole-block scope-op link on the first scope-op slow path (useBatchedLazyLink; count = blocks; inclusive of abstractResolve)") \
-    v(GlobalResolveMemoHit, "resolve: count only: abstractResolve answered from the global resolve memo (useGlobalResolveMemo)") \
-    v(GlobalResolveMemoRecord, "resolve: count only: global-level resolutions computed and recorded in the memo (misses)") \
-    v(GlobalResolveMemoInvalidate, "resolve: count only: memo invalidations (structure-decided entries dropped on a global structure change, or everything on a symbol table / epoch change)") \
     v(JITPrepareLazyState, "jit: prepareLazyStateForConcurrentCompilation slow path (mutator, before a JIT tier / replacement / inlining)") \
     v(JITPrepareInlineCandidates, "jit: DFG::compile inline-candidate pre-walk (mutator, inclusive of the above)") \
     v(JITInlineeRefusedUnprepared, "jit:   count only: DFG inlinees refused because their lazy state was not prepared") \
@@ -147,7 +145,7 @@ struct DecodeRecord {
     bool everLinked { false };
 };
 
-// While decoding a block, nested helper decodes (children, constants) charge this record.
+// While decoding a block, nested helper decodes (children, constants) charge this record. Per thread.
 JS_EXPORT_PRIVATE DecodeRecord* beginDecode();
 JS_EXPORT_PRIVATE void endDecode(DecodeRecord*, DecodeRecord* previous, UnlinkedCodeBlock*);
 JS_EXPORT_PRIVATE DecodeRecord* currentDecode();

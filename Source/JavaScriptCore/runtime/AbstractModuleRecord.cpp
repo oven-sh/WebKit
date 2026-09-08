@@ -125,6 +125,10 @@ size_t AbstractModuleRecord::estimatedSize(JSCell* cell, VM& vm)
     // OrderedHashMap does not expose byteSize(); approximate with capacity * entry size.
     size += thisObject->m_exportEntries.capacity() * (sizeof(RefPtr<UniquedStringImpl>) + sizeof(ExportEntry));
     size += thisObject->m_importEntries.capacity() * (sizeof(RefPtr<UniquedStringImpl>) + sizeof(ImportEntry));
+#if USE(BUN_JSC_ADDITIONS)
+    size += thisObject->m_prelinkedRequested.capacity() * sizeof(WriteBarrier<AbstractModuleRecord>);
+    size += thisObject->m_prelinkedImportResolutions.size() * sizeof(Resolution);
+#endif
     return size;
 }
 
@@ -278,6 +282,7 @@ void AbstractModuleRecord::convertPrelinkedToEager()
 {
     ASSERT(m_prelinked && !m_prelinkedEntriesMaterialized && !hasAnyPrelinkedRequestedModule());
     materializePrelinkedEntries();
+    m_prelinkedImportResolutions.clear();
     Locker locker { cellLock() };
     m_prelinkedRequested.clear();
     m_prelinked = nullptr;
@@ -466,14 +471,28 @@ auto AbstractModuleRecord::prelinkedResolution(JSGlobalObject* globalObject, Pre
     RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, m_prelinked->identifier(importNameSid)));
 }
 
-// ResolveImport answered from the graph: the entry is found by name in the hash-sorted import table and its resolution
-// is what ResolveExport on the imported module would have returned.
+// ResolveImport answered from the graph: which import `localName` is comes from the hash-sorted import table (code
+// names variables, not import indices); the binding is computed once per import and reused by every use site.
 auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const Identifier& localName) -> std::optional<Resolution>
 {
-    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(prelinkedModule(), localName.impl());
-    if (!import || import->isNamespace())
+    const auto& module = prelinkedModule();
+    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(module, localName.impl());
+    if (!import)
         return Resolution::notFound();
-    return prelinkedResolution(globalObject, import->resolution(), import->resolvedModule, import->resolvedLocalSid, import->request(), import->importNameSid);
+    auto imports = m_prelinked->imports(module);
+    if (m_prelinkedImportResolutions.size() != imports.size()) [[unlikely]]
+        m_prelinkedImportResolutions = FixedVector<Resolution>(imports.size());
+    Resolution& memo = m_prelinkedImportResolutions[import - imports.data()];
+    if (memo.moduleRecord || memo.type != Resolution::Type::Resolved) [[likely]]
+        return memo;
+    std::optional<Resolution> resolution;
+    if (import->isNamespace())
+        resolution = Resolution::notFound();
+    else
+        resolution = prelinkedResolution(globalObject, import->resolution(), import->resolvedModule, import->resolvedLocalSid, import->request(), import->importNameSid);
+    if (resolution && (resolution->type == Resolution::Type::Resolved || resolution->type == Resolution::Type::NotFound))
+        memo = *resolution;
+    return resolution;
 }
 
 auto AbstractModuleRecord::tryResolveExportPrelinked(JSGlobalObject* globalObject, const PrelinkedModuleGraph::Export& entry) -> std::optional<Resolution>

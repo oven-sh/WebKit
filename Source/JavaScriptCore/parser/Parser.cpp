@@ -2580,20 +2580,6 @@ template <class TreeBuilder> typename TreeBuilder::FormalParameterList Parser<Le
 }
 
 template <typename LexerType>
-void Parser<LexerType>::recordModuleFunctionDeclarationFreeVariablesIfNeeded(Scope* functionScope, FunctionDefinitionType functionDefinitionType, const Identifier* name)
-{
-    if (!Options::useSyntheticModuleScope() && !Options::dumpModuleScopePartition()) [[likely]]
-        return;
-    if (!m_moduleScopeData || functionDefinitionType != FunctionDefinitionType::Declaration || !name)
-        return;
-    if (!functionScope->containingScope() || !functionScope->containingScope()->isModuleCode())
-        return;
-    Vector<RefPtr<UniquedStringImpl>> freeVariables;
-    functionScope->collectOwnFreeVariables(freeVariables);
-    m_moduleScopeData->setFunctionDeclarationFreeVariables(name->impl(), WTF::move(freeVariables));
-}
-
-template <typename LexerType>
 template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuilder& context, FunctionNameRequirements requirements, bool nameIsInContainingScope, ConstructorKind constructorKind, SuperBinding expectedSuperBinding, unsigned functionStart, ParserFunctionInfo<TreeBuilder>& functionInfo, FunctionDefinitionType functionDefinitionType, std::optional<int> functionConstructorParametersEndPosition)
 {
     auto mode = sourceParseMode();
@@ -2676,7 +2662,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             m_seenTaggedTemplateInNonReparsingFunctionMode = cachedInfo->containsTaggedTemplate;
 
             functionScope->restoreFromSourceProviderCache(cachedInfo);
-            recordModuleFunctionDeclarationFreeVariablesIfNeeded(functionScope.scope(), functionDefinitionType, functionInfo.name);
             popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo);
             
             m_token = cachedInfo->endFunctionToken();
@@ -2932,8 +2917,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     }
 
     bool functionScopeWasStrictMode = functionScope->strictMode();
-
-    recordModuleFunctionDeclarationFreeVariablesIfNeeded(functionScope.scope(), functionDefinitionType, functionInfo.name);
+    
     popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo, hasPrecomputedFreeVariables, parameters.freeVariables());
     
     if (functionBodyType != ArrowFunctionBodyExpression)

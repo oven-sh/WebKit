@@ -104,16 +104,6 @@ public:
         m_storage.setType(current().withIndexingType(recommendedIndexingMode));
     }
 
-    // A lazily linked CodeBlock (Options::useLazyCodeBlockLink()) leaves the profile zero-filled instead of constructing
-    // it (every profiled indexing type has IsArray set, so zero type bits only ever mean that); the allocation slow paths
-    // and CodeBlock::ensureScopeOpsResolved() construct it before anything reads it.
-    bool isInitialized() const { return !!m_storage.type(); }
-    void initializeIfZeroFilled(IndexingType recommendedIndexingMode)
-    {
-        if (!isInitialized()) [[unlikely]]
-            initializeIndexingMode(recommendedIndexingMode);
-    }
-
 private:
     struct IndexingTypeAndVectorLength {
         static_assert(sizeof(IndexingType) <= sizeof(uint8_t));

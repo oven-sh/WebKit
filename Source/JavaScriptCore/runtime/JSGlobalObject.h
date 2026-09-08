@@ -691,12 +691,6 @@ public:
     unsigned m_globalLexicalBindingEpoch { 1 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
-    std::unique_ptr<GlobalResolveMemo> m_globalResolveMemo; // Options::useGlobalResolveMemo(); see JSScope.h
-    // This object's structure (and, since a dictionary structure adds properties and flattens in place, its shape) the
-    // memo's structure-decided entries were computed against. Strong: a recycled Structure must not validate them.
-    WriteBarrier<Structure> m_globalResolveMemoStructure;
-    PropertyOffset m_globalResolveMemoMaxOffset { invalidOffset };
-    bool m_globalResolveMemoStructureIsDictionary { false };
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
     std::optional<unsigned> m_stackTraceLimit;
@@ -1170,11 +1164,6 @@ public:
 
     void bumpGlobalLexicalBindingEpoch(VM&);
     unsigned globalLexicalBindingEpoch() const { return m_globalLexicalBindingEpoch; }
-    // Mutator only. Null until the first memoized resolve; validated (and emptied if stale) on each call.
-    GlobalResolveMemo* globalResolveMemoForResolve(VM&);
-    // Something abstractResolve() reads at the global levels changed other than this object's structure (a global
-    // symbol table or global lexical environment entry was added): forget every memoized resolution.
-    void invalidateGlobalResolveMemo();
     static constexpr ptrdiff_t globalLexicalBindingEpochOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     unsigned* addressOfGlobalLexicalBindingEpoch() LIFETIME_BOUND { return &m_globalLexicalBindingEpoch; }
 

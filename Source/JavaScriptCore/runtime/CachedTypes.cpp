@@ -340,17 +340,6 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
     return AtomStringImpl::add(characters).releaseNonNull();
 }
 
-JSString* Decoder::jsStringForInlineString(std::span<const uint8_t, 4> slot)
-{
-#if USE(BUN_JSC_ADDITIONS)
-    if (Options::useLazyHeapConstants() && ((slot[0] >> 2) & 3) == 3) {
-        std::span<const Latin1Character> characters = slot.subspan(1).first(3);
-        return jsNontrivialString(m_vm, String { StringImpl::create(characters) }); // lengths 1-2 are shared atoms already; 3 would be an atom-table insert per constant
-    }
-#endif
-    return jsOwnedString(m_vm, String { atomForInlineString(m_vm, slot) });
-}
-
 ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
 {
     if (!m_externalStrings) [[unlikely]] {
@@ -440,7 +429,6 @@ DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
 
 DecoderStringTable::~DecoderStringTable()
 {
-    ASSERT(m_pendingCellOrdinals.isEmpty());
     // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
     for (uint32_t i = 0; i < m_count; ++i) {
         if (m_slots[i] && !isCell(m_slots[i]))
@@ -732,11 +720,6 @@ bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) con
 JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
-    // A new cell is unrooted until it lands in m_cellOrdinals (below, or at flushPendingCells). Until then: GC is
-    // deferred, so no collection reaches a safepoint/flip; a concurrent mark already in flight treats the new cell (and
-    // the newly allocated pool owner) as live; and the caller's WriteBarrier::set into the owner covers an old owner.
-    ASSERT(vm.heap.isDeferred());
-    ASSERT(!isCompilationThread());
     uintptr_t& slot = m_slots[ordinal];
     if (isCell(slot))
         return cell(slot);
@@ -756,27 +739,9 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     slot = std::bit_cast<uintptr_t>(string) | cellTag;
     if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
         r->stringConstantCellsCreated++;
-#if USE(BUN_JSC_ADDITIONS)
-    if (Options::useLazyHeapConstants()) {
-        m_pendingCellOrdinals.append(ordinal);
-        return string;
-    }
-#endif
     Locker locker { m_cellsLock };
     m_cellOrdinals.append(ordinal);
     return string;
-}
-
-void DecoderStringTable::flushPendingCells()
-{
-    // m_pendingCellOrdinals is the mutator's; only the append to m_cellOrdinals races with visitStrongReferences.
-    if (m_pendingCellOrdinals.isEmpty())
-        return;
-    {
-        Locker locker { m_cellsLock };
-        m_cellOrdinals.appendVector(m_pendingCellOrdinals);
-    }
-    m_pendingCellOrdinals.shrink(0);
 }
 
 template<typename Visitor>
@@ -1314,11 +1279,6 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
 
 Decoder::~Decoder()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    // Backstop for a jsStringForExternalString caller that is not CachedJSValuePool::decode. Not an assertion: a sweep
-    // triggered by an allocation inside some other decoder's pool can destroy this one while that pool has cells pending.
-    flushPendingStringCells();
-#endif
     for (AtomStringImpl* atom : m_atomsByOrdinal) {
         if (atom)
             atom->deref();
@@ -3162,7 +3122,7 @@ public:
             if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
                 r->stringConstants++;
             if (this->hasInlineString())
-                return decoder.jsStringForInlineString(asByteSpan<uint32_t, sizeof(uint32_t)>(this->rawSlot()));
+                return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
                 return decoder.jsStringForExternalString(this->externalStringOrdinal());
             // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
@@ -3222,7 +3182,6 @@ struct CachedJSValuePool {
 
     static void decode(Decoder& decoder, const uint8_t* pool, unsigned count, WriteBarrier<Unknown>* out, const JSCell* owner, HeadPrefetch head = HeadPrefetch::None)
     {
-        ASSERT(decoder.vm().heap.isDeferred()); // new string cells are rooted only by the barriered stores into `owner` until the flush below
         const CachedJSValue* slot = slots(pool, count);
 #if USE(BUN_JSC_ADDITIONS)
         if (const DecoderStringTable* table = decoder.stringsToPrefetch()) {
@@ -3231,7 +3190,6 @@ struct CachedJSValuePool {
             decodeWithStringPrefetch<DecoderStringTable::PrefetchFor::JSString>(decoder.vm(), *table, count, head, stringOrdinals(pool, count), [&](unsigned i) {
                 out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
             });
-            decoder.flushPendingStringCells();
             return;
         }
 #else
@@ -3239,7 +3197,6 @@ struct CachedJSValuePool {
 #endif
         for (unsigned i = 0; i < count; ++i)
             out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
-        decoder.flushPendingStringCells();
     }
 };
 
@@ -4504,15 +4461,9 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
         prefetchStringTargets<DecoderStringTable::PrefetchFor::Atom>(*strings, 0, identifiersHead, identifierOrdinals);
     }
 #endif
-    // Most identifiers become atoms; let the table grow once for this block rather than as they trickle in. String
-    // constants do not (jsStringFor / jsStringForInlineString), so counting the constant pool only over-grows the table.
-    unsigned expectedAtoms = layout.identifiers.count;
-#if USE(BUN_JSC_ADDITIONS)
-    if (!Options::useLazyHeapConstants())
-#endif
-        expectedAtoms += layout.constants.count;
-    if (expectedAtoms >= 64)
-        AtomStringImpl::reserveCapacityForCurrentThread(expectedAtoms);
+    // Most identifiers and many constants become atoms; let the table grow once for this block rather than as they trickle in.
+    if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
+        AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
         DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstants, layout.constants.count);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);

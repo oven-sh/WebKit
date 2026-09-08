@@ -33,6 +33,7 @@
 #include "UnlinkedCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <mutex>
 #if OS(UNIX)
@@ -58,8 +59,8 @@ namespace {
 
 struct State {
     Lock lock;
-    std::array<uint64_t, numberOfBuckets> ticks { };
-    std::array<uint64_t, numberOfBuckets> counts { };
+    std::array<std::atomic<uint64_t>, numberOfBuckets> ticks { };
+    std::array<std::atomic<uint64_t>, numberOfBuckets> counts { };
 
     Vector<std::unique_ptr<DecodeRecord>> decodes;
     UncheckedKeyHashMap<UnlinkedCodeBlock*, DecodeRecord*> liveDecodes;
@@ -76,11 +77,9 @@ struct State {
     uint64_t childrenLinked { 0 };
     uint64_t executablesLinkedTotal { 0 };
 
-    DecodeRecord* currentDecode { nullptr };
-
     uint64_t tsc0 { 0 };
     MonotonicTime mono0;
-    MonotonicTime lastDump;
+    std::atomic<double> lastDumpSeconds { 0 }; // MonotonicTime; checked without the lock by maybePeriodicDump()
     uint64_t linksAtLastDump { 0 };
     unsigned dumps { 0 };
     unsigned intervalMs { 0 };
@@ -152,7 +151,7 @@ void initialize()
         State& s = state();
         s.tsc0 = now();
         s.mono0 = MonotonicTime::now();
-        s.lastDump = s.mono0;
+        s.lastDumpSeconds.store(s.mono0.secondsSinceEpoch().value(), std::memory_order_relaxed);
         s.intervalMs = Options::reportCodeBlockCreationCostsIntervalMs();
         g_enabled = true;
         std::atexit(exitHook);
@@ -165,13 +164,14 @@ void initialize()
 void add(Bucket bucket, uint64_t t, uint64_t count)
 {
     State& s = state();
-    // Main-thread dominated; tolerate rare races from compiler threads rather than paying for atomics.
-    s.ticks[static_cast<unsigned>(bucket)] += t;
-    s.counts[static_cast<unsigned>(bucket)] += count;
+    s.ticks[static_cast<unsigned>(bucket)].fetch_add(t, std::memory_order_relaxed);
+    s.counts[static_cast<unsigned>(bucket)].fetch_add(count, std::memory_order_relaxed);
 }
 
-DecodeRecord* currentDecode() { return state().currentDecode; }
-void setCurrentDecode(DecodeRecord* r) { state().currentDecode = r; }
+static thread_local DecodeRecord* t_currentDecode;
+
+DecodeRecord* currentDecode() { return t_currentDecode; }
+void setCurrentDecode(DecodeRecord* r) { t_currentDecode = r; }
 
 DecodeRecord* beginDecode()
 {
@@ -186,7 +186,7 @@ DecodeRecord* beginDecode()
 void endDecode(DecodeRecord* record, DecodeRecord* previous, UnlinkedCodeBlock* codeBlock)
 {
     State& s = state();
-    s.currentDecode = previous;
+    t_currentDecode = previous;
     record->codeBlock = codeBlock;
     if (codeBlock) {
         Locker locker { s.lock };
@@ -209,7 +209,7 @@ void noteChildExecutableDecoded(UnlinkedFunctionExecutable* executable, bool has
     s.childrenDecodedWithTDZ += hasTDZ;
     s.childrenDecodedWithRareData += hasRareData;
     s.unlinkedChildren.add(executable);
-    if (DecodeRecord* r = s.currentDecode) {
+    if (DecodeRecord* r = t_currentDecode) {
         r->children++;
         r->childrenWithName += hasName;
         r->childrenWithTDZ += hasTDZ;
@@ -296,9 +296,12 @@ void maybePeriodicDump()
     State& s = state();
     if (!s.intervalMs)
         return;
-    MonotonicTime t = MonotonicTime::now();
-    if ((t - s.lastDump).milliseconds() < s.intervalMs)
+    double last = s.lastDumpSeconds.load(std::memory_order_relaxed);
+    double t = MonotonicTime::now().secondsSinceEpoch().value();
+    if ((t - last) * 1000 < s.intervalMs)
         return;
+    if (!s.lastDumpSeconds.compare_exchange_strong(last, t, std::memory_order_relaxed))
+        return; // another thread is dumping
     dump("periodic");
 }
 
@@ -336,8 +339,13 @@ void dump(const char* reason)
 
     Locker locker { s.lock };
     s.dumps++;
-    s.lastDump = MonotonicTime::now();
+    s.lastDumpSeconds.store(MonotonicTime::now().secondsSinceEpoch().value(), std::memory_order_relaxed);
     s.linksAtLastDump = s.links.size();
+    std::array<uint64_t, numberOfBuckets> ticks, counts;
+    for (unsigned i = 0; i < numberOfBuckets; ++i) {
+        ticks[i] = s.ticks[i].load(std::memory_order_relaxed);
+        counts[i] = s.counts[i].load(std::memory_order_relaxed);
+    }
 
     // Refresh live records.
     for (auto& entry : s.liveLinks) {
@@ -366,9 +374,9 @@ void dump(const char* reason)
     // ---- Totals ----
     out.printf("\n-- Totals (bucket, count, ms) --\n");
     for (unsigned i = 0; i < numberOfBuckets; ++i)
-        out.printf("  %-30s %10llu %10.3f ms   %s\n", bucketName(i), static_cast<unsigned long long>(s.counts[i]), ms(s.ticks[i]), bucketDescription(i));
-    double decodeTotalMs = ms(s.ticks[static_cast<unsigned>(Bucket::DecodeTotal)]);
-    double linkTotalMs = ms(s.ticks[static_cast<unsigned>(Bucket::LinkTotal)]);
+        out.printf("  %-30s %10llu %10.3f ms   %s\n", bucketName(i), static_cast<unsigned long long>(counts[i]), ms(ticks[i]), bucketDescription(i));
+    double decodeTotalMs = ms(ticks[static_cast<unsigned>(Bucket::DecodeTotal)]);
+    double linkTotalMs = ms(ticks[static_cast<unsigned>(Bucket::LinkTotal)]);
     // Lazy function-code-block decodes nest inside nothing else; root (program/module) decodes include eager children only.
     out.printf("  decode total %.3f ms + link total %.3f ms = %.3f ms creation cost\n", decodeTotalMs, linkTotalMs, decodeTotalMs + linkTotalMs);
 
@@ -414,9 +422,9 @@ void dump(const char* reason)
             (unsigned long long)wasted, s.childrenDecoded ? 100.0 * wasted / s.childrenDecoded : 0.0,
             wasted * static_cast<double>(sizeof(UnlinkedFunctionExecutable)) / (1024 * 1024), sizeof(UnlinkedFunctionExecutable));
         out.printf("  FunctionExecutables created via link() total: %llu\n", (unsigned long long)s.executablesLinkedTotal);
-        double childMs = ms(s.ticks[static_cast<unsigned>(Bucket::DecodeChildren)]);
+        double childMs = ms(ticks[static_cast<unsigned>(Bucket::DecodeChildren)]);
         out.printf("  eager child decode cost: %.3f ms total; pro-rata never-linked share: %.3f ms\n", childMs, s.childrenDecoded ? childMs * wasted / s.childrenDecoded : 0.0);
-        double identMs = ms(s.ticks[static_cast<unsigned>(Bucket::DecodeIdentifiers)]);
+        double identMs = ms(ticks[static_cast<unsigned>(Bucket::DecodeIdentifiers)]);
         out.printf("  identifier decode cost: %.3f ms total; pro-rata untouched share: %.3f ms\n", identMs, identifiers ? identMs * (identifiers - identifiersTouched) / identifiers : 0.0);
     }
 
@@ -525,7 +533,7 @@ void dump(const char* reason)
             }
         }
         out.printf("  bytecode instructions walked at link: %llu (%.2f MB); plain profiled-metadata entries initialized: %llu; scope-resolution ops: %llu; in <=1x blocks: %llu instructions, %llu metadata entries\n",
-            (unsigned long long)instructions, instructionBytes / (1024.0 * 1024.0), (unsigned long long)metadataOps, (unsigned long long)s.counts[static_cast<unsigned>(Bucket::LinkScopeResolution)], (unsigned long long)coldInstructions, (unsigned long long)coldMetadataOps);
+            (unsigned long long)instructions, instructionBytes / (1024.0 * 1024.0), (unsigned long long)metadataOps, (unsigned long long)counts[static_cast<unsigned>(Bucket::LinkScopeResolution)], (unsigned long long)coldInstructions, (unsigned long long)coldMetadataOps);
     }
     {
         // Fate of the FunctionExecutables that CodeBlock linking created eagerly for every child (live CodeBlocks only).
@@ -578,7 +586,7 @@ void dump(const char* reason)
         out.printf("\n-- Cost attributable to CodeBlocks that %s: %llu of %llu blocks (%.1f%%) --\n", cold.label, (unsigned long long)cold.count, (unsigned long long)totalLinkCount, totalLinkCount ? 100.0 * cold.count / totalLinkCount : 0.0);
         for (unsigned i = 0; i < numberOfBuckets; ++i) {
             if (cold.ticks[i])
-                out.printf("  %-30s %10.3f ms (of %10.3f ms total = %.1f%%)\n", bucketName(i), ms(cold.ticks[i]), ms(s.ticks[i]), s.ticks[i] ? 100.0 * cold.ticks[i] / s.ticks[i] : 0.0);
+                out.printf("  %-30s %10.3f ms (of %10.3f ms total = %.1f%%)\n", bucketName(i), ms(cold.ticks[i]), ms(ticks[i]), ticks[i] ? 100.0 * cold.ticks[i] / ticks[i] : 0.0);
         }
         out.printf("  MetadataTable bytes for these blocks: %.2f MB of %.2f MB (%.1f%%); identifiers: %llu; children: %llu; constants: %llu; SymbolTables cloned: %llu; instruction KB: %.1f\n",
             cold.metadata / (1024.0 * 1024.0), totalMetadata / (1024.0 * 1024.0), totalMetadata ? 100.0 * cold.metadata / totalMetadata : 0.0, (unsigned long long)cold.identifiers, (unsigned long long)cold.children, (unsigned long long)cold.constants, (unsigned long long)cold.symbolTablesCloned, cold.instructionBytes / 1024.0);

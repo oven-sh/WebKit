@@ -65,7 +65,6 @@
 #include "LLIntPrototypeLoadAdaptiveStructureWatchpoint.h"
 #include "LLIntThunks.h"
 #include "MaxFrameExtentForSlowPathCall.h"
-#include "ObjectAllocationProfileInlines.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyConditionSet.h"
 #include "ProtoCallFrameInlines.h"
@@ -383,7 +382,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     ASSERT(Options::useJIT());
 
     if (codeBlock->jitType() != JITType::BaselineJIT) {
-        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode; baselineRef && codeBlock->canAdoptSharedBaselineCode()) {
+        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
             codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
             codeBlock->ownerExecutable()->installCode(codeBlock);
             codeBlock->jitNextInvocation();
@@ -414,7 +413,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     return false;
 }
 
-static UGPRPair entryOSR(CallFrame* callFrame, CodeBlock* codeBlock, const char *name, EntryKind kind)
+static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
 {
     dataLogLnIf(Options::verboseOSR(),
         *codeBlock, ": Entered ", name, " with executeCounter = ",
@@ -425,8 +424,6 @@ static UGPRPair entryOSR(CallFrame* callFrame, CodeBlock* codeBlock, const char 
         LLINT_RETURN_TWO(nullptr, nullptr);
     }
     VM& vm = codeBlock->vm();
-    if (codeBlock->linksLazily())
-        codeBlock->noteLazyLinkScopeFromFrame(callFrame); // lets prepareLazyStateForConcurrentCompilation() resolve the scope ops that have not run yet
     if (!jitCompileAndSetHeuristics(vm, codeBlock))
         LLINT_RETURN_TWO(nullptr, nullptr);
     
@@ -438,7 +435,7 @@ static UGPRPair entryOSR(CallFrame* callFrame, CodeBlock* codeBlock, const char 
     LLINT_RETURN_TWO(codeBlock->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
 }
 #else // ENABLE(JIT)
-static UGPRPair entryOSR(CallFrame*, CodeBlock* codeBlock, const char*, EntryKind)
+static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
 {
     codeBlock->dontJITAnytimeSoon();
     LLINT_RETURN_TWO(nullptr, nullptr);
@@ -448,31 +445,31 @@ static UGPRPair entryOSR(CallFrame*, CodeBlock* codeBlock, const char*, EntryKin
 LLINT_SLOW_PATH_DECL(entry_osr)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(callFrame, callFrame->codeBlock(), "entry_osr", Prologue);
+    return entryOSR(callFrame->codeBlock(), "entry_osr", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
+    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
+    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call_arityCheck)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
+    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct_arityCheck)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
+    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(loop_osr)
@@ -498,8 +495,6 @@ LLINT_SLOW_PATH_DECL(loop_osr)
         LLINT_RETURN_TWO(nullptr, nullptr);
     }
 
-    if (codeBlock->linksLazily())
-        codeBlock->noteLazyLinkScopeFromFrame(callFrame); // lets prepareLazyStateForConcurrentCompilation() resolve the scope ops that have not run yet
     if (!jitCompileAndSetHeuristics(vm, codeBlock))
         LLINT_RETURN_TWO(nullptr, nullptr);
 
@@ -534,11 +529,9 @@ LLINT_SLOW_PATH_DECL(replace)
         *codeBlock, ": Entered replace with executeCounter = ",
         codeBlock->llintExecuteCounter());
     
-    if (shouldJIT(codeBlock)) {
-        if (codeBlock->linksLazily())
-            codeBlock->noteLazyLinkScopeFromFrame(callFrame);
+    if (shouldJIT(codeBlock))
         jitCompileAndSetHeuristics(vm, codeBlock);
-    } else
+    else
         codeBlock->dontJITAnytimeSoon();
     LLINT_END_IMPL();
 #else // ENABLE(JIT)
@@ -674,10 +667,7 @@ LLINT_SLOW_PATH_DECL(slow_path_new_object)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewObject>();
     auto& metadata = bytecode.metadata(codeBlock);
-    auto& profile = metadata.m_objectAllocationProfile;
-    if (codeBlock->linksLazily() && profile.isNull())
-        profile.initializeProfile(vm, globalObject, codeBlock, globalObject->objectPrototype(), bytecode.m_inlineCapacity);
-    LLINT_RETURN(constructEmptyObject(vm, profile.structure()));
+    LLINT_RETURN(constructEmptyObject(vm, metadata.m_objectAllocationProfile.structure()));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_new_array)
@@ -685,8 +675,6 @@ LLINT_SLOW_PATH_DECL(slow_path_new_array)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewArray>();
     auto& metadata = bytecode.metadata(codeBlock);
-    if (codeBlock->linksLazily())
-        metadata.m_arrayAllocationProfile.initializeIfZeroFilled(ArrayWithUndecided);
     LLINT_RETURN(constructArrayNegativeIndexed(globalObject, &metadata.m_arrayAllocationProfile, std::bit_cast<JSValue*>(&callFrame->uncheckedR(bytecode.m_argv)), bytecode.m_argc));
 }
 
@@ -695,8 +683,6 @@ LLINT_SLOW_PATH_DECL(slow_path_new_array_with_size)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewArrayWithSize>();
     auto& metadata = bytecode.metadata(codeBlock);
-    if (codeBlock->linksLazily())
-        metadata.m_arrayAllocationProfile.initializeIfZeroFilled(ArrayWithUndecided);
     LLINT_RETURN(constructArrayWithSizeQuirk(globalObject, &metadata.m_arrayAllocationProfile, getOperand(callFrame, bytecode.m_length)));
 }
 
@@ -868,8 +854,6 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (codeBlock->linksLazily())
-        metadata.initializeIfZeroFilled();
     PropertySlot slot(baseValue, PropertySlot::PropertySlot::InternalMethodType::Get);
 
     JSValue result = baseValue.get<true>(globalObject, ident, slot);
@@ -2216,15 +2200,6 @@ LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
     LLINT_RETURN_CALLEE_FRAME(calleeFrame);
 }
 
-LLINT_SLOW_PATH_DECL(slow_path_link_call_link_info)
-{
-    LLINT_BEGIN_NO_SET_PC();
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(throwScope);
-    codeBlock->linkCallLinkInfoLazily(pc);
-    LLINT_END_IMPL();
-}
-
 enum class SetArgumentsWith {
     Object,
     CurrentArguments
@@ -2242,7 +2217,6 @@ static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* p
     auto bytecode = pc->as<Op>();
     auto& metadata = bytecode.metadata(codeBlock);
     JSValue calleeAsValue = getOperand(callFrame, bytecode.m_callee);
-    codeBlock->linkCallLinkInfoLazily(pc);
 
     CallFrame* calleeFrame = vm.newCallFrameReturnValue;
     unsigned argumentCountIncludingThis = vm.varargsLength + 1;
@@ -2381,13 +2355,6 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSObject* scope = uncheckedDowncast<JSObject>(getNonConstantOperand(callFrame, bytecode.m_scope));
 
-    if (codeBlock->linksLazily()) {
-        codeBlock->linkLazily(callFrame, bytecode);
-        JSValue result;
-        if (CommonSlowPaths::tryGetFromScopeForLinkedMetadata(codeBlock, metadata, scope, result))
-            LLINT_RETURN_PROFILED(result);
-    }
-
     // ModuleVar is always converted to ClosureVar for get_from_scope.
     ASSERT(metadata.m_getPutInfo.resolveType() != ModuleVar);
 
@@ -2420,15 +2387,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_to_scope)
 
     auto bytecode = pc->as<OpPutToScope>();
     auto& metadata = bytecode.metadata(codeBlock);
+    const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSObject* scope = uncheckedDowncast<JSObject>(getNonConstantOperand(callFrame, bytecode.m_scope));
     JSValue value = getOperand(callFrame, bytecode.m_value);
-    if (codeBlock->linksLazily()) {
-        codeBlock->linkLazily(callFrame, bytecode);
-        if (CommonSlowPaths::tryPutToScopeForLinkedMetadata(codeBlock, metadata, scope, value))
-            LLINT_END();
-        if (metadata.m_getPutInfo.resolveType() == ModuleVar)
-            LLINT_THROW(createTypeError(globalObject, ReadonlyPropertyWriteError));
-    }
     if (metadata.m_getPutInfo.resolveType() == ResolvedClosureVar) {
         JSLexicalEnvironment* environment = uncheckedDowncast<JSLexicalEnvironment>(scope);
         environment->variableAt(ScopeOffset(metadata.m_operand)).set(vm, environment, value);
@@ -2441,7 +2402,6 @@ LLINT_SLOW_PATH_DECL(slow_path_put_to_scope)
         LLINT_END();
     }
 
-    const Identifier& ident = codeBlock->identifier(bytecode.m_var); // only a ResolvedClosureVar put can be anonymous (m_var == UINT_MAX)
     bool hasProperty = scope->hasProperty(globalObject, ident);
     LLINT_CHECK_EXCEPTION();
     if (hasProperty

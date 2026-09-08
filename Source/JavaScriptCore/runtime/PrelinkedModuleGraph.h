@@ -188,8 +188,9 @@ public:
     }
 
     // The one atom this VM uses for the name (through the shared string table, so the bytecode's own identifiers are the
-    // same atoms). The two sentinels map to the VM's *default* / *namespace* private names. Mutator only.
-    JS_EXPORT_PRIVATE Identifier identifier(uint32_t sid) const;
+    // same atoms), made once per sid and kept for the VM's lifetime. The two sentinels map to the VM's *default* /
+    // *namespace* private names. Mutator only.
+    JS_EXPORT_PRIVATE const Identifier& identifier(uint32_t sid) const;
     // The specifier / fetch parameters a ModuleRequest for `request` carries. Parameters are shared per FetchKind.
     RefPtr<ScriptFetchParameters> fetchParameters(const Request&);
 
@@ -215,7 +216,7 @@ private:
     std::span<const Export> m_exports;
     std::span<const uint32_t> m_starExports;
     RefPtr<ScriptFetchParameters> m_fetchParameters[4]; // by FetchKind, JavaScript..JSON (None is null)
-    mutable Vector<Identifier> m_identifiers; // by sid: the atom once identifier() made it or a by-name lookup met it; mutator only
+    mutable Vector<Identifier> m_identifiers; // by sid, sized once: the atom once identifier() made it or a by-name lookup met it; mutator only
     bool m_hashesVerified { true }; // the producer's name hashes agree with this build's StringHasher; else lookups scan
 };
 

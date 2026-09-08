@@ -30,8 +30,6 @@
 #include "CommonSlowPaths.h"
 #include "DirectArguments.h"
 #include "JSGlobalLexicalEnvironment.h"
-#include "JSLexicalEnvironment.h"
-#include "JSModuleEnvironment.h"
 #include "JSSetInlines.h"
 #include "ScopedArguments.h"
 #include "SymbolTableInlines.h"
@@ -39,73 +37,6 @@
 namespace JSC {
 
 namespace CommonSlowPaths {
-
-// Lazy link (Options::useLazyCodeBlockLink()): an entry CodeBlock::linkLazily() just resolved must be served the way the
-// LLInt fast path serves it -- ClosureVar (also what a module import becomes) by slot, never by name; ModuleVar by the
-// linked environment -- so these replay the fast path for the statically resolved kinds, declining (nullptr / false)
-// exactly where the fast path's own guards would take the slow path. Safe to try before the generic lookup.
-
-inline JSScope* tryResolveScopeForLinkedMetadata(CodeBlock* codeBlock, OpResolveScope::Metadata& metadata, JSScope* currentScope)
-{
-    JSGlobalObject* globalObject = codeBlock->globalObject();
-    ResolveType resolveType = metadata.m_resolveType;
-    switch (resolveType) {
-    case GlobalProperty:
-    case GlobalPropertyWithVarInjectionChecks:
-    case GlobalVar:
-    case GlobalVarWithVarInjectionChecks:
-    case GlobalLexicalVar:
-    case GlobalLexicalVarWithVarInjectionChecks:
-        if (needsVarInjectionChecks(resolveType) && globalObject->varInjectionWatchpointSet().hasBeenInvalidated())
-            return nullptr;
-        if ((resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks) && metadata.m_globalLexicalBindingEpoch != globalObject->globalLexicalBindingEpoch())
-            return nullptr;
-        return metadata.m_constantScope.get();
-    case ModuleVar:
-        return uncheckedDowncast<JSScope>(metadata.m_lexicalEnvironment.get());
-    case ClosureVar:
-    case ClosureVarWithVarInjectionChecks: {
-        if (needsVarInjectionChecks(resolveType) && globalObject->varInjectionWatchpointSet().hasBeenInvalidated())
-            return nullptr;
-        JSScope* scope = currentScope;
-        for (unsigned i = 0; i < metadata.m_localScopeDepth; ++i)
-            scope = scope->next();
-        return scope;
-    }
-    default:
-        return nullptr;
-    }
-}
-
-template<typename Metadata>
-bool isClosureVarAccessForLinkedMetadata(CodeBlock* codeBlock, Metadata& metadata)
-{
-    switch (metadata.m_getPutInfo.resolveType()) {
-    case ClosureVar:
-        return true;
-    case ClosureVarWithVarInjectionChecks:
-        return !codeBlock->globalObject()->varInjectionWatchpointSet().hasBeenInvalidated();
-    default:
-        return false;
-    }
-}
-
-inline bool tryGetFromScopeForLinkedMetadata(CodeBlock* codeBlock, OpGetFromScope::Metadata& metadata, JSObject* scope, JSValue& result)
-{
-    if (!isClosureVarAccessForLinkedMetadata(codeBlock, metadata))
-        return false;
-    result = uncheckedDowncast<JSLexicalEnvironment>(scope)->variableAt(ScopeOffset(metadata.m_operand)).get(); // may be empty: op_check_tdz follows
-    return true;
-}
-
-inline bool tryPutToScopeForLinkedMetadata(CodeBlock* codeBlock, OpPutToScope::Metadata& metadata, JSObject* scope, JSValue value)
-{
-    if (!isClosureVarAccessForLinkedMetadata(codeBlock, metadata))
-        return false;
-    JSLexicalEnvironment* environment = uncheckedDowncast<JSLexicalEnvironment>(scope);
-    environment->variableAt(ScopeOffset(metadata.m_operand)).set(codeBlock->vm(), environment, value);
-    return true;
-}
 
 template<typename Metadata>
 void cacheGlobalLexicalVar(CodeBlock* codeBlock, Metadata& metadata, JSGlobalLexicalEnvironment* globalLexicalEnvironment, const Identifier& ident)
@@ -122,7 +53,7 @@ void cacheGlobalLexicalVar(CodeBlock* codeBlock, Metadata& metadata, JSGlobalLex
         offset = iter->value.scopeOffset();
     }
     ConcurrentJSLocker locker(codeBlock->m_lock);
-    metadata.m_getPutInfo = metadata.m_getPutInfo.withResolveType(newResolveType);
+    metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
     metadata.m_watchpointSet = watchpointSet;
     metadata.m_operand = reinterpret_cast<uintptr_t>(globalLexicalEnvironment->variableAt(offset).slot());
 }
@@ -142,7 +73,7 @@ inline void tryCachePutToScopeGlobal(
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
             ConcurrentJSLocker locker(codeBlock->m_lock);
-            metadata.m_getPutInfo = metadata.m_getPutInfo.withResolveType(newResolveType);
+            metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
             break;
         }
         [[fallthrough]];
@@ -201,7 +132,7 @@ inline void tryCacheGetFromScopeGlobal(
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
             ConcurrentJSLocker locker(codeBlock->m_lock);
-            metadata.m_getPutInfo = metadata.m_getPutInfo.withResolveType(newResolveType);
+            metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
             break;
         }
         [[fallthrough]];

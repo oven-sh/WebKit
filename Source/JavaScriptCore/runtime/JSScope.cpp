@@ -27,7 +27,6 @@
 #include "JSScope.h"
 
 #include "AbstractModuleRecord.h"
-#include "CodeBlockCreationStats.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
@@ -314,59 +313,11 @@ ResolveOp JSScope::abstractResolve(JSGlobalObject* globalObject, size_t depthOff
 
     bool needsVarInjectionChecks = JSC::needsVarInjectionChecks(unlinkedType);
     size_t depth = depthOffset;
-    // From the global lexical environment up the answer no longer depends on the chain walked so far (only on
-    // needsVarInjectionChecks, part of the memo key), so it is looked up / recorded there; see GlobalResolveMemo.
-    JSScope* globalLexicalEnvironment = globalObject->globalLexicalEnvironment();
-    GlobalResolveMemo::Map* memo = nullptr;
-    size_t depthAtGlobalLexicalEnvironment = 0;
     for (; scope; scope = scope->next()) {
-        if (scope == globalLexicalEnvironment && Options::useGlobalResolveMemo() && initializationMode == InitializationMode::NotInitialization) {
-            memo = &globalObject->globalResolveMemoForResolve(globalObject->vm())->map(getOrPut, needsVarInjectionChecks);
-            auto iter = memo->find(ident.impl());
-            if (iter != memo->end()) {
-                const GlobalResolveMemo::Entry& entry = iter->value;
-                size_t entryDepth = 0;
-                if (entry.depth != GlobalResolveMemo::Depth::Zero)
-                    entryDepth = entry.depth == GlobalResolveMemo::Depth::GlobalObject ? depth + 1 : depth;
-                if (CodeBlockCreationStats::enabled()) [[unlikely]]
-                    CodeBlockCreationStats::add(CodeBlockCreationStats::Bucket::GlobalResolveMemoHit, 0);
-                return ResolveOp(entry.type, entryDepth, entry.hasStructure ? globalObject->structure() : nullptr, nullptr, entry.watchpointSet, entry.operand);
-            }
-            depthAtGlobalLexicalEnvironment = depth;
-        }
         bool success = abstractAccess(globalObject, scope, ident, getOrPut, depth, needsVarInjectionChecks, op, initializationMode);
         if (success)
             break;
         ++depth;
-    }
-
-    if (memo && !op.lexicalEnvironment) {
-        // abstractAccess() at those two levels yields depth 0 (unresolved / uncacheable / Dynamic), the global lexical
-        // environment's (GlobalLexicalVar) or the global object's, the global object's current structure or none, and a
-        // watchpoint set / slot address owned by the realm's symbol tables: nothing specific to the chain below.
-        ASSERT(!op.importedName);
-        ASSERT(!op.structure || op.structure == globalObject->structure());
-        std::optional<GlobalResolveMemo::Depth> entryDepth;
-        if (op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks) {
-            if (op.depth == depthAtGlobalLexicalEnvironment)
-                entryDepth = GlobalResolveMemo::Depth::GlobalLexicalEnvironment;
-        } else if (!op.depth)
-            entryDepth = GlobalResolveMemo::Depth::Zero;
-        else if (op.depth == depthAtGlobalLexicalEnvironment + 1) {
-            // A put left uncached only because the property's replacement watchpoint is still intact would cache once
-            // that fires; do not pin the uncached form for later blocks.
-            bool isPutAwaitingReplacementWatchpoint = getOrPut == Put && !op.structure && (op.type == GlobalProperty || op.type == GlobalPropertyWithVarInjectionChecks);
-            if (!isPutAwaitingReplacementWatchpoint)
-                entryDepth = GlobalResolveMemo::Depth::GlobalObject;
-        }
-        if (entryDepth) {
-            // abstractAccess() may have transitioned the global object (reified a static property); re-validate so the
-            // entry is stamped with the structure it was computed against. The Map objects survive validation.
-            GlobalResolveMemo* validMemo = globalObject->globalResolveMemoForResolve(globalObject->vm());
-            validMemo->add(*memo, ident.impl(), GlobalResolveMemo::Entry { op.type, *entryDepth, !!op.structure, op.watchpointSet, op.operand });
-            if (CodeBlockCreationStats::enabled()) [[unlikely]]
-                CodeBlockCreationStats::add(CodeBlockCreationStats::Bucket::GlobalResolveMemoRecord, 0);
-        }
     }
 
     return op;

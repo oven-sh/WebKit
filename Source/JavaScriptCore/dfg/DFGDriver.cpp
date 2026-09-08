@@ -65,11 +65,7 @@ static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, Cod
 {
     if (!Options::useLazyCodeBlockStateCompilerFence())
         return;
-    if (!Options::useLazyCodeBlockLink() && !Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables()
-#if USE(BUN_JSC_ADDITIONS)
-        && !Options::useLazySymbolTableConstants()
-#endif
-        )
+    if (!Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables())
         return; // every block is born prepared
     CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::JITPrepareInlineCandidates);
     DeferGCForAWhile deferGC(vm); // raw CodeBlock* / callee cells are held across the ensure*() allocations below

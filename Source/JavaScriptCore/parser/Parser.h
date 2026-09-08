@@ -900,19 +900,6 @@ public:
         ASSERT(parameters.freeVariableCount + capturesFromParameterExpressions.size() == parameters.usedVariables.size());
     }
 
-    void collectOwnFreeVariables(Vector<RefPtr<UniquedStringImpl>>& result) const
-    {
-        UncheckedKeyHashSet<UniquedStringImpl*> seen;
-        for (const UniquedStringImplPtrSet& set : m_usedVariables) {
-            for (UniquedStringImpl* impl : set) {
-                if (m_declaredVariables.contains(impl) || m_lexicalVariables.contains(impl))
-                    continue;
-                if (seen.add(impl).isNewEntry)
-                    result.append(impl);
-            }
-        }
-    }
-
     void restoreFromSourceProviderCache(const SourceProviderCacheItem* info)
     {
         ASSERT(m_isFunction);
@@ -1882,7 +1869,6 @@ private:
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression createResolveAndUseVariable(TreeBuilder&, const Identifier*, bool isEval, const JSTextPosition&, const JSTokenLocation&);
 
     enum class FunctionDefinitionType { Expression, Declaration, Method };
-    void recordModuleFunctionDeclarationFreeVariablesIfNeeded(Scope* functionScope, FunctionDefinitionType, const Identifier* name);
     template <class TreeBuilder> NEVER_INLINE bool parseFunctionInfo(TreeBuilder&, FunctionNameRequirements, bool nameIsInContainingScope, ConstructorKind, SuperBinding, unsigned functionStart, ParserFunctionInfo<TreeBuilder>&, FunctionDefinitionType, std::optional<int> functionConstructorParametersEndPosition = std::nullopt);
     
     template <class TreeBuilder> ALWAYS_INLINE bool isArrowFunctionParameters(TreeBuilder&);

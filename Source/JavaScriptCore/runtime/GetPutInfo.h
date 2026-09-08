@@ -247,11 +247,7 @@ public:
     static constexpr unsigned initializationBits = ((1 << modeShift) - 1) & ~typeBits;
     static constexpr unsigned modeBits = ((1 << 30) - 1) & ~initializationBits & ~typeBits;
     static constexpr unsigned isStrictBit = 1 << 30;
-    // Only ever set on the copy held in op_get_from_scope / op_put_to_scope Metadata: tells a linked entry apart from
-    // the zero-filled state a lazily linked CodeBlock starts with. Every accessor masks it out.
-    static constexpr unsigned isLinkedMetadataBit = 1u << 31;
     static_assert((modeBits & initializationBits & typeBits & isStrictBit) == 0x0, "There should be no intersection between ResolveMode ResolveType and InitializationMode");
-    static_assert(!((modeBits | initializationBits | typeBits | isStrictBit) & isLinkedMetadataBit));
 
     GetPutInfo() = default;
 
@@ -269,11 +265,7 @@ public:
     InitializationMode initializationMode() const { return static_cast<InitializationMode>((m_operand & initializationBits) >> initializationShift); }
     ResolveMode resolveMode() const { return static_cast<ResolveMode>((m_operand & modeBits) >> modeShift); }
     ECMAMode ecmaMode() const { return m_operand & isStrictBit ? ECMAMode::strict() : ECMAMode::sloppy(); }
-    unsigned operand() const { return m_operand & ~isLinkedMetadataBit; }
-
-    bool isLinkedMetadata() const { return m_operand & isLinkedMetadataBit; }
-    GetPutInfo asLinkedMetadata() const { return GetPutInfo(m_operand | isLinkedMetadataBit); }
-    GetPutInfo withResolveType(ResolveType resolveType) const { return GetPutInfo((m_operand & ~typeBits) | resolveType); } // keeps every other bit, isLinkedMetadataBit included
+    unsigned operand() const { return m_operand; }
 
     void dump(PrintStream&) const;
 
