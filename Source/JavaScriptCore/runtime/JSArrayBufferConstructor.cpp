@@ -75,12 +75,12 @@ EncodedJSValue JSGenericArrayBufferConstructor<sharingMode>::constructImpl(JSGlo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    double lengthDouble = 0;
+    // https://tc39.es/ecma262/#sec-arraybuffer-length
+    // https://tc39.es/ecma262/#sec-sharedarraybuffer-length
+    size_t length = 0;
     std::optional<size_t> maxByteLength;
-
-    bool hasArguments = callFrame->argumentCount();
-    if (hasArguments) {
-        lengthDouble = callFrame->uncheckedArgument(0).toNumber(globalObject);
+    if (callFrame->argumentCount()) {
+        length = callFrame->uncheckedArgument(0).toIndex(globalObject, "length"_s);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue options = callFrame->argument(1);
         if (options.isObject()) {
@@ -93,24 +93,18 @@ EncodedJSValue JSGenericArrayBufferConstructor<sharingMode>::constructImpl(JSGlo
         }
     }
 
-    // https://tc39.es/proposal-resizablearraybuffer/#sec-allocatesharedarraybuffer
-    RefPtr<ArrayBuffer> buffer;
-    if (maxByteLength) {
-        if (maxByteLength.value() < lengthDouble)
-            return throwVMRangeError(globalObject, scope, "ArrayBuffer length exceeds maxByteLength option"_s);
-    }
+    // https://tc39.es/ecma262/#sec-allocatearraybuffer
+    // https://tc39.es/ecma262/#sec-allocatesharedarraybuffer
+    // byteLength > maxByteLength is a RangeError before OrdinaryCreateFromConstructor reads newTarget.prototype.
+    // A Data Block that cannot be created is a RangeError after it.
+    if (maxByteLength && length > maxByteLength.value())
+        return throwVMRangeError(globalObject, scope, "ArrayBuffer length exceeds maxByteLength option"_s);
 
     JSObject* newTarget = asObject(callFrame->newTarget());
     Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, arrayBufferStructureWithSharingMode<sharingMode>, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(scope, { });
 
-    size_t length = 0;
-    if (hasArguments) {
-        JSValue lengthDoubleValue = JSValue(JSValue::EncodeAsDouble, lengthDouble);
-        length = lengthDoubleValue.toIndex(globalObject, "length"_s);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-
+    RefPtr<ArrayBuffer> buffer;
     if (maxByteLength) {
         if constexpr (sharingMode == ArrayBufferSharingMode::Shared) {
             buffer = ArrayBuffer::tryCreateShared(vm, length, 1, maxByteLength.value());
