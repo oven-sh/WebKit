@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "LocalAllocator.h"
+#include "JSThreadsCounters.h"
 
 #include "AllocatingScope.h"
 #include "FreeListInlines.h"
@@ -191,6 +192,7 @@ void LocalAllocator::stopAllocatingForClientTeardown()
 
 void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
+    JSTHREADS_COUNT(allocateSlowCase);
     SuperSamplerScope superSamplerScope(false);
     // SharedGC (§5.2(1)/I2): access-based ownership, not thread-pinned. !ISS
     // this is today's API-lock predicate (I10); once shared it checks the

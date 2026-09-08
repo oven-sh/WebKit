@@ -24,6 +24,8 @@
 #include "config.h"
 #include "JSObject.h"
 
+#include "JSThreadsCounters.h"
+
 #include "AllocationFailureMode.h"
 #include "BlockDirectory.h"
 #include "CompleteSubspace.h"
@@ -2736,7 +2738,7 @@ Butterfly* JSObject::createInitialIndexedStorageConcurrent(VM& vm, TransitionKin
             WTF::storeStoreFence();
             setStructure(vm, newStructure);
             published = true;
-        }));
+        }), "OM createInitialIndexedStorage");
 
         if (!published)
             continue; // RESTART: re-plan from the fresh settled state; the step-1 allocations drop unreferenced.
@@ -2830,7 +2832,7 @@ bool JSObject::definePropertyChangingKindGILOff(VM& vm, Structure* expectedSourc
         WTF::storeStoreFence();
         setStructure(vm, newStructure);
         published = true;
-    }));
+    }), "OM defineProperty changing kind");
     if (!published)
         return false;
 
@@ -3038,7 +3040,7 @@ ArrayStorage* JSObject::createArrayStorageConcurrent(VM& vm, unsigned length, un
             WTF::storeStoreFence();
             setStructure(vm, newStructure);
             published = true;
-        }));
+        }), "OM createArrayStorage");
 
         if (published) {
             // Publication barrier, like setButterfly (I25); superseded storage
@@ -3588,7 +3590,7 @@ ArrayStorage* JSObject::convertToArrayStorageConcurrent(VM& vm, TransitionKind t
             WTF::storeStoreFence();
             setStructure(vm, newStructure);
             published = true;
-        }));
+        }), "OM convertToArrayStorage");
 
         if (published) {
             // Publication barrier, like setButterfly (I25); the superseded
@@ -3750,6 +3752,7 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
                     published = this->structureIDConcurrently() == oldStructureID && claimRewritePublish();
                 }
                 if (published) {
+                    JSTHREADS_COUNT(relabelOwnerLeg);
                     vm.writeBarrier(this);
                     return;
                 }
@@ -3760,6 +3763,9 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
         }
 
         bool published = false;
+        const char* relabelStopName = hasDouble(sourceType) ? "OM relabel Double->Contiguous"
+            : hasInt32(sourceType) ? (hasDouble(targetType) ? "OM relabel Int32->Double" : "OM relabel Int32->Contiguous")
+            : "OM relabel Undecided->*";
         jsThreadsStopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
             // ---- Re-verify inside the stop; allocate nothing (O4).
             if (this->structureID() != oldStructureID)
@@ -3819,7 +3825,7 @@ void JSObject::relabelIndexingShapeConcurrent(VM& vm, TransitionKind transition)
             WTF::storeStoreFence(); // Lanes before the type publish (M2-style).
             setStructure(vm, newStructure); // Butterfly word untouched (I16); no nuke needed.
             published = true;
-        }));
+        }), relabelStopName);
         if (published) {
             vm.writeBarrier(this); // Cheap conservative re-grey; no cell values were introduced (Int32/Double lanes carry no cells).
             return;
@@ -4827,7 +4833,7 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
                     // Re-check inside the stop: a racing fire may have won.
                     if (structure->transitionThreadLocalIsStillValid() || structure->writeThreadLocalIsStillValid())
                         structure->fireTransitionThreadLocal(vm, "F2: foreign/shared delete (§6 L4)");
-                }));
+                }), "OM indexed accessor/other");
                 continue; // RESTART after the stop (§4.2 rule).
             }
         }
@@ -4966,26 +4972,46 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
             // 8B-aligned, so legal on PreciseAllocation cells too - I36). Only
             // the structureID lane changes: remove transitions preserve
             // type/flags/indexing (asserted above).
+            // The StructureID lane can still move under the cell lock: once the
+            // sets are dead (step 0 above, or long before), the object's OWNER
+            // transitions it claim-first WITHOUT the lock (E4-C, r17) - CAS
+            // S -> nuked(S), write, publish S'. A cell-locked writer is
+            // excluded from that leg only through the lane itself (§4.3 step
+            // 4/5, N2 (ii), I38): a header whose ID bits are not S, or a CAS
+            // that fails on more than the volatile bytes (GC cellState, the
+            // lock's parked bit - GT#2), is a claim held or a publication
+            // landed, and the answer is RESTART (re-plan against S'), not an
+            // assertion (seventh round, F33: the r17 change left this delete
+            // leg asserting; the mirror harness found it at 3 in 100 runs of
+            // stress/delete-by-val-ftl.js). The doomed slot already holds
+            // undefined (D1); the property is still present in S, so that is
+            // the same transient any reader of a property being deleted sees.
             Atomic<uint64_t>* headerAtomic = reinterpret_cast<Atomic<uint64_t>*>(static_cast<JSCell*>(thisObject));
             uint64_t expectedHeader = headerAtomic->load(std::memory_order_seq_cst);
-            RELEASE_ASSERT(static_cast<uint32_t>(expectedHeader) == structure->id().bits());
+            bool lostLane = static_cast<uint32_t>(expectedHeader) != structure->id().bits();
             uint64_t desiredHeader = (expectedHeader & ~0xffffffffULL) | static_cast<uint64_t>(newStructure->id().bits());
-            while (true) {
+            while (!lostLane) {
                 uint64_t previousHeader = headerAtomic->compareExchangeStrong(expectedHeader, desiredHeader, std::memory_order_seq_cst);
                 if (previousHeader == expectedHeader)
                     break;
-                // Under the cell lock, with the TTL sets handled by step 0,
-                // only the volatile bytes (GC cellState CAS, lock parked bit -
-                // GT#2) may move; anything else is a logic error (§3.0 step 4).
-                RELEASE_ASSERT(headerDiffersOnlyInVolatileBits(expectedHeader, previousHeader));
+                if (!headerDiffersOnlyInVolatileBits(expectedHeader, previousHeader)) {
+                    lostLane = true;
+                    break;
+                }
                 expectedHeader = mergeVolatileHeaderBits(expectedHeader, previousHeader);
                 desiredHeader = mergeVolatileHeaderBits(desiredHeader, previousHeader);
+            }
+            if (lostLane) {
+                JSTHREADS_COUNT(deleteLostLaneRestart);
+                continue; // RESTART (Locker unlocks on scope exit); the loop top re-reads the structure once the owner publishes.
             }
         }
         vm.writeBarrier(thisObject);
         vm.writeBarrier(thisObject, newStructure);
         slot.setHit(offset);
-        ASSERT(newStructure->outOfLineCapacity() || !thisObject->structure()->outOfLineCapacity());
+        // Against the snapshot, not a re-read: the owner may already have
+        // transitioned the object again without the lock (E4-C).
+        ASSERT(newStructure->outOfLineCapacity() || !structure->outOfLineCapacity());
         if (thisObject->mayBePrototype()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Remove);
         return true;

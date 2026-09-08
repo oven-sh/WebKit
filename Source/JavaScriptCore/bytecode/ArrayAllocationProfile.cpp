@@ -26,6 +26,9 @@
 #include "config.h"
 #include "ArrayAllocationProfile.h"
 
+#include "JSCConfig.h"
+#include "JSThreadsCounters.h"
+
 #include "JSCellInlines.h"
 #include <algorithm>
 
@@ -75,6 +78,15 @@ void ArrayAllocationProfile::updateProfile()
         }
         unsigned largestSeenVectorLength = std::min(std::max(current.vectorLength(), lastArray->getVectorLength()), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
         m_storage.setTypeRelaxed(IndexingTypeAndVectorLength(indexingType, largestSeenVectorLength));
+        // T4-P: the recommendation left Double (this site's arrays get
+        // converted after allocation). GIL off that conversion is a stop per
+        // array unless the optimized allocation follows; tell the code that
+        // baked Double. Published after the type store so the recompile reads
+        // the new recommendation.
+        if (g_jscConfig.gilOffProcess && hasDouble(current.indexingType()) && !hasDouble(indexingType) && !hasUndecided(indexingType) && m_gilOffDoubleDemotionSet.isStillValid()) [[unlikely]] {
+            JSTHREADS_COUNT(arrayAllocationProfileLeftDoubleGILOff);
+            m_gilOffDoubleDemotionSet.fireAll(lastArray->vm(), "GIL off: array allocation profile left Double");
+        }
     }
 }
 

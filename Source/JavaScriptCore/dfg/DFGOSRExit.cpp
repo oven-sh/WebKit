@@ -26,6 +26,8 @@
 #include "config.h"
 #include "DFGOSRExit.h"
 
+#include "JSThreadsCounters.h"
+
 #include "VMLite.h"
 
 #if ENABLE(DFG_JIT)
@@ -182,6 +184,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     // and pins m_jitCode; flag-off output-identical.
     DFG::JITCode* dfgJIT = codeBlock->jitCodeRawPtr()->dfg();
     OSRExit& exit = dfgJIT->m_osrExit[exitIndex];
+    JSTHREADS_COUNT(osrExitDFGOperation);
 
     if (vm.gilOff()) [[unlikely]] {
         // gilOff never repatches the exit jump, so every exit of an
@@ -248,6 +251,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     }
 
     MacroAssemblerCodeRef<OSRExitPtrTag> exitCode;
+    JSTHREADS_COUNT(osrExitDFGCompile);
     {
         CCallHelpers jit(codeBlock);
 

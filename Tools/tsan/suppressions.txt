@@ -755,3 +755,14 @@ race:JSC::VM::setGlobalConstRedeclarationShouldThrow
 race:functionDOMJITGetterComplexSlowCall
 race:domJITGetterComplexSlowCall
 race:functionSetRandomSeed
+
+# Seventh round: Array.prototype.concat's flat copy (copyArrayElements, a
+# memcpy of whole-JSValue lanes) reading a FRESH array that another thread
+# built with relaxed atomic lane stores (JSArray::fastSlice's
+# butterflyConcurrentCopyWords, or T4-C's boxing copy) and published through a
+# JS property store the reader loaded in JIT code. The publication edge is in
+# JIT code, so TSAN pairs the memcpy with the builder's stores. Same class as
+# the growArrayRight entry above (fresh butterfly contents, JIT-side
+# publication). 1 of 7 TSanJIT GIL-off runs of
+# objectmodel/typed-owner-relabel-no-stop.js.
+race:JSC::copyArrayElements

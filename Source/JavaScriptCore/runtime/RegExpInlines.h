@@ -24,6 +24,7 @@
 
 #include "RegExp.h"
 #include "JSCInlines.h"
+#include "JSThreadsCounters.h"
 #include "Yarr.h"
 #include "YarrInterpreter.h"
 #include "YarrJIT.h"
@@ -131,6 +132,15 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
     // AB17d (bench I3 follow-up): Config-page gate — this predicate runs on
     // every mutator RegExp match flag-off.
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        // Lock-free "already compiled" check first (seventh round): the
+        // published-code bits are an acquire/release publication of the code
+        // and state (RegExp.h), so a reader that sees its width may match at
+        // once; only the compile itself takes the cell lock, re-checking under
+        // it. Before, every match took the lock here (27 M acquisitions in one
+        // benchmark).
+        if (hasPublishedCodeGILOff(charSize == Yarr::CharSize::Char8 ? PublishedJIT8 : PublishedJIT16)) [[likely]]
+            return;
+        JSTHREADS_COUNT(regExpCompileCheckLocked);
         Locker locker { cellLock() };
         if (hasCodeFor(charSize))
             return;
@@ -324,6 +334,9 @@ ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize ch
     // AUD1.N2 residual (A) — same shape and rationale as compileIfNecessary
     // (AB17e: unified on the Config-page gate like its sibling above).
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        if (hasPublishedCodeGILOff(charSize == Yarr::CharSize::Char8 ? PublishedJIT8MatchOnly : PublishedJIT16MatchOnly)) [[likely]]
+            return; // see compileIfNecessary
+        JSTHREADS_COUNT(regExpCompileCheckLocked);
         Locker locker { cellLock() };
         if (hasMatchOnlyCodeFor(charSize))
             return;

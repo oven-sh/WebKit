@@ -729,7 +729,7 @@ JS_EXPORT_PRIVATE bool ensureSegmentedOutOfLineCapacity(VM&, JSObjectWithButterf
 
 class VM;
 
-JS_EXPORT_PRIVATE void jsThreadsStopTheWorldAndRun(VM&, const ScopedLambda<void()>&); // defined in ConcurrentButterfly.cpp
+JS_EXPORT_PRIVATE void jsThreadsStopTheWorldAndRun(VM&, const ScopedLambda<void()>&, const char* why = nullptr); // defined in ConcurrentButterfly.cpp; `why` names the requester for the stop watchdog and the diagnostic counters
 JS_EXPORT_PRIVATE bool butterflyWorldIsStopped(VM&); // defined in ConcurrentButterfly.cpp
 
 // ===== §9.6 stress mode: forceSegmentedButterflies (Task 10) =====

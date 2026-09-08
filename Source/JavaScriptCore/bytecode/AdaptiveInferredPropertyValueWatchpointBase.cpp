@@ -65,12 +65,20 @@ bool AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
         return false;
 
     PropertyOffset offset = structure->get(vm, m_key.uid());
-    WatchpointSet* set = structure->propertyReplacementWatchpointSet(offset);
-    if (set->add(&m_propertyWatchpoint))
+    // Flag-on the structure read above can already differ from the one the
+    // watchability check saw (another thread transitioned or flattened the
+    // object in between), and then have no replacement set at this offset, or
+    // no such property at all: a refused install, like the fired-set case
+    // below (seventh round; the amplifier found the null set at about 1 in 100
+    // runs of jit/global-property-cache-vs-global-transitions.js GIL off).
+    WatchpointSet* set = isValidOffset(offset) ? structure->propertyReplacementWatchpointSet(offset) : nullptr;
+    ASSERT(set || Options::useJSThreads());
+    if (set && set->add(&m_propertyWatchpoint))
         return true;
 
-    // Flag-on only: the replacement set fired between the two links. Leave
-    // nothing linked, so a refused install never leaves a half-armed pair.
+    // Flag-on only: the replacement set fired between the two links, or is
+    // not there. Leave nothing linked, so a refused install never leaves a
+    // half-armed pair.
     Locker locker { g_watchpointMembershipLock };
     if (m_structureWatchpoint.isOnList())
         m_structureWatchpoint.remove();
@@ -103,7 +111,20 @@ void AdaptiveInferredPropertyValueWatchpointBase::fire(VM& vm, const FireDetail&
         return;
 
     // A refused install (flag-on: a set fired under us) is a failed adaptation.
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability) && install(vm))
+    // Flag-on, when this fire runs inside a collection phase on this thread
+    // (InferredValue clean-up at GC end), the re-adaptation must not CREATE
+    // the replacement set: ensuring it allocates a StructureRareData cell,
+    // which the allocator refuses while the mutator state is not Running (the
+    // mirror harness hit that release assertion once, seventh round).
+    // Single-threaded the structure re-read here is the one the condition was
+    // installed on and already has the set; with threads it can be a structure
+    // another thread moved the object to. Outside a collection the set is
+    // ensured as before (objectmodel/indexing-transition-keeps-adaptive-
+    // watchpoint.js depends on the re-install creating it).
+    PropertyCondition::WatchabilityEffort effort = PropertyCondition::EnsureWatchability;
+    if (Options::useJSThreads() && vm.heap.mutatorState() != MutatorState::Running) [[unlikely]]
+        effort = PropertyCondition::MakeNoChanges; // inside a collection phase on this thread: adapt only if the set already exists
+    if (m_key.isWatchable(effort) && install(vm))
         return;
 
     handleFire(vm, detail);
