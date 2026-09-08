@@ -29,6 +29,7 @@
 #include "JSStringInlines.h"
 #include "Lexer.h"
 #include "SourceCharacters.h"
+#include <wtf/MathExtras.h>
 #include <wtf/dtoa.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -53,48 +54,44 @@ ALWAYS_INLINE static int parseDigit(unsigned short c, int radix)
     return digit;
 }
 
-static double parseIntOverflow(std::span<const Latin1Character> s, int radix)
+// The nearest double, ties to even, to a run of digits in a power-of-two radix.
+// https://tc39.es/ecma262/#sec-roundmvresult
+template<typename CharacterType>
+static double parseIntOverflow(std::span<const CharacterType> digits, int radix)
 {
-    double number = 0.0;
-    double radixMultiplier = 1.0;
+    ASSERT(radix == 2 || radix == 4 || radix == 8 || radix == 16 || radix == 32);
+    unsigned bitsPerDigit = ctz(static_cast<unsigned>(radix));
 
-    for (const Latin1Character* p = s.data() + s.size() - 1; p >= s.data(); p--) {
-        if (radixMultiplier == std::numeric_limits<double>::infinity()) {
-            if (*p != '0') {
-                number = std::numeric_limits<double>::infinity();
-                break;
-            }
-        } else {
-            int digit = parseDigit(*p, radix);
-            number += digit * radixMultiplier;
+    // The value is leading * 2^exponent, plus less than 2^exponent if a dropped digit was not zero.
+    uint64_t leading = 0;
+    int exponent = 0;
+    bool droppedNonZeroDigit = false;
+
+    // This many digits fit in 64 bits whatever they are.
+    size_t alwaysFit = std::min<size_t>(digits.size(), 64 / bitsPerDigit);
+    for (auto c : digits.first(alwaysFit)) {
+        int digit = parseDigit(c, radix);
+        ASSERT(digit >= 0);
+        leading = (leading << bitsPerDigit) | digit;
+    }
+    // A later digit fits only behind leading zeros.
+    for (auto c : digits.subspan(alwaysFit)) {
+        int digit = parseDigit(c, radix);
+        ASSERT(digit >= 0);
+        if (!(leading >> (64 - bitsPerDigit))) {
+            leading = (leading << bitsPerDigit) | digit;
+            continue;
         }
-
-        radixMultiplier *= radix;
+        droppedNonZeroDigit |= !!digit;
+        exponent += bitsPerDigit;
+        if (exponent >= std::numeric_limits<double>::max_exponent)
+            return std::numeric_limits<double>::infinity();
     }
 
-    return number;
-}
-
-static double parseIntOverflow(std::span<const char16_t> s, int radix)
-{
-    double number = 0.0;
-    double radixMultiplier = 1.0;
-
-    for (const char16_t* p = s.data() + s.size() - 1; p >= s.data(); p--) {
-        if (radixMultiplier == std::numeric_limits<double>::infinity()) {
-            if (*p != '0') {
-                number = std::numeric_limits<double>::infinity();
-                break;
-            }
-        } else {
-            int digit = parseDigit(*p, radix);
-            number += digit * radixMultiplier;
-        }
-
-        radixMultiplier *= radix;
-    }
-
-    return number;
+    // With a digit dropped, leading has 60 bits or more, so its lowest bit is below the 53 that a double keeps and below
+    // the bit that decides the rounding. Set there, a dropped non-zero digit breaks a tie, and the conversion rounds once.
+    double result = static_cast<double>(leading | static_cast<uint64_t>(droppedNonZeroDigit));
+    return exponent ? std::ldexp(result, exponent) : result;
 }
 
 template<typename CharacterType>
