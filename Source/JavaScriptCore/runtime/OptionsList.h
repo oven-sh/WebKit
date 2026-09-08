@@ -123,6 +123,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
     v(Bool, useRegExpAlternationDispatch, true, Normal, "lets the RegExp JIT dispatch a group's alternatives on their first character and compare short literal alternatives inline"_s) \
     v(Unsigned, regExpDispatchMaxInlineLiteralLength, 32, Normal, "longest literal alternative (up to the JIT's ceiling of 32) the RegExp JIT compares inline inside a first-character dispatch chain; 0 disables inline literals"_s) \
+    v(Bool, useLazyRegExpPatternConstruction, true, Normal, "RegExp creation only syntax-checks and capture-counts patterns longer than 64 characters (other than pure literals, named-group and deeply nested patterns) instead of building a YarrPattern it then discards; the pattern is first built when the RegExp is compiled, so YarrPatternConstructor::setupOffsets errors surface there and its error code can differ from the eager one"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
     /* Bun Features */\
