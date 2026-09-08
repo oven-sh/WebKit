@@ -93,6 +93,9 @@ public:
 
     static JSGenericTypedArrayView* create(JSGlobalObject*, Structure*, size_t length);
     static JSGenericTypedArrayView* createWithFastVector(JSGlobalObject*, Structure*, size_t length, void* vector);
+    // `vector`: JSArrayBufferView::tryAllocateAuxiliaryVector storage of at least length elements,
+    // which the view adopts as its (GC-owned) vector. Any length a typed array may have.
+    static JSGenericTypedArrayView* createWithAuxiliaryVector(JSGlobalObject*, Structure*, size_t length, void* vector);
     static JSGenericTypedArrayView* createUninitialized(JSGlobalObject*, Structure*, size_t length);
     static JSGenericTypedArrayView* create(JSGlobalObject*, Structure*, RefPtr<ArrayBuffer>&&, size_t byteOffset, std::optional<size_t> length);
     static JSGenericTypedArrayView* create(VM&, Structure*, RefPtr<typename Adaptor::ViewType>&& impl);

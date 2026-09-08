@@ -85,6 +85,20 @@ JSGenericTypedArrayView<Adaptor>* JSGenericTypedArrayView<Adaptor>::createWithFa
 }
 
 template<typename Adaptor>
+JSGenericTypedArrayView<Adaptor>* JSGenericTypedArrayView<Adaptor>::createWithAuxiliaryVector(
+    JSGlobalObject* globalObject, Structure* structure, size_t length, void* vector)
+{
+    VM& vm = globalObject->vm();
+    ConstructionContext context(structure, length, vector, ConstructionContext::AdoptAuxiliaryVector);
+    RELEASE_ASSERT(context);
+    JSGenericTypedArrayView* result =
+        new (NotNull, allocateCell<JSGenericTypedArrayView>(vm))
+        JSGenericTypedArrayView(vm, context);
+    result->finishCreation(vm);
+    return result;
+}
+
+template<typename Adaptor>
 JSGenericTypedArrayView<Adaptor>* JSGenericTypedArrayView<Adaptor>::createUninitialized(JSGlobalObject* globalObject, Structure* structure, size_t length)
 {
     VM& vm = globalObject->vm();

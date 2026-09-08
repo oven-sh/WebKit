@@ -190,6 +190,10 @@ public:
     }
 
     static constexpr size_t fastSizeLimit = 1000;
+    // GC-owned (primitive Gigacage auxiliary space) storage for createWithAuxiliaryVector:
+    // byteLength bytes, uninitialized; null on failure or if byteLength exceeds what a view can
+    // address. It needs no free: unreferenced auxiliary storage is swept.
+    JS_EXPORT_PRIVATE static void* tryAllocateAuxiliaryVector(VM&, size_t byteLength);
     using VectorPtr = CagedBarrierPtr<Gigacage::Primitive, void>;
 
     static void* nullVectorPtr()
@@ -223,6 +227,13 @@ protected:
         
         // This is only for constructing fast typed arrays. It's used by the JIT's slow path.
         ConstructionContext(Structure*, size_t length, void* vector);
+
+        // A FastTypedArray over caller-allocated auxiliary storage (tryAllocateAuxiliaryVector)
+        // of any length: the view marks it as its vector and the GC owns it, exactly as for a
+        // small fast typed array, but without the fastSizeLimit that only bounds inline JIT
+        // allocation.
+        enum AdoptAuxiliaryVectorTag { AdoptAuxiliaryVector };
+        ConstructionContext(Structure*, size_t length, void* vector, AdoptAuxiliaryVectorTag);
         
         JS_EXPORT_PRIVATE ConstructionContext(
             VM&, Structure*, RefPtr<ArrayBuffer>&&,

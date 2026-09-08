@@ -5456,6 +5456,27 @@ static const VarWidthEntry varWidthEntries[] = {
 
 } // namespace BufferAccessorTest
 
+// $vm.createUint8ArrayWithAuxiliaryVector(length[, fill]): a FastTypedArray of any length over
+// adopted auxiliary storage (JSGenericTypedArrayView::createWithAuxiliaryVector).
+static JSC_DECLARE_HOST_FUNCTION(functionCreateUint8ArrayWithAuxiliaryVector);
+JSC_DEFINE_HOST_FUNCTION(functionCreateUint8ArrayWithAuxiliaryVector, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t length = callFrame->argument(0).toIndex(globalObject, "length"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    uint8_t fill = static_cast<uint8_t>(callFrame->argument(1).toInt32(globalObject));
+    RETURN_IF_EXCEPTION(scope, { });
+    void* vector = JSArrayBufferView::tryAllocateAuxiliaryVector(vm, length);
+    if (!vector) {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    memset(vector, fill, length);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::createWithAuxiliaryVector(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>(), length, vector)));
+}
+
 static JSC_DECLARE_HOST_FUNCTION(functionCreateBufferAccessors);
 JSC_DEFINE_HOST_FUNCTION(functionCreateBufferAccessors, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -5719,6 +5740,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "createBufferAccessors"_s, functionCreateBufferAccessors, 0);
+    addFunction(vm, alwaysAllow, "createUint8ArrayWithAuxiliaryVector"_s, functionCreateUint8ArrayWithAuxiliaryVector, 2);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)

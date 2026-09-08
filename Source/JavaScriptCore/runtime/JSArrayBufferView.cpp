@@ -57,6 +57,29 @@ JSArrayBufferView::ConstructionContext::ConstructionContext(Structure* structure
     RELEASE_ASSERT(length <= fastSizeLimit);
 }
 
+JSArrayBufferView::ConstructionContext::ConstructionContext(Structure* structure, size_t length, void* vector, AdoptAuxiliaryVectorTag)
+    : m_structure(structure)
+    , m_vector(vector)
+    , m_length(length)
+    , m_byteOffset(0)
+    , m_mode(FastTypedArray)
+    , m_butterfly(nullptr)
+{
+    ASSERT(vector);
+    ASSERT(!isResizableOrGrowableSharedTypedArrayIncludingDataView(structure->classInfoForCells()));
+    ASSERT(!Gigacage::isEnabled() || !length || (Gigacage::contains(vector) && Gigacage::contains(static_cast<const uint8_t*>(vector) + length - 1)));
+    RELEASE_ASSERT(length <= MAX_ARRAY_BUFFER_SIZE);
+}
+
+void* JSArrayBufferView::tryAllocateAuxiliaryVector(VM& vm, size_t byteLength)
+{
+    if (byteLength > MAX_ARRAY_BUFFER_SIZE)
+        return nullptr;
+    // Auxiliary allocations are at least pointer-aligned and non-empty.
+    size_t size = WTF::roundUpToMultipleOf<sizeof(EncodedJSValue)>(std::max<size_t>(byteLength, 1));
+    return vm.primitiveGigacageAuxiliarySpace().allocate(vm, size, nullptr, AllocationFailureMode::ReturnNull);
+}
+
 JSArrayBufferView::ConstructionContext::ConstructionContext(VM& vm, Structure* structure, size_t length, unsigned elementSize, InitializationMode mode)
     : m_structure(nullptr)
     , m_length(length)
