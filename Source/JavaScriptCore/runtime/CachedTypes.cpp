@@ -58,6 +58,7 @@
 #include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/AtomStringTable.h>
+#include "CodeBlockCreationStats.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -78,6 +79,77 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 template<typename T> concept PayloadType = std::has_unique_object_representations_v<T> || std::is_same_v<T, double>;
 
 namespace JSC {
+
+namespace {
+struct CodeBlockDecodeStats {
+    using Bucket = CodeBlockCreationStats::Bucket;
+    CodeBlockCreationStats::DecodeRecord* record { nullptr };
+    CodeBlockCreationStats::DecodeRecord* previous { nullptr };
+    uint64_t start { 0 };
+    uint64_t lapStart { 0 };
+
+    CodeBlockDecodeStats()
+    {
+        if (!CodeBlockCreationStats::enabled()) [[likely]]
+            return;
+        record = CodeBlockCreationStats::beginDecode();
+        previous = CodeBlockCreationStats::currentDecode();
+        CodeBlockCreationStats::setCurrentDecode(record);
+        start = lapStart = CodeBlockCreationStats::now();
+    }
+    void lap(Bucket bucket)
+    {
+        if (!record) [[likely]]
+            return;
+        uint64_t t = CodeBlockCreationStats::now();
+        uint64_t delta = t - lapStart;
+        lapStart = t;
+        record->ticks[static_cast<unsigned>(bucket)] += delta;
+        CodeBlockCreationStats::add(bucket, delta);
+    }
+    void resetLap()
+    {
+        if (record) [[unlikely]]
+            lapStart = CodeBlockCreationStats::now();
+    }
+    void finish(UnlinkedCodeBlock* codeBlock, bool isFunctionCode)
+    {
+        if (!record) [[likely]]
+            return;
+        uint64_t total = CodeBlockCreationStats::now() - start;
+        record->ticks[static_cast<unsigned>(Bucket::DecodeTotal)] = total;
+        CodeBlockCreationStats::add(Bucket::DecodeTotal, total);
+        record->isFunctionCode = isFunctionCode;
+        if (codeBlock) {
+            record->instructionBytes = codeBlock->instructions().sizeInBytes();
+            record->identifiers = codeBlock->numberOfIdentifiers();
+            record->constants = codeBlock->constantRegisters().size();
+            record->handlers = codeBlock->numberOfExceptionHandlers();
+        }
+        CodeBlockCreationStats::endDecode(record, previous, codeBlock);
+        record = nullptr;
+    }
+    ~CodeBlockDecodeStats() { finish(nullptr, false); }
+};
+
+// Times a helper decode and charges the UnlinkedCodeBlock decode in progress (if any).
+struct DecodeLap {
+    CodeBlockCreationStats::Bucket bucket;
+    uint64_t start;
+    uint64_t count;
+    DecodeLap(CodeBlockCreationStats::Bucket b, uint64_t n = 1)
+        : bucket(b)
+        , start(CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::now() : 0)
+        , count(n)
+    {
+    }
+    ~DecodeLap()
+    {
+        if (start) [[unlikely]]
+            CodeBlockCreationStats::addToCurrent(bucket, CodeBlockCreationStats::now() - start, count);
+    }
+};
+} // anonymous namespace
 
 bool Decoder::canBorrowPayload() const
 {
@@ -571,6 +643,24 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
     return atom;
 }
 
+void DecoderStringTable::reportStats(VM& vm) const
+{
+    std::array<uint32_t, 3> outcomes { m_atomForCalls - m_atomsPromoted - m_atomsCreated, m_atomsPromoted, m_atomsCreated };
+    constexpr std::array buckets { CodeBlockCreationStats::Bucket::ExternalAtomSlotHit, CodeBlockCreationStats::Bucket::ExternalAtomPromoted, CodeBlockCreationStats::Bucket::ExternalAtomCreated };
+    for (unsigned i = 0; i < 3; ++i) {
+        if (uint32_t delta = outcomes[i] - m_reportedOutcomes[i])
+            CodeBlockCreationStats::add(buckets[i], 0, delta);
+    }
+    m_reportedOutcomes = outcomes;
+    auto& table = vm.atomStringTable()->table();
+    unsigned capacity = table.capacity();
+    if (capacity == m_reportedAtomTableCapacity)
+        return;
+    CodeBlockCreationStats::add(capacity > m_reportedAtomTableCapacity ? CodeBlockCreationStats::Bucket::AtomTableGrew : CodeBlockCreationStats::Bucket::AtomTableShrank, 0);
+    dataLogLn("CodeBlockCreationStats: atom table ", m_reportedAtomTableCapacity, " -> ", capacity, " buckets at ", table.size(), " keys (", m_atomsCreated, " created + ", m_atomsPromoted, " promoted by the string table so far)");
+    m_reportedAtomTableCapacity = capacity;
+}
+
 RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
 {
     if (slot == VariableLengthObjectBase::emptySentinel)
@@ -668,6 +758,8 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     // The impl's bytes belong to the table (or the executable), not the GC heap.
     JSString* string = JSString::createHasOtherOwner(vm, value.releaseNonNull());
     slot = std::bit_cast<uintptr_t>(string) | cellTag;
+    if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
+        r->stringConstantCellsCreated++;
     Locker locker { m_cellsLock };
     m_cellOrdinals.append(ordinal);
     return string;
@@ -3042,9 +3134,20 @@ public:
             return jsNumber(static_cast<int32_t>(this->rawSlot()));
         case Kind::Double:
             return JSValue::decode(*this->buffer<EncodedJSValue>());
-        case Kind::SymbolTable:
-            return this->buffer<CachedSymbolTable>()->decode(decoder);
+        case Kind::SymbolTable: {
+            DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstantSymbolTables);
+            SymbolTable* symbolTable = this->buffer<CachedSymbolTable>()->decode(decoder);
+            if (lap.start) [[unlikely]] {
+                if (auto* r = CodeBlockCreationStats::currentDecode()) {
+                    r->symbolTableConstants++;
+                    r->symbolTableEntries += this->buffer<CachedSymbolTable>()->entryCount();
+                }
+            }
+            return symbolTable;
+        }
         case Kind::String:
+            if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
+                r->stringConstants++;
             if (this->hasInlineString())
                 return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
@@ -4373,7 +4476,8 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     const Layout& layout = tail.layout;
     // See prefetchStringTableSlots(): the constant pool's and the identifier table's first windows had their slots
     // prefetched before the cell was constructed. Their targets go now, ahead of the atom-table reserve and the pool's
-    // allocation; the identifiers' lookups after the pool, ahead of the rest.
+    // allocation; the identifiers' lookups after the pool, ahead of DecodeMisc. (With reportCodeBlockCreationCosts on,
+    // these passes fall between the laps: DecodeTotal counts them, no bucket does.)
     const DecoderStringTable* strings = decoder.stringsToPrefetch();
 #if USE(BUN_JSC_ADDITIONS)
     auto identifierOrdinals = stringOrdinals(at<CachedIdentifier>(layout, layout.identifiers));
@@ -4389,6 +4493,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (unsigned expected = strings ? strings->expectedAtomTableInserts(layout.identifiers.count) : layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstants, layout.constants.count);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock, strings ? HeadPrefetch::All : HeadPrefetch::None);
     }
@@ -4396,77 +4501,118 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (strings)
         prefetchStringLookups(decoder.vm(), *strings, 0, identifiersHead, identifierOrdinals);
 #endif
-    decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeMisc);
+        decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
 #if USE(BUN_JSC_ADDITIONS)
-    // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
-    // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
-    if (auto* record = Options::useLazyCachedExpressionInfo() && decoder.canBorrowPayload() ? m_expressionInfo.getIfInPayload(decoder) : nullptr) {
-        auto payload = decoder.payloadSpan();
-        codeBlock.m_cachedExpressionInfo = record;
-        codeBlock.m_cachedExpressionInfoBytes = static_cast<uint32_t>(std::min<size_t>(payload.data() + payload.size() - std::bit_cast<const uint8_t*>(record), UINT32_MAX));
-    } else
+        // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
+        // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
+        if (auto* record = Options::useLazyCachedExpressionInfo() && decoder.canBorrowPayload() ? m_expressionInfo.getIfInPayload(decoder) : nullptr) {
+            auto payload = decoder.payloadSpan();
+            codeBlock.m_cachedExpressionInfo = record;
+            codeBlock.m_cachedExpressionInfoBytes = static_cast<uint32_t>(std::min<size_t>(payload.data() + payload.size() - std::bit_cast<const uint8_t*>(record), UINT32_MAX));
+        } else
 #endif
-        codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    if (auto* e = extras(layout))
-        e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
-    decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+            codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
+        if (auto* e = extras(layout))
+            e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
+    }
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeIdentifiers, layout.identifiers.count);
+        decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    }
+    if (CodeBlockCreationStats::enabled()) [[unlikely]]
+        CodeBlockCreationStats::noteIdentifierTableCreated(&codeBlock, layout.identifiers.count);
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildren, layout.functionDecls.count + layout.functionExprs.count);
+        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
+        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+    }
+    if (CodeBlockCreationStats::enabled() && strings) [[unlikely]]
+        strings->reportStats(decoder.vm());
 }
 
 UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, true);
     return codeBlock;
 }
 
@@ -4678,7 +4824,10 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread() && Thread::currentSingleton().atomStringTable() == vm().atomStringTable());
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_deferredMembersRecord->slotsView();
-    self->m_ecmaName = v.name->decode(*m_deferredMembersDecoder);
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildNameLazy);
+        self->m_ecmaName = v.name->decode(*m_deferredMembersDecoder);
+    }
     WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
@@ -4689,12 +4838,16 @@ void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
     ASSERT(m_scalarsAreDeferred && m_membersAreDeferred);
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread()); // the cold members share words with (mutator-only) flag bits
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
-    auto v = m_deferredMembersRecord->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
-    self->m_parametersStartOffset = v.scalars.parametersStartOffset;
-    self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
-    self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
-    self->m_lineCount = v.scalars.lineCount;
-    self->m_scalarsAreDeferred = false;
+    CachedFunctionExecutable::View v;
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildScalarsLazy);
+        v = m_deferredMembersRecord->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
+        self->m_parametersStartOffset = v.scalars.parametersStartOffset;
+        self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
+        self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
+        self->m_lineCount = v.scalars.lineCount;
+        self->m_scalarsAreDeferred = false;
+    }
     if (!m_nameIsDeferred && !v.tdz && !v.rareData)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
@@ -4719,10 +4872,13 @@ void UnlinkedFunctionExecutable::materializeDeferredMembersSlow() const
     auto v = m_deferredMembersRecord->slotsView();
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
     std::unique_ptr<RareData> rareData;
-    if (v.tdz)
-        parentScopeTDZVariables = v.tdz->decode(decoder.get());
-    if (v.rareData)
-        rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder.get()));
+    if (v.tdz || v.rareData) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildMembersLazy);
+        if (v.tdz)
+            parentScopeTDZVariables = v.tdz->decode(decoder.get());
+        if (v.rareData)
+            rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder.get()));
+    }
     self->m_deferredMembersDecoder.~RefPtr();
     new (&self->m_parentScopeTDZVariables) RefPtr<TDZEnvironmentLink>(WTF::move(parentScopeTDZVariables));
     new (&self->m_rareData) std::unique_ptr<RareData>(WTF::move(rareData));
@@ -4841,14 +4997,21 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         v.tdz = nullptr;
         v.rareData = nullptr;
     }
-    if (v.name)
+    if (v.name) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildName);
         m_ecmaName = v.name->decode(decoder);
-    if (v.tdz)
+    }
+    if (v.tdz) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildTDZ);
         m_parentScopeTDZVariables = v.tdz->decode(decoder);
+    }
     if (v.rareData) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildRareData);
         m_rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
         ASSERT_WITH_MESSAGE(m_rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
     }
+    if (CodeBlockCreationStats::enabled() && CodeBlockCreationStats::currentDecode()) [[unlikely]]
+        CodeBlockCreationStats::noteChildExecutableDecoded(this, v.header & CachedFunctionExecutable::HasName, v.header & CachedFunctionExecutable::HasTDZ, v.header & CachedFunctionExecutable::HasRareData);
     m_firstLineOffset = scalars.firstLineOffset;
     m_lineCount = scalars.lineCount;
     m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;

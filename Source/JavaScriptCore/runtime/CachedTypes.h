@@ -36,6 +36,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <array>
 #include <optional>
 
 namespace JSC {
@@ -127,6 +128,9 @@ public:
             return lookups;
         return static_cast<unsigned>(static_cast<uint64_t>(lookups) * (m_atomsPromoted + m_atomsCreated) / m_atomForCalls);
     }
+    // Options::reportCodeBlockCreationCosts(): fold atomFor's outcomes since the last call into their count-only buckets
+    // and log the thread's atom table capacity if it changed (a drop means a removal shrank it). Mutator only.
+    void reportStats(VM&) const;
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
@@ -181,10 +185,12 @@ private:
     uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
-    // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
+    // atomFor's outcomes so far (mutator only): expectedAtomTableInserts scales by them, reportStats folds them into buckets.
     uint32_t m_atomForCalls { 0 };
     uint32_t m_atomsPromoted { 0 };
     uint32_t m_atomsCreated { 0 };
+    mutable std::array<uint32_t, 3> m_reportedOutcomes { }; // reportStats: hits / promoted / created already added to the buckets
+    mutable unsigned m_reportedAtomTableCapacity { 0 };
     Lock m_cellsLock;
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };

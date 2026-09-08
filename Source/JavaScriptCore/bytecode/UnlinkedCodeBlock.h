@@ -203,7 +203,25 @@ public:
     // Constant Pools
 
     size_t numberOfIdentifiers() const { return m_identifiers.size(); }
-    const Identifier& identifier(int index) const { return m_identifiers[index]; }
+    const Identifier& identifier(int index) const
+    {
+        if (m_identifierTouchBitsForStats.size()) [[unlikely]]
+            m_identifierTouchBitsForStats[index] = 1;
+        return m_identifiers[index];
+    }
+    // Options::reportCodeBlockCreationCosts() only.
+    void allocateIdentifierTouchBitsForStats(unsigned count)
+    {
+        m_identifierTouchBitsForStats = FixedVector<uint8_t>(count);
+        std::fill(m_identifierTouchBitsForStats.begin(), m_identifierTouchBitsForStats.end(), 0);
+    }
+    unsigned countTouchedIdentifiersForStats() const
+    {
+        unsigned n = 0;
+        for (uint8_t b : m_identifierTouchBitsForStats)
+            n += b;
+        return n;
+    }
     const FixedVector<Identifier>& identifiers() const LIFETIME_BOUND { return m_identifiers; }
 
     BitVector& bitVector(size_t i) { ASSERT(m_rareData); return m_rareData->m_bitVectors[i]; }
@@ -443,6 +461,7 @@ private:
 
     // Constant Pools
     FixedVector<Identifier> m_identifiers;
+    mutable FixedVector<uint8_t> m_identifierTouchBitsForStats;
     FixedVector<WriteBarrier<Unknown>> m_constantRegisters;
     FixedVector<SourceCodeRepresentation> m_constantsSourceCodeRepresentation;
     using FunctionExpressionVector = FixedVector<WriteBarrier<UnlinkedFunctionExecutable>>;

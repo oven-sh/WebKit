@@ -72,11 +72,18 @@ inline JSFunction* JSFunction::createWithInvalidatedReallocationWatchpoint(VM& v
     return createImpl(vm, executable, scope, structure);
 }
 
+namespace CodeBlockCreationStats {
+extern JS_EXPORT_PRIVATE bool g_enabled;
+JS_EXPORT_PRIVATE void noteFunctionInstantiated(FunctionExecutable*);
+}
+
 inline JSFunction::JSFunction(VM& vm, FunctionExecutable* executable, JSScope* scope, Structure* structure)
     : Base(vm, scope, structure)
     , m_executableOrRareData(std::bit_cast<uintptr_t>(executable))
 {
     assertTypeInfoFlagInvariants();
+    if (CodeBlockCreationStats::g_enabled) [[unlikely]]
+        CodeBlockCreationStats::noteFunctionInstantiated(executable);
 }
 
 inline FunctionExecutable* JSFunction::jsExecutable() const
