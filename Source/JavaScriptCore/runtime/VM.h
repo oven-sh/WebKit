@@ -1021,6 +1021,20 @@ public:
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
+    // Options::startupJITDeferralScale: while the startup window is active, LLInt->Baseline and
+    // Baseline->DFG compile thresholds behave as if multiplied by this. Mutator-only (tier-up slow
+    // paths); the deadline is observed lazily, on the next such slow path after it passes.
+    double startupJITDeferralScale()
+    {
+        if (m_startupJITDeferralScale == 1) [[likely]]
+            return 1;
+        if (ApproximateTime::now() < m_startupJITDeferralDeadline)
+            return m_startupJITDeferralScale;
+        endStartupJITDeferral("deadline");
+        return 1;
+    }
+    JS_EXPORT_PRIVATE void endStartupJITDeferral(const char* reason = "embedder"); // `reason` is only logged (Options::verboseOSR)
+
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
 
@@ -1393,6 +1407,9 @@ public:
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
 private:
 #endif
+
+    double m_startupJITDeferralScale { 1 };
+    ApproximateTime m_startupJITDeferralDeadline;
 
     bool m_hasSideData { false };
     bool m_hasTerminationRequest { false };

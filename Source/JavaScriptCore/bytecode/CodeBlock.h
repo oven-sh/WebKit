@@ -624,7 +624,7 @@ public:
 
     bool checkIfJITThresholdReached()
     {
-        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this);
+        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
     }
 
     void dontJITAnytimeSoon()

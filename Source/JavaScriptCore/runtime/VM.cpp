@@ -462,6 +462,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     Gigacage::addPrimitiveDisableCallback(primitiveGigacageDisabledCallback, this);
 
     heap.notifyIsSafeToCollect();
+
+    if (Options::startupJITDeferralScale() > 1) [[unlikely]] {
+        m_startupJITDeferralScale = Options::startupJITDeferralScale();
+        m_startupJITDeferralDeadline = Options::startupJITDeferralMaxMs()
+            ? ApproximateTime::now() + Seconds::fromMilliseconds(Options::startupJITDeferralMaxMs())
+            : ApproximateTime::infinity();
+    }
     
     if (Options::useProfiler()) [[unlikely]] {
         m_perBytecodeProfiler = makeUnique<Profiler::Database>(*this);
@@ -730,6 +737,17 @@ void VM::primitiveGigacageDisabled()
     // This is totally racy, and that's OK. The point is, it's up to the user to ensure that they pass the
     // uncaged buffer in a nicely synchronized manner.
     requestEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
+}
+
+void VM::endStartupJITDeferral(const char* reason)
+{
+    if (m_startupJITDeferralScale == 1)
+        return;
+    // No CodeBlock walk: counters armed during the window were clipped to re-check within one
+    // normal threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their
+    // next slow-path visit.
+    dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: ", reason ? reason : "embedder", " (scale was ", String::number(m_startupJITDeferralScale), ")");
+    m_startupJITDeferralScale = 1;
 }
 
 void VM::setLastStackTop(const Thread& thread)

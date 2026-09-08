@@ -2164,6 +2164,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
+static JSC_DECLARE_HOST_FUNCTION(functionEndStartupJITDeferral);
 static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
@@ -2668,6 +2669,16 @@ JSC_DEFINE_HOST_FUNCTION(functionNoInline, (JSGlobalObject*, CallFrame* callFram
         executable->setNeverInline(true);
     
     return JSValue::encode(jsUndefined());
+}
+
+// $vm.endStartupJITDeferral(): VM::endStartupJITDeferral(). Returns whether a window was active.
+JSC_DEFINE_HOST_FUNCTION(functionEndStartupJITDeferral, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    bool wasActive = vm.startupJITDeferralScale() != 1;
+    vm.endStartupJITDeferral();
+    return JSValue::encode(jsBoolean(wasActive));
 }
 
 // Runs a full GC synchronously.
@@ -5537,6 +5548,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "baselineJITTrue"_s, functionBaselineJITTrue, 0);
 
     addFunction(vm, alwaysAllow, "noInline"_s, functionNoInline, 1);
+    addFunction(vm, alwaysAllow, "endStartupJITDeferral"_s, functionEndStartupJITDeferral, 0);
 
     addFunction(vm, alwaysAllow, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);

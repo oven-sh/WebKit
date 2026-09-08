@@ -3061,8 +3061,14 @@ bool CodeBlock::checkIfOptimizationThresholdReached()
     }
 #endif
 
-    if (auto* jitData = baselineJITData())
-        return jitData->executeCounter().checkIfThresholdCrossedAndSet(this);
+    if (auto* jitData = baselineJITData()) {
+        double startupDeferralScale = vm().startupJITDeferralScale();
+#if ENABLE(JIT)
+        if (startupDeferralScale != 1 && hasOptimizedReplacement())
+            startupDeferralScale = 1; // only spacing OSR-entry retries / reoptimization checks; the compile already happened
+#endif
+        return jitData->executeCounter().checkIfThresholdCrossedAndSet(this, startupDeferralScale);
+    }
     return false;
 }
 
