@@ -57,6 +57,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
+#include "CodeBlockCreationStats.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -77,6 +78,77 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 template<typename T> concept PayloadType = std::has_unique_object_representations_v<T> || std::is_same_v<T, double>;
 
 namespace JSC {
+
+namespace {
+struct CodeBlockDecodeStats {
+    using Bucket = CodeBlockCreationStats::Bucket;
+    CodeBlockCreationStats::DecodeRecord* record { nullptr };
+    CodeBlockCreationStats::DecodeRecord* previous { nullptr };
+    uint64_t start { 0 };
+    uint64_t lapStart { 0 };
+
+    CodeBlockDecodeStats()
+    {
+        if (!CodeBlockCreationStats::enabled()) [[likely]]
+            return;
+        record = CodeBlockCreationStats::beginDecode();
+        previous = CodeBlockCreationStats::currentDecode();
+        CodeBlockCreationStats::setCurrentDecode(record);
+        start = lapStart = CodeBlockCreationStats::now();
+    }
+    void lap(Bucket bucket)
+    {
+        if (!record) [[likely]]
+            return;
+        uint64_t t = CodeBlockCreationStats::now();
+        uint64_t delta = t - lapStart;
+        lapStart = t;
+        record->ticks[static_cast<unsigned>(bucket)] += delta;
+        CodeBlockCreationStats::add(bucket, delta);
+    }
+    void resetLap()
+    {
+        if (record) [[unlikely]]
+            lapStart = CodeBlockCreationStats::now();
+    }
+    void finish(UnlinkedCodeBlock* codeBlock, bool isFunctionCode)
+    {
+        if (!record) [[likely]]
+            return;
+        uint64_t total = CodeBlockCreationStats::now() - start;
+        record->ticks[static_cast<unsigned>(Bucket::DecodeTotal)] = total;
+        CodeBlockCreationStats::add(Bucket::DecodeTotal, total);
+        record->isFunctionCode = isFunctionCode;
+        if (codeBlock) {
+            record->instructionBytes = codeBlock->instructions().sizeInBytes();
+            record->identifiers = codeBlock->numberOfIdentifiers();
+            record->constants = codeBlock->constantRegisters().size();
+            record->handlers = codeBlock->numberOfExceptionHandlers();
+        }
+        CodeBlockCreationStats::endDecode(record, previous, codeBlock);
+        record = nullptr;
+    }
+    ~CodeBlockDecodeStats() { finish(nullptr, false); }
+};
+
+// Times a helper decode and charges the UnlinkedCodeBlock decode in progress (if any).
+struct DecodeLap {
+    CodeBlockCreationStats::Bucket bucket;
+    uint64_t start;
+    uint64_t count;
+    DecodeLap(CodeBlockCreationStats::Bucket b, uint64_t n = 1)
+        : bucket(b)
+        , start(CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::now() : 0)
+        , count(n)
+    {
+    }
+    ~DecodeLap()
+    {
+        if (start) [[unlikely]]
+            CodeBlockCreationStats::addToCurrent(bucket, CodeBlockCreationStats::now() - start, count);
+    }
+};
+} // anonymous namespace
 
 bool Decoder::canBorrowPayload() const
 {
@@ -2735,9 +2807,20 @@ public:
             return jsNumber(static_cast<int32_t>(this->rawSlot()));
         case Kind::Double:
             return JSValue::decode(*this->buffer<EncodedJSValue>());
-        case Kind::SymbolTable:
-            return this->buffer<CachedSymbolTable>()->decode(decoder);
+        case Kind::SymbolTable: {
+            DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstantSymbolTables);
+            SymbolTable* symbolTable = this->buffer<CachedSymbolTable>()->decode(decoder);
+            if (lap.start) [[unlikely]] {
+                if (auto* r = CodeBlockCreationStats::currentDecode()) {
+                    r->symbolTableConstants++;
+                    r->symbolTableEntries += symbolTable->size();
+                }
+            }
+            return symbolTable;
+        }
         case Kind::String:
+            if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
+                r->stringConstants++;
             if (this->hasInlineString())
                 return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
@@ -3976,67 +4059,107 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstants, layout.constants.count);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock);
     }
-    decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
-    codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    if (auto* e = extras(layout))
-        e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
-    decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeMisc);
+        decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
+        codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
+        if (auto* e = extras(layout))
+            e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
+    }
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeIdentifiers, layout.identifiers.count);
+        decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    }
+    if (CodeBlockCreationStats::enabled()) [[unlikely]]
+        CodeBlockCreationStats::noteIdentifierTableCreated(&codeBlock, layout.identifiers.count);
+    {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildren, layout.functionDecls.count + layout.functionExprs.count);
+        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
+        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+    }
 }
 
 UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) const
 {
+    CodeBlockDecodeStats stats;
     Tail tail;
-    if (!regionIsIntact(decoder, tail))
+    bool intact = regionIsIntact(decoder, tail);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
+    if (!intact)
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
+    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
+    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
+    stats.finish(codeBlock, true);
     return codeBlock;
 }
 
@@ -4319,12 +4442,20 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_hasCapturedVariables = scalars.hasCapturedVariables;
     m_features = scalars.features;
     m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
-    if (v.name)
+    if (v.name) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildName);
         m_ecmaName = v.name->decode(decoder);
-    if (v.tdz)
+    }
+    if (v.tdz) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildTDZ);
         m_parentScopeTDZVariables = v.tdz->decode(decoder);
-    if (v.rareData)
+    }
+    if (v.rareData) {
+        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildRareData);
         m_rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
+    }
+    if (CodeBlockCreationStats::enabled() && CodeBlockCreationStats::currentDecode()) [[unlikely]]
+        CodeBlockCreationStats::noteChildExecutableDecoded(this, !!v.name, !!v.tdz, !!v.rareData);
     m_firstLineOffset = scalars.firstLineOffset;
     m_lineCount = scalars.lineCount;
     m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;

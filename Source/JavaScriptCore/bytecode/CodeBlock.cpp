@@ -29,6 +29,8 @@
 
 #include "config.h"
 #include "CodeBlock.h"
+
+#include "CodeBlockCreationStats.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -108,6 +110,39 @@ const ClassInfo CodeBlock::s_info = {
     "CodeBlock"_s, nullptr, nullptr, nullptr,
     CREATE_METHOD_TABLE(CodeBlock)
 };
+
+static uint64_t s_lastMetadataLinkTicksForStats;
+static CodeBlockCreationStats::LinkRecord* s_currentLinkRecordForStats;
+
+struct LinkSubLapForStats {
+    LinkSubLapForStats(CodeBlockCreationStats::LinkRecord* record, CodeBlockCreationStats::Bucket bucket)
+        : m_record(record)
+        , m_bucket(bucket)
+        , m_start(record ? CodeBlockCreationStats::now() : 0)
+    {
+    }
+    ~LinkSubLapForStats()
+    {
+        if (!m_record) [[likely]]
+            return;
+        uint64_t delta = CodeBlockCreationStats::now() - m_start;
+        m_record->ticks[static_cast<unsigned>(m_bucket)] += delta;
+        CodeBlockCreationStats::add(m_bucket, delta);
+    }
+    CodeBlockCreationStats::LinkRecord* m_record;
+    CodeBlockCreationStats::Bucket m_bucket;
+    uint64_t m_start;
+};
+
+static RefPtr<MetadataTable> linkMetadataForStats(UnlinkedCodeBlock* unlinkedCodeBlock)
+{
+    if (!CodeBlockCreationStats::enabled()) [[likely]]
+        return unlinkedCodeBlock->metadata().link();
+    uint64_t start = CodeBlockCreationStats::now();
+    RefPtr<MetadataTable> result = unlinkedCodeBlock->metadata().link();
+    s_lastMetadataLinkTicksForStats = CodeBlockCreationStats::now() - start;
+    return result;
+}
 
 CString CodeBlock::inferredName() const
 {
@@ -378,7 +413,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     , m_ownerExecutable(ownerExecutable, WriteBarrierEarlyInit)
     , m_vm(&vm)
     , m_instructionsRawPointer(unlinkedCodeBlock->instructions().rawPointer())
-    , m_metadata(unlinkedCodeBlock->metadata().link())
+    , m_metadata(linkMetadataForStats(unlinkedCodeBlock))
     , m_creationTime(ApproximateTime::now())
 #if ASSERT_ENABLED
     , m_magic(CODEBLOCK_MAGIC)
@@ -431,6 +466,43 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     ASSERT(vm.heap.isDeferred());
 
+    using StatsBucket = CodeBlockCreationStats::Bucket;
+    CodeBlockCreationStats::LinkRecord* statsRecord = nullptr;
+    uint64_t statsStart = 0;
+    uint64_t statsLapStart = 0;
+    unsigned statsInstructionCount = 0;
+    unsigned statsProfiledMetadataOps = 0;
+    if (CodeBlockCreationStats::enabled()) [[unlikely]] {
+        statsRecord = CodeBlockCreationStats::beginLink(this, unlinkedCodeBlock);
+        statsRecord->ticks[static_cast<unsigned>(StatsBucket::LinkMetadataCreate)] = s_lastMetadataLinkTicksForStats;
+        CodeBlockCreationStats::add(StatsBucket::LinkMetadataCreate, s_lastMetadataLinkTicksForStats);
+        s_currentLinkRecordForStats = statsRecord;
+        statsStart = statsLapStart = CodeBlockCreationStats::now();
+    }
+    auto statsLap = [&](StatsBucket bucket) ALWAYS_INLINE_LAMBDA {
+        if (!statsRecord) [[likely]]
+            return;
+        uint64_t t = CodeBlockCreationStats::now();
+        uint64_t delta = t - statsLapStart;
+        statsLapStart = t;
+        statsRecord->ticks[static_cast<unsigned>(bucket)] += delta;
+        CodeBlockCreationStats::add(bucket, delta);
+    };
+    auto statsFinish = [&]() {
+        if (!statsRecord) [[likely]]
+            return;
+        statsLap(StatsBucket::LinkTemplateObjects);
+        uint64_t total = CodeBlockCreationStats::now() - statsStart + s_lastMetadataLinkTicksForStats;
+        statsRecord->ticks[static_cast<unsigned>(StatsBucket::LinkTotal)] = total;
+        CodeBlockCreationStats::add(StatsBucket::LinkTotal, total);
+        statsRecord->instructionCount = statsInstructionCount;
+        statsRecord->profiledMetadataOps = statsProfiledMetadataOps;
+        CodeBlockCreationStats::add(StatsBucket::LinkProfiledOpcodeMetadata, 0, statsProfiledMetadataOps);
+        s_currentLinkRecordForStats = nullptr;
+        s_lastMetadataLinkTicksForStats = 0;
+        CodeBlockCreationStats::endLink(statsRecord);
+    };
+
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
@@ -454,6 +526,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         }
         replaceConstant(VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()), clonedSymbolTable);
     }
+    statsLap(StatsBucket::LinkConstants);
 
     bool shouldUpdateFunctionHasExecutedCache = m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes();
     m_functionDecls = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionDecls());
@@ -474,6 +547,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
         m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
     }
+    statsLap(StatsBucket::LinkFunctions);
 
     if (unlinkedCodeBlock->numberOfExceptionHandlers()) {
         createRareDataIfNecessary();
@@ -492,6 +566,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             }
         }
     }
+
+    statsLap(StatsBucket::LinkHandlers);
 
     // Bookkeep the strongly referenced module environments.
     UncheckedKeyHashSet<JSModuleEnvironment*> stronglyReferencedModuleEnvironments;
@@ -526,6 +602,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
 #define LINK(...) \
     CASE(WTF_LAZY_FIRST(__VA_ARGS__)): { \
+        statsProfiledMetadataOps++; \
         LINK_IMPL(__VA_ARGS__) \
         break; \
     }
@@ -535,6 +612,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
         m_bytecodeCost += opcodeLengths[opcodeID] + 1;
+        ++statsInstructionCount;
         switch (opcodeID) {
         LINK(OpGetByVal)
         LINK(OpGetPrivateName)
@@ -598,6 +676,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         }
 
         case op_resolve_scope: {
+            LinkSubLapForStats statsSubLap(statsRecord, StatsBucket::LinkScopeResolution);
             INITIALIZE_METADATA(OpResolveScope)
 
             const Identifier& ident = identifier(bytecode.m_var);
@@ -625,6 +704,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         }
 
         case op_get_from_scope: {
+            LinkSubLapForStats statsSubLap(statsRecord, StatsBucket::LinkScopeResolution);
             INITIALIZE_METADATA(OpGetFromScope)
 
             metadata.m_watchpointSet = nullptr;
@@ -650,6 +730,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         }
 
         case op_put_to_scope: {
+            LinkSubLapForStats statsSubLap(statsRecord, StatsBucket::LinkScopeResolution);
             INITIALIZE_METADATA(OpPutToScope)
 
             if (bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar) {
@@ -796,6 +877,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK_FIELD
 #undef LINK
 
+    statsLap(StatsBucket::LinkInstructionWalk);
+
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
         insertBasicBlockBoundariesForControlFlowProfiler();
 
@@ -806,6 +889,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         vm.heap.reportExtraMemoryAllocated(this, m_metadata->sizeInBytesForGC());
 
     initializeTemplateObjects(topLevelExecutable, templateObjectIndices);
+    statsFinish();
     RETURN_IF_EXCEPTION(throwScope, false);
 
     return true;
@@ -891,6 +975,8 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 
 CodeBlock::~CodeBlock()
 {
+    if (CodeBlockCreationStats::enabled()) [[unlikely]]
+        CodeBlockCreationStats::noteCodeBlockDestroyed(this);
     auto& cc = checker();
     if (cc.isEnabled) {
         RELEASE_ASSERT(cc.get(CrashChecker::This) == cc.hash(this),
@@ -1131,7 +1217,14 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                             // share one InferredValue. This avoids re-firing the singleton watchpoint
                             // independently in every realm (e.g. on navigation) for the same code.
                             auto propagateCloneInvalidationToOriginal = m_unlinkedCode->isBuiltinFunction() ? SymbolTable::PropagateCloneInvalidationToOriginal::No : SymbolTable::PropagateCloneInvalidationToOriginal::Yes;
-                            clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                            {
+                                CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::LinkConstantSymbolTableClone);
+                                clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                                if (s_currentLinkRecordForStats) [[unlikely]] {
+                                    s_currentLinkRecordForStats->symbolTablesCloned++;
+                                    s_currentLinkRecordForStats->ticks[static_cast<unsigned>(CodeBlockCreationStats::Bucket::LinkConstantSymbolTableClone)] += statsScope.elapsed();
+                                }
+                            }
                             globalObject->symbolTableCache().set(symbolTable, clone);
                         }
                         if (wasCompiledWithDebuggingOpcodes())

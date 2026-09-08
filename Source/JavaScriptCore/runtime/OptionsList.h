@@ -144,6 +144,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, initialRepatchBufferingCountdown, 6, Normal, nullptr) \
     \
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
+    v(Bool, reportCodeBlockCreationCosts, false, Normal, "Collect per-CodeBlock decode/link cost counters and dump them to stderr at exit") \
+    v(Unsigned, reportCodeBlockCreationCostsIntervalMs, 0, Normal, "If non-zero, also dump the CodeBlock creation cost report every N ms (checked on CodeBlock creation)") \
     v(Bool, dumpBytecodeLivenessResults, false, Normal, nullptr) \
     v(Bool, validateBytecode, false, Normal, nullptr) \
     v(Bool, forceDebuggerBytecodeGeneration, false, Normal, nullptr) \
