@@ -38,7 +38,7 @@ namespace JSC {
 template<typename T>
 static std::optional<std::span<const T>> arrayAt(std::span<const uint8_t> blob, uint32_t offset, uint32_t count)
 {
-    static_assert(alignof(T) == alignof(uint32_t));
+    static_assert(alignof(T) <= alignof(uint32_t));
     if (offset % alignof(T) || offset > blob.size() || count > (blob.size() - offset) / sizeof(T))
         return std::nullopt;
     return std::span { std::bit_cast<const T*>(blob.data() + offset), count };
@@ -56,13 +56,15 @@ RefPtr<PrelinkedModuleGraph> PrelinkedModuleGraph::tryCreate(VM& vm, DecoderStri
     auto imports = arrayAt<Import>(blob, header.importsOffset, header.importCount);
     auto exports = arrayAt<Export>(blob, header.exportsOffset, header.exportCount);
     auto starExports = arrayAt<uint32_t>(blob, header.starExportsOffset, header.starExportCount);
-    if (!modules || !requests || !imports || !exports || !starExports)
+    auto importIndex = arrayAt<uint16_t>(blob, header.importIndexOffset, header.importIndexBytes / sizeof(uint16_t));
+    if (!modules || !requests || !imports || !exports || !starExports || !importIndex)
         return nullptr;
     auto within = [](uint32_t first, uint32_t count, size_t size) { return first <= size && count <= size - first; };
     for (const Module& m : *modules) {
-        if (m.keySid >= header.stringCount || m.requestCount > std::numeric_limits<uint16_t>::max()
+        if (m.keySid >= header.stringCount || m.requestCount > std::numeric_limits<uint16_t>::max() || m.importCount >= std::numeric_limits<uint16_t>::max()
             || !within(m.firstRequest, m.requestCount, requests->size()) || !within(m.firstImport, m.importCount, imports->size())
-            || !within(m.firstExport, m.exportCount, exports->size()) || !within(m.firstStarExport, m.starExportCount, starExports->size()))
+            || !within(m.firstExport, m.exportCount, exports->size()) || !within(m.firstStarExport, m.starExportCount, starExports->size())
+            || m.importIndexOffset % sizeof(uint16_t) || !within(m.importIndexOffset / sizeof(uint16_t), importIndexSlotCount(m.importCount), importIndex->size()))
             return nullptr;
     }
     return adoptRef(*new PrelinkedModuleGraph(vm, strings, blob, header, stringSlots));
@@ -77,6 +79,7 @@ PrelinkedModuleGraph::PrelinkedModuleGraph(VM& vm, DecoderStringTable& strings, 
     , m_imports(*arrayAt<Import>(blob, header.importsOffset, header.importCount))
     , m_exports(*arrayAt<Export>(blob, header.exportsOffset, header.exportCount))
     , m_starExports(*arrayAt<uint32_t>(blob, header.starExportsOffset, header.starExportCount))
+    , m_importIndex(*arrayAt<uint16_t>(blob, header.importIndexOffset, header.importIndexBytes / sizeof(uint16_t)))
 {
     // The producer hashed names with its own copy of StringHasher; by-name lookups binary-search on those hashes, so make
     // sure the two agree (a sample is enough: a different hasher disagrees almost everywhere) and scan linearly if not.
@@ -207,7 +210,22 @@ const Entry* PrelinkedModuleGraph::findByName(std::span<const Entry> entries, Un
 
 auto PrelinkedModuleGraph::findImport(const Module& module, UniquedStringImpl* localName) const -> const Import*
 {
-    return findByName<Import, &Import::localSid>(imports(module), localName);
+    if (!localName || localName->isSymbol() || !module.importCount)
+        return nullptr;
+    if (!m_hashesVerified) [[unlikely]]
+        return findByName<Import, &Import::localSid>(imports(module), localName);
+    auto entries = imports(module);
+    uint32_t hash = localName->existingSymbolAwareHash();
+    uint32_t mask = importIndexSlotCount(module.importCount) - 1;
+    const uint16_t* slots = m_importIndex.data() + module.importIndexOffset / sizeof(uint16_t);
+    for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
+        uint16_t slot = slots[i];
+        if (!slot)
+            return nullptr;
+        const Import& entry = entries[slot - 1];
+        if (entry.nameHash() == hash && nameEquals(entry.localSid, *localName))
+            return &entry;
+    }
 }
 
 auto PrelinkedModuleGraph::findExport(const Module& module, UniquedStringImpl* exportName) const -> const Export*
