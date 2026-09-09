@@ -305,11 +305,17 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
 }
 
 // 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters) a small direct-mapped cache in front of the atom table.
-Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)
+static std::span<const Latin1Character> inlineStringCharacters(std::span<const uint8_t, 4> slot)
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
     unsigned length = (slot[0] >> 2) & 3;
-    std::span<const Latin1Character> characters = slot.subspan(1).first(length);
+    return slot.subspan(1).first(length);
+}
+
+Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)
+{
+    std::span<const Latin1Character> characters = inlineStringCharacters(slot);
+    unsigned length = characters.size();
     if (length == 1)
         return vm.smallStrings.singleCharacterStringRep(characters[0]);
     if (length == 2) {
@@ -340,6 +346,11 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
     return AtomStringImpl::add(characters).releaseNonNull();
 }
 
+String Decoder::stringForInlineString(std::span<const uint8_t, 4> slot)
+{
+    return StringImpl::create(inlineStringCharacters(slot));
+}
+
 ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
 {
     if (!m_externalStrings) [[unlikely]] {
@@ -357,6 +368,11 @@ Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
 JSString* Decoder::jsStringForExternalString(uint32_t ordinal)
 {
     return externalStrings().jsStringFor(m_vm, ordinal);
+}
+
+String Decoder::stringForExternalString(uint32_t ordinal)
+{
+    return externalStrings().stringFor(ordinal);
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EncoderStringTable);
@@ -763,6 +779,11 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     Locker locker { m_cellsLock };
     m_cellOrdinals.append(ordinal);
     return string;
+}
+
+String DecoderStringTable::stringFor(uint32_t ordinal) const
+{
+    return createImpl(record(ordinal));
 }
 
 template<typename Visitor>
@@ -1458,6 +1479,7 @@ public:
     uint32_t NODELETE rawSlot() const { return std::bit_cast<uint32_t>(m_offset); }
     void setRawSlot(uint32_t value) { m_offset = std::bit_cast<Offset>(value); }
     Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
+    String inlinePlainString() const { return Decoder::stringForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
 
     // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
     bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
@@ -1772,6 +1794,19 @@ public:
     void decode(Decoder& decoder, RefPtr<Source, PtrTraits>& src) const
     {
         src = decode(decoder);
+    }
+
+    // The characters as a plain String -- no atom table, string-table slot or GC cell involved -- for a reader that must
+    // not atomize (a stack trace the collector's end phase builds).
+    String decodePlainString(Decoder& decoder) const requires (CachedPtr<T, Source>::holdsString)
+    {
+        if (m_ptr.isEmpty())
+            return String();
+        if (m_ptr.hasInlineString())
+            return m_ptr.inlinePlainString();
+        if (m_ptr.hasExternalString())
+            return decoder.stringForExternalString(m_ptr.externalStringOrdinal());
+        return m_ptr.get()->decodePlainString(decoder);
     }
 
     // The DecoderStringTable ordinal this decodes through, for a loop that decodes many in a row to hand to
@@ -2288,6 +2323,8 @@ public:
         dst = decode(decoder);
     }
 
+    String decodePlainString(Decoder& decoder) const { return m_impl.decodePlainString(decoder); }
+
     uint32_t externalStringOrdinal() const { return m_impl.externalStringOrdinal(); }
 
 private:
@@ -2315,6 +2352,8 @@ public:
     {
         ident = decode(decoder);
     }
+
+    String decodePlainString(Decoder& decoder) const { return m_string.decodePlainString(decoder); }
 
     uint32_t externalStringOrdinal() const { return m_string.externalStringOrdinal(); }
 
@@ -4831,6 +4870,19 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
+}
+
+String UnlinkedFunctionExecutable::ecmaNameWithoutGCSlow() const
+{
+    ASSERT(m_nameIsDeferred && m_membersAreDeferred);
+    ASSERT(!isCompilationThread()); // not synchronized with the mutator's materializeDeferredMembersSlow: use tryGetEcmaNameConcurrently()
+    if (!vm().heap.currentThreadIsDoingGCWork()) {
+        materializeDeferredNameSlow();
+        return m_ecmaName.string();
+    }
+    // ErrorInstance::computeErrorInfo under Heap::runEndPhase (world stopped, the thread's atom string table cleared):
+    // copy the name out of the record instead of materializing (atomizing) it.
+    return m_deferredMembersRecord->slotsView().name->decodePlainString(*m_deferredMembersDecoder);
 }
 
 void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const

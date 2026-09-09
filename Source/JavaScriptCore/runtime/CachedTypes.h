@@ -145,6 +145,9 @@ public:
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives.
     JSString* jsStringFor(VM&, uint32_t ordinal);
+    // The characters as a plain string, touching neither the slot, a cell nor the atom table (a reader that must not
+    // atomize: a stack trace the collector builds).
+    String stringFor(uint32_t ordinal) const;
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
     // Options::useFastCachedAtoms(): unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
@@ -259,10 +262,12 @@ public:
     // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
     static Ref<AtomStringImpl> atomForInlineString(VM&, std::span<const uint8_t, 4> slot);
     Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot) { return atomForInlineString(m_vm, slot); }
+    static String stringForInlineString(std::span<const uint8_t, 4> slot); // the same characters, not atomized
     // Strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots): every non-empty,
     // non-symbol string when encoding against a table; EncoderStringTable::slotFor (module_info) still inlines 1-3 chars.
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     JSString* jsStringForExternalString(uint32_t ordinal);
+    String stringForExternalString(uint32_t ordinal); // DecoderStringTable::stringFor
     // See DecoderStringTable::prefetchSlot. Null with useFastCachedAtoms off or no embedder table (a payload that then
     // names a table string still fails in atomForExternalString, not here).
     const DecoderStringTable* stringsToPrefetch();

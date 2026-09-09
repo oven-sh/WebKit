@@ -155,6 +155,9 @@ public:
     bool isClassConstructorFunction() const { return m_unlinkedExecutable->isClassConstructorFunction(); }
     const Identifier& name() { return m_unlinkedExecutable->name(); }
     const Identifier& ecmaName() { return m_unlinkedExecutable->ecmaName(); }
+    // Unlike name() / ecmaName(), also callable from the collector's end phase (ErrorInstance::computeErrorInfo's stack traces).
+    String nameWithoutGC() { return m_unlinkedExecutable->nameWithoutGC(); }
+    String ecmaNameWithoutGC() { return m_unlinkedExecutable->ecmaNameWithoutGC(); }
     const Identifier* tryGetEcmaNameConcurrently() { return m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
     CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
     unsigned parameterCount() const { return m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!

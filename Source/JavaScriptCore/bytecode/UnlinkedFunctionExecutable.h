@@ -91,6 +91,16 @@ public:
             materializeDeferredNameSlow();
         return m_ecmaName;
     }
+    // Like JSFunction::nameWithoutGC(): also for the stack traces the collector's end phase builds
+    // (ErrorInstance::computeErrorInfo), where nothing may be atomized, so there a name still in the bytecode cache is
+    // copied out of it instead of being materialized.
+    String ecmaNameWithoutGC() const
+    {
+        if (m_nameIsDeferred) [[unlikely]]
+            return ecmaNameWithoutGCSlow();
+        return m_ecmaName.string();
+    }
+    String nameWithoutGC() const { return m_hasName ? ecmaNameWithoutGC() : String(); }
     // For threads other than the mutator (compiler-thread dumps): null while the name is still only in the bytecode cache.
     const Identifier* tryGetEcmaNameConcurrently() const
     {
@@ -342,6 +352,7 @@ private:
 
     void decodeCachedCodeBlocks(VM&);
     JS_EXPORT_PRIVATE void materializeDeferredNameSlow() const;
+    JS_EXPORT_PRIVATE String ecmaNameWithoutGCSlow() const;
     JS_EXPORT_PRIVATE void materializeDeferredMembersSlow() const;
     JS_EXPORT_PRIVATE void materializeDeferredScalarsSlow() const;
 
