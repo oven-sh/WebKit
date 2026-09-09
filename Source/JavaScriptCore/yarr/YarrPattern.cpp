@@ -4308,6 +4308,7 @@ static constexpr std::unique_ptr<CharacterClass> (*sharedCharacterClassCreateFun
     anycharCreate, newlineCreate, digitsCreate, spacesCreate, wordcharCreate, wordUnicodeIgnoreCaseCharCreate,
     nondigitsCreate, nonspacesCreate, nonwordcharCreate, nonwordUnicodeIgnoreCaseCharCreate,
 };
+static_assert(std::size(sharedCharacterClassCreateFunctions) == static_cast<size_t>(SharedCharacterClass::NonWordUnicodeIgnoreCaseChar) + 1, "one per SharedCharacterClass, in enum order");
 static std::array<std::atomic<CharacterClass*>, std::size(sharedCharacterClassCreateFunctions)> sharedCharacterClasses;
 
 CharacterClass* sharedCharacterClass(SharedCharacterClass id)

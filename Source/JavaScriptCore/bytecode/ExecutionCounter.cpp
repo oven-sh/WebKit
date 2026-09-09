@@ -189,7 +189,7 @@ bool ExecutionCounter<countingVariant>::setThreshold(CodeBlock* codeBlock, doubl
     }
 
     if (startupDeferralScale != 1)
-        threshold = std::min(threshold, std::max(unscaledThreshold, clippedThreshold(codeBlock, threshold)));
+        threshold = std::min({ threshold, std::max(unscaledThreshold, clippedThreshold(codeBlock, threshold)), static_cast<double>(std::numeric_limits<int32_t>::max()) });
     else
         threshold = clippedThreshold(codeBlock, threshold);
     

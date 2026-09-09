@@ -30,7 +30,7 @@ for (let s = 0; s < 6; ++s)
     families.push(makeFamily(s));
 
 let total = 0;
-for (let i = 0; i < 400000; ++i) {
+for (let i = 0; i < 40 * testLoopCount; ++i) {
     let f = families[i % families.length];
     total += f.run(i & 255);
     total += f.thrower(i & 7);

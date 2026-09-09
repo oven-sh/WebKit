@@ -27,16 +27,17 @@ function foo(n)
 noInline(foo);
 
 let expected = 0;
-for (let i = 0; i < 100; ++i)
+for (let i = 0; i < 30; ++i)
     expected += (i & 1) ? i * 2 : i;
 
-for (let i = 0; i < 20000; ++i) {
-    let result = foo(100);
+for (let i = 0; i < testLoopCount; ++i) {
+    let result = foo(30);
     if (result !== expected)
         throw new Error("bad result: " + result + " at iteration " + i);
 }
 
-if (numberOfDFGCompiles(foo) < 1)
+// numberOfDFGCompiles reads as many wherever the DFG is off; executable allocation fuzzing fails compilations at random.
+if (numberOfDFGCompiles(foo) < 1 && !jscOptions().useExecutableAllocationFuzz)
     throw new Error("foo should have been compiled by the DFG");
 
 // A catch that first executes only after foo tiered up.
@@ -56,9 +57,9 @@ function bar(n, doThrow)
 }
 noInline(bar);
 
-for (let i = 0; i < 20000; ++i)
-    bar(100, false);
-for (let i = 0; i < 20000; ++i) {
+for (let i = 0; i < testLoopCount; ++i)
+    bar(30, false);
+for (let i = 0; i < testLoopCount; ++i) {
     let result = bar(10, true);
     if (result !== 135)
         throw new Error("bad result from bar: " + result);

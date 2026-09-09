@@ -868,8 +868,6 @@ public:
     bool m_didFailFTLCompilation : 1;
     bool m_hasBeenCompiledWithFTL : 1;
     bool m_isJettisoned : 1;
-    bool m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // mutator-written like the rest of this byte (m_didFailFTLCompilation is likewise read by compiler threads); see prepareLazyStateForConcurrentCompilation()
-    bool m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // written and read on the mutator (this byte may also be RMW'd by a Baseline compile thread via m_capabilityLevelState; a lost bit only re-defers the buffer); Options::useLazyCatchLiveness()
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
@@ -1081,6 +1079,9 @@ private:
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
     unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
+    // Mutator-written; whole bytes rather than bits of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
+    bool m_isLazyStatePreparedForConcurrentCompilation { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
+    bool m_hasCatchThatExecutedWithoutBuffer { false }; // Options::useLazyCatchLiveness()
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);

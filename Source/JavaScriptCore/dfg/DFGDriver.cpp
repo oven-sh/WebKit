@@ -85,11 +85,11 @@ static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, Cod
         push(replacement, 0);
 
     Vector<std::pair<JSCell*, CodeSpecializationKind>, 16> callees;
-    unsigned blocksVisited = 0;
-    while (!worklist.isEmpty()) {
-        Entry entry = worklist.takeLast();
+    // Breadth-first, so a block reachable at several depths is expanded at its shallowest.
+    for (unsigned blocksVisited = 0; blocksVisited < worklist.size(); ++blocksVisited) {
+        Entry entry = worklist[blocksVisited];
         entry.block->baselineAlternative()->prepareLazyStateForConcurrentCompilation();
-        if (++blocksVisited >= Options::maximumGlobalInliningPlanSites())
+        if (blocksVisited + 1 >= Options::maximumGlobalInliningPlanSites())
             break;
         if (entry.depth + 1 >= Options::maximumInliningDepth())
             continue; // InliningPlan::priceCandidate rejects depth >= maximumInliningDepth, where the root's callees are depth 1

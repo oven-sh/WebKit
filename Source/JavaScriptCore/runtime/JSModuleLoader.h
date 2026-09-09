@@ -190,6 +190,7 @@ public:
         if (!m_nonJavaScriptEntryCount) [[likely]]
             return nullptr; // a miss is common (require(esm), "is it registered yet?")
         using Type = ScriptFetchParameters::Type;
+        static_assert(static_cast<unsigned>(Type::HostDefined) == 5, "every Type but JavaScript is listed below");
         for (Type type : { Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::None }) {
             if (auto entry = m_moduleMap.get({ impl, type }))
                 return entry.get();

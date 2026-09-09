@@ -16,7 +16,7 @@ function makeClosures(i) {
     function* gen(x, y) { yield x + i; }
     let method = { m(p, q) { return p + q + i; } }.m;
     class K { constructor(z) { this.z = z + i; } static s() { return i; } }
-    if (i % 100 == 99)
+    if (i % 100 == 99 || i == testLoopCount - 1)
         return [decl, expr, arrow, asyncDecl, gen, method, K];
     return decl(1, 2) + expr(2) + arrow(3) + method(1, 1);
 }

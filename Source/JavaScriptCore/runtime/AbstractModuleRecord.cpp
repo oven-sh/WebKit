@@ -468,7 +468,9 @@ auto AbstractModuleRecord::prelinkedResolution(JSGlobalObject* globalObject, Pre
         return std::nullopt;
     if (importNameSid == PrelinkedModuleGraph::starNamespaceSid)
         return Resolution { Resolution::Type::Resolved, importedModule, vm.propertyNames->starNamespacePrivateName };
-    RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, m_prelinked->identifier(importNameSid)));
+    // By name, not resolveExport(): the target may be prelinked too, and an Unresolved entry there that leads back here (a
+    // re-export cycle) would recurse; the by-name algorithm carries the resolve set that ends the cycle as NotFound.
+    RELEASE_AND_RETURN(scope, importedModule->resolveExportByName(globalObject, m_prelinked->identifier(importNameSid)));
 }
 
 // ResolveImport answered from the graph: which import `localName` is comes from the hash-sorted import table (code

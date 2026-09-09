@@ -86,6 +86,7 @@ for (let i = 0; i < 200; ++i)
 shouldBe(dynamic[0].exec("abc").length, 5, "dynamic[0] captures");
 shouldBe(dynamic[1].test("abc"), true, "dynamic[1]");
 shouldBe(dynamic[2].test("xabc"), false, "dynamic[2] lookbehind");
+dynamic[3].lastIndex = 0; // 'g'
 shouldBe(dynamic[3].exec("c")[3], "c", "dynamic[3] nested");
 shouldBe(dynamic[4].test("αβ"), true, "dynamic[4] unicode property");
 shouldBe(dynamic[5].test("ABC"), true, "dynamic[5] unicode sets");

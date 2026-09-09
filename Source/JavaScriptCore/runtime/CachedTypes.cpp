@@ -4570,8 +4570,8 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     if (tdz)
         tdz->encode(encoder, executable.m_parentScopeTDZVariables);
 
-    if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
-        encoder.addLeafExecutable(&executable, encoder.offsetOf(this));
+    if (metadata && (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct))
+        encoder.addLeafExecutable(&executable, encoder.offsetOf(this)); // CachedBytecode::addFunctionUpdate patches the Updatable layout's slots
 
     encoder.deferBody([call, construct, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
         if (call)
@@ -4683,7 +4683,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
             m_decoder = nullptr;
     }
 
-    if (leafExecutables)
+    if (leafExecutables && (v.header & CachedFunctionExecutable::Updatable))
         decoder.addLeafExecutable(this, decoder.offsetOf(&cachedExecutable));
 }
 

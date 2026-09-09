@@ -52,11 +52,11 @@ function check(error, i) {
 errors.forEach(check);
 
 // The same blocks, asked again from the mutator after the collector decoded them, agree.
-let again = [];
+let again = [], againLine;
 (function recreate() {
-    function thrower(i) { return new Error("again " + i); }
+    function thrower(i) { return new Error("again " + i); }           againLine = 57;
     again.push(thrower(0));
 })();
 let m = /thrower@.*:(\d+):\d+/.exec(again[0].stack);
-if (!m || Number(m[1]) !== 57)
-    throw new Error("mutator-side line wrong: " + again[0].stack);
+if (!m || Number(m[1]) !== againLine)
+    throw new Error("mutator-side line wrong (expected " + againLine + "): " + again[0].stack);
