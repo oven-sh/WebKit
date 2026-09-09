@@ -98,7 +98,7 @@ shouldThrowTypeError(() => realm.evaluate(`throw new Proxy(new Error("proxy"), {
 
 // Through the JITs.
 let thrower = realm.evaluate(`(i) => { throw Symbol("s" + i); }`);
-for (let i = 0; i < 1e4; ++i)
+for (let i = 0; i < testLoopCount; ++i)
     shouldThrowTypeError(() => thrower(i), "Symbol(s" + i + ")");
-for (let i = 0; i < 1e4; ++i)
+for (let i = 0; i < testLoopCount; ++i)
     shouldBe(callAndDescribe(() => { throw Symbol(i); }), "true:Symbol(" + i + ")");
