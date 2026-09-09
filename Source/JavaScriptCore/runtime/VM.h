@@ -1034,6 +1034,7 @@ public:
         return 1;
     }
     JS_EXPORT_PRIVATE void endStartupJITDeferral(const char* reason = "embedder"); // `reason` is only logged (Options::verboseOSR)
+    JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // > 1 (re)arms the window with no deadline; <= 1 ends it
 
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);

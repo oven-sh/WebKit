@@ -755,6 +755,17 @@ void VM::endStartupJITDeferral(const char* reason)
     m_startupJITDeferralScale = 1;
 }
 
+void VM::setStartupJITDeferralScale(double scale)
+{
+    if (!(scale > 1)) {
+        endStartupJITDeferral("embedder");
+        return;
+    }
+    dataLogLnIf(Options::verboseOSR(), "Startup JIT deferral scale set to ", String::number(scale));
+    m_startupJITDeferralScale = scale;
+    m_startupJITDeferralDeadline = ApproximateTime::infinity();
+}
+
 void VM::setLastStackTop(const Thread& thread)
 {
     m_lastStackTop = thread.savedLastStackTop();

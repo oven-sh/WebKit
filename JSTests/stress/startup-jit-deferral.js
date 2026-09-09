@@ -10,6 +10,8 @@ function shouldBe(actual, expected, what) {
 // LLInt->Baseline threshold is 500 (34 calls), so inside an 8x window it is 4000 (267 calls).
 function probe() { return $vm.llintTrue(); }
 noInline(probe);
+function probe2() { return $vm.llintTrue(); }
+noInline(probe2);
 
 if ($vm.useJIT()) {
     let last;
@@ -24,4 +26,16 @@ if ($vm.useJIT()) {
     for (let i = 0; i < 60; ++i)
         last = probe();
     shouldBe(last, false, "compiled promptly once the window ended");
+
+    // Re-arming after the window ended defers a fresh function again, with no deadline.
+    $vm.setStartupJITDeferralScale(8);
+    for (let i = 0; i < 60; ++i)
+        last = probe2();
+    shouldBe(last, true, "re-armed window defers tier-up");
+
+    $vm.setStartupJITDeferralScale(1);
+    shouldBe($vm.endStartupJITDeferral(), false, "scale 1 ended the window");
+    for (let i = 0; i < 60; ++i)
+        last = probe2();
+    shouldBe(last, false, "compiled promptly once the scale returned to 1");
 }
