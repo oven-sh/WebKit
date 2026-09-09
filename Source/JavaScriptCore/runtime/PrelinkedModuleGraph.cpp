@@ -30,6 +30,7 @@
 
 #include "BuiltinNames.h"
 #include "CachedTypes.h"
+#include "IdentifierInlines.h"
 #include "VM.h"
 
 namespace JSC {
