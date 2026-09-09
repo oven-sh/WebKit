@@ -1028,7 +1028,7 @@ public:
     {
         if (m_startupJITDeferralScale == 1) [[likely]]
             return 1;
-        if (ApproximateTime::now() < m_startupJITDeferralDeadline)
+        if (m_startupJITDeferralDeadline.isInfinity() || ApproximateTime::now() < m_startupJITDeferralDeadline)
             return m_startupJITDeferralScale;
         endStartupJITDeferral("deadline");
         return 1;
