@@ -238,6 +238,7 @@ public:
     JS_EXPORT_PRIVATE void setPrelinkedRecord(VM&, uint32_t moduleIndex, AbstractModuleRecord*);
     // A second record now exists for that module's key: clear the slot and resolve bindings into it by name from now on.
     JS_EXPORT_PRIVATE void forgetPrelinkedRecord(uint32_t moduleIndex);
+    void pinPrelinkedEdges(uint32_t moduleIndex);
     // prelinkedRecord(), or null once that module's registry entry has ever been deleted: from then on the index may name
     // a record other than the one an importer's own (retained) graph edges lead to, so bindings into it resolve by name.
     AbstractModuleRecord* prelinkedRecordForResolution(uint32_t moduleIndex) const

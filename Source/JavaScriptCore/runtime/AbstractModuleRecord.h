@@ -410,7 +410,8 @@ protected:
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already
-    // reachable through the loader's table / [[LoadedModules]], like m_resolutionCache); { Resolved, null } = unfilled.
+    // reachable through the loader's table or, once that slot is forgotten, [[LoadedModules]] -- JSModuleLoader::pinPrelinkedEdges);
+    // { Resolved, null } = unfilled.
     FixedVector<Resolution> m_prelinkedImportResolutions;
 #endif
 };

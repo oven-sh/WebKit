@@ -1162,9 +1162,36 @@ void JSModuleLoader::setPrelinkedRecord(VM& vm, uint32_t moduleIndex, AbstractMo
     m_prelinkedRecords[moduleIndex].set(vm, this, record);
 }
 
+// A graph edge importer -> target is normally held only by this table (AbstractModuleRecord::prelinkedRequestedModule).
+// Before a slot is cleared, put the edges that touch it into the records' own [[LoadedModules]], as they would be for
+// ordinary records: the leaving record keeps its targets, and its importers keep it (their memoized import resolutions
+// and later GetImportedModule calls name it).
+void JSModuleLoader::pinPrelinkedEdges(uint32_t moduleIndex)
+{
+    AbstractModuleRecord* leaving = m_prelinkedRecords[moduleIndex].get();
+    if (!leaving)
+        return;
+    auto pin = [&](AbstractModuleRecord* importer, uint32_t onlyTarget) {
+        auto requests = m_prelinkedGraph->requests(importer->prelinkedModule());
+        for (unsigned i = 0; i < requests.size(); ++i) {
+            uint32_t target = requests[i].moduleIndex;
+            if (target == PrelinkedModuleGraph::noModule || (onlyTarget != PrelinkedModuleGraph::noModule && target != onlyTarget))
+                continue;
+            if (AbstractModuleRecord* record = prelinkedRecordForResolution(target))
+                importer->setImportedModule(importer->globalObject(), importer->requestedModules()[i], record);
+        }
+    };
+    pin(leaving, PrelinkedModuleGraph::noModule);
+    for (auto& slot : m_prelinkedRecords) {
+        if (slot && slot.get() != leaving)
+            pin(slot.get(), moduleIndex);
+    }
+}
+
 void JSModuleLoader::forgetPrelinkedRecord(uint32_t moduleIndex)
 {
     RELEASE_ASSERT(moduleIndex < m_prelinkedRecords.size(), moduleIndex, m_prelinkedRecords.size());
+    pinPrelinkedEdges(moduleIndex);
     m_prelinkedRecords[moduleIndex].clear();
     m_prelinkedRecordRemoved.ensureSize(m_prelinkedRecords.size());
     m_prelinkedRecordRemoved.quickSet(moduleIndex);
@@ -1175,6 +1202,7 @@ void JSModuleLoader::forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullF
     for (unsigned i = 0; i < m_prelinkedRecords.size(); ++i) {
         auto& slot = m_prelinkedRecords[i];
         if (slot && (!keyOrNullForAll || slot->moduleKey().impl() == keyOrNullForAll)) {
+            pinPrelinkedEdges(i);
             slot.clear();
             m_prelinkedRecordRemoved.ensureSize(m_prelinkedRecords.size());
             m_prelinkedRecordRemoved.quickSet(i);
