@@ -27,9 +27,6 @@
 #include "CachedTypes.h"
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
-#if CPU(X86_64)
-#include <cpuid.h>
-#endif
 
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
@@ -58,7 +55,6 @@
 #include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/AtomStringTable.h>
-#include "CodeBlockCreationStats.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -79,77 +75,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 template<typename T> concept PayloadType = std::has_unique_object_representations_v<T> || std::is_same_v<T, double>;
 
 namespace JSC {
-
-namespace {
-struct CodeBlockDecodeStats {
-    using Bucket = CodeBlockCreationStats::Bucket;
-    CodeBlockCreationStats::DecodeRecord* record { nullptr };
-    CodeBlockCreationStats::DecodeRecord* previous { nullptr };
-    uint64_t start { 0 };
-    uint64_t lapStart { 0 };
-
-    CodeBlockDecodeStats()
-    {
-        if (!CodeBlockCreationStats::enabled()) [[likely]]
-            return;
-        record = CodeBlockCreationStats::beginDecode();
-        previous = CodeBlockCreationStats::currentDecode();
-        CodeBlockCreationStats::setCurrentDecode(record);
-        start = lapStart = CodeBlockCreationStats::now();
-    }
-    void lap(Bucket bucket)
-    {
-        if (!record) [[likely]]
-            return;
-        uint64_t t = CodeBlockCreationStats::now();
-        uint64_t delta = t - lapStart;
-        lapStart = t;
-        record->ticks[static_cast<unsigned>(bucket)] += delta;
-        CodeBlockCreationStats::add(bucket, delta);
-    }
-    void resetLap()
-    {
-        if (record) [[unlikely]]
-            lapStart = CodeBlockCreationStats::now();
-    }
-    void finish(UnlinkedCodeBlock* codeBlock, bool isFunctionCode)
-    {
-        if (!record) [[likely]]
-            return;
-        uint64_t total = CodeBlockCreationStats::now() - start;
-        record->ticks[static_cast<unsigned>(Bucket::DecodeTotal)] = total;
-        CodeBlockCreationStats::add(Bucket::DecodeTotal, total);
-        record->isFunctionCode = isFunctionCode;
-        if (codeBlock) {
-            record->instructionBytes = codeBlock->instructions().sizeInBytes();
-            record->identifiers = codeBlock->numberOfIdentifiers();
-            record->constants = codeBlock->constantRegisters().size();
-            record->handlers = codeBlock->numberOfExceptionHandlers();
-        }
-        CodeBlockCreationStats::endDecode(record, previous, codeBlock);
-        record = nullptr;
-    }
-    ~CodeBlockDecodeStats() { finish(nullptr, false); }
-};
-
-// Times a helper decode and charges the UnlinkedCodeBlock decode in progress (if any).
-struct DecodeLap {
-    CodeBlockCreationStats::Bucket bucket;
-    uint64_t start;
-    uint64_t count;
-    DecodeLap(CodeBlockCreationStats::Bucket b, uint64_t n = 1)
-        : bucket(b)
-        , start(CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::now() : 0)
-        , count(n)
-    {
-    }
-    ~DecodeLap()
-    {
-        if (start) [[unlikely]]
-            CodeBlockCreationStats::addToCurrent(bucket, CodeBlockCreationStats::now() - start, count);
-    }
-};
-} // anonymous namespace
 
 bool Decoder::canBorrowPayload() const
 {
@@ -183,7 +108,7 @@ private:
 
 class VarintReader {
 public:
-    // `end` bounds the read when the bytes have not been checksummed yet; past it every read yields 0 and overran() is set.
+    // `end` bounds the read; past it every read yields 0 and overran() is set.
     explicit VarintReader(const uint8_t* p, const uint8_t* end = nullptr)
         : m_p(p)
         , m_end(end)
@@ -224,66 +149,6 @@ private:
     const uint8_t* m_end;
     bool m_overran { false };
 };
-
-// CRC-32C of the bytes one code-block decode reads, so a truncated or corrupted payload falls back to generating that
-// function from source instead of being trusted. Hardware where the ISA guarantees it, a table elsewhere.
-static uint32_t crc32cSoftware(uint32_t crc, std::span<const uint8_t> bytes)
-{
-    static const std::array<uint32_t, 256> table = [] {
-        std::array<uint32_t, 256> t { };
-        for (uint32_t i = 0; i < 256; ++i) {
-            uint32_t c = i;
-            for (int k = 0; k < 8; ++k)
-                c = c & 1 ? 0x82F63B78u ^ (c >> 1) : c >> 1;
-            t[i] = c;
-        }
-        return t;
-    }();
-    for (uint8_t byte : bytes)
-        crc = table[(crc ^ byte) & 0xff] ^ (crc >> 8);
-    return crc;
-}
-
-#if CPU(X86_64)
-__attribute__((target("sse4.2"))) static uint32_t crc32cHardware(uint32_t crc, std::span<const uint8_t> bytes)
-{
-    const uint8_t* p = bytes.data();
-    size_t n = bytes.size();
-    uint64_t c = crc;
-    for (; n >= 8; n -= 8, p += 8)
-        c = __builtin_ia32_crc32di(c, WTF::unalignedLoad<uint64_t>(p));
-    for (; n; --n, ++p)
-        c = __builtin_ia32_crc32qi(static_cast<uint32_t>(c), *p);
-    return static_cast<uint32_t>(c);
-}
-#elif CPU(ARM64) && defined(__ARM_FEATURE_CRC32)
-static uint32_t crc32cHardware(uint32_t crc, std::span<const uint8_t> bytes)
-{
-    const uint8_t* p = bytes.data();
-    size_t n = bytes.size();
-    for (; n >= 8; n -= 8, p += 8)
-        crc = __builtin_arm_crc32cd(crc, WTF::unalignedLoad<uint64_t>(p));
-    for (; n; --n, ++p)
-        crc = __builtin_arm_crc32cb(crc, *p);
-    return crc;
-}
-#endif
-
-static uint32_t crc32c(uint32_t crc, std::span<const uint8_t> bytes)
-{
-#if CPU(X86_64)
-    static const bool hardware = [] {
-        // cpuid directly: __builtin_cpu_supports needs compiler-rt's __cpu_model, which not every link provides.
-        unsigned eax, ebx, ecx = 0, edx;
-        return __get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_SSE4_2);
-    }();
-    if (hardware)
-        return crc32cHardware(crc, bytes);
-#elif CPU(ARM64) && defined(__ARM_FEATURE_CRC32)
-    return crc32cHardware(crc, bytes);
-#endif
-    return crc32cSoftware(crc, bytes);
-}
 
 AtomStringImpl* Decoder::atomForOrdinal(uint32_t ordinal) const
 {
@@ -659,24 +524,6 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
     return atom;
 }
 
-void DecoderStringTable::reportStats(VM& vm) const
-{
-    std::array<uint32_t, 3> outcomes { m_atomForCalls - m_atomsPromoted - m_atomsCreated, m_atomsPromoted, m_atomsCreated };
-    constexpr std::array buckets { CodeBlockCreationStats::Bucket::ExternalAtomSlotHit, CodeBlockCreationStats::Bucket::ExternalAtomPromoted, CodeBlockCreationStats::Bucket::ExternalAtomCreated };
-    for (unsigned i = 0; i < 3; ++i) {
-        if (uint32_t delta = outcomes[i] - m_reportedOutcomes[i])
-            CodeBlockCreationStats::add(buckets[i], 0, delta);
-    }
-    m_reportedOutcomes = outcomes;
-    auto& table = vm.atomStringTable()->table();
-    unsigned capacity = table.capacity();
-    if (capacity == m_reportedAtomTableCapacity)
-        return;
-    CodeBlockCreationStats::add(capacity > m_reportedAtomTableCapacity ? CodeBlockCreationStats::Bucket::AtomTableGrew : CodeBlockCreationStats::Bucket::AtomTableShrank, 0);
-    dataLogLn("CodeBlockCreationStats: atom table ", m_reportedAtomTableCapacity, " -> ", capacity, " buckets at ", table.size(), " keys (", m_atomsCreated, " created + ", m_atomsPromoted, " promoted by the string table so far)");
-    m_reportedAtomTableCapacity = capacity;
-}
-
 RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
 {
     if (slot == VariableLengthObjectBase::emptySentinel)
@@ -774,8 +621,6 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     // The impl's bytes belong to the table (or the executable), not the GC heap.
     JSString* string = JSString::createHasOtherOwner(vm, value.releaseNonNull());
     slot = std::bit_cast<uintptr_t>(string) | cellTag;
-    if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
-        r->stringConstantCellsCreated++;
     Locker locker { m_cellsLock };
     m_cellOrdinals.append(ordinal);
     return string;
@@ -819,45 +664,6 @@ bool Decoder::payloadContains(const void* start, size_t size) const
     auto payload = m_cachedBytecode->span();
     auto* begin = static_cast<const uint8_t*>(start);
     return begin >= payload.data() && size <= payload.size() && begin + size <= payload.data() + payload.size();
-}
-
-bool Decoder::verifiesChecksums() const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    // Pre-existing: a persistent payload (embedder lifetime promise) already skipped checksums, which also covers on-disk
-    // caches an embedder maps for the life of the process; those keep the bounds checks. Trust is the separate, explicit promise.
-    return !m_cachedBytecode->payloadIsPersistent() && !m_trustsPayloadIntegrity && Options::verifyBytecodeCacheChecksums();
-#else
-    return true;
-#endif
-}
-
-bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays) const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    if (!verifiesChecksums())
-        return true;
-#endif
-    auto* begin = static_cast<const uint8_t*>(start);
-    auto* hole = reinterpret_cast<const uint8_t*>(storedChecksum);
-    if (!payloadContains(start, size) || hole < begin || hole + 4 > begin + size)
-        return false; // includes a stored size too small to cover the record that holds the checksum
-    static const uint8_t zeros[4] = { };
-    uint32_t crc = ~0u;
-    crc = crc32c(crc, std::span { begin, hole });
-    crc = crc32c(crc, std::span { zeros, 4 });
-    crc = crc32c(crc, std::span { hole + 4, begin + size });
-    for (auto external : externalArrays) {
-        if (!payloadContains(external.data(), external.size()))
-            return false;
-        crc = crc32c(crc, external);
-    }
-    uint32_t stored;
-    memcpy(&stored, storedChecksum, sizeof(stored));
-    if (~crc == stored)
-        return true;
-    dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] code block checksum mismatch; regenerating from source");
-    return false;
 }
 
 namespace Yarr {
@@ -908,7 +714,7 @@ public:
     // A payload that gets appended to another one (CachedBytecode::addFunctionUpdate) is read by the same Decoder as its
     // base, so it leaves its strings unnumbered rather than collide with numbers the base already handed out.
     enum class NumberStrings : bool { No, Yes };
-    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes, EncoderStringTable* externalStrings = nullptr, BytecodeCacheChecksums checksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable updatable = BytecodeCacheUpdatable::Yes)
+    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes, EncoderStringTable* externalStrings = nullptr, BytecodeCacheUpdatable updatable = BytecodeCacheUpdatable::Yes)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
         , m_baseOffset(0)
@@ -916,7 +722,6 @@ public:
         , m_externalStrings(externalStrings)
         , m_numberStrings(numberStrings == NumberStrings::Yes)
         , m_updatable(updatable == BytecodeCacheUpdatable::Yes)
-        , m_checksums(m_updatable || checksums == BytecodeCacheChecksums::Yes)
     {
         allocateNewPage();
     }
@@ -945,7 +750,6 @@ public:
     }
 
     bool updatable() const { return m_updatable; }
-    bool checksums() const { return m_checksums; }
 
     VM& vm() { return m_vm; }
 
@@ -996,38 +800,6 @@ public:
         }
         RELEASE_ASSERT(m_baseOffset + pageOffset == offset);
         return Allocation { m_currentPage->buffer() + pageOffset, offset };
-    }
-
-    // CRC-32C of [offset, offset + size) as it will appear in the payload, with the 4 bytes at `hole` read as zero
-    // (that is where the checksum itself is stored).
-    uint32_t checksumOfRange(ptrdiff_t offset, size_t size, ptrdiff_t hole)
-    {
-        uint32_t crc = ~0u;
-        ptrdiff_t baseOffset = 0;
-        ptrdiff_t end = offset + size;
-        for (const auto& page : m_pages) {
-            ptrdiff_t pageEnd = baseOffset + page.size();
-            ptrdiff_t from = std::max(offset, baseOffset);
-            ptrdiff_t to = std::min(end, pageEnd);
-            for (ptrdiff_t cursor = from; cursor < to;) {
-                ptrdiff_t stop = to;
-                if (cursor < hole)
-                    stop = std::min(stop, hole);
-                else if (cursor < hole + 4) {
-                    static const uint8_t zeros[4] = { };
-                    ptrdiff_t skip = std::min<ptrdiff_t>(hole + 4, to) - cursor;
-                    crc = crc32c(crc, std::span { zeros, static_cast<size_t>(skip) });
-                    cursor += skip;
-                    continue;
-                }
-                crc = crc32c(crc, page.span().subspan(cursor - baseOffset, stop - cursor));
-                cursor = stop;
-            }
-            baseOffset = pageEnd;
-            if (baseOffset >= end)
-                break;
-        }
-        return ~crc;
     }
 
     std::span<const uint8_t> bytesAt(ptrdiff_t offset, size_t size) { return mutableBytesAt(offset, size); }
@@ -1124,23 +896,11 @@ public:
             m_cold.takeFirst()();
             RELEASE_ASSERT(m_bodies.isEmpty());
         }
-        // Slots inside a checksummed region (a block's ExpressionInfo, its children's records) are filled by the deferred
-        // work above, so the checksums are computed only now that every byte is final.
-        for (auto& pending : m_pendingChecksums) {
-            uint32_t crc = ~checksumOfRange(pending.start, pending.size, pending.checksumOffset);
-            for (auto [offset, size] : pending.externalArrays)
-                crc = crc32c(crc, bytesAt(offset, size));
-            uint32_t checksum = ~crc;
-            memcpySpan(mutableBytesAt(pending.checksumOffset, sizeof(checksum)), std::span { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
-        }
-        m_pendingChecksums.clear();
     }
-    void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset, Vector<std::pair<ptrdiff_t, size_t>>&& externalArrays = { }) { m_pendingChecksums.append({ start, size, checksumOffset, WTF::move(externalArrays) }); }
     uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : std::numeric_limits<uint32_t>::max(); }
 
-    // Content-sharing of arrays is only on while a code block encodes the few arrays its checksum knows how to follow
-    // (decoder side: CachedCodeBlock::regionIsIntact); an array shared from outside the block's own bytes is folded into
-    // the block's checksum so it is verified by whoever reads it, not only by whoever wrote it first.
+    // Content-sharing of arrays is only on while a code block encodes the few arrays CachedCodeBlock::regionIsIntact allows
+    // to lie outside the block's own region.
     class ShareableArrayScope {
     public:
         ShareableArrayScope(Encoder& encoder)
@@ -1155,13 +915,6 @@ public:
         bool m_previous;
     };
     bool arraySharingEnabled() const { return m_arraySharingEnabled; }
-    void beginBlockRegion(ptrdiff_t start) { m_blockRegionStart = start; m_blockExternalArrays.clear(); }
-    void noteSharedArray(ptrdiff_t offset, size_t size)
-    {
-        if (offset < m_blockRegionStart)
-            m_blockExternalArrays.append({ offset, size });
-    }
-    Vector<std::pair<ptrdiff_t, size_t>> takeBlockExternalArrays() { return std::exchange(m_blockExternalArrays, { }); }
 
     RefPtr<CachedBytecode> release(BytecodeCacheError& error)
     {
@@ -1294,17 +1047,12 @@ private:
     LeafExecutableMap m_leafExecutables;
     Deque<Function<void()>> m_bodies;
     Deque<Function<void()>> m_cold;
-    struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
-    Vector<PendingChecksum> m_pendingChecksums;
     uint32_t m_nextStringOrdinal { 0 };
     EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_updatable;
-    bool m_checksums;
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
-    ptrdiff_t m_blockRegionStart { 0 };
-    Vector<std::pair<ptrdiff_t, size_t>> m_blockExternalArrays;
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
 };
 
@@ -1313,7 +1061,6 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
     , m_cachedBytecode(WTF::move(cachedBytecode))
     , m_provider(provider)
 #if USE(BUN_JSC_ADDITIONS)
-    , m_trustsPayloadIntegrity(Options::useTrustedEmbeddedBytecodeIntegrity() && m_cachedBytecode->payloadIntegrityIsPreVerified())
     , m_canDeferIntoPayload(Options::useThinChildExecutables() && m_cachedBytecode->payloadIsOwnedOrPersistent())
 #endif
 {
@@ -1538,7 +1285,6 @@ protected:
         if (encoder.arraySharingEnabled()) {
             if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignment)) {
                 m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
-                encoder.noteSharedArray(*existing, bytes.size());
                 return;
             }
         }
@@ -2570,54 +2316,47 @@ private:
     unsigned m_unused : 30 { 0 };
 };
 
-// [u32 numberOfEncodedInfo][u8 flags][varint chapters][varint extensions][pad to 4][payload words][u32 checksum if flagged]
+// [u32 numberOfEncodedInfo][varint chapters][varint extensions][pad to 4][payload words]
 // Self-contained and position-independent, so identical ones (every async wrapper, say) are written once.
 class CachedExpressionInfo : public CachedObject<ExpressionInfo> {
 public:
 #if USE(BUN_JSC_ADDITIONS)
     static constexpr bool isSingleOwner = true;
 #endif
-    enum Flag : uint8_t { HasChecksum = 1 << 0 };
 
-    static Vector<uint8_t, 64> pack(const ExpressionInfo& info, bool checksum)
+    static Vector<uint8_t, 64> pack(const ExpressionInfo& info)
     {
         VarintWriter head;
-        head.u8(checksum ? HasChecksum : 0);
         head.u32(info.m_numberOfChapters);
         head.u32(info.m_numberOfEncodedInfoExtensions);
         size_t payloadAt = roundUpToMultipleOf<4>(sizeof(uint32_t) + head.size());
         size_t payloadBytes = info.payloadSize() * sizeof(unsigned);
         Vector<uint8_t, 64> bytes;
-        bytes.grow(payloadAt + payloadBytes + (checksum ? sizeof(uint32_t) : 0));
+        bytes.grow(payloadAt + payloadBytes);
         memset(bytes.mutableSpan().data(), 0, bytes.size());
         uint32_t count = info.m_numberOfEncodedInfo;
         memcpy(bytes.mutableSpan().data(), &count, sizeof(count));
         head.copyTo(bytes.mutableSpan().data() + sizeof(uint32_t));
         if (payloadBytes)
             memcpy(bytes.mutableSpan().data() + payloadAt, info.payload(), payloadBytes);
-        if (checksum) {
-            uint32_t crc = ~crc32c(~0u, bytes.span().first(payloadAt + payloadBytes));
-            memcpy(bytes.mutableSpan().data() + payloadAt + payloadBytes, &crc, sizeof(crc));
-        }
         return bytes;
     }
 
     // A damaged one decodes as "no expression info" (stack traces lose line/column for that function) rather than failing the function.
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
-        if (!decoder.payloadContains(this, sizeof(uint32_t) + 1))
+        if (!decoder.payloadContains(this, sizeof(uint32_t)))
             return ExpressionInfo::createUninitialized(0, 0, 0);
         auto payload = decoder.payloadSpan();
-        return decode(payload.data() + payload.size(), decoder.verifiesChecksums(), decoder.canBorrowPayload());
+        return decode(payload.data() + payload.size(), decoder.canBorrowPayload());
     }
     // `this` lies inside a payload that ends at `limit` (the caller checked); nothing past it is read.
-    std::unique_ptr<ExpressionInfo> decode(const uint8_t* limit, bool verifyChecksum, bool borrow) const
+    std::unique_ptr<ExpressionInfo> decode(const uint8_t* limit, bool borrow) const
     {
         const uint8_t* base = std::bit_cast<const uint8_t*>(this);
-        if (limit < base || static_cast<size_t>(limit - base) < sizeof(uint32_t) + 1)
+        if (limit < base || static_cast<size_t>(limit - base) < sizeof(uint32_t))
             return ExpressionInfo::createUninitialized(0, 0, 0);
         VarintReader reader(base + sizeof(uint32_t), limit);
-        uint8_t flags = reader.u8();
         unsigned chapters = reader.u32();
         unsigned extensions = reader.u32();
         if (reader.overran())
@@ -2625,17 +2364,8 @@ public:
         unsigned encodedInfo = m_numberOfEncodedInfo;
         size_t payloadAt = roundUpToMultipleOf<4>(reader.position() - base);
         size_t payloadBytes = ExpressionInfo::payloadSizeInBytes(chapters, encodedInfo, extensions);
-        size_t total = payloadAt + payloadBytes + ((flags & HasChecksum) ? sizeof(uint32_t) : 0);
-        if (total > static_cast<size_t>(limit - base))
+        if (payloadAt + payloadBytes > static_cast<size_t>(limit - base))
             return ExpressionInfo::createUninitialized(0, 0, 0);
-        if ((flags & HasChecksum) && verifyChecksum) {
-            uint32_t stored;
-            memcpy(&stored, base + payloadAt + payloadBytes, sizeof(stored));
-            if (stored != ~crc32c(~0u, std::span { base, payloadAt + payloadBytes })) {
-                dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] expression info checksum mismatch; dropping it");
-                return ExpressionInfo::createUninitialized(0, 0, 0);
-            }
-        }
         const unsigned* words = reinterpret_cast<const unsigned*>(base + payloadAt);
         if (borrow && payloadBytes)
             return ExpressionInfo::createBorrowed(chapters, encodedInfo, extensions, words);
@@ -3173,20 +2903,9 @@ public:
             return jsNumber(static_cast<int32_t>(this->rawSlot()));
         case Kind::Double:
             return JSValue::decode(*this->buffer<EncodedJSValue>());
-        case Kind::SymbolTable: {
-            DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstantSymbolTables);
-            SymbolTable* symbolTable = this->buffer<CachedSymbolTable>()->decode(decoder);
-            if (lap.start) [[unlikely]] {
-                if (auto* r = CodeBlockCreationStats::currentDecode()) {
-                    r->symbolTableConstants++;
-                    r->symbolTableEntries += this->buffer<CachedSymbolTable>()->entryCount();
-                }
-            }
-            return symbolTable;
-        }
+        case Kind::SymbolTable:
+            return this->buffer<CachedSymbolTable>()->decode(decoder);
         case Kind::String:
-            if (auto* r = CodeBlockCreationStats::enabled() ? CodeBlockCreationStats::currentDecode() : nullptr) [[unlikely]]
-                r->stringConstants++;
             if (this->hasInlineString())
                 return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
@@ -3345,10 +3064,8 @@ static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container
         auto bytes = std::span { std::bit_cast<const uint8_t*>(container.span().data()), sizeof(T) * size };
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
         if (encoder.arraySharingEnabled()) {
-            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignof(T))) {
-                encoder.noteSharedArray(*existing, bytes.size());
+            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignof(T)))
                 return *existing;
-            }
         }
         auto result = encoder.malloc(bytes.size(), alignof(T));
         memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
@@ -3847,14 +3564,13 @@ private:
 static_assert(sizeof(CachedFunctionExecutableRareData) == sizeof(uint32_t));
 
 // Layout: a header word (what is present, parse mode), then only what is present, 4-byte slots first so they stay aligned:
-//   [mutable metadata 8][checksum 4][extent 4]   updatable records (the jsc shell's disk cache patches them in place)
-//   [checksum 4][extent 4]                       checksummed but not updatable
+//   [mutable metadata 8]   updatable records (the jsc shell's disk cache patches them in place)
 //   [call slot][construct slot][name][TDZ link][rare data]
 //   varint tail, hot part (read when the cell is created): flags, lexically scoped features, parameter count, start
 //     offset, function start, source length, body start column, [first line offset]
 //   varint tail, cold part (read on first call / introspection, UnlinkedFunctionExecutable::m_scalarsAreDeferred):
 //     features, parameters start, function end, body end column, [line count]
-// A persistent payload (bun --compile) has none of the first two rows and only the slots it uses.
+// A persistent payload (bun --compile) has no metadata row and only the slots it uses.
 class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable> {
     friend struct CachedFunctionExecutableOffsets;
 
@@ -3870,10 +3586,9 @@ public:
         HasTDZ = 1 << 3,
         HasRareData = 1 << 4,
         HasLines = 1 << 5,
-        HasChecksum = 1 << 6,
-        Updatable = 1 << 7, // implies HasChecksum and both code block slots
-        HasCapturedVariables = 1 << 8,
-        IsClass = 1 << 9, // so isClass() never needs the rare data
+        Updatable = 1 << 6, // implies both code block slots
+        HasCapturedVariables = 1 << 7,
+        IsClass = 1 << 8, // so isClass() never needs the rare data
         ParseModeShift = 16, // 8 bits
     };
 
@@ -3914,8 +3629,6 @@ public:
     struct View {
         uint32_t header { 0 };
         const CachedFunctionExecutableMetadata* metadata { nullptr };
-        const uint32_t* checksum { nullptr };
-        const uint32_t* extent { nullptr };
         const CodeBlockSlot* call { nullptr };
         const CodeBlockSlot* construct { nullptr };
         const CachedIdentifier* name { nullptr };
@@ -3937,7 +3650,7 @@ public:
     void encode(Encoder&, const UnlinkedFunctionExecutable&);
     UnlinkedFunctionExecutable* decode(Decoder&) const;
 
-    // `limit` bounds the parse; the payload end for an integrity check, unbounded once verified. HotScalarsOnly leaves
+    // `limit` bounds the parse: the payload end for an integrity check, unbounded once verified. HotScalarsOnly leaves
     // the cold part's Scalars members unset.
     View view(const uint8_t* limit = nullptr, ScalarsToView = AllScalars) const;
     // view() without the scalars: locates the slots from the header word and stops at the tail (v.tail is null on overrun).
@@ -3949,12 +3662,7 @@ public:
         if (!decoder.payloadContains(this, sizeof(uint32_t)))
             return false;
         auto payload = decoder.payloadSpan();
-        View v = view(payload.data() + payload.size());
-        if (!v.intact)
-            return false;
-        if (!(v.header & HasChecksum) || decoder.trustsPayloadIntegrity())
-            return true;
-        return decoder.regionChecksumMatches(this, *v.extent, v.checksum);
+        return view(payload.data() + payload.size()).intact;
     }
 
 private:
@@ -3964,8 +3672,6 @@ private:
         size_t bytes = 0;
         if (header & Updatable)
             bytes += sizeof(CachedFunctionExecutableMetadata);
-        if (header & HasChecksum)
-            bytes += 2 * sizeof(uint32_t);
         for (uint32_t bit : { HasCallSlot, HasConstructSlot, HasName, HasTDZ, HasRareData }) {
             if (header & bit)
                 bytes += sizeof(uint32_t);
@@ -3988,48 +3694,14 @@ ptrdiff_t CachedFunctionExecutableOffsets::metadataOffset()
     return sizeof(uint32_t);
 }
 
-ptrdiff_t CachedFunctionExecutableOffsets::checksumOffset()
-{
-    return metadataOffset() + sizeof(CachedFunctionExecutableMetadata);
-}
-
-ptrdiff_t CachedFunctionExecutableOffsets::extentOffset()
-{
-    return checksumOffset() + sizeof(uint32_t);
-}
-
 ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForCallOffset()
 {
-    return extentOffset() + sizeof(uint32_t);
+    return metadataOffset() + sizeof(CachedFunctionExecutableMetadata);
 }
 
 ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForConstructOffset()
 {
     return codeBlockForCallOffset() + sizeof(uint32_t);
-}
-
-size_t CachedFunctionExecutableOffsets::fixedSize()
-{
-    return codeBlockForConstructOffset() + sizeof(uint32_t);
-}
-
-bool CachedFunctionExecutableOffsets::isUpdatable(std::span<const uint8_t> record)
-{
-    uint32_t header;
-    if (record.size() < sizeof(header))
-        return false;
-    memcpySpan(std::span { reinterpret_cast<uint8_t*>(&header), sizeof(header) }, record.first(sizeof(header)));
-    return header & CachedFunctionExecutable::Updatable;
-}
-
-uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset)
-{
-    static const uint8_t zeros[4] = { };
-    uint32_t crc = ~0u;
-    crc = crc32c(crc, record.first(checksumOffset));
-    crc = crc32c(crc, std::span { zeros, 4 });
-    crc = crc32c(crc, record.subspan(checksumOffset + 4));
-    return ~crc;
 }
 
 template<typename CodeBlockType> struct CachedCodeBlockRecordFor;
@@ -4101,7 +3773,6 @@ public:
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
         LayoutHasExtras = 1 << 2,
-        LayoutHasChecksum = 1 << 3, // [u32 region size][u32 checksum] follow the tail
     };
     struct Array {
         unsigned count { 0 };
@@ -4123,7 +3794,6 @@ public:
     struct Tail {
         Layout layout;
         Scalars scalars;
-        const uint8_t* end { nullptr }; // where the tail's varints stop: the region size and checksum, when present, follow
         bool intact { true };
     };
 
@@ -4203,40 +3873,24 @@ public:
         return e ? e->rareData.decode(decoder) : nullptr;
     }
 
-    // The region (arrays, record, tail, derived members, child slots) is checksummed when the payload carries checksums; a
-    // mismatch on decode means the payload is damaged and the block is generated from source instead. Without them the
-    // check is that everything the block points at lies inside the payload.
+    // Everything the block points at (arrays, record, tail, derived members, child slots and the child records) must lie
+    // inside the payload; a damaged block is generated from source instead.
     bool regionIsIntact(Decoder& decoder, Tail& tail) const
     {
-        // `this` came from a slot that CachedBytecode::commitUpdates may rewrite and is therefore not itself checksummed.
         if (!decoder.payloadContains(this, sizeof(Record)))
             return false;
         auto payload = decoder.payloadSpan();
-        const uint8_t* payloadEnd = payload.data() + payload.size();
-        tail = readTail(payloadEnd);
+        const uint8_t* end = payload.data() + payload.size();
+        tail = readTail(end);
         if (!tail.intact)
             return false;
         const Layout& layout = tail.layout;
         const uint8_t* begin = regionBegin(layout);
         if (begin > std::bit_cast<const uint8_t*>(this) || begin < payload.data())
             return false;
-        const uint8_t* end = payloadEnd;
-        uint32_t regionSize = 0;
-        const uint8_t* storedChecksum = nullptr;
-        if (layout.flags & LayoutHasChecksum) {
-            if (!decoder.payloadContains(tail.end, 2 * sizeof(uint32_t)))
-                return false;
-            memcpy(&regionSize, tail.end, sizeof(regionSize));
-            storedChecksum = tail.end + sizeof(uint32_t);
-            end = begin + regionSize;
-            if (!decoder.payloadContains(begin, regionSize) || storedChecksum + sizeof(uint32_t) > end)
-                return false;
-        }
 
-        // Every array must lie inside the region, except the three the encoder may have shared from an earlier block,
-        // which are folded into the checksum instead (in encoder order).
-        std::array<std::span<const uint8_t>, 3> external;
-        unsigned externalCount = 0;
+        // Every array must lie inside [region start, payload end), except the three the encoder may have shared from an
+        // earlier block, which may lie anywhere in the payload.
         auto coveredBytes = [&](const Array& array, size_t bytes) {
             if (!array.count)
                 return true;
@@ -4250,10 +3904,7 @@ public:
             const uint8_t* p = begin + array.at;
             if (array.at >= 0 && p + bytes <= end && p + bytes >= p)
                 return true;
-            if (!shareable || !decoder.payloadContains(p, bytes))
-                return false;
-            external[externalCount++] = { p, bytes };
-            return true;
+            return shareable && decoder.payloadContains(p, bytes);
         };
         if (!covered(layout.steps, sizeof(uint32_t), true)
             || !covered(layout.instructions, 1, true)
@@ -4264,12 +3915,6 @@ public:
             || !covered(layout.functionExprs, sizeof(CachedWriteBarrier<CachedFunctionExecutable>), false))
             return false;
         if ((layout.flags & LayoutHasExtras) && (layout.extrasAt < 0 || begin + layout.extrasAt + sizeof(CachedCodeBlockExtras) > end))
-            return false;
-        // A trusted payload keeps the O(1) structural checks above (a truncated or edited executable still falls back to
-        // source) and skips the checksum and the walk over every child record, which is what costs time and page faults.
-        if (decoder.trustsPayloadIntegrity())
-            return true;
-        if (storedChecksum && !decoder.regionChecksumMatches(begin, regionSize, reinterpret_cast<const uint32_t*>(storedChecksum), std::span { external.data(), externalCount }))
             return false;
 
         for (const Array* children : { &layout.functionDecls, &layout.functionExprs }) {
@@ -4515,8 +4160,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     const Layout& layout = tail.layout;
     // See prefetchStringTableSlots(): the constant pool's and the identifier table's first windows had their slots
     // prefetched before the cell was constructed. Their targets go now, ahead of the atom-table reserve and the pool's
-    // allocation; the identifiers' lookups after the pool, ahead of DecodeMisc. (With reportCodeBlockCreationCosts on,
-    // these passes fall between the laps: DecodeTotal counts them, no bucket does.)
+    // allocation; the identifiers' lookups after the pool, ahead of the rest.
     const DecoderStringTable* strings = decoder.stringsToPrefetch();
 #if USE(BUN_JSC_ADDITIONS)
     auto identifierOrdinals = stringOrdinals(at<CachedIdentifier>(layout, layout.identifiers));
@@ -4532,7 +4176,6 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (unsigned expected = strings ? strings->expectedAtomTableInserts(layout.identifiers.count) : layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeConstants, layout.constants.count);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock, strings ? HeadPrefetch::All : HeadPrefetch::None);
     }
@@ -4540,118 +4183,77 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (strings)
         prefetchStringLookups(decoder.vm(), *strings, 0, identifiersHead, identifierOrdinals);
 #endif
-    {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeMisc);
-        decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
+    decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
 #if USE(BUN_JSC_ADDITIONS)
-        // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
-        // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
-        if (auto* record = Options::useLazyCachedExpressionInfo() && decoder.canBorrowPayload() ? m_expressionInfo.getIfInPayload(decoder) : nullptr) {
-            auto payload = decoder.payloadSpan();
-            codeBlock.m_cachedExpressionInfo = record;
-            codeBlock.m_cachedExpressionInfoBytes = static_cast<uint32_t>(std::min<size_t>(payload.data() + payload.size() - std::bit_cast<const uint8_t*>(record), UINT32_MAX));
-        } else
+    // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
+    // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
+    if (auto* record = Options::useLazyCachedExpressionInfo() && decoder.canBorrowPayload() ? m_expressionInfo.getIfInPayload(decoder) : nullptr) {
+        auto payload = decoder.payloadSpan();
+        codeBlock.m_cachedExpressionInfo = record;
+        codeBlock.m_cachedExpressionInfoBytes = static_cast<uint32_t>(std::min<size_t>(payload.data() + payload.size() - std::bit_cast<const uint8_t*>(record), UINT32_MAX));
+    } else
 #endif
-            codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-        if (auto* e = extras(layout))
-            e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
-    }
-    {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeIdentifiers, layout.identifiers.count);
-        decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    }
-    if (CodeBlockCreationStats::enabled()) [[unlikely]]
-        CodeBlockCreationStats::noteIdentifierTableCreated(&codeBlock, layout.identifiers.count);
-    {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildren, layout.functionDecls.count + layout.functionExprs.count);
-        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
-        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
-    }
-    if (CodeBlockCreationStats::enabled() && strings) [[unlikely]]
-        strings->reportStats(decoder.vm());
+        codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
+    if (auto* e = extras(layout))
+        e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
+    decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
+    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
 }
 
 UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
 {
-    CodeBlockDecodeStats stats;
     Tail tail;
-    bool intact = regionIsIntact(decoder, tail);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
-    if (!intact)
+    if (!regionIsIntact(decoder, tail))
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
-    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
-    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) const
 {
-    CodeBlockDecodeStats stats;
     Tail tail;
-    bool intact = regionIsIntact(decoder, tail);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
-    if (!intact)
+    if (!regionIsIntact(decoder, tail))
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
-    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
-    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
 {
-    CodeBlockDecodeStats stats;
     Tail tail;
-    bool intact = regionIsIntact(decoder, tail);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
-    if (!intact)
+    if (!regionIsIntact(decoder, tail))
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
-    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
-    stats.finish(codeBlock, false);
     return codeBlock;
 }
 
 UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) const
 {
-    CodeBlockDecodeStats stats;
     Tail tail;
-    bool intact = regionIsIntact(decoder, tail);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeIntegrityCheck);
-    if (!intact)
+    if (!regionIsIntact(decoder, tail))
         return nullptr;
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeFixed);
     Base::decode(decoder, *codeBlock, tail);
-    stats.resetLap();
     decodeOwnMembers(decoder, *codeBlock);
-    stats.lap(CodeBlockCreationStats::Bucket::DecodeOwnMembers);
-    stats.finish(codeBlock, true);
     return codeBlock;
 }
 
@@ -4762,10 +4364,8 @@ uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& e
         header |= HasCallSlot;
     if (executable.m_unlinkedCodeBlockForConstruct)
         header |= HasConstructSlot;
-    if (encoder->checksums())
-        header |= HasChecksum;
     if (encoder->updatable())
-        header |= Updatable | HasChecksum | HasCallSlot | HasConstructSlot;
+        header |= Updatable | HasCallSlot | HasConstructSlot;
     return header;
 }
 
@@ -4787,8 +4387,6 @@ auto CachedFunctionExecutable::slotsView(const uint8_t* limit) const -> View
         return true;
     };
     if ((v.header & Updatable) && !take(v.metadata))
-        return v;
-    if ((v.header & HasChecksum) && (!take(v.checksum) || !take(v.extent)))
         return v;
     if ((v.header & HasCallSlot) && !take(v.call))
         return v;
@@ -4863,10 +4461,7 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread() && Thread::currentSingleton().atomStringTable() == vm().atomStringTable());
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_deferredMembersRecord->slotsView();
-    {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildNameLazy);
-        self->m_ecmaName = v.name->decode(*m_deferredMembersDecoder);
-    }
+    self->m_ecmaName = v.name->decode(*m_deferredMembersDecoder);
     WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
@@ -4890,16 +4485,12 @@ void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
     ASSERT(m_scalarsAreDeferred && m_membersAreDeferred);
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread()); // the cold members share words with (mutator-only) flag bits
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
-    CachedFunctionExecutable::View v;
-    {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildScalarsLazy);
-        v = m_deferredMembersRecord->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
-        self->m_parametersStartOffset = v.scalars.parametersStartOffset;
-        self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
-        self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
-        self->m_lineCount = v.scalars.lineCount;
-        self->m_scalarsAreDeferred = false;
-    }
+    auto v = m_deferredMembersRecord->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
+    self->m_parametersStartOffset = v.scalars.parametersStartOffset;
+    self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
+    self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
+    self->m_lineCount = v.scalars.lineCount;
+    self->m_scalarsAreDeferred = false;
     if (!m_nameIsDeferred && !v.tdz && !v.rareData)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
@@ -4924,13 +4515,10 @@ void UnlinkedFunctionExecutable::materializeDeferredMembersSlow() const
     auto v = m_deferredMembersRecord->slotsView();
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
     std::unique_ptr<RareData> rareData;
-    if (v.tdz || v.rareData) {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildMembersLazy);
-        if (v.tdz)
-            parentScopeTDZVariables = v.tdz->decode(decoder.get());
-        if (v.rareData)
-            rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder.get()));
-    }
+    if (v.tdz)
+        parentScopeTDZVariables = v.tdz->decode(decoder.get());
+    if (v.rareData)
+        rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder.get()));
     self->m_deferredMembersDecoder.~RefPtr();
     new (&self->m_parentScopeTDZVariables) RefPtr<TDZEnvironmentLink>(WTF::move(parentScopeTDZVariables));
     new (&self->m_rareData) std::unique_ptr<RareData>(WTF::move(rareData));
@@ -4943,8 +4531,6 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     m_header = header;
     uint8_t* p = bytes() + sizeof(uint32_t);
     CachedFunctionExecutableMetadata* metadata = nullptr;
-    uint32_t* checksum = nullptr;
-    uint32_t* extent = nullptr;
     CodeBlockSlot* call = nullptr;
     CodeBlockSlot* construct = nullptr;
     CachedIdentifier* name = nullptr;
@@ -4957,10 +4543,6 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     };
     if (header & Updatable)
         place(metadata);
-    if (header & HasChecksum) {
-        place(checksum);
-        place(extent);
-    }
     if (header & HasCallSlot)
         place(call);
     if (header & HasConstructSlot)
@@ -4990,12 +4572,6 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
 
     if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this));
-
-    if (checksum) {
-        ptrdiff_t start = encoder.offsetOf(this);
-        *extent = safeCast<uint32_t>(encoder.currentOffset() - start);
-        encoder.addChecksum(start, *extent, encoder.offsetOf(checksum));
-    }
 
     encoder.deferBody([call, construct, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
         if (call)
@@ -5049,21 +4625,14 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         v.tdz = nullptr;
         v.rareData = nullptr;
     }
-    if (v.name) {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildName);
+    if (v.name)
         m_ecmaName = v.name->decode(decoder);
-    }
-    if (v.tdz) {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildTDZ);
+    if (v.tdz)
         m_parentScopeTDZVariables = v.tdz->decode(decoder);
-    }
     if (v.rareData) {
-        DecodeLap lap(CodeBlockCreationStats::Bucket::DecodeChildRareData);
         m_rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
         ASSERT_WITH_MESSAGE(m_rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
     }
-    if (CodeBlockCreationStats::enabled() && CodeBlockCreationStats::currentDecode()) [[unlikely]]
-        CodeBlockCreationStats::noteChildExecutableDecoded(this, v.header & CachedFunctionExecutable::HasName, v.header & CachedFunctionExecutable::HasTDZ, v.header & CachedFunctionExecutable::HasRareData);
     m_firstLineOffset = scalars.firstLineOffset;
     m_lineCount = scalars.lineCount;
     m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;
@@ -5239,7 +4808,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.numArrayProfiles = reader.u32();
     s.numBinaryArithProfiles = reader.u32();
     s.numUnaryArithProfiles = reader.u32();
-    tail.end = reader.position();
     tail.intact = !reader.overran();
     return tail;
 }
@@ -5248,7 +4816,6 @@ template<typename CodeBlockType>
 auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockType& codeBlock) -> Record*
 {
     ptrdiff_t regionStart = encoder.currentOffset();
-    encoder.beginBlockRegion(regionStart);
     Layout layout;
     auto place = [&](Array& array, unsigned count, auto&& write) {
         array.count = count;
@@ -5290,9 +4857,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
     }
 
-    if (encoder.checksums())
-        layout.flags |= LayoutHasChecksum;
-    size_t trailerBytes = (layout.flags & LayoutHasChecksum) ? 2 * sizeof(uint32_t) : 0;
     VarintWriter writer;
     // The tail holds the record's own offset in the region as a varint, so its size is settled where it is placed.
     auto result = encoder.mallocPlaced(alignof(Record), [&](ptrdiff_t offset) {
@@ -5300,15 +4864,14 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         writer = { };
         packLayout(layout, writer);
         packScalars(codeBlock, writer);
-        return sizeof(Record) + writer.size() + trailerBytes;
+        return sizeof(Record) + writer.size();
     });
     static_assert(PayloadType<Record>);
     Record* record = new (result.buffer()) Record();
     writer.copyTo(record->tailBytes());
-    ptrdiff_t trailerOffset = result.offset() + sizeof(Record) + writer.size();
     encoder.deferCold([record, &encoder, &codeBlock] {
-        // Self-checksummed and position-independent, so an identical one written earlier is reused.
-        auto bytes = CachedExpressionInfo::pack(codeBlock.expressionInfo(), encoder.checksums());
+        // Position-independent, so an identical one written earlier is reused.
+        auto bytes = CachedExpressionInfo::pack(codeBlock.expressionInfo());
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes.span()) ^ static_cast<unsigned>(bytes.size());
         ptrdiff_t at;
         if (auto existing = encoder.existingIdenticalArray(bytes.span(), hash, alignof(CachedExpressionInfo)))
@@ -5322,13 +4885,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         record->m_expressionInfo.pointAtPayloadOffset(encoder, at);
     });
     record->encodeOwnMembers(encoder, codeBlock);
-
-    uint32_t regionSize = safeCast<uint32_t>(encoder.currentOffset() - regionStart);
-    if (trailerBytes) {
-        memcpySpan(encoder.mutableBytesAt(trailerOffset, sizeof(uint32_t)), std::span { reinterpret_cast<const uint8_t*>(&regionSize), sizeof(regionSize) });
-        encoder.addChecksum(regionStart, regionSize, trailerOffset + sizeof(uint32_t), encoder.takeBlockExternalArrays());
-    } else
-        encoder.takeBlockExternalArrays();
 
     auto encodeChildren = [&](const Array& slots, const auto& executables) {
         if (!slots.count)
@@ -5380,8 +4936,8 @@ public:
 protected:
     // Folded into the stored version so that reinterpreting existing record bits (which an embedder-supplied cache version
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
-    // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part.
-    static constexpr uint32_t cachedTypesFormatRevision = 2;
+    // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
+    static constexpr uint32_t cachedTypesFormatRevision = 3;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5398,9 +4954,6 @@ protected:
     {
         if (m_cacheVersion != currentCacheVersion())
             return false;
-        // The entry, its boot session string and its source code key, up to where the code block starts.
-        if (!decoder.regionChecksumMatches(this, m_headerSize, &m_headerChecksum))
-            return false;
         if (m_bootSessionUUID.decode(decoder) != bootSessionUUIDString())
             return false;
         // BytecodeGenerator numbers a code block's locals after the LLInt/baseline callee-save area, so its size is baked into the bytecode.
@@ -5409,16 +4962,8 @@ protected:
         return true;
     }
 
-    void sealHeader(Encoder& encoder)
-    {
-        m_headerSize = safeCast<uint32_t>(encoder.currentOffset()); // the entry is at offset 0
-        encoder.addChecksum(0, m_headerSize, encoder.offsetOf(&m_headerChecksum));
-    }
-
 private:
     uint32_t m_cacheVersion;
-    uint32_t m_headerSize { 0 };
-    uint32_t m_headerChecksum { 0 };
     CachedString m_bootSessionUUID;
     CachedCodeBlockTag m_tag;
     uint32_t m_reservedCalleeLocals;
@@ -5437,7 +4982,6 @@ public:
     void encode(Encoder& encoder, std::pair<SourceCodeKey, const UnlinkedCodeBlockType*> pair)
     {
         m_key.encode(encoder, pair.first);
-        sealHeader(encoder);
         m_codeBlock.encode(encoder, pair.second);
     }
 
@@ -5550,7 +5094,6 @@ public:
     {
         m_sourceLength = sourceLength;
         m_embedderStamp = embedderStamp;
-        sealHeader(encoder);
         m_executable.encode(encoder, &executable);
     }
 
@@ -5572,11 +5115,11 @@ private:
     CachedPtr<CachedFunctionExecutable> m_executable;
 };
 
-RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings, BytecodeCacheChecksums checksums, BytecodeCacheUpdatable updatable)
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings, checksums, updatable);
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
     encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
     encoder.encodeDeferred();
     return encoder.release(error);
@@ -5593,11 +5136,11 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     return entry->decode(decoder.get(), sourceLength, embedderStamp);
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheChecksums checksums, BytecodeCacheUpdatable updatable)
+RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
 {
     const ClassInfo* classInfo = codeBlock->classInfo();
 
-    Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings, checksums, updatable);
+    Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
     if (classInfo == UnlinkedProgramCodeBlock::info())
         encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, key, codeBlock);
     else if (classInfo == UnlinkedModuleProgramCodeBlock::info())
@@ -5609,11 +5152,11 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     return encoder.release(error);
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, EncoderStringTable* externalStrings, BytecodeCacheChecksums checksums, BytecodeCacheUpdatable updatable)
+RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings, checksums, updatable);
+    return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings, updatable);
 }
 
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
@@ -5645,6 +5188,8 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]]
         before = MonotonicTime::now();
 
+    if (cachedBytecodeSize < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
+        return nullptr;
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider());
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
@@ -5667,7 +5212,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
 bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, const SourceCodeKey& key, SourceCodeType type)
 {
     auto span = cachedBytecode->span();
-    if (span.empty())
+    if (span.size() < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
         return false;
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(span.data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
@@ -5677,10 +5222,10 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
 
 // The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
 // and with it the serialized form.
-static_assert(sizeof(GenericCacheEntry) == 24);
-static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 56);
-static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 56);
-static_assert(sizeof(BuiltinFunctionCacheEntry) == 36);
+static_assert(sizeof(GenericCacheEntry) == 16);
+static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 48);
+static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 48);
+static_assert(sizeof(BuiltinFunctionCacheEntry) == 28);
 static_assert(sizeof(VariableLengthObjectBase) == 4);
 static_assert(sizeof(CachedPtr<CachedString>) == 4);
 static_assert(sizeof(CachedRefPtr<CachedUniquedStringImpl>) == 4);
@@ -5749,8 +5294,8 @@ void decodeSymbolTableEntries(Decoder& decoder, const CachedSymbolTable& cachedS
 
 std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo, uint32_t payloadBytesLeft)
 {
-    // A persistent payload is never checksummed on decode (Decoder::verifiesChecksums) and may always be borrowed.
-    return static_cast<const CachedExpressionInfo*>(cachedExpressionInfo)->decode(static_cast<const uint8_t*>(cachedExpressionInfo) + payloadBytesLeft, false, true);
+    // Only a persistent payload lends out its expression info (CachedCodeBlock::decode), and that may always be borrowed.
+    return static_cast<const CachedExpressionInfo*>(cachedExpressionInfo)->decode(static_cast<const uint8_t*>(cachedExpressionInfo) + payloadBytesLeft, true);
 }
 
 } // namespace JSC

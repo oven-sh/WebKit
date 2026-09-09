@@ -31,7 +31,6 @@
 
 #include "CachedTypes.h"
 #include "CodeBlock.h"
-#include "CodeBlockCreationStats.h"
 #include "DebuggerLocation.h"
 #include "JSCJSValueInlines.h"
 #include "ResourceExhaustion.h"
@@ -347,7 +346,6 @@ void SymbolTable::materializeCachedEntries()
     if (isCompilationThread() || vm.heap.currentThreadIsDoingGCWork()) [[unlikely]]
         return;
     ASSERT(Thread::currentSingleton().atomStringTable() == vm.atomStringTable());
-    CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::MaterializeSymbolTableEntriesLazy);
     RefPtr<Decoder> decoder = std::exchange(m_cachedEntriesDecoder, nullptr);
     const CachedSymbolTable* record = std::exchange(m_cachedEntries, nullptr);
     decodeSymbolTableEntries(*decoder, *record, *this, m_cachedEntriesScopePartOnly);

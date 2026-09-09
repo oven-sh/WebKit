@@ -26,8 +26,6 @@
 #include "config.h"
 #include "UnlinkedFunctionExecutable.h"
 
-#include "CodeBlockCreationStats.h"
-
 #include "BuiltinExecutables.h"
 #include "BytecodeGenerator.h"
 #include "CachedTypes.h"
@@ -224,8 +222,6 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
         SourceProfiler::profile(SourceProfiler::Type::Function, source);
 
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
-    if (CodeBlockCreationStats::enabled()) [[unlikely]]
-        CodeBlockCreationStats::noteExecutableLinked(this);
     if (m_singletonHasBeenInvalidated)
         result->singleton().invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
     if (overrideLineNumber)
@@ -307,7 +303,6 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 
     DeferGC deferGC(vm);
-    CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::DecodeFunctionCodeBlockLazy);
 
     // m_unlinkedCodeBlockForCall shares its slot with the decoder we just moved out, so it is already null; the construct
     // slot still holds the two offsets, and a decode that rejects a damaged block leaves its slot untouched.

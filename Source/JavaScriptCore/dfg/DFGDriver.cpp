@@ -28,7 +28,6 @@
 
 #include "CallVariant.h"
 #include "CodeBlock.h"
-#include "CodeBlockCreationStats.h"
 #include "DFGCapabilities.h"
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
@@ -60,12 +59,11 @@ unsigned getNumCompilations()
 // (CodeBlock::prepareLazyStateForConcurrentCompilation) of every block the ByteCodeParser may inline into this plan --
 // the callees the profiled blocks name so far, transitively, within the inliner's depth and size limits (this mirrors
 // InliningPlan::surveyCallSites plus the accessor and recorded-status callees the parser also reaches). A callee that
-// gets linked after this ran is just not inlined by this compilation (counted under reportCodeBlockCreationCosts).
+// gets linked after this ran is just not inlined by this compilation.
 static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, CodeBlock* profiledDFGCodeBlock, JITCompilationMode mode)
 {
     if (!Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables())
         return; // every block is born prepared
-    CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::JITPrepareInlineCandidates);
     DeferGCForAWhile deferGC(vm); // raw CodeBlock* / callee cells are held across the ensure*() allocations below
     JITType jitType = isFTL(mode) ? JITType::FTLJIT : JITType::DFGJIT;
 

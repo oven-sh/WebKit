@@ -41,9 +41,6 @@ public:
     // Only an explicit embedder promise makes a payload borrowable; nothing is inferred from how it is stored.
     bool isPersistent() const { return m_isPersistent; }
     void setIsPersistent() { m_isPersistent = true; } // embedder promises the bytes outlive every VM use (e.g. a section of the running executable)
-    // Embedder vouches the bytes are exactly what the encoder wrote (e.g. they are part of the running executable), so per-code-block checksums and child-record walks may be skipped.
-    bool isIntegrityPreVerified() const { return m_isIntegrityPreVerified; }
-    void setIsIntegrityPreVerified() { m_isIntegrityPreVerified = true; }
     // The bytes stay valid for as long as this object does. Only a bare span handed in without a destructor is a borrow of unknown duration.
     bool isOwnedOrPersistent() const { return m_isPersistent || !!m_destructor || !std::holds_alternative<std::span<uint8_t>>(m_data); }
 
@@ -59,7 +56,6 @@ public:
 
     DataType m_data;
     bool m_isPersistent { false };
-    bool m_isIntegrityPreVerified { false };
     Destructor m_destructor { nullptr };
 };
 

@@ -36,7 +36,6 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
-#include <array>
 #include <optional>
 
 namespace JSC {
@@ -62,9 +61,6 @@ struct CachedFunctionExecutableMetadata {
     bool m_hasCapturedVariables;
 };
 
-// Per-record CRC-32C checksums. A persistent payload (a section of the executable) does without: corruption there means
-// the program is already broken and code signing covers it. Separate on-disk cache files keep them.
-enum class BytecodeCacheChecksums : bool { No, Yes };
 // Whether executable records keep the fixed fields CachedBytecode::addFunctionUpdate patches when a lazily compiled
 // function joins the cache later. A payload generated all at once (bun --compile) needs none of that.
 enum class BytecodeCacheUpdatable : bool { No, Yes };
@@ -74,15 +70,7 @@ struct CachedFunctionExecutableOffsets {
     static ptrdiff_t NODELETE codeBlockForCallOffset();
     static ptrdiff_t NODELETE codeBlockForConstructOffset();
     static ptrdiff_t NODELETE metadataOffset();
-    // For re-sealing a record after it is patched in place: the checksum covers [0, extent).
-    static ptrdiff_t NODELETE checksumOffset();
-    static ptrdiff_t NODELETE extentOffset(); // uint32_t: bytes covered by the record's checksum
-    static size_t NODELETE fixedSize();
-    static bool NODELETE isUpdatable(std::span<const uint8_t> record);
 };
-
-// CRC-32C of `record` with the 4 bytes at `checksumOffset` read as zero (how every checksummed record is sealed).
-JS_EXPORT_PRIVATE uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset);
 
 struct CachedWriteBarrierOffsets {
     static ptrdiff_t NODELETE ptrOffset();
@@ -128,9 +116,6 @@ public:
             return lookups;
         return static_cast<unsigned>(static_cast<uint64_t>(lookups) * (m_atomsPromoted + m_atomsCreated) / m_atomForCalls);
     }
-    // Options::reportCodeBlockCreationCosts(): fold atomFor's outcomes since the last call into their count-only buckets
-    // and log the thread's atom table capacity if it changed (a drop means a removal shrank it). Mutator only.
-    void reportStats(VM&) const;
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
@@ -188,12 +173,10 @@ private:
     uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
-    // atomFor's outcomes so far (mutator only): expectedAtomTableInserts scales by them, reportStats folds them into buckets.
+    // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
     uint32_t m_atomForCalls { 0 };
     uint32_t m_atomsPromoted { 0 };
     uint32_t m_atomsCreated { 0 };
-    mutable std::array<uint32_t, 3> m_reportedOutcomes { }; // reportStats: hits / promoted / created already added to the buckets
-    mutable unsigned m_reportedAtomTableCapacity { 0 };
     Lock m_cellsLock;
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
@@ -249,13 +232,8 @@ public:
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
-    bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
     bool payloadContains(const void* start, size_t size) const;
     std::span<const uint8_t> payloadSpan() const;
-    bool verifiesChecksums() const;
-    // The embedder pre-verified the payload (Options::useTrustedEmbeddedBytecodeIntegrity): code blocks skip their checksum
-    // and the up-front walk over their child records; the O(1) bounds checks stay.
-    bool trustsPayloadIntegrity() const { return m_trustsPayloadIntegrity; }
     // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
@@ -304,19 +282,18 @@ private:
     Vector<std::function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
-    bool m_trustsPayloadIntegrity { false };
     bool m_canDeferIntoPayload { false };
 };
 
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>);
 
 // An embedder's JS builtin (a root UnlinkedFunctionExecutable from BuiltinExecutables::createExecutable), with its code
 // blocks generated recursively beforehand (see recursivelyGenerateUnlinkedCodeBlocksForFunction). `embedderStamp`
 // identifies the builtin source's contents; decode checks it and the source length instead of hashing the source.
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp);
 
 template<typename UnlinkedCodeBlockType>

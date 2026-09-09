@@ -27,8 +27,6 @@
 
 #include "UnlinkedCodeBlock.h"
 
-#include "CodeBlockCreationStats.h"
-
 #include "BaselineJITCode.h"
 #include "BytecodeLivenessAnalysis.h"
 #include "BytecodeStructs.h"
@@ -241,8 +239,6 @@ bool UnlinkedCodeBlock::typeProfilerExpressionInfoForBytecodeOffset(unsigned byt
 
 UnlinkedCodeBlock::~UnlinkedCodeBlock()
 {
-    if (CodeBlockCreationStats::enabled()) [[unlikely]]
-        CodeBlockCreationStats::noteUnlinkedCodeBlockDestroyed(this);
     if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
         if (auto* instructions = m_instructions.get()) {
             VM& vm = this->vm();

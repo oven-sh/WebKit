@@ -778,7 +778,6 @@ runtime/TerminationDeadline.cpp
 runtime/TopExceptionScope.cpp
 runtime/ClassInfo.cpp
 runtime/ClonedArguments.cpp
-runtime/CodeBlockCreationStats.cpp
 runtime/CodeCache.cpp
 runtime/CodeSpecializationKind.cpp
 runtime/CommonIdentifiers.cpp

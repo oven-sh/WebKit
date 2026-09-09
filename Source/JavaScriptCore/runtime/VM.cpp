@@ -29,8 +29,6 @@
 #include "config.h"
 #include "VM.h"
 
-#include "CodeBlockCreationStats.h"
-
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -323,7 +321,6 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 
     updateSoftReservedZoneSize(Options::softReservedZoneSize());
     setLastStackTop(Thread::currentSingleton());
-    CodeBlockCreationStats::initialize();
     stringSplitIndice.reserveInitialCapacity(256);
 
     JSRunLoopTimer::Manager::singleton().registerVM(*this);
@@ -629,8 +626,6 @@ void VM::queueMicrotask(QueuedTask&& task)
 
 VM::~VM()
 {
-    if (CodeBlockCreationStats::enabled()) [[unlikely]]
-        CodeBlockCreationStats::dump("vm-shutdown");
     // Remove from VMManager before marking as no longer in service or cancelling traps,
     // so requestStopAllInternal() never iterates a VM with m_isShuttingDown set.
     VMManager::singleton().notifyVMDestruction(*this);
