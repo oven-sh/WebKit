@@ -4,6 +4,8 @@
 // Only the whitespace-only string has the value 0n. "+", "-", "0x" followed by nothing
 // but whitespace do not parse, so BigInt() throws a SyntaxError and the comparison
 // operators treat the string as if it were NaN.
+// The expectations match V8 (node 26): this file passes there with `noInline` stubbed
+// and `testLoopCount` defined.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -43,7 +45,9 @@ function compare(bigInt, string) {
 noInline(compare);
 
 const expectedForNoDigits = [false, false, true, true, false, false, false, false, false, false, false, false];
-for (let i = 0; i < testLoopCount; ++i) {
+// Every string at least once, and enough iterations for compare() to tier up.
+const iterations = Math.max(testLoopCount, noDigits.length);
+for (let i = 0; i < iterations; ++i) {
     const string = noDigits[i % noDigits.length];
     for (const bigInt of [0n, 1n, -1n, 2n ** 64n]) {
         const actual = compare(bigInt, string);

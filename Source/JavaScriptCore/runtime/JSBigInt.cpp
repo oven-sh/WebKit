@@ -6980,10 +6980,11 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
 {
     size_t p = startIndex;
 
-    // Removing trailing spaces
+    // Removing trailing spaces. Trimming the span itself rather than tracking an end index keeps
+    // every read below provably within it, and nothing past the trailing spaces is read again.
+    while (data.size() > p && isStrWhiteSpace(data.back()))
+        data = data.first(data.size() - 1);
     size_t length = data.size();
-    while (length > p && isStrWhiteSpace(data[length - 1]))
-        --length;
 
     // After a radix prefix or a sign there must be at least one digit. Trailing whitespace
     // does not count as one, so this check comes after it is removed ("0x ", "- ").
