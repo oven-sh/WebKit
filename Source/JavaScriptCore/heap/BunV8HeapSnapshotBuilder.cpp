@@ -103,7 +103,6 @@ String BunV8HeapSnapshotBuilder::json()
 {
     VM& vm = m_profiler.vm();
     PreventCollectionScope preventCollectionScope(vm.heap);
-    HeapSnapshotBuilder::materializeLazyStateForHeapAnalysis(vm);
     {
         ASSERT(!m_profiler.activeHeapAnalyzer());
         m_profiler.setActiveHeapAnalyzer(this);
@@ -123,7 +122,6 @@ Vector<uint8_t> BunV8HeapSnapshotBuilder::jsonBytes()
 {
     VM& vm = m_profiler.vm();
     PreventCollectionScope preventCollectionScope(vm.heap);
-    HeapSnapshotBuilder::materializeLazyStateForHeapAnalysis(vm);
     {
         ASSERT(!m_profiler.activeHeapAnalyzer());
         m_profiler.setActiveHeapAnalyzer(this);

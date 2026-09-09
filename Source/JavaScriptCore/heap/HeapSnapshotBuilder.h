@@ -112,8 +112,6 @@ public:
     ~HeapSnapshotBuilder() final;
 
     static void NODELETE resetNextAvailableObjectIdentifier();
-    // Before an analyzing collection: materializes lazy state analyzeVariableNameEdge needs and marking cannot fault in.
-    static void materializeLazyStateForHeapAnalysis(VM&);
 
     // Performs a garbage collection that builds a snapshot of all live cells.
     void buildSnapshot();

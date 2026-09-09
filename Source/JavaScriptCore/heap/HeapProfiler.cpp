@@ -26,7 +26,10 @@
 #include "config.h"
 #include "HeapProfiler.h"
 
+#include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
+#include "SubspaceInlines.h"
+#include "SymbolTable.h"
 #include "VM.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -58,9 +61,22 @@ void HeapProfiler::clearSnapshots()
     m_snapshots.clear();
 }
 
+// analyzeVariableNameEdge needs SymbolTable entries, which cannot be faulted in from inside marking.
+static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)
+{
+    HeapIterationScope iterationScope(vm.heap);
+    vm.heap.symbolTableSpace.forEachLiveCell([](HeapCell* cell, HeapCell::Kind) {
+        SUPPRESS_MEMORY_UNSAFE_CAST auto* symbolTable = static_cast<SymbolTable*>(cell);
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        symbolTable->materializeCachedEntriesIfNeeded(locker);
+    });
+}
+
 void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)
 {
     ASSERT(!!m_activeAnalyzer != !!analyzer);
+    if (analyzer)
+        materializeLazySymbolTablesForHeapAnalysis(m_vm);
     m_activeAnalyzer = analyzer;
     m_vm.setActiveHeapAnalyzer(analyzer);
 }
