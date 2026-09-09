@@ -121,8 +121,8 @@ public:
     SourceCode classSource() const
     {
         materializeDeferredMembersIfNeeded();
-        if (m_rareData)
-            return m_rareData->m_classSource;
+        if (m_members.live().rareData)
+            return m_members.live().rareData->m_classSource;
         return SourceCode();
     }
     void setClassSource(const SourceCode& source)
@@ -223,7 +223,7 @@ public:
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
     {
         materializeDeferredMembersIfNeeded();
-        return m_parentScopeTDZVariables;
+        return m_members.live().parentScopeTDZVariables;
     }
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
     // Taken by the first code block generated for this executable (call or construct); a second specialization of
@@ -231,28 +231,28 @@ public:
     RefPtr<DeclaredNamesLink> takeParentDeclaredNames()
     {
         materializeDeferredMembersIfNeeded();
-        if (!m_rareData || !m_rareData->m_parentDeclaredNames)
+        if (!m_members.live().rareData || !m_members.live().rareData->m_parentDeclaredNames)
             return nullptr;
-        RefPtr<DeclaredNamesLink> result = std::exchange(m_rareData->m_parentDeclaredNames, nullptr);
-        if (m_rareData->isEmpty())
-            m_rareData = nullptr;
+        RefPtr<DeclaredNamesLink> result = std::exchange(m_members.live().rareData->m_parentDeclaredNames, nullptr);
+        if (m_members.live().rareData->isEmpty())
+            m_members.live().rareData = nullptr;
         return result;
     }
 
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames() const
     {
         materializeDeferredMembersIfNeeded();
-        if (!m_rareData)
+        if (!m_members.live().rareData)
             return nullptr;
-        return &m_rareData->m_generatorOrAsyncWrapperFunctionParameterNames;
+        return &m_members.live().rareData->m_generatorOrAsyncWrapperFunctionParameterNames;
     }
 
     const PrivateNameEnvironment* parentPrivateNameEnvironment() const
     {
         materializeDeferredMembersIfNeeded();
-        if (!m_rareData)
+        if (!m_members.live().rareData)
             return nullptr;
-        return &m_rareData->m_parentPrivateNameEnvironment;
+        return &m_members.live().rareData->m_parentPrivateNameEnvironment;
     }
     
     bool isArrowFunction() const { return isArrowFunctionParseMode(parseMode()); }
@@ -268,15 +268,15 @@ public:
     String sourceURLDirective() const
     {
         materializeDeferredMembersIfNeeded();
-        if (m_rareData)
-            return m_rareData->m_sourceURLDirective;
+        if (m_members.live().rareData)
+            return m_members.live().rareData->m_sourceURLDirective;
         return String();
     }
     String sourceMappingURLDirective() const
     {
         materializeDeferredMembersIfNeeded();
-        if (m_rareData)
-            return m_rareData->m_sourceMappingURLDirective;
+        if (m_members.live().rareData)
+            return m_members.live().rareData->m_sourceMappingURLDirective;
         return String();
     }
     void setSourceURLDirective(const String& sourceURL)
@@ -332,8 +332,8 @@ public:
     const FixedVector<ClassElementDefinition>* classElementDefinitions() const
     {
         materializeDeferredMembersIfNeeded();
-        if (m_rareData)
-            return &m_rareData->m_classElementDefinitions;
+        if (m_members.live().rareData)
+            return &m_members.live().rareData->m_classElementDefinitions;
         return nullptr;
     }
 
@@ -416,30 +416,80 @@ private:
     };
 
     Identifier m_ecmaName;
-    union {
-        RefPtr<TDZEnvironmentLink> m_parentScopeTDZVariables;
-        RefPtr<Decoder> m_deferredMembersDecoder; // m_membersAreDeferred
+
+    // parentScopeTDZVariables and rareData, or, while m_membersAreDeferred, the cache record they still live in.
+    class DeferredMembers {
+    public:
+        struct Live {
+            RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
+            std::unique_ptr<RareData> rareData;
+        };
+        struct Pending {
+            RefPtr<Decoder> decoder;
+            const CachedFunctionExecutable* record; // in decoder's payload
+        };
+        explicit DeferredMembers(RefPtr<TDZEnvironmentLink>&& parentScopeTDZVariables) { new (&m_live) Live { WTF::move(parentScopeTDZVariables), nullptr }; }
+        ~DeferredMembers();
+        bool isPending() const;
+        Live& live() { ASSERT(!isPending()); return m_live; }
+        const Live& live() const { ASSERT(!isPending()); return m_live; }
+        const Pending& pending() const { ASSERT(isPending()); return m_pending; }
+        void defer(Decoder&, const CachedFunctionExecutable&); // empty Live -> Pending
+        void settle(Live&&); // Pending -> Live, then clears the owner's flag
+    private:
+        UnlinkedFunctionExecutable& owner() const;
+        union {
+            Live m_live;
+            Pending m_pending;
+        };
     };
+    DeferredMembers m_members;
 
     RareData& ensureRareData()
     {
         materializeDeferredMembersIfNeeded();
-        if (m_rareData) [[likely]]
-            return *m_rareData;
+        if (m_members.live().rareData) [[likely]]
+            return *m_members.live().rareData;
         return ensureRareDataSlow();
     }
     RareData& ensureRareDataSlow();
-
-    union {
-        std::unique_ptr<RareData> m_rareData;
-        const CachedFunctionExecutable* m_deferredMembersRecord; // m_membersAreDeferred; lives in m_deferredMembersDecoder's payload
-    };
 
 public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_EXPORT_INFO;
 };
+
+inline UnlinkedFunctionExecutable& UnlinkedFunctionExecutable::DeferredMembers::owner() const
+{
+    return *std::bit_cast<UnlinkedFunctionExecutable*>(std::bit_cast<uintptr_t>(this) - OBJECT_OFFSETOF(UnlinkedFunctionExecutable, m_members));
+}
+
+inline bool UnlinkedFunctionExecutable::DeferredMembers::isPending() const { return owner().m_membersAreDeferred; }
+
+inline UnlinkedFunctionExecutable::DeferredMembers::~DeferredMembers()
+{
+    if (isPending())
+        m_pending.~Pending();
+    else
+        m_live.~Live();
+}
+
+inline void UnlinkedFunctionExecutable::DeferredMembers::defer(Decoder& decoder, const CachedFunctionExecutable& record)
+{
+    ASSERT(!isPending() && !m_live.parentScopeTDZVariables && !m_live.rareData);
+    m_live.~Live();
+    new (&m_pending) Pending { &decoder, &record };
+    owner().m_membersAreDeferred = true;
+}
+
+inline void UnlinkedFunctionExecutable::DeferredMembers::settle(Live&& live)
+{
+    ASSERT(isPending());
+    m_pending.~Pending();
+    new (&m_live) Live(WTF::move(live));
+    owner().m_membersAreDeferred = false;
+}
 
 #if !ASSERT_ENABLED
 static_assert(sizeof(UnlinkedFunctionExecutable) <= 96, "UnlinkedFunctionExecutable needs to be small");

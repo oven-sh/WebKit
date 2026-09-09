@@ -4347,7 +4347,7 @@ Vector<uint8_t, 64> CachedFunctionExecutable::packedTail(const UnlinkedFunctionE
 
 uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& executable, const Encoder* encoder)
 {
-    executable.materializeDeferredMembersIfNeeded(); // m_parentScopeTDZVariables / m_rareData are read directly below and in encode()
+    executable.materializeDeferredMembersIfNeeded(); // the live members are read directly below and in encode()
     uint32_t header = static_cast<uint32_t>(executable.m_sourceParseMode) << ParseModeShift;
     if (executable.m_hasCapturedVariables)
         header |= HasCapturedVariables;
@@ -4357,9 +4357,9 @@ uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& e
         header |= IsClass;
     if (!executable.ecmaName().isNull())
         header |= HasName;
-    if (executable.m_parentScopeTDZVariables)
+    if (executable.m_members.live().parentScopeTDZVariables)
         header |= HasTDZ;
-    if (executable.m_rareData)
+    if (executable.m_members.live().rareData)
         header |= HasRareData;
     if (executable.m_unlinkedCodeBlockForCall)
         header |= HasCallSlot;
@@ -4461,8 +4461,8 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     ASSERT(m_nameIsDeferred && m_membersAreDeferred);
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread() && Thread::currentSingleton().atomStringTable() == vm().atomStringTable());
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
-    auto v = m_deferredMembersRecord->slotsView();
-    self->m_ecmaName = v.name->decode(*m_deferredMembersDecoder);
+    auto v = m_members.pending().record->slotsView();
+    self->m_ecmaName = v.name->decode(*m_members.pending().decoder);
     WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
@@ -4478,7 +4478,7 @@ String UnlinkedFunctionExecutable::ecmaNameWithoutGCSlow() const
     }
     // ErrorInstance::computeErrorInfo under Heap::runEndPhase (world stopped, the thread's atom string table cleared):
     // copy the name out of the record instead of materializing (atomizing) it.
-    return m_deferredMembersRecord->slotsView().name->decodePlainString(*m_deferredMembersDecoder);
+    return m_members.pending().record->slotsView().name->decodePlainString(*m_members.pending().decoder);
 }
 
 void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
@@ -4486,7 +4486,7 @@ void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
     ASSERT(m_scalarsAreDeferred && m_membersAreDeferred);
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread()); // the cold members share words with (mutator-only) flag bits
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
-    auto v = m_deferredMembersRecord->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
+    auto v = m_members.pending().record->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
     self->m_parametersStartOffset = v.scalars.parametersStartOffset;
     self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
     self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
@@ -4512,18 +4512,14 @@ void UnlinkedFunctionExecutable::materializeDeferredMembersSlow() const
             return;
     }
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
-    Ref<Decoder> decoder = *m_deferredMembersDecoder;
-    auto v = m_deferredMembersRecord->slotsView();
-    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
-    std::unique_ptr<RareData> rareData;
+    Ref<Decoder> decoder = *m_members.pending().decoder;
+    auto v = m_members.pending().record->slotsView();
+    DeferredMembers::Live live;
     if (v.tdz)
-        parentScopeTDZVariables = v.tdz->decode(decoder.get());
+        live.parentScopeTDZVariables = v.tdz->decode(decoder.get());
     if (v.rareData)
-        rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder.get()));
-    self->m_deferredMembersDecoder.~RefPtr();
-    new (&self->m_parentScopeTDZVariables) RefPtr<TDZEnvironmentLink>(WTF::move(parentScopeTDZVariables));
-    new (&self->m_rareData) std::unique_ptr<RareData>(WTF::move(rareData));
-    self->m_membersAreDeferred = false;
+        live.rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder.get()));
+    self->m_members.settle(WTF::move(live));
 }
 
 ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable)
@@ -4565,11 +4561,11 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
         metadata->m_hasCapturedVariables = executable.m_hasCapturedVariables;
     }
     if (rareData)
-        rareData->encode(encoder, executable.m_rareData.get());
+        rareData->encode(encoder, executable.m_members.live().rareData.get());
     if (name)
         name->encode(encoder, executable.ecmaName());
     if (tdz)
-        tdz->encode(encoder, executable.m_parentScopeTDZVariables);
+        tdz->encode(encoder, executable.m_members.live().parentScopeTDZVariables);
 
     if (metadata && (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct))
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this)); // CachedBytecode::addFunctionUpdate patches the Updatable layout's slots
@@ -4603,8 +4599,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_scalarsAreDeferred(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
-    , m_parentScopeTDZVariables()
-    , m_rareData()
+    , m_members(nullptr)
 {
     bool defer = Options::useThinChildExecutables() && decoder.canDeferIntoPayload();
     CachedFunctionExecutable::View v = cachedExecutable.view(nullptr, defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
@@ -4615,11 +4610,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_isClass = !!(v.header & CachedFunctionExecutable::IsClass);
     if (defer) {
         ASSERT(decoder.payloadContains(&cachedExecutable, cachedExecutable.view().tailEnd - std::bit_cast<const uint8_t*>(&cachedExecutable))); // including the cold tail read later
-        m_parentScopeTDZVariables.~RefPtr();
-        new (&m_deferredMembersDecoder) RefPtr<Decoder>(&decoder);
-        m_rareData.~unique_ptr();
-        new (&m_deferredMembersRecord) const CachedFunctionExecutable*(&cachedExecutable);
-        m_membersAreDeferred = true;
+        m_members.defer(decoder, cachedExecutable);
         m_scalarsAreDeferred = true;
         m_nameIsDeferred = !!v.name;
         v.name = nullptr;
@@ -4629,10 +4620,10 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     if (v.name)
         m_ecmaName = v.name->decode(decoder);
     if (v.tdz)
-        m_parentScopeTDZVariables = v.tdz->decode(decoder);
+        m_members.live().parentScopeTDZVariables = v.tdz->decode(decoder);
     if (v.rareData) {
-        m_rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
-        ASSERT_WITH_MESSAGE(m_rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
+        m_members.live().rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
+        ASSERT_WITH_MESSAGE(m_members.live().rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
     }
     m_firstLineOffset = scalars.firstLineOffset;
     m_lineCount = scalars.lineCount;
