@@ -239,7 +239,8 @@ function testDoubleArraySource() {
     }
 }
 
-for (let i = 0; i < 200; ++i) {
+// Each pass makes several hundred calls into the C++ builtins, so scale the iteration count down.
+for (let i = 0; i < Math.max(1, testLoopCount / 50); ++i) {
     testUint8Clamped();
     testIntegral();
     testFloat32();
