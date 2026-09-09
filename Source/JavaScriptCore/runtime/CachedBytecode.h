@@ -76,6 +76,7 @@ public:
     size_t rootOffset() const { return m_rootOffset; }
     void setRootOffset(size_t offset) { m_rootOffset = offset; }
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
+    bool payloadIsOwnedOrPersistent() const { return m_payload.isOwnedOrPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
     size_t sizeForUpdate() const { return m_size; }
 

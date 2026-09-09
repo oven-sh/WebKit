@@ -28,6 +28,8 @@
 
 #include "Yarr.h"
 #include "YarrPattern.h"
+#include <array>
+#include <atomic>
 #include <wtf/text/WTFString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -106,11 +108,14 @@ std::optional<BuiltInCharacterClassID> unicodeMatchProperty(WTF::String unicodeP
     return std::optional<BuiltInCharacterClassID>(static_cast<BuiltInCharacterClassID>(static_cast<int>(BuiltInCharacterClassID::BaseUnicodePropertyID) + propertyIndex));
 }
 
-std::unique_ptr<CharacterClass> createUnicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
+static std::array<std::atomic<CharacterClass*>, std::size(createCharacterClassFunctions)> sharedUnicodeCharacterClasses;
+
+CharacterClass* sharedUnicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
 {
+    ASSERT(unicodeClassID >= BuiltInCharacterClassID::BaseUnicodePropertyID);
     unsigned unicodePropertyIndex = static_cast<unsigned>(unicodeClassID) - static_cast<unsigned>(BuiltInCharacterClassID::BaseUnicodePropertyID);
 
-    return createCharacterClassFunctions[unicodePropertyIndex]();
+    return ensureSharedCharacterClass(sharedUnicodeCharacterClasses[unicodePropertyIndex], createCharacterClassFunctions[unicodePropertyIndex]);
 }
 
 bool characterClassMayContainStrings(BuiltInCharacterClassID unicodeClassID)

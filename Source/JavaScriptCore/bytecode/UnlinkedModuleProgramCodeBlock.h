@@ -82,6 +82,11 @@ public:
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = offset;
     }
 
+    // functionDecl(i) for i < this is heap allocated: instantiated into the module environment by
+    // moduleDeclarationInstantiation, never by an op_new_func (BytecodeGenerator adds those first). The rest are stack allocated.
+    unsigned numberOfHeapAllocatedFunctionDecls() const { return m_numberOfHeapAllocatedFunctionDecls; }
+    void setNumberOfHeapAllocatedFunctionDecls(unsigned count) { m_numberOfHeapAllocatedFunctionDecls = count; }
+
     bool isAsync() const { return codeFeatures() & AwaitFeature; }
 
     void setVariableDeclarations(const VariableEnvironment& environment) { m_varDeclarations = environment; }
@@ -99,6 +104,7 @@ private:
 
     VariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset { 0 };
+    unsigned m_numberOfHeapAllocatedFunctionDecls { 0 };
 
 public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);

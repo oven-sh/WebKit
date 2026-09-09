@@ -28,6 +28,7 @@
 #include "RegExpInlines.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
+#include "YarrSyntaxChecker.h"
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
@@ -159,9 +160,28 @@ RegExp::RegExp(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags
     ASSERT(m_flags != Yarr::Flags::DeletedValue);
 }
 
+// Shorter patterns are built eagerly: that is cheap and is what recognizes the m_specificPattern shapes.
+static constexpr unsigned maxEagerlyConstructedPatternLength = 64;
+// Deeper patterns are built eagerly so that YarrPatternConstructor's recursion limit still reports at construction.
+static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
+
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+    if (Options::useLazyRegExpPatternConstruction() && m_patternString.length() > maxEagerlyConstructedPatternLength) {
+        Yarr::SyntaxSummary summary = Yarr::checkSyntax(m_patternString, m_flags);
+        m_constructionErrorCode = summary.error;
+        if (!isValid()) {
+            m_state = ParseError;
+            return;
+        }
+        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth) {
+            m_numSubpatterns = summary.numSubpatterns;
+            m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
+            return;
+        }
+    }
+
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (!isValid()) {
         m_state = ParseError;
@@ -294,7 +314,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         m_state = ParseError;
         return;
     }
-    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // finishCreationFromCache took this on trust
+    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
 
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;
@@ -315,7 +335,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         m_state = ParseError;
         return;
     }
-    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // finishCreationFromCache took this on trust
+    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
 
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;
@@ -403,7 +423,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_state = ParseError;
         return;
     }
-    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // finishCreationFromCache took this on trust
+    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
 
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;

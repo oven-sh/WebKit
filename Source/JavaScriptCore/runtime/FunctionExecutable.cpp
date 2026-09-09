@@ -35,6 +35,7 @@
 #include "IsoCellSetInlines.h"
 #include "JSArray.h"
 #include "JSCJSValueInlines.h"
+#include <wtf/Threading.h>
 
 namespace JSC {
 
@@ -52,6 +53,19 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 void FunctionExecutable::destroy(JSCell* cell)
 {
     static_cast<FunctionExecutable*>(cell)->FunctionExecutable::~FunctionExecutable();
+}
+
+CString FunctionExecutable::inferredNameForTools()
+{
+    // Only the thread running the VM may pull the name out of the bytecode cache (it atomizes); compiler, GC, sampling
+    // profiler and crash-reporter threads print what is there.
+    if (isCompilationThread() || Thread::mayBeGCThread() || !vm().currentThreadIsHoldingAPILock()) {
+        if (const Identifier* name = tryGetEcmaNameConcurrently())
+            return name->utf8();
+        return "<name not materialized>"_span;
+    }
+    // The mutator itself may be inside the collector's end phase (a CodeBlock dumped while it is jettisoned), where it must not atomize either.
+    return ecmaNameWithoutGC().utf8();
 }
 
 FunctionCodeBlock* FunctionExecutable::baselineCodeBlockFor(CodeSpecializationKind kind)
