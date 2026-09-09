@@ -547,25 +547,28 @@ private:
         return { };
     }
 
-    [[nodiscard]] PartialResult checkUnreachableBranchTarget(const BlockSignature& signature, bool isLoop)
+    // Checks the label's types against the top of the stack without popping. A polymorphic frame supplies
+    // whatever is missing below the values that are there, but the values that are there still have to match.
+    template<typename TypeAt>
+    [[nodiscard]] PartialResult checkUnreachableBranchTargetTypes(unsigned arity, const TypeAt& expectedType)
     {
-        const unsigned arity = isLoop ? signature.argumentCount() : signature.returnCount();
-        if (!arity)
-            return { };
         const auto& frame = currentUnreachableFrame();
         const unsigned available = m_unreachableTypeStack.size() - frame.height;
-        if (available < arity) {
-            WASM_VALIDATOR_FAIL_IF(!frame.polymorphic, "branch to block on expression stack of size "_s, available, ", but block expects "_s, arity, " values"_s);
-            return { };
-        }
-        const unsigned offset = m_unreachableTypeStack.size() - arity;
-        for (unsigned i = 0; i < arity; ++i) {
-            Type expected = isLoop ? signature.argumentType(i) : signature.returnType(i);
-            Type actual = m_unreachableTypeStack[offset + i];
+        WASM_VALIDATOR_FAIL_IF(available < arity && !frame.polymorphic, "branch to block on expression stack of size "_s, available, ", but block expects "_s, arity, " values"_s);
+        const unsigned checked = std::min(available, arity);
+        const size_t base = m_unreachableTypeStack.size() - checked;
+        for (unsigned i = 0; i < checked; ++i) {
+            Type expected = expectedType(arity - checked + i);
+            Type actual = m_unreachableTypeStack[base + i];
             if (actual != Types::Void)
-                WASM_VALIDATOR_FAIL_IF(!isSubtype(actual, expected), "branch's stack type is not a subtype of block's type branch target type. Stack value has type "_s, actual, " but branch target expects a value of "_s, expected, " at index "_s, i);
+                WASM_VALIDATOR_FAIL_IF(!isSubtype(actual, expected), "branch's stack type is not a subtype of block's type branch target type. Stack value has type "_s, actual, " but branch target expects a value of "_s, expected, " at index "_s, arity - checked + i);
         }
         return { };
+    }
+
+    [[nodiscard]] PartialResult checkUnreachableBranchTarget(const BlockSignature& signature, bool isLoop)
+    {
+        return checkUnreachableBranchTargetTypes(isLoop ? signature.argumentCount() : signature.returnCount(), [&](unsigned i) { return isLoop ? signature.argumentType(i) : signature.returnType(i); });
     }
 
     bool isNestedUnreachableLabel(uint32_t target) const
@@ -618,22 +621,7 @@ private:
 
     [[nodiscard]] PartialResult checkUnreachableBranchTarget(const ControlType& target)
     {
-        const auto arity = target.branchTargetArity();
-        if (!arity)
-            return { };
-        const auto& frame = currentUnreachableFrame();
-        const unsigned available = m_unreachableTypeStack.size() - frame.height;
-        if (available < arity) {
-            WASM_VALIDATOR_FAIL_IF(!frame.polymorphic, "branch to block on expression stack of size "_s, available, ", but block expects "_s, arity, " values"_s);
-            return { };
-        }
-        const unsigned offset = m_unreachableTypeStack.size() - arity;
-        for (unsigned i = 0; i < arity; ++i) {
-            Type actual = m_unreachableTypeStack[offset + i];
-            if (actual != Types::Void)
-                WASM_VALIDATOR_FAIL_IF(!isSubtype(actual, target.branchTargetType(i)), "branch's stack type is not a subtype of block's type branch target type. Stack value has type "_s, actual, " but branch target expects a value of "_s, target.branchTargetType(i), " at index "_s, i);
-        }
-        return { };
+        return checkUnreachableBranchTargetTypes(target.branchTargetArity(), [&](unsigned i) { return target.branchTargetType(i); });
     }
 
     [[nodiscard]] PartialResult enterUnreachableControl(UnreachableControlFrame::Kind kind, BlockSignature&& signature, bool popIfCondition = false)
@@ -1251,8 +1239,21 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         return { };
     };
 
+    // Unreachable code only tracks operand types, see parseUnreachableExpression().
+    auto validateUnreachable = [&](std::initializer_list<Type> operandsFromTop, std::optional<Type> result) -> PartialResult {
+        ASSERT(!isReachable);
+        for (Type operand : operandsFromTop) {
+            Type actual;
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(operand, actual));
+        }
+        if (result)
+            pushUnreachableOperand(*result);
+        return { };
+    };
+
     // only used in some specializations
     UNUSED_VARIABLE(pushUnreachable);
+    UNUSED_VARIABLE(validateUnreachable);
     UNUSED_PARAM(optionalRelation);
 
     auto parseMemOp = [&] (uint64_t& offset, TypedExpression& pointer, uint8_t& memoryIndex) -> PartialResult {
@@ -1302,8 +1303,10 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
 
         WASM_VALIDATOR_FAIL_IF(alignment > maxAlignment, "alignment: "_s, alignment, " can't be larger than max alignment for simd operation: "_s, maxAlignment);
 
-        if constexpr (!isReachable)
-            return { };
+        if constexpr (!isReachable) {
+            Type unused;
+            return popUnreachableOperand(m_info.memory(memoryIndex).addressType().asWasmType(), unused);
+        }
 
         WASM_TRY_POP_EXPRESSION_STACK_INTO(pointer, "simd memory op pointer"_s);
         WASM_VALIDATOR_FAIL_IF(pointer.type().kind() != m_info.memory(memoryIndex).addressType().asWasmTypeKind(), "pointer type mismatch"_s);
@@ -1322,7 +1325,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_PARSER_FAIL_IF(!parseImmByteArray16(constant), "can't parse 128-bit vector constant"_s);
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ }, Types::V128);
 
         if (Context::tierSupportsSIMD()) {
             m_expressionStack.constructAndAppend(Types::V128, m_context.addSIMDConstant(constant));
@@ -1334,7 +1337,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         ASSERT(signMode == SIMDSignMode::None);
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ simdScalarType(lane) }, Types::V128);
 
         TypedExpression scalar;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(scalar, "select condition"_s);
@@ -1370,7 +1373,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::Shr:
     case SIMDLaneOperation::Shl: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::I32, Types::V128 }, Types::V128);
 
         TypedExpression vector;
         TypedExpression shift;
@@ -1391,7 +1394,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::ExtmulLow:
     case SIMDLaneOperation::ExtmulHigh: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128 }, Types::V128);
 
         TypedExpression lhs;
         TypedExpression rhs;
@@ -1419,7 +1422,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer, memoryIndex));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ }, Types::V128);
 
         if (Context::tierSupportsSIMD()) {
             ExpressionType result;
@@ -1435,9 +1438,11 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::Store: {
         TypedExpression val;
 
-        if (isReachable) {
+        if constexpr (isReachable) {
             WASM_TRY_POP_EXPRESSION_STACK_INTO(val, "val"_s);
             WASM_VALIDATOR_FAIL_IF(!val.type().isV128(), "store vector must be v128"_s);
+        } else {
+            WASM_FAIL_IF_HELPER_FAILS(validateUnreachable({ Types::V128 }, std::nullopt));
         }
 
         uint64_t offset;
@@ -1475,9 +1480,11 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
             }
         })();
 
-        if (isReachable) {
+        if constexpr (isReachable) {
             WASM_TRY_POP_EXPRESSION_STACK_INTO(vector, "vector"_s);
             WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "load_lane input must be a vector"_s);
+        } else {
+            WASM_FAIL_IF_HELPER_FAILS(validateUnreachable({ Types::V128 }, std::nullopt));
         }
 
         uint8_t memoryIndex;
@@ -1485,7 +1492,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(laneCount, laneIndex));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ }, Types::V128);
 
         if (Context::tierSupportsSIMD()) {
             ExpressionType result;
@@ -1518,9 +1525,11 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
             }
         })();
 
-        if (isReachable) {
+        if constexpr (isReachable) {
             WASM_TRY_POP_EXPRESSION_STACK_INTO(vector, "vector"_s);
             WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "store_lane input must be a vector"_s);
+        } else {
+            WASM_FAIL_IF_HELPER_FAILS(validateUnreachable({ Types::V128 }, std::nullopt));
         }
 
         uint8_t memoryIndex;
@@ -1547,7 +1556,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer, memoryIndex));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ }, Types::V128);
 
         if (Context::tierSupportsSIMD()) {
             ExpressionType result;
@@ -1566,7 +1575,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer, memoryIndex));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ }, Types::V128);
 
         if (Context::tierSupportsSIMD()) {
             ExpressionType result;
@@ -1586,7 +1595,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
             WASM_PARSER_FAIL_IF(imm.u8x16[i] >= 2 * elementCount(lane));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128 }, Types::V128);
 
         WASM_TRY_POP_EXPRESSION_STACK_INTO(b, "vector argument"_s);
         WASM_VALIDATOR_FAIL_IF(!b.type().isV128(), "shuffle input must be a vector"_s);
@@ -1607,7 +1616,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(elementCount(lane), laneIdx));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128 }, simdScalarType(lane));
 
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument"_s);
         WASM_VALIDATOR_FAIL_IF(v.type() != Types::V128, "type mismatch for argument 0"_s);
@@ -1627,7 +1636,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(elementCount(lane), laneIdx));
 
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ simdScalarType(lane), Types::V128 }, Types::V128);
 
         WASM_TRY_POP_EXPRESSION_STACK_INTO(s, "scalar argument"_s);
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument"_s);
@@ -1646,7 +1655,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::AnyTrue:
     case SIMDLaneOperation::AllTrue: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128 }, Types::I32);
 
         TypedExpression v;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument"_s);
@@ -1679,7 +1688,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::Nearest:
     case SIMDLaneOperation::Sqrt: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128 }, Types::V128);
 
         TypedExpression v;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument"_s);
@@ -1696,7 +1705,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::BitwiseSelect:
     case SIMDLaneOperation::RelaxedLaneSelect: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128, Types::V128 }, Types::V128);
 
         TypedExpression v1;
         TypedExpression v2;
@@ -1721,7 +1730,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::LessThan:
     case SIMDLaneOperation::LessThanOrEqual: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128 }, Types::V128);
 
         TypedExpression rhs;
         TypedExpression lhs;
@@ -1741,7 +1750,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::Equal:
     case SIMDLaneOperation::NotEqual: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128 }, Types::V128);
 
         TypedExpression rhs;
         TypedExpression lhs;
@@ -1783,7 +1792,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::RelaxedQ15Mulr:
     case SIMDLaneOperation::RelaxedDotI8x16I7x16: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128 }, Types::V128);
 
         TypedExpression a;
         TypedExpression b;
@@ -1804,7 +1813,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::RelaxedNMAdd:
     case SIMDLaneOperation::RelaxedDotI8x16I7x16Add: {
         if constexpr (!isReachable)
-            return { };
+            return validateUnreachable({ Types::V128, Types::V128, Types::V128 }, Types::V128);
         TypedExpression a;
         TypedExpression b;
         TypedExpression c;
@@ -5033,7 +5042,6 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
     }
 
     case ExtGC: {
-        truncateUnreachableStack();
         WASM_PARSER_FAIL_IF(!parseVarUInt32(m_currentExtOp), "can't parse extended GC opcode"_s);
         m_context.willParseExtendedOpcode();
 
@@ -5043,112 +5051,186 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
             WasmOpcodeCounter::singleton().increment(op);
 #endif
 
+        Type actual;
         switch (op) {
         case ExtGCOpType::RefI31:
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            pushUnreachableOperand(Type { TypeKind::Ref, typeIndexFromTypeKind(TypeKind::I31ref) });
+            return { };
         case ExtGCOpType::I31GetS:
         case ExtGCOpType::I31GetU:
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Type { TypeKind::RefNull, typeIndexFromTypeKind(TypeKind::I31ref) }, actual));
+            pushUnreachableOperand(Types::I32);
             return { };
-        case ExtGCOpType::ArrayNew: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.new in unreachable context"_s);
-            return { };
-        }
+        case ExtGCOpType::ArrayNew:
         case ExtGCOpType::ArrayNewDefault: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.new_default in unreachable context"_s);
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition(op == ExtGCOpType::ArrayNew ? "array.new"_s : "array.new_default"_s, false, typeIndex, fieldType, arrayRefType));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            if (op == ExtGCOpType::ArrayNew)
+                WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(fieldType.type.unpacked(), actual));
+            else
+                WASM_VALIDATOR_FAIL_IF(!isDefaultableType(fieldType.type), "array.new_default index ", typeIndex, " does not reference an array definition with a defaultable type");
+            pushUnreachableOperand(arrayRefType);
             return { };
         }
         case ExtGCOpType::ArrayNewFixed: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.new_fixed in unreachable context"_s);
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get argument count for array.new_fixed in unreachable context"_s);
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition("array.new_fixed"_s, false, typeIndex, fieldType, arrayRefType));
+            uint32_t argumentCount;
+            WASM_PARSER_FAIL_IF(!parseVarUInt32(argumentCount), "can't get argument count for array.new_fixed in unreachable context"_s);
+            WASM_VALIDATOR_FAIL_IF(argumentCount > maxArrayNewFixedArgs, "array_new_fixed can take at most "_s, maxArrayNewFixedArgs, " operands. Got "_s, argumentCount);
+            for (uint32_t i = 0; i < argumentCount; ++i)
+                WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(fieldType.type.unpacked(), actual));
+            pushUnreachableOperand(arrayRefType);
             return { };
         }
-        case ExtGCOpType::ArrayNewData: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.new_data in unreachable context"_s);
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get data segment index for array.new_data in unreachable context"_s);
-            return { };
-        }
+        case ExtGCOpType::ArrayNewData:
         case ExtGCOpType::ArrayNewElem: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.new_elem in unreachable context"_s);
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get elements segment index for array.new_elem in unreachable context"_s);
+            auto opName = op == ExtGCOpType::ArrayNewData ? "array.new_data"_s : "array.new_elem"_s;
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition(opName, false, typeIndex, fieldType, arrayRefType));
+            uint32_t segmentIndex;
+            WASM_PARSER_FAIL_IF(!parseVarUInt32(segmentIndex), "can't get segment index for "_s, opName, " in unreachable context"_s);
+            if (op == ExtGCOpType::ArrayNewData) {
+                WASM_VALIDATOR_FAIL_IF(fieldType.type.template is<Type>() && isRefType(fieldType.type.template as<Type>()), "array.new_data expected numeric, packed, or vector type; found ", fieldType.type.template as<Type>());
+                WASM_VALIDATOR_FAIL_IF(segmentIndex >= m_info.dataSegmentsCount(), "array.new_data segment index ", segmentIndex, " is out of bounds");
+            } else {
+                WASM_VALIDATOR_FAIL_IF(segmentIndex >= m_info.elements.size(), "array.new_elem segment index ", segmentIndex, " is out of bounds");
+                WASM_VALIDATOR_FAIL_IF(fieldType.type.template is<PackedType>(), "type mismatch in array.new_elem: expected `funcref` or `externref`");
+                WASM_VALIDATOR_FAIL_IF(!isSubtype(m_info.elements[segmentIndex].elementType, fieldType.type.unpacked()), "type mismatch in array.new_elem: segment elements have type ", m_info.elements[segmentIndex].elementType, " but array.new_elem operation expects elements of type ", fieldType.type.unpacked());
+            }
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            pushUnreachableOperand(arrayRefType);
             return { };
         }
-        case ExtGCOpType::ArrayGet: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.get in unreachable context"_s);
-            return { };
-        }
-        case ExtGCOpType::ArrayGetS: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.get_s in unreachable context"_s);
-            return { };
-        }
+        case ExtGCOpType::ArrayGet:
+        case ExtGCOpType::ArrayGetS:
         case ExtGCOpType::ArrayGetU: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.get_u in unreachable context"_s);
+            auto opName = op == ExtGCOpType::ArrayGet ? "array.get"_s : op == ExtGCOpType::ArrayGetS ? "array.get_s"_s : "array.get_u"_s;
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition(opName, true, typeIndex, fieldType, arrayRefType));
+            if (op == ExtGCOpType::ArrayGet)
+                WASM_PARSER_FAIL_IF(fieldType.type.template is<PackedType>(), opName, " applied to packed array of "_s, fieldType.type.template as<PackedType>(), " -- use array.get_s or array.get_u"_s);
+            else
+                WASM_PARSER_FAIL_IF(!fieldType.type.template is<PackedType>(), opName, " applied to wrong type of array -- expected: i8 or i16, found "_s, fieldType.type.template as<Type>().kind());
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(arrayRefType, actual));
+            pushUnreachableOperand(fieldType.type.unpacked());
             return { };
         }
         case ExtGCOpType::ArraySet: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.set in unreachable context"_s);
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition("array.set"_s, true, typeIndex, fieldType, arrayRefType));
+            WASM_VALIDATOR_FAIL_IF(fieldType.mutability != Mutability::Mutable, "array.set index ", typeIndex, " does not reference a mutable array definition");
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(fieldType.type.unpacked(), actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(arrayRefType, actual));
             return { };
         }
         case ExtGCOpType::ArrayLen:
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(arrayrefType(), actual));
+            pushUnreachableOperand(Types::I32);
             return { };
         case ExtGCOpType::ArrayFill: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get type index immediate for array.fill in unreachable context"_s);
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition("array.fill"_s, true, typeIndex, fieldType, arrayRefType));
+            WASM_VALIDATOR_FAIL_IF(fieldType.mutability != Mutability::Mutable, "array.fill index ", typeIndex, " does not reference a mutable array definition");
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(fieldType.type.unpacked(), actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(arrayRefType, actual));
             return { };
         }
         case ExtGCOpType::ArrayCopy: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get first type index immediate for array.copy in unreachable context"_s);
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get second type index immediate for array.copy in unreachable context"_s);
+            TypeSignatureIndex dstTypeIndex;
+            FieldType dstFieldType;
+            Type dstArrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition("array.copy"_s, true, dstTypeIndex, dstFieldType, dstArrayRefType));
+            TypeSignatureIndex srcTypeIndex;
+            FieldType srcFieldType;
+            Type srcArrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition("array.copy"_s, true, srcTypeIndex, srcFieldType, srcArrayRefType));
+            WASM_VALIDATOR_FAIL_IF(dstFieldType.mutability != Mutability::Mutable, "array.copy index ", dstTypeIndex, " does not reference a mutable array definition");
+            WASM_VALIDATOR_FAIL_IF(!isSubtype(srcFieldType.type, dstFieldType.type), "array.copy src index ", srcTypeIndex, " does not reference a subtype of dst index ", dstTypeIndex);
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(srcArrayRefType, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(dstArrayRefType, actual));
             return { };
         }
-        case ExtGCOpType::ArrayInitElem: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get first type index immediate for array.init_elem in unreachable context"_s);
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get second type index immediate for array.init_elem in unreachable context"_s);
-            return { };
-        }
+        case ExtGCOpType::ArrayInitElem:
         case ExtGCOpType::ArrayInitData: {
-            uint32_t unused;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get first type index immediate for array.init_data in unreachable context"_s);
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(unused), "can't get second type index immediate for array.init_data in unreachable context"_s);
+            auto opName = op == ExtGCOpType::ArrayInitElem ? "array.init_elem"_s : "array.init_data"_s;
+            TypeSignatureIndex typeIndex;
+            FieldType fieldType;
+            Type arrayRefType;
+            WASM_FAIL_IF_HELPER_FAILS(parseArrayTypeDefinition(opName, true, typeIndex, fieldType, arrayRefType));
+            unsigned segmentIndex;
+            if (op == ExtGCOpType::ArrayInitElem) {
+                WASM_FAIL_IF_HELPER_FAILS(parseElementIndex(segmentIndex));
+                WASM_VALIDATOR_FAIL_IF(fieldType.mutability != Mutability::Mutable, "array.init_elem index ", typeIndex, " does not reference a mutable array definition");
+                WASM_VALIDATOR_FAIL_IF(!isSubtype(m_info.elements[segmentIndex].elementType, fieldType.type.unpacked()), "type mismatch in array.init_elem: segment elements have type ", m_info.elements[segmentIndex].elementType, " but array.init_elem operation expects elements of type ", fieldType.type.unpacked());
+            } else {
+                WASM_FAIL_IF_HELPER_FAILS(parseDataSegmentIndex(segmentIndex));
+                WASM_VALIDATOR_FAIL_IF(fieldType.mutability != Mutability::Mutable, "array.init_data index ", typeIndex, " does not reference a mutable array definition");
+                WASM_VALIDATOR_FAIL_IF(!fieldType.type.template is<PackedType>() && isRefType(fieldType.type.unpacked()), "array.init_data index ", typeIndex, " must refer to an array definition with numeric or vector type");
+            }
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Types::I32, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(arrayRefType, actual));
             return { };
         }
-        case ExtGCOpType::StructNew: {
-            TypeSignatureIndex unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndex(unused, "struct.new"_s));
-            return { };
-        }
+        case ExtGCOpType::StructNew:
         case ExtGCOpType::StructNewDefault: {
-            TypeSignatureIndex unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndex(unused, "struct.new_default"_s));
+            TypeSignatureIndex typeIndex;
+            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndex(typeIndex, op == ExtGCOpType::StructNew ? "struct.new"_s : "struct.new_default"_s));
+            const auto& structType = m_info.rtt(typeIndex);
+            if (op == ExtGCOpType::StructNew) {
+                for (StructFieldCount i = structType.fieldCount(); i--;)
+                    WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(structType.field(i).type.unpacked(), actual));
+            } else {
+                for (StructFieldCount i = 0; i < structType.fieldCount(); i++)
+                    WASM_PARSER_FAIL_IF(!isDefaultableType(structType.field(i).type), "struct.new_default "_s, typeIndex, " requires all fields to be defaultable, but field "_s, i, " has type "_s, structType.field(i).type);
+            }
+            pushUnreachableOperand(Type { TypeKind::Ref, structType.asTypeIndex() });
             return { };
         }
-        case ExtGCOpType::StructGet: {
-            StructTypeIndexAndFieldIndex unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndexAndFieldIndex(unused, "struct.get"_s));
-            return { };
-        }
-        case ExtGCOpType::StructGetS: {
-            StructTypeIndexAndFieldIndex unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndexAndFieldIndex(unused, "struct.get_s"_s));
-            return { };
-        }
-        case ExtGCOpType::StructGetU: {
-            StructTypeIndexAndFieldIndex unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndexAndFieldIndex(unused, "struct.get_u"_s));
-            return { };
-        }
+        case ExtGCOpType::StructGet:
+        case ExtGCOpType::StructGetS:
+        case ExtGCOpType::StructGetU:
         case ExtGCOpType::StructSet: {
-            StructTypeIndexAndFieldIndex unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndexAndFieldIndex(unused, "struct.set"_s));
+            auto opName = op == ExtGCOpType::StructGet ? "struct.get"_s : op == ExtGCOpType::StructGetS ? "struct.get_s"_s : op == ExtGCOpType::StructGetU ? "struct.get_u"_s : "struct.set"_s;
+            StructTypeIndexAndFieldIndex indices;
+            WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndexAndFieldIndex(indices, opName));
+            const auto& structType = m_info.rtt(indices.structTypeIndex);
+            const FieldType field = structType.field(indices.fieldIndex);
+            if (op == ExtGCOpType::StructSet) {
+                WASM_PARSER_FAIL_IF(field.mutability != Mutability::Mutable, "the field "_s, indices.fieldIndex, " can't be set because it is immutable"_s);
+                WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(field.type.unpacked(), actual));
+            } else if (op == ExtGCOpType::StructGet) {
+                WASM_PARSER_FAIL_IF(field.type.template is<PackedType>(), opName, " applied to packed array of "_s, field.type.template as<PackedType>(), " -- use struct.get_s or struct.get_u"_s);
+            } else {
+                WASM_PARSER_FAIL_IF(!field.type.template is<PackedType>(), opName, " applied to wrong type of struct -- expected: i8 or i16, found "_s, field.type.template as<Type>().kind());
+            }
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(Type { TypeKind::RefNull, structType.asTypeIndex() }, actual));
+            if (op != ExtGCOpType::StructSet)
+                pushUnreachableOperand(field.type.unpacked());
             return { };
         }
         case ExtGCOpType::RefTest:
@@ -5156,8 +5238,41 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
         case ExtGCOpType::RefCast:
         case ExtGCOpType::RefCastNull: {
             auto opName = op == ExtGCOpType::RefCast || op == ExtGCOpType::RefCastNull ? "ref.cast"_s : "ref.test"_s;
-            int32_t unused;
-            WASM_PARSER_FAIL_IF(!parseHeapType(m_info, unused), "can't get heap type for "_s, opName);
+            int32_t heapType;
+            WASM_PARSER_FAIL_IF(!parseHeapType(m_info, heapType), "can't get heap type for "_s, opName);
+            // The operand has to be in the target type's hierarchy, so it is checked against that hierarchy's top type.
+            TypeIndex targetTypeIndex;
+            Type topType;
+            if (isTypeIndexHeapType(heapType)) {
+                const auto& targetRTT = m_info.rtt(ModuleInformation::typeSignatureIndexFromHeapType(heapType));
+                targetTypeIndex = targetRTT.asTypeIndex();
+                topType = targetRTT.kind() == RTTKind::Function ? funcrefType() : anyrefType();
+            } else {
+                TypeKind targetKind = static_cast<TypeKind>(heapType);
+                targetTypeIndex = typeIndexFromTypeKind(targetKind);
+                switch (targetKind) {
+                case TypeKind::Funcref:
+                case TypeKind::Nofuncref:
+                    topType = funcrefType();
+                    break;
+                case TypeKind::Externref:
+                case TypeKind::Noexternref:
+                    topType = externrefType();
+                    break;
+                case TypeKind::Exnref:
+                case TypeKind::Noexnref:
+                    topType = exnrefType();
+                    break;
+                default:
+                    topType = anyrefType();
+                    break;
+                }
+            }
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(topType, actual));
+            if (op == ExtGCOpType::RefTest || op == ExtGCOpType::RefTestNull)
+                pushUnreachableOperand(Types::I32);
+            else
+                pushUnreachableOperand(Type { op == ExtGCOpType::RefCastNull ? TypeKind::RefNull : TypeKind::Ref, targetTypeIndex });
             return { };
         }
         case ExtGCOpType::BrOnCast:
@@ -5169,8 +5284,8 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
             bool hasNull1 = flags & 0x1;
             bool hasNull2 = flags & 0x2;
 
-            uint32_t unused;
-            WASM_FAIL_IF_HELPER_FAILS(parseBranchTarget(unused));
+            uint32_t target;
+            WASM_FAIL_IF_HELPER_FAILS(parseBranchTarget(target, m_unreachableBlocks));
 
             int32_t heapType1, heapType2;
             WASM_PARSER_FAIL_IF(!parseHeapType(m_info, heapType1), "can't get first heap type for "_s, opName);
@@ -5187,12 +5302,43 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
             else
                 typeIndex2 = typeIndexFromTypeKind(static_cast<TypeKind>(heapType2));
 
-            WASM_VALIDATOR_FAIL_IF(!isSubtype(Type { hasNull2 ? TypeKind::RefNull : TypeKind::Ref, typeIndex2 }, Type { hasNull1 ? TypeKind::RefNull : TypeKind::Ref, typeIndex1 }), "target heaptype was not a subtype of source heaptype for "_s, opName);
+            const Type sourceType { hasNull1 ? TypeKind::RefNull : TypeKind::Ref, typeIndex1 };
+            const Type targetType { hasNull2 ? TypeKind::RefNull : TypeKind::Ref, typeIndex2 };
+            WASM_VALIDATOR_FAIL_IF(!isSubtype(targetType, sourceType), "target heaptype was not a subtype of source heaptype for "_s, opName);
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(sourceType, actual));
+
+            // The branch carries the reference typed targetType if the cast holds (br_on_cast) or sourceType minus
+            // targetType's nullability if it does not (br_on_cast_fail), and the fall through gets the other one.
+            const Type castFailedType { hasNull1 && !hasNull2 ? TypeKind::RefNull : TypeKind::Ref, typeIndex1 };
+            pushUnreachableOperand(op == ExtGCOpType::BrOnCast ? targetType : castFailedType);
+            if (isNestedUnreachableLabel(target)) {
+                const auto& targetFrame = nestedUnreachableLabel(target);
+                WASM_FAIL_IF_HELPER_FAILS(checkUnreachableBranchTarget(targetFrame.signature, targetFrame.kind == UnreachableControlFrame::Kind::Loop));
+            } else
+                WASM_FAIL_IF_HELPER_FAILS(checkUnreachableBranchTarget(realUnreachableLabel(target)));
+            m_unreachableTypeStack.removeLast();
+            pushUnreachableOperand(op == ExtGCOpType::BrOnCast ? castFailedType : targetType);
             return { };
         }
         case ExtGCOpType::AnyConvertExtern:
-        case ExtGCOpType::ExternConvertAny:
+        case ExtGCOpType::ExternConvertAny: {
+            // The result is nullable if the operand is. A bottom operand counts as a non-null reference.
+            const auto& frame = currentUnreachableFrame();
+            if (m_unreachableTypeStack.size() == frame.height || m_unreachableTypeStack.last() == Types::Void) {
+                WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand());
+                pushUnreachableOperand(op == ExtGCOpType::AnyConvertExtern ? anyrefType(false) : externrefType(false));
+                return { };
+            }
+            Type reference = m_unreachableTypeStack.takeLast();
+            if (op == ExtGCOpType::AnyConvertExtern) {
+                WASM_VALIDATOR_FAIL_IF(!isExternref(reference), "any.convert_extern reference to type "_s, reference, " expected "_s, TypeKind::Externref);
+                pushUnreachableOperand(anyrefType(reference.isNullable()));
+            } else {
+                WASM_VALIDATOR_FAIL_IF(!isSubtype(reference, anyrefType()), "extern.convert_any reference to type "_s, reference, " expected "_s, TypeKind::Anyref);
+                pushUnreachableOperand(externrefType(reference.isNullable()));
+            }
             return { };
+        }
         default:
             WASM_PARSER_FAIL_IF(true, "invalid extended GC op "_s, m_currentExtOp);
             break;
@@ -5222,28 +5368,14 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
         return { };
     }
 
-#define CREATE_ATOMIC_CASE(name, ...) case ExtAtomicOpType::name:
     case ExtAtomic: {
-        truncateUnreachableStack();
         WASM_PARSER_FAIL_IF(!parseVarUInt32(m_currentExtOp), "can't parse atomic extended opcode"_s);
         m_context.willParseExtendedOpcode();
 
         ExtAtomicOpType op = static_cast<ExtAtomicOpType>(m_currentExtOp);
-        switch (op) {
-        FOR_EACH_WASM_EXT_ATOMIC_LOAD_OP(CREATE_ATOMIC_CASE)
-        FOR_EACH_WASM_EXT_ATOMIC_STORE_OP(CREATE_ATOMIC_CASE)
-        FOR_EACH_WASM_EXT_ATOMIC_BINARY_RMW_OP(CREATE_ATOMIC_CASE)
-        case ExtAtomicOpType::MemoryAtomicWait64:
-        case ExtAtomicOpType::MemoryAtomicWait32:
-        case ExtAtomicOpType::MemoryAtomicNotify:
-        case ExtAtomicOpType::I32AtomicRmw8CmpxchgU:
-        case ExtAtomicOpType::I32AtomicRmw16CmpxchgU:
-        case ExtAtomicOpType::I32AtomicRmwCmpxchg:
-        case ExtAtomicOpType::I64AtomicRmw8CmpxchgU:
-        case ExtAtomicOpType::I64AtomicRmw16CmpxchgU:
-        case ExtAtomicOpType::I64AtomicRmw32CmpxchgU:
-        case ExtAtomicOpType::I64AtomicRmwCmpxchg:
-        {
+
+        // The accesses pop the operands above the address from the top down, then the address, and push resultType unless it is Void.
+        auto access = [&](std::initializer_list<Type> operandsAboveAddress, Type resultType) -> PartialResult {
             WASM_VALIDATOR_FAIL_IF(!m_info.memoryCount(), "atomic instruction without memory"_s);
             uint32_t alignment;
             WASM_PARSER_FAIL_IF(!parseVarUInt32(alignment), "can't get load alignment"_s);
@@ -5252,8 +5384,41 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
             WASM_PARSER_FAIL_IF(alignment != memoryLog2Alignment(op), "byte alignment "_s, 1ull << alignment, " does not match against atomic op's natural alignment "_s, 1ull << memoryLog2Alignment(op));
             uint64_t unusedOffset;
             WASM_FAIL_IF_HELPER_FAILS(parseMemoryOffset(memoryIndex, unusedOffset));
-            break;
-        }
+
+            Type actual;
+            for (Type operand : operandsAboveAddress)
+                WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(operand, actual));
+            WASM_FAIL_IF_HELPER_FAILS(popUnreachableOperand(m_info.memory(memoryIndex).addressType().asWasmType(), actual));
+            if (resultType != Types::Void)
+                pushUnreachableOperand(resultType);
+            return { };
+        };
+
+        switch (op) {
+#define CREATE_ATOMIC_CASE(name, id, b3op, inc, memoryType) case ExtAtomicOpType::name: return access({ }, Types::memoryType);
+        FOR_EACH_WASM_EXT_ATOMIC_LOAD_OP(CREATE_ATOMIC_CASE)
+#undef CREATE_ATOMIC_CASE
+#define CREATE_ATOMIC_CASE(name, id, b3op, inc, memoryType) case ExtAtomicOpType::name: return access({ Types::memoryType }, Types::Void);
+        FOR_EACH_WASM_EXT_ATOMIC_STORE_OP(CREATE_ATOMIC_CASE)
+#undef CREATE_ATOMIC_CASE
+#define CREATE_ATOMIC_CASE(name, id, b3op, inc, memoryType) case ExtAtomicOpType::name: return access({ Types::memoryType }, Types::memoryType);
+        FOR_EACH_WASM_EXT_ATOMIC_BINARY_RMW_OP(CREATE_ATOMIC_CASE)
+#undef CREATE_ATOMIC_CASE
+        case ExtAtomicOpType::MemoryAtomicWait64:
+            return access({ Types::I64, Types::I64 }, Types::I32);
+        case ExtAtomicOpType::MemoryAtomicWait32:
+            return access({ Types::I64, Types::I32 }, Types::I32);
+        case ExtAtomicOpType::MemoryAtomicNotify:
+            return access({ Types::I32 }, Types::I32);
+        case ExtAtomicOpType::I32AtomicRmw8CmpxchgU:
+        case ExtAtomicOpType::I32AtomicRmw16CmpxchgU:
+        case ExtAtomicOpType::I32AtomicRmwCmpxchg:
+            return access({ Types::I32, Types::I32 }, Types::I32);
+        case ExtAtomicOpType::I64AtomicRmw8CmpxchgU:
+        case ExtAtomicOpType::I64AtomicRmw16CmpxchgU:
+        case ExtAtomicOpType::I64AtomicRmw32CmpxchgU:
+        case ExtAtomicOpType::I64AtomicRmwCmpxchg:
+            return access({ Types::I64, Types::I64 }, Types::I64);
         case ExtAtomicOpType::AtomicFence: {
             uint8_t flags;
             WASM_PARSER_FAIL_IF(!parseUInt8(flags), "can't get flags"_s);
@@ -5267,11 +5432,9 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
 
         return { };
     }
-#undef CREATE_ATOMIC_CASE
 
 #if ENABLE(B3_JIT)
     case ExtSIMD: {
-        truncateUnreachableStack();
         WASM_PARSER_FAIL_IF(!Options::useWasmSIMD(), "wasm-simd is not enabled"_s);
         m_context.notifyFunctionUsesSIMD();
         WASM_PARSER_FAIL_IF(!parseVarUInt32(m_currentExtOp), "can't parse wasm extended opcode"_s);
@@ -5367,11 +5530,13 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
                 WASM_PARSER_FAIL_IF(isRefType(nonZero) || isRefType(zero), "can't use ref-types with unannotated select"_s);
                 WASM_VALIDATOR_FAIL_IF(nonZero != zero, "select result types must match, got "_s, nonZero, " and "_s, zero);
                 pushUnreachableOperand(zero);
-            } else if (zero != Types::Void)
+            } else if (zero != Types::Void) {
+                WASM_PARSER_FAIL_IF(isRefType(zero), "can't use ref-types with unannotated select"_s);
                 pushUnreachableOperand(zero);
-            else if (nonZero != Types::Void)
+            } else if (nonZero != Types::Void) {
+                WASM_PARSER_FAIL_IF(isRefType(nonZero), "can't use ref-types with unannotated select"_s);
                 pushUnreachableOperand(nonZero);
-            else
+            } else
                 pushUnreachableOperand(Types::Void);
         } else if (!zeroInvented) {
             WASM_PARSER_FAIL_IF(zero != Types::Void && isRefType(zero), "can't use ref-types with unannotated select"_s);
