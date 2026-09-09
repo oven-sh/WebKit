@@ -52,7 +52,6 @@
 #include <wtf/MallocSpan.h>
 #include <wtf/Packed.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/AtomStringTable.h>
 
@@ -4937,7 +4936,8 @@ protected:
     // Folded into the stored version so that reinterpreting existing record bits (which an embedder-supplied cache version
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
-    static constexpr uint32_t cachedTypesFormatRevision = 3;
+    // 4: GenericCacheEntry lost its (always empty) boot session UUID.
+    static constexpr uint32_t cachedTypesFormatRevision = 4;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -4945,16 +4945,15 @@ protected:
         , m_tag(tag)
         , m_reservedCalleeLocals(CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     {
-        m_bootSessionUUID.encode(encoder, bootSessionUUIDString());
+        UNUSED_PARAM(encoder);
     }
 
     CachedCodeBlockTag NODELETE tag() const { return m_tag; }
 
     bool isUpToDate(Decoder& decoder) const
     {
+        UNUSED_PARAM(decoder);
         if (m_cacheVersion != currentCacheVersion())
-            return false;
-        if (m_bootSessionUUID.decode(decoder) != bootSessionUUIDString())
             return false;
         // BytecodeGenerator numbers a code block's locals after the LLInt/baseline callee-save area, so its size is baked into the bytecode.
         if (m_reservedCalleeLocals != CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
@@ -4964,7 +4963,6 @@ protected:
 
 private:
     uint32_t m_cacheVersion;
-    CachedString m_bootSessionUUID;
     CachedCodeBlockTag m_tag;
     uint32_t m_reservedCalleeLocals;
 };
@@ -5222,10 +5220,10 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
 
 // The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
 // and with it the serialized form.
-static_assert(sizeof(GenericCacheEntry) == 16);
-static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 48);
-static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 48);
-static_assert(sizeof(BuiltinFunctionCacheEntry) == 28);
+static_assert(sizeof(GenericCacheEntry) == 12);
+static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 44);
+static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 44);
+static_assert(sizeof(BuiltinFunctionCacheEntry) == 24);
 static_assert(sizeof(VariableLengthObjectBase) == 4);
 static_assert(sizeof(CachedPtr<CachedString>) == 4);
 static_assert(sizeof(CachedRefPtr<CachedUniquedStringImpl>) == 4);

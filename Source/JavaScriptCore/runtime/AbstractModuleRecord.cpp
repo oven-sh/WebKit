@@ -252,6 +252,7 @@ AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalOb
         if (request.m_specifier.impl() == moduleName.impl() && request.type() == moduleRequestType) {
             if (AbstractModuleRecord* loaded = m_prelinkedRequested[i].get())
                 return loaded;
+            ASSERT_WITH_MESSAGE(m_prelinkedEntriesMaterialized, "the embedder must wire every request of a prelinked record before it links");
         }
     }
 #endif
