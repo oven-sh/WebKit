@@ -243,10 +243,11 @@ function testStructNew() {
      *   (func (export "main")
      *     unreachable
      *     struct.new $Point (i32.const 19) (i32.const 37)
+     *     drop
      *   )
      * )
     */
-    let instance = new WebAssembly.Instance(module("\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x0a\x02\x60\x00\x00\x5f\x02\x7f\x00\x7f\x00\x03\x02\x01\x00\x07\x08\x01\x04\x6d\x61\x69\x6e\x00\x00\x0a\x0c\x01\x0a\x00\x00\x41\x13\x41\x25\xfb\x07\x01\x0b"));
+    let instance = new WebAssembly.Instance(module("\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x0a\x02\x60\x00\x00\x5f\x02\x7f\x00\x7f\x00\x03\x02\x01\x00\x07\x08\x01\x04\x6d\x61\x69\x6e\x00\x00\x0a\x0d\x01\x0b\x00\x00\x41\x13\x41\x25\xfb\x00\x01\x1a\x0b"));
 
     /*
      * invalid type index for struct.new in unreachable context
@@ -273,7 +274,7 @@ function testStructNew() {
       (type $Point (struct (field $x i32) (field $y i32)))
       (func (export "main")
         unreachable
-        struct.new $Point (i32.const 19) (i32.const 37)
+        (drop (struct.new $Point (i32.const 19) (i32.const 37)))
       )
     )
   `);
