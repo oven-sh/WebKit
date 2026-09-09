@@ -652,6 +652,9 @@ public:
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy 65536-entry [c0|c1<<8] -> atom table for the bulk of minified identifiers, shared by every Decoder.
     AtomStringImpl** ensureCachedBytecodeTwoCharacterAtoms();
+    // And a direct-mapped cache for 3-character ones (Decoder::atomForInlineString); entries hold a ref, hits verify the characters.
+    static constexpr unsigned cachedBytecodeThreeCharacterAtomsLog2Size = 12;
+    AtomStringImpl** ensureCachedBytecodeThreeCharacterAtoms();
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;
 
@@ -1019,6 +1022,11 @@ public:
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
+    // While > 1, LLInt->Baseline and Baseline->DFG compile thresholds behave as if multiplied by this.
+    // Mutator-only (tier-up slow paths). Set from Options::startupJITDeferralScale or by the embedder.
+    double startupJITDeferralScale() const { return m_startupJITDeferralScale; }
+    JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // <= 1 ends the window
+
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
 
@@ -1321,6 +1329,7 @@ private:
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
     std::unique_ptr<std::array<AtomStringImpl*, 65536>> m_cachedBytecodeTwoCharacterAtoms;
+    std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
@@ -1390,6 +1399,8 @@ public:
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
 private:
 #endif
+
+    double m_startupJITDeferralScale { 1 };
 
     bool m_hasSideData { false };
     bool m_hasTerminationRequest { false };

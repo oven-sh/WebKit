@@ -2169,6 +2169,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
+static JSC_DECLARE_HOST_FUNCTION(functionSetStartupJITDeferralScale);
 static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
@@ -2673,6 +2674,18 @@ JSC_DEFINE_HOST_FUNCTION(functionNoInline, (JSGlobalObject*, CallFrame* callFram
     if (FunctionExecutable* executable = getExecutableForFunction(theFunctionValue))
         executable->setNeverInline(true);
     
+    return JSValue::encode(jsUndefined());
+}
+
+// $vm.setStartupJITDeferralScale(n): VM::setStartupJITDeferralScale(n).
+JSC_DEFINE_HOST_FUNCTION(functionSetStartupJITDeferralScale, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double scale = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    vm.setStartupJITDeferralScale(scale);
     return JSValue::encode(jsUndefined());
 }
 
@@ -5580,6 +5593,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "baselineJITTrue"_s, functionBaselineJITTrue, 0);
 
     addFunction(vm, alwaysAllow, "noInline"_s, functionNoInline, 1);
+    addFunction(vm, alwaysAllow, "setStartupJITDeferralScale"_s, functionSetStartupJITDeferralScale, 1);
 
     addFunction(vm, alwaysAllow, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);

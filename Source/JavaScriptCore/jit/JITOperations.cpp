@@ -3084,6 +3084,14 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
             OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
         }
     } else {
+        if (codeBlock->ensureCatchLivenessIsComputedForExecutedCatches()) {
+            // Options::useLazyCatchLiveness(): those catches only start profiling now; give them a warm-up like the other value profiles had.
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("catch profiling just started"));
+            updateAllPredictionsAndOptimizeAfterWarmUp(codeBlock);
+            dataLogLnIf(Options::verboseOSR(), "Delaying optimization for ", *codeBlock, " because its catch value profiles were just created.");
+            OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+        }
+
         if (!codeBlock->shouldOptimizeNowFromBaseline()) {
             dataLogLnIf(Options::verboseOSR(),
                 "Delaying optimization for ", *codeBlock,
@@ -3192,10 +3200,10 @@ JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (
         break;
     }
 
-    codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
-    auto bytecode = codeBlock->instructions().at(bytecodeIndex)->as<OpCatch>();
-    auto& metadata = bytecode.metadata(codeBlock);
-    metadata.m_buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
+    auto* buffer = codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
+    if (!buffer)
+        OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+    buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
         profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 

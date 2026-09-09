@@ -3805,9 +3805,8 @@ bool JSObject::increaseVectorLength(VM& vm, unsigned newLength)
     unsigned vectorLength = storage->vectorLength();
     unsigned availableVectorLength = storage->availableVectorLength(structure(), vectorLength); 
     if (availableVectorLength >= newLength) {
-        // The cell was already big enough for the desired length!
-        for (unsigned i = vectorLength; i < availableVectorLength; ++i)
-            storage->m_vector[i].clear();
+        gcSafeZeroMemory(storage->m_vector + vectorLength, (availableVectorLength - vectorLength) * sizeof(JSValue));
+        WTF::storeStoreFence();
         storage->setVectorLength(availableVectorLength);
         return true;
     }

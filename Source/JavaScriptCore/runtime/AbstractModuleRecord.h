@@ -29,8 +29,12 @@
 #include "JSGenerator.h"
 #include "JSInternalFieldObjectImpl.h"
 #include "ModuleMap.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "PrelinkedModuleGraph.h"
+#endif
 #include "ScriptFetchParameters.h"
 #include "ScriptFetcher.h"
+#include <wtf/FixedVector.h>
 #include <wtf/OrderedHashMap.h>
 #include <wtf/OrderedHashSet.h>
 #include <wtf/RefPtr.h>
@@ -217,9 +221,16 @@ public:
     void setImportedRecords(VM&, const Vector<AbstractModuleRecord*>&);
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
+#if USE(BUN_JSC_ADDITIONS)
+    // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
+    const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
+    const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
+    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_starExportEntries; }
+#else
     const ExportEntries& exportEntries() const LIFETIME_BOUND { return m_exportEntries; }
     const ImportEntries& importEntries() const LIFETIME_BOUND { return m_importEntries; }
     const StarExportEntries& starExportEntries() const LIFETIME_BOUND { return m_starExportEntries; }
+#endif
     const Vector<WriteBarrier<AbstractModuleRecord>>& asyncParentModules() const LIFETIME_BOUND { return m_asyncParentModules; }
     CyclicModuleRecord* cycleRoot() const { return m_cycleRoot.get(); }
     AsyncEvaluationOrder asyncEvaluationOrder() const { return m_asyncEvaluationOrder; }
@@ -247,6 +258,7 @@ public:
         static Resolution NODELETE ambiguous();
 
         bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
+        bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
 
         Type type;
         AbstractModuleRecord* moduleRecord;
@@ -255,6 +267,9 @@ public:
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
     Resolution resolveImport(JSGlobalObject*, const Identifier& localName);
+    // The same over the by-name entry maps only, never answered from a PrelinkedModuleGraph (a prelinked record builds its maps first).
+    Resolution resolveExportByName(JSGlobalObject*, const Identifier& exportName);
+    Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName);
 
     AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
@@ -312,6 +327,28 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isTypeScript = false;
+
+    // Options::usePrelinkedModuleInfo(): this record is module `prelinkedIndex()` of an embedder-resolved graph. Its
+    // requests, import and export entries live in the graph; a request that names a graph module is answered by the
+    // loader's index table, any other request by [[LoadedModules]] as usual (the embedder calls setImportedModule);
+    // import bindings come from the graph's resolutions. The by-name maps above are built from the graph the first time
+    // something needs them.
+    bool isPrelinked() const { return !!m_prelinked; }
+    PrelinkedModuleGraph* prelinkedGraph() const { return m_prelinked.get(); }
+    uint32_t prelinkedIndex() const { return m_prelinkedIndex; }
+    const PrelinkedModuleGraph::Module& prelinkedModule() const { return m_prelinked->module(m_prelinkedIndex); }
+    // GetImportedModule for requestedModules()[i]: the loader's record for the graph module the request names, else
+    // [[LoadedModules]], else null (not loaded yet).
+    JS_EXPORT_PRIVATE AbstractModuleRecord* prelinkedRequestedModule(unsigned requestIndex) const;
+    // Same, for a `request` of this record (an element of requestedModules(), or a copy of one).
+    AbstractModuleRecord* prelinkedRequestedModule(const ModuleRequest&) const;
+    JS_EXPORT_PRIVATE bool hasAllPrelinkedRequestedModules() const;
+    bool prelinkedEntriesMaterialized() const { return m_prelinkedEntriesMaterialized; }
+    JS_EXPORT_PRIVATE void materializePrelinkedEntries();
+    // Right after createPrelinked, before any request is wired: turn this into an ordinary record (entry maps built, graph dropped).
+    JS_EXPORT_PRIVATE void convertPrelinkedToEager();
+    // The record a pre-resolved binding's module index names, or null if index-based resolution must not be used for it.
+    AbstractModuleRecord* prelinkedRecordForResolution(JSGlobalObject*, uint32_t moduleIndex) const;
 #endif
 
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);
@@ -319,12 +356,31 @@ public:
 protected:
     AbstractModuleRecord(VM&, Structure*, Identifier, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
+    void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
+#endif
 
 private:
     struct ResolveQuery;
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
     std::optional<Resolution> NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
+#if USE(BUN_JSC_ADDITIONS)
+    void ensurePrelinkedEntriesMaterialized() const
+    {
+        if (m_prelinked && !m_prelinkedEntriesMaterialized) [[unlikely]]
+            const_cast<AbstractModuleRecord*>(this)->materializePrelinkedEntries();
+    }
+protected:
+    // nullopt: not answerable from the graph (take the by-name path).
+    std::optional<Resolution> tryResolveImportPrelinked(JSGlobalObject*, const Identifier& localName);
+    std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const Identifier& exportName);
+    std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const PrelinkedModuleGraph::Export&);
+    std::optional<Resolution> prelinkedResolution(JSGlobalObject*, PrelinkedModuleGraph::ResolutionKind, uint32_t resolvedModule, uint32_t resolvedLocalSid, uint32_t requestIndex, uint32_t importNameSid);
+    bool collectPrelinkedNamespaceResolutions(JSGlobalObject*, Vector<std::pair<Identifier, Resolution>>&);
+private:
+#endif
 
     // The loader resolves the given module name to the module key. The module key is the unique value to represent this module.
     Identifier m_moduleKey;
@@ -373,6 +429,15 @@ protected:
     Vector<WriteBarrier<AbstractModuleRecord>> m_importedRecords;
     bool m_importedRecordsSet { false };
     SourceProviderSourceType m_sourceType;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_prelinkedEntriesMaterialized { false };
+    uint32_t m_prelinkedIndex { 0 };
+    RefPtr<PrelinkedModuleGraph> m_prelinked;
+    // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already
+    // reachable through the loader's table or, once that slot is forgotten, [[LoadedModules]] -- JSModuleLoader::pinPrelinkedEdges);
+    // { Resolved, null } = unfilled.
+    FixedVector<Resolution> m_prelinkedImportResolutions;
+#endif
 };
 
 } // namespace JSC

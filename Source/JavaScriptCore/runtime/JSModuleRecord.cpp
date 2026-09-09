@@ -67,6 +67,20 @@ JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Str
     return instance;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSModuleRecord* JSModuleRecord::createPrelinked(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, Ref<PrelinkedModuleGraph>&& graph, uint32_t moduleIndex)
+{
+    const PrelinkedModuleGraph::Module& module = graph->module(moduleIndex);
+    CodeFeatures features = (module.flags & PrelinkedModuleGraph::Module::HasImportMeta) ? ImportMetaFeature : NoFeatures;
+    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, features);
+    instance->finishCreation(globalObject, vm);
+    instance->initializePrelinked(vm, WTF::move(graph), moduleIndex);
+    if (!Options::usePrelinkedModuleInfo()) [[unlikely]]
+        instance->convertPrelinkedToEager();
+    return instance;
+}
+#endif
+
 JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
     : Base(vm, structure, moduleKey, SourceProviderSourceType::Module)
     , m_sourceCode(sourceCode)
@@ -327,9 +341,11 @@ JSModuleEnvironment* JSModuleRecord::createInstanceEnvironment(JSGlobalObject* g
     }
 
     // 24. Function declarations: new function objects over the executables the
-    // primary instantiation linked, closed over this environment.
-    for (size_t i = 0, count = unlinkedCodeBlock->numberOfFunctionDecls(); i < count; ++i) {
-        FunctionExecutable* functionExecutable = i < m_functionDeclExecutables.size() ? m_functionDeclExecutables[i].get() : nullptr;
+    // primary instantiation linked (the heap-allocated ones; the module body
+    // creates the rest), closed over this environment.
+    ASSERT(m_functionDeclExecutables.size() <= unlinkedCodeBlock->numberOfFunctionDecls());
+    for (size_t i = 0, count = m_functionDeclExecutables.size(); i < count; ++i) {
+        FunctionExecutable* functionExecutable = m_functionDeclExecutables[i].get();
         if (!functionExecutable)
             continue;
         SourceParseMode parseMode = functionExecutable->parseMode();

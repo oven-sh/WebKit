@@ -169,7 +169,17 @@ public:
     void setHasTailCalls() { m_hasTailCalls = true; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
-    bool hasExpressionInfo() { return !m_expressionInfo->isEmpty(); }
+    // Decoded on first use when the block came from a persistent bytecode cache (Options::useLazyCachedExpressionInfo()).
+    // Any thread, including the collector's end phase (ErrorInstance::computeErrorInfo): the first call takes m_lock
+    // around a bounds-checked read of the cache payload and one fastMalloc; no GC allocation, no safepoint.
+    ExpressionInfo& expressionInfo()
+    {
+        if (m_expressionInfo) [[likely]]
+            return *m_expressionInfo;
+        return expressionInfoSlow();
+    }
+    ExpressionInfo& expressionInfo() const { return const_cast<UnlinkedCodeBlock*>(this)->expressionInfo(); }
+    bool hasExpressionInfo() { return !expressionInfo().isEmpty(); }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
@@ -386,6 +396,7 @@ private:
     }
 
     BytecodeLivenessAnalysis& livenessAnalysisSlow(CodeBlock*);
+    ExpressionInfo& expressionInfoSlow();
 
     VirtualRegister m_thisRegister;
     VirtualRegister m_scopeRegister;
@@ -485,6 +496,8 @@ private:
     OutOfLineJumpTargets m_outOfLineJumpTargets;
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
+    const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
+    uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
     FixedVector<UnlinkedValueProfile> m_valueProfiles;
     FixedVector<UnlinkedArrayProfile> m_arrayProfiles;
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;

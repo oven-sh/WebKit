@@ -36,6 +36,7 @@
 #include "BuiltinNames.h"
 #include "BytecodeGeneratorBaseInlines.h"
 #include "BytecodeGeneratorification.h"
+#include "BytecodeOptimizer.h"
 #include "BytecodeUseDef.h"
 #include "DefinePropertyAttributes.h"
 #include "Interpreter.h"
@@ -364,6 +365,9 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     }
     
 
+    if (shouldRunBytecodeOptimizer()) [[unlikely]]
+        BytecodeOptimizer::run(*this);
+
     if (m_needsGeneratorification)
         performGeneratorification(*this, m_codeBlock.get(), m_writer, m_generatorFrameSymbolTable.get(), m_generatorFrameSymbolTableIndex);
 
@@ -382,9 +386,11 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     return ParserError(ParserError::ErrorNone);
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*)
+BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(programNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
     , m_codeType(GlobalCode)
@@ -428,9 +434,11 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
     }
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* parentPrivateNameEnvironment)
+BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(functionNode)
     , m_codeType(FunctionCode)
     , m_vm(vm)
@@ -991,9 +999,11 @@ IGNORE_GCC_WARNINGS_END
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment)
+BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(evalNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
     , m_codeType(EvalCode)
@@ -1057,9 +1067,11 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*)
+BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(moduleProgramNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
     , m_codeType(ModuleCode)
@@ -1159,6 +1171,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     bool isWithScope = false;
 
     m_lexicalScopeStack.append({ moduleEnvironmentSymbolTable, m_topLevelScopeRegister, isWithScope, constantSymbolTable->index() });
+    declaredNamesScopesChanged();
     emitPrefillStackTDZVariables(lexicalVariables, moduleEnvironmentSymbolTable);
 
     // makeFunction assumes that there's correct TDZ stack entries.
@@ -1209,7 +1222,8 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
             //    import "B";
             //    import "A";
             //
-            m_codeBlock->addFunctionDecl(makeFunction(function));
+            unsigned index = m_codeBlock->addFunctionDecl(makeFunction(function));
+            codeBlock->setNumberOfHeapAllocatedFunctionDecls(index + 1);
         } else {
             // Stack allocated functions can be allocated when executing the module's body.
             m_functionsToInitialize.append(std::make_pair(function, NormalFunctionVariable));
@@ -1426,6 +1440,7 @@ void BytecodeGenerator::initializeVarLexicalEnvironment(int symbolTableConstantI
     }
     bool isWithScope = false;
     m_lexicalScopeStack.append({ functionSymbolTable, m_lexicalEnvironmentRegister, isWithScope, symbolTableConstantIndex });
+    declaredNamesScopesChanged();
     m_varScopeLexicalScopeStackIndex = m_lexicalScopeStack.size() - 1;
 }
 
@@ -2292,6 +2307,7 @@ void BytecodeGenerator::pushLexicalScopeInternal(VariableEnvironment& environmen
 
     bool isWithScope = false;
     m_lexicalScopeStack.append({ symbolTable, newScope, isWithScope, symbolTableConstantIndex });
+    declaredNamesScopesChanged();
     pushTDZVariables(environment, tdzCheckOptimization, tdzRequirement);
 
     if (tdzRequirement == TDZRequirement::UnderTDZ)
@@ -2438,6 +2454,7 @@ void BytecodeGenerator::popLexicalScopeInternal(VariableEnvironment& environment
         environment.markAllVariablesAsCaptured();
 
     auto stackEntry = m_lexicalScopeStack.takeLast();
+    declaredNamesScopesChanged();
     SymbolTable* symbolTable = stackEntry.m_symbolTable;
     bool hasCapturedVariables = false;
     for (auto& entry : environment) {
@@ -3363,6 +3380,62 @@ std::optional<PrivateNameEnvironment> BytecodeGenerator::getAvailablePrivateAcce
     return result;
 }
 
+RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
+{
+    // A name a nested function can refer to is captured, so it has a slot in one of the Frames below; the only
+    // stable bindings without a slot are a module's imports.
+    if (!m_functionDeclaredNames && m_codeType == ModuleCode) {
+        IdentifierSet names;
+        for (auto& entry : m_scopeNode->lexicalVariables()) {
+            if (entry.value.isImported())
+                names.add(entry.key);
+        }
+        m_functionDeclaredNames = DeclaredNamesLink::Names::create(WTF::move(names));
+    }
+    RefPtr<DeclaredNamesLink::Names> names = m_functionDeclaredNames;
+
+    // The environment records that exist right now. Only scopes that allocated an environment (m_scope) are on the
+    // chain at run time; a `with` scope hides everything below it.
+    m_framesForLexicalScopeStack.grow(m_lexicalScopeStack.size());
+    m_frameSymbolTableSizes.grow(m_lexicalScopeStack.size());
+    RefPtr<DeclaredNamesLink::Frame> frames;
+    for (unsigned i = 0; i < m_lexicalScopeStack.size(); ++i) {
+        auto& entry = m_lexicalScopeStack[i];
+        auto& node = m_framesForLexicalScopeStack[i];
+        if (entry.m_isWithScope) {
+            if (!node || !node->isBarrier || node->next != frames)
+                node = DeclaredNamesLink::Frame::create(true, { }, frames);
+            frames = node;
+            continue;
+        }
+        if (!entry.m_scope || !entry.m_symbolTable)
+            continue;
+        ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
+        unsigned size = entry.m_symbolTable->size(locker);
+        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size) {
+            DeclaredNamesLink::Frame::Slots slots;
+            for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
+                VarOffset offset = it->value.varOffset();
+                if (offset.isScope())
+                    slots.add(it->key, offset.scopeOffset().offset());
+            }
+            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames);
+            m_frameSymbolTableSizes[i] = size;
+        }
+        frames = node;
+    }
+    // Not m_ecmaMode: class bodies temporarily force it strict while their members' executables are created.
+    bool hasSloppyEval = m_codeType == EvalCode || (m_scopeNode->usesEval() && !m_scopeNode->isStrictMode());
+    if (hasSloppyEval)
+        frames = DeclaredNamesLink::Frame::create(true, { }, WTF::move(frames)); // eval can add vars to the innermost var scope
+    bool isDynamicBarrier = hasSloppyEval || (m_scopeNode->features() & WithFeature);
+
+    // Functions created back to back in the same scope (the common case) share one link.
+    if (!m_cachedDeclaredNames || m_cachedDeclaredNames->names() != names.get() || m_cachedDeclaredNames->frames() != frames.get())
+        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
+    return m_cachedDeclaredNames;
+}
+
 RefPtr<TDZEnvironmentLink> BytecodeGenerator::getVariablesUnderTDZ()
 {
     RefPtr<TDZEnvironmentLink> parent = m_cachedParentTDZ;
@@ -4134,6 +4207,7 @@ RegisterID* BytecodeGenerator::emitPushWithScope(RegisterID* objectScope)
 
     move(scopeRegister(), newScope);
     m_lexicalScopeStack.append({ nullptr, newScope, true, 0 });
+    declaredNamesScopesChanged();
 
     return newScope;
 }
@@ -4149,6 +4223,7 @@ void BytecodeGenerator::emitPopWithScope()
     emitGetParentScope(scopeRegister(), scopeRegister());
     popLocalControlFlowScope();
     auto stackEntry = m_lexicalScopeStack.takeLast();
+    declaredNamesScopesChanged();
     stackEntry.m_scope->deref();
     RELEASE_ASSERT(stackEntry.m_isWithScope);
 }

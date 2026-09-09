@@ -686,6 +686,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/ComplexGetStatus.h
     bytecode/DFGExitProfile.h
     bytecode/DataFormat.h
+    bytecode/DeclaredNamesLink.h
     bytecode/DeferredCompilationCallback.h
     bytecode/DeferredSourceDump.h
     bytecode/DeleteByStatus.h
@@ -1641,6 +1642,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ParseInt.h
     runtime/PinballCompletion.h
     runtime/PlainGregorianDateTime.h
+    runtime/PrelinkedModuleGraph.h
     runtime/PrivateFieldPutKind.h
     runtime/PrivateName.h
     runtime/ProfilerSupport.h

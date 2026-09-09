@@ -855,8 +855,8 @@ void PropertyInlineCache::initializeWithUnitHandler(CodeBlock* codeBlock, Ref<In
         if (handlerIC->m_inlinedHandler)
             handlerIC->clearInlinedHandler(codeBlock);
         ASSERT(!handlerIC->m_inlinedHandler);
-        if (m_handler)
-            m_handler->removeOwner(codeBlock);
+        for (auto* cursor = m_handler.get(); cursor; cursor = cursor->next())
+            cursor->removeOwner(codeBlock);
         m_handler = WTF::move(handler);
         m_handler->addOwner(codeBlock);
     } else {
@@ -894,15 +894,8 @@ void PropertyInlineCache::rewireStubAsJumpInAccess(CodeBlock* codeBlock, Ref<Inl
 
 void PropertyInlineCache::resetStubAsJumpInAccess(CodeBlock* codeBlock)
 {
-    if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*this)) {
-        if (handlerIC->m_inlinedHandler)
-            handlerIC->clearInlinedHandler(codeBlock);
-        auto* cursor = m_handler.get();
-        while (cursor) {
-            cursor->removeOwner(codeBlock);
-            cursor = cursor->next();
-        }
-        m_handler = InlineCacheCompiler::generateSlowPathHandler(codeBlock->vm(), accessType);
+    if (isHandlerIC()) {
+        initializeWithUnitHandler(codeBlock, InlineCacheCompiler::generateSlowPathHandler(codeBlock->vm(), accessType));
         return;
     }
 

@@ -27,6 +27,7 @@
 
 #include "MetadataTable.h"
 #include "UnlinkedMetadataTable.h"
+#include <array>
 #include <wtf/FastMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -58,7 +59,7 @@ ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(unsigned numValueProf
     : m_hasMetadata(true)
     , m_isFinalized(true)
     , m_isLinked(false)
-    , m_is32Bit(stepsNeed32BitOffsets(persistentSteps))
+    , m_is32Bit(false) // decided by link(), which lays the table out; nothing reads the offset table of an unlinked steps-backed table
     , m_isBackedBySteps(true)
     , m_numValueProfiles(numValueProfiles)
     , m_stepsCount(persistentSteps.size())
@@ -116,6 +117,14 @@ ALWAYS_INLINE unsigned UnlinkedMetadataTable::addEntry(OpcodeID opcodeID)
     return preprocessBuffer()[opcodeID]++;
 }
 
+ALWAYS_INLINE void UnlinkedMetadataTable::restartForReemit()
+{
+    ASSERT(!m_isFinalized && !m_isBackedBySteps);
+    memset(preprocessBuffer(), 0, sizeof(Offset32) * s_offsetTableEntries);
+    m_numValueProfiles = 0;
+    m_hasMetadata = false;
+}
+
 ALWAYS_INLINE unsigned UnlinkedMetadataTable::addValueProfile()
 {
     ASSERT(!m_isFinalized);
@@ -168,16 +177,29 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     if (!m_hasMetadata)
         return nullptr;
 
-    unsigned totalSize = this->totalSize();
-    unsigned offsetTableSize = this->offsetTableSize();
     unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
+    unsigned totalSize;
+    std::array<Offset32, s_offsetTableEntries> expanded;
+    bool expandsSteps = m_isBackedBySteps && !m_isLinked;
+    if (expandsSteps) {
+        // One walk over the steps sizes the allocation, decides the offset width and produces the table (narrowed below
+        // if it fits 16 bits); later CodeBlocks of this UnlinkedCodeBlock copy the linked table.
+        unsigned endOffset = expandSteps(std::span { m_steps, m_stepsCount }, expanded.data());
+        m_is32Bit = endOffset > UINT16_MAX;
+        totalSize = valueProfileSize + endOffset;
+    } else
+        totalSize = this->totalSize();
+    unsigned offsetTableSize = this->offsetTableSize();
     uint8_t* buffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(sizeof(LinkingData) + totalSize));
     uint8_t* table = buffer + valueProfileSize + sizeof(LinkingData);
-    if (m_isBackedBySteps && !m_isLinked) {
+    if (expandsSteps) {
         if (m_is32Bit)
-            expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset32*>(table + s_offset16TableSize));
-        else
-            expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset16*>(table));
+            memcpy(table + s_offset16TableSize, expanded.data(), s_offsetTableEntries * sizeof(Offset32)); // offsetTable16()[0] stays 0: MetadataTable::is32Bit()
+        else {
+            auto* table16 = std::bit_cast<Offset16*>(table);
+            for (unsigned i = 0; i < s_offsetTableEntries; ++i)
+                table16[i] = static_cast<Offset16>(expanded[i]);
+        }
     } else
         memcpy(table, this->buffer(), offsetTableSize);
     if (!m_isLinked) {

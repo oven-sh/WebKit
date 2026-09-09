@@ -464,6 +464,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     Gigacage::addPrimitiveDisableCallback(primitiveGigacageDisabledCallback, this);
 
     heap.notifyIsSafeToCollect();
+
+    if (Options::startupJITDeferralScale() > 1) [[unlikely]]
+        m_startupJITDeferralScale = Options::startupJITDeferralScale();
     
     if (Options::useProfiler()) [[unlikely]] {
         m_perBytecodeProfiler = makeUnique<Profiler::Database>(*this);
@@ -684,6 +687,13 @@ VM::~VM()
         }
         m_cachedBytecodeTwoCharacterAtoms = nullptr;
     }
+    if (m_cachedBytecodeThreeCharacterAtoms) {
+        for (AtomStringImpl* atom : *m_cachedBytecodeThreeCharacterAtoms) {
+            if (atom)
+                atom->deref();
+        }
+        m_cachedBytecodeThreeCharacterAtoms = nullptr;
+    }
 
     delete propertyNames;
     if (vmType != VMType::Default)
@@ -725,6 +735,20 @@ void VM::primitiveGigacageDisabled()
     // This is totally racy, and that's OK. The point is, it's up to the user to ensure that they pass the
     // uncaged buffer in a nicely synchronized manner.
     requestEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
+}
+
+void VM::setStartupJITDeferralScale(double scale)
+{
+    if (!(scale > 1)) {
+        // No CodeBlock walk: counters armed under the scale were clipped to re-check within one normal
+        // threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their next visit.
+        if (m_startupJITDeferralScale != 1)
+            dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: embedder (scale was ", String::number(m_startupJITDeferralScale), ")");
+        m_startupJITDeferralScale = 1;
+        return;
+    }
+    dataLogLnIf(Options::verboseOSR(), "Startup JIT deferral scale set to ", String::number(scale));
+    m_startupJITDeferralScale = scale;
 }
 
 void VM::setLastStackTop(const Thread& thread)
@@ -2274,6 +2298,13 @@ AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
     if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]]
         m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
     return m_cachedBytecodeTwoCharacterAtoms->data();
+}
+
+AtomStringImpl** VM::ensureCachedBytecodeThreeCharacterAtoms()
+{
+    if (!m_cachedBytecodeThreeCharacterAtoms) [[unlikely]]
+        m_cachedBytecodeThreeCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>>();
+    return m_cachedBytecodeThreeCharacterAtoms->data();
 }
 
 } // namespace JSC

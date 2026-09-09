@@ -386,6 +386,7 @@ op :catch,
     },
     metadata: {
         buffer: ValueProfileAndVirtualRegisterBuffer.*,
+        hasExecutedWithoutBuffer: bool, # Options::useLazyCatchLiveness(): executed before its buffer was created; CodeBlock::ensureCatchLivenessIsComputedForExecutedCatches()
     }
 
 op :new_array_with_size,

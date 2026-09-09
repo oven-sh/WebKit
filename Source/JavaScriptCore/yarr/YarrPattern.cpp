@@ -32,6 +32,7 @@
 #include "Yarr.h"
 #include "YarrCanonicalize.h"
 #include "YarrParser.h"
+#include <array>
 #include <limits>
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
@@ -2019,9 +2020,9 @@ public:
 
     // Copy the terms of `alternative`, dropping the parentheses copyTerm() filtered out. Returns
     // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
-    std::optional<Vector<PatternTerm>> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
+    std::optional<PatternTermList> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
     {
-        Vector<PatternTerm> copiedTerms;
+        PatternTermList copiedTerms;
         copiedTerms.reserveInitialCapacity(alternative->m_terms.size());
         for (unsigned termIndex = 0; termIndex < alternative->m_terms.size(); ++termIndex) {
             auto& term = alternative->m_terms[termIndex];
@@ -2422,7 +2423,7 @@ public:
             alternatives.last()->m_isLastAlternative = true;
 
             if (alternatives.size() == 1 && alternatives[0]->m_startsWithBOL) {
-                Vector<PatternTerm>& terms = alternatives[0]->m_terms;
+                PatternTermList& terms = alternatives[0]->m_terms;
 
                 bool isStringList = false;
 
@@ -2443,7 +2444,7 @@ public:
                     constexpr unsigned emptyAlternativeNotFound = std::numeric_limits<unsigned>::max();
                     unsigned firstEmptyAlternative = emptyAlternativeNotFound;
 
-                    auto isPureCharacterSequence = [](const Vector<PatternTerm>& innerTerms) {
+                    auto isPureCharacterSequence = [](const PatternTermList& innerTerms) {
                         for (auto& innerTerm : innerTerms) {
                             if (innerTerm.type != PatternTerm::Type::PatternCharacter
                                 || innerTerm.quantityType != QuantifierType::FixedCount
@@ -2457,7 +2458,7 @@ public:
                     // wrapping a pure fixed string (e.g. "(t0)") is equivalent to that string for
                     // matching purposes. Returns the wrapped disjunction so the caller can flatten the
                     // alternative to the group's character terms; nullptr if the shape does not match.
-                    auto unwrapSingleGroup = [&](const Vector<PatternTerm>& innerTerms) -> PatternDisjunction* {
+                    auto unwrapSingleGroup = [&](const PatternTermList& innerTerms) -> PatternDisjunction* {
                         if (innerTerms.size() != 1)
                             return nullptr;
 
@@ -3142,7 +3143,7 @@ public:
 
     static bool containsCapturingTerms(PatternAlternative* alternative, size_t firstTermIndex, size_t endIndex)
     {
-        Vector<PatternTerm>& terms = alternative->m_terms;
+        PatternTermList& terms = alternative->m_terms;
 
         ASSERT(endIndex <= terms.size());
         for (size_t termIndex = firstTermIndex; termIndex < endIndex; ++termIndex) {
@@ -3216,7 +3217,7 @@ public:
         if (!isSafeToRecurse()) [[unlikely]]
             return true;
 
-        Vector<PatternTerm>& terms = alternative->m_terms;
+        PatternTermList& terms = alternative->m_terms;
         for (size_t termIndex = firstTermIndex; termIndex < endIndex; ++termIndex) {
             PatternTerm& term = terms[termIndex];
             switch (term.type) {
@@ -3274,7 +3275,7 @@ public:
 
         CharacterClass* dotCharacterClass = dotAll() ? m_pattern.anyCharacterClass() : m_pattern.newlineCharacterClass();
         PatternAlternative* alternative = alternatives[0].get();
-        Vector<PatternTerm>& terms = alternative->m_terms;
+        PatternTermList& terms = alternative->m_terms;
         if (terms.size() >= 3) {
             bool startsWithBOL = false;
             bool endsWithEOL = false;
@@ -4290,6 +4291,30 @@ std::unique_ptr<CharacterClass> anycharCreate()
     characterClass->m_characterWidths = CharacterClassWidths::HasBothBMPAndNonBMP;
     characterClass->m_anyCharacter = true;
     return characterClass;
+}
+
+CharacterClass* ensureSharedCharacterClass(std::atomic<CharacterClass*>& slot, std::unique_ptr<CharacterClass> (*create)())
+{
+    if (CharacterClass* existing = slot.load(std::memory_order_acquire))
+        return existing;
+    std::unique_ptr<CharacterClass> created = create();
+    CharacterClass* expected = nullptr;
+    if (slot.compare_exchange_strong(expected, created.get(), std::memory_order_acq_rel, std::memory_order_acquire))
+        return created.release();
+    return expected;
+}
+
+static constexpr std::unique_ptr<CharacterClass> (*sharedCharacterClassCreateFunctions[])() = {
+    anycharCreate, newlineCreate, digitsCreate, spacesCreate, wordcharCreate, wordUnicodeIgnoreCaseCharCreate,
+    nondigitsCreate, nonspacesCreate, nonwordcharCreate, nonwordUnicodeIgnoreCaseCharCreate,
+};
+static_assert(std::size(sharedCharacterClassCreateFunctions) == static_cast<size_t>(SharedCharacterClass::NonWordUnicodeIgnoreCaseChar) + 1, "one per SharedCharacterClass, in enum order");
+static std::array<std::atomic<CharacterClass*>, std::size(sharedCharacterClassCreateFunctions)> sharedCharacterClasses;
+
+CharacterClass* sharedCharacterClass(SharedCharacterClass id)
+{
+    unsigned index = static_cast<unsigned>(id);
+    return ensureSharedCharacterClass(sharedCharacterClasses[index], sharedCharacterClassCreateFunctions[index]);
 }
 
 std::optional<char16_t> CharacterClass::hasSharedLeadSurrogate() const
