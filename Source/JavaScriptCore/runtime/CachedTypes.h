@@ -228,7 +228,7 @@ class Decoder : public RefCounted<Decoder> {
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
-    bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
+    bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }

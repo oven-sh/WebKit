@@ -451,14 +451,15 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    // Options::useLazySymbolTableConstants(): a table decoded from the bytecode cache, or cloned from one, keeps its
-    // entries in the cache payload until they are first read; until then m_map is empty. They are decoded only on the
-    // mutator, outside GC phases, with m_lock held. A compiler thread (or heap analysis during marking) holding m_lock
-    // therefore sees either the complete map or no entries; the accessors such a thread may use on a pending table are
-    // begin/end/localToEntry (entryFor), and their callers — Graph::tryGetConstantClosureVar ("no entry" = not a
-    // constant; a pending entry cannot be watched), JSLexicalEnvironment::analyzeHeap, FTL validation — treat "no
-    // entries" conservatively. Every other accessor asserts the entries are in. (DesiredGlobalProperties reads the
-    // global lexical environment's table, which never comes from the cache.)
+    // Options::useLazySymbolTableConstants(): a table decoded from an owned or persistent bytecode cache payload
+    // (Decoder::canDeferIntoPayload), or cloned from one, keeps its entries in the payload until they are first read;
+    // until then m_map is empty. They are decoded only on the mutator, outside GC phases, with m_lock held. A compiler
+    // thread (or heap analysis during marking) holding m_lock therefore sees either the complete map or no entries; the
+    // accessors such a thread may use on a pending table are begin/end/localToEntry (entryFor), and their callers —
+    // Graph::tryGetConstantClosureVar ("no entry" = not a constant; a pending entry cannot be watched),
+    // JSLexicalEnvironment::analyzeHeap, FTL validation — treat "no entries" conservatively. Every other accessor asserts
+    // the entries are in. (DesiredGlobalProperties reads the global lexical environment's table, which never comes from
+    // the cache.)
     bool hasCachedEntriesPending() const { return !!m_cachedEntries; }
     void materializeCachedEntriesIfPossible(const ConcurrentJSLockerBase&) const
     {

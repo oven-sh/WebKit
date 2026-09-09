@@ -1060,7 +1060,7 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
     , m_cachedBytecode(WTF::move(cachedBytecode))
     , m_provider(provider)
 #if USE(BUN_JSC_ADDITIONS)
-    , m_canDeferIntoPayload(Options::useThinChildExecutables() && m_cachedBytecode->payloadIsOwnedOrPersistent())
+    , m_canDeferIntoPayload(m_cachedBytecode->payloadIsOwnedOrPersistent())
 #endif
 {
 }
@@ -2615,7 +2615,7 @@ public:
     {
         SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
 #if USE(BUN_JSC_ADDITIONS)
-        if (Options::useLazySymbolTableConstants() && m_map.entryCount())
+        if (Options::useLazySymbolTableConstants() && decoder.canDeferIntoPayload() && m_map.entryCount())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
         else
 #endif
@@ -3873,7 +3873,9 @@ public:
     }
 
     // Everything the block points at (arrays, record, tail, derived members, child slots and the child records) must lie
-    // inside the payload; a damaged block is generated from source instead.
+    // inside the payload; a damaged block is generated from source instead. This catches a truncated or misassembled
+    // payload cheaply; it is not a validation of every nested record (the strings, TDZ environments, rare data and
+    // constants those point at are trusted like the rest of a payload this build wrote, as upstream's decoder trusts them).
     bool regionIsIntact(Decoder& decoder, Tail& tail) const
     {
         if (!decoder.payloadContains(this, sizeof(Record)))
@@ -4604,7 +4606,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_parentScopeTDZVariables()
     , m_rareData()
 {
-    bool defer = decoder.canDeferIntoPayload();
+    bool defer = Options::useThinChildExecutables() && decoder.canDeferIntoPayload();
     CachedFunctionExecutable::View v = cachedExecutable.view(nullptr, defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;
