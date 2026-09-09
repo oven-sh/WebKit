@@ -64,7 +64,8 @@ CString FunctionExecutable::inferredNameForTools()
             return name->utf8();
         return "<name not materialized>"_span;
     }
-    return ecmaName().utf8();
+    // The mutator itself may be inside the collector's end phase (a CodeBlock dumped while it is jettisoned), where it must not atomize either.
+    return ecmaNameWithoutGC().utf8();
 }
 
 FunctionCodeBlock* FunctionExecutable::baselineCodeBlockFor(CodeSpecializationKind kind)
