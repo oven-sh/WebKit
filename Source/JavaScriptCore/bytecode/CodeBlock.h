@@ -1079,9 +1079,9 @@ private:
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
     unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
-    // Mutator-written; whole bytes rather than bits of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
-    bool m_isLazyStatePreparedForConcurrentCompilation { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
-    bool m_hasCatchThatExecutedWithoutBuffer { false }; // Options::useLazyCatchLiveness()
+    // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
+    uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
+    uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);
