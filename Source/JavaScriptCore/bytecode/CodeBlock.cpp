@@ -2688,6 +2688,8 @@ void CodeBlock::collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializat
         }
         for (auto& pair : statuses->puts) {
             for (auto& variant : pair.second->variants()) {
+                if (variant.kind() != PutByVariant::Setter && variant.kind() != PutByVariant::Proxy)
+                    continue;
                 if (CallLinkStatus* status = variant.callLinkStatus())
                     addVariants(*status, CodeSpecializationKind::CodeForCall);
             }
