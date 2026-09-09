@@ -463,12 +463,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     heap.notifyIsSafeToCollect();
 
-    if (Options::startupJITDeferralScale() > 1) [[unlikely]] {
+    if (Options::startupJITDeferralScale() > 1) [[unlikely]]
         m_startupJITDeferralScale = Options::startupJITDeferralScale();
-        m_startupJITDeferralDeadline = Options::startupJITDeferralMaxMs()
-            ? ApproximateTime::now() + Seconds::fromMilliseconds(Options::startupJITDeferralMaxMs())
-            : ApproximateTime::infinity();
-    }
     
     if (Options::useProfiler()) [[unlikely]] {
         m_perBytecodeProfiler = makeUnique<Profiler::Database>(*this);
@@ -739,26 +735,18 @@ void VM::primitiveGigacageDisabled()
     requestEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
 }
 
-void VM::endStartupJITDeferral(const char* reason)
-{
-    if (m_startupJITDeferralScale == 1)
-        return;
-    // No CodeBlock walk: counters armed during the window were clipped to re-check within one
-    // normal threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their
-    // next slow-path visit.
-    dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: ", reason ? reason : "embedder", " (scale was ", String::number(m_startupJITDeferralScale), ")");
-    m_startupJITDeferralScale = 1;
-}
-
 void VM::setStartupJITDeferralScale(double scale)
 {
     if (!(scale > 1)) {
-        endStartupJITDeferral("embedder");
+        // No CodeBlock walk: counters armed under the scale were clipped to re-check within one normal
+        // threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their next visit.
+        if (m_startupJITDeferralScale != 1)
+            dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: embedder (scale was ", String::number(m_startupJITDeferralScale), ")");
+        m_startupJITDeferralScale = 1;
         return;
     }
     dataLogLnIf(Options::verboseOSR(), "Startup JIT deferral scale set to ", String::number(scale));
     m_startupJITDeferralScale = scale;
-    m_startupJITDeferralDeadline = ApproximateTime::infinity();
 }
 
 void VM::setLastStackTop(const Thread& thread)

@@ -1021,20 +1021,10 @@ public:
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
-    // Options::startupJITDeferralScale: while the startup window is active, LLInt->Baseline and
-    // Baseline->DFG compile thresholds behave as if multiplied by this. Mutator-only (tier-up slow
-    // paths); the deadline is observed lazily, on the next such slow path after it passes.
-    double startupJITDeferralScale()
-    {
-        if (m_startupJITDeferralScale == 1) [[likely]]
-            return 1;
-        if (m_startupJITDeferralDeadline.isInfinity() || ApproximateTime::now() < m_startupJITDeferralDeadline)
-            return m_startupJITDeferralScale;
-        endStartupJITDeferral("deadline");
-        return 1;
-    }
-    JS_EXPORT_PRIVATE void endStartupJITDeferral(const char* reason = "embedder"); // `reason` is only logged (Options::verboseOSR)
-    JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // > 1 (re)arms the window with no deadline; <= 1 ends it
+    // While > 1, LLInt->Baseline and Baseline->DFG compile thresholds behave as if multiplied by this.
+    // Mutator-only (tier-up slow paths). Set from Options::startupJITDeferralScale or by the embedder.
+    double startupJITDeferralScale() const { return m_startupJITDeferralScale; }
+    JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // <= 1 ends the window
 
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
@@ -1410,7 +1400,6 @@ private:
 #endif
 
     double m_startupJITDeferralScale { 1 };
-    ApproximateTime m_startupJITDeferralDeadline;
 
     bool m_hasSideData { false };
     bool m_hasTerminationRequest { false };
