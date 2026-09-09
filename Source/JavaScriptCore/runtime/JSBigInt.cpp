@@ -6965,16 +6965,14 @@ JSValue JSBigInt::parseInt(JSGlobalObject* globalObject, std::span<const CharTyp
             return parseInt(globalObject, vm, data, p + 2, 8, errorParseMode, ParseIntSign::Unsigned, ParseIntMode::DisallowEmptyString);
     }
 
-    ParseIntSign sign = ParseIntSign::Unsigned;
-    if (p < data.size()) {
-        if (data[p] == '-') {
-            sign = ParseIntSign::Signed;
-            ++p;
-        } else if (data[p] == '+')
-            ++p;
+    // SignedInteger ::: DecimalDigits | + DecimalDigits | - DecimalDigits
+    if (p < data.size() && (data[p] == '+' || data[p] == '-')) {
+        ParseIntSign sign = data[p] == '-' ? ParseIntSign::Signed : ParseIntSign::Unsigned;
+        return parseInt(globalObject, vm, data, p + 1, 10, errorParseMode, sign, ParseIntMode::DisallowEmptyString);
     }
 
-    return parseInt(globalObject, vm, data, p, 10, errorParseMode, sign);
+    // StringIntegerLiteral ::: StrWhiteSpace_opt has the value 0n.
+    return parseInt(globalObject, vm, data, p, 10, errorParseMode, ParseIntSign::Unsigned, ParseIntMode::AllowEmptyString);
 }
 
 template <typename CharType>
@@ -6982,7 +6980,15 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
 {
     size_t p = startIndex;
 
-    if (parseMode != ParseIntMode::AllowEmptyString && startIndex == data.size()) {
+    // Removing trailing spaces. Trimming the span itself rather than tracking an end index keeps
+    // every read below provably within it, and nothing past the trailing spaces is read again.
+    while (data.size() > p && isStrWhiteSpace(data.back()))
+        data = data.first(data.size() - 1);
+    size_t length = data.size();
+
+    // After a radix prefix or a sign there must be at least one digit. Trailing whitespace
+    // does not count as one, so this check comes after it is removed ("0x ", "- ").
+    if (parseMode != ParseIntMode::AllowEmptyString && p == length) {
         ASSERT(nullOrGlobalObjectForOOM);
         if (errorParseMode == ErrorParseMode::ThrowExceptions) {
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6992,15 +6998,8 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
     }
 
     // Skipping leading zeros
-    while (p < data.size() && data[p] == '0')
+    while (p < length && data[p] == '0')
         ++p;
-
-    int endIndex = data.size() - 1;
-    // Removing trailing spaces
-    while (endIndex >= static_cast<int>(p) && isStrWhiteSpace(data[endIndex]))
-        --endIndex;
-
-    size_t length = endIndex + 1;
 
     if (p == length) {
 #if USE(BIGINT32)
