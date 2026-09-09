@@ -343,7 +343,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxDFGNodesInBasicBlockForPreciseAnalysis, 20000, Normal, "Disable precise but costly analysis and give conservative results if the number of DFG nodes in a block exceeds this threshold"_s) \
     \
     v(Bool, useConcurrentJIT, true, Normal, "allows the DFG / FTL compilation in threads other than the executing JS thread"_s) \
-    v(Bool, useLazyCodeBlockStateCompilerFence, true, Normal, "If true, the DFG only inlines CodeBlocks whose lazily materialized link-time state the mutator has completed (CodeBlock::prepareLazyStateForConcurrentCompilation), and DFG::compile prepares the likely inlinees up front."_s) \
     v(Unsigned, minNumberOfWorklistThreads, computeNumberOfWorkerThreads(3, 2), Normal, nullptr) \
     v(Unsigned, maxNumberOfWorklistThreads, computeNumberOfWorkerThreads(3, 2), Normal, nullptr) \
     v(Unsigned, numberOfBaselineCompilerThreads, computeNumberOfWorkerThreads(3, 2), Normal, nullptr) \

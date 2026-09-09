@@ -63,8 +63,6 @@ unsigned getNumCompilations()
 // gets linked after this ran is just not inlined by this compilation (counted under reportCodeBlockCreationCosts).
 static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, CodeBlock* profiledDFGCodeBlock, JITCompilationMode mode)
 {
-    if (!Options::useLazyCodeBlockStateCompilerFence())
-        return;
     if (!Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables())
         return; // every block is born prepared
     CodeBlockCreationStats::Scope statsScope(CodeBlockCreationStats::Bucket::JITPrepareInlineCandidates);

@@ -151,7 +151,7 @@ inline CapabilityLevel inlineFunctionForCapabilityLevel(JITType jitType, CodeBlo
 {
     // Usually called on a compiler thread: the inlinee's bytecode, metadata and constants are about to be parsed there,
     // so they must be complete (CodeBlock::prepareLazyStateForConcurrentCompilation).
-    if (Options::useLazyCodeBlockStateCompilerFence() && !isLazyStatePreparedForInlining(codeBlock))
+    if (!isLazyStatePreparedForInlining(codeBlock))
         return CannotCompile;
     if (isClosureCall) {
         if (kind != CodeSpecializationKind::CodeForCall)
