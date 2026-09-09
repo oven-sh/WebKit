@@ -350,7 +350,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 }
                 // 7.a. Let importedModule be GetImportedModule(module, in.[[ModuleRequest]]).
                 const ModuleRequest& request = requestedModules()[import.request()];
-                AbstractModuleRecord* importedModule = importedModuleForPrelinkedRequest(import.request());
+                AbstractModuleRecord* importedModule = prelinkedRequestedModule(import.request());
                 RELEASE_ASSERT(importedModule, import.localSid, import.request());
                 if (resolutionKind == ResolutionKind::Namespace && !Options::validatePrelinkedModuleInfo()) {
                     if (AbstractModuleRecord* target = prelinkedRecordForResolution(globalObject, import.resolvedModule)) [[likely]] {

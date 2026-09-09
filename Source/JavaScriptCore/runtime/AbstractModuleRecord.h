@@ -307,22 +307,20 @@ public:
     bool m_isTypeScript = false;
 
     // Options::usePrelinkedModuleInfo(): this record is module `prelinkedIndex()` of an embedder-resolved graph. Its
-    // requests, import and export entries live in the graph; requested modules are wired by index
-    // (setPrelinkedRequestedModule) instead of through [[LoadedModules]] by specifier; import bindings come from the
-    // graph's resolutions. The by-name maps above are built from the graph the first time something needs them.
+    // requests, import and export entries live in the graph; a request that names a graph module is answered by the
+    // loader's index table, any other request by [[LoadedModules]] as usual (the embedder calls setImportedModule);
+    // import bindings come from the graph's resolutions. The by-name maps above are built from the graph the first time
+    // something needs them.
     bool isPrelinked() const { return !!m_prelinked; }
     PrelinkedModuleGraph* prelinkedGraph() const { return m_prelinked.get(); }
     uint32_t prelinkedIndex() const { return m_prelinkedIndex; }
     const PrelinkedModuleGraph::Module& prelinkedModule() const { return m_prelinked->module(m_prelinkedIndex); }
-    // The record loaded for requestedModules()[i], if it was wired by index; null otherwise (then [[LoadedModules]] has it, or nothing does yet).
-    AbstractModuleRecord* prelinkedRequestedModule(unsigned requestIndex) const;
+    // GetImportedModule for requestedModules()[i]: the loader's record for the graph module the request names, else
+    // [[LoadedModules]], else null (not loaded yet).
+    JS_EXPORT_PRIVATE AbstractModuleRecord* prelinkedRequestedModule(unsigned requestIndex) const;
     // Same, for a `request` of this record (an element of requestedModules(), or a copy of one).
     AbstractModuleRecord* prelinkedRequestedModule(const ModuleRequest&) const;
-    // GetImportedModule: the wired record, else [[LoadedModules]], else null.
-    AbstractModuleRecord* importedModuleForPrelinkedRequest(unsigned requestIndex) const;
-    JS_EXPORT_PRIVATE void setPrelinkedRequestedModule(VM&, unsigned requestIndex, AbstractModuleRecord*);
-    bool hasAllPrelinkedRequestedModules() const;
-    bool hasAnyPrelinkedRequestedModule() const;
+    JS_EXPORT_PRIVATE bool hasAllPrelinkedRequestedModules() const;
     bool prelinkedEntriesMaterialized() const { return m_prelinkedEntriesMaterialized; }
     JS_EXPORT_PRIVATE void materializePrelinkedEntries();
     // Right after createPrelinked, before any request is wired: turn this into an ordinary record (entry maps built, graph dropped).
@@ -411,9 +409,8 @@ protected:
     bool m_prelinkedEntriesMaterialized { false };
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
-    Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRequested; // by request index; visited under cellLock()
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already
-    // reachable through m_prelinkedRequested / the loader's table, like m_resolutionCache); { Resolved, null } = unfilled.
+    // reachable through the loader's table / [[LoadedModules]], like m_resolutionCache); { Resolved, null } = unfilled.
     FixedVector<Resolution> m_prelinkedImportResolutions;
 #endif
 };
