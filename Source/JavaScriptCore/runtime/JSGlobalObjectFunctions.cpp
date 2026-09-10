@@ -35,7 +35,6 @@
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
 #include "ModuleGraphInstance.h"
-#include "JSModuleEnvironment.h"
 #include "JSPromise.h"
 #include "JSSet.h"
 #include "Lexer.h"
@@ -821,24 +820,20 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
-
 #if USE(BUN_JSC_ADDITIONS)
-    // Module graph instances: import() from code that belongs to an instance
-    // loads the requested graph as a template (no evaluation of the primary)
-    // and instantiates it into the caller's instance.
-    if (Options::useModuleGraphInstances()) [[unlikely]] {
-        if (ModuleGraphInstance* instance = globalObject->graphInstanceForScope(callFrame->callerScope(vm))) {
-            JSPromise* promise = JSModuleLoader::importIntoGraphInstance(globalObject, specifier, parameters, sourceOrigin, instance, deferred);
-            if (scope.exception()) [[unlikely]]
-                return rejectWithCaughtException();
-            return JSValue::encode(promise);
-        }
-    }
-    // A primary-graph import() issued by host code that runs during an
-    // instance's load is the primary's, not that instance's.
+    // import() from code of a module graph instance loads into that instance:
+    // the host resolves the specifier as usual and the load it then requests is
+    // diverted (JSModuleLoader::requestImportModule). An import() issued by host
+    // code that runs during an instance's load belongs to the global object's
+    // own graph.
+    std::optional<JSGlobalObject::DynamicImportGraphInstanceScope> targetInstance;
     std::optional<JSGlobalObject::GraphInstanceLoadingScope> primaryLoading;
-    if (Options::useModuleGraphInstances() && globalObject->currentGraphInstanceForLoading()) [[unlikely]]
-        primaryLoading.emplace(globalObject, nullptr);
+    if (Options::useModuleGraphInstances()) [[unlikely]] {
+        if (ModuleGraphInstance* instance = globalObject->graphInstanceForScope(callFrame->callerScope(vm)))
+            targetInstance.emplace(globalObject, instance);
+        else if (globalObject->currentGraphInstanceForLoading())
+            primaryLoading.emplace(globalObject, nullptr);
+    }
 #endif
     auto* importPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
     if (scope.exception()) [[unlikely]]

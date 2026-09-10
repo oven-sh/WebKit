@@ -25,109 +25,40 @@
 
 #pragma once
 
-#include "AbstractModuleRecord.h"
-#include "CyclicModuleRecord.h"
-#include "JSInternalFieldObjectImpl.h"
-#include "JSDestructibleObject.h"
+#include "JSCell.h"
+#include "WriteBarrier.h"
 #include <wtf/HashMap.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
-class JSModuleEnvironment;
-class JSModuleNamespaceObject;
+class AbstractModuleRecord;
+class JSModuleRecord;
 class JSPromise;
 class JSScope;
-class ModuleGraphInstance;
 
-// The state of one module record within one ModuleGraphInstance: its module
-// environment there and the record's evaluation state for that instance (the
-// fields the module evaluation algorithm keeps on a Cyclic Module Record). Also
-// the context object of that instance's asynchronous evaluation steps.
-// It is also the generator object of the instance's module body (internal
-// fields State and Frame, as on AbstractModuleRecord) and therefore the driver
-// a top-level `for await` in that body resumes.
-class ModuleRecordInstance final : public JSInternalFieldObjectImpl<2> {
+// A further instantiation of already-linked modules in the same global object
+// (Options::useModuleGraphInstances()).
+//
+// An instance maps a *template* record (the one the module loader registry
+// holds) to the record that stands for that module inside this instance:
+//   - a Source Text Module Record gets a fresh JSModuleRecord (ModuleGraphInstance::instantiate)
+//     with its own environment, namespace and evaluation state, sharing the
+//     template's ModuleProgramExecutable -- and with it every CodeBlock, function
+//     executable and piece of JIT code;
+//   - any other record (synthetic / host modules) is shared with the template
+//     graph unless the embedder registers a replacement first (add()).
+// Everything else -- Link(), Evaluate(), namespaces, top-level await -- is the
+// ordinary machinery running on the instance's records.
+class ModuleGraphInstance final : public JSCell {
 public:
-    using Base = JSInternalFieldObjectImpl<2>;
+    using Base = JSCell;
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
-    using Field = AbstractModuleRecord::Field;
-    static_assert(numberOfInternalFields == AbstractModuleRecord::numberOfInternalFields);
-    WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
-    const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
-
-    template<typename CellType, SubspaceAccess mode>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
-    {
-        return vm.moduleRecordInstanceSpace<mode>();
-    }
-
-    inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static ModuleRecordInstance* create(VM&, ModuleGraphInstance*, AbstractModuleRecord*, JSModuleEnvironment*);
-
-    AbstractModuleRecord* record() const { return m_record.get(); }
-    ModuleGraphInstance* graphInstance() const { return m_graphInstance.get(); }
-    JSModuleEnvironment* environment() const { return m_environment.get(); }
-
-    CyclicModuleRecord::Status status() const { return m_status; }
-    void setStatus(CyclicModuleRecord::Status status) { m_status = status; }
-    JSValue evaluationError() const { return m_evaluationError.get(); }
-    void setEvaluationError(VM& vm, JSValue error) { m_evaluationError.set(vm, this, error); }
-    unsigned dfsAncestorIndex() const { return m_dfsAncestorIndex; }
-    void setDFSAncestorIndex(unsigned index) { m_dfsAncestorIndex = index; }
-    CyclicModuleRecord* cycleRoot() const { return m_cycleRoot.get(); }
-    void setCycleRoot(VM& vm, CyclicModuleRecord* root) { m_cycleRoot.setMayBeNull(vm, this, root); }
-    AbstractModuleRecord::AsyncEvaluationOrder asyncEvaluationOrder() const { return m_asyncEvaluationOrder; }
-    void setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder order) { m_asyncEvaluationOrder = order; }
-    std::optional<int> pendingAsyncDependencies() const { return m_pendingAsyncDependencies; }
-    void setPendingAsyncDependencies(std::optional<int> value) { m_pendingAsyncDependencies = value; }
-    const Vector<WriteBarrier<AbstractModuleRecord>>& asyncParentModules() const LIFETIME_BOUND { return m_asyncParentModules; }
-    void appendAsyncParentModule(VM&, AbstractModuleRecord*);
-    JSPromise* topLevelCapability() const { return m_topLevelCapability.get(); }
-    void setTopLevelCapability(VM& vm, JSPromise* capability) { m_topLevelCapability.setMayBeNull(vm, this, capability); }
-    JSPromise* asyncCapability() const { return m_asyncCapability.get(); }
-    void setAsyncCapability(VM& vm, JSPromise* capability) { m_asyncCapability.setMayBeNull(vm, this, capability); }
-    // Generator state of a module body with top-level await (Field::State).
-    bool isTopLevelExecutionFinished() const;
-    JSModuleNamespaceObject* deferredNamespaceObject() const { return m_deferredNamespaceObject.get(); }
-    void setDeferredNamespaceObject(VM&, JSModuleNamespaceObject*);
-
-private:
-    ModuleRecordInstance(VM&, Structure*);
-    void finishCreation(VM&, ModuleGraphInstance*, AbstractModuleRecord*, JSModuleEnvironment*);
-
-    WriteBarrier<AbstractModuleRecord> m_record;
-    WriteBarrier<ModuleGraphInstance> m_graphInstance;
-    WriteBarrier<JSModuleEnvironment> m_environment;
-    WriteBarrier<Unknown> m_evaluationError;
-    WriteBarrier<CyclicModuleRecord> m_cycleRoot;
-    WriteBarrier<JSPromise> m_topLevelCapability;
-    WriteBarrier<JSPromise> m_asyncCapability;
-    WriteBarrier<JSModuleNamespaceObject> m_deferredNamespaceObject;
-    Vector<WriteBarrier<AbstractModuleRecord>> m_asyncParentModules;
-    AbstractModuleRecord::AsyncEvaluationOrder m_asyncEvaluationOrder { };
-    std::optional<int> m_pendingAsyncDependencies;
-    unsigned m_dfsAncestorIndex { 0 };
-    CyclicModuleRecord::Status m_status { CyclicModuleRecord::Status::Linked };
-};
-
-// One instantiation of a module graph in a global object beyond the primary
-// one: maps each module record instantiated for it to its ModuleRecordInstance
-// (environment + evaluation state). Records not in the map are shared with the
-// primary graph (their own environment and state apply).
-class ModuleGraphInstance final : public JSDestructibleObject {
-public:
-    using Base = JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    DECLARE_EXPORT_INFO;
-    DECLARE_VISIT_CHILDREN;
-    static constexpr DestructionMode needsDestruction = NeedsDestruction;
-    static void destroy(JSCell*);
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -136,72 +67,66 @@ public:
     }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    JS_EXPORT_PRIVATE static ModuleGraphInstance* create(VM&, JSGlobalObject*, JSScope* parentScope);
+    JS_EXPORT_PRIVATE static ModuleGraphInstance* create(VM&, JSGlobalObject*, JSScope* parentScope = nullptr);
 
-    // The scope module environments of this instance are created under: an
-    // embedder-provided scope (e.g. a scope overlay) or the global object's
-    // module environment parent scope.
+    JSGlobalObject* globalObject() const { return m_globalObject.get(); }
+    // Scope the instance's module environments are created under (default: the
+    // one the global object's own module environments use). Shared CodeBlocks
+    // were linked against one scope chain shape, so this must mirror it.
     JSScope* parentScope() const { return m_parentScope.get(); }
     void setParentScope(VM& vm, JSScope* scope) { m_parentScope.setMayBeNull(vm, this, scope); }
+    // For the embedder: whatever object represents this instance to it (kept alive by the instance).
+    JSValue embedderData() const { return m_embedderData.get(); }
+    void setEmbedderData(VM& vm, JSValue value) { m_embedderData.set(vm, this, value); }
 
-    ModuleRecordInstance* recordInstance(AbstractModuleRecord*) const;
-    JSModuleEnvironment* environment(AbstractModuleRecord* record) const
-    {
-        ModuleRecordInstance* instance = recordInstance(record);
-        return instance ? instance->environment() : nullptr;
-    }
-    ModuleRecordInstance* add(VM&, AbstractModuleRecord*, JSModuleEnvironment*);
-    bool remove(AbstractModuleRecord*);
-    // Drops every record's environment and state (the embedder is done with the
-    // instance; code of the instance that still runs keeps what it closes over).
-    // Releases every record's state; pending top-level evaluation promises of
-    // this instance are rejected and later asynchronous completions of its
-    // modules are dropped.
-    JS_EXPORT_PRIVATE void clear(JSGlobalObject*);
+    // The record standing for templateRecord in this instance, or null.
+    JS_EXPORT_PRIVATE AbstractModuleRecord* recordFor(AbstractModuleRecord* templateRecord) const;
+    JSModuleRecord* sourceTextRecordFor(AbstractModuleRecord* templateRecord) const;
+    // Register the record that stands for templateRecord (an embedder may
+    // pre-register a fresh synthetic record, or the template itself to force sharing).
+    JS_EXPORT_PRIVATE void add(VM&, AbstractModuleRecord* templateRecord, AbstractModuleRecord* instanceRecord);
+    JS_EXPORT_PRIVATE bool remove(AbstractModuleRecord* templateRecord);
+
+    // Create (or find) this instance's records for templateRecord and every
+    // Source Text Module Record it depends on, and Link() them. templateRecord
+    // must itself be linked. Returns this instance's record for it.
+    JS_EXPORT_PRIVATE JSModuleRecord* instantiate(JSGlobalObject*, JSModuleRecord* templateRecord);
+    // instantiate() + Evaluate(); the promise is the top-level capability.
+    JS_EXPORT_PRIVATE JSPromise* evaluate(JSGlobalObject*, JSModuleRecord* templateRecord);
+    // Same, for callers that cannot wait: throws if evaluation does not settle synchronously.
+    JS_EXPORT_PRIVATE JSModuleRecord* evaluateSync(JSGlobalObject*, JSModuleRecord* templateRecord);
+
+    // The embedder is done with the instance: drop every record (code of the
+    // instance that still runs keeps what it closes over). Later instantiate()
+    // calls throw.
+    JS_EXPORT_PRIVATE void clear();
     bool isCleared() const { return m_cleared; }
-    // Disposed by its owner: cleared, or to be cleared as soon as the evaluation
-    // step currently running against it returns (see BusyScope).
-    bool isDisposed() const { return m_cleared || m_clearPending; }
+    bool isDisposed() const { return m_cleared; }
 
-    // Brackets an evaluation step that runs against this instance (Evaluate(),
-    // an asynchronous completion or resumption); a clear() requested meanwhile
-    // is performed when the outermost step returns.
-    class BusyScope {
-        WTF_MAKE_NONCOPYABLE(BusyScope);
-    public:
-        BusyScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
-            : m_globalObject(globalObject), m_instance(instance)
-        {
-            if (m_instance)
-                ++m_instance->m_busy;
-        }
-        ~BusyScope()
-        {
-            if (m_instance && !--m_instance->m_busy && m_instance->m_clearPending)
-                m_instance->clear(m_globalObject);
-        }
-    private:
-        JSGlobalObject* m_globalObject;
-        ModuleGraphInstance* m_instance;
-    };
     template<typename Functor> void forEachRecord(const Functor&) const;
+    unsigned size() const { return m_records.size(); }
 
 private:
     ModuleGraphInstance(VM&, Structure*);
-    void finishCreation(VM&, JSScope* parentScope);
+    void finishCreation(VM&, JSGlobalObject*, JSScope*);
+    JSModuleRecord* cloneSubgraph(JSGlobalObject*, JSModuleRecord* templateRecord, Vector<AbstractModuleRecord*>& created);
 
+    struct Entry {
+        WriteBarrier<AbstractModuleRecord> templateRecord;
+        WriteBarrier<AbstractModuleRecord> instanceRecord;
+    };
+    UncheckedKeyHashMap<AbstractModuleRecord*, Entry> m_records;
+    WriteBarrier<JSGlobalObject> m_globalObject;
     WriteBarrier<JSScope> m_parentScope;
-    UncheckedKeyHashMap<AbstractModuleRecord*, WriteBarrier<ModuleRecordInstance>> m_records;
+    WriteBarrier<Unknown> m_embedderData;
     bool m_cleared { false };
-    bool m_clearPending { false };
-    unsigned m_busy { 0 };
 };
 
 template<typename Functor>
 void ModuleGraphInstance::forEachRecord(const Functor& functor) const
 {
-    for (auto& [record, instance] : m_records)
-        functor(*record, *instance.get());
+    for (auto& [key, entry] : m_records)
+        functor(*entry.templateRecord.get(), *entry.instanceRecord.get());
 }
 
 } // namespace JSC

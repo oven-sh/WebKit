@@ -58,22 +58,6 @@ public:
     static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
 
     static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
-    // Module graph instances: JSON modules carry mutable state (their parsed
-    // value), so each graph gets its own environment with a fresh parse.
-    // True for data modules: a JSON source to re-parse, or exports that are all
-    // plain data (primitives / arrays / plain objects), deep-copied per graph.
-    // Native/builtin modules (functions, host objects, lazy exports) are shared.
-    bool hasPerGraphInstanceState() const;
-    JSModuleEnvironment* createGraphInstanceEnvironment(JSGlobalObject*);
-    // Host synthetic modules with per-graph state of their own (a CommonJS
-    // module behind an ESM import): the provider regenerates per graph, and if
-    // the record was first created for a graph, the primary bindings stay lazy
-    // until the primary graph links to them (then the provider runs for it).
-    void setSyntheticSourceProvider(RefPtr<SyntheticSourceProvider>&& provider, bool primaryPending) { m_provider = WTF::move(provider); m_primaryPending = primaryPending; }
-    // The primary environment's values are produced on first use by the primary graph.
-    bool primaryPending() const { return m_primaryPending; }
-    SyntheticSourceProvider* syntheticSourceProvider() const { return m_provider.get(); }
-    void materializePrimaryIfPending(JSGlobalObject*);
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
@@ -88,6 +72,23 @@ public:
     JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
+
+    // Module graph instances: a record whose provider regenerates per instance
+    // (or a JSON module, whose parsed value is mutable) gets a fresh record in
+    // each instance instead of being shared with the template graph.
+    bool regeneratesPerGraphInstance() const;
+    JS_EXPORT_PRIVATE static SyntheticModuleRecord* createForGraphInstance(JSGlobalObject*, SyntheticModuleRecord* templateRecord);
+    void setSyntheticSourceProvider(RefPtr<SyntheticSourceProvider>&&, bool primaryPending);
+    SyntheticSourceProvider* syntheticSourceProvider() const { return m_provider.get(); }
+    // A record first produced while loading for a graph instance keeps the
+    // template's own bindings unset until the template graph first uses them;
+    // then the provider runs again, for the template.
+    bool primaryPending() const { return m_primaryPending; }
+    JS_EXPORT_PRIVATE void materializePrimaryIfPending(JSGlobalObject*);
+    // The template record for a module first loaded on behalf of a graph
+    // instance: export names known (the instance's generation produced them),
+    // bindings left unset until materializePrimaryIfPending().
+    static SyntheticModuleRecord* createPendingPrimary(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, RefPtr<SyntheticSourceProvider>&&);
 
     // No-op unless this record has lazy exports and localName is one of them that nobody has materialized (or
     // overridden through JSModuleNamespaceObject::overrideExportValue) yet. May run arbitrary JS and throw.
@@ -110,12 +111,10 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_lazyExportsSource;
-#endif
-    // Module graph instances: how to produce this record's bindings again for
-    // another instance (JSON source to re-parse, or the host's provider).
-    SourceCode m_jsonSource;
     RefPtr<SyntheticSourceProvider> m_provider;
+    SourceCode m_jsonSource;
     bool m_primaryPending { false };
+#endif
 };
 
 } // namespace JSC

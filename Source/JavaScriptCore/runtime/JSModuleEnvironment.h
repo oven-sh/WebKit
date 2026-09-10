@@ -35,7 +35,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 class AbstractModuleRecord;
-class ModuleGraphInstance;
 class Register;
 
 class JSModuleEnvironment final : public JSLexicalEnvironment {
@@ -64,15 +63,10 @@ public:
         return offset;
     }
 
-    static size_t offsetOfGraphInstance(SymbolTable* symbolTable)
-    {
-        return offsetOfModuleRecord(symbolTable) + sizeof(WriteBarrier<AbstractModuleRecord>);
-    }
-
     // Number of import slots this environment was allocated with (raw word).
     static size_t offsetOfImportSlotCount(SymbolTable* symbolTable)
     {
-        return offsetOfGraphInstance(symbolTable) + sizeof(WriteBarrier<Unknown>);
+        return offsetOfModuleRecord(symbolTable) + sizeof(WriteBarrier<AbstractModuleRecord>);
     }
 
     static size_t offsetOfImportSlot(SymbolTable* symbolTable, unsigned index)
@@ -102,29 +96,23 @@ public:
     // Point every import slot at the exporter's environment in this graph
     // instance (or the exporter's primary environment). Slots whose exporter has
     // no environment yet (link-time cycles) stay empty and are filled on first use.
-    void fillImportSlots(JSGlobalObject*);
+    void fillImportSlots(VM&);
 
     AbstractModuleRecord* moduleRecord()
     {
         return moduleRecordSlot().get();
     }
 
-    // Module graph instances (prototype): a secondary instantiation of a module
-    // graph shares every record, executable and CodeBlock with the primary one
-    // and differs only in its environments. Each secondary environment points at
-    // its instance's map (a JSMap: AbstractModuleRecord → JSModuleEnvironment)
-    // so ModuleVar resolution can find the importing instance's copy of the
-    // exporting module's environment. Null on primary environments.
-    // The module graph instance this environment belongs to (null: the primary instantiation).
-    ModuleGraphInstance* graphInstance();
-    void setGraphInstance(VM&, ModuleGraphInstance*);
-    // The environment of `exporter` in the same graph instance as this one
-    // (the exporter's primary environment if this is a primary environment).
-    JSModuleEnvironment* importedEnvironmentFor(JSGlobalObject*, AbstractModuleRecord* exporter);
-    // op_resolve_scope slow path for a ModuleVar under module graph instances:
-    // walk `depth` scopes from `scope` to the importing module environment and
-    // return the exporter's environment in that environment's instance
-    // (`linkedExporter` — the one the CodeBlock was linked against — otherwise).
+    // Options::useModuleGraphInstances(): the environment of `exporter` (a record
+    // of the global object's own module graph) as seen from this environment --
+    // the environment of the record standing for it in this environment's graph
+    // instance, else exporter's own. Never allocates; null if that record has no
+    // environment yet.
+    JSModuleEnvironment* importedEnvironmentFor(AbstractModuleRecord* exporter);
+    // op_resolve_scope slow path for a ModuleVar with an import slot that is not
+    // filled yet: walk `depth` scopes from `scope` to the importing module
+    // environment and resolve `linkedExporter` (the environment the CodeBlock was
+    // linked against) into that environment's graph instance.
     static JSObject* resolveModuleVarScope(JSGlobalObject*, JSScope*, unsigned depth, JSModuleEnvironment* linkedExporter);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -143,10 +131,6 @@ private:
     {
         return *std::bit_cast<WriteBarrierBase<AbstractModuleRecord>*>(std::bit_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
     }
-    WriteBarrierBase<Unknown>& graphInstanceSlot()
-    {
-        return *std::bit_cast<WriteBarrierBase<Unknown>*>(std::bit_cast<char*>(this) + offsetOfGraphInstance(symbolTable()));
-    }
     uintptr_t& importSlotCountSlot()
     {
         return *std::bit_cast<uintptr_t*>(std::bit_cast<char*>(this) + offsetOfImportSlotCount(symbolTable()));
@@ -157,7 +141,6 @@ inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JS
     : Base(vm, structure, currentScope, symbolTable, initialValue)
 {
     this->moduleRecordSlot().setWithoutWriteBarrier(moduleRecord);
-    this->graphInstanceSlot().setWithoutWriteBarrier(JSValue());
     this->importSlotCountSlot() = 0;
 }
 

@@ -211,13 +211,6 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
-        // Module graph instances: a generator that yields a fresh module per call
-        // and honours JSGlobalObject::currentGraphInstanceForLoading() (e.g. a
-        // CommonJS module evaluated in that graph's cache) — such records get
-        // their own environment per graph and a lazily produced primary.
-        void setRegeneratesPerGraphInstance(bool value) { m_regeneratesPerGraphInstance = value; }
-        bool regeneratesPerGraphInstance() const { return m_regeneratesPerGraphInstance; }
-
         unsigned hash() const final
         {
             return m_source.impl()->hash();
@@ -229,6 +222,13 @@ private:
         }
 
         // Returns the object that exports declared without a value are read from, or nullptr if there are none.
+        // Module graph instances: the generator yields a fresh module per call and
+        // honours JSGlobalObject::currentGraphInstanceForLoading(); records made
+        // from this provider are regenerated for each graph instance instead of
+        // being shared with the template graph.
+        void setRegeneratesPerGraphInstance(bool value) { m_regeneratesPerGraphInstance = value; }
+        bool regeneratesPerGraphInstance() const { return m_regeneratesPerGraphInstance; }
+
         JSObject* generate(JSGlobalObject* globalObject, Identifier moduleKey, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
         {
             if (m_lazyGenerator)

@@ -44,7 +44,6 @@ namespace JSC {
 class CyclicModuleRecord;
 class JSModuleEnvironment;
 class JSModuleNamespaceObject;
-class ModuleGraphInstance;
 class JSMap;
 class JSPromise;
 
@@ -201,13 +200,24 @@ public:
 
     const Identifier& moduleKey() const { return m_moduleKey; }
     ScriptFetchParameters::Type moduleType() const;
-    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
+    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->requestedModules() : m_requestedModules; }
+    // Module graph instances: a record created for an instance reads its requests
+    // and import/export entries from its template instead of holding copies.
+    void shareDeclarationsWith(VM&, AbstractModuleRecord* templateRecord);
+    AbstractModuleRecord* sharedDeclarations() const { return m_sharedDeclarations.get(); }
+    // GetImportedModule for a record of a module graph instance: the template's
+    // dependency as it stands in the instance (its record there, else shared). Null for other records.
+    AbstractModuleRecord* graphInstanceImportedModule(const Identifier& moduleName, ScriptFetchParameters::Type);
 
-    // Import slots (module graph instances): the distinct records this module's
-    // named imports resolve to, fixed at link time. Every JSModuleEnvironment of
-    // this record carries one trailing slot per entry holding the environment of
-    // that exporter in the same graph instance, so a ModuleVar access is
-    // "walk to the importing environment, load slot" in every tier.
+    // Import slots (Options::useModuleGraphInstances()): the distinct records this
+    // module's named imports resolve to, fixed when its environment is first
+    // initialized. Every JSModuleEnvironment of the module carries one trailing
+    // slot per entry holding the environment of that exporter *in the same graph
+    // instance*, so a ModuleVar access in code shared between instances is "walk
+    // to the importing environment, load slot" in every tier. A record created for
+    // a graph instance adopts its template's list (the layout is what the shared
+    // CodeBlocks encode).
+    bool hasImportedRecords() const { return m_importedRecordsSet; }
     unsigned importSlotCount() const { return m_importedRecords.size(); }
     AbstractModuleRecord* importedRecordAt(unsigned index) const { return m_importedRecords[index].get(); }
     std::optional<unsigned> importSlotIndexFor(AbstractModuleRecord* exporter) const
@@ -219,17 +229,18 @@ public:
         return std::nullopt;
     }
     void setImportedRecords(VM&, const Vector<AbstractModuleRecord*>&);
+    void adoptImportedRecords(VM&, const AbstractModuleRecord& templateRecord);
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
     // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
-    const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
-    const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
-    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_starExportEntries; }
+    const ExportEntries& exportEntries() const LIFETIME_BOUND { if (m_sharedDeclarations) return m_sharedDeclarations->exportEntries(); ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
+    const ImportEntries& importEntries() const LIFETIME_BOUND { if (m_sharedDeclarations) return m_sharedDeclarations->importEntries(); ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
+    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { if (m_sharedDeclarations) return m_sharedDeclarations->starExportEntries(); ensurePrelinkedEntriesMaterialized(); return m_starExportEntries; }
 #else
-    const ExportEntries& exportEntries() const LIFETIME_BOUND { return m_exportEntries; }
-    const ImportEntries& importEntries() const LIFETIME_BOUND { return m_importEntries; }
-    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { return m_starExportEntries; }
+    const ExportEntries& exportEntries() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->exportEntries() : m_exportEntries; }
+    const ImportEntries& importEntries() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->importEntries() : m_importEntries; }
+    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->starExportEntries() : m_starExportEntries; }
 #endif
     const Vector<WriteBarrier<AbstractModuleRecord>>& asyncParentModules() const LIFETIME_BOUND { return m_asyncParentModules; }
     CyclicModuleRecord* cycleRoot() const { return m_cycleRoot.get(); }
@@ -275,10 +286,6 @@ public:
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
 
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation, bool shouldPreventExtensions = true);
-    // Module graph instances (prototype): a namespace object bound to `instance`'s environments (not cached on the record).
-    JS_EXPORT_PRIVATE JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation);
-    // This record's environment in `instance` (creating it for synthetic records with per-graph state when asked), or null.
-    JS_EXPORT_PRIVATE JSModuleEnvironment* graphInstanceEnvironment(JSGlobalObject*, ModuleGraphInstance*, bool createForSynthetic);
 #if USE(BUN_JSC_ADDITIONS)
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions)
     {
@@ -286,9 +293,9 @@ public:
     }
 #endif
 
-    void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen, ModuleGraphInstance* = nullptr);
-    bool readyForSyncExecution(ModuleGraphInstance* = nullptr);
-    void evaluateSync(JSGlobalObject*, ModuleGraphInstance* = nullptr);
+    void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
+    bool readyForSyncExecution();
+    void evaluateSync(JSGlobalObject*);
 
     JSPromise* asyncCapability() const;
     void asyncCapability(VM&, JSPromise*);
@@ -311,9 +318,9 @@ public:
 
     void evaluateModuleSync(JSGlobalObject*);
 #if USE(BUN_JSC_ADDITIONS)
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise, ModuleGraphInstance*);
+    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
 #else
-    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance*);
+    unsigned innerModuleEvaluation(JSGlobalObject*, Vector<AbstractModuleRecord*, 8>& stack, unsigned index);
 #endif
     unsigned innerModuleLinking(JSGlobalObject*, Vector<CyclicModuleRecord*, 8>& stack, unsigned index, RefPtr<ScriptFetcher>);
 
@@ -426,8 +433,9 @@ protected:
     std::optional<int> m_pendingAsyncDependencies;
 
     bool m_hasTLA { false };
-    Vector<WriteBarrier<AbstractModuleRecord>> m_importedRecords;
     bool m_importedRecordsSet { false };
+    Vector<WriteBarrier<AbstractModuleRecord>> m_importedRecords;
+    WriteBarrier<AbstractModuleRecord> m_sharedDeclarations;
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };

@@ -37,14 +37,13 @@
 
 namespace JSC {
 
+class ModuleGraphInstance;
+
 class ErrorInstance;
 class JSPromise;
 class JSModuleNamespaceObject;
-class ModuleGraphInstance;
 class JSModuleRecord;
 class JSSourceCode;
-class JSMap;
-class JSModuleEnvironment;
 class ModuleRegistryEntry;
 class SourceOrigin;
 
@@ -53,8 +52,8 @@ enum class ModuleLoadFlag : uint8_t {
     Dynamic = 1 << 1,
     UseImportMap = 1 << 2,
     Deferred = 1 << 3,
-    // Loading a template for a module graph instance: the primary graph's
-    // evaluation error for an already-loaded module is not this load's failure.
+    // Loading a template on behalf of a module graph instance: an already-loaded
+    // module's evaluation error in the global object's own graph is not this load's failure.
     ForGraphInstance = 1 << 4,
 };
 
@@ -101,20 +100,6 @@ public:
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
-    // Module graph instances (prototype): link a fetched module graph without
-    // evaluating it, so it can serve as the template for instantiateIntoGraphInstance.
-    JS_EXPORT_PRIVATE AbstractModuleRecord* linkWithoutEvaluating(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetcher>, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript);
-#if USE(BUN_JSC_ADDITIONS)
-    // import() from code of a module graph instance: fetch and link the graph as
-    // a template (through the synchronous loader), instantiate it into the
-    // instance, and resolve with the instance's namespace object. (An
-    // asynchronous-loader form is needed for ports without loadModuleSync.)
-    JS_EXPORT_PRIVATE static JSPromise* importIntoGraphInstance(JSGlobalObject*, JSString* specifier, JSValue parameters, const SourceOrigin& referrer, ModuleGraphInstance*, bool deferred = false);
-    JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
-    // Resolves with the instance's namespace object once its (possibly asynchronous) evaluation completes.
-    JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false, JSPromise* dynamicImportPromise = nullptr);
-    static JSObject* createGraphInstanceImportContext(JSGlobalObject*, ModuleGraphInstance*, const Identifier& key, ScriptFetchParameters::Type, bool deferred);
-#endif
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
@@ -122,6 +107,20 @@ public:
 
     // Platform dependent hooked APIs.
     JSPromise* importModule(JSGlobalObject*, JSString* moduleName, JSValue parameters, const SourceOrigin& referrer, bool deferred = false);
+
+    // Module graph instances (Options::useModuleGraphInstances()).
+    // Link() an already-fetched module graph without Evaluate(), so its records
+    // can serve as templates; returns the record for moduleKey.
+    JS_EXPORT_PRIVATE AbstractModuleRecord* linkModule(JSGlobalObject*, const Identifier& moduleKey, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, RefPtr<ScriptFetcher> = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    // Fetch the graph for `key` on behalf of `instance` (through the synchronous
+    // loader; host module providers see the instance as the current loading
+    // instance). Resolves once loaded; nothing is linked or evaluated.
+    JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
+    // Load, link the template, instantiate into `instance` and evaluate there;
+    // resolves with the instance's namespace object for `key`.
+    JS_EXPORT_PRIVATE static JSPromise* importIntoGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*, bool deferred = false);
+#endif
     Identifier resolve(JSGlobalObject*, JSValue name, JSValue referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     Identifier resolve(JSGlobalObject*, const Identifier& name, const Identifier& referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     JSPromise* fetch(JSGlobalObject*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);

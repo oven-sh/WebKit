@@ -375,8 +375,8 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     jsMicrotaskDispatcherStructure.setWithoutWriteBarrier(JSMicrotaskDispatcher::createStructure(*this, nullptr, jsNull()));
     moduleLoaderStructure.setWithoutWriteBarrier(JSModuleLoader::createStructure(*this, nullptr, jsNull()));
     moduleRegistryEntryStructure.setWithoutWriteBarrier(ModuleRegistryEntry::createStructure(*this, nullptr, jsNull()));
+    moduleGraphInstanceStructure.setWithoutWriteBarrier(ModuleGraphInstance::createStructure(*this, nullptr, jsNull()));
     moduleLoadingContextStructure.setWithoutWriteBarrier(ModuleLoadingContext::createStructure(*this, nullptr, jsNull()));
-    moduleRecordInstanceStructure.setWithoutWriteBarrier(ModuleRecordInstance::createStructure(*this, nullptr, jsNull()));
     moduleLoaderPayloadStructure.setWithoutWriteBarrier(ModuleLoaderPayload::createStructure(*this, nullptr, jsNull()));
     moduleGraphLoadingStateStructure.setWithoutWriteBarrier(ModuleGraphLoadingState::createStructure(*this, nullptr, jsNull()));
     promiseCombinatorsContextStructure.setWithoutWriteBarrier(JSPromiseCombinatorsContext::createStructure(*this, nullptr, jsNull()));
@@ -2086,8 +2086,8 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(jsMicrotaskDispatcherStructure);
     visitor.append(moduleLoaderStructure);
     visitor.append(moduleRegistryEntryStructure);
+    visitor.append(moduleGraphInstanceStructure);
     visitor.append(moduleLoadingContextStructure);
-    visitor.append(moduleRecordInstanceStructure);
     visitor.append(moduleLoaderPayloadStructure);
     visitor.append(moduleGraphLoadingStateStructure);
     visitor.append(promiseCombinatorsContextStructure);

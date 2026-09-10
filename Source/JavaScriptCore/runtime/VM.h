@@ -560,8 +560,8 @@ public:
     WriteBarrier<Structure> jsMicrotaskDispatcherStructure;
     WriteBarrier<Structure> moduleLoaderStructure;
     WriteBarrier<Structure> moduleRegistryEntryStructure;
+    WriteBarrier<Structure> moduleGraphInstanceStructure;
     WriteBarrier<Structure> moduleLoadingContextStructure;
-    WriteBarrier<Structure> moduleRecordInstanceStructure;
     WriteBarrier<Structure> moduleLoaderPayloadStructure;
     WriteBarrier<Structure> moduleGraphLoadingStateStructure;
     WriteBarrier<Structure> promiseCombinatorsContextStructure;

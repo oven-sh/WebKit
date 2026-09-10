@@ -32,18 +32,12 @@
 
 namespace JSC {
 
-class ModuleGraphInstance;
 class ModuleProgramExecutable;
-class ModuleRecordInstance;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
-class JSMap;
 class FunctionExecutable;
-class JSPromise;
-class InternalFieldTuple;
-class CodeBlock;
-
+class ModuleGraphInstance;
 
 class JSModuleRecord final : public CyclicModuleRecord {
     friend class LLIntOffsetsExtractor;
@@ -75,6 +69,25 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
+    using CyclicModuleRecord::evaluate;
+
+    // Module graph instances (Options::useModuleGraphInstances()): a fresh record
+    // for templateRecord's module inside `instance`, with the template's key,
+    // source, requests and import/export entries and *the same*
+    // ModuleProgramExecutable (so the same CodeBlocks and function executables),
+    // status Unlinked. The caller fills [[LoadedModules]] and runs Link().
+    static JSModuleRecord* createForGraphInstance(JSGlobalObject*, VM&, JSModuleRecord* templateRecord, ModuleGraphInstance*);
+    // The record this one was created from (null for a record the loader created).
+    JSModuleRecord* templateRecord() const { return m_templateRecord.get(); }
+    JSModuleRecord* templateRecordOrThis() { return m_templateRecord ? m_templateRecord.get() : this; }
+    // The instance this record belongs to (null: the global object's own module graph).
+    ModuleGraphInstance* graphInstance() const { return m_graphInstance.get(); }
+    // Function executables of the module's environment-allocated function
+    // declarations, as the environment was initialized (so instances create their
+    // function objects over the same executables). Empty unless
+    // Options::useModuleGraphInstances().
+    const Vector<WriteBarrier<FunctionExecutable>>& functionDeclarationExecutables() const { return m_functionDeclarationExecutables; }
+    void setFunctionDeclarationExecutables(VM&, Vector<WriteBarrier<FunctionExecutable>>&&);
 
     bool isTopLevelExecutionFinished() const;
 
@@ -86,45 +99,16 @@ public:
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
 
-    // Module graph instances. Instantiate this module and, recursively, every
-    // source text module it depends on, a further time into `instance`, reusing
-    // this record's ModuleProgramExecutable, CodeBlock and function executables,
-    // then evaluate the instance with the module evaluation algorithm against
-    // the instance's state (CyclicModuleRecord::evaluate(..., instance)).
-    // The synchronous form requires the evaluation to complete synchronously
-    // (throws for top-level await) and returns this module's environment in the
-    // instance; the asynchronous form returns the evaluation promise.
-    JS_EXPORT_PRIVATE JSModuleEnvironment* instantiateIntoGraphInstance(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation);
-    // `dynamicImportPromise` is the import() promise this evaluation settles,
-    // when there is one, for the top-level-await deadlock check in
-    // innerModuleEvaluation (BUN_JSC_ADDITIONS); null otherwise.
-    JS_EXPORT_PRIVATE JSPromise* instantiateIntoGraphInstanceAsync(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation, JSPromise* dynamicImportPromise = nullptr);
-    // ExecuteModule against this record's environment in `instance`.
-    void executeInstance(JSGlobalObject*, ModuleRecordInstance*, JSPromise* capability);
-    JSValue evaluateInstance(JSGlobalObject*, ModuleRecordInstance*, JSValue sentValue, JSValue resumeMode);
-    ModuleProgramExecutable* retainedExecutable() const { return m_retainedExecutable.get(); }
-    void pinRetainedCodeBlock(VM&);
-    // Once a record may be instantiated again it must keep its executable
-    // (normally dropped after evaluation) and its top-level function executables.
-    void retainForGraphInstances(VM&, ModuleProgramExecutable*, Vector<WriteBarrier<FunctionExecutable>>&&);
-
 private:
     JSModuleRecord(VM&, Structure*, const Identifier&, const SourceCode&, CodeFeatures);
 
     void finishCreation(JSGlobalObject*, VM&);
 
-    JSModuleEnvironment* createInstanceEnvironment(JSGlobalObject*, ModuleGraphInstance*, Vector<JSModuleRecord*>& created);
-
     SourceCode m_sourceCode;
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
-    // Kept for graph instances: the executable past evaluation, and the linked
-    // executables of top-level function declarations (index = functionDecl(i)).
-    WriteBarrier<ModuleProgramExecutable> m_retainedExecutable;
-    // The program CodeBlock whose constants own the nested FunctionExecutables
-    // every instance shares; held strongly so old-age jettison cannot re-link it
-    // (which would mint fresh executables for later instances).
-    WriteBarrier<CodeBlock> m_retainedCodeBlock;
-    Vector<WriteBarrier<FunctionExecutable>> m_functionDeclExecutables;
+    WriteBarrier<JSModuleRecord> m_templateRecord;
+    WriteBarrier<ModuleGraphInstance> m_graphInstance;
+    Vector<WriteBarrier<FunctionExecutable>> m_functionDeclarationExecutables;
     CodeFeatures m_features;
 };
 

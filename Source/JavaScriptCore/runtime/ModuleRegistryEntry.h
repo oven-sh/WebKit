@@ -75,14 +75,15 @@ public:
     JSPromise* loadPromise() const;
     // The error this entry settled with: a fetch, instantiation or dependency
     // load error stored on the entry, else (unless excluded) the record's
-    // evaluation error.
+    // evaluation error. A load on behalf of a module graph instance excludes the
+    // latter: the instance evaluates its own record.
     enum class IncludeEvaluationError : bool { No, Yes };
     JSValue error(JSGlobalObject*, IncludeEvaluationError = IncludeEvaluationError::Yes) const;
+    // A finished, failed load (fetch or instantiation) with nothing in flight:
+    // an entry a later load may retry from scratch.
+    bool hasSettledFailure() const;
     JSValue fetchError() const;
     Status status() const;
-    // A finished, failed load: fetch or record creation / instantiation failed and
-    // nothing is in flight (an entry another program run may retry from scratch).
-    bool hasSettledFailure() const;
 
     void setRecord(VM&, AbstractModuleRecord*);
     void setLoadPromise(VM&, JSPromise*);

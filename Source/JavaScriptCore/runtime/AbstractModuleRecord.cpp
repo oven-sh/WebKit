@@ -34,8 +34,8 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
-#include "JSModuleRecord.h"
 #include "ModuleGraphInstance.h"
+#include "JSModuleRecord.h"
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "InternalFieldTuple.h"
@@ -107,11 +107,11 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_topLevelCapability);
     visitor.append(thisObject->m_asyncCapability);
     Locker locker { thisObject->cellLock() };
-    for (auto& record : thisObject->m_importedRecords)
-        visitor.append(record);
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
+    visitor.append(thisObject->m_importedRecords.begin(), thisObject->m_importedRecords.end());
+    visitor.append(thisObject->m_sharedDeclarations);
 }
 
 DEFINE_VISIT_CHILDREN(AbstractModuleRecord);
@@ -187,8 +187,23 @@ void AbstractModuleRecord::addExportEntry(const ExportEntry& entry)
     ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate export entry name '%s'", entry.exportName.impl()->utf8().data());
 }
 
+void AbstractModuleRecord::shareDeclarationsWith(VM& vm, AbstractModuleRecord* templateRecord)
+{
+    ASSERT(m_requestedModules.isEmpty() && m_importEntries.isEmpty() && m_exportEntries.isEmpty());
+    // Chains collapse: always point at the record that owns the tables.
+    if (AbstractModuleRecord* owner = templateRecord->sharedDeclarations())
+        templateRecord = owner;
+    m_sharedDeclarations.set(vm, this, templateRecord);
+    m_hasTLA = templateRecord->hasTLA();
+#if USE(BUN_JSC_ADDITIONS)
+    m_isTypeScript = templateRecord->m_isTypeScript;
+#endif
+}
+
 auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> std::optional<ImportEntry>
 {
+    if (m_sharedDeclarations)
+        return m_sharedDeclarations->tryGetImportEntry(localName);
 #if USE(BUN_JSC_ADDITIONS)
     ensurePrelinkedEntriesMaterialized();
 #endif
@@ -200,6 +215,8 @@ auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> st
 
 auto AbstractModuleRecord::tryGetExportEntry(UniquedStringImpl* exportName) -> std::optional<ExportEntry>
 {
+    if (m_sharedDeclarations)
+        return m_sharedDeclarations->tryGetExportEntry(exportName);
 #if USE(BUN_JSC_ADDITIONS)
     ensurePrelinkedEntriesMaterialized();
 #endif
@@ -239,10 +256,30 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
 }
 
-AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
+// A record of a module graph instance keeps no [[LoadedModules]] of its own: its
+// template's dependency, as that module stands in the instance.
+AbstractModuleRecord* AbstractModuleRecord::graphInstanceImportedModule(const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
+{
+    auto* self = dynamicDowncast<JSModuleRecord>(this);
+    if (!self || !self->graphInstance() || !self->templateRecord())
+        return nullptr;
+    AbstractModuleRecord* dependency = self->templateRecord()->hostResolveImportedModule(globalObject(), moduleName, moduleRequestType);
+    if (!dependency)
+        return nullptr;
+    if (AbstractModuleRecord* inInstance = self->graphInstance()->recordFor(dependency))
+        return inInstance;
+    return dependency;
+}
+
+AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject* globalObject, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
 {
     if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
         return iter->value.m_module.get();
+    if (m_sharedDeclarations) {
+        if (AbstractModuleRecord* dependency = graphInstanceImportedModule(moduleName, moduleRequestType))
+            return dependency;
+    }
+    UNUSED_PARAM(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
     // A prelinked record's graph requests are answered by the loader's index table, not [[LoadedModules]] (until
     // something materializes the by-name view); a record has tens of requests, so find the request by name.
@@ -1189,99 +1226,6 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
 }
 
-
-JSModuleEnvironment* AbstractModuleRecord::graphInstanceEnvironment(JSGlobalObject* globalObject, ModuleGraphInstance* instance, bool createForSynthetic)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSModuleEnvironment* existing = instance->environment(this))
-        return existing;
-    if (!createForSynthetic)
-        return nullptr;
-    if (instance->isCleared()) {
-        throwTypeError(globalObject, scope, "Module graph instance was disposed"_s);
-        return nullptr;
-    }
-    auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this);
-    if (!synthetic || !synthetic->hasPerGraphInstanceState())
-        return nullptr;
-    JSModuleEnvironment* environment = nullptr;
-    {
-        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
-        environment = synthetic->createGraphInstanceEnvironment(globalObject);
-    }
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    // The provider ran host code: the instance may have been disposed, or this
-    // record instantiated into it re-entrantly (add() then returns that one).
-    if (instance->isCleared()) {
-        throwTypeError(globalObject, scope, "Module graph instance was disposed"_s);
-        return nullptr;
-    }
-    return instance->add(vm, this, environment)->environment();
-}
-
-// GetModuleNamespace for the record as instantiated in `instance`: one namespace
-// object per (instance, module), cached in the instance environment's
-// *namespace* binding (deferred namespaces on the ModuleRecordInstance).
-// Records the instance shares with the primary graph answer the primary's.
-JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModuleGraphInstance* instance, ModulePhase phase)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!instance)
-        RELEASE_AND_RETURN(scope, getModuleNamespace(globalObject, phase));
-    if (instance->isCleared()) {
-        throwTypeError(globalObject, scope, "Module graph instance was disposed"_s);
-        return nullptr;
-    }
-    JSModuleEnvironment* environment = graphInstanceEnvironment(globalObject, instance, true);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!environment)
-        RELEASE_AND_RETURN(scope, getModuleNamespace(globalObject, phase));
-    ModuleRecordInstance* recordInstance = instance->recordInstance(this);
-    ASSERT(recordInstance);
-    if (phase == ModulePhase::Defer) {
-        if (JSModuleNamespaceObject* deferred = recordInstance->deferredNamespaceObject())
-            return deferred;
-    }
-    ScopeOffset namespaceOffset;
-    {
-        SymbolTable* symbolTable = environment->symbolTable();
-        ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto iterator = symbolTable->find(locker, vm.propertyNames->starNamespacePrivateName.impl());
-        ASSERT(iterator != symbolTable->end(locker));
-        namespaceOffset = iterator->value.scopeOffset();
-    }
-    if (phase != ModulePhase::Defer) {
-        JSValue cached = environment->variableAt(namespaceOffset).get();
-        if (cached && cached.isCell()) {
-            if (auto* namespaceObject = dynamicDowncast<JSModuleNamespaceObject>(cached.asCell()))
-                return namespaceObject;
-        }
-    }
-    // Same exported names as the primary namespace (which caches the resolutions).
-    JSModuleNamespaceObject* primary = getModuleNamespace(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    JSModuleNamespaceObject::getOwnPropertyNames(primary, globalObject, names, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    Vector<std::pair<Identifier, Resolution>> resolutions;
-    for (auto& name : names) {
-        Resolution resolution = resolveExport(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (resolution.type == Resolution::Type::Resolved)
-            resolutions.append({ name, resolution });
-    }
-    auto* object = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), true, phase == ModulePhase::Defer);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    object->setGraphInstance(vm, instance, environment);
-    if (phase == ModulePhase::Defer)
-        recordInstance->setDeferredNamespaceObject(vm, object);
-    else
-        environment->variableAt(namespaceOffset).set(vm, environment, object);
-    return object;
-}
-
 JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions)
 {
     VM& vm = globalObject->vm();
@@ -1445,7 +1389,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 }
 
 // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
-void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen, ModuleGraphInstance* instance)
+void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
 {
     // The spec text is recursive; we use an explicit work list to avoid native stack overflow on
     // deep graphs. Children are pushed in reverse to preserve the spec's pre-order discovery order.
@@ -1462,7 +1406,7 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
         if (!cyclic)
             continue;
         // 6. If module.[[Status]] is either EVALUATING or IsModuleSCCEvaluated(module), return result.
-        if (cyclic->status(instance) == CyclicModuleRecord::Status::Evaluating || cyclic->isSCCEvaluated(instance))
+        if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->isSCCEvaluated())
             continue;
         // 7. If module.[[HasTLA]] is true, then
         if (cyclic->hasTLA()) {
@@ -1483,7 +1427,7 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
 }
 
 // https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
-bool AbstractModuleRecord::readyForSyncExecution(ModuleGraphInstance* instance)
+bool AbstractModuleRecord::readyForSyncExecution()
 {
     // The spec text is recursive; we use an explicit work list to avoid native stack overflow on deep graphs.
     UncheckedKeyHashSet<AbstractModuleRecord*> seen;
@@ -1500,16 +1444,16 @@ bool AbstractModuleRecord::readyForSyncExecution(ModuleGraphInstance* instance)
         if (!seen.add(module).isNewEntry)
             continue;
         // 5. If IsModuleSCCEvaluated(module), return true.
-        if (cyclic->isSCCEvaluated(instance))
+        if (cyclic->isSCCEvaluated())
             continue;
         // 6. If module.[[Status]] is either EVALUATING or EVALUATING-ASYNC, return false.
-        if (cyclic->status(instance) == CyclicModuleRecord::Status::Evaluating || cyclic->status(instance) == CyclicModuleRecord::Status::EvaluatingAsync)
+        if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->status() == CyclicModuleRecord::Status::EvaluatingAsync)
             return false;
         // 7. Assert: module.[[Status]] is LINKED or EVALUATED.
         // EVALUATED is reachable for a module whose own body has run inside a cycle that is still
         // awaiting; the walk below then reaches its EVALUATING-ASYNC cycle root and returns false.
         // https://github.com/tc39/proposal-defer-import-eval/issues/86
-        ASSERT(cyclic->status(instance) == CyclicModuleRecord::Status::Linked || cyclic->status(instance) == CyclicModuleRecord::Status::Evaluated);
+        ASSERT(cyclic->status() == CyclicModuleRecord::Status::Linked || cyclic->status() == CyclicModuleRecord::Status::Evaluated);
         // 8. If module.[[HasTLA]] is true, return false.
         if (cyclic->hasTLA())
             return false;
@@ -1524,30 +1468,17 @@ bool AbstractModuleRecord::readyForSyncExecution(ModuleGraphInstance* instance)
 }
 
 // https://tc39.es/proposal-defer-import-eval/#sec-EvaluateModuleSync
-void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
+void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject)
 {
-    ModuleGraphInstance::BusyScope busy(globalObject, instance);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (instance && instance->isCleared()) {
-        throwTypeError(globalObject, scope, "Module graph instance was disposed"_s);
-        return;
-    }
     // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
-    if (!readyForSyncExecution(instance)) {
+    if (!readyForSyncExecution()) {
         throwTypeError(globalObject, scope, "Unable to synchronously evaluate deferred module"_s);
         return;
     }
     // 2. Let promise be ! module.Evaluate().
-    JSPromise* promise = nullptr;
-    if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this); cyclic && instance) {
-#if USE(BUN_JSC_ADDITIONS)
-        promise = cyclic->evaluate(globalObject, -1, nullptr, instance);
-#else
-        promise = cyclic->evaluate(globalObject, instance);
-#endif
-    } else
-        promise = evaluate(globalObject);
+    JSPromise* promise = evaluate(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     // 3. Assert: promise.[[PromiseState]] is either FULFILLED or REJECTED.
     ASSERT(promise->status() != JSPromise::Status::Pending);
@@ -1564,13 +1495,23 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject, ModuleGrap
 
 void AbstractModuleRecord::setImportedRecords(VM& vm, const Vector<AbstractModuleRecord*>& records)
 {
-    ASSERT(!m_importedRecordsSet || m_importedRecords.size() == records.size());
-    if (std::exchange(m_importedRecordsSet, true))
-        return;
+    ASSERT(!m_importedRecordsSet);
+    m_importedRecordsSet = true;
     auto importedRecords = WTF::map(records, [&](AbstractModuleRecord* record) {
         return WriteBarrier<AbstractModuleRecord>(vm, this, record);
     });
     // The concurrent marker iterates m_importedRecords under the cell lock.
+    Locker locker { cellLock() };
+    m_importedRecords = WTF::move(importedRecords);
+}
+
+void AbstractModuleRecord::adoptImportedRecords(VM& vm, const AbstractModuleRecord& templateRecord)
+{
+    ASSERT(templateRecord.m_importedRecordsSet);
+    auto importedRecords = WTF::map(templateRecord.m_importedRecords, [&](const WriteBarrier<AbstractModuleRecord>& record) {
+        return WriteBarrier<AbstractModuleRecord>(vm, this, record.get());
+    });
+    m_importedRecordsSet = true;
     Locker locker { cellLock() };
     m_importedRecords = WTF::move(importedRecords);
 }
@@ -1697,10 +1638,8 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency, ModuleGraphInstance* instance)
+static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
 {
-    // In a graph instance the [[AsyncParentModules]] of a record live on its
-    // ModuleRecordInstance; the primary graph's are on the record.
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
         Vector<AbstractModuleRecord*, 8> work;
@@ -1711,22 +1650,10 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
                 return true;
             if (!seen.add(current).isNewEntry)
                 continue;
-            ModuleRecordInstance* state = instance ? instance->recordInstance(current) : nullptr;
-            for (auto& parent : state ? state->asyncParentModules() : current->asyncParentModules())
+            for (auto& parent : current->asyncParentModules())
                 work.append(parent.get());
         }
         return false;
-    };
-    // An AsyncModuleExecutionResume reaction's driver is the record in the
-    // primary graph and the ModuleRecordInstance in a graph instance; only one
-    // of this evaluation's instance can gate the dependency.
-    auto moduleForDriver = [&](JSCell* driver) -> AbstractModuleRecord* {
-        if (!driver)
-            return nullptr;
-        if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(driver))
-            return recordInstance->graphInstance() == instance ? recordInstance->record() : nullptr;
-        auto* module = dynamicDowncast<AbstractModuleRecord>(driver);
-        return module && !instance ? module : nullptr;
     };
 
     auto cellOf = [](JSValue value) -> JSCell* {
@@ -1762,7 +1689,7 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             work.append(promise);
         else if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(cell))
             follow(generator->context());
-        else if (AbstractModuleRecord* module = moduleForDriver(cell))
+        else if (auto* module = dynamicDowncast<AbstractModuleRecord>(cell))
             found = resumesDependency(module);
     };
 
@@ -1820,9 +1747,6 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         case InternalMicrotask::DynamicImportEvaluateSettled:
         case InternalMicrotask::DynamicImportDeferLoadSettled:
         case InternalMicrotask::DynamicImportDeferDependencySettled:
-        case InternalMicrotask::ModuleGraphInstanceLoadSettled:
-        case InternalMicrotask::ModuleGraphInstanceEvaluateSettled:
-        case InternalMicrotask::ModuleGraphInstanceDependencySettled:
             follow(cell);
             break;
         default:
@@ -1847,9 +1771,9 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise, ModuleGraphInstance* instance)
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
 #else
-unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance* instance)
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
 #endif
 {
     // InnerModuleEvaluation(module, stack, index)
@@ -1865,19 +1789,15 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
     // 1. If module is not a Cyclic Module Record, then
     if (!module) {
         // 1.a. Perform ? EvaluateModuleSync(module).
-        // A record with its own environment in the instance was given its values
-        // when that environment was created; only records the instance shares
-        // with the primary graph evaluate (the primary).
-        if (!instance || !instance->recordInstance(this))
-            evaluateModuleSync(globalObject);
+        evaluateModuleSync(globalObject);
         RETURN_IF_EXCEPTION(scope, invalid);
         // 1.b. Return index.
         return index;
     }
     // 2. If module.[[Status]] is either EVALUATING-ASYNC or EVALUATED, then
-    if (auto status = module->status(instance); status == Status::EvaluatingAsync || status == Status::Evaluated) {
+    if (auto status = module->status(); status == Status::EvaluatingAsync || status == Status::Evaluated) {
         // 2.a. If module.[[EvaluationError]] is EMPTY, return index.
-        JSValue evaluationError = module->evaluationError(instance);
+        JSValue evaluationError = module->evaluationError();
         if (!evaluationError)
             RELEASE_AND_RETURN(scope, index);
         // 2.b. Otherwise, return ? module.[[EvaluationError]].
@@ -1885,18 +1805,18 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         return invalid;
     }
     // 3. If module.[[Status]] is EVALUATING, return index.
-    if (module->status(instance) == Status::Evaluating)
+    if (module->status() == Status::Evaluating)
         RELEASE_AND_RETURN(scope, index);
     // 4. Assert: module.[[Status]] is LINKED.
-    ASSERT(module->status(instance) == Status::Linked);
+    ASSERT(module->status() == Status::Linked);
     // 5. Set module.[[Status]] to EVALUATING.
-    module->setStatus(instance, Status::Evaluating);
+    module->setStatus(Status::Evaluating);
     // 6. Let moduleIndex be index.
     unsigned moduleIndex = index;
     // 7. Set module.[[DFSAncestorIndex]] to index.
-    module->setDFSAncestorIndex(instance, index);
+    module->setDFSAncestorIndex(index);
     // 8. Set module.[[PendingAsyncDependencies]] to 0.
-    module->setPendingAsyncDependencies(instance, 0);
+    module->setPendingAsyncDependencies(0);
     // 9. Set index to index + 1.
     ++index;
     // 10. Append module to stack.
@@ -1914,7 +1834,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 11.b.ii. For each Module Record additionalModule of additionalModules, do
             //   11.b.ii.1. If evaluationList does not contain additionalModule, then append additionalModule to evaluationList.
             UncheckedKeyHashSet<AbstractModuleRecord*> seen;
-            requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen, instance);
+            requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
         } else {
             // 11.c. Else if evaluationList does not contain requiredModule, then
             //   11.c.i. Append requiredModule to evaluationList.
@@ -1927,9 +1847,9 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, invalid);
         // 12.a. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
 #if USE(BUN_JSC_ADDITIONS)
-        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise, instance);
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise);
 #else
-        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, instance);
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index);
 #endif
         RETURN_IF_EXCEPTION(scope, invalid);
         index = result;
@@ -1948,42 +1868,42 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // its DFSAncestorIndex into our inner SCC would taint the SCC
             // linearization. The outer DFS owns the module's evaluation
             // lifecycle; our inner pass treats it as a satisfied dependency.
-            bool depInOuterSCC = cyclic->status(instance) == Status::Evaluating && !stack.contains(requiredModule);
+            bool depInOuterSCC = cyclic->status() == Status::Evaluating && !stack.contains(requiredModule);
             if (!depInOuterSCC) {
 #endif
             // 12.b.i. Assert: requiredModule.[[Status]] is one of EVALUATING, EVALUATING-ASYNC, or EVALUATED.
-            ASSERT(cyclic->status(instance) == Status::Evaluating || cyclic->status(instance) == Status::EvaluatingAsync || cyclic->status(instance) == Status::Evaluated);
+            ASSERT(cyclic->status() == Status::Evaluating || cyclic->status() == Status::EvaluatingAsync || cyclic->status() == Status::Evaluated);
             // 12.b.ii. Assert: requiredModule.[[Status]] is EVALUATING if and only if stack contains requiredModule.
-            ASSERT(stack.contains(requiredModule) == (cyclic->status(instance) == Status::Evaluating));
+            ASSERT(stack.contains(requiredModule) == (cyclic->status() == Status::Evaluating));
             // 12.b.iii. If requiredModule.[[Status]] is EVALUATING, then
-            if (cyclic->status(instance) == Status::Evaluating) {
+            if (cyclic->status() == Status::Evaluating) {
                 // 12.b.iii.1. Set module.[[DFSAncestorIndex]] to min(module.[[DFSAncestorIndex]], requiredModule.[[DFSAncestorIndex]]).
-                module->setDFSAncestorIndex(instance, std::min(module->dfsAncestorIndex(instance), cyclic->dfsAncestorIndex(instance)));
+                module->setDFSAncestorIndex(std::min(module->dfsAncestorIndex(), cyclic->dfsAncestorIndex()));
             // 12.b.iv. Else,
             } else {
                 // 12.b.iv.1. Set requiredModule to requiredModule.[[CycleRoot]].
-                cyclic = cyclic->cycleRoot(instance);
+                cyclic = requiredModule->cycleRoot();
                 requiredModule = cyclic;
                 // 12.b.iv.2. Assert: requiredModule.[[Status]] is either EVALUATING-ASYNC or EVALUATED.
-                ASSERT(cyclic->status(instance) == Status::EvaluatingAsync || cyclic->status(instance) == Status::Evaluated);
+                ASSERT(cyclic->status() == Status::EvaluatingAsync || cyclic->status() == Status::Evaluated);
                 // 12.b.iv.3. If requiredModule.[[EvaluationError]] is not empty, return ? requiredModule.[[EvaluationError]].
-                if (JSValue error = cyclic->evaluationError(instance)) {
+                if (JSValue error = cyclic->evaluationError()) {
                     scope.throwException(globalObject, error);
                     return invalid;
                 }
             }
             // 12.b.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
-            if (cyclic->asyncEvaluationOrder(instance).hasOrder()) {
+            if (cyclic->asyncEvaluationOrder().hasOrder()) {
 #if USE(BUN_JSC_ADDITIONS)
                 // referrerAsyncOrder covers an import() whose promise reaches the suspended referrer only through native code (an HTTP round trip, a captured resolver), where the walk cannot follow.
-                bool deadlocks = cyclic->asyncEvaluationOrder(instance).order() == referrerAsyncOrder
-                    || (dynamicImportPromise && importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic, instance));
+                bool deadlocks = cyclic->asyncEvaluationOrder().order() == referrerAsyncOrder
+                    || (dynamicImportPromise && importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic));
                 if (!deadlocks) {
 #endif
                 // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
-                module->setPendingAsyncDependencies(instance, module->pendingAsyncDependencies(instance).value() + 1);
+                module->setPendingAsyncDependencies(module->pendingAsyncDependencies().value() + 1);
                 // 12.b.v.2. Append module to requiredModule.[[AsyncParentModules]].
-                cyclic->appendAsyncParentModule(vm, instance, module);
+                cyclic->appendAsyncParentModule(vm, module);
 #if USE(BUN_JSC_ADDITIONS)
                 }
 #endif
@@ -1994,29 +1914,29 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         }
     }
     // 12. If module.[[PendingAsyncDependencies]] > 0 or module.[[HasTLA]] is true, then
-    if (module->pendingAsyncDependencies(instance) > 0 || module->hasTLA()) {
+    if (module->pendingAsyncDependencies() > 0 || module->hasTLA()) {
         // 12.a. Assert: module.[[AsyncEvaluationOrder]] is UNSET.
-        ASSERT(module->asyncEvaluationOrder(instance).isUnset());
+        ASSERT(module->asyncEvaluationOrder().isUnset());
         // 12.b. Set module.[[AsyncEvaluationOrder]] to IncrementModuleAsyncEvaluationCount().
-        module->setAsyncEvaluationOrder(instance, vm.incrementModuleAsyncEvaluationCount());
+        module->setAsyncEvaluationOrder(vm.incrementModuleAsyncEvaluationCount());
         // 12.c. If module.[[PendingAsyncDependencies]] = 0, perform ExecuteAsyncModule(module).
-        if (std::optional<int> deps = module->pendingAsyncDependencies(instance); deps && !*deps) {
-            module->executeAsync(globalObject, instance);
+        if (std::optional<int> deps = module->pendingAsyncDependencies(); deps && !*deps) {
+            module->executeAsync(globalObject);
             RETURN_IF_EXCEPTION(scope, invalid);
         }
     // 13. Else,
     } else {
         // 13.a. Perform ? module.ExecuteModule().
-        module->execute(globalObject, nullptr, instance);
+        module->execute(globalObject);
         RETURN_IF_EXCEPTION(scope, invalid);
     }
     // 14. Assert: module occurs exactly once in stack.
     ASSERT(stack.contains(module));
     ASSERT(stack.find(module) == stack.reverseFind(module));
     // 15. Assert: module.[[DFSAncestorIndex]] <= moduleIndex.
-    ASSERT(module->dfsAncestorIndex(instance) <= moduleIndex);
+    ASSERT(module->dfsAncestorIndex() <= moduleIndex);
     // 16. If module.[[DFSAncestorIndex]] = moduleIndex, then
-    if (module->dfsAncestorIndex(instance) == moduleIndex) {
+    if (module->dfsAncestorIndex() == moduleIndex) {
         // 16.a. Let done be false.
         bool done = false;
         // 16.b. Repeat, while done is false,
@@ -2027,17 +1947,17 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 16.b.iii. Assert: requiredModule is a Cyclic Module Record.
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule); // cyclic is a downcasted alias of requiredModule.
             // 16.b.iv. Assert: requiredModule.[[AsyncEvaluationOrder]] is either an integer or UNSET.
-            ASSERT(cyclic->asyncEvaluationOrder(instance).hasOrder() || cyclic->asyncEvaluationOrder(instance).isUnset());
+            ASSERT(cyclic->asyncEvaluationOrder().hasOrder() || cyclic->asyncEvaluationOrder().isUnset());
             // 16.b.v. If requiredModule.[[AsyncEvaluationOrder]] is UNSET, set requiredModule.[[Status]] to EVALUATED.
-            if (cyclic->asyncEvaluationOrder(instance).isUnset()) {
-                cyclic->setStatus(instance, Status::Evaluated);
+            if (cyclic->asyncEvaluationOrder().isUnset()) {
+                cyclic->setStatus(Status::Evaluated);
             // 16.b.vi. Otherwise, set requiredModule.[[Status]] to EVALUATING-ASYNC.
             } else
-                cyclic->setStatus(instance, Status::EvaluatingAsync);
+                cyclic->setStatus(Status::EvaluatingAsync);
             // 16.b.vii. If requiredModule and module are the same Module Record, set done to true.
             done = requiredModule == module;
             // 16.b.viii. Set requiredModule.[[CycleRoot]] to module.
-            cyclic->setCycleRoot(vm, instance, module);
+            requiredModule->setCycleRoot(vm, module);
         } while (!done);
     }
     // 17. Return index.

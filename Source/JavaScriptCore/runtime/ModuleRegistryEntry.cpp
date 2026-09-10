@@ -25,13 +25,13 @@
 
 #include "config.h"
 #include "ModuleRegistryEntry.h"
-#include "SyntheticModuleRecord.h"
 
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "Microtask.h"
+#include "SyntheticModuleRecord.h"
 
 namespace JSC {
 
@@ -160,11 +160,8 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluati
         auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get());
         if (cyclic && cyclic->status() == CyclicModuleRecord::Status::Evaluated && cyclic->evaluationError())
             return { };
-        // A synthetic record with per-instance state is regenerated in each
-        // instance, so the primary's evaluation failure is not the instance's
-        // either; one shared with the primary graph keeps it.
         auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(m_record.get());
-        if (synthetic && synthetic->hasPerGraphInstanceState())
+        if (synthetic && synthetic->regeneratesPerGraphInstance())
             return { };
     }
     if (JSValue error = m_error.get()) {
@@ -181,6 +178,16 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluati
     return { };
 }
 
+bool ModuleRegistryEntry::hasSettledFailure() const
+{
+    if (m_status == Status::FetchFailed || m_status == Status::InstantiationFailed)
+        return true;
+    if (m_record)
+        return false;
+    auto rejected = [](JSPromise* promise) { return promise && promise->status() == JSPromise::Status::Rejected; };
+    return rejected(m_fetchPromise.get()) || rejected(m_modulePromise.get()) || rejected(m_loadPromise.get());
+}
+
 JSValue ModuleRegistryEntry::fetchError() const
 {
     if (m_status == Status::FetchFailed)
@@ -191,16 +198,6 @@ JSValue ModuleRegistryEntry::fetchError() const
 auto ModuleRegistryEntry::status() const -> Status
 {
     return m_status;
-}
-
-bool ModuleRegistryEntry::hasSettledFailure() const
-{
-    if (m_status == Status::FetchFailed || m_status == Status::InstantiationFailed)
-        return true;
-    if (m_record)
-        return false;
-    auto rejected = [](JSPromise* promise) { return promise && promise->status() == JSPromise::Status::Rejected; };
-    return rejected(m_fetchPromise.get()) || rejected(m_modulePromise.get()) || rejected(m_loadPromise.get());
 }
 
 void ModuleRegistryEntry::setRecord(VM& vm, AbstractModuleRecord* record)

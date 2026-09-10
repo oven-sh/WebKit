@@ -96,10 +96,10 @@ class JSCustomSetterFunction;
 class JSGlobalObjectDebuggable;
 class JSIterator;
 class JSIteratorConstructor;
+class ModuleGraphInstance;
 class JSIteratorHelperPrototype;
 class JSIteratorPrototype;
 class JSModuleLoader;
-class ModuleGraphInstance;
 class JSModuleRecord;
 class JSPromise;
 class JSPromiseConstructor;
@@ -352,11 +352,12 @@ public:
     WriteBarrier<JSObject> m_regExpProtoSymbolReplace;
     LazyProperty<JSGlobalObject, GetterSetter> m_throwTypeErrorArgumentsCalleeGetterSetter;
 
-    LazyProperty<JSGlobalObject, JSModuleLoader> m_moduleLoader;
     WriteBarrier<SymbolTable> m_moduleScopeOverlaySymbolTable;
-    WriteBarrier<ModuleGraphInstance> m_currentGraphInstanceForLoading;
     WriteBarrier<JSLexicalEnvironment> m_primaryModuleScopeOverlay;
+    WriteBarrier<ModuleGraphInstance> m_currentGraphInstanceForLoading;
+    WriteBarrier<ModuleGraphInstance> m_dynamicImportGraphInstance;
     bool m_hasCreatedModuleEnvironment { false };
+    LazyProperty<JSGlobalObject, JSModuleLoader> m_moduleLoader;
 
     WriteBarrier<ObjectPrototype> m_objectPrototype;
     WriteBarrier<FunctionPrototype> m_functionPrototype;
@@ -461,7 +462,6 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_accessorPropertyDescriptorObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_promiseCapabilityObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_moduleRecordStructure;
-    LazyProperty<JSGlobalObject, Structure> m_moduleGraphInstanceStructure;
     LazyProperty<JSGlobalObject, Structure> m_syntheticModuleRecordStructure;
     LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_proxyObjectStructure;
@@ -921,30 +921,42 @@ public:
     
     JSModuleLoader* moduleLoader() const LIFETIME_BOUND { return m_moduleLoader.get(this); }
 
-    // Module graph instances (prototype): an optional lexical environment placed
-    // between every module environment and the global lexical environment, so a
-    // fixed set of free identifiers (e.g. `process`) resolve as closure variables
-    // that each graph instance can give its own values. Configured once, before
-    // the first module is linked, with the identifier list; the primary overlay
-    // holds the global's own values.
+    // Module graph instances (Options::useModuleGraphInstances()): an optional
+    // lexical environment placed between every module environment and the global
+    // lexical environment, so a fixed set of free identifiers resolve as closure
+    // variables that each graph instance can give its own values (the "scope
+    // overlay"). Configured once, before the first module environment is created;
+    // the primary overlay holds the global object's own values.
     JS_EXPORT_PRIVATE void configureModuleScopeOverlay(const Vector<Identifier>& names);
     SymbolTable* moduleScopeOverlaySymbolTable() const { return m_moduleScopeOverlaySymbolTable.get(); }
-    // True for a scope created by createModuleScopeOverlay (or the primary overlay).
     bool isModuleScopeOverlay(JSScope*) const;
     JSLexicalEnvironment* primaryModuleScopeOverlay() const { return m_primaryModuleScopeOverlay.get(); }
-    // Parent scope for module environments: the primary overlay if configured, else the global lexical environment.
+    // Parent scope of module environments: the primary overlay if configured, else the global lexical environment.
     JS_EXPORT_PRIVATE JSScope* moduleEnvironmentParentScope();
-    // A new overlay for a graph instance: same shape as the primary, values from `values` (own properties by name), defaulting to the primary's.
+    // A new overlay for a graph instance: same shape as the primary's, values from `values` (own properties by name), defaulting to the primary's.
     JS_EXPORT_PRIVATE JSLexicalEnvironment* createModuleScopeOverlay(JSObject* values, ModuleGraphInstance* = nullptr);
-    // The graph instance (and its overlay) that code with this scope chain runs in, or null (primary / not configured).
+    // The graph instance code with this scope chain belongs to (its module environment's record, or its overlay), or null.
     JS_EXPORT_PRIVATE ModuleGraphInstance* graphInstanceForScope(JSScope*, JSScope** overlayOut = nullptr);
-    // Module graph instances: while a graph loads/links modules (synchronously),
-    // the host's fetch hooks attribute host-side module objects they create
-    // (e.g. CommonJS modules behind an ESM import) to this instance.
+    // While a load or link runs on behalf of a graph instance (synchronously), so
+    // host module providers can attribute what they create to it.
     ModuleGraphInstance* currentGraphInstanceForLoading() const { return m_currentGraphInstanceForLoading.get(); }
     JS_EXPORT_PRIVATE void setCurrentGraphInstanceForLoading(VM&, ModuleGraphInstance*);
-    // Brackets a load performed on behalf of `instance` (host-provided
-    // synthetic modules created meanwhile belong to it); restores on exit.
+    // import() from code of a graph instance: set around the host's import hook
+    // so the load it requests (JSModuleLoader::requestImportModule) goes into the
+    // instance; taken (cleared) by the first request.
+    JS_EXPORT_PRIVATE ModuleGraphInstance* takeDynamicImportGraphInstance();
+    JS_EXPORT_PRIVATE void setDynamicImportGraphInstance(VM&, ModuleGraphInstance*);
+    class DynamicImportGraphInstanceScope {
+    public:
+        DynamicImportGraphInstanceScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
+            : m_globalObject(globalObject)
+        {
+            globalObject->setDynamicImportGraphInstance(globalObject->vm(), instance);
+        }
+        ~DynamicImportGraphInstanceScope() { m_globalObject->setDynamicImportGraphInstance(m_globalObject->vm(), nullptr); }
+    private:
+        JSGlobalObject* m_globalObject;
+    };
     class GraphInstanceLoadingScope {
     public:
         GraphInstanceLoadingScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
@@ -1105,7 +1117,6 @@ public:
     Structure* regExpStringIteratorStructure() const { return m_regExpStringIteratorStructure.get(); }
     Structure* remoteFunctionStructure() const { return m_remoteFunctionStructure.get(this); }
     Structure* moduleRecordStructure() const { return m_moduleRecordStructure.get(this); }
-    Structure* moduleGraphInstanceStructure() const { return m_moduleGraphInstanceStructure.get(this); }
     Structure* syntheticModuleRecordStructure() const { return m_syntheticModuleRecordStructure.get(this); }
     Structure* moduleNamespaceObjectStructure() const { return m_moduleNamespaceObjectStructure.get(this); }
     Structure* proxyObjectStructure() const { return m_proxyObjectStructure.get(this); }

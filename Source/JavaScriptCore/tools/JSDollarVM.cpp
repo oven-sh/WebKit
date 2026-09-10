@@ -55,11 +55,10 @@
 #include "JSCInlines.h"
 #include "JSGlobalProxyInlines.h"
 #include "JSONObject.h"
-#include "JSMapInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
-#include "ModuleGraphInstance.h"
 #include "JSModuleNamespaceObject.h"
+#include "ModuleGraphInstance.h"
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
@@ -3936,11 +3935,17 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
-// $vm.instantiateModuleGraph(moduleNamespaceObject[, instance])
-// Instantiates (and evaluates) the namespace's module and its source text
-// dependencies a further time into `instance` (a ModuleGraphInstance; a new one
-// if omitted) and returns { namespace, environment, instance }: the module's
-// namespace object and environment in that instance.
+JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
+}
+
+// $vm.instantiateModuleGraph(namespace[, instance]) -- Options::useModuleGraphInstances():
+// instantiates and evaluates the namespace's module and its dependencies a
+// further time, in `instance` (a value returned by an earlier call; a new
+// ModuleGraphInstance if omitted). Returns { namespace, environment, instance }
+// for the module in that instance.
 JSC_DEFINE_HOST_FUNCTION(functionInstantiateModuleGraph, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -3955,28 +3960,22 @@ JSC_DEFINE_HOST_FUNCTION(functionInstantiateModuleGraph, (JSGlobalObject* global
     if (!record)
         return throwVMTypeError(globalObject, scope, "namespace does not belong to a source text module"_s);
     JSValue instanceValue = callFrame->argument(1);
-    auto* instance = dynamicDowncast<ModuleGraphInstance>(instanceValue);
+    ModuleGraphInstance* instance = instanceValue.isCell() ? dynamicDowncast<ModuleGraphInstance>(instanceValue.asCell()) : nullptr;
     if (!instance) {
         if (!instanceValue.isUndefined())
-            return throwVMTypeError(globalObject, scope, "expected a ModuleGraphInstance"_s);
-        instance = ModuleGraphInstance::create(vm, globalObject, nullptr);
+            return throwVMTypeError(globalObject, scope, "expected a module graph instance"_s);
+        instance = ModuleGraphInstance::create(vm, globalObject);
     }
-    JSModuleEnvironment* environment = record->instantiateIntoGraphInstance(globalObject, instance);
+    JSModuleRecord* instanceRecord = instance->evaluateSync(globalObject, record->templateRecordOrThis());
     RETURN_IF_EXCEPTION(scope, {});
-    JSModuleNamespaceObject* namespaceObject = record->getModuleNamespace(globalObject, instance);
+    JSModuleNamespaceObject* namespaceObject = instanceRecord->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSObject* result = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirect(vm, Identifier::fromString(vm, "namespace"_s), namespaceObject);
-    result->putDirect(vm, Identifier::fromString(vm, "environment"_s), environment);
+    result->putDirect(vm, Identifier::fromString(vm, "environment"_s), instanceRecord->moduleEnvironment());
     result->putDirect(vm, Identifier::fromString(vm, "instance"_s), instance);
     return JSValue::encode(result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
-{
-    DollarVMAssertScope assertScope;
-    return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))

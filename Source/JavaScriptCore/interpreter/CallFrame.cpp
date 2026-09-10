@@ -30,8 +30,8 @@
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
 #include "InlineCallFrame.h"
-#include "JSCInlines.h"
 #include "JSCallee.h"
+#include "JSCInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
 #include "LLIntPCRanges.h"
@@ -195,7 +195,6 @@ SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFram
     return static_cast<CallFrame*>(unsafeCallerFrameOrEntryFrame());
 }
 
-
 JSScope* CallFrame::callerScope(VM& vm)
 {
     RELEASE_ASSERT(callee().isCell());
@@ -208,8 +207,7 @@ JSScope* CallFrame::callerScope(VM& vm)
         case StackVisitor::Frame::CodeType::Native:
         case StackVisitor::Frame::CodeType::Wasm:
         // Eval code runs in its caller's scope, but its callee is the global
-        // object's shared eval callee whose scope is only set while the eval is
-        // being entered: attribute to the frame that called eval instead.
+        // object's shared eval callee: attribute to the frame that called eval.
         case StackVisitor::Frame::CodeType::Eval:
             return IterationStatus::Continue;
         case StackVisitor::Frame::CodeType::Function:

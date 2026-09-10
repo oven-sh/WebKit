@@ -620,7 +620,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpModuleRecord, false, Normal, nullptr) \
     v(Bool, dumpModuleLoadingState, false, Normal, nullptr) \
     v(Bool, exposeInternalModuleLoader, false, Normal, "expose the internal module loader object to the global space for debugging"_s) \
-    v(Bool, useModuleGraphInstances, false, Normal, "Allow a linked module graph to be instantiated more than once per global object (ModuleGraphInstance)"_s) \
     \
     v(Bool, exposePrivateIdentifiers, false, Normal, "Allow non-builtin scripts to use private identifiers. Mostly useful to expose @superSamplerBegin/End intrinsics for profiling"_s) \
     \
@@ -710,6 +709,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseExecutablePoolAllocation, false, Normal, nullptr) \
     v(Bool, useHandlerICInFTL, false, Normal, nullptr) \
     v(Bool, useLLIntICs, true, Normal, "Use property and call ICs in LLInt code."_s) \
+    v(Bool, useModuleGraphInstances, false, Normal, "Allow linked modules to be instantiated again in the same global object (ModuleGraphInstance): import bindings resolve through per-environment import slots so instances share CodeBlocks"_s) \
     v(Bool, useLazyFunctionExecutables, true, Normal, "If true, a CodeBlock creates the FunctionExecutable for a function declaration / expression the first time that new_func* executes (or before a JIT compiles the block) instead of creating all of them when the CodeBlock is linked; a module body never creates one for its heap-allocated declarations (the module environment already did)."_s) \
     v(Bool, useLazyCatchLiveness, true, Normal, "If true, an op_catch that executes in the LLInt / Baseline JIT does not run the function's bytecode liveness analysis to size its value-profile buffer; the buffers of the catches that have executed are created when the function first crosses its DFG threshold (that tier-up is delayed once so they can profile), and op_catch profiles only once its buffer exists."_s) \
     v(Bool, useBaselineJITCodeSharing, jitEnabledByDefault(), Normal, nullptr) \
