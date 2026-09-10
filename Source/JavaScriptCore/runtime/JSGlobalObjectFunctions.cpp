@@ -34,8 +34,6 @@
 #include "IntlDateTimeFormat.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
-#include "AbstractModuleRecord.h"
-#include "JSModuleEnvironment.h"
 #include "JSPromise.h"
 #include "JSSet.h"
 #include "Lexer.h"
@@ -821,15 +819,8 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
-    // import() from a module loads through that module's loader.
-    JSModuleLoader* loader = globalObject->moduleLoader();
-    for (JSScope* callerScope = callFrame->callerScope(vm); callerScope; callerScope = callerScope->next()) {
-        if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(callerScope)) {
-            if (AbstractModuleRecord* record = moduleEnvironment->moduleRecord())
-                loader = record->moduleLoader();
-            break;
-        }
-    }
+    auto* referrer = dynamicDowncast<AbstractModuleRecord>(callFrame->argument(3));
+    JSModuleLoader* loader = referrer ? referrer->moduleLoader() : globalObject->moduleLoader();
     auto* importPromise = loader->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();

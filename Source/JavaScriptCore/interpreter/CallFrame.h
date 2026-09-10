@@ -228,7 +228,6 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         JS_EXPORT_PRIVATE CallFrame* callerFrame(EntryFrame*&) const;
 
         JS_EXPORT_PRIVATE SourceOrigin callerSourceOrigin(VM&);
-        JS_EXPORT_PRIVATE JSScope* callerScope(VM&);
 
         static constexpr ptrdiff_t callerFrameOffset() { return OBJECT_OFFSETOF(CallerFrameAndPC, callerFrame); }
 

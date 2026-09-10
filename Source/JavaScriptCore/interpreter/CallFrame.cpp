@@ -30,7 +30,6 @@
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
 #include "InlineCallFrame.h"
-#include "JSCallee.h"
 #include "JSCInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
@@ -193,33 +192,6 @@ SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFram
         return currVMEntryRecord->unsafePrevTopCallFrame();
     }
     return static_cast<CallFrame*>(unsafeCallerFrameOrEntryFrame());
-}
-
-JSScope* CallFrame::callerScope(VM& vm)
-{
-    JSScope* found = nullptr;
-    bool haveSkippedFirstFrame = false;
-    StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
-        if (!std::exchange(haveSkippedFirstFrame, true))
-            return IterationStatus::Continue;
-        switch (visitor->codeType()) {
-        case StackVisitor::Frame::CodeType::Native:
-        case StackVisitor::Frame::CodeType::Wasm:
-        case StackVisitor::Frame::CodeType::Eval: // the shared eval callee's scope is only set while entering the eval; use the frame that called eval
-            return IterationStatus::Continue;
-        case StackVisitor::Frame::CodeType::Function:
-        case StackVisitor::Frame::CodeType::Module:
-        case StackVisitor::Frame::CodeType::Global:
-            break;
-        }
-        JSCell* calleeCell = visitor->callee().asCell();
-        if (auto* function = dynamicDowncast<JSFunction>(calleeCell))
-            found = function->scope();
-        else if (auto* callee = dynamicDowncast<JSCallee>(calleeCell))
-            found = callee->scope();
-        return IterationStatus::Done;
-    });
-    return found;
 }
 
 SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
