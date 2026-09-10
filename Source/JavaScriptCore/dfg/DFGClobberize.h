@@ -476,6 +476,14 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         clobberTop();
         return;
 
+    case GeneratorClaimResume:
+    case GeneratorPublishResume:
+        // An atomic read-modify-write of the generator's State internal field;
+        // no allocation, no park.
+        read(JSInternalFields);
+        write(JSInternalFields);
+        return;
+
     case StringLocaleCompare:
         read(World);
         write(SideState);
@@ -930,8 +938,17 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 // The validateButterflyTagDisciplineForGraph lint (declared
                 // below; SPEC-jit I14/I21(b) Task-13) cross-checks that no
                 // GetButterfly result is consumed across this clobber.
-                write(JSObject_butterfly);
-                write(Butterfly_vectorLength);
+                // Eighth round (SPEC-jit history §39): in FTL plans the
+                // butterfly POINTER and its vectorLength survive the poll -
+                // LICM hoists them - and every bound the FTL takes through a
+                // storage edge is clamped to that storage's own (frozen)
+                // vectorLength instead, which is the other way to keep {base,
+                // bound} same-snapshot; publicLength stays poll-bounded. The
+                // DFG tier has no LICM and keeps the reload.
+                if (!graph.m_plan.isFTL()) {
+                    write(JSObject_butterfly);
+                    write(Butterfly_vectorLength);
+                }
                 // Typed-array view fields (vector, length, byteOffset) and the
                 // other MiscFields-defined facts must be re-loaded after every
                 // poll: a foreign detach or transfer zeroes the view under only
@@ -2316,6 +2333,15 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case Array::SlowPutArrayStorage:
             read(Butterfly_vectorLength);
             def(HeapLocation(VectorLengthLoc, Butterfly_vectorLength, node->child1()), LazyNode(node));
+            return;
+        case Array::Int32:
+        case Array::Double:
+        case Array::Contiguous:
+            // GIL off only (SSA lowering's §39 bound); keyed on the storage
+            // edge, whose flat vectorLength never changes in place GIL off.
+            ASSERT(Options::useJSThreads() && !Options::useThreadGIL());
+            read(Butterfly_vectorLength);
+            def(HeapLocation(VectorLengthLoc, Butterfly_vectorLength, node->child2()), LazyNode(node));
             return;
 
         default:

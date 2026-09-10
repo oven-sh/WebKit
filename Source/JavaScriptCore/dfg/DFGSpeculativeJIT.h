@@ -1410,7 +1410,7 @@ public:
     void speculateInt32LaneIfRelabellable(ArrayMode mode, GPRReg laneGPR)
     {
         if (mode.type() == Array::Int32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
-            speculationCheck(BadType, JSValueRegs(), nullptr, branchIfNotInt32(laneGPR));
+            speculationCheck(BadType, JSValueSource(), nullptr, branchIfNotInt32(laneGPR));
     }
     JITCompiler::JumpList emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg tidScratchGPR, GPRReg indexingScratchGPR, const ThreadedButterflyPlan&);
 
@@ -1453,8 +1453,8 @@ public:
     // recorded in DFGFixupPhase.cpp::checkArray). These do NOT consume a
     // StorageOperand; FixupPhase intentionally leaves the storage child unset
     // when needsSegmentedAwareCodegen().
-    void compileGetByValSegmentedAwareContiguous(Node*, const ScopedLambda<std::tuple<JSValueRegs, DataFormat>(DataFormat, bool)>& prefix);
-    void compileGetByValSegmentedAwareDouble(Node*, const ScopedLambda<std::tuple<JSValueRegs, DataFormat>(DataFormat, bool)>& prefix);
+    void compileGetByValSegmentedAwareContiguous(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat, bool)>& prefix);
+    void compileGetByValSegmentedAwareDouble(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat, bool)>& prefix);
     void compileGetArrayLengthSegmentedAware(Node*);
     void compileContiguousPutByValSegmentedAware(Node*);
     void compileDoublePutByValSegmentedAware(Node*);
@@ -1812,6 +1812,8 @@ public:
     void compileGlobalIsNaN(Node*);
     void compileNumberIsNaN(Node*);
     void compileGlobalIsFinite(Node*);
+    void compileGeneratorClaimResume(Node*);
+    void compileGeneratorPublishResume(Node*);
     void compileNumberIsFinite(Node*);
     void compileNumberIsSafeInteger(Node*);
     void compileToIntegerOrInfinity(Node*);

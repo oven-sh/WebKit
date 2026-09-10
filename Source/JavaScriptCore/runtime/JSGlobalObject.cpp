@@ -1051,7 +1051,13 @@ static ALWAYS_INLINE EncodedJSValue generatorClaimTokenForCurrentThread()
     // both endpoints alive — accepted (and the collision outcome is the
     // pre-token done-ambiguity, not a new unsafety class).
     int32_t token = static_cast<int32_t>(JSGenerator::State::Executing) - 1 - static_cast<int32_t>(Thread::currentSingleton().uid() & 0x3FFFFFFFu);
+    ASSERT(!VMLite::currentIfExists() || VMLite::currentIfExists()->generatorClaimToken == JSValue::encode(jsNumber(token))); // the DFG/FTL intrinsics read the lite's copy
     return JSValue::encode(jsNumber(token));
+}
+
+EncodedJSValue generatorClaimTokenForThread(Thread& thread)
+{
+    return JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Executing) - 1 - static_cast<int32_t>(thread.uid() & 0x3FFFFFFFu)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(claimGeneratorResume, (JSGlobalObject*, CallFrame* callFrame))
@@ -1318,7 +1324,20 @@ struct PerLiteRealmState {
 struct PerLiteRealmTable {
     Lock lock; // §LK.7 leaf: nothing is acquired under it; markers take it bare (M11 shape).
     HashMap<std::pair<JSGlobalObject*, VMLite*>, std::unique_ptr<PerLiteRealmState>> map WTF_GUARDED_BY_LOCK(lock);
+    // Bumped (under the lock) by every purge; a thread's last-lookup memo
+    // (threadRegExpGlobalDataSlow) is valid only while it has not moved.
+    Atomic<uint64_t> purgeGeneration { 0 };
 };
+
+// One-entry per-thread memo of the last (global, lite) -> RegExpGlobalData
+// lookup, so a worker thread's matches do not take the table lock each time.
+struct PerLiteRegExpDataMemo {
+    JSGlobalObject* globalObject { nullptr };
+    VMLite* lite { nullptr };
+    RegExpGlobalData* data { nullptr };
+    uint64_t generation { 0 };
+};
+static thread_local PerLiteRegExpDataMemo t_regExpDataMemo;
 
 PerLiteRealmTable& perLiteRealmTable()
 {
@@ -1364,12 +1383,20 @@ RegExpGlobalData& threadRegExpGlobalDataSlow(JSGlobalObject* globalObject)
         return globalObject->regExpGlobalData();
 
     auto& table = perLiteRealmTable();
+    PerLiteRegExpDataMemo& memo = t_regExpDataMemo;
+    uint64_t generation = table.purgeGeneration.load(std::memory_order_acquire);
+    if (memo.globalObject == globalObject && memo.lite == lite && memo.generation == generation) [[likely]]
+        return *memo.data; // no entry has been purged since this thread looked it up
     std::pair<JSGlobalObject*, VMLite*> key { globalObject, lite };
+    auto remember = [&](RegExpGlobalData& data) -> RegExpGlobalData& {
+        memo = { globalObject, lite, &data, generation };
+        return data;
+    };
     {
         Locker locker { table.lock };
         auto it = table.map.find(key);
         if (it != table.map.end() && it->value->regExpGlobalData)
-            return *it->value->regExpGlobalData;
+            return remember(*it->value->regExpGlobalData);
     }
     // Alloc-outside: mirror the ctor-time seeding of the in-object stream
     // (init()'s cachedResult().record with the empty string) so $1-$9 read
@@ -1383,7 +1410,7 @@ RegExpGlobalData& threadRegExpGlobalDataSlow(JSGlobalObject* globalObject)
     auto& state = *result.iterator->value;
     if (!state.regExpGlobalData)
         state.regExpGlobalData = WTF::move(fresh);
-    return *state.regExpGlobalData; // A losing `fresh` dies at scope exit, after the locker releases.
+    return remember(*state.regExpGlobalData); // A losing `fresh` dies at scope exit, after the locker releases.
 }
 
 // Lite-teardown half of the ~VM walk (K4 binding consequence 3): called from
@@ -1395,6 +1422,7 @@ void purgePerLiteRealmStateForLite(VMLite& lite)
     Vector<std::unique_ptr<PerLiteRealmState>, 4> doomed;
     {
         Locker locker { table.lock };
+        table.purgeGeneration.exchangeAdd(1); // invalidates every thread's lookup memo before any entry goes
         table.map.removeIf([&](auto& entry) {
             if (entry.key.second != &lite)
                 return false;
@@ -1414,6 +1442,7 @@ static void purgePerLiteRealmStateForGlobal(JSGlobalObject* globalObject)
     Vector<std::unique_ptr<PerLiteRealmState>, 4> doomed;
     {
         Locker locker { table.lock };
+        table.purgeGeneration.exchangeAdd(1); // invalidates every thread's lookup memo before any entry goes
         table.map.removeIf([&](auto& entry) {
             if (entry.key.first != globalObject)
                 return false;
@@ -2525,10 +2554,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             init.set(JSFunction::create(init.vm, init.owner, 1, "isPromiseStatePending"_s, isPromiseStatePending, ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::claimGeneratorResume)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 1, "claimGeneratorResume"_s, claimGeneratorResume, ImplementationVisibility::Private));
+            init.set(JSFunction::create(init.vm, init.owner, 1, "claimGeneratorResume"_s, claimGeneratorResume, ImplementationVisibility::Private, GeneratorClaimResumeIntrinsic));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::publishGeneratorResume)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 1, "publishGeneratorResume"_s, publishGeneratorResume, ImplementationVisibility::Private));
+            init.set(JSFunction::create(init.vm, init.owner, 1, "publishGeneratorResume"_s, publishGeneratorResume, ImplementationVisibility::Private, GeneratorPublishResumeIntrinsic));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::resolvePromiseWithFirstResolvingFunctionCallCheck)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "resolvePromiseWithFirstResolvingFunctionCallCheck"_s, resolvePromiseWithFirstResolvingFunctionCallCheck, ImplementationVisibility::Private, ResolvePromiseWithFirstResolvingFunctionCallCheckIntrinsic));

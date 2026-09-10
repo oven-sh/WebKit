@@ -1570,7 +1570,38 @@ bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* ex
 }
 
 // N2 (§2.1) restartable locked core; see the header comment for the contract.
-bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value, const PropertyTable* plannedTable, uint32_t plannedEditCount)
+// SPEC-jit history §38 / OM history §28: a flatten publishes a NEW structure
+// whose pinned table is a clone of the source's, taken before the cell lock.
+// In-place dictionary edits made by a lock-holding thread bump the concurrent
+// edit count the caller planned against, but edits made INSIDE A STOP (the
+// kind-changing defineProperty, the shared-dictionary delete) need not - no
+// lock-free reader runs then - and the cloning thread can be parked in such a
+// stop between its clone and this lock. So the clone is compared with the
+// source's table as it stands under the cell lock, entry by entry (offset and
+// attributes); any difference is a RESTART. Flatten is rare; the walk is O(n).
+static bool clonedTableStillMatchesSource(VM& vm, Structure* source, Structure* flattened)
+{
+    unsigned count = 0;
+    bool matches = true;
+    flattened->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) -> bool {
+        ++count;
+        unsigned attributes = 0;
+        PropertyOffset offset = source->getConcurrently(entry.key(), attributes);
+        if (offset != entry.offset() || attributes != entry.attributes()) {
+            matches = false;
+            return false;
+        }
+        return true;
+    });
+    if (!matches)
+        return false;
+    unsigned sourceCount = 0;
+    source->forEachPropertyConcurrently([&](const PropertyTableEntry&) -> bool { ++sourceCount; return true; });
+    UNUSED_PARAM(vm);
+    return count == sourceCount;
+}
+
+bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value, const PropertyTable* plannedTable, uint32_t plannedEditCount, bool requireSourceStillUnpinnedIfNoPlan)
 {
     RELEASE_ASSERT(Options::useJSThreads());
     s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
@@ -1615,6 +1646,18 @@ bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSou
             || plannedTable->concurrentEditCount() != plannedEditCount)) {
         unlockCellChecked(cellLock);
         return false; // RESTART: an in-place dictionary edit landed after the plan.
+    }
+    if (!plannedTable && requireSourceStillUnpinnedIfNoPlan && source->pinnedPropertyTableForConcurrentReadStamp()) {
+        unlockCellChecked(cellLock);
+        return false; // RESTART: the table was pinned (and possibly edited in place) after the plan.
+    }
+    // The flatten form (a planned table, or the unpinned-source requirement):
+    // its clone must still describe the source exactly (see
+    // clonedTableStillMatchesSource - world-stopped edits do not bump the count).
+    if ((plannedTable || requireSourceStillUnpinnedIfNoPlan) && inlineOffset == invalidOffset && newStructure->hasBeenFlattenedBefore() && source->isDictionary()
+        && !clonedTableStillMatchesSource(vm, source, newStructure)) [[unlikely]] {
+        unlockCellChecked(cellLock);
+        return false; // RESTART: an edit made inside a stop landed between the clone and the lock.
     }
     ASSERT(newStructure->outOfLineCapacity() == source->outOfLineCapacity());
 
@@ -2711,6 +2754,7 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
             };
             unsigned availableOldLength = Butterfly::availableContiguousVectorLength(propertyCapacity, oldVectorLength);
             if (availableOldLength >= length) {
+                JSTHREADS_COUNT(ensureLengthInPlaceSlack);
                 AssertNoGC assertNoGC;
                 clearNewLanes(butterfly, oldVectorLength, availableOldLength);
                 WTF::storeStoreFence(); // Cleared lanes before the raised bound (concurrent marker).
@@ -2720,6 +2764,7 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
             void* oldBase = butterfly->base(0, propertyCapacity);
             if (!propertyCapacity && !vm.heap.mutatorShouldBeFenced() && std::bit_cast<HeapCell*>(oldBase)->isPreciseAllocation()) {
                 size_t newSize = Butterfly::totalSize(0, 0, true, static_cast<size_t>(newVectorLength) * sizeof(EncodedJSValue));
+                JSTHREADS_COUNT(ensureLengthPreciseRealloc);
                 void* newBase = vm.auxiliarySpace().reallocatePreciseAllocationNonVirtual(vm, std::bit_cast<HeapCell*>(oldBase), newSize, &deferralContext, AllocationFailureMode::ReturnNull);
                 if (!newBase)
                     return false;
@@ -2737,6 +2782,9 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
                 return true;
             }
         }
+        JSTHREADS_COUNT(ensureLengthFreshCopy);
+        if (JSThreadsCounters::enabled()) [[unlikely]]
+            JSThreadsCounters::singleton().ensureLengthFreshCopyBytes.fetch_add(Butterfly::totalSize(0, propertyCapacity, true, static_cast<size_t>(newVectorLength) * sizeof(EncodedJSValue)), std::memory_order_relaxed);
         Butterfly* newButterfly = Butterfly::tryCreateUninitialized(
             vm, object, 0, propertyCapacity, true, static_cast<size_t>(newVectorLength) * sizeof(EncodedJSValue), &deferralContext);
         if (!newButterfly) [[unlikely]]

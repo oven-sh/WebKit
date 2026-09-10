@@ -74,6 +74,7 @@
 #include "WebAssemblyModuleRecord.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/ListDump.h>
+#include <wtf/ThreadSanitizerSupport.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -1889,7 +1890,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
 // allocation inside (OM I29). The functors materialize operands that the two
 // callers hold differently (handler fields vs. stub constants).
 template<typename LoadOffset, typename LoadOldStructureIDBits, typename StoreNewStructureID>
-static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelpers::JumpList& slow, GPRReg baseGPR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, const LoadOffset& loadOffset, const LoadOldStructureIDBits& loadOldStructureIDBits, const StoreNewStructureID& storeNewStructureID)
+static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelpers::JumpList& slow, GPRReg baseGPR, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, const LoadOffset& loadOffset, const LoadOldStructureIDBits& loadOldStructureIDBits, const StoreNewStructureID& storeNewStructureID)
 {
     JIT_COMMENT(jit, "concurrent transition: owner predicate");
     slow.append(jit.branchTestPtr(CCallHelpers::NonZero, baseGPR, CCallHelpers::TrustedImm32(PreciseAllocation::halfAlignment))); // OM I36
@@ -1910,7 +1911,7 @@ static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelp
         slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
         // Committed: the lane is ours (nuked); nothing below can fail.
         loadOffset(scratch1GPR); // inline by construction (no butterfly)
-        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+        jit.storeValue(valueGPR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
         jit.storeFence();
         storeNewStructureID();
     }
@@ -1939,10 +1940,10 @@ static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelp
         CCallHelpers::Jump isInline = jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset));
         jit.neg32(scratch1GPR);
         jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
-        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+        jit.storeValue(valueGPR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
         CCallHelpers::Jump stored = jit.jump();
         isInline.link(&jit);
-        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+        jit.storeValue(valueGPR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
         stored.link(&jit);
         jit.storeFence();
         storeNewStructureID();
@@ -1951,9 +1952,9 @@ static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelp
 }
 
 // Data IC handler form: operands come from the InlineCacheHandler.
-static void emitConcurrentNonReallocatingTransitionForHandler(CCallHelpers& jit, CCallHelpers::JumpList& slow, GPRReg baseGPR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR)
+static void emitConcurrentNonReallocatingTransitionForHandler(CCallHelpers& jit, CCallHelpers::JumpList& slow, GPRReg baseGPR, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR)
 {
-    emitConcurrentNonReallocatingTransition(jit, slow, baseGPR, valueJSR, scratch1GPR, scratch2GPR,
+    emitConcurrentNonReallocatingTransition(jit, slow, baseGPR, valueGPR, scratch1GPR, scratch2GPR,
         [&](GPRReg dest) { jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), dest); },
         [&](GPRReg dest) { jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), dest); },
         [&] { jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())); });
@@ -3769,7 +3770,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
             CCallHelpers::JumpList failAndIgnore;
             failAndIgnore.append(jit.loadButterflyForWrite(base, storageGPR, tidScratchGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
             jit.storeValue(
-                valueRegs,
+                valueGPR,
                 CCallHelpers::Address(
                     storageGPR, offsetInButterfly(accessCase.m_offset) * sizeof(JSValue)));
             allocator.restoreReusedRegistersByPopping(jit, preservedState);
@@ -3852,7 +3853,13 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
                 InlineCacheCompiler::emitDataICPrepareForCall(jit);
                 // The handler of a per-case-compiled stub carries no transition
                 // fields; pass the access case itself (it lives as long as the stub).
-                jit.setupArguments<decltype(operationPutByTransitionReallocatingConcurrent)>(CCallHelpers::TrustedImmPtr(&vm), baseGPR, valueRegs, CCallHelpers::TrustedImmPtr(&accessCase));
+                // TSAN only: the operation reads the case's fields on whichever
+                // thread runs the stub; the real order is the stub's publication
+                // through the handler chain (fenced), which TSAN cannot key on
+                // the case, so pair a BEFORE here (the case is complete when it is
+                // compiled) with the AFTER at the operation's entry.
+                TSAN_ANNOTATE_HAPPENS_BEFORE(&accessCase);
+                jit.setupArguments<decltype(operationPutByTransitionReallocatingConcurrent)>(CCallHelpers::TrustedImmPtr(&vm), baseGPR, valueGPR, CCallHelpers::TrustedImmPtr(&accessCase));
                 jit.prepareCallOperation(vm);
                 jit.callOperation<OperationPtrTag>(operationPutByTransitionReallocatingConcurrent);
                 InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
@@ -3868,7 +3875,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
             StructureID sourceID = accessCase.structure()->id();
             StructureID targetID = accessCase.newStructure()->id();
             PropertyOffset offset = accessCase.m_offset;
-            emitConcurrentNonReallocatingTransition(jit, slowPath, baseGPR, valueRegs, scratchGPR, scratch2GPR,
+            emitConcurrentNonReallocatingTransition(jit, slowPath, baseGPR, valueGPR, scratchGPR, scratch2GPR,
                 [&](GPRReg dest) { jit.move(CCallHelpers::TrustedImm32(offset), dest); },
                 [&](GPRReg dest) { jit.move(CCallHelpers::TrustedImm32(sourceID.bits()), dest); },
                 [&] { jit.store32(CCallHelpers::TrustedImm32(std::bit_cast<uint32_t>(targetID)), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())); });
@@ -4147,7 +4154,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 
             flatDone.link(&jit);
             failAndIgnore.append(jit.branch32(CCallHelpers::LessThan, scratchGPR, CCallHelpers::TrustedImm32(0)));
-            jit.boxInt32(scratchGPR, valueRegs);
+            jit.boxInt32(scratchGPR, valueGPR);
             allocator.restoreReusedRegistersByPopping(jit, preservedState);
             succeed();
 
@@ -4994,20 +5001,6 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
     // If the resulting set of cases is so big that we would stop caching and this is InstanceOf,
     // then we want to generate the generic InstanceOf and then stop.
     if (cases.size() >= Options::maxAccessVariantListSize() || m_propertyCache.canBeMegamorphic) {
-        // AUD1.K4 row II.19 (SPEC-ungil §K.1): codegen hygiene, NOT a
-        // safety closure — the cache's fill paths already no-op under
-        // useJSThreads (MegamorphicCache::fillsDisabledUnderJSThreads(),
-        // pre-existing) and the inline probes bail, so a gilOff
-        // MegamorphicCache-consulting AccessCase could only build an
-        // always-miss stub. Refuse those forms instead of generating dead
-        // code; see canUseMegamorphicGetByIdExcludingIndex. The
-        // canUseMegamorphic* predicates already refuse the by-id arms; this
-        // gate also covers the Indexed* arms below, which have no uid to
-        // consult a predicate for. InstanceOfMegamorphic is exempt: it is a
-        // generic prototype walk and never touches the MegamorphicCache.
-        // Flag-off and GIL-on generation unchanged.
-        if (vm().gilOffWithProcessGate() && m_propertyCache.accessType != AccessType::InstanceOf) [[unlikely]]
-            return nullptr;
         switch (m_propertyCache.accessType) {
         case AccessType::InstanceOf:
             return AccessCase::create(vm(), codeBlock, AccessCase::InstanceOfMegamorphic, nullptr);
@@ -6015,7 +6008,7 @@ static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpL
             UNUSED_PARAM(scratch3GPR);
             UNUSED_PARAM(scratch4GPR);
             RELEASE_ASSERT(concurrentSlow);
-            emitConcurrentNonReallocatingTransitionForHandler(jit, *concurrentSlow, baseJSR.payloadGPR(), valueJSR, scratch1GPR, scratch2GPR);
+            emitConcurrentNonReallocatingTransitionForHandler(jit, *concurrentSlow, baseGPR, valueGPR, scratch1GPR, scratch2GPR);
             return;
         }
         // r17 (SPEC-jit §5.5 Transition, OM E4-C): the (re)allocating
@@ -6030,7 +6023,6 @@ static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpL
         // after the allocation take the allocation-failure call, whose
         // operation completes the put through the object-model protocols.
         RELEASE_ASSERT(concurrentSlow);
-        GPRReg baseGPR = baseJSR.payloadGPR();
         JIT_COMMENT(jit, "concurrent allocating transition: owner predicate");
         concurrentSlow->append(jit.branchTestPtr(CCallHelpers::NonZero, baseGPR, CCallHelpers::TrustedImm32(PreciseAllocation::halfAlignment))); // OM I36
         jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
@@ -6085,7 +6077,7 @@ static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpL
         jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR); // out-of-line by construction
         jit.neg32(scratch1GPR);
         jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
-        jit.storeValue(valueJSR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+        jit.storeValue(valueGPR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 
         JIT_COMMENT(jit, "claim, re-check, publish");
         jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), scratch3GPR);

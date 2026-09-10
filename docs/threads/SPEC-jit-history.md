@@ -928,3 +928,281 @@ GIL on 3,460 -> 171 stop requests. Test:
 inner-loop shape; stop requests in the threaded phase 6,445 -> 0 GIL on, values
 conserved in every mode).
 
+
+## §37. Megamorphic cache GIL off: one cache per thread, one epoch per process (eighth landing round; §5.5)
+
+The sixth round left the megamorphic cache inert in a GIL-off process (§30): a
+fill writes a multi-word entry with a `RefPtr` uid that N unsynchronized
+mutators cannot share, so the inline probes bailed, the fills no-op'd, the
+by-id megamorphic access cases were refused, and every access an inline cache
+had given up on ran the generic operation - `gbemu` 1.7 M times per JetStream
+run, the micro rows `megamorphic-access` at 1.8x and
+`megamorphic-put-transition` at 2.7x of GIL on (PERF-RESULTS §6). This is the
+design §30 recorded, now built.
+
+Storage. Each JS thread of a GIL-off process owns a `MegamorphicCache`, hung
+off its `VMLite` and created by the thread's first fill; the VM's cache stays
+what flag-off and GIL-on use. Only the owning thread touches a cache's entries
+- probes run in its JIT code, fills in its slow paths - so an entry needs no
+atomicity, and the uid references a cache holds are dropped by the owner (a
+displaced entry) or with the world stopped (collection end; thread teardown
+takes the registry lock the collector's walk holds). Rule G1: no thread reads
+or writes another thread's megamorphic cache except the conductor of a
+collection inside the stop.
+
+Invalidation. `VM::invalidateStructureChainIntegrity` (prototype changes,
+adds/deletes/attribute changes on objects that may be prototypes, freezes,
+flattening) runs on whichever thread mutates and must reach every cache. GIL
+off the epoch those events bump is one process-wide 32-bit counter; a bump is
+an atomic increment. The probe loads the counter's low half where it loaded
+the VM cache's epoch before (one absolute load of a read-mostly line) and
+compares it with the entry's 16-bit stamp as today. Rule G2 (what a stale
+probe may do): a probe that loaded the counter before a concurrent bump can
+validate a pre-bump entry and load through it. That is the reader linearized
+before the mutation - the outcome a structure-checked IC load racing the same
+mutation already has: its slot load returns the old value or `undefined`
+(SPEC-objectmodel D1: flag-on deletes release-store `undefined` before the
+table edit) and never another property's value (I18: no deleted slot is reused
+before a collection, and a collection ages every cache). A reader ordered after
+the mutation by any happens-before edge sees the bump: the increment precedes
+the mutating thread's release, the probe's load follows the reader's acquire.
+Rule G3 (fills): a fill stamps its entry with the counter value read BEFORE the
+lookup whose result it caches, and keys it on the base's StructureID read
+before that lookup, so a concurrent mutation or transition between lookup and
+fill leaves a dead entry (stale stamp, or a StructureID the object no longer
+has) rather than a live wrong one. Rule G4 (wrap): entries keep 16-bit stamps;
+a cache remembers the counter's high half it last filled under and clears
+itself when a fill or a collection finds the high half moved, so a wrapped low
+half revalidates nothing unless one thread neither fills nor sees a collection
+across 65,536 invalidations.
+
+Collection end, world stopped, bumps the process counter (every collection:
+an entry holds a raw holder pointer, as the VM cache's `age()` bump accounts
+for) and on a Full collection also clears every thread's cache and drops its
+uid references, walking the VMLite registry.
+
+Codegen. GIL off `findMegamorphicCacheEntry` loads the cache pointer from the
+current VMLite (the TLS load `loadVMLite` emits) instead of materializing the
+VM cache's address, sends a null pointer (a thread that never filled) to the
+slow path, and reloads it for the secondary table (the register that held the
+base holds the epoch by then); the epoch compare reads the process counter.
+The tagged-butterfly legs (`loadPropertyTagged` / `storePropertyTagged`, the
+claimed transition arm) are the GIL-on ones of §30 unchanged: they are the
+§5.5 read and write rows, which hold GIL off. Flag-off and GIL-on emission is
+byte-identical to before. The by-id megamorphic access cases, the `canBeMegamorphic`
+indexed forms and the DFG/FTL megamorphic nodes are admitted GIL off again.
+
+Measurements (x86-64, Release, medians of 3). `megamorphic-access` (one get
+site, 1000 shapes): GIL off 2410 ms -> 1500 ms (GIL on 1350, flag off 1110);
+`megamorphic-put-transition-1M`: 128 ms -> 52.7 ms (GIL on 48); the new
+corpus test's single-thread part: 200000 of 200000 gets through the gave-up
+operation before, 0 after. JetStream `gbemu` GIL off did not move (104 ->
+104, GIL on 158): its generic traffic is not megamorphic-cache misses (the
+profile's leaders are JIT code quality, `ensureLengthSlowConcurrent` and the
+math-IC slow path; §39, §40 and PERF-RESULTS §6.9 take those).
+
+## §38. Dictionary flattening GIL off is a transition (eighth landing round; SPEC-objectmodel F3)
+
+The problem. Flattening rewrites a dictionary's storage in place - offsets
+renumbered by insertion order, slots moved between inline storage and the
+butterfly, the butterfly shrunk or dropped - and keeps the StructureID, so a
+reader that resolved an offset against the pre-flatten table, or an inline
+cache another thread is generating from conditions it sampled before the
+flatten, is wrong after it with nothing to tell it so. Flag-on the branch
+therefore flattens only inside a stop (F3, "flatten under stop"), and GIL off
+the inline-cache paths, which hold `codeBlock->m_lock` with heap access and so
+must not request a stop, refuse to flatten at all: a property found through a
+dictionary prototype is never cached GIL off and every access takes the
+generic path (the fifth round's O2/GT11 refusal; the sixth round's attempt to
+flatten after the lock was dropped, P3, kept the in-place form and crashed one
+run in five because the StructureID survived the rewrite).
+
+The rule GIL off. Flattening does not touch storage. It allocates a fresh
+Structure cloned from the dictionary - the same prototype, type info and
+inline capacity, a private copy of the property table with the same offsets
+(holes included), the same `maxOffset`, kind `None`, `hasBeenDictionary` and
+`hasBeenFlattenedBefore` set, thread-locality sets born fired if either of the
+dictionary's had fired (F4/F3, no stop: nothing watches an unpublished
+structure) - and publishes it with the structure-only N2 core
+(`tryStructureOnlyTransition`: cell lock, StructureID re-check, the dictionary
+table's edit count re-check against the value read before the clone, claim,
+one header CAS). A reader holding the old structure reads the same slots in
+the same butterfly; a stub keyed on the old StructureID misses; conditions can
+now be established on the new structure because it is not a dictionary; the
+old structure object stays a dictionary nobody's header names. What the
+in-place form bought beyond cacheability - compaction of deleted slots and the
+butterfly shrink - is forgone GIL off (a flattened prototype keeps its holes
+until it dies). Leaving the dictionary fires its transition watchpoint set
+(deferred, outside the structure allocation lock); a dictionary is rarely
+watched and a watcherless fire takes no stop (§36), a watched one takes the
+Class-A stop, which is why the inline-cache paths still do not flatten inline:
+they record the object (`Structure::requestDeferredFlattenGILOff`) and return
+"retry", and every `repatch*` entry point runs the recorded flatten once
+`tryCache*` has returned and the lock is dropped; the retry that follows
+caches. The unlocked runtime sites (`JSObject::flattenDictionaryObject`, the
+global object's prototype setup, the interpreter's scope flattening) take the
+transition form directly GIL off; GIL on and flag off keep the in-place forms
+(under the stop, and as upstream) unchanged.
+
+Races. Two threads flattening one object: the loser's publication fails the
+StructureID re-check and finds a non-dictionary; its clone is garbage. An
+in-place dictionary edit between the clone and the publication: the edit-count
+re-check fails, RESTART re-clones. The object's owner transitioning it
+claim-first meanwhile (E4-C): the claim CAS in the N2 core loses, RESTART. A
+foreign flatten of an object whose shape is still thread-local: the N2 core's
+step 0 fires the sets under a stop first, as for any foreign structure change
+(legal at every site that runs the flatten).
+
+Follow-up found by the eighth round's amplifier campaign
+(`objectmodel/define-property-kind-change-vs-readers.js` GIL off, a hang in
+about 1 run in 20 under `--randomYield*`): a flatten publishes a NEW structure
+whose table is a clone, so it must not slip between the two halves of an
+in-place edit of the source. The uncacheable-dictionary form of a kind-changing
+`defineProperty` stored the value under the cell lock and changed the
+attributes in the pinned table AFTER releasing it; a flatten that cloned in
+between froze the old attributes over the new value in the flattened
+structure and the attribute edit landed in the orphaned table - after which
+every reader of the property, and the defining thread's own next lookup, spun
+on "attributes and value disagree". Two rules close it: `putDirectInternal`'s
+in-place attribute change re-checks that the object still has the structure
+it edited and RESTARTs otherwise (the replay meets the flattened structure and
+takes the transitioning form, publishing value and attributes together); and
+the flatten's publication, under the cell lock, compares its clone with the
+source's table entry by entry and RESTARTs on any difference (edits made
+inside a stop do not bump the edit count the plan was checked against).
+0 hangs in 450 amplified runs after (both modes) - but the plain corpus
+run of the same test, on a machine loaded by the stress suites, still hung
+once on that binary (the same frozen state: the flattened structure's
+attributes disagreeing with the slot), so a third interleaving existed. It
+is the pair of locks: the flatten compares its clone and publishes inside
+one CELL-lock section, while the uncacheable dictionary's in-place attribute
+edit took only the STRUCTURE's lock - so the edit could land after the
+compare and before the publish, and the defining thread's re-check (second
+rule) then still saw the old structure and returned. Third rule: that
+in-place attribute edit is made under the cell lock too (as the value store
+before it and every dictionary add, replace and delete already are), after
+re-checking the structure under it; an edit is then wholly before the
+flatten's compare (the compare fails, the flatten restarts) or wholly after
+its publish (the re-check fails, the define restarts on the flattened
+structure and takes the transitioning form). Lock order is the established
+cell lock (10a) before `Structure::m_lock` (10b). With the three rules the
+flatten is on by default (`Options::useGILOffDictionaryFlatten` remains as a
+switch); measured on the final tree: JetStream GIL off +1.9 % overall with it
+on, `ML` +40 %, `Basic`/`regexp`/`raytrace` +6-7 %; the kind-change test's
+hang rate before and after the third rule is in LANDING-PLAN "Results,
+eighth round" (P2).
+
+## §39. GIL off, the FTL keeps the butterfly across polls; bounds come from the same butterfly's vectorLength (eighth landing round; §5.5, I21)
+
+The problem. GIL off every poll (the `CheckTraps` at a loop head) was modeled
+as writing `JSObject_butterfly` and `Butterfly_vectorLength` (AUDIT-checktraps
+Tier-B B3): a foreign thread can convert a flat butterfly to segmented storage
+and grow it with no stop and no epoch bump (SPEC-objectmodel §4.2), and the
+segmented array's publicLength is the old flat header's slot (I9b), so a
+hoisted flat base paired with a re-loaded publicLength could index past the
+flat allocation. Forcing {base, publicLength, vectorLength} to be re-loaded
+after every poll closed that, and cost every GIL-off loop over an array its
+loop-invariant code motion: the profile of `crypto`'s inner loops (eighth
+round) is the object pointer re-loaded from the frame, the butterfly word
+re-loaded and masked, the length re-loaded and, for the store, the ownership
+test re-run, on every iteration - about 25 instructions on a 50-instruction
+loop body, where GIL on hoists all of it.
+
+The rule (FTL plans, GIL off). The poll no longer writes `JSObject_butterfly`
+or `Butterfly_vectorLength`; `NamedProperties`, `IndexedProperties` and
+`Butterfly_publicLength` stay poll-bounded (the memory-model interim of
+AUDIT-checktraps §7.1 is unchanged: plain values are re-read after a poll).
+Instead, every bound the FTL derives from a storage edge - a GetButterfly
+result, which LICM may now have hoisted across any number of polls - is the
+smaller of that storage's publicLength and its own vectorLength: SSA lowering
+adds `CheckInBounds(index, GetVectorLength(storage))` next to the publicLength
+check for Int32/Double/Contiguous in-bounds accesses (GetByVal, PutByVal,
+HasIndexedProperty, EnumeratorGetByVal, Atomics), and the out-of-bounds legs,
+`HasIndexedProperty`, `EnumeratorNextUpdateIndexAndMode`, `ArrayIndexOf` /
+`ArrayIncludes` and `ArraySlice` clamp the publicLength they read to the
+vectorLength of the same storage (`publicLengthForBounds`); `ArrayPop` and
+`ArrayShift` take their runtime path when the two disagree; `ArrayPush` and
+`ArrayUnshift` already tested vectorLength. Why this is enough: a flat
+butterfly's vectorLength never changes in place GIL off (T1 always allocates
+afresh; AS-COPY; the GIL-on in-place forms are GIL-on only), so a hoisted
+vectorLength is the extent of the allocation the hoisted base points into for
+as long as the frame holds it (the conservative scan keeps a superseded
+butterfly alive; I7); lanes below it are either this array's current storage
+or, after a foreign segmented conversion, the aliased fragments of it, so a
+read there is a current or tardy value and a write there lands where the
+segmented readers look; an index at or past it goes to the node's slow path or
+exits, which re-derives everything from the object. Everything a stop can
+change (haveABadTime, structure retags, debugger) still bumps the conductor
+epoch and forces the frame out at the poll (I21's precise-jettison arm), so
+structure and indexing-type facts stay hoistable as before and the butterfly
+now joins them. The DFG tier has no LICM and keeps the reload (its local CSE
+never spans a poll: polls open blocks). Nodes that load the butterfly
+themselves (MultiGetByVal, Spread, ArraySortCommit, ...) read a current word
+and are unaffected. Flag-off and GIL-on emission is unchanged.
+
+The Int32 lane check (I41) is one compare now: `(lane - 1) < NumberTag - 1`
+unsigned passes holes and int32s and fails everything else, replacing the
+two-flag form that cost seven instructions per element load.
+
+## §40. GIL off, an exit reaches its compiled ramp without the generation thunk (eighth landing round; §4.4, I2)
+
+Flag-off, the first time a DFG or FTL speculation exit is taken its ramp is
+compiled and the exit's patchable jump is repatched to it. GIL off nothing
+repatches reachable code outside a stop (I2/P3), so the jump kept pointing at
+the generation thunk and every later exit of the same site saved every
+register, called `operationCompileOSRExit` / `operationCompileFTLOSRExit`,
+found the published ramp and jumped to it - `gbemu` takes about 25,000 exits
+a run in either mode, and GIL off each one paid that. Now: DFG code GIL off
+dispatches its exits the way unlinked DFG code does, through the JITData exit
+vector (`move index; jump` to one shared tail that loads `m_exits[index]`'s
+code pointer and far-jumps), whose slot `setExitCode` publishes atomically
+after the ramp is finalized, so from the second exit on the site reaches its
+ramp in one indirect jump; invalidation points keep their jump replacements.
+FTL exit thunks GIL off (x86-64) read the exit's `m_codePtrForConcurrentReaders`
+- the pointer `compileStub` publishes with release semantics after bumping
+the stop generation - through a borrowed register saved on the stack and
+`ret` to it when it is set, falling back to the generation thunk when it is
+not; the address of that word is patched in at link time, and the FTL
+JITCode's exit vector is no longer shrunk GIL off so the word does not move.
+The operations' published-pointer fast paths stay for the first racing exits.
+A thread that jumps into a ramp another thread compiled does so through a
+pointer published after `FINALIZE_CODE`, the same way every thread already
+enters DFG/FTL code a compiler thread produced.
+
+## §41. (considered, not adopted) Exempting Class-A fire windows from the heap-fact epoch
+
+The eighth round considered declaring a watchpoint fire's stop window
+code-lifecycle-only (no conductor heap-fact epoch bump, so bystander threads
+parked by the fire keep their optimized frames): every `Watchpoint::Type`
+handler rewrites code or code-side caches, never a structure, indexing type
+or butterfly. It was implemented and then withdrawn in the same round because
+no test could show a before/after difference - four optimized worker threads
+parked by twelve watched transition fires were not jettisoned on resume with
+or without the change (the fires' own jettisons were the only ones) - so the
+change had no demonstrated effect to set against the audit surface it
+touches (AUDIT-checktraps row CA stays "conservative"). Recorded so the idea
+is not re-derived without first explaining that measurement.
+
+## §42. GIL off, a site that meets Double arrays among others is generic, not converting (eighth landing round; §5.5, OM §4.7)
+
+Flag-off, a get/put-by-val site whose profile saw several indexing shapes
+speculates the widest (Contiguous, or ArrayStorage) and plants `Arrayify`,
+which converts every narrower array that reaches it in place - a few stores.
+GIL off a Double array's conversion to Contiguous, and any conversion to
+ArrayStorage, is a per-array stop-the-world (OM §4.7 / I28: a stale
+Double-keyed reader over boxed storage), so such a site stopped the world once
+per Double array that flowed through it: `Basic` builds one-element arrays
+that hold a double in some iterations, and a later site that reads them had,
+depending on the order its profile filled, either a Contiguous speculation
+with `Arrayify` (up to 840,000 stops and 3.7 s of a 5 s run - the test's
+bimodal 145 / 420 / 520 scores across runs) or a generic access; the sjcl
+tests (`aes`, `pbkdf2`, `sha256`) paid 2,000-4,000 such stops a run at
+`bitArray.bitLength`. Rule: GIL off, `ArrayMode::fromObserved` returns
+`Array::Generic` instead of a converting Contiguous mode when the observed
+shapes include Double, and instead of a converting ArrayStorage mode when they
+include anything else; the DFG and FTL then access the site through their
+get/put-by-val inline caches, which serve each shape with its own stub and
+convert nothing. Int32 and Undecided arrays keep converting to Contiguous
+(stop-free relabels for the allocating thread, OM T4-O), and a Double-profiled
+put site whose value is not a number keeps its conversion (that array does
+change shape, once). Flag-off / GIL on: unchanged.

@@ -515,7 +515,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
                     notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
                 if (rejectedCallable)
 #if USE(BUN_JSC_ADDITIONS)
-                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected) | payloadFlags, promiseOrCapability, onRejected, settled, asyncContext);
 #else
                     globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
@@ -527,7 +527,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
                 JSValue settled = slotValue;
                 if (fulfilledCallable)
 #if USE(BUN_JSC_ADDITIONS)
-                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
+                    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled) | payloadFlags, promiseOrCapability, onFulfilled, settled, asyncContext);
 #else
                     globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled);
 #endif
@@ -542,6 +542,12 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             switch (snapshotKind) {
             case InlineReactionKind::InternalMicrotask: {
                 InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+#if USE(BUN_JSC_ADDITIONS)
+                if (snapshotFlags & inlineReactionAsyncContextFlag) {
+                    existing = JSSlimPromiseReaction::createWithAsyncContext(vm, payload, task, slotValue, nullptr); // as spillInlineReaction
+                    break;
+                }
+#endif
                 existing = JSSlimPromiseReaction::create(vm, payload ? JSValue(payload) : jsUndefined(), task, slotValue, nullptr);
                 break;
             }
@@ -558,11 +564,11 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             bool onlyReject = !fulfilledCallable && rejectedCallable;
             JSPromiseReaction* reaction;
 #if USE(BUN_JSC_ADDITIONS)
-            if (!context.isUndefined()) {
-                reaction = JSFullPromiseReaction::create(vm, promiseOrCapability,
+            if (hasAsyncContext) {
+                reaction = JSFullPromiseReaction::createWithAsyncContext(vm, promiseOrCapability,
                     fulfilledCallable ? onFulfilled : jsUndefined(),
                     rejectedCallable ? onRejected : jsUndefined(),
-                    context, existing);
+                    asyncContext, existing);
             } else
 #endif
             if (onlyFulfill)
@@ -580,7 +586,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
                 if (flags() == snapshotFlags && payloadCell() == payload && m_slot.get() == slotValue) {
                     if (snapshotKind != InlineReactionKind::None)
                         clearSlot(); // the spilled inline reaction now owns its context/handler.
-                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | isHandledFlag, reaction);
+                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | isHandledFlag, reaction);
                     return;
                 }
             }
@@ -720,6 +726,12 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
             switch (snapshotKind) {
             case InlineReactionKind::InternalMicrotask: {
                 InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+#if USE(BUN_JSC_ADDITIONS)
+                if (snapshotFlags & inlineReactionAsyncContextFlag) {
+                    existing = JSSlimPromiseReaction::createWithAsyncContext(vm, payload, task, slotValue, nullptr); // as spillInlineReaction
+                    break;
+                }
+#endif
                 existing = JSSlimPromiseReaction::create(vm, payload ? JSValue(payload) : jsUndefined(), task, slotValue, nullptr);
                 break;
             }
@@ -742,7 +754,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
                 if (flags() == snapshotFlags && payloadCell() == payload && m_slot.get() == slotValue) {
                     if (snapshotKind != InlineReactionKind::None)
                         clearSlot();
-                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | isHandledFlag, reaction);
+                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | isHandledFlag, reaction);
                     return;
                 }
             }
@@ -821,11 +833,13 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
                 if (wonHandleClaim)
                     notifyPromiseRejectionTrackerCrossThreadAware(globalObject, this, JSPromiseRejectionOperation::Handle);
 #if USE(BUN_JSC_ADDITIONS)
-                if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                    synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context });
-                } else
-#endif
+                if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]]
+                    synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context, asyncContext });
+                else
+                    globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context, asyncContext);
+#else
                 globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(snapshotStatus), cellValue, settled, context);
+#endif
                 return;
             }
 
@@ -834,6 +848,12 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
             switch (snapshotKind) {
             case InlineReactionKind::InternalMicrotask: {
                 InternalMicrotask existingTask = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
+#if USE(BUN_JSC_ADDITIONS)
+                if (snapshotFlags & inlineReactionAsyncContextFlag) {
+                    existing = JSSlimPromiseReaction::createWithAsyncContext(vm, payload, existingTask, slotValue, nullptr); // as spillInlineReaction
+                    break;
+                }
+#endif
                 existing = JSSlimPromiseReaction::create(vm, payload ? JSValue(payload) : jsUndefined(), existingTask, slotValue, nullptr);
                 break;
             }
@@ -846,13 +866,19 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
                 break;
             }
 
+#if USE(BUN_JSC_ADDITIONS)
+            auto* reaction = hasAsyncContext
+                ? JSSlimPromiseReaction::createWithAsyncContext(vm, asyncContext, task, context, existing)
+                : JSSlimPromiseReaction::create(vm, cellValue, task, context, existing);
+#else
             auto* reaction = JSSlimPromiseReaction::create(vm, cellValue, task, context, existing);
+#endif
             {
                 Locker locker { cellLock() };
                 if (flags() == snapshotFlags && payloadCell() == payload && m_slot.get() == slotValue) {
                     if (snapshotKind != InlineReactionKind::None)
                         clearSlot();
-                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | isHandledFlag, reaction);
+                    setPackedCell(vm, (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | isHandledFlag, reaction);
                     return;
                 }
             }
@@ -1040,23 +1066,31 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
                 return;
             payload = payloadCell();
             slotValue = m_slot.get();
-            uint16_t settledFlags = (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | static_cast<uint16_t>(Status::Rejected);
+            uint16_t settledFlags = (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | static_cast<uint16_t>(Status::Rejected);
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
         }
         auto kind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
         switch (kind) {
         case InlineReactionKind::InternalMicrotask: {
+            // As settleInlineInternalMicrotask, on the locked snapshot.
             ASSERT(snapshotFlags & isHandledFlag);
             InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
             JSValue cellValue = payload ? JSValue(payload) : jsUndefined();
 #if USE(BUN_JSC_ADDITIONS)
+            JSValue asyncContext;
+            if (snapshotFlags & inlineReactionAsyncContextFlag) {
+                asyncContext = cellValue;
+                cellValue = jsUndefined();
+            }
             if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue });
+                synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue, asyncContext });
                 return;
             }
-#endif
+            globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue, asyncContext);
+#else
             globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Rejected), cellValue, argument, slotValue);
+#endif
             return;
         }
         case InlineReactionKind::FulfillHandler:
@@ -1124,23 +1158,31 @@ void JSPromise::fulfillPromise(VM& vm, JSValue argument)
                 return;
             payload = payloadCell();
             slotValue = m_slot.get();
-            uint16_t settledFlags = (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | static_cast<uint16_t>(Status::Fulfilled);
+            uint16_t settledFlags = (snapshotFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | static_cast<uint16_t>(Status::Fulfilled);
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
         }
         auto snapshotKind = static_cast<InlineReactionKind>((snapshotFlags & inlineReactionKindMask) >> inlineReactionKindShift);
         switch (snapshotKind) {
         case InlineReactionKind::InternalMicrotask: {
+            // As settleInlineInternalMicrotask, on the locked snapshot.
             ASSERT(snapshotFlags & isHandledFlag);
             InternalMicrotask task = static_cast<InternalMicrotask>((snapshotFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
             JSValue cellValue = payload ? JSValue(payload) : jsUndefined();
 #if USE(BUN_JSC_ADDITIONS)
+            JSValue asyncContext;
+            if (snapshotFlags & inlineReactionAsyncContextFlag) {
+                asyncContext = cellValue;
+                cellValue = jsUndefined();
+            }
             if (auto* synchronousModuleQueue = synchronousModuleQueueGILOff(vm); synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue });
+                synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue, asyncContext });
                 return;
             }
-#endif
+            globalObjectForGILOff->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue, asyncContext);
+#else
             globalObjectForGILOff->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Fulfilled), cellValue, argument, slotValue);
+#endif
             return;
         }
         case InlineReactionKind::FulfillHandler:

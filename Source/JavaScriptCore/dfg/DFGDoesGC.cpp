@@ -543,6 +543,10 @@ bool doesGCIgnoringClobberize(Graph& graph, Node* node)
     case GlobalIsNaN:
         return node->child1().useKind() == UntypedUse;
 
+    case GeneratorClaimResume:
+    case GeneratorPublishResume:
+        return false;
+
     case DataViewGetInt:
         return node->dataViewData().byteSize == 8;
 

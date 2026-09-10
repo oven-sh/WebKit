@@ -152,22 +152,9 @@ private:
 
 ALWAYS_INLINE bool canUseMegamorphicGetByIdExcludingIndex(VM& vm, UniquedStringImpl* uid)
 {
-    // AUD1.K4 row II.19 (SPEC-ungil §K.1): codegen hygiene, NOT a safety
-    // closure. The II.19 hazard (torn multi-word entry init / RefPtr uid
-    // refcount race on the VM-singular MegamorphicCache) was already
-    // unreachable before this gate: every fill no-ops under useJSThreads
-    // (MegamorphicCache::fillsDisabledUnderJSThreads(), pre-existing) and
-    // every inline probe bails to the slow path
-    // (AssemblyHelpers::{load,store,has}MegamorphicProperty). With fills
-    // dead, a gilOff megamorphic AccessCase could only ever build an
-    // always-miss probe stub; refusing the megamorphic by-id forms here
-    // just stops generating that dead code. The ruled per-lite cache
-    // (+ the §0 U4 A16-ext JIT repointing) is the real follow-up; a miss
-    // is only a perf event (K4 table II preamble). Flag-off and GIL-on
-    // behavior unchanged (one predicted-false frozen-Config-page test,
-    // the F1 convention).
-    if (vm.gilOffWithProcessGate()) [[unlikely]]
-        return false;
+    // Flag-on the megamorphic forms are admitted in both modes: GIL on the
+    // VM's cache (r17), GIL off the thread's own (SPEC-jit history §37; the
+    // fifth round's refusal here was hygiene while the cache was inert GIL off).
     return uid != vm.propertyNames->length && uid != vm.propertyNames->name && uid != vm.propertyNames->prototype && uid != vm.propertyNames->underscoreProto;
 }
 
@@ -183,8 +170,6 @@ inline bool canUseMegamorphicInById(VM& vm, UniquedStringImpl* uid)
 
 inline bool canUseMegamorphicPutById(VM& vm, UniquedStringImpl* uid)
 {
-    if (vm.gilOffWithProcessGate()) [[unlikely]] // AUD1.K4 row II.19 hygiene — see canUseMegamorphicGetByIdExcludingIndex.
-        return false;
     return !parseIndex(*uid) && uid != vm.propertyNames->underscoreProto;
 }
 

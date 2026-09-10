@@ -8947,3 +8947,145 @@ which call the workload function once and can only change tier by OSR entry,
 find a function-entry FTL replacement installed when they start - and is
 reported as measured, not as fixed (PERF-RESULTS §2).
 
+
+## Eighth landing round: per-thread state that had been left shared or refused GIL off
+
+Four pieces of §K.1-class state (per-lite by the design, VM-global or absent
+in the code) got their per-thread home, and one host-call protocol got its
+JIT form:
+
+- `String.prototype.replace`'s regexp search cache (`StringReplaceCache`,
+  AUD1.N2 residual (C)). GIL off it was bypassed outright, which is what the
+  `regexp` benchmark measures (0.72 of GIL on before). Each VMLite now owns
+  one, created on first use; it is never visited, so the collector clears
+  every thread's cache at every cycle end, world stopped, before any result it
+  holds could have been swept (the VM's cache stays visited-on-eden,
+  cleared-on-full). The subjects are atoms of the shared table GIL off, so the
+  cache dies with the lite on whichever thread tears it down.
+- The per-(global, lite) RegExp legacy-statics stream lookup
+  (`threadRegExpGlobalDataSlow`) keeps a one-entry per-thread memo validated
+  by a purge generation, so a worker thread's matches take the table lock once
+  per (global, lite) rather than once per match. Purges (lite teardown, global
+  teardown) bump the generation under the lock before removing anything.
+- The megamorphic property cache: SPEC-jit history §37.
+- The dictionary flatten the inline-cache paths refused: SPEC-jit history §38.
+- §N.5's resume claim and publish. `@claimGeneratorResume` /
+  `@publishGeneratorResume` were host calls on every `next()` (2.5 M per run of
+  a generator-heavy program, PERF-RESULTS §6). They are DFG/FTL intrinsics now
+  (`GeneratorClaimResume` / `GeneratorPublishResume`): the same CAS protocol
+  inline, the token read from the installed VMLite, which `setCurrent` stamps
+  with the value the host functions derive from the installing thread's uid,
+  so host and JIT forms of one thread agree. LLInt and Baseline keep calling
+  the host functions. Test: `vmstate/generator-resume-claim-inline-gil-off.js`
+  (four threads racing forty shared generators: 16,000 values each delivered
+  once, the claim losers see the TypeError; a hot single-threaded resume loop
+  made 300,000 host claim calls per 300,000 resumes before, 0 after tier-up).
+
+Also GIL off: `Structure::forEachProperty`'s snapshot takes the plain
+structure lock (nothing under it allocates from the GC heap) and a larger
+inline buffer; the typed-array bulk copies from Int32/Double arrays
+(`copyFromInt32ShapeArray` / `copyFromDoubleShapeArray`) run GIL off again,
+through one snapshot of the destination vector taken after the caller's
+bounds proof (a concurrent detach cannot release the buffer before the next
+stop; resizable views and a null snapshot keep the per-element path); the
+`DeferredWatchpointFire` temporaries on the transition paths no longer take
+the process-wide watchpoint membership lock in their destructor when nothing
+was ever linked into them; a Class-A fire that lost the race to another
+thread's fire of the same set returns instead of queueing an empty stop; and
+the allocation-paced Full collection keeps its blocks (SPEC-heap §10E
+amendment: only a requested Full returns everything; the retention rule keys
+on the size at the start of the cycle that ran, Eden or Full).
+
+## Eighth landing round: loop entry into the superseded DFG code
+
+GIL off several threads can be running one function's Baseline code inside
+long loops - typically because the optimized code they were in was
+jettisoned by a watchpoint fire and they landed there - at the moment an FTL
+FUNCTION-ENTRY replacement is installed over the function's DFG code (the
+"had an FTL replacement before" heuristic makes the DFG's loop trigger
+compile one early). A Baseline frame changes tier only by loop OSR entry,
+and loop entry needs a DFG target: `DFG::prepareOSREntry` on the FTL
+replacement fails ("target code block is not DFG"), `operationOptimize`
+counts the failure as an exit against the FTL code and sets a long warm-up,
+and the frame stays in Baseline until enough such failures jettison the FTL
+- after which the cycle can repeat. Single-threaded this is a corner (the
+one frame is normally the DFG frame whose trigger asked for the FTL); with N
+threads it is the common case, and it is what the scaling suite's
+string-heavy measured since the sixth round: 1,900 refused entries a run,
+the threads in Baseline sharing one set of profiles and counters at four
+times the single-thread cost per operation, four threads at 0.9x of one.
+
+Rule: GIL off, `ScriptExecutable::installCode` installing an FTL
+function-entry CodeBlock over a DFG one that is not jettisoned records the
+DFG block on their common Baseline block (`BaselineJITData`, so LLInt-only
+functions carry nothing) as the loop-entry target for frames still in
+Baseline; `operationOptimize` at a loop, finding the replacement FTL, enters
+that block through the ordinary `DFG::prepareOSREntry` (from where the DFG's
+own loop tier-up reaches the FTL through `FTLForOSREntry`, as for any DFG
+frame). The block is still valid code - frames may be running it - and the
+pointer is cleared in `CodeBlock::jettison` of that block (whose window
+invalidates its code), visited strongly by the Baseline block (one DFG block
+per hot function stays alive while its Baseline code does; it does not age
+out on its own), and overwritten by the next FTL-over-DFG install. A thread
+that read the pointer just before a jettison enters code whose invalidation
+points fire at its next poll, exactly as a thread entering
+`codeBlock->replacement()` concurrently with its jettison already does.
+Flag-off and GIL on: nothing is recorded or consulted.
+
+Measured: string-heavy four threads 7.3-7.6 s -> 2.4-3.2 s (single thread
+1.5-1.7 s; speedup 0.9x -> 2.0-2.4x), eight threads 13.6 s -> 3.4 s (3.5-3.8x);
+`vmstate/loop-entry-when-replacement-is-ftl-gil-off.js` (the same workload
+as a corpus test: four threads 4.3 s before, 2.4-2.7 s after; every thread's
+checksum equal; refused entries counted and bounded). What remains on that
+workload is a different tiering matter: the FTL loop-entry code the threads
+reach keeps taking one `Overflow` exit (a hash multiply) and, with the
+reoptimization back-off already raised by the earlier jettisons and the
+GIL-off thread multiplier on exit thresholds, tolerates ~1,000 such exits
+before recompiling; recorded in PERF-RESULTS §6.9.
+
+## Eighth landing round: the known-atom bit and rope resolution GIL off (§N.2, rebase follow-up)
+
+The new base marks a `JSString` whose impl is known to be an
+`AtomStringImpl` with a per-cell header bit (`isDefinitelyAtom`, set by
+`markAsAtom` after a rope resolves to an atom or an impl is swapped for its
+atom), and its JIT code uses the bit to skip the rope and atom checks on an
+impl it has ALREADY loaded (`branchIfNotAtomStringImpl(string, impl)` in
+the megamorphic by-value stubs, Baseline's string-constant `stricteq`, the
+DFG's `speculateStringIdentAndLoadStorage`; the FTL's `speculateStringIdent`
+over `lowStringIdent`'s load). With one mutator that is sound: nothing
+changes the string between the two loads. GIL off another thread resolves
+the same rope (§N.2's single publication of the fiber word) and then sets
+the bit, so a reader can pair the fiber word it loaded BEFORE the
+resolution (rope bits - for a 16-bit substring rope the word is exactly
+`isRope|isSubstring` with no pointer bits) with the bit it tests AFTER it,
+skip the rope check, and use the rope bits as a `StringImpl*`. The rebase
+had ordered the writers (impl published with a release store, a store fence,
+then the bit) but not this reader. Found by the eighth round's amplifier
+campaign: `cve/mc-tear-rope-resolve-race.js` GIL off, SIGSEGV in the
+megamorphic get-by-value stub reading `StringImpl::hashAndFlags` through
+`0x3`, about 1 run in 2,000 under random yields (core dump: the property
+register holds a substring rope since resolved to an atom by another
+thread, header bit set, loaded fiber `0x3`).
+
+Rule (reader side of §N.2 for the bit): GIL off the bit vouches only for an
+impl loaded AFTER the bit was observed. `branchIfNotAtomStringImpl`, in a
+GIL-off process, tests the bit first and on "set" RE-LOADS the impl register
+from the string (a `loadFence` between them; no instruction on x86-64), so
+the register the caller goes on to use holds the published atom; on "clear"
+it checks the impl the caller loaded, as before. The FTL, whose callers use
+the SSA value loaded before the test, does not consult the bit GIL off and
+checks that value (rope bit, then atom flag). C++ readers either test the
+bit without touching the impl (the concurrent compiler's value profiling,
+which is why the bit exists) or load the impl after the test
+(`jsAtomString`), and need nothing. GIL on and flag off emit the base's code
+unchanged (the JIT paths have no safepoint between the two loads, so the
+GIL serializes them against any resolver).
+
+Test: `jit/known-atom-bit-vs-rope-resolve-gil-off.js` - main publishes
+fresh 16-bit substring ropes each round and six threads use them at once as
+keys at a megamorphic get-by-value site and a string-constant `===`. The
+window is one thread's two adjacent loads straddling another's
+publication, so it is met per run only sometimes and not more often by
+longer runs; counted over runs: 8 of 2,400 plain GIL-off runs crashed
+before (19 of 7,200 shorter ones), 0 of 2,400 and 0 of 9,600 after; the
+cve test under the amplifier 13 of 24,000 runs before, 0 of 24,000 after.

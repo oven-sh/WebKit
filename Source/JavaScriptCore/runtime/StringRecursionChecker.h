@@ -28,6 +28,7 @@
 
 #include "CallFrame.h"
 #include "GetVM.h"
+#include "Options.h"
 #include "VMInlines.h"
 #include <wtf/StackStats.h>
 
@@ -47,8 +48,31 @@ private:
     JSValue NODELETE emptyString();
     JSValue performCheck();
 
+    // The recursion state describes one thread's call stack, so with JS
+    // threads on it lives in a thread_local: GIL-on threads interleave inside
+    // a stringification whenever a callback parks (join, contended Lock.hold,
+    // Condition.wait, Atomics.wait), and a shared set would make another
+    // thread's in-progress object look like a cycle on this one; GIL-off the
+    // VM members would also be a data race. Entries exist only while a checker
+    // for them is on this thread's stack, so the raw JSObject* pointers are
+    // kept live by the active frames and the set is never visited by GC.
+    // Flag-off keeps the VM members.
+    struct PerThreadState {
+        JSObject* firstObject { nullptr };
+        UncheckedKeyHashSet<JSObject*> visitedObjects;
+    };
+    static PerThreadState& perThreadState()
+    {
+        static thread_local PerThreadState state;
+        return state;
+    }
+
     JSGlobalObject* m_globalObject;
     JSObject* m_thisObject;
+    // Slots selected once in performCheck(); the destructor must undo its
+    // registration in the same state the constructor used.
+    JSObject** m_firstObjectSlot { nullptr };
+    UncheckedKeyHashSet<JSObject*>* m_visitedObjects { nullptr };
     JSValue m_earlyReturnValue;
 
     StackStats::CheckPoint stackCheckpoint;
@@ -60,13 +84,22 @@ inline JSValue StringRecursionChecker::performCheck()
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError();
 
+    if (Options::useJSThreads()) [[unlikely]] {
+        auto& state = perThreadState();
+        m_firstObjectSlot = &state.firstObject;
+        m_visitedObjects = &state.visitedObjects;
+    } else {
+        m_firstObjectSlot = &vm.stringRecursionCheckFirstObject;
+        m_visitedObjects = &vm.stringRecursionCheckVisitedObjects;
+    }
+
     bool alreadyVisited = false;
-    if (!vm.stringRecursionCheckFirstObject)
-        vm.stringRecursionCheckFirstObject = m_thisObject;
-    else if (vm.stringRecursionCheckFirstObject == m_thisObject)
+    if (!*m_firstObjectSlot)
+        *m_firstObjectSlot = m_thisObject;
+    else if (*m_firstObjectSlot == m_thisObject)
         alreadyVisited = true;
     else
-        alreadyVisited = !vm.stringRecursionCheckVisitedObjects.add(m_thisObject).isNewEntry;
+        alreadyVisited = !m_visitedObjects->add(m_thisObject).isNewEntry;
 
     if (alreadyVisited)
         return emptyString(); // Return empty string to avoid infinite recursion.
@@ -90,12 +123,15 @@ inline StringRecursionChecker::~StringRecursionChecker()
     if (m_earlyReturnValue)
         return;
 
-    VM& vm = getVM(m_globalObject);
-    if (vm.stringRecursionCheckFirstObject == m_thisObject)
-        vm.stringRecursionCheckFirstObject = nullptr;
+    // Use the slots performCheck() selected; re-deriving them here could
+    // disagree (and the stack-overflow early return leaves them null, but
+    // that path sets m_earlyReturnValue, so we never get here without them).
+    ASSERT(m_firstObjectSlot && m_visitedObjects);
+    if (*m_firstObjectSlot == m_thisObject)
+        *m_firstObjectSlot = nullptr;
     else {
-        ASSERT(vm.stringRecursionCheckVisitedObjects.contains(m_thisObject));
-        vm.stringRecursionCheckVisitedObjects.remove(m_thisObject);
+        ASSERT(m_visitedObjects->contains(m_thisObject));
+        m_visitedObjects->remove(m_thisObject);
     }
 }
 

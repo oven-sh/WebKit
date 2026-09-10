@@ -384,6 +384,23 @@ protected:
 #endif
     }
 
+    // TSAN builds only (nothing in production): the last constructor store to
+    // m_fiber of a rope is repeated as a release, as the resolved-string
+    // constructor's is, so that a sibling thread's fiberConcurrently() acquire
+    // synchronizes with the construction in TSAN's happens-before model. The
+    // real order is the cell's publication (a JS store) plus the reader's
+    // address dependency, which TSAN cannot see; without this edge TSAN pairs
+    // the reader's later plain read of the word with whatever this thread
+    // last wrote there before publishing - the constructor store, or the
+    // free-list link the sweep wrote into the same word just before handing
+    // the cell out (TSAN-RESULTS, eighth round, F32).
+    ALWAYS_INLINE void tsanPublishFiberAtConstruction()
+    {
+#if TSAN_ENABLED
+        WTF::atomicStore(&m_fiber, WTF::atomicLoad(&m_fiber, std::memory_order_relaxed), std::memory_order_release);
+#endif
+    }
+
     mutable uintptr_t m_fiber;
 
 private:
@@ -676,6 +693,7 @@ private:
         initializeFiber0(nullptr);
         initializeFiber1(nullptr);
         initializeFiber2(nullptr);
+        tsanPublishFiberAtConstruction();
     }
 
     JSRopeString(VM& vm, unsigned length, bool is8Bit, JSString* s1, JSString* s2)
@@ -689,6 +707,7 @@ private:
         initializeFiber1(s2);
         initializeFiber2(nullptr);
         ASSERT((s1->length() + s2->length()) == this->length());
+        tsanPublishFiberAtConstruction();
     }
 
     JSRopeString(VM& vm, unsigned length, bool is8Bit, JSString* s1, JSString* s2, JSString* s3)
@@ -702,6 +721,7 @@ private:
         initializeFiber1(s2);
         initializeFiber2(s3);
         ASSERT((s1->length() + s2->length() + s3->length()) == this->length());
+        tsanPublishFiberAtConstruction();
     }
 
     JSRopeString(VM& vm, unsigned length, bool is8Bit, JSString* base, unsigned offset)
@@ -716,6 +736,7 @@ private:
         initializeSubstringOffset(offset);
         ASSERT(length == this->length());
         ASSERT(!base->isRope());
+        tsanPublishFiberAtConstruction();
     }
 
     ALWAYS_INLINE void finishCreationSubstringOfResolved(VM& vm)
