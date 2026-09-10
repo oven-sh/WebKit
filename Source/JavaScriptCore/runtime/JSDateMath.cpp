@@ -219,13 +219,13 @@ void DateCache::DSTCache::extendTheAfterCache(int64_t millisecondsFromEpoch, Loc
 
 LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64_t millisecondsFromEpoch, TimeType inputTimeType)
 {
-    if (millisecondsFromEpoch >= WTF::Int64Milliseconds::minECMAScriptTime && millisecondsFromEpoch <= WTF::Int64Milliseconds::maxECMAScriptTime) {
-        // Do nothing. Use millisecondsFromEpoch directly
-    } else {
-        // Adjust to equivalent time.
-        int64_t newTime = WTF::equivalentTime(millisecondsFromEpoch);
-        dataLogLnIf(JSDateMathInternal::verbose, "Equivalent time conversion from ", millisecondsFromEpoch, " to ", newTime);
-        millisecondsFromEpoch = newTime;
+    // The cache below marks an empty entry with start = maxECMAScriptTime, end = minECMAScriptTime, so it can only hold
+    // times in that range. UTC(t), https://tc39.es/ecma262/#sec-utc-t, runs before TimeClip on a local time value that
+    // is up to one UTC offset outside the range while its result is still inside. Ask ICU directly for those. (Mapping
+    // them to an "equivalent" year inside the range instead would apply that year's UTC offset, not this one's.)
+    if (millisecondsFromEpoch < WTF::Int64Milliseconds::minECMAScriptTime || millisecondsFromEpoch > WTF::Int64Milliseconds::maxECMAScriptTime) [[unlikely]] {
+        dataLogLnIf(JSDateMathInternal::verbose, "Out of cache range ", millisecondsFromEpoch);
+        return dateCache.calculateLocalTimeOffset(millisecondsFromEpoch, inputTimeType);
     }
 
     if (m_epoch > UINT32_MAX) [[unlikely]] {
@@ -329,18 +329,20 @@ double DateCache::gregorianDateTimeToMS(int32_t year, int32_t month, int32_t mon
 {
     double day = dateToDaysFrom1970(year, month, monthDay);
     double ms = timeToMS(hour, minute, second, milliseconds);
-    double localTimeResult = (day * WTF::msPerDay) + ms;
-
-    if (inputTimeType == TimeType::LocalTime && std::isfinite(localTimeResult))
-        return localTimeResult - localTimeOffset(static_cast<int64_t>(localTimeResult), inputTimeType).offset;
-    return localTimeResult;
+    return localTimeToMS((day * WTF::msPerDay) + ms, inputTimeType);
 }
 
+// https://tc39.es/ecma262/#sec-utc-t when inputTimeType is LocalTime.
 double DateCache::localTimeToMS(double milliseconds, TimeType inputTimeType)
 {
-    if (inputTimeType == TimeType::LocalTime && std::isfinite(milliseconds))
-        return milliseconds - localTimeOffset(static_cast<int64_t>(milliseconds), inputTimeType).offset;
-    return milliseconds;
+    if (inputTimeType != TimeType::LocalTime)
+        return milliseconds;
+    // Every caller passes the result to timeClip(), and no UTC offset reaches a day. So a local time value more than
+    // a day outside the time value range can only become NaN, and answering that here keeps the int64_t conversion
+    // below in range.
+    if (!(std::abs(milliseconds) <= WTF::maxECMAScriptTime + WTF::msPerDay))
+        return PNaN;
+    return milliseconds - localTimeOffset(static_cast<int64_t>(milliseconds), inputTimeType).offset;
 }
 
 ALWAYS_INLINE std::tuple<int32_t, int32_t, int32_t> DateCache::yearMonthDayFromDaysWithCache(int32_t days)
@@ -442,7 +444,7 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
             double value = v8::ParseDateTimeString(dateString.data(), dateString.size(), local);
 
             if (local)
-                value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+                value = localTimeToMS(value, TimeType::LocalTime);
 
             return v8::TimeClip(value);
         }
@@ -451,8 +453,8 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
         if (std::isnan(value))
             value = WTF::parseDate(dateString, isLocalTime);
 
-        if (isLocalTime && std::isfinite(value))
-            value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+        if (isLocalTime)
+            value = localTimeToMS(value, TimeType::LocalTime);
 
         return value;
     };
