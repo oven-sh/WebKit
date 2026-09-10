@@ -56,7 +56,6 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_scriptMode(static_cast<unsigned>(info.scriptMode()))
     , m_isArrowFunctionContext(info.isArrowFunctionContext())
     , m_isClassContext(info.isClassContext())
-    , m_isInsideModuleCode(info.isInsideModuleCode())
     , m_hasTailCalls(false)
     , m_constructorKind(static_cast<unsigned>(info.constructorKind()))
     , m_derivedContextType(static_cast<unsigned>(info.derivedContextType()))

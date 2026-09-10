@@ -43,8 +43,8 @@ ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModul
     , m_scriptFetcher(WTF::move(scriptFetcher))
     , m_payload(payload, WriteBarrierEarlyInit)
     , m_entry(entry, WriteBarrierEarlyInit)
-    , m_loader(loader, WriteBarrierEarlyInit)
     , m_referrer(referrer.toJSValue(), WriteBarrierEarlyInit)
+    , m_loader(loader, WriteBarrierEarlyInit)
 {
 }
 

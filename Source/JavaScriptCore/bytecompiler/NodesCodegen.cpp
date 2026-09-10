@@ -241,12 +241,9 @@ RegisterID* ImportNode::emitBytecode(BytecodeGenerator& generator, RegisterID* d
     else
         generator.emitLoad(arguments.argumentRegister(1), jsUndefined());
     generator.emitLoad(arguments.argumentRegister(2), jsBoolean(m_deferred));
-    if (generator.isInsideModuleCode()) {
-        Variable moduleRecord = generator.variable(generator.propertyNames().builtinNames().moduleRecordPrivateName());
-        RefPtr<RegisterID> scope = generator.emitResolveScope(generator.newTemporary(), moduleRecord);
-        generator.emitGetFromScope(arguments.argumentRegister(3), scope.get(), moduleRecord, ThrowIfNotFound);
-    } else
-        generator.emitLoad(arguments.argumentRegister(3), jsUndefined());
+    Variable moduleLoader = generator.variable(generator.propertyNames().builtinNames().moduleLoaderPrivateName());
+    RefPtr<RegisterID> scope = generator.emitResolveScope(generator.newTemporary(), moduleLoader);
+    generator.emitGetFromScope(arguments.argumentRegister(3), scope.get(), moduleLoader, ThrowIfNotFound);
     return generator.emitCall(generator.finalDestination(dst, importModule.get()), importModule.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 

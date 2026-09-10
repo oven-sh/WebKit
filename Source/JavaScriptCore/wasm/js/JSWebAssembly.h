@@ -35,7 +35,6 @@
 namespace JSC {
 
 class JSModuleLoader;
-
 class WebAssemblyCompileOptions;
 
 class JSWebAssembly final : public JSNonFinalObject {

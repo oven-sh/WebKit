@@ -35,7 +35,6 @@
 namespace JSC {
 
 class JSModuleLoader;
-
 class ScriptFetcher;
 
 class ModuleRegistryEntry final : public JSCell {

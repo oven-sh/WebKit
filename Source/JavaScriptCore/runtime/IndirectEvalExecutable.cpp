@@ -89,9 +89,8 @@ IndirectEvalExecutable* IndirectEvalExecutable::tryCreate(JSGlobalObject* global
 }
 
 constexpr bool insideOrdinaryFunction = false;
-constexpr bool insideModuleCode = false;
 IndirectEvalExecutable::IndirectEvalExecutable(JSGlobalObject* globalObject, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isArrowFunctionContext, EvalContextType evalContextType)
-    : EvalExecutable(globalObject, source, lexicallyScopedFeatures, derivedContextType, isArrowFunctionContext, insideOrdinaryFunction, insideModuleCode, evalContextType, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None)
+    : EvalExecutable(globalObject, source, lexicallyScopedFeatures, derivedContextType, isArrowFunctionContext, insideOrdinaryFunction, evalContextType, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None)
 {
 }
 

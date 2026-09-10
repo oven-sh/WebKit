@@ -31,9 +31,8 @@
 
 namespace JSC {
 
-class JSModuleLoader;
-
 class JSGlobalObject;
+class JSModuleLoader;
 
 // https://tc39.es/proposal-json-modules/#sec-synthetic-module-records
 class SyntheticModuleRecord final : public AbstractModuleRecord {

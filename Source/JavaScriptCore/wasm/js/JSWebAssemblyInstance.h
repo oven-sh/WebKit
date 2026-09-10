@@ -61,7 +61,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 class JSModuleLoader;
-
 class JSModuleNamespaceObject;
 class JSWebAssemblyArray;
 class JSWebAssemblyModule;

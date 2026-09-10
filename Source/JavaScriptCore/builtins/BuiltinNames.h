@@ -194,7 +194,7 @@ namespace JSC {
     macro(copyDataProperties) \
     macro(cloneObject) \
     macro(meta) \
-    macro(moduleRecord) \
+    macro(moduleLoader) \
     macro(instanceFieldInitializer) \
     macro(privateBrand) \
     macro(privateClassBrand) \

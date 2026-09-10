@@ -54,8 +54,8 @@ public:
 
 protected:
     friend class ScriptExecutable;
-    GlobalExecutable(Structure* structure, VM& vm, const SourceCode& sourceCode, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, bool isInsideModuleCode, EvalContextType evalContextType, Intrinsic intrinsic)
-        : Base(structure, vm, sourceCode, lexicallyScopedFeatures, derivedContextType, isInArrowFunctionContext, isInsideOrdinaryFunction, isInsideModuleCode, evalContextType, intrinsic)
+    GlobalExecutable(Structure* structure, VM& vm, const SourceCode& sourceCode, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, Intrinsic intrinsic)
+        : Base(structure, vm, sourceCode, lexicallyScopedFeatures, derivedContextType, isInArrowFunctionContext, isInsideOrdinaryFunction, evalContextType, intrinsic)
     {
     }
 

@@ -34,7 +34,6 @@
 namespace JSC {
 
 class JSModuleLoader;
-
 class JSModuleRecord;
 class SourceCode;
 class ScriptFetchParameters;

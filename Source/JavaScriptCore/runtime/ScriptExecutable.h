@@ -83,7 +83,6 @@ public:
     bool isOkToOptimize() const { return !neverOptimize(); }
     bool canUseOSRExitFuzzing() const { return m_canUseOSRExitFuzzing; }
     bool isInsideOrdinaryFunction() const { return m_isInsideOrdinaryFunction; }
-    bool isInsideModuleCode() const { return m_isInsideModuleCode; }
     
     bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND { return &m_didTryToEnterInLoop; }
 
@@ -136,7 +135,7 @@ private:
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
 protected:
-    ScriptExecutable(Structure*, VM&, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, bool isInsideModuleCode, EvalContextType, Intrinsic);
+    ScriptExecutable(Structure*, VM&, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType, Intrinsic);
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
@@ -167,7 +166,6 @@ protected:
     bool m_canUseOSRExitFuzzing : 1;
     bool m_codeForGeneratorBodyWasGenerated : 1;
     bool m_isInsideOrdinaryFunction : 1;
-    bool m_isInsideModuleCode : 1;
     unsigned m_derivedContextType : 2; // DerivedContextType
     unsigned m_evalContextType : 2; // EvalContextType
 };

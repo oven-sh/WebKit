@@ -402,7 +402,7 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRecordForResolution(JSGloba
 {
     if (moduleIndex == m_prelinkedIndex)
         return const_cast<AbstractModuleRecord*>(this);
-    JSModuleLoader* loader = globalObject()->moduleLoader();
+    JSModuleLoader* loader = moduleLoader();
     if (loader->prelinkedModuleGraph() != m_prelinked.get())
         return nullptr;
     AbstractModuleRecord* record = loader->prelinkedRecordForResolution(moduleIndex);

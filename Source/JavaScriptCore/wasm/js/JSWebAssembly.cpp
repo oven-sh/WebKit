@@ -310,7 +310,7 @@ static void compileAndInstantiate(VM& vm, JSGlobalObject* globalObject, JSPromis
             auto* promise = uncheckedDowncast<JSPromise>(ticket.target());
             auto& deps = ticket.dependencies();
             JSCell* moduleKeyCell = deps[deps.size() - 3];
-            auto* moduleLoader = uncheckedDowncast<JSModuleLoader>(deps[deps.size() - 2]);
+            auto* loader = uncheckedDowncast<JSModuleLoader>(deps[deps.size() - 2]);
             auto* globalObject = promise->realm();
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -337,7 +337,7 @@ static void compileAndInstantiate(VM& vm, JSGlobalObject* globalObject, JSPromis
                 return;
             }
 
-            instantiate(vm, globalObject, promise, moduleLoader, module, importObject, WTF::move(sourceProvider), moduleKey, resolveKind, creationMode, /* alwaysAsync */ false);
+            instantiate(vm, globalObject, promise, loader, module, importObject, WTF::move(sourceProvider), moduleKey, resolveKind, creationMode, /* alwaysAsync */ false);
             if (scope.exception()) [[unlikely]] {
                 promise->rejectWithCaughtException(vm, scope);
                 return;

@@ -36,7 +36,6 @@
 namespace JSC {
 
 class JSModuleLoader;
-
 class JSWebAssemblyInstance;
 class JSWebAssemblyModule;
 class WebAssemblyFunction;

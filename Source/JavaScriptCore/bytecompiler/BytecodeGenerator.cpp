@@ -1136,7 +1136,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // Now declare all variables.
 
     createVariable(m_vm.propertyNames->starNamespacePrivateName, VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
-    createVariable(m_vm.propertyNames->builtinNames().moduleRecordPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
+    createVariable(m_vm.propertyNames->builtinNames().moduleLoaderPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
     if (moduleProgramNode->features() & ImportMetaFeature)
         createVariable(m_vm.propertyNames->builtinNames().metaPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
 
@@ -3687,7 +3687,7 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
 
     FunctionMetadataNode metadata(parserArena(), JSTokenLocation(), JSTokenLocation(), 0, 0, 0, 0, 0, ImplementationVisibility::Private, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
-    auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, isInsideModuleCode(), NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+    auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
 
     unsigned index = m_codeBlock->addFunctionExpr(initializer);

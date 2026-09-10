@@ -81,7 +81,7 @@ static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedM
     using ResolutionKind = PrelinkedModuleGraph::ResolutionKind;
     using Resolution = AbstractModuleRecord::Resolution;
     auto sameModule = [&] {
-        AbstractModuleRecord* byIndex = globalObject->moduleLoader()->prelinkedRecordForResolution(resolvedModule);
+        AbstractModuleRecord* byIndex = actual.moduleRecord ? actual.moduleRecord->moduleLoader()->prelinkedRecordForResolution(resolvedModule) : nullptr;
         return actual.moduleRecord && actual.moduleRecord->prelinkedGraph() == &graph && actual.moduleRecord->prelinkedIndex() == resolvedModule
             && (!byIndex || byIndex == actual.moduleRecord);
     };
@@ -233,7 +233,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         setModuleEnvironment(globalObject, env);
         RETURN_IF_EXCEPTION(scope, void());
         bool putResult = false;
-        symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().moduleRecordPrivateName(), jsModule, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+        symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
         RETURN_IF_EXCEPTION(scope, void());
     }
 
@@ -511,7 +511,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     }
 
     if (jsModule->features() & ImportMetaFeature) {
-        JSObject* metaProperties = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
+        JSObject* metaProperties = moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
         RETURN_IF_EXCEPTION(scope, void());
         bool putResult = false;
         symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().metaPrivateName(), metaProperties, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
