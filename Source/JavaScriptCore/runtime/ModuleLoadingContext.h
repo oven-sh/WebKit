@@ -73,7 +73,6 @@ public:
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
     AbstractModuleRecord* module() const { return m_module.get(); }
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
-    // The loader running this load (a global object may have more than one).
     JSModuleLoader* loader() const { return m_loader.get(); }
 
     bool evaluate() const { return m_flags.contains(ModuleLoadFlag::Evaluate); }

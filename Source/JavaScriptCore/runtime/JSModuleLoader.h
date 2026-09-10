@@ -81,12 +81,6 @@ public:
         return object;
     }
 
-    // A global object has one module loader (JSGlobalObject::moduleLoader()); an
-    // embedder may create more to load and evaluate module graphs again,
-    // separately, in the same global object: each loader has its own registry, so
-    // the same specifiers give fresh module records with their own environments
-    // and state. Records remember their loader; import() from module code loads
-    // through the calling module's loader.
     static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm)
     {
         return create(globalObject, vm, vm.moduleLoaderStructure.get());

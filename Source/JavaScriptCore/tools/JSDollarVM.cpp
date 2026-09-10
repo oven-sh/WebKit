@@ -3939,9 +3939,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObjec
     return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
 }
 
-// $vm.createModuleLoader(): an additional JSModuleLoader for this global object
-// (wrapped in a plain object as { loader }); modules imported through it are
-// loaded and evaluated afresh, separately from the global object's own loader.
+// $vm.createModuleLoader(): another JSModuleLoader for this global object, as { loader }.
 JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;

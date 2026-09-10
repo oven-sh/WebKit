@@ -821,8 +821,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
-    // import() from a module loads through that module's loader (there may be
-    // loaders besides the global object's own); anything else uses the global object's.
+    // import() from a module loads through that module's loader.
     JSModuleLoader* loader = globalObject->moduleLoader();
     for (JSScope* callerScope = callFrame->callerScope(vm); callerScope; callerScope = callerScope->next()) {
         if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(callerScope)) {

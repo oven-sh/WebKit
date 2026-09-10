@@ -205,17 +205,13 @@ JSScope* CallFrame::callerScope(VM& vm)
         switch (visitor->codeType()) {
         case StackVisitor::Frame::CodeType::Native:
         case StackVisitor::Frame::CodeType::Wasm:
-        // Eval code runs in its caller's scope, but its callee is the global
-        // object's shared eval callee: attribute to the frame that called eval.
-        case StackVisitor::Frame::CodeType::Eval:
+        case StackVisitor::Frame::CodeType::Eval: // the shared eval callee's scope is only set while entering the eval; use the frame that called eval
             return IterationStatus::Continue;
         case StackVisitor::Frame::CodeType::Function:
         case StackVisitor::Frame::CodeType::Module:
         case StackVisitor::Frame::CodeType::Global:
             break;
         }
-        // The callee carries the scope its code was created with at every tier
-        // (the scope register is not materialized in optimized frames).
         JSCell* calleeCell = visitor->callee().asCell();
         if (auto* function = dynamicDowncast<JSFunction>(calleeCell))
             found = function->scope();

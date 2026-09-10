@@ -200,8 +200,6 @@ public:
     };
 
     const Identifier& moduleKey() const { return m_moduleKey; }
-    // The loader whose registry this record belongs to (a global object may have
-    // more than one); records created outside any loader answer the global object's.
     JSModuleLoader* moduleLoader() const;
     void setModuleLoader(VM&, JSModuleLoader*);
     ScriptFetchParameters::Type moduleType() const;

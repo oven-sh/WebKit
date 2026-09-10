@@ -246,7 +246,6 @@ JSModuleLoader* AbstractModuleRecord::moduleLoader() const
 
 void AbstractModuleRecord::setModuleLoader(VM& vm, JSModuleLoader* loader)
 {
-    ASSERT(!m_moduleLoader || m_moduleLoader.get() == loader);
     m_moduleLoader.set(vm, this, loader);
 }
 
