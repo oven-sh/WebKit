@@ -223,7 +223,7 @@ String StackFrame::functionName(VM& vm) const
                 name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();
             else if (jsFrame.codeBlock) {
                 if (auto* executable = dynamicDowncast<FunctionExecutable>(jsFrame.codeBlock->ownerExecutable()))
-                    name = executable->ecmaName().impl();
+                    name = executable->ecmaNameWithoutGC();
             }
 
             if (name.isNull())

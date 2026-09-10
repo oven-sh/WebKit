@@ -541,6 +541,7 @@ private:
     void handlePutAccessorById(NodeType, Bytecode);
     template <typename Bytecode>
     void handlePutAccessorByVal(NodeType, Bytecode);
+    bool handleUnmaterializedFunctionExecutable(FunctionExecutable*, VirtualRegister dst);
     template <typename Bytecode>
     void handleNewFunc(NodeType, Bytecode);
     template <typename Bytecode>
@@ -11817,10 +11818,24 @@ void ByteCodeParser::handlePutAccessorByVal(NodeType op, Bytecode bytecode)
     addToGraph(op, OpInfo(bytecode.m_attributes), base, subscript, accessor);
 }
 
+// CodeBlock::prepareLazyStateForConcurrentCompilation() created every FunctionExecutable of a block this thread parses
+// (Options::useLazyFunctionExecutables()); one cannot be created here, so a hole is an OSR exit rather than a crash.
+bool ByteCodeParser::handleUnmaterializedFunctionExecutable(FunctionExecutable* executable, VirtualRegister dst)
+{
+    if (executable) [[likely]]
+        return false;
+    ASSERT_NOT_REACHED_WITH_MESSAGE("compiling a CodeBlock whose FunctionExecutables were not materialized by the mutator");
+    addToGraph(ForceOSRExit);
+    set(dst, addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+    return true;
+}
+
 template <typename Bytecode>
 void ByteCodeParser::handleNewFunc(NodeType op, Bytecode bytecode)
 {
-    FunctionExecutable* decl = m_inlineStackTop->m_profiledBlock->functionDecl(bytecode.m_functionDecl);
+    FunctionExecutable* decl = m_inlineStackTop->m_profiledBlock->functionDeclIfMaterialized(bytecode.m_functionDecl);
+    if (handleUnmaterializedFunctionExecutable(decl, bytecode.m_dst)) [[unlikely]]
+        return;
     FrozenValue* frozen = m_graph.freezeStrong(decl);
     Node* scope = get(bytecode.m_scope);
     set(bytecode.m_dst, addToGraph(op, OpInfo(frozen), scope));
@@ -11837,7 +11852,9 @@ void ByteCodeParser::handleNewFunc(NodeType op, Bytecode bytecode)
 template <typename Bytecode>
 void ByteCodeParser::handleNewFuncExp(NodeType op, Bytecode bytecode)
 {
-    FunctionExecutable* expr = m_inlineStackTop->m_profiledBlock->functionExpr(bytecode.m_functionDecl);
+    FunctionExecutable* expr = m_inlineStackTop->m_profiledBlock->functionExprIfMaterialized(bytecode.m_functionDecl);
+    if (handleUnmaterializedFunctionExecutable(expr, bytecode.m_dst)) [[unlikely]]
+        return;
     FrozenValue* frozen = m_graph.freezeStrong(expr);
     Node* scope = get(bytecode.m_scope);
     set(bytecode.m_dst, addToGraph(op, OpInfo(frozen), scope));

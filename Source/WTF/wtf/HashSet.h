@@ -112,6 +112,7 @@ public:
     template<typename HashTranslator, typename T> bool contains(const T&) const;
 
     ALWAYS_INLINE bool isNullStorage() const { return m_impl.isNullStorage(); }
+    ALWAYS_INLINE void prefetchForHash(unsigned hash) const { m_impl.prefetchForHash(hash); }
 
     // The return value includes both an iterator to the added value's location,
     // and an isNewEntry bool that indicates if it is a new or existing entry in the set.

@@ -32,6 +32,7 @@
 #include "YarrUnicodeProperties.h"
 #include <array>
 #include <limits>
+#include <atomic>
 #include <wtf/BitSet.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/HashMap.h>
@@ -471,6 +472,8 @@ struct PatternTerm {
     void dump(PrintStream&, YarrPattern*, unsigned);
 };
 
+using PatternTermList = Vector<PatternTerm, 4, CrashOnOverflow, 8>;
+
 struct PatternAlternative {
     WTF_MAKE_TZONE_ALLOCATED(PatternAlternative);
 public:
@@ -539,7 +542,7 @@ public:
 
     void dump(PrintStream&, YarrPattern*, unsigned);
 
-    Vector<PatternTerm> m_terms;
+    PatternTermList m_terms;
     PatternDisjunction* m_parent;
     unsigned m_minimumSize;
     unsigned m_firstSubpatternId;
@@ -578,8 +581,8 @@ public:
 
 // You probably don't want to be calling these functions directly
 // (please to be calling newlineCharacterClass() et al on your
-// friendly neighborhood YarrPattern instance to get nicely
-// cached copies).
+// friendly neighborhood YarrPattern instance to get the shared
+// instances).
 
 std::unique_ptr<CharacterClass> anycharCreate();
 std::unique_ptr<CharacterClass> newlineCreate();
@@ -591,6 +594,11 @@ std::unique_ptr<CharacterClass> nondigitsCreate();
 std::unique_ptr<CharacterClass> nonspacesCreate();
 std::unique_ptr<CharacterClass> nonwordcharCreate();
 std::unique_ptr<CharacterClass> nonwordUnicodeIgnoreCaseCharCreate();
+
+enum class SharedCharacterClass : uint8_t { AnyChar, Newline, Digits, Spaces, WordChar, WordUnicodeIgnoreCaseChar, NonDigits, NonSpaces, NonWordChar, NonWordUnicodeIgnoreCaseChar };
+// Immutable, created once per process on first use from any thread, never destroyed.
+CharacterClass* sharedCharacterClass(SharedCharacterClass);
+CharacterClass* ensureSharedCharacterClass(std::atomic<CharacterClass*>&, std::unique_ptr<CharacterClass> (*create)());
 
 struct TermChain {
     TermChain(PatternTerm term)
@@ -620,18 +628,6 @@ struct YarrPattern {
         m_hasNamedCaptureGroups = false;
         m_saveInitialStartValue = false;
 
-        anycharCached = nullptr;
-        newlineCached = nullptr;
-        digitsCached = nullptr;
-        spacesCached = nullptr;
-        wordcharCached = nullptr;
-        wordUnicodeIgnoreCaseCharCached = nullptr;
-        nondigitsCached = nullptr;
-        nonspacesCached = nullptr;
-        nonwordcharCached = nullptr;
-        nonwordUnicodeIgnoreCasecharCached = nullptr;
-        unicodePropertiesCached.clear();
-
         m_disjunctions.clear();
         m_userCharacterClasses.clear();
         m_captureGroupNames.clear();
@@ -644,106 +640,22 @@ struct YarrPattern {
         return m_containsUnsignedLengthPattern;
     }
 
-    CharacterClass* anyCharacterClass()
-    {
-        if (!anycharCached) {
-            m_userCharacterClasses.append(anycharCreate());
-            anycharCached = m_userCharacterClasses.last().get();
-        }
-        return anycharCached;
-    }
+    CharacterClass* anyCharacterClass() { return sharedCharacterClass(SharedCharacterClass::AnyChar); }
     // The DotStarEnclosure's two frame slots (YarrStackSpaceForDotStarEnclosure): the offset the
     // match started from, and the end of the newline-free span known to follow it.
     unsigned initialStartFrameLocation() const { return m_initialStartValueFrameLocation; }
     unsigned noNewlineBeforeFrameLocation() const { return m_initialStartValueFrameLocation + 1; }
 
-    CharacterClass* newlineCharacterClass()
-    {
-        if (!newlineCached) {
-            m_userCharacterClasses.append(newlineCreate());
-            newlineCached = m_userCharacterClasses.last().get();
-        }
-        return newlineCached;
-    }
-    CharacterClass* digitsCharacterClass()
-    {
-        if (!digitsCached) {
-            m_userCharacterClasses.append(digitsCreate());
-            digitsCached = m_userCharacterClasses.last().get();
-        }
-        return digitsCached;
-    }
-    CharacterClass* spacesCharacterClass()
-    {
-        if (!spacesCached) {
-            m_userCharacterClasses.append(spacesCreate());
-            spacesCached = m_userCharacterClasses.last().get();
-        }
-        return spacesCached;
-    }
-    CharacterClass* wordcharCharacterClass()
-    {
-        if (!wordcharCached) {
-            m_userCharacterClasses.append(wordcharCreate());
-            wordcharCached = m_userCharacterClasses.last().get();
-        }
-        return wordcharCached;
-    }
-    CharacterClass* wordUnicodeIgnoreCaseCharCharacterClass()
-    {
-        if (!wordUnicodeIgnoreCaseCharCached) {
-            m_userCharacterClasses.append(wordUnicodeIgnoreCaseCharCreate());
-            wordUnicodeIgnoreCaseCharCached = m_userCharacterClasses.last().get();
-        }
-        return wordUnicodeIgnoreCaseCharCached;
-    }
-    CharacterClass* nondigitsCharacterClass()
-    {
-        if (!nondigitsCached) {
-            m_userCharacterClasses.append(nondigitsCreate());
-            nondigitsCached = m_userCharacterClasses.last().get();
-        }
-        return nondigitsCached;
-    }
-    CharacterClass* nonspacesCharacterClass()
-    {
-        if (!nonspacesCached) {
-            m_userCharacterClasses.append(nonspacesCreate());
-            nonspacesCached = m_userCharacterClasses.last().get();
-        }
-        return nonspacesCached;
-    }
-    CharacterClass* nonwordcharCharacterClass()
-    {
-        if (!nonwordcharCached) {
-            m_userCharacterClasses.append(nonwordcharCreate());
-            nonwordcharCached = m_userCharacterClasses.last().get();
-        }
-        return nonwordcharCached;
-    }
-    CharacterClass* nonwordUnicodeIgnoreCaseCharCharacterClass()
-    {
-        if (!nonwordUnicodeIgnoreCasecharCached) {
-            m_userCharacterClasses.append(nonwordUnicodeIgnoreCaseCharCreate());
-            nonwordUnicodeIgnoreCasecharCached = m_userCharacterClasses.last().get();
-        }
-        return nonwordUnicodeIgnoreCasecharCached;
-    }
-    CharacterClass* unicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
-    {
-        ASSERT(unicodeClassID >= BuiltInCharacterClassID::BaseUnicodePropertyID);
-
-        unsigned classID = static_cast<unsigned>(unicodeClassID);
-
-        if (unicodePropertiesCached.find(classID) == unicodePropertiesCached.end()) {
-            m_userCharacterClasses.append(createUnicodeCharacterClassFor(unicodeClassID));
-            CharacterClass* result = m_userCharacterClasses.last().get();
-            unicodePropertiesCached.add(classID, result);
-            return result;
-        }
-
-        return unicodePropertiesCached.get(classID);
-    }
+    CharacterClass* newlineCharacterClass() { return sharedCharacterClass(SharedCharacterClass::Newline); }
+    CharacterClass* digitsCharacterClass() { return sharedCharacterClass(SharedCharacterClass::Digits); }
+    CharacterClass* spacesCharacterClass() { return sharedCharacterClass(SharedCharacterClass::Spaces); }
+    CharacterClass* wordcharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::WordChar); }
+    CharacterClass* wordUnicodeIgnoreCaseCharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::WordUnicodeIgnoreCaseChar); }
+    CharacterClass* nondigitsCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonDigits); }
+    CharacterClass* nonspacesCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonSpaces); }
+    CharacterClass* nonwordcharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonWordChar); }
+    CharacterClass* nonwordUnicodeIgnoreCaseCharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonWordUnicodeIgnoreCaseChar); }
+    CharacterClass* unicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID) { return sharedUnicodeCharacterClassFor(unicodeClassID); }
 
     unsigned offsetVectorBaseForNamedCaptures() const
     {
@@ -824,18 +736,6 @@ struct YarrPattern {
 
 private:
     ErrorCode compile(StringView patternString);
-
-    CharacterClass* anycharCached { nullptr };
-    CharacterClass* newlineCached { nullptr };
-    CharacterClass* digitsCached { nullptr };
-    CharacterClass* spacesCached { nullptr };
-    CharacterClass* wordcharCached { nullptr };
-    CharacterClass* wordUnicodeIgnoreCaseCharCached { nullptr };
-    CharacterClass* nondigitsCached { nullptr };
-    CharacterClass* nonspacesCached { nullptr };
-    CharacterClass* nonwordcharCached { nullptr };
-    CharacterClass* nonwordUnicodeIgnoreCasecharCached { nullptr };
-    UncheckedKeyHashMap<unsigned, CharacterClass*> unicodePropertiesCached;
 };
 
     void indentForNestingLevel(PrintStream&, unsigned);

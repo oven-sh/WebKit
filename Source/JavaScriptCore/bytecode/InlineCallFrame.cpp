@@ -53,7 +53,7 @@ CodeBlockHash InlineCallFrame::hash() const
 
 CString InlineCallFrame::inferredName() const
 {
-    return uncheckedDowncast<FunctionExecutable>(baselineCodeBlock->ownerExecutable())->ecmaName().utf8();
+    return uncheckedDowncast<FunctionExecutable>(baselineCodeBlock->ownerExecutable())->inferredNameForTools();
 }
 
 String InlineCallFrame::inferredNameWithHash() const
