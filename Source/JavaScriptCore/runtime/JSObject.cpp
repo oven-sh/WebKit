@@ -2892,7 +2892,8 @@ void JSObject::freeze(VM& vm)
     if (isFrozen(vm))
         return;
     materializeLazyOwnProperties(vm);
-    enterDictionaryIndexingMode(vm);
+    if (!(indexingMode() == ArrayClass && inherits<JSArray>()))
+        enterDictionaryIndexingMode(vm);
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -3410,6 +3411,8 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES: {
         if (indexingShouldBeSparse()) {
+            if (indexingMode() == ArrayClass && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
+                return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             auto* arrayStorage = ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm);
             if (!hasSlowPutArrayStorage(indexingType())) [[likely]]
                 RELEASE_AND_RETURN(scope, putByIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, shouldThrow, arrayStorage));
@@ -4059,7 +4062,15 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         ASSERT(attributes & PropertyAttribute::Accessor);
         JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : (current.getterPresent() ? current.getterObject() : nullptr);
         JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : (current.setterPresent() ? current.setterObject() : nullptr);
-        GetterSetter* getterSetter = GetterSetter::create(vm, globalObject, getter, setter);
+        GetterSetter* getterSetter = nullptr;
+        if (JSValue existing = object->getDirect(vm, propertyName); existing && existing.isGetterSetter()) {
+            auto* existingGetterSetter = uncheckedDowncast<GetterSetter>(existing.asCell());
+            if ((getter ? existingGetterSetter->getter() == getter : existingGetterSetter->isGetterNull())
+                && (setter ? existingGetterSetter->setter() == setter : existingGetterSetter->isSetterNull()))
+                getterSetter = existingGetterSetter;
+        }
+        if (!getterSetter)
+            getterSetter = GetterSetter::create(vm, globalObject, getter, setter);
         object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());

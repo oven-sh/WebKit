@@ -651,6 +651,10 @@ public:
     bool canPerformFastPutInline(VM&, PropertyName);
     bool canPerformFastPutInlineExcludingProto();
 
+    enum class FastPutInlineAvailability : uint8_t { Unavailable, Available, AvailableIfPrototypesDoNotDefineProperties };
+    FastPutInlineAvailability fastPutInlineAvailabilityExcludingProto();
+    bool prototypeChainHasReadOnlyOrAccessorProperty(VM&, PropertyName);
+
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
 

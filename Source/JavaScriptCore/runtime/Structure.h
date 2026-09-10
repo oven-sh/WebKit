@@ -836,6 +836,7 @@ public:
     DEFINE_BITFIELD(bool, hasNonEnumerableProperties, HasNonEnumerableProperties, 1, 6);
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
+    DEFINE_BITFIELD(bool, didFreeze, DidFreeze, 1, 10);
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);

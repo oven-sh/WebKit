@@ -106,6 +106,7 @@ public:
 
     void pushInline(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE void push(JSGlobalObject*, JSValue);
+    void pushToNonExtensibleArrayClass(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE JSValue pop(JSGlobalObject*);
     JSValue fastShift(VM&);
 
@@ -193,6 +194,8 @@ protected:
 private:
     bool isLengthWritable()
     {
+        if (structure()->didFreeze()) [[unlikely]]
+            return false;
         ArrayStorage* storage = arrayStorageOrNull();
         if (!storage)
             return true;

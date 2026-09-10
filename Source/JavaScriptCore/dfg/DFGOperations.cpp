@@ -317,7 +317,9 @@ JSC_DEFINE_JIT_OPERATION(operationObjectAssignObject, void, (JSGlobalObject* glo
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible()) {
+    auto* targetObject = dynamicDowncast<JSFinalObject>(target);
+    auto fastPutAvailability = targetObject ? targetObject->fastPutInlineAvailabilityExcludingProto() : JSObject::FastPutInlineAvailability::Unavailable;
+    if (fastPutAvailability != JSObject::FastPutInlineAvailability::Unavailable && targetObject->isStructureExtensible()) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer values;
         if (!source->staticPropertiesReified()) {
@@ -336,7 +338,7 @@ JSC_DEFINE_JIT_OPERATION(operationObjectAssignObject, void, (JSGlobalObject* glo
         // https://bugs.webkit.org/show_bug.cgi?id=187837
 
         // Do not clear since Vector::clear shrinks the backing store.
-        bool objectAssignFastSucceeded = objectAssignFast(globalObject, targetObject, source, properties, values);
+        bool objectAssignFastSucceeded = objectAssignFast(globalObject, targetObject, source, properties, values, fastPutAvailability == JSObject::FastPutInlineAvailability::AvailableIfPrototypesDoNotDefineProperties);
         OPERATION_RETURN_IF_EXCEPTION(scope);
         if (objectAssignFastSucceeded)
             OPERATION_RETURN(scope);
@@ -360,7 +362,9 @@ JSC_DEFINE_JIT_OPERATION(operationObjectAssignUntyped, void, (JSGlobalObject* gl
     JSObject* source = sourceValue.toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
 
-    if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible()) {
+    auto* targetObject = dynamicDowncast<JSFinalObject>(target);
+    auto fastPutAvailability = targetObject ? targetObject->fastPutInlineAvailabilityExcludingProto() : JSObject::FastPutInlineAvailability::Unavailable;
+    if (fastPutAvailability != JSObject::FastPutInlineAvailability::Unavailable && targetObject->isStructureExtensible()) {
         if (!source->staticPropertiesReified()) {
             source->reifyAllStaticProperties(globalObject);
             OPERATION_RETURN_IF_EXCEPTION(scope);
@@ -368,7 +372,7 @@ JSC_DEFINE_JIT_OPERATION(operationObjectAssignUntyped, void, (JSGlobalObject* gl
 
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer values;
-        bool objectAssignFastSucceeded = objectAssignFast(globalObject, targetObject, source, properties, values);
+        bool objectAssignFastSucceeded = objectAssignFast(globalObject, targetObject, source, properties, values, fastPutAvailability == JSObject::FastPutInlineAvailability::AvailableIfPrototypesDoNotDefineProperties);
         OPERATION_RETURN_IF_EXCEPTION(scope);
         if (objectAssignFastSucceeded)
             OPERATION_RETURN(scope);

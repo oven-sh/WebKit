@@ -261,6 +261,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(false);
     setDidPreventExtensions(typeInfo.overridesIsExtensible());
+    setDidFreeze(false);
     setDidTransition(false);
     setStaticPropertiesReified(false);
     setTransitionWatchpointIsLikelyToBeFired(false);
@@ -309,6 +310,7 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(false);
     setDidPreventExtensions(typeInfo.overridesIsExtensible());
+    setDidFreeze(false);
     setDidTransition(false);
     setStaticPropertiesReified(false);
     setTransitionWatchpointIsLikelyToBeFired(false);
@@ -353,6 +355,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(previous->mayBePrototype());
     setDidPreventExtensions(previous->didPreventExtensions());
+    setDidFreeze(previous->didFreeze());
     setDidTransition(true);
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
@@ -951,6 +954,9 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     
     if (preventsExtensions(transitionKind))
         transition->setDidPreventExtensions(true);
+
+    if (transitionKind == TransitionKind::Freeze)
+        transition->setDidFreeze(true);
 
     if (transitionKind == TransitionKind::BecomePrototype)
         transition->setMayBePrototype(true);

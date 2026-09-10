@@ -223,6 +223,46 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInline(VM& vm, PropertyName proper
     return canPerformFastPutInlineExcludingProto();
 }
 
+ALWAYS_INLINE JSObject::FastPutInlineAvailability JSObject::fastPutInlineAvailabilityExcludingProto()
+{
+    auto result = FastPutInlineAvailability::Available;
+    JSObject* obj = this;
+    while (true) {
+        Structure* structure = obj->structure();
+        if (structure->typeInfo().overridesGetPrototype())
+            return FastPutInlineAvailability::Unavailable;
+        if (obj != this && structure->typeInfo().overridesPut())
+            return FastPutInlineAvailability::Unavailable;
+        if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
+            if (obj == this)
+                return FastPutInlineAvailability::Unavailable;
+            result = FastPutInlineAvailability::AvailableIfPrototypesDoNotDefineProperties;
+        }
+
+        JSValue prototype = obj->getPrototypeDirect();
+        if (prototype.isNull())
+            return result;
+
+        obj = asObject(prototype);
+    }
+}
+
+inline bool JSObject::prototypeChainHasReadOnlyOrAccessorProperty(VM& vm, PropertyName propertyName)
+{
+    for (JSValue prototype = getPrototypeDirect(); !prototype.isNull(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        JSObject* object = asObject(prototype);
+        Structure* structure = object->structure();
+        if (!structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto())
+            continue;
+        if (object->hasNonReifiedStaticProperties())
+            return true;
+        unsigned attributes;
+        if (isValidOffset(structure->get(vm, propertyName, attributes)) && (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
+            return true;
+    }
+    return false;
+}
+
 template<typename CallbackWhenNoException>
 ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type JSObject::getPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, CallbackWhenNoException callback) const
 {
@@ -532,8 +572,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     return ReadonlyPropertyChangeError;
             }
 
+            bool shouldFireReplacement = structure->isWatchingReplacement() && getDirect(offset) != value;
             putDirectOffset(vm, offset, value);
-            structure->didReplaceProperty(offset);
+            if (shouldFireReplacement) [[unlikely]]
+                structure->didReplaceProperty(offset);
 
             // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
             // https://bugs.webkit.org/show_bug.cgi?id=214342
@@ -591,7 +633,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
             return ReadonlyPropertyChangeError;
 
-        structure->didReplaceProperty(offset);
+        if (structure->isWatchingReplacement() && getDirect(offset) != value) [[unlikely]]
+            structure->didReplaceProperty(offset);
         putDirectOffset(vm, offset, value);
 
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
