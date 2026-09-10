@@ -272,7 +272,6 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSModuleLoader* thisObject = uncheckedDowncast<JSModuleLoader>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_moduleEnvironmentParentScope);
     visitor.append(thisObject->m_embedderData);
     Locker locker { thisObject->cellLock() };
     auto moduleMapValues = thisObject->m_moduleMap.values();

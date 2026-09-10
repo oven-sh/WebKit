@@ -31,7 +31,6 @@
 #include "JSObject.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
-#include "JSScope.h"
 #include "ModuleMap.h"
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
@@ -86,7 +85,7 @@ public:
     {
         return create(globalObject, vm, vm.moduleLoaderStructure.get());
     }
-    // An additional loader for globalObject (see moduleEnvironmentParentScope()).
+    // An additional loader for globalObject (see above).
     JS_EXPORT_PRIVATE static JSModuleLoader* createAdditional(JSGlobalObject*, VM&);
 
     DECLARE_INFO;
@@ -94,17 +93,12 @@ public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     // A global object has one module loader (JSGlobalObject::moduleLoader()); an
-    // embedder may create more with create() to load and evaluate module graphs
-    // again, separately, in the same global object: each loader has its own
-    // registry, so the same specifiers give fresh module records with their own
-    // environments and state. Records remember their loader; import() from module
-    // code loads through the calling module's loader.
+    // embedder may create more with createAdditional() to load and evaluate
+    // module graphs again, separately, in the same global object: each loader has
+    // its own registry, so the same specifiers give fresh module records with
+    // their own environments and state. Records remember their loader; import()
+    // from module code loads through the calling module's loader.
     //
-    // Optional scope to place this loader's module environments under instead of
-    // the global lexical environment (e.g. a JSLexicalEnvironment whose bindings
-    // shadow some global names for this loader's modules).
-    JSScope* moduleEnvironmentParentScope() const { return m_moduleEnvironmentParentScope.get(); }
-    void setModuleEnvironmentParentScope(VM& vm, JSScope* scope) { m_moduleEnvironmentParentScope.setMayBeNull(vm, this, scope); }
     // For the embedder: whatever it associates with this loader.
     JSValue embedderData() const { return m_embedderData.get(); }
     void setEmbedderData(VM& vm, JSValue value) { m_embedderData.set(vm, this, value); }
@@ -304,7 +298,6 @@ private:
 #endif
     }
 
-    WriteBarrier<JSScope> m_moduleEnvironmentParentScope;
     WriteBarrier<Unknown> m_embedderData;
 
     // Corresponds to RealmRecord.[[LoadedModules]].

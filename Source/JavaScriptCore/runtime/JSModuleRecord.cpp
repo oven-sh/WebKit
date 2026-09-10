@@ -168,7 +168,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         ASSERT(capability == nullptr);
         // 9.b. Push moduleContext onto the execution context stack; moduleContext is now the running execution context.
         // 9.c. Let result be Completion(Evaluation of module.[[ECMAScriptCode]]).
-        moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         // 9.d. Suspend moduleContext and remove it from the execution context stack.
         // 9.e. Resume the context that is now on the top of the execution context stack as the running execution context.
         // 9.f. If result is an abrupt completion, then
@@ -180,7 +180,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         ASSERT(capability != nullptr);
         // 10.b. Perform AsyncBlockStart(capability, module.[[ECMAScriptCode]], moduleContext).
         asyncCapability(vm, capability);
-        JSValue result = moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        JSValue result = globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         asyncModuleResolveEvaluation(globalObject, vm, scope, this, result);
     }
     // 11. Return unused.
