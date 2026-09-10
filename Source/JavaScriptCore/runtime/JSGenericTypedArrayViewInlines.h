@@ -330,25 +330,39 @@ bool JSGenericTypedArrayView<Adaptor>::setFromTypedArray(JSGlobalObject* globalO
         typename Adaptor::Type* srcBase = std::bit_cast<typename Adaptor::Type*>(other->vector());
         if (vm.gilOffWithProcessGate()) [[unlikely]] {
             // GIL-off, both ranges may be raced by other JS threads, so the bulk
-            // memmove is replaced by relaxed lane copies in memmove order. A detach
-            // on another thread can land after the bounds proof. Then the base is
-            // null, and skipping the copy is the lost write that race is allowed to
-            // produce, or it is the old base, whose mapping stays until the next
-            // stop (JSArrayBufferView::detachKeepsVector()), so a stale length is
-            // only a value race. Flag-off/GIL-on keeps the memmove.
+            // memmove is replaced by relaxed lane copies in memmove order (or in
+            // ascending order for the overlapping slice case below: the overlap
+            // distance is a whole number of lanes, so lane-wise and byte-wise
+            // forward copies agree). A detach on another thread can land after the
+            // bounds proof. Then the base is null, and skipping the copy is the lost
+            // write that race is allowed to produce, or it is the old base, whose
+            // mapping stays until the next stop (JSArrayBufferView::detachKeepsVector()),
+            // so a stale length is only a value race. Flag-off/GIL-on keeps the memmove.
             if (!dstBase || !srcBase)
                 return true;
             typename Adaptor::Type* dst = dstBase + offset;
             typename Adaptor::Type* src = srcBase + objectOffset;
-            if (dst <= src) {
+            bool ascendingOverlap = type == CopyType::LeftToRight && src < dst && dst < src + length;
+            if (dst <= src || ascendingOverlap) {
                 for (size_t i = 0; i < length; ++i)
                     typedArrayLaneStoreRelaxed(dst + i, typedArrayLaneLoadRelaxed(src + i));
             } else {
                 for (size_t i = length; i--;)
                     typedArrayLaneStoreRelaxed(dst + i, typedArrayLaneLoadRelaxed(src + i));
             }
-        } else
-            memmove(dstBase + offset, srcBase + objectOffset, length * elementSize);
+            return true;
+        }
+        auto* target = std::bit_cast<uint8_t*>(dstBase + offset);
+        const auto* source = std::bit_cast<const uint8_t*>(srcBase + objectOffset);
+        size_t byteLength = length * elementSize;
+        // %TypedArray%.prototype.slice copies bytes in ascending order, so a destination that
+        // overlaps and follows the source reads back its own writes instead of the original bytes.
+        if (type == CopyType::LeftToRight && source < target && target < source + byteLength) {
+            for (size_t i = 0; i < byteLength; ++i)
+                target[i] = source[i];
+            return true;
+        }
+        memmove(target, source, byteLength);
         return true;
     };
 
@@ -440,14 +454,17 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
     // numbers in TA elements, never followed as cell pointers. Flag-off all
     // tag bits are zero (I22): the snapshot is exactly array->butterfly()
     // and the [[unlikely]] arm is dead — byte-identical to the original.
-    // GIL-off always takes the per-element path: the bulk copyElements below
-    // re-reads the destination base after the caller's bounds proof, which a
-    // detach on another thread can have nulled with no stop, whereas
-    // setIndexQuicklyToNativeValue snapshots the base and bails on null.
+    // GIL off the bulk copy writes through ONE snapshot of the destination base
+    // taken here, after the caller's bounds proof: a detach on another thread
+    // can null the live field with no stop, but the buffer it detached stays
+    // mapped until the next stop, which cannot begin inside this straight-line
+    // copy; a null snapshot or a resizable view (whose length can shrink under
+    // us) keeps the per-element path, whose stores re-check.
     Butterfly* sourceButterfly;
+    typename Adaptor::Type* destination = typedVector();
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t snapshotWord = array->taggedButterflyWord();
-        if (g_jscConfig.gilOffProcess || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+        if ((g_jscConfig.gilOffProcess && (!destination || !canUseRawFieldsDirectly())) || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
             || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
             for (size_t i = 0; i < length; ++i) {
                 JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -463,20 +480,21 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
         sourceButterfly = untaggedButterfly(snapshotWord);
     } else
         sourceButterfly = array->butterfly();
+    std::span<typename Adaptor::Type> destinationSpan = unsafeMakeSpan(destination, offset + length).subspan(offset);
 
     // If the destination is uint32_t or int32_t, we can use copyElements.
     // 1. int32_t -> uint32_t conversion does not change any bit representation. So we can simply copy them.
     // 2. Hole is represented as JSEmpty in Int32Shape, which lower 32bits is zero. And we expect 0 for undefined, thus this copying simply works.
     if constexpr (Adaptor::typeValue == TypeUint8 || Adaptor::typeValue == TypeInt8) {
-        WTF::copyElements(byteCast<uint8_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
+        WTF::copyElements(byteCast<uint8_t>(destinationSpan), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
         return;
     }
     if constexpr (Adaptor::typeValue == TypeUint16 || Adaptor::typeValue == TypeInt16) {
-        WTF::copyElements(spanReinterpretCast<uint16_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
+        WTF::copyElements(spanReinterpretCast<uint16_t>(destinationSpan), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
         return;
     }
     if constexpr (Adaptor::typeValue == TypeUint32 || Adaptor::typeValue == TypeInt32) {
-        WTF::copyElements(spanReinterpretCast<uint32_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
+        WTF::copyElements(spanReinterpretCast<uint32_t>(destinationSpan), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
         return;
     }
     for (size_t i = 0; i < length; ++i) {
@@ -504,11 +522,12 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
     // relabels on a shared word are per-event STW (§4.7/§10.6), so the
     // raw-double read of the snapshot's lanes never follows a cell pointer.
     // Flag-off byte-identical (I22).
-    // GIL-off always takes the per-element path; see copyFromInt32ShapeArray.
+    // GIL off: one destination snapshot, as in copyFromInt32ShapeArray.
     Butterfly* sourceButterfly;
+    typename Adaptor::Type* destination = typedVector();
     if (Options::useJSThreads()) [[unlikely]] {
         uint64_t snapshotWord = array->taggedButterflyWord();
-        if (g_jscConfig.gilOffProcess || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+        if ((g_jscConfig.gilOffProcess && (!destination || !canUseRawFieldsDirectly())) || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
             || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
             for (size_t i = 0; i < length; ++i) {
                 JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -524,7 +543,7 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
         sourceButterfly = array->butterfly();
 
     if constexpr (Adaptor::typeValue == TypeFloat64 || Adaptor::typeValue == TypeFloat32) {
-        WTF::copyElements(typedSpan().subspan(offset), std::span<const double> { sourceButterfly->contiguousDouble().data() + objectOffset, length });
+        WTF::copyElements(unsafeMakeSpan(destination, offset + length).subspan(offset), std::span<const double> { sourceButterfly->contiguousDouble().data() + objectOffset, length });
         return;
     }
 

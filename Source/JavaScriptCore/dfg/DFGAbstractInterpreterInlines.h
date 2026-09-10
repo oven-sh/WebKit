@@ -2137,6 +2137,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case GeneratorClaimResume:
+        setNonCellTypeForNode(node, SpecInt32Only); // a state, a suspend point or a claim token: always an int32
+        break;
+    case GeneratorPublishResume:
+        setNonCellTypeForNode(node, SpecBoolean);
+        break;
+
     case GlobalIsFinite: {
         ASSERT(node->child1().useKind() == UntypedUse);
         AbstractValue& child = forNode(node->child1());

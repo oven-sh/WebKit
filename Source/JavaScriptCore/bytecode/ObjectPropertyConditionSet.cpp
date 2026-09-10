@@ -604,18 +604,21 @@ static std::optional<PrototypeChainCachingStatus> prepareChainForCaching(JSGloba
             }
 
             if (vm.gilOff()) [[unlikely]] {
-                // O2/GT11 (AB17e: sibling site of the Repatch.cpp
-                // actionForCell gate): prepareChainForCaching is called from
-                // the tryCache* IC paths (Repatch.cpp) under
-                // codeBlock->m_lock (rank 6b) with heap access held, and
-                // flag-on flattenDictionaryStructure ALWAYS routes through
-                // the §10.6 per-event stop — requesting a stop while holding
-                // a lock other mutators block on wedges the conductor's
-                // quiescence predicate into the 30s watchdog. Rule: gilOff,
-                // NEVER flatten from any IC-caching/chain-prep path — report
-                // the chain uncacheable instead. Perf forgone, never a
-                // correctness change.
-                return std::nullopt;
+                // Called from the tryCache* IC paths under codeBlock->m_lock:
+                // the flatten (a transition GIL off, SPEC-jit history §38) is
+                // run by the caller once the lock is dropped (Repatch.cpp
+                // actionForCell), and this attempt reports "flattened, retry"
+                // - the chain as it stands is still a dictionary, so it must
+                // not be cached from now; the retry after the flatten caches.
+                // With the flatten switched off (Options::useGILOffDictionaryFlatten)
+                // the chain is reported uncacheable, as in the seventh round.
+                if (!Options::useGILOffDictionaryFlatten()) [[unlikely]]
+                    return std::nullopt;
+                Structure::requestDeferredFlattenGILOff(asObject(current));
+                PrototypeChainCachingStatus retry;
+                retry.usesPolyProto = usesPolyProto;
+                retry.flattenedDictionary = true;
+                return retry;
             }
             structure->flattenDictionaryStructure(vm, asObject(current));
             flattenedDictionary = true;

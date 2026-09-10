@@ -1174,7 +1174,8 @@ private:
             break;
         }
             
-        case GetArgumentCountIncludingThis: {
+        case GetArgumentCountIncludingThis:
+        case GeneratorClaimResume: {
             setPrediction(SpecInt32Only);
             break;
         }
@@ -1348,6 +1349,7 @@ private:
         case GlobalIsFinite:
         case NumberIsFinite:
         case NumberIsSafeInteger:
+        case GeneratorPublishResume:
         case IsObject:
         case IsCallable:
         case IsConstructor:

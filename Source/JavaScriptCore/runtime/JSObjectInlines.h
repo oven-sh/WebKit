@@ -1369,7 +1369,27 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     PropertyTable* plannedTable = structure->pinnedPropertyTableForConcurrentReadStamp();
                     uint32_t plannedEditCount = plannedTable ? plannedTable->concurrentEditCount() : 0;
                     DeferredStructureTransitionWatchpointFire deferred(vm, structure);
-                    Structure* attributeChanged = Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred);
+                    Structure* attributeChanged;
+                    if (structure->isUncacheableDictionary()) {
+                        // The in-place form (SPEC-jit history §38 follow-up, third
+                        // window): the table edit is made under the CELL lock, like
+                        // every other in-place edit of a dictionary's table (the
+                        // value went in under it one step earlier), because GIL off
+                        // a flatten compares its clone with this table and publishes
+                        // the flattened structure inside one cell-lock section - an
+                        // edit under the structure's own lock only could land
+                        // between that compare and that publish, leaving the
+                        // flattened structure with the old attributes over the new
+                        // value for good. Superseded before the lock (a flatten or
+                        // transition won): RESTART, and the replay on the new
+                        // structure takes the transitioning form.
+                        Locker cellLocker { cellLock() };
+                        if (this->structureID() != structureID) [[unlikely]]
+                            continue;
+                        attributeChanged = Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred);
+                        ASSERT(attributeChanged == structure);
+                    } else
+                        attributeChanged = Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred);
                     if (attributeChanged != structure) {
                         // Attribute changes keep type, flags and indexing mode: only
                         // the structureID lane moves, under the §3.0 volatile-byte

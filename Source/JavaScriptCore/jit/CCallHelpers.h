@@ -819,8 +819,8 @@ public:
     // e.g. ARM64 GetById where resultJSR == baseJSR, so the storage cannot
     // live in result.payloadGPR()). On a slow-case jump object/offset-operand
     // registers other than offset, storageScratch are preserved.
-    void loadProperty(GPRReg object, GPRReg offset, JSValueRegs result, GPRReg storageScratch, JumpList& slowCases, GPRReg structureIDGPR = InvalidGPRReg);
-    void storeProperty(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg tidScratch, JumpList& slowCases, GPRReg structureIDGPR = InvalidGPRReg);
+    void loadProperty(GPRReg object, GPRReg offset, GPRReg result, GPRReg storageScratch, JumpList& slowCases, GPRReg structureIDGPR = InvalidGPRReg);
+    void storeProperty(GPRReg value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg tidScratch, JumpList& slowCases, GPRReg structureIDGPR = InvalidGPRReg);
     using AssemblyHelpers::loadProperty;
     using AssemblyHelpers::storeProperty;
 

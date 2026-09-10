@@ -369,6 +369,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
 
     case GlobalIsFinite:
     case GlobalIsNaN:
+    case GeneratorClaimResume:
+    case GeneratorPublishResume:
         return false;
 
     case GetButterfly:

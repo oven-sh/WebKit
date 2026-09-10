@@ -184,7 +184,23 @@ ArrayMode ArrayMode::fromObserved(ArrayProfile profile, Array::Action action, bo
             arrayClass = nonArray;
         else
             arrayClass = Array::PossiblyArray;
-        
+
+        // SPEC-jit §5.5 / OM §4.7 (eighth round): GIL off, converting a Double
+        // array to Contiguous (or anything to ArrayStorage) is a stop-the-world
+        // per array, not the flag-off in-place rewrite, so a site that sees
+        // Double arrays among Contiguous ones must not Arrayify them on every
+        // execution (`Basic`: up to 840,000 stops a run from one such site;
+        // the sjcl tests 2,000+). Access such sites generically (the DFG/FTL
+        // get/put-by-val inline caches handle each shape without converting);
+        // Int32/Undecided -> Contiguous stay conversions (stop-free relabels
+        // for the allocating thread, OM T4-O).
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            bool convertsDoubleArrays = type == Array::Contiguous && (observed & (asArrayModesIgnoringTypedArrays(DoubleShape) | asArrayModesIgnoringTypedArrays(DoubleShape | IsArray) | asArrayModesIgnoringTypedArrays(DoubleShape | IsArray | CopyOnWrite)));
+            bool convertsToArrayStorage = (type == Array::ArrayStorage || type == Array::SlowPutArrayStorage) && (observed & ~(asArrayModesIgnoringTypedArrays(ArrayStorageShape) | asArrayModesIgnoringTypedArrays(ArrayStorageShape | IsArray) | asArrayModesIgnoringTypedArrays(SlowPutArrayStorageShape) | asArrayModesIgnoringTypedArrays(SlowPutArrayStorageShape | IsArray)));
+            if (convertsDoubleArrays || convertsToArrayStorage)
+                return ArrayMode(Array::Generic, nonArray, Array::AsIs, action).withProfile(profile, makeSafe); // same shape as the mixed-typed-array Generic above: a Generic mode never claims Array class
+        }
+
         return ArrayMode(type, arrayClass, Array::Convert, action).withProfile(profile, makeSafe);
     }
 }

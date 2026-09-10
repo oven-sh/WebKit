@@ -51,8 +51,10 @@ function check(where) {
     // same as GIL on.
     if (slowCalls > N / 100) throw new Error(where + ": " + slowCalls + " of " + N + " virtual calls took operationVirtualCall");
     // The timing ratio is a Release-build check; Debug/sanitizer builds skew
-    // the two loops differently (the counter above is the invariant there).
-    if (!$vm.assertEnabled() && r.tVirtual > r.tMono * 8) throw new Error(where + ": virtual calls " + (r.tVirtual / r.tMono).toFixed(1) + "x the monomorphic loop");
+    // the two loops differently (the counter above is the invariant there;
+    // the TSAN build, which is not assert-enabled, reaches 8-9x under load,
+    // the unfixed sixth-round binary 16x, a quiet Release build 3x).
+    if (!$vm.assertEnabled() && r.tVirtual > r.tMono * 12) throw new Error(where + ": virtual calls " + (r.tVirtual / r.tMono).toFixed(1) + "x the monomorphic loop");
 }
 
 check("main thread");

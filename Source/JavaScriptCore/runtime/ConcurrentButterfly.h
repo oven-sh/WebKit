@@ -666,7 +666,11 @@ JS_EXPORT_PRIVATE bool tryArrayStoragePropertyTransition(VM&, JSObjectWithButter
 // planned (Structure::pinnedPropertyTableForConcurrentReadStamp,
 // PropertyTable::concurrentEditCount); a change under the cell lock is a
 // RESTART.
-JS_EXPORT_PRIVATE bool tryStructureOnlyTransition(VM&, JSObject*, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue, const PropertyTable* plannedTable = nullptr, uint32_t plannedEditCount = 0);
+// requireSourceStillUnpinnedIfNoPlan: the caller planned from a dictionary whose
+// table was NOT pinned (so it had no edit count to take); a table pinned by
+// the time the cell lock is held means an in-place edit may have landed since
+// the plan, which the structureID re-check cannot see - RESTART.
+JS_EXPORT_PRIVATE bool tryStructureOnlyTransition(VM&, JSObject*, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue, const PropertyTable* plannedTable = nullptr, uint32_t plannedEditCount = 0, bool requireSourceStillUnpinnedIfNoPlan = false);
 
 // The try* cores above are the only entry into the transition protocol: a
 // racing transition that changes the SOURCE structure invalidates the

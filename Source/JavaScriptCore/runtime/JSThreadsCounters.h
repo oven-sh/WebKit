@@ -98,7 +98,17 @@ namespace JSC {
     v(icFlattenSkippedGILOff) \
     v(icRetryWithoutProgressGaveUp) \
     v(dictionaryFlatten) \
+    v(dictionaryFlattenByTransition) \
+    v(dictionaryFlattenByTransitionRestart) \
     v(arrayAllocationProfileLeftDoubleGILOff) \
+    v(arrayAllocationProfilePromotedToDoubleGILOff) \
+    v(ensureLengthInPlaceSlack) \
+    v(ensureLengthPreciseRealloc) \
+    v(ensureLengthFreshCopy) \
+    v(ensureLengthFreshCopyBytes) \
+    v(heapFactRewriteOnStackJettison) \
+    v(loopEntryIntoSupersededDFGGILOff) \
+    v(loopEntryRefusedReplacementIsFTLGILOff) \
     v(watchpointFireWatcherless) \
     v(deleteLostLaneRestart)
 
@@ -113,7 +123,7 @@ struct JSThreadsCounters {
 
     // Stop-the-world requests by requester description (pointer-keyed:
     // descriptions are string literals).
-    static constexpr unsigned namedSlots = 48;
+    static constexpr unsigned namedSlots = 160;
     struct Named {
         std::atomic<const char*> name { nullptr };
         std::atomic<uint64_t> count { 0 };

@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "FTLJITCode.h"
+#include "JSCConfig.h"
 
 #if ENABLE(FTL_JIT)
 
@@ -151,7 +152,11 @@ const DFG::CommonData* JITCode::dfgCommon() const
 void JITCode::shrinkToFit()
 {
     common.shrinkToFit();
-    m_osrExit.shrinkToFit();
+    // GIL off the exit thunks in the B3 code hold the address of each exit's
+    // m_codePtrForConcurrentReaders (FTLOSRExitHandle::emitExitThunk, patched
+    // at link, which ran before this): the vector must not move any more.
+    if (!g_jscConfig.gilOffProcess)
+        m_osrExit.shrinkToFit();
     osrExitDescriptors.shrinkToFit();
     osrExitConstants.shrinkToFit();
     osrExitValueReps.shrinkToFit();
