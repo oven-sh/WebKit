@@ -272,6 +272,9 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(resolutionFailuresValues.begin(), resolutionFailuresValues.end());
     for (auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_prelinkedRecords.begin(), thisObject->m_prelinkedRecords.end());
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleLoader);
@@ -601,6 +604,10 @@ AbstractModuleRecord* JSModuleLoader::getImportedModule(AbstractModuleRecord* re
     // GetImportedModule(referrer, request)
     // https://tc39.es/ecma262/#sec-GetImportedModule
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (AbstractModuleRecord* loaded = referrer->prelinkedRequestedModule(request))
+        return loaded;
+#endif
     // 1. Let records be a List consisting of each LoadedModuleRequest Record r of referrer.[[LoadedModules]] such that ModuleRequestsEqual(r, request) is true.
     auto iter = referrer->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() });
     // 2. Assert: records has exactly one element, since LoadRequestedModules has completed successfully on referrer prior to invoking this abstract operation.
@@ -797,6 +804,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         mapEntry = ModuleRegistryEntry::create(vm, resolved, type, scriptFetcher);
         Locker locker { cellLock() };
         m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
+        didAddModuleMapEntry(type);
     }
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
@@ -886,9 +894,16 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // 2.d.i.2. Perform ContinueModuleLoading(state, error).
                     // (Not possible.)
                     // 2.d.ii. Else if module.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, request) is true, then
-                    if (auto iter = module->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != module->loadedModules().end()) {
+                    AbstractModuleRecord* loaded = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+                    loaded = module->prelinkedRequestedModule(request);
+#endif
+                    if (!loaded) {
+                        if (auto iter = module->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != module->loadedModules().end())
+                            loaded = iter->value.m_module.get();
+                    }
+                    if (loaded) {
                         // 2.d.ii.1. Perform InnerModuleLoading(state, record.[[Module]]).
-                        AbstractModuleRecord* loaded = iter->value.m_module.get();
                         if (state->containsVisited(loaded))
                             state->setPendingModulesCount(state->pendingModulesCount() - 1);
                         else
@@ -1114,6 +1129,7 @@ ModuleRegistryEntry* JSModuleLoader::ensureRegistered(JSGlobalObject* globalObje
 
     Locker locker { cellLock() };
     m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, entry));
+    didAddModuleMapEntry(type);
 
     return entry;
 }
@@ -1126,6 +1142,75 @@ ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& ke
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+void JSModuleLoader::setPrelinkedModuleGraph(Ref<PrelinkedModuleGraph>&& graph)
+{
+    ASSERT(Options::usePrelinkedModuleInfo());
+    ASSERT(!m_prelinkedGraph || m_prelinkedGraph == graph.ptr());
+    if (m_prelinkedGraph)
+        return;
+    Locker locker { cellLock() };
+    m_prelinkedGraph = WTF::move(graph);
+    m_prelinkedRecords.grow(m_prelinkedGraph->moduleCount());
+}
+
+void JSModuleLoader::setPrelinkedRecord(VM& vm, uint32_t moduleIndex, AbstractModuleRecord* record)
+{
+    RELEASE_ASSERT(m_prelinkedGraph && moduleIndex < m_prelinkedRecords.size(), moduleIndex, m_prelinkedRecords.size());
+    ASSERT(record->isPrelinked() && record->prelinkedGraph() == m_prelinkedGraph && record->prelinkedIndex() == moduleIndex);
+    ASSERT(!m_prelinkedRecords[moduleIndex] || m_prelinkedRecords[moduleIndex].get() == record);
+    if (moduleIndex < m_prelinkedRecordRemoved.size() && m_prelinkedRecordRemoved.quickGet(moduleIndex)) [[unlikely]]
+        return; // prelinkedRecordForResolution stays null for it; the record itself still works by its own edges
+    m_prelinkedRecords[moduleIndex].set(vm, this, record);
+}
+
+// A graph edge importer -> target is normally held only by this table (AbstractModuleRecord::prelinkedRequestedModule).
+// Before a slot is cleared, put the edges that touch it into the records' own [[LoadedModules]], as they would be for
+// ordinary records: the leaving record keeps its targets, and its importers keep it (their memoized import resolutions
+// and later GetImportedModule calls name it).
+void JSModuleLoader::pinPrelinkedEdges(uint32_t moduleIndex)
+{
+    AbstractModuleRecord* leaving = m_prelinkedRecords[moduleIndex].get();
+    if (!leaving)
+        return;
+    auto pin = [&](AbstractModuleRecord* importer, uint32_t onlyTarget) {
+        auto requests = m_prelinkedGraph->requests(importer->prelinkedModule());
+        for (unsigned i = 0; i < requests.size(); ++i) {
+            uint32_t target = requests[i].moduleIndex;
+            if (target == PrelinkedModuleGraph::noModule || (onlyTarget != PrelinkedModuleGraph::noModule && target != onlyTarget))
+                continue;
+            if (AbstractModuleRecord* record = prelinkedRecordForResolution(target))
+                importer->setImportedModule(importer->globalObject(), importer->requestedModules()[i], record);
+        }
+    };
+    pin(leaving, PrelinkedModuleGraph::noModule);
+    for (auto& slot : m_prelinkedRecords) {
+        if (slot && slot.get() != leaving)
+            pin(slot.get(), moduleIndex);
+    }
+}
+
+void JSModuleLoader::forgetPrelinkedRecord(uint32_t moduleIndex)
+{
+    RELEASE_ASSERT(moduleIndex < m_prelinkedRecords.size(), moduleIndex, m_prelinkedRecords.size());
+    pinPrelinkedEdges(moduleIndex);
+    m_prelinkedRecords[moduleIndex].clear();
+    m_prelinkedRecordRemoved.ensureSize(m_prelinkedRecords.size());
+    m_prelinkedRecordRemoved.quickSet(moduleIndex);
+}
+
+void JSModuleLoader::forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll)
+{
+    for (unsigned i = 0; i < m_prelinkedRecords.size(); ++i) {
+        auto& slot = m_prelinkedRecords[i];
+        if (slot && (!keyOrNullForAll || slot->moduleKey().impl() == keyOrNullForAll)) {
+            pinPrelinkedEdges(i);
+            slot.clear();
+            m_prelinkedRecordRemoved.ensureSize(m_prelinkedRecords.size());
+            m_prelinkedRecordRemoved.quickSet(i);
+        }
+    }
+}
+
 int64_t JSModuleLoader::asyncEvaluationOrderForKey(const Identifier& key)
 {
     if (key.isNull() || key.isEmpty())
@@ -1151,6 +1236,7 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
         return;
     Locker locker { cellLock() };
     m_moduleMap.remove(iter);
+    didRemoveModuleMapEntry(moduleMapKey.second);
 }
 
 void JSModuleLoader::addResolutionFailure(VM& vm, const ResolutionMapKey& key, JSValue error)

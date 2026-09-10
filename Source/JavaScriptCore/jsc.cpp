@@ -329,6 +329,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionPrintStdOut);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateBytecodeCacheFile);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCacheFor);
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinFromBytecodeCache);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionEvalTwiceFromTransientBytecodeCache);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinBytecodeSize);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdErr);
@@ -695,6 +698,9 @@ private:
         addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
         addFunction(vm, "bytecodeCacheFor"_s, functionBytecodeCacheFor, 2);
         addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
+#if USE(BUN_JSC_ADDITIONS)
+        addFunction(vm, "evalTwiceFromTransientBytecodeCache"_s, functionEvalTwiceFromTransientBytecodeCache, 1);
+#endif
         addFunction(vm, "builtinBytecodeSize"_s, functionBuiltinBytecodeSize, 2);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
         addFunction(vm, "describe"_s, functionDescribe, 1);
@@ -1863,6 +1869,68 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), globalObject)));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// evalTwiceFromTransientBytecodeCache(sourceText) — what an embedder handing JSC a caller-owned buffer does (a bare span:
+// no destructor, not persistent; e.g. node:vm's cachedData): encode sourceText as a program, decode its code block from a
+// copy of the bytes JSC merely borrows, evaluate it, then scribble over and free the copy and evaluate the same decoded
+// block again in a fresh realm. Nothing the block still owns may point into the buffer. Returns [firstResult, secondResult].
+JSC_DEFINE_HOST_FUNCTION(functionEvalTwiceFromTransientBytecodeCache, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    URL url { "file:///evalTwiceFromTransientBytecodeCache.js"_s };
+    SourceCode source = makeSource(text, SourceOrigin { url }, SourceTaintedOrigin::Untainted, url.string(), TextPosition(), SourceProviderSourceType::Program);
+    RefPtr<CachedBytecode> generated;
+    {
+        FileSystem::FileHandle inMemory;
+        BytecodeCacheError error;
+        generated = generateProgramBytecode(vm, source, inMemory, error);
+        if (error.isValid())
+            return throwVMError(globalObject, scope, error.message());
+        if (!generated)
+            return throwVMError(globalObject, scope, "no bytecode generated"_s);
+    }
+    size_t size = generated->size();
+    auto* transient = static_cast<uint8_t*>(fastMalloc(size));
+    memcpySpan(std::span { transient, size }, generated->span());
+    generated = nullptr;
+
+    UnlinkedProgramCodeBlock* block = decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, sourceCodeKeyForSerializedProgram(vm, source), CachedBytecode::create(std::span { transient, size }, nullptr, { }));
+    if (!block) {
+        fastFree(transient);
+        return throwVMError(globalObject, scope, "decode rejected the payload"_s);
+    }
+    MarkedArgumentBuffer keepAlive; // evaluate() roots neither the block between calls nor `first`
+    keepAlive.append(block);
+    NakedPtr<Exception> exception;
+    JSValue first = evaluate(globalObject, source, block, JSValue(), exception);
+    memset(transient, 0xbe, size);
+    fastFree(transient);
+    if (exception) {
+        scope.throwException(globalObject, exception);
+        return { };
+    }
+    keepAlive.append(first);
+    // A fresh realm, so the second link clones the block's SymbolTable constants afresh instead of reusing the first realm's clones (JSGlobalObject::symbolTableCache).
+    GlobalObject* realm = GlobalObject::create(vm, GlobalObject::createStructure(vm, jsNull()), Vector<String>());
+    JSValue second = evaluate(realm, source, block, JSValue(), exception);
+    if (exception) {
+        scope.throwException(globalObject, exception);
+        return { };
+    }
+    keepAlive.append(second);
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    array->putDirectIndex(globalObject, 0, first);
+    RETURN_IF_EXCEPTION(scope, { });
+    array->putDirectIndex(globalObject, 1, second);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(array);
+}
+#endif
 
 // builtinBytecodeSize(source, depth) — bytes encodeBuiltinFunction produces for a builtin created from `source`.
 JSC_DEFINE_HOST_FUNCTION(functionBuiltinBytecodeSize, (JSGlobalObject* globalObject, CallFrame* callFrame))
