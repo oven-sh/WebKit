@@ -34,6 +34,8 @@
 
 namespace JSC {
 
+class JSModuleLoader;
+
 class ScriptFetcher;
 
 class ModuleRegistryEntry final : public JSCell {
@@ -64,8 +66,10 @@ public:
     }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static ModuleRegistryEntry* create(VM&, Structure*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
-    static ModuleRegistryEntry* create(VM&, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
+    static ModuleRegistryEntry* create(VM&, Structure*, JSModuleLoader*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
+    static ModuleRegistryEntry* create(VM&, JSModuleLoader*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
+
+    JSModuleLoader* loader() const { return m_loader.get(); }
 
     const Identifier& key() const;
     ScriptFetchParameters::Type moduleType() const;
@@ -102,13 +106,14 @@ public:
 #endif
 
 private:
-    ModuleRegistryEntry(VM&, Structure*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
+    ModuleRegistryEntry(VM&, Structure*, JSModuleLoader*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
 
     void finishCreation(VM&);
 
     const Identifier m_key;
     const ScriptFetchParameters::Type m_type;
     const RefPtr<ScriptFetcher> m_scriptFetcher;
+    WriteBarrier<JSModuleLoader> m_loader;
     WriteBarrier<AbstractModuleRecord> m_record;
     WriteBarrier<JSPromise> m_fetchPromise;
     WriteBarrier<JSPromise> m_modulePromise;

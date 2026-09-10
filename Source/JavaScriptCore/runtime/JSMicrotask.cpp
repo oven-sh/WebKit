@@ -1025,7 +1025,7 @@ static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, Thr
 #endif
     if (status == JSPromise::Status::Fulfilled) {
         auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-        JSPromise* makeModulePromise = JSModuleLoader::makeModule(globalObject, entry->key(), jsSourceCode);
+        JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), jsSourceCode);
         if (scope.exception()) {
             modulePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1103,7 +1103,6 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->module(vm, module);
-            module->setModuleLoader(vm, context->loader());
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);

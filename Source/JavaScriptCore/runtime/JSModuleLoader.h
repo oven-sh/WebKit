@@ -165,7 +165,7 @@ public:
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
 
-    static JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
+    JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
     static ErrorInstance* duplicateError(JSGlobalObject*, ErrorInstance*);

@@ -33,6 +33,8 @@
 
 namespace JSC {
 
+class JSModuleLoader;
+
 class JSModuleRecord;
 class SourceCode;
 class ScriptFetchParameters;
@@ -41,7 +43,7 @@ class ModuleAnalyzer {
     WTF_MAKE_NONCOPYABLE(ModuleAnalyzer);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    ModuleAnalyzer(JSGlobalObject*, const Identifier& moduleKey, const SourceCode&, CodeFeatures);
+    ModuleAnalyzer(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const SourceCode&, CodeFeatures);
 
     std::expected<JSModuleRecord*, std::tuple<ErrorType, String>> analyze(ModuleProgramNode&);
 

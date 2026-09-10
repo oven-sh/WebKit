@@ -200,8 +200,7 @@ public:
     };
 
     const Identifier& moduleKey() const { return m_moduleKey; }
-    JSModuleLoader* moduleLoader() const;
-    void setModuleLoader(VM&, JSModuleLoader*);
+    JSModuleLoader* moduleLoader() const { return m_moduleLoader.get(); }
     ScriptFetchParameters::Type moduleType() const;
     const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
@@ -335,7 +334,7 @@ public:
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);
 
 protected:
-    AbstractModuleRecord(VM&, Structure*, Identifier, SourceProviderSourceType);
+    AbstractModuleRecord(VM&, Structure*, JSModuleLoader*, Identifier, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
 #if USE(BUN_JSC_ADDITIONS)
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.

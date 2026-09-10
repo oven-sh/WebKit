@@ -75,9 +75,10 @@ auto AbstractModuleRecord::AsyncEvaluationOrder::order(int64_t order) -> AsyncEv
     return *this;
 }
 
-AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, Identifier moduleKey, SourceProviderSourceType sourceType)
+AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, Identifier moduleKey, SourceProviderSourceType sourceType)
     : Base(vm, structure)
     , m_moduleKey(WTF::move(moduleKey))
+    , m_moduleLoader(moduleLoader, WriteBarrierEarlyInit)
     , m_sourceType(sourceType)
 {
 }
@@ -235,18 +236,6 @@ auto AbstractModuleRecord::Resolution::error() -> Resolution
 auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
 {
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
-}
-
-JSModuleLoader* AbstractModuleRecord::moduleLoader() const
-{
-    if (JSModuleLoader* loader = m_moduleLoader.get())
-        return loader;
-    return globalObject()->moduleLoader();
-}
-
-void AbstractModuleRecord::setModuleLoader(VM& vm, JSModuleLoader* loader)
-{
-    m_moduleLoader.set(vm, this, loader);
 }
 
 AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)

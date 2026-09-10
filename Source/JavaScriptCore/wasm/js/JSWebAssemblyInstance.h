@@ -60,6 +60,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class JSModuleLoader;
+
 class JSModuleNamespaceObject;
 class JSWebAssemblyArray;
 class JSWebAssemblyModule;
@@ -92,7 +94,7 @@ public:
 
     static Identifier createPrivateModuleKey();
 
-    static JSWebAssemblyInstance* tryCreate(VM&, Structure*, JSGlobalObject*, const Identifier& moduleKey, JSWebAssemblyModule*, JSObject* importObject, Wasm::CreationMode, RefPtr<SourceProvider>&&);
+    static JSWebAssemblyInstance* tryCreate(VM&, Structure*, JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, JSWebAssemblyModule*, JSObject* importObject, Wasm::CreationMode, RefPtr<SourceProvider>&&);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_EXPORT_INFO;

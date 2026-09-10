@@ -801,7 +801,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             return promise;
         }
     } else {
-        mapEntry = ModuleRegistryEntry::create(vm, resolved, type, scriptFetcher);
+        mapEntry = ModuleRegistryEntry::create(vm, this, resolved, type, scriptFetcher);
         Locker locker { cellLock() };
         m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
         didAddModuleMapEntry(type);
@@ -1125,7 +1125,7 @@ ModuleRegistryEntry* JSModuleLoader::ensureRegistered(JSGlobalObject* globalObje
     if (auto iter = m_moduleMap.find(moduleMapKey); iter != m_moduleMap.end())
         return iter->value.get();
 
-    ModuleRegistryEntry* entry = ModuleRegistryEntry::create(vm, key, type, nullptr);
+    ModuleRegistryEntry* entry = ModuleRegistryEntry::create(vm, this, key, type, nullptr);
 
     Locker locker { cellLock() };
     m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, entry));
@@ -1343,7 +1343,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     return result;
 }
 
-extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
+extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, JSModuleLoader*, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
     (void)moduleKey;
     (void)sourceCode;
@@ -1368,12 +1368,12 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
     case SourceProviderSourceType::WebAssembly:
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSPromise>(JSWebAssembly::instantiate(globalObject, promise, sourceCode.provider(), moduleKey, jsSourceCode)));
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSPromise>(JSWebAssembly::instantiate(globalObject, promise, this, sourceCode.provider(), moduleKey, jsSourceCode)));
 #endif
 
     // https://tc39.es/proposal-json-modules/#sec-parse-json-module
     case SourceProviderSourceType::JSON: {
-        auto* moduleRecord = SyntheticModuleRecord::parseJSONModule(globalObject, moduleKey, SourceCode { sourceCode });
+        auto* moduleRecord = SyntheticModuleRecord::parseJSONModule(globalObject, this, moduleKey, SourceCode { sourceCode });
         attachErrorInfo(globalObject, scope, moduleRecord, moduleKey, ScriptFetchParameters::Type::JSON, ModuleFailure::Kind::Evaluation);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
         scope.release();
@@ -1381,7 +1381,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         return promise;
     }
     case SourceProviderSourceType::Text: {
-        auto* moduleRecord = SyntheticModuleRecord::createTextModule(globalObject, moduleKey, SourceCode { sourceCode });
+        auto* moduleRecord = SyntheticModuleRecord::createTextModule(globalObject, this, moduleKey, SourceCode { sourceCode });
         attachErrorInfo(globalObject, scope, moduleRecord, moduleKey, ScriptFetchParameters::Type::Text, ModuleFailure::Kind::Evaluation);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
         scope.release();
@@ -1397,7 +1397,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
-        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, args, lazyExportsSource);
+        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
         scope.release();
@@ -1405,7 +1405,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         return promise;
     }
     case SourceProviderSourceType::BunTranspiledModule: {
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSPromise>(JSValue::decode(Bun__analyzeTranspiledModule(globalObject, moduleKey, sourceCode, promise))));
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<JSPromise>(JSValue::decode(Bun__analyzeTranspiledModule(globalObject, this, moduleKey, sourceCode, promise))));
     }
 #endif
     default:
@@ -1426,7 +1426,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     }
     ASSERT(moduleProgramNode);
 
-    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
+    ModuleAnalyzer moduleAnalyzer(globalObject, this, moduleKey, sourceCode, moduleProgramNode->features());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);

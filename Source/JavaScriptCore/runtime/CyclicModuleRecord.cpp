@@ -52,8 +52,8 @@ namespace JSC {
 
 const ClassInfo CyclicModuleRecord::s_info = { "CyclicModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CyclicModuleRecord) };
 
-CyclicModuleRecord::CyclicModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, SourceProviderSourceType sourceType)
-    : Base(vm, structure, moduleKey, sourceType)
+CyclicModuleRecord::CyclicModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, SourceProviderSourceType sourceType)
+    : Base(vm, structure, moduleLoader, moduleKey, sourceType)
 {
 }
 
