@@ -60,8 +60,8 @@ public:
         Cached, // cached loadPromise settled -> finishLoading or evaluationError
     };
 
-    static ModuleLoadingContext* create(VM&, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    static ModuleLoadingContext* create(VM&, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
+    static ModuleLoadingContext* create(VM&, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
+    static ModuleLoadingContext* create(VM&, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
 
     Step step() const { return m_step; }
     void setStep(Step s) { m_step = s; }
@@ -75,7 +75,6 @@ public:
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
     // The loader running this load (a global object may have more than one).
     JSModuleLoader* loader() const { return m_loader.get(); }
-    void setLoader(VM& vm, JSModuleLoader* loader) { m_loader.set(vm, this, loader); }
 
     bool evaluate() const { return m_flags.contains(ModuleLoadFlag::Evaluate); }
     bool dynamic() const { return m_flags.contains(ModuleLoadFlag::Dynamic); }
@@ -86,8 +85,8 @@ public:
 #endif
 
 private:
-    ModuleLoadingContext(VM&, Structure*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    ModuleLoadingContext(VM&, Structure*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
+    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
+    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
 
     Step m_step { Step::Main };
     AbstractModuleRecord::ModuleRequest m_moduleRequest;

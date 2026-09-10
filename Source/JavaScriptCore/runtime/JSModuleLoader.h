@@ -81,27 +81,20 @@ public:
         return object;
     }
 
+    // A global object has one module loader (JSGlobalObject::moduleLoader()); an
+    // embedder may create more to load and evaluate module graphs again,
+    // separately, in the same global object: each loader has its own registry, so
+    // the same specifiers give fresh module records with their own environments
+    // and state. Records remember their loader; import() from module code loads
+    // through the calling module's loader.
     static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm)
     {
         return create(globalObject, vm, vm.moduleLoaderStructure.get());
     }
-    // An additional loader for globalObject (see above).
-    JS_EXPORT_PRIVATE static JSModuleLoader* createAdditional(JSGlobalObject*, VM&);
 
     DECLARE_INFO;
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-
-    // A global object has one module loader (JSGlobalObject::moduleLoader()); an
-    // embedder may create more with createAdditional() to load and evaluate
-    // module graphs again, separately, in the same global object: each loader has
-    // its own registry, so the same specifiers give fresh module records with
-    // their own environments and state. Records remember their loader; import()
-    // from module code loads through the calling module's loader.
-    //
-    // For the embedder: whatever it associates with this loader.
-    JSValue embedderData() const { return m_embedderData.get(); }
-    void setEmbedderData(VM& vm, JSValue value) { m_embedderData.set(vm, this, value); }
 
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
@@ -297,8 +290,6 @@ private:
         UNUSED_PARAM(type);
 #endif
     }
-
-    WriteBarrier<Unknown> m_embedderData;
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;

@@ -3947,7 +3947,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleLoader* loader = JSModuleLoader::createAdditional(globalObject, vm);
+    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm);
     JSObject* result = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirect(vm, Identifier::fromString(vm, "loader"_s), loader);

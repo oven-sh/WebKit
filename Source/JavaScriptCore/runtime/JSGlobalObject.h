@@ -351,7 +351,6 @@ public:
     WriteBarrier<JSObject> m_regExpProtoSymbolReplace;
     LazyProperty<JSGlobalObject, GetterSetter> m_throwTypeErrorArgumentsCalleeGetterSetter;
 
-    bool m_hasAdditionalModuleLoaders { false };
     LazyProperty<JSGlobalObject, JSModuleLoader> m_moduleLoader;
 
     WriteBarrier<ObjectPrototype> m_objectPrototype;
@@ -915,10 +914,6 @@ public:
     GetterSetter* throwTypeErrorArgumentsCalleeGetterSetter() const LIFETIME_BOUND { return m_throwTypeErrorArgumentsCalleeGetterSetter.get(this); }
     
     JSModuleLoader* moduleLoader() const LIFETIME_BOUND { return m_moduleLoader.get(this); }
-    // Whether JSModuleLoader::createAdditional was ever used here, so import()
-    // needs to find the calling module's loader.
-    bool hasAdditionalModuleLoaders() const { return m_hasAdditionalModuleLoaders; }
-    void setHasAdditionalModuleLoaders() { m_hasAdditionalModuleLoaders = true; }
 
     ObjectPrototype* objectPrototype() const LIFETIME_BOUND { return m_objectPrototype.get(); }
     FunctionPrototype* functionPrototype() const LIFETIME_BOUND { return m_functionPrototype.get(); }

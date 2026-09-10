@@ -253,13 +253,6 @@ void JSModuleLoader::destroy(JSCell* cell)
     thisObject->JSModuleLoader::~JSModuleLoader();
 }
 
-JSModuleLoader* JSModuleLoader::createAdditional(JSGlobalObject* globalObject, VM& vm)
-{
-    JSModuleLoader* loader = create(globalObject, vm);
-    globalObject->setHasAdditionalModuleLoaders();
-    return loader;
-}
-
 void JSModuleLoader::finishCreation(JSGlobalObject*, VM& vm)
 {
     Base::finishCreation(vm);
@@ -272,7 +265,6 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSModuleLoader* thisObject = uncheckedDowncast<JSModuleLoader>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_embedderData);
     Locker locker { thisObject->cellLock() };
     auto moduleMapValues = thisObject->m_moduleMap.values();
     visitor.append(moduleMapValues.begin(), moduleMapValues.end());
@@ -395,8 +387,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #else
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
-    auto* context = ModuleLoadingContext::create(vm, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
-    context->setLoader(vm, this);
+    auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();
@@ -800,8 +791,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, mapEntry->record(), scriptFetcher);
                 RETURN_IF_EXCEPTION(scope, nullptr);
             } else {
-                auto* context = ModuleLoadingContext::create(vm, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
-                context->setLoader(vm, this);
+                auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
                 JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
                 resultPromise->markAsHandled();
                 promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, resultPromise, context);
@@ -828,8 +818,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* context = ModuleLoadingContext::create(vm, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
-    context->setLoader(vm, this);
+    auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
     JSPromise* loadPromise = JSPromise::create(vm, globalObject->promiseStructure());
     loadPromise->markAsHandled();
 
@@ -851,8 +840,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
     JSPromise* promise = hostLoadImportedModule(globalObject, referrer, moduleRequest, payload, scriptFetcher, flags.contains(ModuleLoadFlag::UseImportMap));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* context = ModuleLoadingContext::create(vm, moduleRequest, WTF::move(scriptFetcher), flags);
-    context->setLoader(vm, this);
+    auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags);
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
 

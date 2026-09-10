@@ -824,13 +824,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // import() from a module loads through that module's loader (there may be
     // loaders besides the global object's own); anything else uses the global object's.
     JSModuleLoader* loader = globalObject->moduleLoader();
-    if (globalObject->hasAdditionalModuleLoaders()) [[unlikely]] {
-        for (JSScope* callerScope = callFrame->callerScope(vm); callerScope; callerScope = callerScope->next()) {
-            if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(callerScope)) {
-                if (AbstractModuleRecord* record = moduleEnvironment->moduleRecord())
-                    loader = record->moduleLoader();
-                break;
-            }
+    for (JSScope* callerScope = callFrame->callerScope(vm); callerScope; callerScope = callerScope->next()) {
+        if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(callerScope)) {
+            if (AbstractModuleRecord* record = moduleEnvironment->moduleRecord())
+                loader = record->moduleLoader();
+            break;
         }
     }
     auto* importPromise = loader->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);

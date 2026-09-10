@@ -309,16 +309,6 @@ JSPromise* importModule(JSGlobalObject* globalObject, const Identifier& moduleNa
     return globalObject->moduleLoader()->requestImportModule(globalObject, moduleName, referrer, WTF::move(parameters), WTF::move(scriptFetcher), deferred, referrerAsyncOrder);
 }
 
-JSPromise* importModule(JSGlobalObject* globalObject, JSModuleLoader* loader, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder)
-{
-    VM& vm = globalObject->vm();
-    JSLockHolder lock(vm);
-    RELEASE_ASSERT(vm.atomStringTable() == Thread::currentSingleton().atomStringTable());
-    RELEASE_ASSERT(!vm.isCollectorBusyOnCurrentThread());
-
-    return loader->requestImportModule(globalObject, moduleName, referrer, WTF::move(parameters), WTF::move(scriptFetcher), deferred, referrerAsyncOrder);
-}
-
 UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String> retrieveImportAttributesFromDynamicImportOptions(JSGlobalObject* globalObject, JSValue options, const Vector<RefPtr<UniquedStringImpl>>& supportedImportAttributes)
 {
     // https://tc39.es/proposal-import-attributes/#sec-evaluate-import-call

@@ -1177,9 +1177,9 @@ JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, 
 
     auto referrerKey = Identifier::fromString(vm, referrer.string());
 #if USE(BUN_JSC_ADDITIONS)
-    auto* result = JSC::importModule(globalObject, loader, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, loader->asyncEvaluationOrderForKey(referrerKey));
+    auto* result = loader->requestImportModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, loader->asyncEvaluationOrderForKey(referrerKey));
 #else
-    auto* result = JSC::importModule(globalObject, loader, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
+    auto* result = loader->requestImportModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
 #endif
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();

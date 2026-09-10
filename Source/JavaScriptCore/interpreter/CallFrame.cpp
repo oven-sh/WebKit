@@ -197,7 +197,6 @@ SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFram
 
 JSScope* CallFrame::callerScope(VM& vm)
 {
-    RELEASE_ASSERT(callee().isCell());
     JSScope* found = nullptr;
     bool haveSkippedFirstFrame = false;
     StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
@@ -218,11 +217,9 @@ JSScope* CallFrame::callerScope(VM& vm)
         // The callee carries the scope its code was created with at every tier
         // (the scope register is not materialized in optimized frames).
         JSCell* calleeCell = visitor->callee().asCell();
-        if (auto* function = dynamicDowncast<JSFunction>(calleeCell)) {
-            if (!function->isHostFunction() && function->jsExecutable()->isPrivateBuiltinFunction())
-                return IterationStatus::Continue;
+        if (auto* function = dynamicDowncast<JSFunction>(calleeCell))
             found = function->scope();
-        } else if (auto* callee = dynamicDowncast<JSCallee>(calleeCell))
+        else if (auto* callee = dynamicDowncast<JSCallee>(calleeCell))
             found = callee->scope();
         return IterationStatus::Done;
     });
