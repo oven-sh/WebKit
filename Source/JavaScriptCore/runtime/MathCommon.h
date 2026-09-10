@@ -161,6 +161,11 @@ ALWAYS_INLINE Int toIntImpl(double number)
             // As a result, the exp of the double is always >= 31. We can take advantage
             // of this by specifically checking for (exp == 31) and give the compiler a
             // chance to constant fold the operations below.
+            //
+            // The x86_64 DFG and FTL truncate with cvttsd2siq instead and keep the low
+            // 32 bits, which is ToInt32 for every |src| < 2^63. cvttsd2siq only fails
+            // for NaN, +-Inf, and |(src)rz| >= 2^63, so from those tiers the exp is
+            // always >= 63 and this branch is not taken.
             const constexpr UInt missingOne = static_cast<UInt>(1U) << intBitsMinusOne;
             result &= missingOne - 1;
             result += missingOne;

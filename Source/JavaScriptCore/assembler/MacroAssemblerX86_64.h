@@ -2519,6 +2519,20 @@ public:
         return branch32(branchType ? NotEqual : Equal, dest, TrustedImm32(0x80000000));
     }
 
+    // Truncates 'src' to a 64 bit integer and leaves its low 32 bits, zero extended, in 'dest'.
+    // That is ToInt32(src) for every |src| < 2^63, so doubles outside the int32 range stay on
+    // the fast path. Branches when the 64 bit truncation fails, which cvttsd2siq reports as
+    // INT64_MIN: NaN, the infinities, and |src| >= 2^63.
+    Jump branchTruncateDoubleToInt32ViaInt64(FPRegisterID src, RegisterID dest)
+    {
+        truncateDoubleToInt64(src, dest);
+        // INT64_MIN is the only value whose subtraction of 1 overflows.
+        m_assembler.cmpq_ir(1, dest);
+        Jump failed(m_assembler.jCC(X86Assembler::ConditionO));
+        zeroExtend32ToWord(dest, dest);
+        return failed;
+    }
+
     void truncateDoubleToInt32(FPRegisterID src, RegisterID dest)
     {
         if (supportsAVX())
