@@ -241,11 +241,12 @@ RegisterID* ImportNode::emitBytecode(BytecodeGenerator& generator, RegisterID* d
     else
         generator.emitLoad(arguments.argumentRegister(1), jsUndefined());
     generator.emitLoad(arguments.argumentRegister(2), jsBoolean(m_deferred));
-    // The referencing module: its environment's @moduleRecord binding when the
-    // caller is (nested in, or eval'd from) module code, undefined otherwise.
-    Variable referrer = generator.variable(generator.propertyNames().builtinNames().moduleRecordPrivateName());
-    RefPtr<RegisterID> referrerScope = generator.emitResolveScope(generator.newTemporary(), referrer);
-    generator.emitGetFromScope(arguments.argumentRegister(3), referrerScope.get(), referrer, DoNotThrowIfNotFound);
+    if (generator.isInsideModuleCode()) {
+        Variable moduleRecord = generator.variable(generator.propertyNames().builtinNames().moduleRecordPrivateName());
+        RefPtr<RegisterID> scope = generator.emitResolveScope(generator.newTemporary(), moduleRecord);
+        generator.emitGetFromScope(arguments.argumentRegister(3), scope.get(), moduleRecord, ThrowIfNotFound);
+    } else
+        generator.emitLoad(arguments.argumentRegister(3), jsUndefined());
     return generator.emitCall(generator.finalDestination(dst, importModule.get()), importModule.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 

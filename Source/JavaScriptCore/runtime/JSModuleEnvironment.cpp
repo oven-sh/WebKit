@@ -30,7 +30,6 @@
 #include "JSModuleEnvironment.h"
 
 #include "AbstractModuleRecord.h"
-#include "BuiltinNames.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
 
@@ -58,20 +57,6 @@ JSModuleEnvironment* JSModuleEnvironment::create(
             allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable)))
         JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord);
     result->finishCreation(vm);
-
-    const Identifier& moduleRecordName = vm.propertyNames->builtinNames().moduleRecordPrivateName();
-    InlineWatchpointSet* set = nullptr;
-    WriteBarrierBase<Unknown>* slot = nullptr;
-    {
-        ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto iter = symbolTable->find(locker, moduleRecordName.impl());
-        if (iter != symbolTable->end(locker)) {
-            set = iter->value.watchpointSet();
-            slot = &result->variableAt(iter->value.scopeOffset());
-        }
-    }
-    if (slot)
-        symbolTablePutTouchWatchpointSet(vm, result, moduleRecordName, moduleRecord, slot, set);
     return result;
 }
 

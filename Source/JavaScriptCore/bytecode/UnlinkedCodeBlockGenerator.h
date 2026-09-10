@@ -56,6 +56,7 @@ public:
     EvalContextType evalContextType() const { return m_codeBlock->evalContextType(); }
     bool isArrowFunctionContext() const { return m_codeBlock->isArrowFunctionContext(); }
     bool isClassContext() const { return m_codeBlock->isClassContext(); }
+    bool isInsideModuleCode() const { return m_codeBlock->isInsideModuleCode(); }
     unsigned numCalleeLocals() const { return m_codeBlock->m_numCalleeLocals; }
     unsigned numVars() const { return m_codeBlock->m_numVars; }
     unsigned numParameters() const { return m_codeBlock->numParameters(); }

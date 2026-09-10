@@ -37,7 +37,7 @@ enum class NeedsClassFieldInitializer : bool { No, Yes };
 // FIXME: These flags, ParserModes and propagation to XXXCodeBlocks should be reorganized.
 // https://bugs.webkit.org/show_bug.cgi?id=151547
 struct ExecutableInfo {
-    ExecutableInfo(bool isConstructor, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinFunction, ConstructorKind constructorKind, JSParserScriptMode scriptMode, SuperBinding superBinding, SourceParseMode parseMode, DerivedContextType derivedContextType, NeedsClassFieldInitializer needsClassFieldInitializer, bool isArrowFunctionContext, bool isClassContext, EvalContextType evalContextType, bool isBuiltinDefaultClassConstructor = false)
+    ExecutableInfo(bool isConstructor, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinFunction, ConstructorKind constructorKind, JSParserScriptMode scriptMode, SuperBinding superBinding, SourceParseMode parseMode, DerivedContextType derivedContextType, NeedsClassFieldInitializer needsClassFieldInitializer, bool isArrowFunctionContext, bool isClassContext, EvalContextType evalContextType, bool isInsideModuleCode, bool isBuiltinDefaultClassConstructor = false)
         : m_isConstructor(isConstructor)
         , m_privateBrandRequirement(static_cast<unsigned>(privateBrandRequirement))
         , m_isBuiltinFunction(isBuiltinFunction)
@@ -50,6 +50,7 @@ struct ExecutableInfo {
         , m_isArrowFunctionContext(isArrowFunctionContext)
         , m_isClassContext(isClassContext)
         , m_evalContextType(static_cast<unsigned>(evalContextType))
+        , m_isInsideModuleCode(isInsideModuleCode)
         , m_isBuiltinDefaultClassConstructor(isBuiltinDefaultClassConstructor)
     {
         ASSERT(m_constructorKind == static_cast<unsigned>(constructorKind));
@@ -68,6 +69,7 @@ struct ExecutableInfo {
     EvalContextType evalContextType() const { return static_cast<EvalContextType>(m_evalContextType); }
     bool isArrowFunctionContext() const { return m_isArrowFunctionContext; }
     bool isClassContext() const { return m_isClassContext; }
+    bool isInsideModuleCode() const { return m_isInsideModuleCode; }
     NeedsClassFieldInitializer needsClassFieldInitializer() const { return static_cast<NeedsClassFieldInitializer>(m_needsClassFieldInitializer); }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
@@ -84,6 +86,7 @@ private:
     unsigned m_isArrowFunctionContext : 1;
     unsigned m_isClassContext : 1;
     unsigned m_evalContextType : 2;
+    unsigned m_isInsideModuleCode : 1;
     unsigned m_isBuiltinDefaultClassConstructor : 1;
 };
 

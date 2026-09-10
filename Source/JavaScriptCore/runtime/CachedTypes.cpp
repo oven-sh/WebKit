@@ -3613,6 +3613,7 @@ public:
         unsigned superBinding;
         unsigned derivedContextType;
         unsigned evalContextType;
+        bool isInsideModuleCode;
         bool inlineAttribute;
         bool needsClassFieldInitializer;
         unsigned privateBrandRequirement;
@@ -3755,6 +3756,7 @@ public:
         unsigned constructorKind : 2;
         unsigned derivedContextType : 2;
         unsigned evalContextType : 2;
+        unsigned isInsideModuleCode : 1;
         unsigned hasTailCalls : 1;
         unsigned codeType : 2;
         unsigned hasCheckpoints : 1;
@@ -4140,6 +4142,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_scriptMode = scalars.scriptMode;
     m_isArrowFunctionContext = scalars.isArrowFunctionContext;
     m_isClassContext = scalars.isClassContext;
+    m_isInsideModuleCode = scalars.isInsideModuleCode;
     m_hasTailCalls = scalars.hasTailCalls;
     m_constructorKind = scalars.constructorKind;
     m_derivedContextType = scalars.derivedContextType;
@@ -4290,6 +4293,7 @@ enum CachedFunctionExecutableFlag : uint32_t {
     ExecutableNeedsClassFieldInitializerShift = 16,
     ExecutableIsBuiltinFunctionShift = 17,
     ExecutableIsBuiltinDefaultClassConstructorShift = 18,
+    ExecutableIsInsideModuleCodeShift = 19,
 };
 static_assert(bitWidthOfImplementationVisibility <= 2);
 
@@ -4308,7 +4312,8 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
         | static_cast<uint32_t>(executable.m_inlineAttribute) << ExecutableInlineAttributeShift
         | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << ExecutableNeedsClassFieldInitializerShift
         | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
-        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
+        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift
+        | static_cast<uint32_t>(executable.m_isInsideModuleCode) << ExecutableIsInsideModuleCodeShift;
     executable.materializeDeferredScalarsIfNeeded();
     bool hasLines = executable.m_firstLineOffset || executable.m_lineCount;
     // Hot part: what link() (the FunctionExecutable's SourceCode), JSFunction structure selection, the first call
@@ -4426,6 +4431,7 @@ auto CachedFunctionExecutable::view(const uint8_t* limit, ScalarsToView scalarsT
     s.needsClassFieldInitializer = bits(ExecutableNeedsClassFieldInitializerShift);
     s.isBuiltinFunction = bits(ExecutableIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(ExecutableIsBuiltinDefaultClassConstructorShift);
+    s.isInsideModuleCode = bits(ExecutableIsInsideModuleCodeShift);
     s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
     s.hasCapturedVariables = v.header & HasCapturedVariables;
     s.sourceParseMode = static_cast<SourceParseMode>((v.header >> ParseModeShift) & 0xff);
@@ -4649,6 +4655,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_derivedContextType = scalars.derivedContextType;
     m_inlineAttribute = scalars.inlineAttribute;
     m_evalContextType = scalars.evalContextType;
+    m_isInsideModuleCode = scalars.isInsideModuleCode;
     m_hasName = scalars.hasName;
 
     uint32_t leafExecutables = 2;
@@ -4693,6 +4700,7 @@ enum CachedCodeBlockFlag : uint32_t {
     CodeBlockCodeTypeShift = 13, // 2
     CodeBlockIsBuiltinFunctionShift = 15,
     CodeBlockIsBuiltinDefaultClassConstructorShift = 16,
+    CodeBlockIsInsideModuleCodeShift = 17,
 };
 
 template<typename CodeBlockType>
@@ -4710,7 +4718,8 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
         | static_cast<uint32_t>(codeBlock.m_evalContextType) << CodeBlockEvalContextTypeShift
         | static_cast<uint32_t>(codeBlock.m_codeType) << CodeBlockCodeTypeShift
         | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
-        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift
+        | static_cast<uint32_t>(codeBlock.m_isInsideModuleCode) << CodeBlockIsInsideModuleCodeShift;
     writer.u32(flags);
     writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
     writer.u8(codeBlock.m_codeGenerationMode.toRaw());
@@ -4789,6 +4798,7 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.codeType = bits(CodeBlockCodeTypeShift, 2);
     s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
+    s.isInsideModuleCode = bits(CodeBlockIsInsideModuleCodeShift);
     s.parseMode = static_cast<SourceParseMode>(reader.u8());
     s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
     s.thisRegister = VirtualRegister(reader.i32());

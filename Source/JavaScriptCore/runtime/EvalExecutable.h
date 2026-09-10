@@ -83,7 +83,7 @@ protected:
     friend class ScriptExecutable;
 
     using Base::finishCreation;
-    EvalExecutable(JSGlobalObject*, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType, NeedsClassFieldInitializer, PrivateBrandRequirement);
+    EvalExecutable(JSGlobalObject*, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isArrowFunctionContext, bool isInsideOrdinaryFunction, bool isInsideModuleCode, EvalContextType, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_privateBrandRequirement : 1;
