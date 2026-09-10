@@ -464,7 +464,7 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
     auto contentEncodingSniffingPolicy = resourceLoader.contentEncodingSniffingPolicy();
     StoredCredentialsPolicy storedCredentialsPolicy = resourceLoader.shouldUseCredentialStorage() ? StoredCredentialsPolicy::Use : StoredCredentialsPolicy::DoNotUse;
 
-    LOG(NetworkScheduling, "(WebProcess) WebLoaderStrategy::scheduleLoad, url '%s' will be scheduled with the NetworkProcess with priority %d, storedCredentialsPolicy %i", resourceLoader.url().string().latin1().data(), static_cast<int>(resourceLoader.request().priority()), (int)storedCredentialsPolicy);
+    LOG(NetworkScheduling, "(WebProcess) WebLoaderStrategy::scheduleLoad, url '%s' will be scheduled with the NetworkProcess with priority %d, storedCredentialsPolicy %i", resourceLoader.url().string().utf8().data(), static_cast<int>(resourceLoader.request().priority()), (int)storedCredentialsPolicy);
 
     NetworkResourceLoadParameters loadParameters {
         trackingParameters.webPageProxyID,
@@ -532,7 +532,7 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
 
     // FIXME: All loaders should provide their origin if navigation mode is cors/no-cors/same-origin.
     // As a temporary approach, we use the document origin if available or the HTTP Origin header otherwise.
-    if (auto* loader = dynamicDowncast<SubresourceLoader>(resourceLoader)) {
+    if (RefPtr loader = dynamicDowncast<SubresourceLoader>(resourceLoader)) {
         loadParameters.sourceOrigin = loader->origin();
 
         if (auto* headers = loader->originalHeaders())

@@ -113,7 +113,7 @@
 #include "RenderImage.h"
 #include "RenderListBox.h"
 #include "RenderListItem.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderTableCell.h"
 #include "RenderView.h"
 #include "RuleFeature.h"
@@ -919,7 +919,7 @@ bool AccessibilityNodeObject::canHaveChildren() const
     if (node() && !renderer() && WebCore::elementName(node()) == ElementName::HTML_noscript)
         return false;
 
-    if (CheckedPtr listMarker = dynamicDowncast<RenderListMarker>(renderer()))
+    if (CheckedPtr listMarker = dynamicDowncast<RenderListOutsideMarker>(renderer()))
         return listMarker->hasContentProperty();
 
     // If this is an AccessibilityRenderObject, then it's okay if this object
@@ -4172,14 +4172,40 @@ Vector<AXStitchGroup> AccessibilityNodeObject::stitchGroups() const
             currentGroup.clear();
         representativeID = std::nullopt;
     };
+    // Our own outside marker takes no part in our lines, so it is not one of the leaf boxes below, but it belongs at
+    // the start of the group for the line it was positioned against, when that line is one of ours.
+    auto stitchableExcludedMarker = [&]() -> CheckedPtr<RenderListOutsideMarker> {
+        // The marker's list item is this block flow itself when the item's own content makes the line, and an
+        // ancestor of it when the line is in a descendant block of the item.
+        for (CheckedPtr<const RenderBlock> ancestor = renderBlockFlow.get(); ancestor; ancestor = ancestor->containingBlock()) {
+            CheckedPtr listItem = dynamicDowncast<RenderListItem>(ancestor.get());
+            CheckedPtr marker = listItem ? listItem->markerBox() : nullptr;
+            if (!marker || !marker->isExcludedMarker() || marker->isDisclosureMarker())
+                continue;
+            auto excludedPosition = marker->excludedPosition();
+            if (excludedPosition && excludedPosition->firstFormattedLineRoot.get() == renderBlockFlow.get())
+                return marker;
+        }
+        return { };
+    }();
+    if (stitchableExcludedMarker) {
+        if (RefPtr object = cache->getOrCreate(*stitchableExcludedMarker))
+            appendToCurrentGroup(object->objectID());
+    }
+
     for (auto lineBox = inlineLayout->firstLineBox(); lineBox; lineBox.traverseNext()) {
         for (auto box = lineBox->logicalLeftmostLeafBox(); box; box.traverseLogicalRightwardOnLine()) {
             auto updateLastRenderer = makeScopeExit([&] {
                 context.lastRenderer = box->renderer();
             });
 
-            if (CheckedPtr renderListMarker = dynamicDowncast<RenderListMarker>(box->renderer()); renderListMarker && !renderListMarker->isDisclosureMarker()) {
-                if (RefPtr object = cache->getOrCreate(const_cast<RenderListMarker&>(*renderListMarker)))
+            if (listMarkerIsDisclosure(dynamicDowncast<RenderElement>(box->renderer())) || listMarkerIsDisclosure(box->renderer().parent())) {
+                finalizeCurrentGroup();
+                continue;
+            }
+
+            if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(box->renderer())) {
+                if (RefPtr object = cache->getOrCreate(const_cast<RenderListOutsideMarker&>(*renderListMarker)))
                     appendToCurrentGroup(object->objectID());
                 continue;
             }
@@ -4307,10 +4333,11 @@ String AccessibilityNodeObject::stringValue() const
                 if (!runStartNode)
                     runStartNode = memberNode;
                 runEndNode = memberNode;
-            } else if (CheckedPtr renderListMarker = dynamicDowncast<RenderListMarker>(object->renderer())) {
+            } else if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(object->renderer())) {
                 // List markers have no DOM node. Flush any pending text run, then append marker text.
                 flushRun();
-                builder.append(renderListMarker->textContent());
+                if (CheckedPtr listItem = renderListMarker->listItem())
+                    builder.append(listItem->markerText());
             }
         }
         flushRun();

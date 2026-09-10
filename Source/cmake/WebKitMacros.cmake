@@ -198,9 +198,11 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
         unset(_resultTmp)
         unset(_outputTmp)
     else ()
+        set(_arcSourcesFile "${CMAKE_CURRENT_BINARY_DIR}/${_framework}ARCSources.txt")
         execute_process(COMMAND ${Python_EXECUTABLE} ${WTF_SCRIPTS_DIR}/generate-unified-source-bundles.py
             ${gusb_args}
             "--print-all-sources"
+            --print-arc-sources "${_arcSourcesFile}"
             ${_sourceListFileTruePaths}
             RESULT_VARIABLE _resultTmp
             OUTPUT_VARIABLE _outputTmp)
@@ -209,7 +211,17 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
              message(FATAL_ERROR "generate-unified-source-bundles.py exited with non-zero status, exiting")
         endif ()
 
-        list(APPEND ${_framework}_SOURCES ${_outputTmp})
+        # Without bundles there is no *-ARC.mm to key off, so take the @nonARC
+        # annotations straight from the source lists to keep the ARC sources in the
+        # OBJECT library whose OBJCXX precompiled header agrees on -fobjc-arc.
+        file(STRINGS "${_arcSourcesFile}" _arcSources)
+        foreach (_file IN LISTS _outputTmp)
+            if (_file IN_LIST _arcSources)
+                list(APPEND ${_framework}_ARC_SOURCES ${_file})
+            else ()
+                list(APPEND ${_framework}_SOURCES ${_file})
+            endif ()
+        endforeach ()
         unset(_resultTmp)
         unset(_outputTmp)
     endif ()
@@ -1175,7 +1187,6 @@ function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
         set(_dllimport_decl "")
     endif ()
     set(_flags
-        -DENABLE_WEBGPU_SWIFT=1
         -DJS_EXPORT_PRIVATE=${_dllimport_decl}
         -DNODELETE=
         -DPAL_EXPORT=${_dllimport_decl}
@@ -1396,6 +1407,9 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # which is also Swift-only) can set
         # ${_target}_SWIFT_INTEROP_MODULE_PATH_SWIFT_ONLY to TRUE.
         list(APPEND _swift_options "-cxx-interoperability-mode=default" "-Xcc" "-std=c++2b")
+        if (CMAKE_Swift_COMPILER_TARGET)
+            list(APPEND _swift_options "-clang-target" "${CMAKE_Swift_COMPILER_TARGET}")
+        endif ()
         _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS(_shared_cc_flags)
         foreach (_f IN LISTS _shared_cc_flags)
             list(APPEND _swift_options "-Xcc" "${_f}")

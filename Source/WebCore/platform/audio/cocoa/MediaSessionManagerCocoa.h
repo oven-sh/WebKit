@@ -82,6 +82,7 @@ protected:
     void setNowPlayingUpdateInterval(double) final;
     double nowPlayingUpdateInterval() final;
     void updateActiveNowPlayingSession(RefPtr<PlatformMediaSessionInterface>);
+    virtual void activeNowPlayingSessionChanged(PlatformMediaSessionInterface*);
     bool shouldUpdateNowPlaying(const NowPlayingInfo&);
 
     void removeSession(PlatformMediaSessionInterface&) override;

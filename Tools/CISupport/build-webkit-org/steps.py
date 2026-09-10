@@ -1372,6 +1372,7 @@ class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
 
     def __init__(self, **kwargs):
         kwargs['timeout'] = 90 * 60
+        kwargs['maxTime'] = 3 * 60 * 60
         super().__init__(**kwargs)
 
     @defer.inlineCallbacks

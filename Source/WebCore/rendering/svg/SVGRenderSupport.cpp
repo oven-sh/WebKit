@@ -564,7 +564,7 @@ void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const
         }
         
         bool canSetLineDash = false;
-        auto dashArray = DashArray::map(dashes, [&lengthContext, usedZoom, scaleFactor, &canSetLineDash](auto& dash) -> DashArrayElement {
+        auto dashArray = DashArray::map(dashes, [&lengthContext, usedZoom, scaleFactor, &canSetLineDash](const Style::SVGStrokeDasharrayValue& dash) -> DashArrayElement {
             auto value = lengthContext.valueForLength(dash, usedZoom) * scaleFactor;
             if (value > 0)
                 canSetLineDash = true;

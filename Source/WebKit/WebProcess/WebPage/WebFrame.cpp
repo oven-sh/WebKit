@@ -164,7 +164,7 @@ void WebFrame::initWithCoreMainFrame(WebPage& page, Frame& coreFrame)
 {
     m_coreFrame = coreFrame;
     m_coreFrame->tree().setSpecifiedName(nullAtom());
-    if (auto* localFrame = dynamicDowncast<LocalFrame>(coreFrame))
+    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(coreFrame))
         localFrame->init();
 }
 
@@ -807,7 +807,7 @@ void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader,
 
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     isAppBound = m_isNavigatingToAppBoundDomain;
-    webProcess.ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::ConvertMainResourceLoadToDownload(mainResourceLoadIdentifier, policyDownloadID, request, topOrigin, response, isAppBound), 0);
+    protect(webProcess.ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::ConvertMainResourceLoadToDownload(mainResourceLoadIdentifier, policyDownloadID, request, topOrigin, response, isAppBound), 0);
 }
 
 void WebFrame::addConsoleMessage(MessageSource messageSource, MessageLevel messageLevel, const String& message, uint64_t requestID)
@@ -2001,7 +2001,7 @@ void WebFrame::describeTextExtractionInteraction(TextExtraction::Interaction&& i
 {
     RefPtr frame = coreLocalFrame();
     if (!frame)
-        return completion({ { }, { }, false });
+        return completion({ { }, { }, false, false });
 
     auto resolvedInteraction = interactionWithResolvedTargetNode(WTF::move(interaction));
     completion(TextExtraction::interactionDescription(resolvedInteraction, *frame));
@@ -2077,6 +2077,17 @@ void WebFrame::requestContainerJSHandleForSearchTexts(Vector<String>&& searchTex
 void WebFrame::requestContentFrameIdentifierForNode(NodeIdentifier nodeIdentifier, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>&&)>&& completion)
 {
     completion(TextExtraction::contentFrameIdentifierForNode(nodeIdentifier));
+}
+
+void WebFrame::findFirstConnectedNode(Vector<NodeIdentifier>&& candidates, CompletionHandler<void(std::optional<NodeIdentifier>)>&& completion)
+{
+    for (auto& candidate : candidates) {
+        RefPtr node = Node::fromIdentifier(candidate);
+        if (node && node->isConnected())
+            return completion(candidate);
+    }
+
+    completion({ });
 }
 
 void WebFrame::getSelectorPathsForNode(JSHandleInfo&& handle, CompletionHandler<void(Vector<HashSet<String>>&&)>&& completion)

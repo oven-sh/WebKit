@@ -38,11 +38,11 @@ class DynamicContentScalingImageBufferBackend : public WebCore::ImageBufferCGBac
     WTF_MAKE_TZONE_ALLOCATED(DynamicContentScalingImageBufferBackend);
     WTF_MAKE_NONCOPYABLE(DynamicContentScalingImageBufferBackend);
 public:
-    static size_t calculateMemoryCost(const Parameters&);
+    size_t memoryCost() const final { return WebCore::ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size(), pixelFormat())); }
 
-    static std::unique_ptr<DynamicContentScalingImageBufferBackend> create(const Parameters&, const WebCore::ImageBufferCreationContext&);
+    static std::unique_ptr<DynamicContentScalingImageBufferBackend> create(const WebCore::ImageBufferParameters&, const WebCore::ImageBufferCreationContext&);
 
-    DynamicContentScalingImageBufferBackend(const Parameters&, const WebCore::ImageBufferCreationContext&, WebCore::RenderingMode);
+    DynamicContentScalingImageBufferBackend(const WebCore::ImageBufferParameters&, const WebCore::ImageBufferCreationContext&, WebCore::RenderingMode);
     ~DynamicContentScalingImageBufferBackend();
 
     WebCore::GraphicsContext& NODELETE context() LIFETIME_BOUND final;

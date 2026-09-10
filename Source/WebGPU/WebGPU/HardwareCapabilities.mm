@@ -120,7 +120,6 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
     features.append(WGPUFeatureName_Float32Blendable);
 
     features.append(WGPUFeatureName_ClipDistances);
-    features.append(WGPUFeatureName_PrimitiveIndex);
     features.append(WGPUFeatureName_DepthClipControl);
     features.append(WGPUFeatureName_Depth32FloatStencil8);
 
@@ -145,6 +144,8 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
     features.append(WGPUFeatureName_TextureFormatsTier1);
     features.append(WGPUFeatureName_TextureFormatsTier2);
 #endif
+    if (device.supportsShaderBarycentricCoordinates)
+        features.append(WGPUFeatureName_PrimitiveIndex);
 
     // Subgroup (SIMD-group) built-in functions are guaranteed across GPU vendors by the
     // Metal 3 feature set, which provides the full reduction, prefix-scan, shuffle, ballot,

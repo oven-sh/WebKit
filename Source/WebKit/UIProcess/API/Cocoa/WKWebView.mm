@@ -67,6 +67,7 @@
 #import "SafeBrowsingUtilities.h"
 #import "SessionStateCoding.h"
 #import "TextExtractionAssertionScope.h"
+#import "TextExtractionCache.h"
 #import "TextExtractionFilter.h"
 #import "TextExtractionURLCache.h"
 #import "UIDelegate.h"
@@ -440,7 +441,7 @@ static uint32_t NODELETE convertSystemLayoutDirection(NSUserInterfaceLayoutDirec
     if (!PAL::isScreenTimeFrameworkAvailable())
         return;
 
-    if (!_page->preferences().screenTimeEnabled() || !_page->mainFrame() || !_page->mainFrame()->url().protocolIsInHTTPFamily())
+    if (!protect(_page->preferences())->screenTimeEnabled() || !_page->mainFrame() || !_page->mainFrame()->url().protocolIsInHTTPFamily())
         return;
 
     if (!_screenTimeConfigurationObserver) {
@@ -2644,8 +2645,6 @@ static _WKSelectionAttributes NODELETE selectionAttributes(const WebKit::EditorS
 }
 #endif
 
-#if (USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))) || ENABLE(WRITING_TOOLS)
-
 std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(const WebKit::WebFrameProxy& frame, _WKJSHandle *nodeHandle)
 {
     if (!nodeHandle)
@@ -2659,8 +2658,6 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
 
     return std::nullopt;
 }
-
-#endif // (USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))) || ENABLE(WRITING_TOOLS)
 
 #if ENABLE(WRITING_TOOLS)
 
@@ -5775,7 +5772,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 - (void)_clearBackForwardCache
 {
     THROW_IF_SUSPENDED;
-    _page->configuration().processPool().backForwardCache().removeEntriesForPage(*_page);
+    protect(_page->configuration().processPool().backForwardCache())->removeEntriesForPage(*_page);
 }
 
 + (BOOL)_handlesSafeBrowsing
@@ -7300,7 +7297,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
         return completionHandler(WebKit::createEmptyTextExtractionResult().get());
 
     UniqueRef assertionScope = _page->createTextExtractionAssertionScope();
-#if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
     if (protect(_page->preferences())->textExtractionFilterEnabled() && (configuration.filterOptions & _WKTextExtractionFilterRules)) {
         [self _ensureTextExtractionFilterRulesWithCompletionHandler:[weakSelf = WeakObjCPtr<WKWebView>(self), assertionScope = WTF::move(assertionScope), configuration = RetainPtr { configuration }, completionHandler = makeBlockPtr(completionHandler)]() mutable {
             RetainPtr strongSelf = weakSelf.get();
@@ -7310,7 +7306,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
         }];
         return;
     }
-#endif // USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
 
     [self _extractDebugTextWithConfigurationWithoutUpdatingFilterRules:configuration assertionScope:WTF::move(assertionScope) completionHandler:completionHandler];
 }
@@ -7319,7 +7314,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 {
     auto actionType = wkInteraction.action;
     RELEASE_LOG(TextExtraction, "<%@: %p> Performing %@", [self class], self, WebKit::nameForTextExtractionAction(actionType));
-#if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
     if (!self._isValid)
         return completionHandler(adoptNS([[_WKTextExtractionInteractionResult alloc] initWithErrorDescription:@"Web view is invalid" summary:nil interactedElementBounds:CGRectNull]).get());
 
@@ -7358,8 +7352,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
     }
 #endif // PLATFORM(MAC)
 
-    [self _performInteraction:WTF::move(interaction) inFrame:targetFrame actionType:actionType nodeIdentifier:nodeIdentifierString staleNodeNote:emptyString() shouldResolveStaleNodeIdentifier:YES completionHandler:completionHandler];
-#endif // USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
+    [self _performInteraction:WTF::move(interaction) inFrame:targetFrame actionType:actionType staleNodeResolution:WebKit::StaleNodeResolutionState { .requestedIdentifier = nodeIdentifierString } completionHandler:completionHandler];
 }
 
 - (void)_addWritingToolsPreservedNodes:(NSArray<_WKJSHandle *> *)nodes
@@ -7386,7 +7379,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
     if (filterUsingClassifier)
         WebKit::TextExtractionFilter::singleton().prewarm();
 
-#if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
     if (filterUsingRules) {
         [self _ensureTextExtractionFilterRulesWithCompletionHandler:[weakSelf = WeakObjCPtr<WKWebView>(self), string = adoptNS([string copy]), completionHandler = makeBlockPtr(completionHandler), options]() mutable {
             RetainPtr strongSelf = weakSelf.get();
@@ -7396,7 +7388,6 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
         }];
         return;
     }
-#endif // USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
 
     [self _filterExtractedStringWithoutUpdatingFilterRules:string options:options completionHandler:completionHandler];
 #else

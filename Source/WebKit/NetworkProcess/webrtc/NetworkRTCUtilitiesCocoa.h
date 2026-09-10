@@ -42,6 +42,7 @@ void setNWParametersApplicationIdentifiers(nw_parameters_t, const char* sourceAp
 void setNWParametersTrackerOptions(nw_parameters_t, bool shouldBypassRelay, bool isFirstParty, bool isKnownTracker);
 bool isKnownTracker(const WebCore::RegistrableDomain&);
 std::optional<uint32_t> trafficClassFromDSCP(webrtc::DiffServCodePoint, bool enableServiceClass);
+nw_ip_version_t ipVersionFromFamily(int family);
 
 } // namespace WebKit
 

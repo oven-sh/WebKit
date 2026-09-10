@@ -356,9 +356,7 @@ public:
             || a.usedZoom != b.usedZoom
             || a.textZoom != b.textZoom
             || a.deviceScaleFactor != b.deviceScaleFactor
-    #if ENABLE(TEXT_AUTOSIZING)
             || a.textSizeAdjust != b.textSizeAdjust
-    #endif
             || a.wordBreak != b.wordBreak
             || a.overflowWrap != b.overflowWrap
             || a.effectiveWrapInsideAvoid != b.effectiveWrapInsideAvoid
@@ -425,9 +423,6 @@ public:
                 if (a.nonInheritedData().boxData->verticalAlign != b.nonInheritedData().boxData->verticalAlign)
                     return true;
 
-                if (a.nonInheritedData().boxData->boxSizing != b.nonInheritedData().boxData->boxSizing)
-                    return true;
-
                 if (a.nonInheritedData().boxData->hasAutoUsedZIndex != b.nonInheritedData().boxData->hasAutoUsedZIndex)
                     return true;
             }
@@ -477,10 +472,8 @@ public:
             return true;
 
         if (&a.inheritedData() != &b.inheritedData()) {
-            if (a.inheritedData().lineHeight != b.inheritedData().lineHeight
-    #if ENABLE(TEXT_AUTOSIZING)
-                || a.inheritedData().specifiedLineHeight != b.inheritedData().specifiedLineHeight
-    #endif
+            if (a.inheritedData().textAutosizingAdjustedLineHeight != b.inheritedData().textAutosizingAdjustedLineHeight
+                || a.inheritedData().lineHeight != b.inheritedData().lineHeight
                 || a.inheritedData().borderHorizontalSpacing != b.inheritedData().borderHorizontalSpacing
                 || a.inheritedData().borderVerticalSpacing != b.inheritedData().borderVerticalSpacing)
                 return true;
@@ -493,6 +486,7 @@ public:
             || a.inheritedFlags().rtlOrdering != b.inheritedFlags().rtlOrdering
             || a.nonInheritedFlags().position != b.nonInheritedFlags().position
             || a.nonInheritedFlags().floating != b.nonInheritedFlags().floating
+            || a.nonInheritedFlags().boxSizing != b.nonInheritedFlags().boxSizing
             || a.nonInheritedFlags().originalDisplay != b.nonInheritedFlags().originalDisplay)
             return true;
 

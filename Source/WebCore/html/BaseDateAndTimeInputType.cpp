@@ -667,8 +667,8 @@ bool BaseDateAndTimeInputType::setupDateTimeChooserParameters(DateTimeChooserPar
     if (!document->settings().langAttributeAwareFormControlUIEnabled())
         parameters.locale = AtomString { defaultLanguage() };
     else {
-        AtomString computedLocale = element->effectiveLang();
-        parameters.locale = computedLocale.isEmpty() ? AtomString(defaultLanguage()) : computedLocale;
+        AtomString locale = element->effectiveLang();
+        parameters.locale = locale.isEmpty() ? AtomString { defaultLanguage() } : locale;
     }
 
     auto stepRange = createStepRange(AnyStepHandling::Reject);

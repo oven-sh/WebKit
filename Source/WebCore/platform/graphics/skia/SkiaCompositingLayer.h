@@ -275,6 +275,8 @@ private:
 #if ENABLE(DAMAGE_TRACKING)
     bool damagePropagationEnabled() const { return m_damagePropagationEnabled; }
     bool hasLayerDamage() const { return m_layerDamage && !m_layerDamage->isEmpty(); }
+    bool hasGroupPropertyDamage() const;
+    bool hasDamageInSubtree() const;
     void trackLayerRect(PaintContext&, const FloatRect& layerRectInFrame);
 #endif
 
@@ -283,6 +285,7 @@ private:
         std::optional<TransformationMatrix> futureTransform;
         std::optional<float> opacity;
         std::optional<Filter> filter;
+        std::optional<FilterOperations> filterOperations;
         bool isRunning { false };
     };
     std::optional<AnimationsState> syncAnimations(MonotonicTime);
@@ -292,6 +295,7 @@ private:
     float opacity() const;
     float opacityForAnimationsState(const AnimationsState*) const;
     const std::optional<Filter> filter() const;
+    IntOutsets unclippedFilterOutsets() const;
 
     struct DebugBorder {
         Color color;

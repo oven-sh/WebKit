@@ -95,5 +95,19 @@ String CSSContainerRule::containerQuery() const
     return builder.toString();
 }
 
+Vector<CSSContainerRule::Condition> CSSContainerRule::conditions() const
+{
+    return WTF::map(styleRuleContainer().containerQuery(), [](const auto& condition) {
+        StringBuilder nameBuilder, queryBuilder;
+        serializeIdentifier(nameBuilder, condition.name);
+        MQ::serialize(queryBuilder, condition.condition);
+
+        return Condition {
+            .name = nameBuilder.toString(),
+            .query = queryBuilder.toString()
+        };
+    });
+}
+
 } // namespace WebCore
 

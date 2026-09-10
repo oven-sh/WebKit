@@ -28,9 +28,18 @@
 typedef USVString CSSOMString;
 
 [
+    JSGenerateToJSObject
+]
+dictionary CSSContainerCondition {
+    required CSSOMString name;
+    required CSSOMString query;
+};
+
+[
     Exposed=Window
 ] interface CSSContainerRule : CSSConditionRule {
     readonly attribute CSSOMString containerName;
     readonly attribute CSSOMString containerQuery;
+    readonly attribute FrozenArray<CSSContainerCondition> conditions;
 };
 

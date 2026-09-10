@@ -86,15 +86,17 @@ TextMarkerData::TextMarkerData(AXObjectCache& cache, const CharacterOffset& char
 
     zeroBytes(*this);
 
-    auto visiblePosition = cache.visiblePositionFromCharacterOffset(characterOffsetParam);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     if (AXObjectCache::shouldCreateAXThreadCompatibleMarkers()) {
+        // Accessibility exposes the text of a user-select:none element, so a marker has to be able to address it.
+        auto visiblePosition = cache.visiblePositionFromCharacterOffset(characterOffsetParam, AllowUserSelectNone::Yes);
         if (std::optional data = cache.textMarkerDataForVisiblePosition(WTF::move(visiblePosition), origin))
             *this = *data;
         return;
     }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
+    auto visiblePosition = cache.visiblePositionFromCharacterOffset(characterOffsetParam);
     treeID = cache.treeID().toUInt64();
     auto optionalObjectID = nodeID(cache, characterOffsetParam.node.get());
     objectID = optionalObjectID ? optionalObjectID->toUInt64() : 0;
@@ -551,7 +553,7 @@ String listMarkerTextOnSameLine(const AXTextMarker& marker)
         if (RefPtr listMarker = findUnignoredDescendant(*listItemAncestor, /* includeSelf */ false, [] (const auto& descendant) {
             return descendant.role() == AccessibilityRole::ListMarker;
         })) {
-            auto lineID = listMarker->listMarkerLineID();
+            auto lineID = AXTextMarker { *listItemAncestor, 0 }.toTextRunMarker().lineID();
             if (lineID && lineID == marker.lineID())
                 return listMarker->listMarkerText();
         }
@@ -667,7 +669,7 @@ String AXTextMarkerRange::toString(IncludeListMarkerText includeListMarkerText, 
         // non-zero length means textual node, zero length means replaced node (AKA "attachments" in AX)
         if (it.text().length()) {
             // If this is in a list item, we need to add the text for the list marker
-            // because a RenderListMarker does not have a Node equivalent and thus does not appear
+            // because a RenderListOutsideMarker does not have a Node equivalent and thus does not appear
             // when iterating text.
             // Don't add list marker text for new line character.
             if (it.text().length() != 1 || !isASCIIWhitespace(it.text()[0]))
@@ -737,16 +739,18 @@ AXTextRunLineID AXTextMarker::lineID() const
     return runIndex != notFound ? runs->lineID(runIndex) : AXTextRunLineID();
 }
 
-int AXTextMarker::lineIndex() const
+int AXTextMarker::lineIndex(std::optional<AXID> rootID) const
 {
     if (!isValid())
         return -1;
     if (!isInTextRun())
-        return toTextRunMarker().lineIndex();
+        return toTextRunMarker().lineIndex(rootID);
 
     AXTextMarker startMarker;
     RefPtr object = isolatedObject();
-    if (object->isTextControl())
+    if (rootID)
+        startMarker = { treeID(), *rootID, 0 };
+    else if (object->isTextControl())
         startMarker = { *object, 0 };
     else if (RefPtr editableAncestor = object->editableAncestor())
         startMarker = { editableAncestor->treeID(), editableAncestor->objectID(), 0 };
@@ -1297,7 +1301,10 @@ static FloatRect viewportRelativeFrameFromRuns(Ref<AXIsolatedObject> object, uns
 {
     const auto* runs = object->textRuns();
     auto relativeFrame = object->relativeFrame();
-    if (!start && end == runs->totalLength()) {
+    // A representative's relativeFrame() is the union of all its members (the whole stitched line), so
+    // it can't be returned as the frame of this object's own run.
+    bool isStitchRepresentative = object->stitchGroupIfRepresentative().has_value();
+    if (!isStitchRepresentative && !start && end == runs->totalLength()) {
         // If the caller wants the entirety of this object's text, we don't need to to do any estimating,
         // and can just return the relative frame.
         return relativeFrame;
@@ -1343,10 +1350,13 @@ FloatRect AXTextMarkerRange::viewportRelativeFrame() const
     }
 
     // The range spans multiple objects, so we'll need to traverse objects with text runs
-    // from start to end and accumulate the final bounds.
+    // from start to end and accumulate the final bounds. The start object contributes only from
+    // start.offset() (handled here); the intermediate objects contribute in full; the end object
+    // contributes up to end.offset() (handled after the loop). Begin the loop at the object after
+    // start so we do not re-add the start object from offset 0 and lose start.offset().
     FloatRect result = viewportRelativeFrameFromRuns(*start.isolatedObject(), start.offset());
 
-    RefPtr current = start.isolatedObject();
+    RefPtr current = findObjectWithRuns(*start.isolatedObject(), AXDirection::Next, /* stopAtID */ *end.objectID());
     while (current && current->objectID() != *end.objectID()) {
         result.unite(viewportRelativeFrameFromRuns(*current, /* offset */ 0));
         RefPtr next = findObjectWithRuns(*current, AXDirection::Next, /* stopAtID */ *end.objectID());
@@ -1571,6 +1581,18 @@ AXTextMarker AXTextMarker::findLine(AXDirection direction, AXTextUnitBoundary bo
             if ((currentObject->role() == AccessibilityRole::LineBreak && includeTrailingLineBreak == IncludeTrailingLineBreak::No)
                 || offsetOfCollapsedTrailingNewline(*currentObject, nextRuns) == std::optional<unsigned> { 0 })
                 break;
+
+            if (direction == AXDirection::Next && boundary == AXTextUnitBoundary::End
+                && currentObject->role() == AccessibilityRole::LineBreak && nextRuns
+                && nextRuns->containingBlock != currentRuns->containingBlock) {
+                // A <br> terminates the line the content before it sits on, so it belongs to the line
+                // being measured even though its lineID (containing block + line index) differs:
+                //   <div>First line<br><button>butto|n</button><br>Third line</div>
+                // The button's text lays out in its own block, the <br> in the <div>. Line indices
+                // within one block still rule, so a <br> starting a blank line isn't pulled in.
+                return { *currentObject, nextRuns->totalLength(), origin };
+            }
+
             currentRuns = nextRuns;
             // Reset the runIndex to 0 or the maximum, since we should start iterating from the very beginning/end of the next object's runs, depending on the direction.
             runIndex = direction == AXDirection::Next ? 0 : currentRuns->size() - 1;

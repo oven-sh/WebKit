@@ -64,7 +64,7 @@ FileTimes fileTimes(const String& path)
 {
 #if HAVE(STAT_BIRTHTIME)
     struct stat fileInfo;
-    if (stat(FileSystem::fileSystemRepresentation(path).data(), &fileInfo))
+    if (FileSystem::statFile(FileSystem::fileSystemRepresentation(path).spanIncludingNullTerminator(), fileInfo))
         return { };
     return { WallTime::fromRawSeconds(fileInfo.st_birthtime), WallTime::fromRawSeconds(fileInfo.st_mtime) };
 #elif USE(SOUP)

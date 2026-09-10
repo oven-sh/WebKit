@@ -35,7 +35,7 @@
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLineBreak.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderSVGInlineText.h"
 #include "RenderTextInlines.h"
 #include "TrailingObjects.h"
@@ -375,7 +375,7 @@ inline bool BreakingContext::handleText()
         m_renderTextInfo.text = &renderer;
         m_renderTextInfo.font = &font;
         m_renderTextInfo.layout = font.createLayout(renderer, m_width.currentWidth(), m_collapseWhiteSpace);
-        m_renderTextInfo.lineBreakIteratorFactory.resetStringAndReleaseIterator(renderer.text(), Style::toPlatform(style->computedLocale()), iteratorMode, contentAnalysis);
+        m_renderTextInfo.lineBreakIteratorFactory.resetStringAndReleaseIterator(renderer.text(), Style::toPlatform(style->usedLocale()), iteratorMode, contentAnalysis);
     } else if (m_renderTextInfo.layout && m_renderTextInfo.font != &font) {
         m_renderTextInfo.font = &font;
         m_renderTextInfo.layout = font.createLayout(renderer, m_width.currentWidth(), m_collapseWhiteSpace);
@@ -673,8 +673,7 @@ inline void BreakingContext::commitAndUpdateLineBreakIfNeeded()
     if (!m_current.renderer()->isFloatingOrOutOfFlowPositioned()) {
         m_lastObject = m_current.renderer();
         if (m_lastObject->isBlockLevelReplacedOrAtomicInline() && m_autoWrap && (!m_lastObject->isImage() || m_allowImagesToBreak)) {
-            auto* renderListMarker = dynamicDowncast<RenderListMarker>(*m_lastObject);
-            if (!renderListMarker || renderListMarker->isInside()) {
+            if (!is<RenderListOutsideMarker>(*m_lastObject)) {
                 if (m_nextObject)
                     commitLineBreakAtCurrentWidth(*m_nextObject);
                 else

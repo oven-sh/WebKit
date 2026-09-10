@@ -26,8 +26,8 @@
 
 #pragma once
 
+#include "CSSColorInterpolationMethod.h"
 #include "Color.h"
-#include "ColorInterpolationMethod.h"
 #include "StylePrimitiveNumericTypes.h"
 #include <optional>
 

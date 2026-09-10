@@ -379,9 +379,9 @@ RunLoop::TimerBase::~TimerBase()
     // schedule work onto another run loop.)
     if (m_scheduledTask->isActive())
 #if USE(BUN_EVENT_LOOP)
-        releaseAssertIsCurrent(m_runLoop->m_parent);
+        assertIsCurrent(m_runLoop->m_parent);
 #else
-        releaseAssertIsCurrent(m_runLoop);
+        assertIsCurrent(m_runLoop);
 #endif
     Locker locker { m_runLoop->m_loopLock };
     stopWithLock();
@@ -415,9 +415,9 @@ void RunLoop::TimerBase::stop()
     Locker locker { m_runLoop->m_loopLock };
     if (m_scheduledTask->isActive())
 #if USE(BUN_EVENT_LOOP)
-        releaseAssertIsCurrent(m_runLoop->m_parent);
+        assertIsCurrent(m_runLoop->m_parent);
 #else
-        releaseAssertIsCurrent(m_runLoop);
+        assertIsCurrent(m_runLoop);
 #endif
     stopWithLock();
 }

@@ -981,25 +981,29 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         WI.Script.resetUniqueDisplayNameNumbers(target);
 
-        this._internalWebKitScripts = [];
-        this._targetDebuggerDataMap.clear();
+        // Only clear state belonging to the target that was cleared. The Debugger domain's
+        // targetTypes includes "frame", so a subframe appearing emits this for its own target.
+        this._internalWebKitScripts = this._internalWebKitScripts.filter((script) => script.target !== target);
+        this._targetDebuggerDataMap.delete(target);
 
         this._ignoreBreakpointDisplayLocationDidChangeEvent = true;
 
-        // Mark all the breakpoints as unresolved. They will be reported as resolved when
+        // Mark this target's breakpoints as unresolved. They will be reported as resolved when
         // breakpointResolved is called as the page loads.
         for (let breakpoint of this._breakpoints) {
-            breakpoint.clearResolvedLocations();
+            if (breakpoint.sourceCodeLocation.sourceCode?.target !== target)
+                continue;
 
-            if (breakpoint.sourceCodeLocation.sourceCode)
-                breakpoint.sourceCodeLocation.sourceCode = null;
+            breakpoint.clearResolvedLocations();
+            breakpoint.sourceCodeLocation.sourceCode = null;
         }
 
         this._ignoreBreakpointDisplayLocationDidChangeEvent = false;
 
         this.dispatchEventToListeners(WI.DebuggerManager.Event.ScriptsCleared);
 
-        if (wasPaused)
+        // `paused` spans every target, so only resume if no other target is still paused.
+        if (wasPaused && !this.paused)
             this.dispatchEventToListeners(WI.DebuggerManager.Event.Resumed);
     }
 

@@ -56,6 +56,45 @@ end
 
 FileUtils.mkdir_p(options[:outputDirectory])
 
+# Keep in sync with GeneratePreferences.rb, which validates this shape.
+FRONTENDS = %w{ WebKitLegacy WebKit WebCore }
+
+# "defaultValue" is the value shared by every frontend the preference is in,
+# either directly or as a map of build conditions ending in "default". A frontend
+# is listed under it only where its value differs.
+def defaultValueFor(name, options, frontend)
+  specification = options["defaultValue"]
+  if specification.nil?
+    puts "ERROR: #{name}: \"defaultValue\" is required and cannot be empty."
+    exit(-1)
+  end
+  return { "default" => specification } if !specification.is_a?(Hash)
+
+  value = specification.fetch(frontend, specification.reject { |key, _| FRONTENDS.include?(key) })
+  value.is_a?(Hash) ? value : { "default" => value }
+end
+
+SETTINGS_KEYS = %w{
+  comment condition defaultValue disableInLockdownMode inspectorOverride refinedType
+  status type webcoreExcludeFromInternalSettings webcoreGetter webcoreImplementation
+  webcoreName webcoreOnChange
+}
+
+def validate(path, parsed)
+  failed = false
+  parsed.each do |name, options|
+    (options.keys - SETTINGS_KEYS).each do |key|
+      puts "ERROR: #{path}: #{name}: \"#{key}\" is not a known key."
+      failed = true
+    end
+    if options["defaultValue"].is_a?(Hash) && !(options["defaultValue"].keys & FRONTENDS).empty?
+      puts "ERROR: #{path}: #{name}: \"defaultValue\" must not name frontends, these settings are WebCore only."
+      failed = true
+    end
+  end
+  exit(-1) if failed
+end
+
 def load(path)
   parsed = begin
     YAML.load_file(path)
@@ -72,6 +111,8 @@ def load(path)
     end
     previousName = name
   end
+
+  validate(path, parsed) unless File.basename(path) == "UnifiedWebPreferences.yaml"
 
   parsed
 end
@@ -96,7 +137,7 @@ class Setting
     @options = options
     @type = options["refinedType"] || options["type"]
     @status = options["status"]
-    @defaultValues = options["defaultValue"]["WebCore"]
+    @defaultValues = defaultValueFor(name, options, "WebCore")
     @excludeFromInternalSettings = options["webcoreExcludeFromInternalSettings"] || false
     @disableInLockdownMode = options["disableInLockdownMode"] || false
     @condition = options["condition"]
@@ -249,13 +290,21 @@ class Settings
     settingsByName = {}
     globalSettingsByName = {}
     settingsFiles.each do |file|
-      parsedSettings = load(file).each do |name, options|
-        # An empty "webcoreBinding" entry indicates this preference uses the default, which is bound to Settings.
-        if !options["webcoreBinding"]
-          settingsByName[name] = Setting.new(name, options)
-        elsif options["webcoreBinding"] == "DeprecatedGlobalSettings"
-          globalSettingsByName[name] = Setting.new(name, options)
+      load(file).each do |name, options|
+        # Preferences excluded from WebCore have no Settings member at all, and the
+        # deprecated globals are declared by hand in DeprecatedGlobalSettings.h.
+        if options["webcoreDeprecatedGlobalSettings"]
+          target = globalSettingsByName
+        elsif !(options["excludeFrom"] || []).include?("WebCore")
+          target = settingsByName
+        else
+          next
         end
+        if target.key?(name)
+          puts "ERROR: #{file}: #{name} is already defined, and the later definition would silently win."
+          exit(-1)
+        end
+        target[name] = Setting.new(name, options)
       end
     end
 

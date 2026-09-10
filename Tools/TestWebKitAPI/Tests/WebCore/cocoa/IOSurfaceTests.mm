@@ -28,6 +28,7 @@
 #import "Helpers/Test.h"
 #import <WebCore/IOSurface.h>
 #import <WebCore/IOSurfacePool.h>
+#import <WebCore/ImageBufferBackend.h>
 #import <WebCore/RenderingMode.h>
 #import <wtf/MachSendRight.h>
 #import <wtf/Threading.h>
@@ -59,6 +60,18 @@ TEST(IOSurfaceTest, CreatePlatformContext)
     EXPECT_FALSE(s1->isInUse());
     c2 = nullptr;
     EXPECT_FALSE(s1->isInUse());
+}
+
+TEST(IOSurfaceTest, Volatility)
+{
+    auto s1 = WebCore::IOSurface::create(nullptr, { 5, 5 }, WebCore::ColorSpace::SRGB());
+    EXPECT_FALSE(s1->isVolatile());
+    EXPECT_EQ(WebCore::SetNonVolatileResult::Valid, s1->setVolatile(false));
+    EXPECT_FALSE(s1->isVolatile());
+    s1->setVolatile(true);
+    EXPECT_TRUE(s1->isVolatile());
+    EXPECT_EQ(WebCore::SetNonVolatileResult::Valid, s1->setVolatile(false));
+    EXPECT_FALSE(s1->isVolatile());
 }
 
 TEST(IOSurfaceTest, createFromUntrustedUncompressedWebKitSendRightSRGB)

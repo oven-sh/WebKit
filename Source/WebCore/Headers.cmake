@@ -1131,7 +1131,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/ImmutableStyleProperties.h
     css/IsImportant.h
     css/MediaList.h
-    css/MediaQueryParserContext.h
     css/MutableStyleProperties.h
     css/PropertySetCSSDescriptors.h
     css/ShorthandSerializer.h
@@ -1197,6 +1196,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     css/values/color/CSSColor.h
     css/values/color/CSSColorDescriptors.h
+    css/values/color/CSSColorInterpolationMethod.h
     css/values/color/CSSColorType.h
     css/values/color/CSSHexColor.h
     css/values/color/CSSKeywordColor.h
@@ -1254,6 +1254,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/values/shapes/CSSRectFunction.h
     css/values/shapes/CSSShapeFunction.h
     css/values/shapes/CSSXywhFunction.h
+
+    css/values/sizing/CSSCalcSizeFunction.h
 
     css/values/text-decoration/CSSTextShadow.h
 
@@ -2087,7 +2089,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/PrewarmInformation.h
     page/PrintContext.h
     page/ProcessWarming.h
-    page/QuirkNames.h
+    page/QuirkBehaviors.h
     page/QuirkTable.h
     page/Quirks.h
     page/QuirksData.h
@@ -2607,7 +2609,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageBuffer.h
     platform/graphics/ImageBufferAllocator.h
     platform/graphics/ImageBufferBackend.h
-    platform/graphics/ImageBufferBackendParameters.h
+    platform/graphics/ImageBufferParameters.h
     platform/graphics/ImageBufferDisplayListBackend.h
     platform/graphics/ImageBufferFormat.h
     platform/graphics/ImageBufferResourceLimits.h
@@ -2955,8 +2957,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/BlobResourceHandleBase.h
     platform/network/CacheValidation.h
     platform/network/CertificateSummary.h
+    platform/network/CookieChangeObserver.h
     platform/network/CookieRequestHeaderFieldProxy.h
-    platform/network/CookieStorage.h
+    platform/network/CookieStorageSession.h
     platform/network/Credential.h
     platform/network/CredentialBase.h
     platform/network/CredentialStorage.h
@@ -2973,7 +2976,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/NetworkLoadInformation.h
     platform/network/NetworkLoadMetrics.h
     platform/network/NetworkStateNotifier.h
-    platform/network/NetworkStorageSession.h
     platform/network/NetworkingContext.h
     platform/network/OrganizationStorageAccessPromptQuirk.h
     platform/network/ParsedContentRange.h
@@ -2994,9 +2996,12 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/ShouldPartitionCookie.h
     platform/network/ShouldRelaxThirdPartyCookieBlocking.h
     platform/network/SocketStreamError.h
+    platform/network/StorageAccessQuirks.h
     platform/network/StorageSessionProvider.h
     platform/network/StoredCredentialsPolicy.h
+    platform/network/ThirdPartyCookieBlockingMode.h
     platform/network/TimingAllowOrigin.h
+    platform/network/TrackingPreventionTypes.h
 
     platform/sql/SQLValue.h
     platform/sql/SQLiteDatabase.h
@@ -3343,6 +3348,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     style/values/flexbox/StyleFlexBasis.h
     style/values/flexbox/StyleFlexGrow.h
+    style/values/flexbox/StyleFlexLineCount.h
     style/values/flexbox/StyleFlexShrink.h
     style/values/flexbox/StyleFlexWrap.h
     style/values/flexbox/StyleWebKitBoxFlex.h
@@ -3471,6 +3477,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/primitives/StylePrimitiveNumericTypes+Rounding.h
     style/values/primitives/StylePrimitiveNumericTypes.h
     style/values/primitives/StyleRatio.h
+    style/values/primitives/StyleSizeOrKeyword.h
     style/values/primitives/StyleSnapLengthAsBorderWidth.h
     style/values/primitives/StyleString.h
     style/values/primitives/StyleURL.h

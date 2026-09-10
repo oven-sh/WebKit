@@ -958,6 +958,7 @@ css/CSSBorderImageSliceValue.cpp
 css/CSSBorderImageSourceValue.cpp
 css/CSSBorderImageWidthValue.cpp
 css/CSSBoxShadowPropertyValue.cpp
+css/CSSCalcSizeValue.cpp
 css/CSSCanvasValue.cpp
 css/CSSClipValue.cpp
 css/CSSColorImageValue.cpp
@@ -988,6 +989,7 @@ css/CSSFontFaceSrcValue.cpp
 css/CSSFontFamilyNameValue.cpp
 css/CSSFontFeatureValue.cpp
 css/CSSFontFeatureValuesRule.cpp
+css/CSSFontPaletteValue.cpp
 css/CSSFontPaletteValuesRule.cpp
 css/CSSFontSelector.cpp
 css/CSSFontStyleRangeValue.cpp
@@ -1031,6 +1033,7 @@ css/CSSPageRule.cpp
 css/CSSPaintImageValue.cpp
 css/CSSParamValue.cpp
 css/CSSPathValue.cpp
+css/CSSPinnedAnchorNameValue.cpp
 css/CSSShorthandSubstitutionValue.cpp
 css/CSSPositionTryDescriptors.cpp
 css/CSSPositionTryRule.cpp
@@ -1088,7 +1091,6 @@ css/MediaList.cpp
 css/MediaQueryList.cpp
 css/MediaQueryListEvent.cpp
 css/MediaQueryMatcher.cpp @cost:3
-css/MediaQueryParserContext.cpp
 css/MutableStyleProperties.cpp
 css/PropertySetCSSDescriptors.cpp
 css/SelectorChecker.cpp @cost:6
@@ -1137,6 +1139,7 @@ css/parser/CSSPropertyParserConsumer+Anchor.cpp
 css/parser/CSSPropertyParserConsumer+Animations.cpp
 css/parser/CSSPropertyParserConsumer+Background.cpp
 css/parser/CSSPropertyParserConsumer+Box.cpp
+css/parser/CSSPropertyParserConsumer+CalcSize.cpp
 css/parser/CSSPropertyParserConsumer+Color.cpp @cost:7
 css/parser/CSSPropertyParserConsumer+ColorAdjust.cpp
 css/parser/CSSPropertyParserConsumer+ColorInterpolationMethod.cpp
@@ -1251,6 +1254,7 @@ css/values/backgrounds/CSSBorderImage.cpp
 css/values/borders/CSSBorderRadius.cpp
 css/values/color-adjust/CSSColorScheme.cpp
 css/values/color/CSSColor.cpp
+css/values/color/CSSColorInterpolationMethod.cpp
 css/values/color/CSSColorLayers.cpp
 css/values/color/CSSColorLayersResolver.cpp
 css/values/color/CSSColorMix.cpp
@@ -1268,6 +1272,8 @@ css/values/color/CSSResolvedColor.cpp
 css/values/content/CSSContent.cpp
 css/values/content/CSSQuotes.cpp
 css/values/fonts/CSSFontFamilyName.cpp
+css/values/fonts/CSSFontPalette.cpp
+css/values/fonts/CSSFontPaletteMix.cpp
 css/values/fonts/CSSFontStyleRange.cpp
 css/values/grid/CSSGridAutoFlow.cpp
 css/values/grid/CSSGridLine.cpp
@@ -1303,6 +1309,7 @@ css/values/primitives/CSSSymbol.cpp
 css/values/primitives/CSSURL.cpp
 css/values/primitives/CSSURLModifiers.cpp
 css/values/primitives/CSSUnevaluatedCalc.cpp
+css/values/sizing/CSSCalcSizeFunction.cpp
 css/values/shapes/CSSCircleFunction.cpp
 css/values/shapes/CSSEllipseFunction.cpp
 css/values/shapes/CSSInsetFunction.cpp
@@ -2695,6 +2702,8 @@ platform/graphics/FontFamilySpecificationNull.cpp
 platform/graphics/FontFeatureValues.cpp
 platform/graphics/FontGenericFamilies.cpp
 platform/graphics/FontPlatformData.cpp
+platform/graphics/FontPalette.cpp
+platform/graphics/FontPaletteMix.cpp
 platform/graphics/FontRanges.cpp
 platform/graphics/FontRenderOptions.cpp
 platform/graphics/FontSelectionAlgorithm.cpp
@@ -2943,6 +2952,7 @@ platform/network/BlobResourceHandle.cpp
 platform/network/BlobResourceHandleBase.cpp
 platform/network/CacheValidation.cpp
 platform/network/Cookie.cpp
+platform/network/CookieStorageSession.cpp
 platform/network/CredentialBase.cpp
 platform/network/CredentialStorage.cpp
 platform/network/DNS.cpp
@@ -2956,7 +2966,6 @@ platform/network/HTTPParsers.cpp
 platform/network/MIMEHeader.cpp
 platform/network/NetworkLoadMetrics.cpp
 platform/network/NetworkStateNotifier.cpp
-platform/network/NetworkStorageSession.cpp
 platform/network/ParsedContentRange.cpp
 platform/network/ParsedContentType.cpp
 platform/network/PendingStreamState.cpp
@@ -2969,6 +2978,7 @@ platform/network/ResourceHandleClient.cpp
 platform/network/ResourceRequestBase.cpp
 platform/network/ResourceResponseBase.cpp
 platform/network/SameSiteInfo.cpp
+platform/network/StorageAccessQuirks.cpp
 platform/network/SynchronousLoaderClient.cpp
 platform/network/TimingAllowOrigin.cpp
 platform/sql/SQLiteAuthorizer.cpp
@@ -3094,7 +3104,7 @@ rendering/RenderLineBoxList.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderLineBreak.cpp @header:RenderStyleGetters @cost:6
 rendering/RenderListBox.cpp @header:RenderStyleGetters @cost:8
 rendering/RenderListItem.cpp @header:RenderStyleGetters @cost:7
-rendering/RenderListMarker.cpp @header:RenderStyleGetters @cost:8
+rendering/RenderListOutsideMarker.cpp @header:RenderStyleGetters @cost:8
 rendering/RenderMarquee.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderMedia.cpp @header:RenderStyleGetters @cost:6
 rendering/RenderMenuList.cpp @header:RenderStyleGetters @cost:8
@@ -3139,6 +3149,7 @@ rendering/RenderWidget.cpp @header:RenderStyleGetters
 rendering/SubtreeScrollbarChangesState.cpp
 rendering/StyledMarkedText.cpp @header:RenderStyleGetters
 rendering/TableLayout.cpp @header:RenderStyleGetters
+rendering/TextAutoSizing.cpp @header:RenderStyleGetters
 rendering/TextBoxPainter.cpp @header:RenderStyleGetters
 rendering/TextBoxTrimmer.cpp @header:RenderStyleGetters
 rendering/TextDecorationPainter.cpp @header:RenderStyleGetters
@@ -3384,6 +3395,7 @@ style/values/align/StyleAlignSelf.cpp @header:RenderStyleGetters @cost:5
 style/values/align/StyleJustifyContent.cpp
 style/values/align/StyleJustifyItems.cpp
 style/values/align/StyleJustifySelf.cpp @header:RenderStyleGetters @cost:5
+style/values/anchor-position/StylePinnedAnchorName.cpp
 style/values/anchor-position/StylePositionAnchor.cpp
 style/values/anchor-position/StylePositionAreaAxis.cpp
 style/values/anchor-position/StylePositionAreaSelf.cpp
@@ -3463,6 +3475,7 @@ style/values/fonts/StyleFontFamilyName.cpp
 style/values/fonts/StyleFontFeatureSettings.cpp
 style/values/fonts/StyleFontMetricsOverride.cpp
 style/values/fonts/StyleFontPalette.cpp
+style/values/fonts/StyleFontPaletteMix.cpp
 style/values/fonts/StyleFontSizeAdjust.cpp @header:RenderStyleGetters @cost:5
 style/values/fonts/StyleFontStyle.cpp
 style/values/fonts/StyleFontVariantAlternates.cpp

@@ -100,8 +100,8 @@ size_t FilterImage::memoryCost() const
 {
     CheckedSize memoryCost;
 
-    if (m_imageBuffer)
-        memoryCost += m_imageBuffer->memoryCost();
+    if (RefPtr imageBuffer = m_imageBuffer)
+        memoryCost += imageBuffer->memoryCost();
 
     if (m_unpremultipliedPixelBuffer)
         memoryCost += m_unpremultipliedPixelBuffer->bytes().size();

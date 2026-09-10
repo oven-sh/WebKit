@@ -41,6 +41,7 @@ Helpers/cocoa/ModelLoadingMessageHandler.mm @nonARC
 Helpers/cocoa/NSItemProviderAdditions.mm @nonARC
 Helpers/cocoa/PlatformUtilitiesCocoa.mm @nonARC
 Helpers/cocoa/SafeBrowsingTestUtilities.mm @nonARC
+Helpers/cocoa/ScreenTimeExtras.mm @nonARC
 Helpers/cocoa/TestCocoa.mm @nonARC
 Helpers/cocoa/TestDownloadDelegate.mm @nonARC
 Helpers/cocoa/TestInspectorURLSchemeHandler.mm @nonARC
@@ -314,7 +315,6 @@ Tests/WebKit/WKWebView/TestAwakener.mm @nonARC
 Tests/WebKit/WKWebView/SOAuthorizationTests.mm @nonARC
 Tests/WebKit/WKWebView/TestURLSchemeHandler.mm @nonARC
 Tests/WebKit/WKWebView/TextExtractionTests.mm @nonARC
-Tests/WebKit/WKWebView/TextFragments.mm @nonARC
 Tests/WebKit/WKWebView/TextManipulation.mm @nonARC
 Tests/WebKit/WKWebView/TextSize.mm @nonARC
 Tests/WebKit/WKWebView/TextWidth.mm @nonARC

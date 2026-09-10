@@ -49,7 +49,7 @@ public:
     void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) override;
 
 protected:
-    ImageBufferCairoSurfaceBackend(const Parameters&, RefPtr<cairo_surface_t>&&);
+    ImageBufferCairoSurfaceBackend(const ImageBufferParameters&, RefPtr<cairo_surface_t>&&);
 
     RefPtr<NativeImage> cairoSurfaceCoerceToImage();
     unsigned bytesPerRow() const override;

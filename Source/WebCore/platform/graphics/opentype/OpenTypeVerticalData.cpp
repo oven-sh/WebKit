@@ -109,7 +109,7 @@ struct VORGTable {
         OpenType::Int16 vertOriginY;
     } vertOriginYMetrics[1];
 
-    size_t requiredSize() const { return sizeof(*this) + sizeof(VertOriginYMetrics) * (numVertOriginYMetrics - 1); }
+    size_t requiredSize() const { return offsetof(VORGTable, vertOriginYMetrics) + sizeof(VertOriginYMetrics) * static_cast<size_t>(numVertOriginYMetrics); }
 };
 
 struct SubstitutionSubTable : TableBase {

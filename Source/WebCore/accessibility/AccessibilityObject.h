@@ -445,7 +445,6 @@ public:
     bool isReplacedElementForTextEmission() const final;
     bool isInUserAgentShadowTree() const final;
     bool isInsideNativeTextControl() const final;
-    AXTextRunLineID listMarkerLineID() const override { return { }; }
     String listMarkerText() const override { return { }; }
     FontOrientation fontOrientation() const final;
 #endif
@@ -852,6 +851,7 @@ public:
 
     void clearIsIgnoredFromParentData() { m_isIgnoredFromParentData = { }; }
     void setIsIgnoredFromParentDataForChild(AccessibilityObject&);
+    AccessibilityIsIgnoredFromParentData computeIsIgnoredFromParentData();
 
     AccessibilityChildrenVector documentLinks() override { return AccessibilityChildrenVector(); }
 
@@ -974,7 +974,7 @@ protected:
     void markPlatformWrapperIgnoredStateDirty() const { };
 #endif
 
-    void setIsIgnoredFromParentData(AccessibilityIsIgnoredFromParentData& data) { m_isIgnoredFromParentData = data; }
+    void setIsIgnoredFromParentData(const AccessibilityIsIgnoredFromParentData& data) { m_isIgnoredFromParentData = data; }
     bool ignoredFromPresentationalRole() const;
 
     bool isAccessibilityObject() const override { return true; }

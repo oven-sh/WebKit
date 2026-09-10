@@ -167,25 +167,6 @@ RefPtr<Sampler> DeviceImpl::createSampler(const SamplerDescriptor& descriptor)
     return SamplerImpl::create(adoptWebGPU(wgpuDeviceCreateSampler(m_backing.get(), &backingDescriptor)), convertToBackingContext);
 }
 
-static WGPUColorSpace NODELETE convertToWGPUColorSpace(const PredefinedColorSpace& colorSpace)
-{
-    switch (colorSpace) {
-    case PredefinedColorSpace::SRGB:
-        return WGPUColorSpace::SRGB;
-    case PredefinedColorSpace::SRGBLinear:
-        return WGPUColorSpace::SRGBLinear;
-#if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
-    case PredefinedColorSpace::DisplayP3:
-        return WGPUColorSpace::DisplayP3;
-    case PredefinedColorSpace::DisplayP3Linear:
-        return WGPUColorSpace::DisplayP3Linear;
-#endif
-    }
-
-    ASSERT_NOT_REACHED();
-    return WGPUColorSpace::SRGB;
-}
-
 void DeviceImpl::updateExternalTexture(const WebCore::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&)
 {
     RELEASE_ASSERT_NOT_REACHED();
@@ -199,7 +180,7 @@ RefPtr<ExternalTexture> DeviceImpl::importExternalTexture(const ExternalTextureD
     WGPUExternalTextureDescriptor backingDescriptor {
         .label = label.data(),
         .pixelBuffer = pixelBuffer ? pixelBuffer->get() : nullptr,
-        .colorSpace = convertToWGPUColorSpace(descriptor.colorSpace),
+        .colorSpace = m_convertToBackingContext->convertToBacking(descriptor.colorSpace),
     };
     return ExternalTextureImpl::create(adoptWebGPU(wgpuDeviceImportExternalTexture(m_backing.get(), &backingDescriptor)), descriptor, m_convertToBackingContext);
 }

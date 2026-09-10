@@ -399,7 +399,7 @@ String PrintContext::pageProperty(LocalFrame* frame, const String& propertyName,
         return autoAtom();
     }
     if (propertyName == "line-height"_s) {
-        return WTF::switchOn(style->lineHeight(),
+        return WTF::switchOn(style->textAutosizingAdjustedLineHeight(),
             [&](const CSS::Keyword::Normal&) -> String {
                 return "0"_s;
             },

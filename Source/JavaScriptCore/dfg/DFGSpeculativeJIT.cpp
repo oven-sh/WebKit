@@ -2769,6 +2769,27 @@ GeneratedOperandType SpeculativeJIT::checkGeneratedTypeForToInt32(Node* node)
     }
 }
 
+void SpeculativeJIT::emitDoubleToInt32(FPRReg fpr, GPRReg gpr)
+{
+#if CPU(ARM64)
+    if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        convertDoubleToInt32UsingJavaScriptSemantics(fpr, gpr);
+        return;
+    }
+#endif
+#if CPU(X86_64)
+    if (hasSensibleDoubleToInt()) {
+        Jump notTruncatedToInteger = branchTruncateDoubleToInt32ViaInt64(fpr, gpr);
+        addSlowPathGenerator(slowPathCall(notTruncatedToInteger, this,
+            operationToInt32SensibleSlow, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, gpr, fpr));
+        return;
+    }
+#endif
+    Jump notTruncatedToInteger = branchTruncateDoubleToInt32(fpr, gpr, BranchIfTruncateFailed);
+    addSlowPathGenerator(slowPathCall(notTruncatedToInteger, this,
+        operationToInt32, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, gpr, fpr));
+}
+
 void SpeculativeJIT::compileValueToInt32(Node* node)
 {
     switch (node->child1().useKind()) {
@@ -2787,16 +2808,7 @@ void SpeculativeJIT::compileValueToInt32(Node* node)
         SpeculateDoubleOperand op1(this, node->child1());
         FPRReg fpr = op1.fpr();
         GPRReg gpr = result.gpr();
-#if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
-            convertDoubleToInt32UsingJavaScriptSemantics(fpr, gpr);
-        else
-#endif
-        {
-            Jump notTruncatedToInteger = branchTruncateDoubleToInt32(fpr, gpr, BranchIfTruncateFailed);
-            addSlowPathGenerator(slowPathCall(notTruncatedToInteger, this,
-                hasSensibleDoubleToInt() ? operationToInt32SensibleSlow : operationToInt32, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, gpr, fpr));
-        }
+        emitDoubleToInt32(fpr, gpr);
         strictInt32Result(gpr, node);
         return;
     }
@@ -2846,17 +2858,7 @@ void SpeculativeJIT::compileValueToInt32(Node* node)
 
             // First, if we get here we have a double encoded as a JSValue
             unboxDouble(gpr, resultGpr, fpr);
-#if CPU(ARM64)
-            if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
-                convertDoubleToInt32UsingJavaScriptSemantics(fpr, resultGpr);
-            else
-#endif
-            {
-                silentSpillAllRegisters(resultGpr);
-                callOperationWithoutExceptionCheck(operationToInt32, resultGpr, fpr);
-                silentFillAllRegisters();
-            }
-
+            emitDoubleToInt32(fpr, resultGpr);
             converted.append(jump());
 
             isInteger.link(this);
@@ -9823,50 +9825,7 @@ void SpeculativeJIT::compileArrayIndexOfOrArrayIncludes(Node* node)
         }
     };
 
-    switch (searchElementEdge.useKind()) {
-    case Int32Use: {
-        auto emitLoop = [&] (auto emitCompare) {
-#if ENABLE(DFG_REGISTER_ALLOCATION_VALIDATION)
-            clearRegisterAllocationOffsets();
-#endif
-
-            zeroExtend32ToWord(lengthGPR, lengthGPR);
-            zeroExtend32ToWord(indexGPR, indexGPR);
-
-            auto loop = label();
-            auto notFound = branch32(Equal, indexGPR, lengthGPR);
-
-            auto found = emitCompare();
-
-            add32(TrustedImm32(1), indexGPR);
-            jump().linkTo(loop, this);
-
-            emitResult(notFound, found);
-            if (isArrayIncludes)
-                unblessedBooleanResult(indexGPR, node);
-            else
-                strictInt32Result(indexGPR, node);
-        };
-
-        ASSERT(node->arrayMode().type() == Array::Int32);
-        JSValueOperand searchElement(this, searchElementEdge, ManualOperandSpeculation);
-        GPRReg searchElementGPR = searchElement.gpr();
-        speculateInt32(searchElementEdge, searchElementGPR);
-        emitLoop([&] () {
-            auto found = branch64(Equal, BaseIndex(storageGPR, indexGPR, TimesEight), searchElementGPR);
-            return found;
-        });
-        return;
-    }
-
-    case DoubleRepUse: {
-        ASSERT(node->arrayMode().type() == Array::Double);
-        SpeculateDoubleOperand searchElement(this, searchElementEdge);
-        FPRTemporary tempDouble(this);
-
-        FPRReg searchElementFPR = searchElement.fpr();
-        FPRReg tempFPR = tempDouble.fpr();
-
+    auto emitLoop = [&](auto searchElementReg, GPRReg scratchGPR, auto emitCompare, auto operation) {
 #if ENABLE(DFG_REGISTER_ALLOCATION_VALIDATION)
         clearRegisterAllocationOffsets();
 #endif
@@ -9874,18 +9833,49 @@ void SpeculativeJIT::compileArrayIndexOfOrArrayIncludes(Node* node)
         zeroExtend32ToWord(lengthGPR, lengthGPR);
         zeroExtend32ToWord(indexGPR, indexGPR);
 
+        sub32(lengthGPR, indexGPR, scratchGPR);
+        auto vectorized = branch32(AboveOrEqual, scratchGPR, TrustedImm32(arrayIndexOfVectorizedThreshold));
+
         auto loop = label();
         auto notFound = branch32(Equal, indexGPR, lengthGPR);
-        loadDouble(BaseIndex(storageGPR, indexGPR, TimesEight), tempFPR);
-        auto found = branchDouble(DoubleEqualAndOrdered, tempFPR, searchElementFPR);
+        auto found = emitCompare();
         add32(TrustedImm32(1), indexGPR);
         jump().linkTo(loop, this);
 
         emitResult(notFound, found);
+        addSlowPathGenerator(slowPathCall(vectorized, this, operation, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, indexGPR, storageGPR, searchElementReg, indexGPR));
         if (isArrayIncludes)
             unblessedBooleanResult(indexGPR, node);
         else
             strictInt32Result(indexGPR, node);
+    };
+
+    switch (searchElementEdge.useKind()) {
+    case Int32Use: {
+        ASSERT(node->arrayMode().type() == Array::Int32);
+        JSValueOperand searchElement(this, searchElementEdge, ManualOperandSpeculation);
+        GPRTemporary scratch(this);
+        GPRReg searchElementGPR = searchElement.gpr();
+        GPRReg scratchGPR = scratch.gpr();
+        speculateInt32(searchElementEdge, searchElementGPR);
+        emitLoop(searchElementGPR, scratchGPR, [&] {
+            return branch64(Equal, BaseIndex(storageGPR, indexGPR, TimesEight), searchElementGPR);
+        }, isArrayIncludes ? operationArrayIncludesNonStringIdentityValueContiguous : operationArrayIndexOfNonStringIdentityValueContiguous);
+        return;
+    }
+
+    case DoubleRepUse: {
+        ASSERT(node->arrayMode().type() == Array::Double);
+        SpeculateDoubleOperand searchElement(this, searchElementEdge);
+        FPRTemporary tempDouble(this);
+        GPRTemporary scratch(this);
+        FPRReg searchElementFPR = searchElement.fpr();
+        FPRReg tempFPR = tempDouble.fpr();
+        GPRReg scratchGPR = scratch.gpr();
+        emitLoop(searchElementFPR, scratchGPR, [&] {
+            loadDouble(BaseIndex(storageGPR, indexGPR, TimesEight), tempFPR);
+            return branchDouble(DoubleEqualAndOrdered, tempFPR, searchElementFPR);
+        }, isArrayIncludes ? operationArrayIncludesDouble : operationArrayIndexOfDouble);
         return;
     }
 
@@ -13470,14 +13460,7 @@ void SpeculativeJIT::compileRegExpTest(Node* node)
             speculateRegExpObject(node->child2(), baseGPR);
             speculateString(node->child3(), argumentGPR);
 
-            if (tryEmitRegExpTestFirstCharacterFilter(node, globalObjectGPR, baseGPR, argumentGPR, node->child2(), node->child3()))
-                return;
-
-            flushRegisters();
-            GPRFlushedCallResult result(this);
-            callOperation(operationRegExpTestString, result.gpr(), globalObjectGPR, baseGPR, argumentGPR);
-
-            unblessedBooleanResult(result.gpr(), node);
+            emitRegExpTestWithFilter(node, globalObjectGPR, baseGPR, argumentGPR, node->child2(), node->child3());
             return;
         }
 
@@ -13487,14 +13470,7 @@ void SpeculativeJIT::compileRegExpTest(Node* node)
         GPRReg argumentGPR = argument.gpr();
         speculateRegExpObject(node->child2(), baseGPR);
 
-        if (tryEmitRegExpTestFirstCharacterFilter(node, globalObjectGPR, baseGPR, argumentGPR, node->child2(), node->child3()))
-            return;
-
-        flushRegisters();
-        GPRFlushedCallResult result(this);
-        callOperation(operationRegExpTest, result.gpr(), globalObjectGPR, baseGPR, argumentGPR);
-
-        unblessedBooleanResult(result.gpr(), node);
+        emitRegExpTestWithFilter(node, globalObjectGPR, baseGPR, argumentGPR, node->child2(), node->child3());
         return;
     }
 
@@ -13510,30 +13486,18 @@ void SpeculativeJIT::compileRegExpTest(Node* node)
     unblessedBooleanResult(result.gpr(), node);
 }
 
-// RegExp.test(input) fast-fail on a constant RegExpObject: when the one byte a match would have to
-// start at cannot begin a match, answer false without entering the RegExp engine. A sticky pattern
-// looks at input[lastIndex] and must also reset lastIndex to 0, as a failed RegExpBuiltinExec does.
-bool SpeculativeJIT::tryEmitRegExpTestFirstCharacterFilter(Node* node, GPRReg globalObjectGPR, GPRReg baseGPR, GPRReg argumentGPR, Edge baseEdge, Edge argumentEdge)
+// RegExp.test(input) fast-fail: answer false without entering the RegExp engine when the input cannot
+// match. A sticky pattern looks at input[lastIndex] and must also reset lastIndex to 0, as a failed
+// RegExpBuiltinExec does.
+void SpeculativeJIT::emitRegExpTestWithFilter(Node* node, GPRReg globalObjectGPR, GPRReg baseGPR, GPRReg argumentGPR, Edge baseEdge, Edge argumentEdge)
 {
-    // At most one position can apply: AtStart requires a non-global non-sticky pattern, AtLastIndex a sticky one.
-    auto position = FirstCharacterFilterPosition::AtStart;
-    const auto* localBitmap = m_graph.tryGetConstantRegExpFirstCharacterBitmap(baseEdge.node(), position);
-    if (!localBitmap) {
-        position = FirstCharacterFilterPosition::AtLastIndex;
-        localBitmap = m_graph.tryGetConstantRegExpFirstCharacterBitmap(baseEdge.node(), position);
-    }
-    if (!localBitmap)
-        return false;
-
-    const uint8_t* bitmap = localBitmap->storageBytes().data();
-    bool argumentIsString = argumentEdge.useKind() == StringUse || argumentEdge.useKind() == KnownStringUse;
-
     GPRTemporary result(this);
     GPRTemporary scratch1(this);
     GPRTemporary scratch2(this);
     GPRReg resultGPR = result.gpr();
     GPRReg scratch1GPR = scratch1.gpr();
     GPRReg scratch2GPR = scratch2.gpr();
+    bool argumentIsString = argumentEdge.useKind() == StringUse || argumentEdge.useKind() == KnownStringUse;
 
     // baseGPR/argumentGPR/globalObjectGPR are preserved across flushRegisters for the slow-path
     // operation call; the scratch registers are free to clobber.
@@ -13542,20 +13506,40 @@ bool SpeculativeJIT::tryEmitRegExpTestFirstCharacterFilter(Node* node, GPRReg gl
     JumpList slowCases;
     JumpList doneCases;
 
-    if (!argumentIsString) {
-        slowCases.append(branchIfNotCell(argumentGPR));
-        slowCases.append(branchIfNotString(argumentGPR));
+    // At most one position can apply: AtStart requires a non-global non-sticky pattern, AtLastIndex a sticky one.
+    auto position = FirstCharacterFilterPosition::AtStart;
+    const auto* localBitmap = m_graph.tryGetConstantRegExpFirstCharacterBitmap(baseEdge.node(), position);
+    if (!localBitmap) {
+        position = FirstCharacterFilterPosition::AtLastIndex;
+        localBitmap = m_graph.tryGetConstantRegExpFirstCharacterBitmap(baseEdge.node(), position);
     }
 
-    if (position == FirstCharacterFilterPosition::AtStart)
-        emitRegExpAnchoredFirstCharacterFilterGuards(bitmap, argumentGPR, scratch1GPR, scratch2GPR, resultGPR, slowCases);
-    else {
-        emitRegExpStickyFirstCharacterFilterGuards(bitmap, baseGPR, argumentGPR, scratch1GPR, scratch2GPR, resultGPR, slowCases);
-        store64(TrustedImm64(JSValue::encode(jsNumber(0))), Address(baseGPR, RegExpObject::offsetOfLastIndex()));
+    std::optional<unsigned> constantMinimumSize;
+    bool emitFilter = true;
+    if (!localBitmap) {
+        constantMinimumSize = m_graph.tryGetConstantRegExpTestMinimumSize(baseEdge.node());
+        if (constantMinimumSize && !*constantMinimumSize)
+            emitFilter = false;
     }
 
-    move(TrustedImm32(0), resultGPR);
-    doneCases.append(jump());
+    if (emitFilter) {
+        if (!argumentIsString) {
+            slowCases.append(branchIfNotCell(argumentGPR));
+            slowCases.append(branchIfNotString(argumentGPR));
+        }
+
+        if (!localBitmap)
+            emitRegExpMinimumLengthFilterGuards(constantMinimumSize, baseGPR, argumentGPR, canBeRope(argumentEdge), scratch1GPR, scratch2GPR, slowCases);
+        else if (position == FirstCharacterFilterPosition::AtStart)
+            emitRegExpAnchoredFirstCharacterFilterGuards(localBitmap->storageBytes().data(), argumentGPR, scratch1GPR, scratch2GPR, resultGPR, slowCases);
+        else {
+            emitRegExpStickyFirstCharacterFilterGuards(localBitmap->storageBytes().data(), baseGPR, argumentGPR, scratch1GPR, scratch2GPR, resultGPR, slowCases);
+            store64(TrustedImm64(JSValue::encode(jsNumber(0))), Address(baseGPR, RegExpObject::offsetOfLastIndex()));
+        }
+
+        move(TrustedImm32(0), resultGPR);
+        doneCases.append(jump());
+    }
 
     slowCases.link(this);
     if (argumentIsString)
@@ -13565,7 +13549,6 @@ bool SpeculativeJIT::tryEmitRegExpTestFirstCharacterFilter(Node* node, GPRReg gl
 
     doneCases.link(this);
     unblessedBooleanResult(resultGPR, node);
-    return true;
 }
 
 void SpeculativeJIT::compileStringReplace(Node* node)

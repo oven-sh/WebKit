@@ -278,6 +278,11 @@ inline std::optional<PseudoElementType> ComputedStyleBase::pseudoElementType() c
     return m_nonInheritedFlags.pseudoElementType ? std::make_optional(static_cast<PseudoElementType>(m_nonInheritedFlags.pseudoElementType - 1)) : std::nullopt;
 }
 
+inline bool ComputedStyleBase::isListMarkerStyle() const
+{
+    return pseudoElementType() == PseudoElementType::Marker;
+}
+
 inline std::optional<PseudoElementType> pseudoElementType(const ComputedStyleBase& style)
 {
     return style.pseudoElementType();
@@ -351,9 +356,9 @@ inline const FontCascade& ComputedStyleBase::fontCascade() const
     return m_inheritedData->fontData->fontCascade;
 }
 
-inline WebkitLocale ComputedStyleBase::computedLocale() const
+inline WebkitLocale ComputedStyleBase::usedLocale() const
 {
-    return fontDescription().computedLocale();
+    return fontDescription().usedLocale();
 }
 
 inline float ComputedStyleBase::usedLetterSpacing() const

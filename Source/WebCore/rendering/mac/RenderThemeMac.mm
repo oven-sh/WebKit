@@ -1229,6 +1229,8 @@ static void setFontFromControlSize(Style::ComputedStyle& style, NSControlSize co
 
     // Reset line height
     style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+    style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
+
     style.setFontDescription(WTF::move(fontDescription));
 }
 
@@ -1423,6 +1425,7 @@ void RenderThemeMac::adjustMenuListButtonStyle(Style::ComputedStyle& style, cons
     style.setMinHeight(18_css_px);
 
     style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+    style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
 }
 
 std::span<const IntSize, 4> RenderThemeMac::menuListSizes() const

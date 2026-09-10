@@ -49,7 +49,13 @@ class PoolAllocator::Segment
         {
             size_t size = mData.size();
             ANGLE_UNUSED_VARIABLE(size);
-            ANGLE_ALLOC_PROFILE(POOL_DEALLOCATION, data, size, size > kSegmentSize);
+#if defined(ANGLE_ENABLE_MEMORY_TAGGING)
+            if (size <= kSegmentSize)
+            {
+                FreeTaggableMemory(data, size);
+                return;
+            }
+#endif
             AlignedFree(data);
         }
     }
@@ -60,7 +66,12 @@ class PoolAllocator::Segment
     }
     static Segment Allocate(size_t size)
     {
-        ANGLE_ALLOC_PROFILE(POOL_ALLOCATION, size, size > kSegmentSize);
+#if defined(ANGLE_ENABLE_MEMORY_TAGGING)
+        if (size <= kSegmentSize)
+        {
+            return Segment{AllocateTaggableMemory(size)};
+        }
+#endif
         uint8_t *result = reinterpret_cast<uint8_t *>(AlignedAlloc(size, kAlignment));
         if (ANGLE_UNLIKELY(result == nullptr))
         {
@@ -153,7 +164,6 @@ Span<uint8_t> PoolAllocator::allocateSingleObject(size_t size)
     }
     Span<uint8_t> result{segment.data(), size};
     mSingleObjectSegments.push_back(std::move(segment));
-    ANGLE_ALLOC_PROFILE(LOCAL_BUMP_ALLOCATION, result, true);
     return result;
 }
 

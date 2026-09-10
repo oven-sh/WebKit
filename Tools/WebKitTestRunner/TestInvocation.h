@@ -121,6 +121,10 @@ private:
     bool compareActualHashToExpectedAndDumpResults(const std::string&);
 
     static void forceRepaintDoneCallback(WKErrorRef, void* context);
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    static void presentationUpdateDoneCallback(WKErrorRef, void* context);
+#endif
+    void waitForPresentationUpdate();
 
     bool shouldLogHistoryClientCallbacks() const;
 
@@ -145,6 +149,9 @@ private:
     bool m_gotInitialResponse { false };
     bool m_gotFinalMessage { false };
     bool m_gotRepaint { false };
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    bool m_gotPresentationUpdate { false };
+#endif
     bool m_error { false };
 
     bool m_waitUntilDone { false };

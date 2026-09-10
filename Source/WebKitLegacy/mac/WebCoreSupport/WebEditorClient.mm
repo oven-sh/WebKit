@@ -1198,7 +1198,7 @@ void WebEditorClient::handleRequestedCandidates(NSInteger sequenceNumber, NSArra
     [m_webView showCandidates:candidates forString:m_paragraphContextForCandidateRequest.get() inRect:rectForSelectionCandidates forSelectedRange:m_rangeForCandidates view:m_webView completionHandler:nil];
 }
 
-void WebEditorClient::handleAcceptedCandidateWithSoftSpaces(WebCore::TextCheckingResult acceptedCandidate)
+void WebEditorClient::handleAcceptedCandidateWithSoftSpaces(const WebCore::TextCheckingResult& acceptedCandidate)
 {
     auto* frame = core([m_webView _selectedOrMainFrame]);
     if (!frame)
