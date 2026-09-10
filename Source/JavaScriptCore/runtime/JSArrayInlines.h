@@ -242,6 +242,11 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 
     switch (indexingMode()) {
     case ArrayClass: {
+        if (!isStructureExtensible()) [[unlikely]] {
+            scope.release();
+            pushToNonExtensibleArrayClass(globalObject, value);
+            return;
+        }
         createInitialUndecided(vm, 0);
         [[fallthrough]];
     }
