@@ -472,11 +472,9 @@ JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObje
     {
         JSModuleLoader* loader = globalObject->moduleLoader();
         auto type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
-        Locker locker { loader->cellLock() };
-        if (ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, type)) {
-            if (entry->hasSettledFailure())
-                loader->removeEntry(key);
-        }
+        ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, type);
+        if (entry && entry->hasSettledFailure())
+            loader->removeEntry(key); // takes the loader's cellLock (the registry is only mutated on the mutator thread)
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSPromise* promise = nullptr;
