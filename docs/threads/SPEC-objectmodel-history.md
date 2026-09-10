@@ -1646,3 +1646,111 @@ properties per object to 20,000 objects while a second thread deletes one;
 abort 6/6 before, PASS with 3,000-5,000 lost-lane restarts per run after;
 every object is checked).
 
+
+## §28. Rev 19 (eighth landing round): the profile of a numeric site recommends Double GIL off, and flatten is a transition
+
+Two additions; the rules they touch are T4-O/T4-P (§4.4) and F3 (§6).
+
+**T4-P promotion.** T4-O (rev 17) executes a GIL-off Int32->Double request
+as Int32->Contiguous, because the same-width in-place rewrite cannot be made
+safe against a reader that already holds the shape check (§25). The
+allocation profile of the array's site then learned Contiguous from that
+array, and every later array from the site was born Contiguous: a numeric
+program that initialises its vectors with integer literals (`[0, 0, 0]`,
+then doubles) kept every double boxed for the rest of the run, where flag
+off and GIL on the profile learns Double after the first conversion and the
+site's arrays are born Double. Rev 19: when `updateProfile` GIL off finds the
+recommendation moving from Undecided/Int32 to Contiguous and the array that
+moved it holds nothing but numbers (holes allowed) with at least one that is
+not an int32 - the first 24 elements and 8 spread over the rest are sampled -
+it recommends Double instead. An array born Double takes int32 and double
+stores with no conversion at all, so nothing is substituted and nothing
+stops. The promotion is taken at most once per site: it requires the site's
+T4-P demotion set to be intact, and a site whose Double arrays later meet a
+non-number leaves Double through the existing T4-P path (the set fires, the
+optimized allocation recompiles, the heuristic is off for that site from
+then on), so a mixed site settles Contiguous after one round trip instead of
+oscillating. Only an array whose butterfly this thread owns is sampled: a
+shared profile's last array may be mid-write on its owner, whose own next
+profile update makes the decision instead. Test:
+`objectmodel/double-array-profile-promotion-gil-off.js` (a `[0, 0, 0]`
+site filled with doubles mints ArrayWithContiguous GIL off before,
+ArrayWithDouble after, as GIL on and flag off always did; a mixed site
+settles Contiguous with 1-2 stop requests over 50,000 arrays; four threads
+agree on the sums).
+
+**F3 GIL off.** Flattening a dictionary GIL off no longer rewrites storage
+under a stop; it is a structure-only transition to a fresh non-dictionary
+clone with the same table and offsets (SPEC-jit history §38 has the rule,
+the races and the inline-cache plumbing). F3's stop form remains the GIL-on
+rule.
+
+## §29. Decision record: encoding-changing shape transitions GIL off without a stop - the storage-then-shape re-check protocol (designed in the eighth round, NOT adopted; rev 19 unchanged)
+
+Why it is wanted. GIL off, three rules exist only because a reader that keyed
+its lane decoding on one shape must never meet storage encoded for another
+(§4.7, I28, I41): Int32->Double is executed as Int32->Contiguous (T4-O r17),
+so numeric arrays that start with integers never get raw-double storage and
+their arithmetic runs on boxed values; fresh copies of Double sources are
+Contiguous (T4-C r18); and Double->Contiguous is a per-array stop (measured
+this round: 3,900-6,200 stops a run on `ML` and the sjcl tests, and up to
+840,000 on `Basic` before SPEC-jit history §42 stopped the JIT from requesting
+them). Together they are most of the remaining GIL-off distance on the
+float-heavy tests (`ML`, `navier-stokes`, `raytrace`, `float-mm`, `gaussian-blur`
+run on boxed doubles wherever their arrays began life as integers).
+
+The protocol that would remove all three. (W) The allocating thread of a flat,
+unshared-write array (the T4-O owner predicate: word (currentTID, SW=0),
+storage present, not copy-on-write) performs an encoding-changing transition
+(Int32->Double, Double->Contiguous) as a COPY: allocate the re-encoded
+butterfly first (may collect; re-validate after), then in one poll-free window
+claim the StructureID (S -> nuked(S); lock-free when both thread-locality sets
+are valid by fresh loads, else under the cell lock, exactly as T4-O), re-check
+the butterfly word, fill the copy from the now-stable lanes, CAS the word to
+the copy (same owner tag), fence, and publish the header - StructureID S' AND
+the indexing-type byte - with ONE 64-bit compare-and-swap loop over the cell
+header (the GC's cell-state byte shares the word), fence. The old butterfly is
+abandoned unmodified, so whoever still holds it keeps decoding it correctly.
+(R) Every reader that decodes Int32 or Double lanes of an array it may not own
+- LLInt and Baseline get/put-by-val, the indexed inline-cache stubs, DFG/FTL
+`GetByVal`/`PutByVal`/`ArrayPush`/`ArrayPop`/`ArrayIndexOf`/`HasIndexedProperty`
+on Int32/Double modes, and every C++ site that switches on `indexingType()`
+and then touches lanes - loads the butterfly FIRST, then (load-load fence)
+re-validates the header: StructureID not nuked and the indexing byte still the
+shape it keyed on BEFORE the load (check, load, re-check: a sequence lock
+whose sequence is the header); a JIT reader exits or takes the slow path on
+mismatch, a C++ reader re-dispatches. Argument: the writer's order is nuke ->
+word CAS -> header publish, and encoding-changing transitions move the shape
+byte monotonically (Int32 -> Double -> Contiguous, never back). If the
+re-check reads an un-nuked header with the keyed shape, it ran either before
+the nuke - then the butterfly load before it predates the word CAS: old
+storage under the old shape, consistent - or after the publish, where the
+byte already names the new shape and the check fails; between nuke and
+publish it reads the nuked bit and fails. A reader that keyed on the new
+shape read its first check after the publish, so its butterfly load, later
+still, returned the copy. In the DFG this is a new node, `CheckArrayAfterStorage(array,
+storage)`, planted after every `GetButterfly` whose array mode is Int32 or
+Double GIL off, taking the storage as an operand so common-subexpression
+elimination cannot fold it into the earlier `CheckArray`, and hoisted together
+with the butterfly load by loop-invariant code motion (SPEC-jit §39's hoisting
+then covers it: a hoisted (storage, check) pair stays consistent for the whole
+loop because the old storage never changes encoding). The concurrent marker
+already runs a StructureID seqlock around its butterfly visit and tolerates
+Int32-valued raw doubles; a Double->Contiguous copy holds only numbers until
+its first barriered store.
+
+What it buys: Int32->Double becomes a real transition again GIL off (T4-O's
+substitution and T4-C withdraw), Double->Contiguous costs an allocation and a
+copy instead of a stop, the allocation-profile promotion of history §28 and
+the `Array::Generic` fallback of SPEC-jit §42 become unnecessary.
+
+Why not this round. The writer side is small; the reader side is an audit of
+every lane decoder in the runtime (the I41 list of rev 17 enumerated the
+Int32-keyed ones and found them tolerant only because Int32->Contiguous keeps
+the encoding; under this protocol each of them, and every Double-keyed one,
+must be converted to storage-then-shape order or proven owner-only), four JIT
+tiers, and a new DFG node - with the failure mode of a missed site being a
+forged pointer read, found only by the amplifier weeks later (cf. the seventh
+round's withdrawn P3). It is recorded here as the designed next step for the
+Double family, to be landed on its own with its own audit table and TSAN /
+amplifier campaign, not folded into a round whose changes are already broad.

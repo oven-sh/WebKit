@@ -38,6 +38,8 @@
 
 namespace JSC {
 
+class CodeBlock;
+
 class BinaryArithProfile;
 class UnaryArithProfile;
 struct BaselineUnlinkedPropertyInlineCache;
@@ -161,6 +163,7 @@ public:
 
     JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
     intptr_t m_stackOffset { 0 };
+    Atomic<CodeBlock*> m_gilOffDFGForLoopEntry { nullptr }; // CodeBlock::gilOffDFGForLoopEntry(); the owner CodeBlock visits it
     // The execute counter is incremented by every thread running this code's
     // loop back-edges and returns (JS threads share CodeBlocks); the fields
     // around it - the global object, the stack offset, and the trailing

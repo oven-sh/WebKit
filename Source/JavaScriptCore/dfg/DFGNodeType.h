@@ -500,6 +500,9 @@ namespace JSC { namespace DFG {
     macro(IsBigInt, NodeResultBoolean) \
     macro(GlobalIsNaN, NodeMustGenerate | NodeResultBoolean) \
     macro(NumberIsNaN, NodeResultBoolean) \
+    /* SPEC-ungil §N.5: GIL-off generator resume claim / publish (inline CAS on the State internal field). */\
+    macro(GeneratorClaimResume, NodeResultJS | NodeMustGenerate) \
+    macro(GeneratorPublishResume, NodeResultBoolean | NodeMustGenerate) \
     macro(GlobalIsFinite, NodeMustGenerate | NodeResultBoolean) \
     macro(NumberIsFinite, NodeResultBoolean) \
     macro(NumberIsInteger, NodeResultBoolean) \

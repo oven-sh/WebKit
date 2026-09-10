@@ -393,7 +393,10 @@ public:
                 }
                 case GetVectorLength: {
                     Array::Type type = node->arrayMode().type();
-                    VALIDATE((node), type == Array::ArrayStorage || type == Array::SlowPutArrayStorage);
+                    // GIL off, SSA lowering also bounds Int32/Double/Contiguous
+                    // accesses by the storage's vectorLength (SPEC-jit history §39).
+                    VALIDATE((node), type == Array::ArrayStorage || type == Array::SlowPutArrayStorage
+                        || ((type == Array::Int32 || type == Array::Double || type == Array::Contiguous) && Options::useJSThreads() && !Options::useThreadGIL()));
                     break;
                 }
                 case CPUIntrinsic: {

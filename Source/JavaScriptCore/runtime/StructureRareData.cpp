@@ -223,10 +223,13 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         // This will not create a condition for the current structure but that is good because we know that property
         // is not on the ownStructure so we will transisition if one is added and this cache will no longer be used.
         auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, slot.slotBase());
+        Structure::runDeferredFlattenGILOff(vm); // §38: no inline-cache lock is held here
         if (!cacheStatus) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }
+        if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+            return; // Left uncached (Unset) this time; the next lookup finds the flattened chain.
         conditionSet = generateConditionsForPrototypePropertyHit(vm, this, globalObject, ownStructure, slot.slotBase(), uid);
         ASSERT(!conditionSet.isValid() || conditionSet.hasOneSlotBaseCondition());
     } else if (slot.isUnset()) {
@@ -236,10 +239,13 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         }
 
         auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, nullptr);
+        Structure::runDeferredFlattenGILOff(vm); // §38
         if (!cacheStatus) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }
+        if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+            return;
         conditionSet = generateConditionsForPropertyMiss(vm, this, globalObject, ownStructure, uid);
     } else
         return;

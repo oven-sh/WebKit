@@ -105,6 +105,8 @@ namespace JSC {
     macro(FromCharCodeIntrinsic) \
     macro(FromCodePointIntrinsic) \
     macro(GlobalIsFiniteIntrinsic) \
+    macro(GeneratorClaimResumeIntrinsic) \
+    macro(GeneratorPublishResumeIntrinsic) \
     macro(GlobalIsNaNIntrinsic) \
     macro(PowIntrinsic) \
     macro(FloorIntrinsic) \
