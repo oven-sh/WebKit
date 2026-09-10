@@ -121,11 +121,11 @@ private:
     class DSTCache {
     public:
         static constexpr unsigned cacheSize = 32;
-        // The implementation relies on the fact that no time zones have
-        // more than one daylight savings offset change per 19 days.
-        // In Egypt in 2010 they decided to suspend DST during Ramadan. This
-        // led to a short interval where DST is in effect from September 10 to
-        // September 30.
+        // When two instants at most this far apart have the same offset, the cache takes the offset to be the same
+        // in between. So a change to another offset and back within 19 days can be missed. In Egypt in 2010 they
+        // decided to suspend DST during Ramadan, which left DST in effect from September 10 to September 30 only.
+        // (tzdata has a few shorter ones, America/Recife 2000-10-08 to 10-15 for one, that this and V8 do miss.)
+        // Any number of changes between different offsets that close together is fine.
         static constexpr int64_t defaultDSTDeltaInMilliseconds = 19 * WTF::Int64Milliseconds::secondsPerDay * 1000;
 
         DSTCache()
@@ -151,7 +151,7 @@ private:
         LocalTimeOffset localTimeOffset(DateCache&, int64_t millisecondsFromEpoch, TimeType);
 
     private:
-        LocalTimeOffsetCache* NODELETE leastRecentlyUsed(LocalTimeOffsetCache* exclude);
+        LocalTimeOffsetCache* NODELETE leastRecentlyUsed(LocalTimeOffsetCache* exclude, LocalTimeOffsetCache* alsoExclude = nullptr);
         std::tuple<LocalTimeOffsetCache*, LocalTimeOffsetCache*> probe(int64_t millisecondsFromEpoch);
         void extendTheAfterCache(int64_t millisecondsFromEpoch, LocalTimeOffset);
 

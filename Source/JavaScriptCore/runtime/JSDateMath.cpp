@@ -113,9 +113,6 @@ void OpaqueICUTimeZoneDeleter::operator()(OpaqueICUTimeZone* timeZone)
 }
 
 // Get the combined UTC + DST offset for the time passed in.
-//
-// NOTE: The implementation relies on the fact that no time zones have
-// more than one daylight savings offset change per month.
 // If this function is called with NaN it returns random value.
 LocalTimeOffset DateCache::calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType)
 {
@@ -148,11 +145,11 @@ LocalTimeOffset DateCache::calculateLocalTimeOffset(double millisecondsFromEpoch
     return { !!dstOffset, rawOffset + dstOffset };
 }
 
-LocalTimeOffsetCache* DateCache::DSTCache::leastRecentlyUsed(LocalTimeOffsetCache* exclude)
+LocalTimeOffsetCache* DateCache::DSTCache::leastRecentlyUsed(LocalTimeOffsetCache* exclude, LocalTimeOffsetCache* alsoExclude)
 {
     LocalTimeOffsetCache* result = nullptr;
     for (auto& cache : m_entries) {
-        if (&cache == exclude)
+        if (&cache == exclude || &cache == alsoExclude)
             continue;
         if (!result) {
             result = &cache;
@@ -289,8 +286,7 @@ LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64
         m_after->epoch = bumpEpoch();
     }
 
-    // Now the millisecondsFromEpoch is between m_before->end and m_after->start.
-    // Only one daylight savings offset change can occur in this interval.
+    // Now millisecondsFromEpoch is in (m_before->end, m_after->start), a window of at most defaultDSTDeltaInMilliseconds.
 
     if (m_before->offset == m_after->offset) {
         // Merge two caches if they have the same offset.
@@ -299,8 +295,11 @@ LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64
         return m_before->offset;
     }
 
-    // Binary search for daylight savings offset change point,
-    // but give up if we don't find it in five iterations.
+    // Binary search for the offset change point, but give up if we don't find it in five iterations: the last one
+    // probes millisecondsFromEpoch itself, so the loop always returns. A probe matches neither m_before nor m_after
+    // when the window holds more than one change (America/Asuncion went from -04 to -03 DST on 2024-10-06 and on to
+    // -03 standard time on 2024-10-15). Such a probe starts an entry of its own, and the search goes on between that
+    // entry and whichever of the two lies on the same side of it as millisecondsFromEpoch.
     for (int i = 4; i >= 0; --i) {
         int64_t delta = m_after->start - m_before->end;
         int64_t middle = !i ? millisecondsFromEpoch : m_before->end + delta / 2;
@@ -310,18 +309,34 @@ LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64
             dataLogLnIf(JSDateMathInternal::verbose, "Cache extended2 from ", m_before->start, " to ", m_before->end, " ", offset.offset, " ", offset.isDST);
             if (millisecondsFromEpoch <= m_before->end)
                 return offset;
-        } else {
-            ASSERT(m_after->offset == offset);
-            m_after->start = middle;
-            dataLogLnIf(JSDateMathInternal::verbose, "Cache extended3 from ", m_after->start, " to ", m_after->end, " ", offset.offset, " ", offset.isDST);
-            if (millisecondsFromEpoch >= m_after->start) {
-                // This swap helps the optimistic fast check in subsequent invocations.
-                std::swap(m_before, m_after);
-                return offset;
+            continue;
+        }
+        if (m_after->offset != offset) {
+            LocalTimeOffsetCache* entry = leastRecentlyUsed(m_before, m_after);
+            entry->offset = offset;
+            entry->start = middle;
+            entry->end = middle;
+            entry->epoch = bumpEpoch();
+            dataLogLnIf(JSDateMathInternal::verbose, "Cache miss, recompute3 ", middle, " ", offset.offset, " ", offset.isDST);
+            if (millisecondsFromEpoch < middle) {
+                m_after = entry;
+                continue;
             }
+            m_before = entry;
+            if (millisecondsFromEpoch == middle)
+                return offset;
+            continue;
+        }
+        m_after->start = middle;
+        dataLogLnIf(JSDateMathInternal::verbose, "Cache extended3 from ", m_after->start, " to ", m_after->end, " ", offset.offset, " ", offset.isDST);
+        if (millisecondsFromEpoch >= m_after->start) {
+            // This swap helps the optimistic fast check in subsequent invocations.
+            std::swap(m_before, m_after);
+            return offset;
         }
     }
 
+    ASSERT_NOT_REACHED();
     return {};
 }
 
