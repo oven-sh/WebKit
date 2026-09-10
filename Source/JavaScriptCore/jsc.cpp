@@ -67,6 +67,7 @@
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
 #include "NativeCallee.h"
+#include "OSCheck.h"
 #include "ObjectConstructor.h"
 #include "ParserError.h"
 #include "ProfilerDatabase.h"
@@ -1020,6 +1021,7 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
     &shouldInterruptScriptBeforeTimeout,
+    nullptr, // moduleTypeIsAllowed
     &moduleLoaderImportModule,
     &moduleLoaderResolve,
     &moduleLoaderFetch,
@@ -1317,18 +1319,18 @@ static bool fillBufferWithContentsOfFile(const String& fileName, Vector<char>& b
         fprintf(stderr, "Error when parsing file name: %s\n", fileName.ascii().data());
         return false;
     }
-    if (stat(fileNameUTF->data(), &statBuf) == -1) {
-        fprintf(stderr, "Could not open file: %s\n", fileNameUTF->data());
+    if (FileSystem::statFile(fileNameUTF->spanIncludingNullTerminator(), statBuf) == -1) {
+        SAFE_FPRINTF(stderr, "Could not open file: %s\n", *fileNameUTF);
         return false;
     }
 
     if ((statBuf.st_mode & S_IFMT) != S_IFREG) {
-        fprintf(stderr, "Trying to open a non-file: %s\n", fileNameUTF->data());
+        SAFE_FPRINTF(stderr, "Trying to open a non-file: %s\n", *fileNameUTF);
         return false;
     }
-    auto* f = fopen(fileNameUTF->data(), "rb");
+    auto* f = fopen(fileNameUTF->characters(), "rb");
     if (!f) {
-        fprintf(stderr, "Could not open file: %s\n", fileNameUTF->data());
+        SAFE_FPRINTF(stderr, "Could not open file: %s\n", *fileNameUTF);
         return false;
     }
 
@@ -1508,7 +1510,7 @@ static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
 #else
     auto pathName = fileName.utf8();
     struct stat status { };
-    if (stat(pathName.data(), &status))
+    if (FileSystem::statFile(pathName.spanIncludingNullTerminator(), status))
         return false;
     if ((status.st_mode & S_IFMT) != S_IFREG)
         return false;
@@ -1623,7 +1625,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 
 #endif // ENABLE(FUZZILLI)
 
-static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<CString, UTF8ConversionError> expectedString)
+static UTF8CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<UTF8CString, UTF8ConversionError> expectedString)
 {
     if (expectedString)
         return expectedString.value();
@@ -1639,7 +1641,7 @@ static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::e
     return { };
 }
 
-template<typename T> static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, T& string)
+template<typename T> static UTF8CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, T& string)
 {
     return toCString(globalObject, scope, string.tryGetUTF8());
 }
@@ -4173,7 +4175,7 @@ static void dumpException(GlobalObject* globalObject, JSValue exception)
         if (stackString.length()) {
             auto expectedUtf8 = stackString.tryGetUTF8();
             if (expectedUtf8)
-                printf("%s\n", expectedUtf8.value().data());
+                SAFE_PRINTF("%s\n", expectedUtf8.value());
         }
     }
 
@@ -4984,7 +4986,8 @@ int jscmain(int argc, char** argv)
     WTF::initializeMainThread();
 
     // Match the QoS of the WebKit WebContent process.
-    WTF::Thread::setCurrentThreadIsUserInteractive(-1);
+    if constexpr (isDarwin())
+        WTF::Thread::setCurrentThreadIsUserInteractive(-1);
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.

@@ -377,6 +377,10 @@ if (USE_OPENXR)
    list(APPEND WebKit_LIBRARIES OpenXR::openxr_loader)
 endif ()
 
+if (USE_LIBSECRET)
+    list(APPEND WebKit_PRIVATE_LIBRARIES Secret::Secret)
+endif ()
+
 if (USE_LIBWEBRTC)
     list(APPEND WebKit_SYSTEM_INCLUDE_DIRECTORIES
         "${THIRDPARTY_DIR}/libwebrtc/Source/"

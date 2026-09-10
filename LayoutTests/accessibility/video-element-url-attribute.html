@@ -56,6 +56,16 @@ if (window.accessibilityController) {
         video = accessibilityController.accessibleElementById(domVideo.id);
         output += await expectAsync("video.url.includes(baseVideoPath)", "true");
 
+        // Replacing the <source> and re-running resource selection changes the video's current
+        // source without changing any attribute on an element already in the document.
+        domVideo.removeChild(domVideo.querySelector("source"));
+        const newSource = document.createElement("source");
+        newSource.setAttribute("src", "resources/foo-bar.mp4");
+        newSource.setAttribute("type", "video/mp4");
+        domVideo.appendChild(newSource);
+        domVideo.load();
+        output += await expectAsync("video.url.includes('foo-bar.mp4')", "true");
+
         output += await expectAsync("!accessibilityController.accessibleElementById('video-with-empty-source-element').url", "true");
         output += await expectAsync("!accessibilityController.accessibleElementById('empty-video').url", "true");
 

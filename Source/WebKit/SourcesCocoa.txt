@@ -30,6 +30,7 @@ NetworkProcess/cocoa/NetworkActivityTrackerCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkDataTaskCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkProcessCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkSessionCocoa.mm @nonARC
+NetworkProcess/cocoa/NetworkStorageSessionCocoa.mm @nonARC
 NetworkProcess/cocoa/NetworkTaskCocoa.mm @nonARC
 NetworkProcess/cocoa/WKURLSessionTaskDelegate.mm @nonARC
 
@@ -38,6 +39,8 @@ NetworkProcess/webtransport/cocoa/NetworkTransportStreamCocoa.mm @nonARC
 
 NetworkProcess/Classifier/WebResourceLoadStatisticsStore.cpp
 
+NetworkProcess/Cookies/cocoa/CookieStorageCocoa.mm @nonARC
+NetworkProcess/Cookies/cocoa/CookieStorageObserver.mm @nonARC
 NetworkProcess/Cookies/mac/WebCookieManagerMac.mm @nonARC
 
 NetworkProcess/CustomProtocols/Cocoa/LegacyCustomProtocolManagerCocoa.mm @nonARC

@@ -232,6 +232,7 @@ private:
     void serializeVariable(AST::Variable&);
     void generatePackingHelpers(AST::Structure&);
     bool emitPackedVector(const Types::Vector&, bool shouldPack);
+    bool NODELETE shouldForceInlining(AST::Function&) const;
 
     bool outlineConstant(const Type*, AST::Expression&);
     void serializeConstant(const Type*, ConstantValue);
@@ -796,6 +797,27 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
     m_shaderModule.clearUsesPackedVec3();
 }
 
+bool FunctionDefinitionWriter::shouldForceInlining(AST::Function& functionDefinition) const
+{
+    if (metalAppleGPUFamily() < 9 || m_entryPointStage)
+        return false;
+
+    auto* returnType = functionDefinition.maybeReturnType();
+    if (!returnType)
+        return false;
+
+    auto* type = returnType->inferredType();
+    if (!type)
+        return false;
+
+    if (!std::holds_alternative<Types::Struct>(*type) && !std::holds_alternative<Types::Array>(*type))
+        return false;
+
+    constexpr unsigned minimumInlinedReturnSize = 128;
+    auto size = type->maybeSize();
+    return size && *size >= minimumInlinedReturnSize;
+}
+
 void FunctionDefinitionWriter::visit(AST::Function& functionDefinition)
 {
     if (!m_visitedFunctions.add(&functionDefinition).isNewEntry)
@@ -808,6 +830,9 @@ void FunctionDefinitionWriter::visit(AST::Function& functionDefinition)
         checkErrorAndVisit(attribute);
         m_body.append(' ');
     }
+
+    if (shouldForceInlining(functionDefinition))
+        m_body.append("__attribute__((always_inline)) "_s);
 
     if (functionDefinition.maybeReturnType())
         visit(functionDefinition.maybeReturnType()->inferredType());
@@ -2363,9 +2388,9 @@ void FunctionDefinitionWriter::visit(const Type* type, AST::CallExpression& call
         }
     }
 
-    auto isArray = is<AST::ArrayTypeExpression>(call.target());
-    auto isStruct = !isArray && std::holds_alternative<Types::Struct>(*call.target().inferredType());
-    if (call.isConstructor() && (isArray || isStruct)) {
+    auto isArray = call.isConstructor() && std::holds_alternative<Types::Array>(*type);
+    auto isStruct = call.isConstructor() && !isArray && std::holds_alternative<Types::Struct>(*call.target().inferredType());
+    if (isArray || isStruct) {
         visit(type);
         m_body.append('(');
         const Type* arrayElementType = nullptr;

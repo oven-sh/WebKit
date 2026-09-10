@@ -50,8 +50,8 @@ class SharedVideoFrameWriter;
 class RemoteGraphicsContextProxy : public WebCore::DisplayList::Recorder {
     WTF_MAKE_TZONE_ALLOCATED(RemoteGraphicsContextProxy);
 public:
-    RemoteGraphicsContextProxy(const WebCore::ColorSpace&, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, RemoteRenderingBackendProxy&);
-    RemoteGraphicsContextProxy(const WebCore::ColorSpace&, WebCore::ContentsFormat, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
+    RemoteGraphicsContextProxy(const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, const WebCore::ColorSpace&, WebCore::RenderingMode, RemoteRenderingBackendProxy&);
+    RemoteGraphicsContextProxy(const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, const WebCore::ColorSpace&, WebCore::ContentsFormat, WebCore::RenderingMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
     ~RemoteGraphicsContextProxy();
     RemoteGraphicsContextIdentifier identifier() const { return m_identifier; }
 
@@ -83,7 +83,7 @@ public:
     }
 
 protected:
-    RemoteGraphicsContextProxy(const WebCore::ColorSpace&, std::optional<WebCore::ContentsFormat>, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, DrawGlyphsMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
+    RemoteGraphicsContextProxy(const WebCore::GraphicsContextState&, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, const WebCore::ColorSpace&, DrawGlyphsMode, std::optional<WebCore::ContentsFormat>, WebCore::RenderingMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
 
     template<typename T> void send(T&& message);
 

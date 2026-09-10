@@ -79,7 +79,7 @@ InlineLayoutUnit InlineFormattingUtils::logicalTopForNextLine(const LineLayoutRe
                 return LayoutUnit { *nextLineLogicalTopCandidate };
             // We have to have a hint when intrusive floats prevented any inline content placement.
             ASSERT_NOT_REACHED();
-            return LayoutUnit { lineLogicalRect.top() + formattingContext().root().style().computedLineHeight() };
+            return LayoutUnit { lineLogicalRect.top() + formattingContext().root().style().usedLineHeight() };
         };
         auto floatConstraints = floatingContext.constraints(toLayoutUnit(lineLogicalRect.top()), nextLineLogicalTop(), FloatingContext::MayBeAboveLastFloat::Yes);
         if (floatConstraints.start && floatConstraints.end) {
@@ -101,7 +101,7 @@ InlineLayoutUnit InlineFormattingUtils::logicalTopForNextLine(const LineLayoutRe
     return ceil(nextafter(lineLogicalRect.bottom(), std::numeric_limits<float>::max()));
 }
 
-bool InlineFormattingUtils::inlineLevelBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox) const
+bool InlineFormattingUtils::inlineLevelBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox, const LineBox& lineBox) const
 {
     if (!inlineLevelBox.mayStretchLineBox())
         return false;
@@ -109,7 +109,9 @@ bool InlineFormattingUtils::inlineLevelBoxAffectsLineBox(const InlineLevelBox& i
     if (inlineLevelBox.isLineBreakBox()) {
         // A line break box affects the line box when it has a non-default
         // line-height (e.g. br { line-height: 200px }).
-        return !inlineLevelBox.isPreferredLineHeightFontMetricsBased();
+        if (inlineLevelBox.isPreferredLineHeightFontMetricsBased())
+            return false;
+        return formattingContext().layoutState().inStandardsMode() ? true : InlineQuirks::lineBreakBoxIsOnlyContentOnLine(lineBox);
     }
     if (inlineLevelBox.isListMarker()) {
         // This does not match other browser engines. see webkit.org/b/256390.
@@ -137,6 +139,16 @@ InlineRect InlineFormattingUtils::flipVisualRectToLogicalForWritingMode(const In
     }
     ASSERT_NOT_REACHED();
     return visualRect;
+}
+
+InlineLayoutUnit InlineFormattingUtils::computedTextIndentForFirstLine(const ElementBox& root, InlineLayoutUnit availableWidth)
+{
+    auto shouldIndent = root.style().textIndent().eachLine.has_value() || (root.isAnonymousTextIndentCandidateForIntegration() || !root.isAnonymous() || (!root.isInlineIntegrationRoot() && root.parent().firstInFlowChild() == &root));
+    // Specifying 'hanging' inverts whether the line should be indented or not.
+    if (shouldIndent == root.style().textIndent().hanging.has_value())
+        return { };
+    auto& textIndentAmount = root.style().textIndent().amount;
+    return textIndentAmount == 0_css_px ? 0.f : Style::evaluate<InlineLayoutUnit>(textIndentAmount, availableWidth, root.style().usedZoomForLength());
 }
 
 InlineLayoutUnit InlineFormattingUtils::computedTextIndent(IsIntrinsicWidthMode isIntrinsicWidthMode, IsFirstFormattedLine isFirstFormattedLine, std::optional<PreviousLineEndsParagraph> previousLineEndsParagraph, InlineLayoutUnit availableWidth) const
@@ -180,7 +192,7 @@ InlineLayoutUnit InlineFormattingUtils::computedTextIndent(IsIntrinsicWidthMode 
 InlineLayoutUnit InlineFormattingUtils::initialLineHeight(bool isFirstLine) const
 {
     if (formattingContext().layoutState().inStandardsMode())
-        return isFirstLine ? formattingContext().root().firstLineStyle().computedLineHeight() : formattingContext().root().style().computedLineHeight();
+        return isFirstLine ? formattingContext().root().firstLineStyle().usedLineHeight() : formattingContext().root().style().usedLineHeight();
     return formattingContext().quirks().initialLineHeight();
 }
 
@@ -346,7 +358,7 @@ static inline bool endsWithSoftWrapOpportunity(const InlineTextItem& previousInl
         // The bidi boundary may or may not be the reason for splitting the inline text box content.
         // FIXME: We could add a "reason flag" to InlineTextItem to tell why the split happened.
         CheckedRef style = previousInlineTextItem.style();
-        auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { previousInlineTextItem.inlineTextBox().content(), Style::toPlatform(style->computedLocale()), TextUtil::lineBreakIteratorMode(style->lineBreak()), TextUtil::contentAnalysis(style->wordBreak()) };
+        auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { previousInlineTextItem.inlineTextBox().content(), Style::toPlatform(style->usedLocale()), TextUtil::lineBreakIteratorMode(style->lineBreak()), TextUtil::contentAnalysis(style->wordBreak()) };
         auto softWrapOpportunityCandidate = nextInlineTextItem.start();
         return TextUtil::findNextBreakablePosition(lineBreakIteratorFactory, softWrapOpportunityCandidate, style.get()) == softWrapOpportunityCandidate;
     }
@@ -401,6 +413,12 @@ bool InlineFormattingUtils::isAtSoftWrapOpportunity(const InlineItem& previous, 
     if (&previous.layoutBox().parent() == &next.layoutBox().parent() && !mayWrapPrevious && !mayWrapNext)
         return false;
 
+    auto isMarkerContent = [](auto& inlineItem) {
+        return inlineItem.layoutBox().parent().style().isListMarkerStyle();
+    };
+    if (isMarkerContent(previous) && !isMarkerContent(next))
+        return TextUtil::isWrappingAllowed(nearestCommonAncestor(previous.layoutBox(), next.layoutBox(), formattingContext().root()).style());
+
     if (is<InlineTextItem>(previous) && is<InlineTextItem>(next)) {
         auto& previousInlineTextItem = uncheckedDowncast<InlineTextItem>(previous);
         auto& nextInlineTextItem = uncheckedDowncast<InlineTextItem>(next);
@@ -435,8 +453,8 @@ bool InlineFormattingUtils::isAtSoftWrapOpportunity(const InlineItem& previous, 
         return TextUtil::isWrappingAllowed(nearestCommonAncestor(previousInlineTextItem.layoutBox(), nextInlineTextItem.layoutBox(), formattingContext().root()).style());
     }
     if (previous.layoutBox().isListMarkerBox()) {
-        auto& listMarkerBox = downcast<ElementBox>(previous.layoutBox());
-        return !listMarkerBox.isListMarkerOutside();
+        // An outside marker is not on the line's content flow, so it offers nothing to break after.
+        return false;
     }
     if (next.layoutBox().isListMarkerBox()) {
         // FIXME: SHould this ever be the case?

@@ -31,6 +31,7 @@
 #include <wtf/CheckedPtr.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
@@ -192,7 +193,10 @@ private:
     WeakHashSet<ContainerNode, WeakPtrImplWithEventTargetData> m_adoptingTreeScopes;
 
     mutable Lock m_opaqueRootLockForGC;
-    CheckedPtr<Node> m_ownerNode;
+    // Only mutated on the main thread while holding m_opaqueRootLockForGC, so main-thread reads
+    // use assertIsOwnerThread() instead of locking; the GC thread must lock even to read.
+    CheckedPtr<Node> m_ownerNode WTF_GUARDED_BY_LOCK(m_opaqueRootLockForGC);
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_opaqueRootLockForGC, mainThreadLike);
     CheckedPtr<CSSImportRule> m_ownerRule;
 
     TextPosition m_startPosition;

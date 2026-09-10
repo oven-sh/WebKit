@@ -4765,6 +4765,7 @@ TestWebKitAPI._WKDownload.SystemPreviewUSDZBlobNaming
 [ ios ] TestWebKitAPI.TextAlternatives.AddTextAlternativesWithoutMatch
 [ ios ] TestWebKitAPI.TextAlternatives.InsertDictationResultsAsAlternatives
 [ ios ] TestWebKitAPI.TextAutosizingBoost.ChangeAutosizingBoostAtRuntime
+[ ios ] TestWebKitAPI.TextFragmentTests/getTextFragmentMatch()
 [ ios ] TestWebKitAPI.TextManipulation.CompleteTextManipulationAvoidExtractingManipulatedTextAfterManipulation
 [ ios ] TestWebKitAPI.TextServicesTests.LookUpPresentationRect
 [ ios ] TestWebKitAPI.TextStyleFontSize.AfterCrash
@@ -5700,7 +5701,6 @@ TestWebKitAPI._WKDownload.SystemPreviewUSDZBlobNaming
 [ ios ] TestWebKitAPI.WebKit.GetBackingScaleFactor
 [ ios ] TestWebKitAPI.WebKit.GetComputedStyleAfterIframeOwnerDestructionDoesNotCrash
 [ ios ] TestWebKitAPI.WebKit.GetPIDAfterAbortedProcessLaunch
-[ ios ] TestWebKitAPI.WebKit.GetTextFragmentMatch
 [ ios ] TestWebKitAPI.WebKit.GetUserMediaFocus
 [ ios ] TestWebKitAPI.WebKit.GrantAccessToMobileAssetsCrash
 [ ios ] TestWebKitAPI.WebKit.HTTPSProxyAPI

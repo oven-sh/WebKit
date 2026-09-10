@@ -87,6 +87,7 @@
 #include "HTMLInputElement.h"
 #include "HTMLLabelElement.h"
 #include "HTMLMapElement.h"
+#include "HTMLMediaElement.h"
 #include "HTMLMeterElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptGroupElement.h"
@@ -118,7 +119,7 @@
 #include "RenderLayer.h"
 #include "RenderLineBreak.h"
 #include "RenderListBox.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMathMLOperator.h"
 #include "RenderMeter.h"
 #include "RenderObjectInlines.h"
@@ -310,15 +311,15 @@ void AXObjectCache::disableAccessibilityForTesting()
 }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-std::optional<AccessibilityMode> AXObjectCache::transitionToAXThreadModeIfNeeded(ForceAXThreadMode forceAXThread)
+std::optional<AccessibilityMode> AXObjectCache::transitionToAXThreadModeIfNeeded(AXThreadModePreconditions preconditions)
 {
     if (accessibilityMode() == AccessibilityMode::AXThread)
         return std::nullopt;
 
-    if (platformAXThreadSupport(forceAXThread) == PlatformAXThreadSupport::NotSupported)
+    if (platformAXThreadSupport(preconditions) == PlatformAXThreadSupport::NotSupported)
         return std::nullopt;
 
-    if (forceAXThread == ForceAXThreadMode::No
+    if (preconditions != AXThreadModePreconditions::None
         && !DeprecatedGlobalSettings::isAccessibilityIsolatedTreeEnabled())
         return std::nullopt;
 
@@ -1911,7 +1912,7 @@ void AXObjectCache::setDirtyStitchGroups(const RenderBlock& renderBlock)
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 void AXObjectCache::onTextRunsChanged(const RenderObject& renderer)
 {
-    if (is<RenderInline>(renderer) || is<RenderListMarker>(renderer)) {
+    if (is<RenderInline>(renderer) || is<RenderListOutsideMarker>(renderer)) {
         // Fast-path exit for common renderers that will never produce text runs.
         return;
     }
@@ -2878,6 +2879,13 @@ void AXObjectCache::selectedChildrenChanged(RenderObject* renderer)
         selectedChildrenChanged(protect(renderer->node()));
 }
 
+#if ENABLE(VIDEO)
+void AXObjectCache::onMediaElementCurrentSrcChanged(HTMLMediaElement& element)
+{
+    postNotification(&element, AXNotification::URLChanged);
+}
+#endif
+
 void AXObjectCache::onScrollbarFrameRectChange(const Scrollbar& scrollbar)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -2912,14 +2920,18 @@ void AXObjectCache::onSelectedOptionChanged(Element& element)
 
 void AXObjectCache::onSelectedOptionChanged(HTMLSelectElement& select, int optionIndex)
 {
-    if (RefPtr axMenuList = dynamicDowncast<AccessibilityMenuList>(get(select))) {
+    if (RefPtr axMenuList = dynamicDowncast<AccessibilityMenuList>(get(select)))
         axMenuList->didUpdateActiveOption(optionIndex);
-        return;
+    else {
+        // Base-appearance selects don't use AccessibilityMenuList (which normally handles this),
+        // so post the value change notification directly.
+        deferMenuListValueChange(&select);
     }
 
-    // Base-appearance selects don't use AccessibilityMenuList (which normally handles this),
-    // so post the value change notification directly.
-    deferMenuListValueChange(&select);
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    // Make sure the string value is updated in the same cycle as the expanded-state change.
+    updateIsolatedTree(get(select), AXProperty::StringValue);
+#endif
 }
 
 void AXObjectCache::onSlottedContentChange(const HTMLSlotElement& slot)
@@ -3605,22 +3617,26 @@ void AXObjectCache::postLiveRegionChangeNotification(AccessibilityObject& object
 void AXObjectCache::liveRegionChangedNotificationPostTimerFired()
 {
     m_liveRegionChangedPostTimer.stop();
+    processChangedLiveRegions();
+}
 
+void AXObjectCache::processChangedLiveRegions()
+{
     if (m_changedLiveRegions.isEmpty())
         return;
 
+    auto changedLiveRegions = std::exchange(m_changedLiveRegions, { });
+
 #if PLATFORM(COCOA)
     if (m_liveRegionManager) {
-        for (auto& object : m_changedLiveRegions)
+        for (auto& object : changedLiveRegions)
             m_liveRegionManager->handleLiveRegionChange(object.get());
-        m_changedLiveRegions.clear();
         return;
     }
 #endif
 
-    for (auto& object : m_changedLiveRegions)
+    for (auto& object : changedLiveRegions)
         postNotification(object.ptr(), protect(object->document()).get(), AXNotification::LiveRegionChanged);
-    m_changedLiveRegions.clear();
 }
 
 void AXObjectCache::onScrollbarUpdate(ScrollView& view)
@@ -4835,7 +4851,7 @@ Node* AXObjectCache::previousNode(Node* node) const
     return NodeTraversal::previousSkippingChildren(*node);
 }
 
-VisiblePosition AXObjectCache::visiblePositionFromCharacterOffset(const CharacterOffset& characterOffset)
+VisiblePosition AXObjectCache::visiblePositionFromCharacterOffset(const CharacterOffset& characterOffset, AllowUserSelectNone allowUserSelectNone)
 {
     if (characterOffset.isNull())
         return VisiblePosition();
@@ -4845,7 +4861,7 @@ VisiblePosition AXObjectCache::visiblePositionFromCharacterOffset(const Characte
     auto range = rangeForUnorderedCharacterOffsets(characterOffset, characterOffset);
     if (!range)
         return { };
-    return makeContainerOffsetPosition(range->start);
+    return { makeContainerOffsetPosition(range->start), VisiblePosition::defaultAffinity, allowUserSelectNone };
 }
 
 CharacterOffset AXObjectCache::characterOffsetFromVisiblePosition(const VisiblePosition& targetVisiblePosition)
@@ -5693,7 +5709,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
     if (!document->view())
         return;
 
-    if (needsLayoutOrStyleRecalc(*document)) {
+    if (auto documentNeeds = needsLayoutOrStyleRecalc(*document)) {
         // Layout became dirty while waiting to performDeferredCacheUpdate, and we require clean layout
         // to update the accessibility tree correctly in this function.
         if ((m_cacheUpdateDeferredCount >= 3 || forceLayout == ForceLayout::Yes) && !Accessibility::inRenderTreeOrStyleUpdate(*document)) {
@@ -5701,8 +5717,12 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
             m_cacheUpdateDeferredCount = 0;
             document->updateLayoutIgnorePendingStylesheets();
         } else {
-            // Wait for layout to trigger another async cache update.
             ++m_cacheUpdateDeferredCount;
+            if (!documentNeeds.contains(DocumentNeeds::Layout) && !m_performCacheUpdateTimer.isActive()) {
+                // A pending style recalc may not necessarily trigger layout, so restart the timer explicitly
+                // to avoid stranding deferred changes.
+                m_performCacheUpdateTimer.startOneShot(0_s);
+            }
             return;
         }
     }
@@ -5939,6 +5959,13 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
 #endif
 
     platformPerformDeferredCacheUpdate();
+
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager && !m_changedLiveRegions.isEmpty()) {
+        m_liveRegionChangedPostTimer.stop();
+        processChangedLiveRegions();
+    }
+#endif
 }
 
 void AXObjectCache::handleDeferredPopoverToggle(AccessibilityObject& axPopover)

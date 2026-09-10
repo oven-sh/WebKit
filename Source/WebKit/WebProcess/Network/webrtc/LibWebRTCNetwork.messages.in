@@ -27,7 +27,7 @@
     DispatchedTo=WebContent
 ]
 messages -> LibWebRTCNetwork {
-    SignalReadPacket(WebCore::LibWebRTCSocketIdentifier socketIdentifier, std::span<const uint8_t> data, WebKit::WebRTCNetwork::IPAddress address, uint16_t port, int64_t timestamp, WebKit::WebRTCNetwork::EcnMarking ecn)
+    SignalReadPacket(WebCore::LibWebRTCSocketIdentifier socketIdentifier, std::span<const uint8_t> data, WebKit::WebRTCNetwork::SocketAddress address, int64_t timestamp, WebKit::WebRTCNetwork::EcnMarking ecn)
     SignalSentPacket(WebCore::LibWebRTCSocketIdentifier socketIdentifier, int64_t rtcPacketID, int64_t timestamp)
     SignalAddressReady(WebCore::LibWebRTCSocketIdentifier socketIdentifier, WebKit::WebRTCNetwork::SocketAddress address)
     SignalConnect(WebCore::LibWebRTCSocketIdentifier socketIdentifier)

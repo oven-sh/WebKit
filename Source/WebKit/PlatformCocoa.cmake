@@ -152,6 +152,7 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/GPUProcess/media/cocoa"
     "${WEBKIT_DIR}/GPUProcess/media/ios"
     "${WEBKIT_DIR}/ModelProcess/cocoa"
+    "${WEBKIT_DIR}/NetworkProcess/Cookies/cocoa"
     "${WEBKIT_DIR}/NetworkProcess/Downloads/cocoa"
     "${WEBKIT_DIR}/NetworkProcess/EntryPoint/Cocoa/Daemon"
     "${WEBKIT_DIR}/NetworkProcess/PrivateClickMeasurement/cocoa"
@@ -520,6 +521,10 @@ list(APPEND WebKit_SWIFTUI_SWIFT_FLAGS
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp>"
     ${WEBKIT_PRIVATE_FRAMEWORKS_COMPILE_FLAG}
 )
+if (CMAKE_Swift_COMPILER_TARGET)
+    list(APPEND WebKit_SWIFTUI_SWIFT_FLAGS
+        "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-clang-target ${CMAKE_Swift_COMPILER_TARGET}>")
+endif ()
 
 # _WebKit_SwiftUI, the SwiftUI cross-import overlay WebKit declares through the
 # .swiftcrossimport file staged beside its swiftmodule. Anything importing both

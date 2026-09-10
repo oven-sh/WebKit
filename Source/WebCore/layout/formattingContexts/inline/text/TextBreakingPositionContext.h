@@ -81,7 +81,7 @@ inline TextBreakingPositionContext::TextBreakingPositionContext(const Style::Com
     , lineBreak(style.lineBreak())
     , wordBreak(style.wordBreak())
     , nbspMode(style.nbspMode())
-    , locale(Style::toPlatform(style.computedLocale()))
+    , locale(Style::toPlatform(style.usedLocale()))
 {
 }
 

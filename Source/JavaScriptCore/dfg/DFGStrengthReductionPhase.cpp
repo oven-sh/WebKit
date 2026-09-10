@@ -734,6 +734,9 @@ private:
             if (!regExp)
                 break;
 
+            if (!regExp->isValid())
+                break;
+
             m_node->convertToNewRegExp(m_graph.freezeStrong(regExp), m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(0), UntypedUse));
             m_changed = true;
             break;
@@ -1151,9 +1154,6 @@ private:
                 if (regExp->globalOrSticky())
                     return false;
 
-                if (regExp->eitherUnicode())
-                    return false;
-
                 auto jitCodeBlock = regExp->getRegExpJITCodeBlock();
                 if (!jitCodeBlock)
                     return false;
@@ -1171,7 +1171,7 @@ private:
                 unsigned alignedFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(inlineCodeStats8Bit.stackSize());
 
                 if (alignedFrameSize)
-                    m_graph.m_parameterSlots = std::max(m_graph.m_parameterSlots, argumentCountForStackSize(alignedFrameSize));
+                    m_graph.m_parameterSlots = std::max<unsigned>(m_graph.m_parameterSlots, alignedFrameSize / sizeof(Register));
 
                 NodeOrigin origin = m_node->origin;
                 m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, origin, m_node->children.justChecks());

@@ -32,6 +32,8 @@
 #import <wtf/NeverDestroyed.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/RunLoop.h>
+#import <wtf/Seconds.h>
+#import <wtf/SoftLinking.h>
 
 @implementation TestServiceLookupResult {
     RetainPtr<NSString> _provider;
@@ -132,16 +134,16 @@
 
 @end
 
-static Seconds globalDelayDuration;
+static NSTimeInterval globalDelayDuration;
 
 @implementation DelayedLookupContext
 
-+ (Seconds)delayDuration
++ (NSTimeInterval)delayDuration
 {
     return globalDelayDuration;
 }
 
-+ (void)setDelayDuration:(Seconds)duration
++ (void)setDelayDuration:(NSTimeInterval)duration
 {
     globalDelayDuration = duration;
 }
@@ -156,9 +158,20 @@ static Seconds globalDelayDuration;
 {
     RetainPtr resourceURL = [NSBundle.test_resourcesBundle URLForResource:@"simple2" withExtension:@"html"];
     BOOL phishing = ![url isEqual:resourceURL.get()] && ![url.path isEqual:@"/safe"];
-    RunLoop::mainSingleton().dispatchAfter(globalDelayDuration, [completionHandler = makeBlockPtr(completionHandler), phishing] {
+    RunLoop::mainSingleton().dispatchAfter(Seconds { globalDelayDuration }, [completionHandler = makeBlockPtr(completionHandler), phishing] {
         completionHandler.get()([TestLookupResult resultWithResults:@[[TestServiceLookupResult resultWithProvider:@"SSBProviderApple" phishing:phishing malware:NO unwantedSoftware:NO]]], nil);
     });
 }
 
 @end
+
+#if !defined(TestWebKitAPI_SSBLookupContext_SoftLinked)
+#define TestWebKitAPI_SSBLookupContext_SoftLinked
+SOFT_LINK_PRIVATE_FRAMEWORK(SafariSafeBrowsing);
+SOFT_LINK_CLASS(SafariSafeBrowsing, SSBLookupContext);
+#endif
+
+Class testSSBLookupContextClass()
+{
+    return getSSBLookupContextClassSingleton();
+}

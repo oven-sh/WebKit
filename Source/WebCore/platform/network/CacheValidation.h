@@ -27,6 +27,7 @@
 
 #include <optional>
 #include <wtf/Forward.h>
+#include <wtf/Function.h>
 #include <wtf/Markable.h>
 #include <wtf/SHA1.h>
 #include <wtf/WallTime.h>
@@ -35,7 +36,6 @@ namespace WebCore {
 
 class CookieJar;
 class HTTPHeaderMap;
-class NetworkStorageSession;
 class ResourceRequest;
 class ResourceResponse;
 struct ResourceLoaderOptions;
@@ -87,9 +87,14 @@ WEBCORE_EXPORT CacheControlDirectives parseCacheControlDirectives(const HTTPHead
 // std::nullopt means there was no Cookie header, which is distinct from an empty one.
 WEBCORE_EXPORT std::optional<SHA1::Digest> computeCookieHeaderDigestForVary(const String& cookieHeader, uint64_t salt = 0);
 
-WEBCORE_EXPORT Vector<std::pair<String, String>> collectVaryingRequestHeaders(NetworkStorageSession*, const ResourceRequest&, const ResourceResponse&);
+// Varying header values are stored and compared as strings.
+WEBCORE_EXPORT String encodeCookieHeaderDigestForVary(const std::optional<SHA1::Digest>&);
+
+WEBCORE_EXPORT String headerValueForVary(const ResourceRequest&, StringView headerName, NOESCAPE const Function<String()>& cookieRequestHeaderFieldValueFunction);
+
+WEBCORE_EXPORT Vector<std::pair<String, String>> collectVaryingRequestHeaders(const ResourceResponse&, NOESCAPE const Function<String(StringView headerName)>& headerValueForVaryFunction);
 WEBCORE_EXPORT Vector<std::pair<String, String>> collectVaryingRequestHeaders(const CookieJar*, const ResourceRequest&, const ResourceResponse&);
-WEBCORE_EXPORT bool verifyVaryingRequestHeaders(NetworkStorageSession*, const Vector<std::pair<String, String>>& varyingRequestHeaders, const ResourceRequest&);
+WEBCORE_EXPORT bool verifyVaryingRequestHeaders(const Vector<std::pair<String, String>>& varyingRequestHeaders, NOESCAPE const Function<String(const String& headerName)>& headerValueForVaryFunction);
 WEBCORE_EXPORT bool verifyVaryingRequestHeaders(const CookieJar*, const Vector<std::pair<String, String>>& varyingRequestHeaders, const ResourceRequest&);
 
 WEBCORE_EXPORT bool NODELETE isStatusCodeCacheableByDefault(int statusCode);

@@ -99,9 +99,7 @@ bool isDutchLocale(const AtomString& locale)
 }
 
 struct SameSizeAsRenderText : public RenderObject {
-#if ENABLE(TEXT_AUTOSIZING)
     float candidateTextSize;
-#endif
     float widths[4];
     String text;
     std::optional<bool> canUseSimplifiedTextMeasuring;
@@ -550,7 +548,7 @@ void RenderText::styleDidChange(Style::Difference diff, const Style::ComputedSty
             return true;
         if (oldStyle->textSecurity() != newStyle.textSecurity())
             return true;
-        return !newStyle.textTransform().isNone() && oldStyle->computedLocale() != newStyle.computedLocale();
+        return !newStyle.textTransform().isNone() && oldStyle->usedLocale() != newStyle.usedLocale();
     };
     if (needsRenderedTextUpdateOnly())
         updateRenderedText();
@@ -1280,7 +1278,7 @@ float RenderText::maxWordFragmentWidth(const Style::ComputedStyle& style, const 
     Vector<int, 8> hyphenLocations;
     ASSERT(word.length() >= minimumSuffixLength);
     unsigned hyphenLocation = word.length() - minimumSuffixLength;
-    while ((hyphenLocation = lastHyphenLocation(word, hyphenLocation, Style::toPlatform(style.computedLocale()))) >= std::max(minimumPrefixLength, 1U))
+    while ((hyphenLocation = lastHyphenLocation(word, hyphenLocation, Style::toPlatform(style.usedLocale()))) >= std::max(minimumPrefixLength, 1U))
         hyphenLocations.append(hyphenLocation);
 
     if (hyphenLocations.isEmpty())
@@ -1347,7 +1345,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     unsigned length = string.length();
     auto iteratorMode = mapLineBreakToIteratorMode(style.lineBreak());
     auto contentAnalysis = mapWordBreakToContentAnalysis(style.wordBreak());
-    CachedLineBreakIteratorFactory lineBreakIteratorFactory(string, Style::toPlatform(style.computedLocale()), iteratorMode, contentAnalysis);
+    CachedLineBreakIteratorFactory lineBreakIteratorFactory(string, Style::toPlatform(style.usedLocale()), iteratorMode, contentAnalysis);
     bool needsWordSpacing = false;
     bool ignoringSpaces = false;
     bool isSpace = false;
@@ -1362,7 +1360,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     float maxWordWidth = std::numeric_limits<float>::max();
     unsigned minimumPrefixLength = 0;
     unsigned minimumSuffixLength = 0;
-    if (style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.computedLocale()))) {
+    if (style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.usedLocale()))) {
         maxWordWidth = 0;
 
         // Map 'hyphenate-limit-{before,after}: auto;' to 2.
@@ -1770,11 +1768,11 @@ String applyTextTransform(const Style::ComputedStyle& style, const String& text,
     // https://w3c.github.io/csswg-drafts/css-text/#text-transform-order
     auto modified = text;
     if (transform.contains(Style::TextTransformValue::Capitalize))
-        modified = capitalize(modified, previousCharacter, Style::toPlatform(style.computedLocale()));
+        modified = capitalize(modified, previousCharacter, Style::toPlatform(style.usedLocale()));
     else if (transform.contains(Style::TextTransformValue::Uppercase))
-        modified = modified.convertToUppercaseWithLocale(Style::toPlatform(style.computedLocale()));
+        modified = modified.convertToUppercaseWithLocale(Style::toPlatform(style.usedLocale()));
     else if (transform.contains(Style::TextTransformValue::Lowercase))
-        modified = modified.convertToLowercaseWithLocale(Style::toPlatform(style.computedLocale()));
+        modified = modified.convertToLowercaseWithLocale(Style::toPlatform(style.usedLocale()));
 
     if (transform.contains(Style::TextTransformValue::FullWidth))
         modified = transformToFullWidth(modified);
@@ -1810,7 +1808,7 @@ void RenderText::setRenderedText(const String& newText)
         break;
 #if !PLATFORM(IOS_FAMILY)
     // We use the same characters here as for list markers.
-    // See the listMarkerText function in RenderListMarker.cpp.
+    // See the listMarkerText function in RenderListOutsideMarker.cpp.
     case TextSecurity::Circle:
         secureText(whiteBullet);
         break;

@@ -105,6 +105,21 @@
             "/webkit/WebKitAccessibility/collection/get-matches": {
                 "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/279009"}}
             },
+            "/webkit/WebKitAccessibility/text/for-range-simple": {
+                "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/279009"}}
+            },
+            "/webkit/WebKitAccessibility/text/for-range-list-item": {
+                "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/279009"}}
+            },
+            "/webkit/WebKitAccessibility/text/for-range-heading": {
+                "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/279009"}}
+            },
+            "/webkit/WebKitAccessibility/text/for-range-table-cell": {
+                "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/279009"}}
+            },
+            "/webkit/WebKitAccessibility/text/for-range-embedded-objects": {
+                "expected": {"gtk": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/279009"}}
+            },
             "/webkit/WebKitAccessibility/accessible/ignored-objects": {
                 "expected": {"gtk": {"status": ["SKIP"], "bug": "webkit.org/b/279009"}}
 	    },
@@ -201,6 +216,21 @@
             },
             "RunLoopObserver.CrossThread_TwoObserversOnDifferentLoops": {
                 "expected": {"all": {"status": ["CRASH", "PASS"], "bug": "webkit.org/b/315297"}}
+            },
+            "PushDatabase.ManyInFlightOps": {
+                "expected": {"all": {"status": ["CRASH"], "bug": "webkit.org/b/323618"}}
+            },
+            "PushDatabase.StartsFromScratchOnDowngrade": {
+                "expected": {"all": {"status": ["CRASH"], "bug": "webkit.org/b/323618"}}
+            },
+            "PushDatabase.CanMigrateV2DatabaseToCurrentSchema": {
+                "expected": {"all": {"status": ["CRASH"], "bug": "webkit.org/b/323618"}}
+            },
+            "FontCascadeTest.ComplexTextRetainsSystemFallbackFonts": {
+                "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/323619"}}
+            },
+            "GraphicsContextGLTextureMapperTest.ClearBufferIncorrectSizes": {
+                "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/323621"}}
             }
         }
     },
@@ -220,6 +250,12 @@
             },
             "WebKit.ResizeWindowAfterCrash": {
                 "expected": {"all": {"slow": true}}
+            },
+            "WebKit.EventModifiers": {
+                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/323622"}}
+            },
+            "WebKit.SpacebarScrolling": {
+                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/323624"}}
             }
         }
     },

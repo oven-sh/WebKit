@@ -27,8 +27,6 @@
 #include "config.h"
 #include "AutosizeStatus.h"
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 #include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
@@ -42,7 +40,7 @@ auto AutosizeStatus::compute(const Style::ComputedStyle& style) -> AutosizeStatu
             return true;
 
         const float maximumDifferenceBetweenFixedLineHeightAndFontSize = 5;
-        auto& lineHeight = style.specifiedLineHeight();
+        auto& lineHeight = style.lineHeight();
         if (auto fixedLineHeight = lineHeight.tryFixed(); fixedLineHeight && fixedLineHeight->resolveZoom(style.usedZoomForLength()) - style.fontSize() > maximumDifferenceBetweenFixedLineHeightAndFontSize)
             return false;
 
@@ -86,22 +84,22 @@ auto AutosizeStatus::isIdempotentTextAutosizingCandidate(const Style::ComputedSt
             if (style.whiteSpaceCollapse() == WhiteSpaceCollapse::Collapse && style.textWrapMode() == TextWrapMode::NoWrap) {
                 if (style.width().isFixed())
                     return false;
-                if (auto fixedHeight = style.height().tryFixed(); fixedHeight && style.specifiedLineHeight().isFixed()) {
-                    if (auto fixedSpecifiedLineHeight = style.specifiedLineHeight().tryFixed()) {
+                if (auto fixedHeight = style.height().tryFixed(); fixedHeight && style.lineHeight().isFixed()) {
+                    if (auto fixedLineHeight = style.lineHeight().tryFixed()) {
                         auto size = style.fontSize();
                         auto zoomFactor = style.usedZoomForLength();
-                        if (fixedHeight->resolveZoom(zoomFactor) == size && fixedSpecifiedLineHeight->resolveZoom(zoomFactor) == size)
+                        if (fixedHeight->resolveZoom(zoomFactor) == size && fixedLineHeight->resolveZoom(zoomFactor) == size)
                             return false;
                     }
                 }
                 return true;
             }
             if (fields.contains(AutosizeStatus::Fields::Floating)) {
-                if (auto fixedHeight = style.height().tryFixed(); style.specifiedLineHeight().isFixed() && fixedHeight) {
-                    if (auto fixedSpecifiedLineHeight = style.specifiedLineHeight().tryFixed()) {
+                if (auto fixedHeight = style.height().tryFixed(); style.lineHeight().isFixed() && fixedHeight) {
+                    if (auto fixedLineHeight = style.lineHeight().tryFixed()) {
                         auto size = style.fontSize();
                         auto zoomFactor = style.usedZoomForLength();
-                        if (fixedSpecifiedLineHeight->resolveZoom(Style::ZoomFactor { 1.0f }) - size > smallMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText
+                        if (fixedLineHeight->resolveZoom(Style::ZoomFactor { 1.0f }) - size > smallMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText
                             && fixedHeight->resolveZoom(zoomFactor) - size > smallMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText)
                             return true;
                     }
@@ -131,7 +129,7 @@ auto AutosizeStatus::isIdempotentTextAutosizingCandidate(const Style::ComputedSt
             return true;
         if (fields.contains(AutosizeStatus::Fields::FixedWidth))
             return true;
-        if (auto fixedSpecifiedLineHeight = style.specifiedLineHeight().tryFixed(); fixedSpecifiedLineHeight && fixedSpecifiedLineHeight->resolveZoom(style.usedZoomForLength()) - style.fontSize() > largeMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText)
+        if (auto fixedLineHeight = style.lineHeight().tryFixed(); fixedLineHeight && fixedLineHeight->resolveZoom(style.usedZoomForLength()) - style.fontSize() > largeMinimumDifferenceThresholdBetweenLineHeightAndComputedFontSizeForBoostingText)
             return true;
         return false;
     }
@@ -144,9 +142,9 @@ auto AutosizeStatus::isIdempotentTextAutosizingCandidate(const Style::ComputedSt
 
 bool AutosizeStatus::probablyContainsASmallFixedNumberOfLines(const Style::ComputedStyle& style)
 {
-    auto& specifiedLineHeight = style.specifiedLineHeight();
-    auto lineHeightAsLength = specifiedLineHeight.tryLength();
-    auto lineHeightAsNumber = specifiedLineHeight.tryNumber();
+    auto& lineHeight = style.lineHeight();
+    auto lineHeightAsLength = lineHeight.tryLength();
+    auto lineHeightAsNumber = lineHeight.tryNumber();
     if (!lineHeightAsLength && !lineHeightAsNumber)
         return false;
 
@@ -220,5 +218,3 @@ float AutosizeStatus::idempotentTextSize(float size, float pageScale)
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(TEXT_AUTOSIZING)

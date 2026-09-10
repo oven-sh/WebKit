@@ -88,6 +88,7 @@ void RemoteGraphicsContextGLProxyGBM::prepareForDisplay()
 #else
     m_layerContentsDisplayDelegate->setDisplayBuffer(CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer), flags, WTF::move(fenceFD), m_layerContentsDisplayDelegate->threadSafeGrContext()));
 #endif
+    m_hasPreparedForDisplay = true;
 }
 
 Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(const GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend)

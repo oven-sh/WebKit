@@ -456,7 +456,11 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     // https://bugs.webkit.org/show_bug.cgi?id=148819
     //
     // Note that we intentionally enable tail call for naked constructors since it does not have special code for "return".
-    , m_allowTailCallOptimization(Options::useTailCalls() && !isConstructor() && constructorKind() == ConstructorKind::None && functionNode->isStrictMode())
+    //
+    // Generator, async function, and async generator bodies hold no tail positions at all
+    // (IsInTailPosition steps 4 to 7): their "return" is not a plain return. An async generator
+    // awaits the returned value, and a tail call would jump over that await.
+    , m_allowTailCallOptimization(Options::useTailCalls() && !isConstructor() && constructorKind() == ConstructorKind::None && functionNode->isStrictMode() && !isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
     , m_allowCallIgnoreResultOptimization(m_defaultAllowCallIgnoreResultOptimization)
     , m_needsToUpdateArrowFunctionContext(functionNode->usesArrowFunction() || functionNode->usesEval())
     , m_ecmaMode(ECMAMode::fromBool(functionNode->isStrictMode()))

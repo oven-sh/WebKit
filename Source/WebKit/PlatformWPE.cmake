@@ -496,6 +496,10 @@ if (USE_OPENXR)
    list(APPEND WebKit_LIBRARIES OpenXR::openxr_loader)
 endif ()
 
+if (USE_LIBSECRET)
+    list(APPEND WebKit_PRIVATE_LIBRARIES Secret::Secret)
+endif ()
+
 if (ENABLE_BUBBLEWRAP_SANDBOX)
     list(APPEND WebKit_LIBRARIES Libseccomp::Libseccomp)
 endif ()

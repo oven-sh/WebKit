@@ -84,7 +84,7 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderLayoutState.h"
 #include "RenderListItem.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMathMLBlock.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectInlines.h"
@@ -5087,12 +5087,12 @@ LayoutUnit RenderBox::lineHeight() const
     auto shouldUseLineHeightFromStyle = [&] {
         if (is<RenderBlock>(*this))
             return true;
-        if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListMarker>(*this))
+        if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(*this))
             return !listMarkerRenderer->isImage();
         return false;
     };
     if (shouldUseLineHeightFromStyle())
-        return LayoutUnit::fromFloatCeil(firstLineStyle().computedLineHeight());
+        return LayoutUnit::fromFloatCeil(firstLineStyle().usedLineHeight());
 
     if (isBlockLevelReplacedOrAtomicInline())
         return marginBefore() + logicalHeight() + marginAfter();

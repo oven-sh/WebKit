@@ -29,6 +29,7 @@
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Utilities.h"
 #import <WebKit/WKWebViewPrivateForTesting.h>
+#import <wtf/BlockPtr.h>
 #import <wtf/RetainPtr.h>
 
 @implementation TestNavigationDelegate
@@ -73,8 +74,10 @@
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error
 {
-    if (_didFailProvisionalNavigation)
-        _didFailProvisionalNavigation(webView, navigation, error);
+    // Retained for the duration of the call so that a handler may clear the property, and thereby
+    // release the block, while it is still executing.
+    if (auto didFailProvisionalNavigation = makeBlockPtr(_didFailProvisionalNavigation))
+        didFailProvisionalNavigation(webView, navigation, error);
 }
 
 - (void)_webView:(WKWebView *)webView didFailProvisionalLoadWithRequest:(NSURLRequest *)request inFrame:(WKFrameInfo *)frame withError:(NSError *)error
@@ -91,8 +94,10 @@
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
 {
-    if (_didFinishNavigation)
-        _didFinishNavigation(webView, navigation);
+    // Retained for the duration of the call so that a handler may clear the property, and thereby
+    // release the block, while it is still executing.
+    if (auto didFinishNavigation = makeBlockPtr(_didFinishNavigation))
+        didFinishNavigation(webView, navigation);
 }
 
 - (void)_webView:(WKWebView *)webView didFinishLoadWithRequest:(NSURLRequest *)request inFrame:(WKFrameInfo *)frame
@@ -175,6 +180,43 @@
     TestWebKitAPI::Util::run(&finished);
 
     self.didFinishNavigation = nil;
+}
+
+// Asynchronous counterpart to -waitForDidFinishNavigation, for callers that cannot spin the run
+// loop. Swift imports this as `try await delegate.waitForDidFinishNavigation()`.
+- (void)waitForDidFinishNavigationWithCompletionHandler:(void (^)(NSError *))completionHandler
+{
+    EXPECT_FALSE(self.didFinishNavigation);
+    EXPECT_FALSE(self.didFailProvisionalNavigation);
+
+    __block bool completed = false;
+
+    // Free both properties before handing control back, so that a caller which starts another wait
+    // is not left waiting on a handler this one went on to clear. Capturing self below keeps this
+    // delegate alive until the navigation ends, since -[WKWebView navigationDelegate] is weak; the
+    // callbacks retain the block across the call, so clearing here does not release it while it is
+    // still executing.
+    void (^complete)(NSError *) = ^(NSError *error) {
+        completed = true;
+        self.didFinishNavigation = nil;
+        self.didFailProvisionalNavigation = nil;
+
+        completionHandler(error);
+    };
+
+    self.didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        if (!completed)
+            complete(nil);
+    };
+
+    // A provisional load that fails will never finish, so hand the error to the caller rather than
+    // leave it waiting on a navigation that is no longer coming — which would also keep this
+    // delegate, and through it the web view and the delegate it replaced, alive for the rest of
+    // the process.
+    self.didFailProvisionalNavigation = ^(WKWebView *, WKNavigation *, NSError *error) {
+        if (!completed)
+            complete(error);
+    };
 }
 
 - (void)waitForDidFinishLoadInSubframe
@@ -371,6 +413,30 @@
     }];
     TestWebKitAPI::Util::run(&presentationUpdateHappened);
 #endif
+}
+
+- (void)_test_waitForDidFinishNavigationWithCompletionHandler:(void (^)(NSError *))completionHandler
+{
+    RetainPtr<id<WKNavigationDelegate>> oldNavigationDelegate = self.navigationDelegate;
+
+    RetainPtr navigationDelegate = adoptNS([[TestNavigationDelegate alloc] init]);
+    self.navigationDelegate = navigationDelegate.get();
+
+    // The temporary delegate keeps itself alive until the navigation finishes.
+    [navigationDelegate waitForDidFinishNavigationWithCompletionHandler:^(NSError *error) {
+        self.navigationDelegate = oldNavigationDelegate.get();
+
+#if PLATFORM(IOS_FAMILY)
+        // Nothing was painted if the load failed, so there is no update to wait for.
+        if (!error) {
+            [self _doAfterNextPresentationUpdateWithoutWaitingForAnimatedResizeForTesting:^{
+                completionHandler(nil);
+            }];
+            return;
+        }
+#endif
+        completionHandler(error);
+    }];
 }
 
 - (void)_test_waitForDidSameDocumentNavigation

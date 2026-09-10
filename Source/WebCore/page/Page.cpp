@@ -2269,7 +2269,20 @@ bool Page::hasRemoteFrames() const
 
 void Page::syncLocalFrameInfoToRemote()
 {
-    forEachLocalFrame([] (LocalFrame& frame) {
+    ASSERT(hasRemoteFrames());
+
+    // Memoize FrameTree::containsRemoteFrame for the entire frame tree.
+    HashSet<FrameIdentifier> subtreeContainsRemoteFrame;
+    for (RefPtr frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
+        if (!is<RemoteFrame>(*frame))
+            continue;
+        for (RefPtr ancestor = frame; ancestor; ancestor = ancestor->tree().parent()) {
+            if (!subtreeContainsRemoteFrame.add(ancestor->frameID()).isNewEntry)
+                break;
+        }
+    }
+
+    forEachLocalFrame([&] (LocalFrame& frame) {
         RefPtr<LocalFrameView> frameView = frame.view();
 
         HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> childrenFrameLayoutInfo;
@@ -2287,32 +2300,70 @@ void Page::syncLocalFrameInfoToRemote()
 #endif
 
         for (RefPtr child = frame.tree().firstChild(); child; child = child->tree().nextSibling()) {
+            if (!subtreeContainsRemoteFrame.contains(child->frameID())) {
+                ASSERT(!child->tree().containsRemoteFrame());
+                continue;
+            }
+            ASSERT(child->tree().containsRemoteFrame());
+
+            auto absoluteToChildFrameOwnerLocalTransform = frameView->absoluteToChildFrameOwnerLocalTransform(*child);
+            auto contentBoxLocation = frameView->childFrameOwnerContentBoxLocation(*child);
+
+            // We could use the mapAbsoluteToChildFrameViewRect member function here, but use the
+            // static version instead to reuse absoluteToChildFrameOwnerLocalTransform across
+            // multiple calls.
+            auto mapParentAbsoluteToChildFrameViewRect = [&] (const LayoutRect& rect) {
+                return LocalFrameView::mapAbsoluteToChildFrameViewRect(FloatRect { rect }, absoluteToChildFrameOwnerLocalTransform, contentBoxLocation);
+            };
+
             auto visibleRectInParent = frameView->visibleRectOfChild(*child.get());
 
+            auto onScreenRectInChildView = [&] {
+                if (!visibleRectInParent)
+                    return IntRect { };
+
+                auto onScreenRectInParent = *visibleRectInParent;
+                onScreenRectInParent.intersect(windowClipRectInContentCoordinates());
+                if (onScreenRectInParent.isEmpty())
+                    return IntRect { };
+
+                return enclosingIntRect(mapParentAbsoluteToChildFrameViewRect(onScreenRectInParent));
+            }();
+
 #if PLATFORM(IOS_FAMILY)
-            // Clamp the child's visible rect to the portion of the page actually on-screen, so an offscreen
-            // iframe commits ~0 tiles — matching the single-tiled-backing coverage decision the page makes
-            // with site isolation off. visibleRectOfChild() clips through the compositor tree but not the
-            // top-level viewport, so a fully-below-fold iframe can still return a non-empty box; intersect
-            // it here with the parent's exposed viewport.
-            auto exposedContentRectInParent = visibleRectInParent;
-            if (exposedContentRectInParent)
-                exposedContentRectInParent->intersect(exposedContentRect());
+            auto exposedContentRectInChildView = [&]() -> FloatRect {
+                auto exposedContentRectInParent = visibleRectInParent;
+                if (exposedContentRectInParent)
+                    exposedContentRectInParent->intersect(exposedContentRect());
+                if (!exposedContentRectInParent || exposedContentRectInParent->isEmpty())
+                    return FloatRect { };
+
+                auto rectInChildView = mapParentAbsoluteToChildFrameViewRect(*exposedContentRectInParent);
+                if (rectInChildView.isEmpty())
+                    return FloatRect { };
+
+                return rectInChildView;
+            }();
 #endif
 
             childrenFrameLayoutInfo.add(child->frameID(), RemoteFrameLayoutInfo::create(
-                windowClipRectInContentCoordinates(),
                 visibleRectInParent,
+                onScreenRectInChildView,
 #if PLATFORM(IOS_FAMILY)
-                exposedContentRectInParent,
+                exposedContentRectInChildView,
 #endif
                 !!child->ownerRenderer(),
                 frameView->childFrameOwnerToRootContentTransform(*child),
-                frameView->absoluteToChildFrameOwnerLocalTransform(*child),
+                WTF::move(absoluteToChildFrameOwnerLocalTransform),
                 frame.usedZoomForChild(*child),
-                frameView->childFrameOwnerContentBoxLocation(*child),
+                contentBoxLocation,
                 frameView->appearanceOfOwnerElementOfChildFrame(*child)
             ));
+        }
+
+        if (childrenFrameLayoutInfo.isEmpty()) {
+            ASSERT(!frame.tree().containsRemoteFrame());
+            return;
         }
 
         frame.loader().client().broadcastFrameGeometryToOtherProcesses({
@@ -2395,8 +2446,7 @@ void Page::updateRendering()
         document.evaluateMediaQueriesAndReportChanges();
     });
 
-    // FIXME: This suppression shouldn't be needed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE runProcessingStep(RenderingUpdateStep::AdjustVisibility, [&] (auto& document) {
+    runProcessingStep(RenderingUpdateStep::AdjustVisibility, [&] (auto& document) {
         m_elementTargetingController->adjustVisibilityInRepeatedlyTargetedRegions(document);
     });
 
@@ -2432,8 +2482,7 @@ void Page::updateRendering()
 
     layoutIfNeeded();
 
-    // FIXME: This suppression shouldn't be needed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE runProcessingStep(RenderingUpdateStep::ResizeObservations, [&] (Document& document) {
+    runProcessingStep(RenderingUpdateStep::ResizeObservations, [&] (Document& document) {
         document.updateResizeObservations(*this);
     });
 
@@ -2795,8 +2844,6 @@ bool Page::shouldUpdateAccessibilityRegions() const
                 protectedMainDocument = owner->document();
         }
 
-        // If accessibility is enabled and we have a main document, that document should have an AX object cache.
-        ASSERT(!protectedMainDocument || protectedMainDocument->existingAXObjectCache());
         if (CheckedPtr topAxObjectCache = protectedMainDocument ? protectedMainDocument->existingAXObjectCache() : nullptr)
             topAxObjectCache->scheduleObjectRegionsUpdate();
         return false;
@@ -5026,8 +5073,6 @@ void Page::didFinishLoadingImageForSVGImage(SVGImageElement& element)
     chrome().client().didFinishLoadingImageForSVGImage(element);
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 void Page::recomputeTextAutoSizingInAllFrames()
 {
     ASSERT(settings().textAutosizingEnabled() && settings().textAutosizingUsesIdempotentMode());
@@ -5048,8 +5093,6 @@ void Page::recomputeTextAutoSizingInAllFrames()
         }
     });
 }
-
-#endif
 
 OptionSet<FilterRenderingMode> Page::preferredFilterRenderingModes(const GraphicsContext& context) const
 {

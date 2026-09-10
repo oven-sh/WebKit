@@ -30,5 +30,5 @@
 ] dictionary XRHitTestOptionsInit {
     required WebXRSpace space;
     [ImplementationDefaultValue=[]] sequence<XRHitTestTrackableType> entityTypes;
-    [ImplementationDefaultValue=null] WebXRRay offsetRay;
+    WebXRRay offsetRay;
 };

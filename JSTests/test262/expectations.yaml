@@ -82,14 +82,6 @@ test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-p
 test/language/expressions/assignment/fn-name-lhs-cover.js:
   default: 3
   strict mode: 3
-test/language/expressions/call/tco-non-eval-function-dynamic.js:
-  default: 3
-test/language/expressions/call/tco-non-eval-function.js:
-  default: 3
-test/language/expressions/call/tco-non-eval-global.js:
-  default: 3
-test/language/expressions/call/tco-non-eval-with.js:
-  default: 3
 test/language/expressions/delete/super-property-uninitialized-this.js:
   default: 3
   strict mode: 3

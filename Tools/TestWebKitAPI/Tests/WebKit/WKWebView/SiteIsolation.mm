@@ -6165,6 +6165,58 @@ TEST(SiteIsolation, SandboxFlagsDuringNavigation)
     EXPECT_FALSE(receivedAlert);
 }
 
+TEST(SiteIsolation, SandboxFlagsRemovedBeforeSameSiteNavigation)
+{
+    NSString *checkAlertJS = @"alert('alerted');window.open('https://example.com/opened');window.webkit.messageHandlers.testHandler.postMessage('testHandler')";
+
+    HTTPServer server({
+        { "/example"_s, { "<iframe sandbox='allow-scripts allow-modals' id='testiframe' src='https://webkit.org/iframe1'></iframe>"_s } },
+        { "/iframe1"_s, { "hi"_s } },
+        { "/iframe2"_s, { [NSString stringWithFormat:@"<script>onload = ()=>{ %@ }</script>", checkAlertJS] } },
+        { "/opened"_s, { "hi"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    bool receivedMessage { false };
+    bool receivedAlert { false };
+    bool receivedOpen { false };
+    auto reset = [&] {
+        receivedMessage = false;
+        receivedAlert = false;
+        receivedOpen = false;
+    };
+
+    auto webViewAndDelegates = makeWebViewAndDelegates(server);
+    RetainPtr webView = webViewAndDelegates.webView;
+    webView.get().configuration.preferences.javaScriptCanOpenWindowsAutomatically = YES;
+    [webViewAndDelegates.messageHandler addMessage:@"testHandler" withHandler:[&] {
+        receivedMessage = true;
+    }];
+    RetainPtr uiDelegate = webViewAndDelegates.uiDelegate;
+    uiDelegate.get().runJavaScriptAlertPanelWithMessage = [&](WKWebView *, NSString *, WKFrameInfo *, void (^completionHandler)()) {
+        receivedAlert = true;
+        completionHandler();
+    };
+    uiDelegate.get().createWebViewWithConfiguration = [&](WKWebViewConfiguration *, WKNavigationAction *, WKWindowFeatures *) -> WKWebView * {
+        receivedOpen = true;
+        return nil;
+    };
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+    [webViewAndDelegates.navigationDelegate waitForDidFinishNavigation];
+    [webView evaluateJavaScript:checkAlertJS inFrame:[webView firstChildFrame] completionHandler:nil];
+    Util::run(&receivedMessage);
+    EXPECT_TRUE(receivedAlert);
+    EXPECT_FALSE(receivedOpen);
+
+    reset();
+    // iframe2 is same-site with iframe1, so the frame stays in the process it is already in and the
+    // now-empty sandbox flags have to be delivered by the load itself rather than by frame creation.
+    [webView evaluateJavaScript:@"let i = document.getElementById('testiframe'); i.removeAttribute('sandbox'); i.src = 'https://webkit.org/iframe2'" completionHandler:nil];
+    Util::run(&receivedMessage);
+    EXPECT_TRUE(receivedAlert);
+    EXPECT_TRUE(receivedOpen);
+}
+
 TEST(SiteIsolation, NavigateNestedRootFramesBackForward)
 {
     HTTPServer server({
@@ -6791,7 +6843,7 @@ TEST(SiteIsolation, DISABLED_PlayAudioInMultipleFrames)
 
     RetainPtr<NSData> videoData = [NSData dataWithContentsOfFile:[NSBundle.test_resourcesBundle pathForResource:@"video-with-audio" ofType:@"mp4"] options:0 error:NULL];
     HTTPResponse videoResponse { videoData.get() };
-    videoResponse.headerFields.set("Content-Type"_s, "video/mp4"_s);
+    videoResponse.setHeaderField("Content-Type"_s, "video/mp4"_s);
 
     HTTPServer server({
         { "/mainframe"_s, { { { "Content-Type"_s, "text/html"_s } }, mainFrameHTML } },
@@ -6825,7 +6877,7 @@ TEST(SiteIsolation, PlayAudioInRemoteFrameThenRemove)
 
     RetainPtr<NSData> videoData = [NSData dataWithContentsOfFile:[NSBundle.test_resourcesBundle pathForResource:@"video-with-audio" ofType:@"mp4"] options:0 error:NULL];
     HTTPResponse videoResponse { videoData.get() };
-    videoResponse.headerFields.set("Content-Type"_s, "video/mp4"_s);
+    videoResponse.setHeaderField("Content-Type"_s, "video/mp4"_s);
 
     HTTPServer server({
         { "/mainframe"_s, { { { "Content-Type"_s, "text/html"_s } }, mainFrameHTML } },
@@ -6863,7 +6915,7 @@ TEST(SiteIsolation, MutesAndSetsAudioInMultipleFrames)
 
     RetainPtr<NSData> videoData = [NSData dataWithContentsOfFile:[NSBundle.test_resourcesBundle pathForResource:@"video-with-audio" ofType:@"mp4"] options:0 error:NULL];
     HTTPResponse videoResponse { videoData.get() };
-    videoResponse.headerFields.set("Content-Type"_s, "video/mp4"_s);
+    videoResponse.setHeaderField("Content-Type"_s, "video/mp4"_s);
 
     HTTPServer server({
         { "/mainframe"_s, { { { "Content-Type"_s, "text/html"_s } }, mainFrameHTML } },
@@ -10955,6 +11007,135 @@ TEST(SiteIsolation, ZoomToRevealFocusedElementRectIsInMainFrameCoordinates)
     EXPECT_TRUE(CGRectContainsRect([webView _focusedElementInteractionRect], revealRect));
 }
 
+#if HAVE(UICONTEXTMENU_LOCATION)
+
+// UIKit anchors the menu to a hidden control whose frame is the anchor rect.
+static CGRect presentedMenuAnchorRect = CGRectNull;
+
+static CGRect menuAnchorRectAfterOpeningFilePicker(TestWKWebView *webView, NSString *script, WKFrameInfo *frame)
+{
+    // Wait for the frame to commit the document containing the input.
+    while (![[webView objectByEvaluatingJavaScript:@"!!document.querySelector('input')" inFrame:frame] boolValue])
+        Util::spinRunLoop();
+
+    InstanceMethodSwizzler menuPresentationSwizzler { UIContextMenuInteraction.class, @selector(_presentMenuAtLocation:), imp_implementationWithBlock(^(UIContextMenuInteraction *interaction, CGPoint) {
+        presentedMenuAnchorRect = interaction.view.frame;
+    }) };
+
+    presentedMenuAnchorRect = CGRectNull;
+    [webView objectByEvaluatingJavaScriptWithUserGesture:script inFrame:frame];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !CGRectIsNull(presentedMenuAnchorRect);
+    }));
+
+    [webView _dismissFilePicker];
+    return presentedMenuAnchorRect;
+}
+
+TEST(SiteIsolation, FileUploadPanelAnchorRectInCrossOriginIframe)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0'><iframe style='display: block; margin: 100px; width: 400px; height: 300px; border: none;' src='https://domain2.com/iframe'></iframe></body>"_s } },
+        { "/iframe"_s, { "<!DOCTYPE html><body style='margin: 0'><input type='file' style='display: block; margin: 50px; width: 100px; height: 50px; border: none; padding: 0;'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    checkFrameTreesInProcesses(webView.get(), {
+        { "https://example.com"_s,
+            { { RemoteFrame } }
+        }, { RemoteFrame,
+            { { "https://domain2.com"_s } }
+        },
+    });
+
+    // The input is at (50, 50) in the iframe, which is at (100, 100) in the main frame.
+    EXPECT_EQ(menuAnchorRectAfterOpeningFilePicker(webView.get(), @"document.querySelector('input').showPicker()", [webView firstChildFrame]), CGRectMake(150, 150, 100, 50));
+}
+
+TEST(SiteIsolation, FileUploadPanelAnchorRectInNestedCrossOriginIframes)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0'><iframe style='display: block; margin: 100px; width: 400px; height: 300px; border: none;' src='https://domain2.com/middle'></iframe></body>"_s } },
+        { "/middle"_s, { "<!DOCTYPE html><body style='margin: 0'><iframe style='display: block; margin: 50px; width: 200px; height: 150px; border: none;' src='https://domain3.com/inner'></iframe></body>"_s } },
+        { "/inner"_s, { "<!DOCTYPE html><body style='margin: 0'><input type='file' style='display: block; margin: 25px; width: 100px; height: 50px; border: none; padding: 0;'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    while (![webView mainFrame].childFrames.firstObject.childFrames.firstObject)
+        Util::spinRunLoop();
+
+    // Two nested frame offsets: 100 + 50 + 25.
+    EXPECT_EQ(menuAnchorRectAfterOpeningFilePicker(webView.get(), @"document.querySelector('input').showPicker()", [webView mainFrame].childFrames.firstObject.childFrames.firstObject.info), CGRectMake(175, 175, 100, 50));
+}
+
+TEST(SiteIsolation, FileUploadPanelAnchorRectWithScrolledMainFrame)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0; height: 2000px'><iframe style='display: block; margin-left: 100px; margin-top: 500px; width: 400px; height: 300px; border: none;' src='https://domain2.com/iframe'></iframe></body>"_s } },
+        { "/iframe"_s, { "<!DOCTYPE html><body style='margin: 0'><input type='file' style='display: block; margin: 50px; width: 100px; height: 50px; border: none; padding: 0;'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    [webView objectByEvaluatingJavaScript:@"window.scrollTo(0, 400)"];
+    while ([[webView objectByEvaluatingJavaScript:@"window.scrollY"] intValue] != 400)
+        Util::spinRunLoop();
+
+    // The main frame's scroll offset must not shift the anchor.
+    EXPECT_EQ(menuAnchorRectAfterOpeningFilePicker(webView.get(), @"document.querySelector('input').showPicker()", [webView firstChildFrame]), CGRectMake(150, 550, 100, 50));
+}
+
+TEST(SiteIsolation, FileUploadPanelAnchorRectInMainFrameIsNotOffset)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0'><input type='file' style='display: block; margin: 60px; width: 100px; height: 50px; border: none; padding: 0;'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    // A spurious conversion would move the anchor off the element.
+    EXPECT_EQ(menuAnchorRectAfterOpeningFilePicker(webView.get(), @"document.querySelector('input').showPicker()", nil), CGRectMake(60, 60, 100, 50));
+}
+
+TEST(SiteIsolation, FileUploadPanelAnchorRectForHiddenInputInCrossOriginIframe)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin: 0'><iframe style='display: block; margin: 100px; width: 400px; height: 300px; border: none;' src='https://domain2.com/iframe'></iframe></body>"_s } },
+        { "/iframe"_s, { "<!DOCTYPE html><body style='margin: 0'><input type='file' style='display: none'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    // No box, so the menu opens anchored to nothing rather than being cancelled.
+    CGRect anchorRect = menuAnchorRectAfterOpeningFilePicker(webView.get(), @"document.querySelector('input').click()", [webView firstChildFrame]);
+    EXPECT_FALSE(CGRectIsNull(anchorRect));
+    EXPECT_TRUE(CGRectIsEmpty(anchorRect));
+}
+
+#endif // HAVE(UICONTEXTMENU_LOCATION)
+
 #endif // PLATFORM(IOS_FAMILY)
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -12347,22 +12528,6 @@ TEST(SiteIsolation, MultiProcessBFCacheCrossSiteToJavaScriptURL)
 
 TEST(SiteIsolation, MultiProcessBFCacheSameSiteWithDifferentCrossSiteIframes)
 {
-    // m_childFrames pollution under same-site BFCache: when a1 (a.com with
-    // b.com iframe) is cached and replaced by a2 (a.com with c.com iframe),
-    // BFCache does NOT destroy the cached frames, so no DidDestroyFrame IPC
-    // fires for b.com. Its stale WebFrameProxy stays in
-    // m_mainFrame->m_childFrames alongside the live c.com WebFrameProxy
-    // from a2.
-    //
-    // After a2 is fully loaded, the live frame tree under m_mainFrame must
-    // only reflect a2 (a.com + c.com remote). The cached b.com WebFrameProxy
-    // must hang off the WebBackForwardCacheEntry and not pollute the live
-    // tree. The b.com process itself remains in the BrowsingContextGroup
-    // while suspended (UI-driven flow does not pull RemotePageProxies out
-    // of the BCG), so getAllFrameTrees still surfaces a third tree from
-    // the suspended b.com process; that tree shows the b.com main as
-    // (remote) and its child as (remote) because the suspended WebPage's
-    // live document is empty (the cached document lives inside CachedPage).
     HTTPServer server({
         { "/a1"_s, { "<iframe src='https://b.com/bframe'></iframe>"_s } },
         { "/bframe"_s, { "b iframe content"_s } },
@@ -12376,27 +12541,27 @@ TEST(SiteIsolation, MultiProcessBFCacheSameSiteWithDifferentCrossSiteIframes)
     [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/a1"]]];
     [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
 
-    checkFrameTreesInProcesses(webView.get(), {
-        { "https://a.com"_s, { { RemoteFrame } } },
-        { RemoteFrame, { { "https://b.com"_s } } },
-    });
+    EXPECT_WK_STREQ(@"https://b.com/bframe", [webView objectByEvaluatingJavaScript:@"location.href" inFrame:[webView firstChildFrame]]);
+    [webView objectByEvaluatingJavaScript:@"window.__bfcacheMarker_a1 = true"];
+    [webView objectByEvaluatingJavaScript:@"window.__iframeBfcacheMarker = true" inFrame:[webView firstChildFrame]];
 
     [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/a2"]]];
     [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
 
-    // After a2 loads:
-    //  - a.com (main proc): a.com main with c.com remote child  → live tree, 1 tree
-    //  - b.com (cached proc, suspended): remote main with remote child → cached tree, 1 tree
-    //  - c.com (live iframe proc): remote main with c.com local child → live tree, 1 tree
-    // The stale b.com WebFrameProxy from a1 must be owned by the same-site
-    // BFCache entry, not by m_mainFrame->m_childFrames. The b.com process
-    // tree is still surfaced via the BCG because UI-driven BFCache leaves
-    // RemotePageProxies in place during suspension.
-    checkFrameTreesInProcesses(webView.get(), {
-        { "https://a.com"_s, { { RemoteFrame } } },
-        { RemoteFrame, { { RemoteFrame } } },
-        { RemoteFrame, { { "https://c.com"_s } } },
-    });
+    EXPECT_WK_STREQ(@"https://c.com/cframe", [webView objectByEvaluatingJavaScript:@"location.href" inFrame:[webView firstChildFrame]]);
+
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_WK_STREQ(@"https://a.com/a1", [webView URL].absoluteString);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.__bfcacheMarker_a1 ? true : false"] boolValue]);
+
+    // The iframe subtree is reattached after the main frame commits, so c.com is still the child frame for a moment after the navigation finishes.
+    while (![[webView firstChildFrame].securityOrigin.host isEqualToString:@"b.com"])
+        Util::spinRunLoop();
+
+    EXPECT_WK_STREQ(@"https://b.com/bframe", [webView objectByEvaluatingJavaScript:@"location.href" inFrame:[webView firstChildFrame]]);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.__iframeBfcacheMarker ? true : false" inFrame:[webView firstChildFrame]] boolValue]);
 }
 
 TEST(SiteIsolation, IframePushStateBackForwardRoutesToIframe)
@@ -14293,6 +14458,59 @@ TEST(SiteIsolation, EndPrintingIsRoutedToTheFrameThatStartedPrinting)
     EXPECT_TRUE(Util::waitFor([&] {
         return [[webView objectByEvaluatingJavaScript:@"window.printEvents.join(',')" inFrame:subframe.get()] isEqualToString:@"beforeprint,afterprint"];
     }));
+}
+
+TEST(SiteIsolation, MultiProcessBFCacheIframeRendersAfterBackNavigation)
+{
+    HTTPServer server({
+        { "/main"_s, { "<iframe src='https://b.com/iframe'></iframe>"_s } },
+        { "/iframe"_s, { "<body style='margin:0'><div style='width:137px;height:59px;background:magenta;transform:translateZ(0)'></div><a id='link' href='https://b.com/destination' target='_top'>click me</a></body>"_s } },
+        { "/destination"_s, { "<body>destination page</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewWithSharedProcess(server, EnableProcessCache::Yes, nil, nil, nil, EnableBackForwardCache::Yes);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+
+    checkFrameTreesInProcesses(webView.get(), {
+        { "https://a.com"_s, { { RemoteFrame } } },
+        { RemoteFrame, { { "https://b.com"_s } } },
+    });
+
+    [webView evaluateJavaScript:@"document.getElementById('link').click()" inFrame:[webView firstChildFrame] completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ(@"https://b.com/destination", [webView URL].absoluteString);
+
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ(@"https://a.com/main", [webView URL].absoluteString);
+
+    Vector<ExpectedFrameTree> expectedAfterGoBack = {
+        { "https://a.com"_s, { { RemoteFrame } } },
+        { RemoteFrame, { { "https://b.com"_s } } },
+    };
+    while (!frameTreesMatch(frameTrees(webView.get()).get(), Vector<ExpectedFrameTree> { expectedAfterGoBack }))
+        TestWebKitAPI::Util::spinRunLoop();
+    checkFrameTreesInProcesses(webView.get(), WTF::move(expectedAfterGoBack));
+
+    __block bool done = false;
+    __block BOOL frozen = YES;
+    [webView _isLayerTreeFrozenForTesting:^(BOOL isFrozen) {
+        frozen = isFrozen;
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    EXPECT_FALSE(frozen);
+
+    // The iframe composites a 137x59 layer, a size nothing in a.com's process can produce, so those
+    // bounds appearing in the hosted CALayer tree detect b.com's contribution alone.
+    [webView waitForNextPresentationUpdate];
+    RetainPtr layerTree = [webView _caLayerTreeAsText];
+    EXPECT_TRUE([layerTree containsString:@"width: 137 height: 59"]) << [layerTree UTF8String];
+
+    startCountingAnimationFrames(webView.get(), [webView firstChildFrame]);
+    expectAnimationFrameCountToIncrease(webView.get(), [webView firstChildFrame]);
 }
 
 }

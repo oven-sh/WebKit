@@ -580,7 +580,7 @@ static CursorContext cursorContext(const WebCore::HitTestResult& hitTestResult, 
 
     if (!lineContainsRequestPoint && cursorTypeIs(context.cursor, WebCore::Cursor::Type::IBeam)) {
         auto approximateLineRectInContentCoordinates = renderer->absoluteBoundingBoxRect();
-        approximateLineRectInContentCoordinates.setHeight(protect(renderer->style())->computedLineHeight());
+        approximateLineRectInContentCoordinates.setHeight(protect(renderer->style())->usedLineHeight());
         context.lineCaretExtent = view->contentsToRootView(approximateLineRectInContentCoordinates);
         if (!context.lineCaretExtent.contains(request.point) || !isEditable)
             context.lineCaretExtent.setY(request.point.y() - context.lineCaretExtent.height() / 2);

@@ -45,7 +45,7 @@ inline bool requiresLineBoxForContent(const RenderInline& flow, const LineInfo& 
     if (flow.document().inNoQuirksMode()) {
         CheckedRef flowStyle = lineStyle(flow, lineInfo);
         CheckedRef parentStyle = lineStyle(*parent, lineInfo);
-        if (flowStyle->lineHeight() != parentStyle->lineHeight()
+        if (flowStyle->textAutosizingAdjustedLineHeight() != parentStyle->textAutosizingAdjustedLineHeight()
             || flowStyle->verticalAlign() != parentStyle->verticalAlign()
             || !parentStyle->fontCascade().metricsOfPrimaryFont().hasIdenticalAscentDescentAndLineGap(flowStyle->fontCascade().metricsOfPrimaryFont()))
         return true;

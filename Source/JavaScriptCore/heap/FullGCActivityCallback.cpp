@@ -43,15 +43,6 @@ void FullGCActivityCallback::doCollection(VM& vm)
     JSC::Heap& heap = vm.heap;
     setDidGCRecently(false);
 
-#if !PLATFORM(IOS_FAMILY) || PLATFORM(MACCATALYST)
-    MonotonicTime startTime = MonotonicTime::now();
-    if (MemoryPressureHandler::singleton().isUnderMemoryPressure() && heap.isPagedOut()) {
-        cancel();
-        heap.increaseLastFullGCLength(MonotonicTime::now() - startTime);
-        return;
-    }
-#endif
-
     heap.collect(m_synchronousness, CollectionScope::Full);
 }
 

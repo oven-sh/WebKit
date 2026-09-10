@@ -69,7 +69,8 @@
 #include "RenderLayerCompositor.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderLineBreak.h"
-#include "RenderListMarker.h"
+#include "RenderListItem.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
@@ -425,8 +426,6 @@ RenderObject* RenderObject::lastLeafChild() const
     return r;
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 // Non-recursive version of the DFS search.
 RenderObject* RenderObject::traverseNext(const RenderObject* stayWithin, HeightTypeTraverseNextInclusionFunction inclusionFunction, int& currentDepth, int& newFixedDepth) const
 {
@@ -474,8 +473,6 @@ RenderObject* RenderObject::traverseNext(const RenderObject* stayWithin, HeightT
     }
     return nullptr;
 }
-
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 RenderLayer* RenderObject::enclosingLayer() const
 {
@@ -1893,7 +1890,8 @@ Node* RenderObject::nodeForHitTest() const
     auto* node = this->node();
     // If we hit the anonymous renderers inside generated content we should
     // actually hit the generated content so walk up to the PseudoElement.
-    if (!node && parent() && parent()->isBeforeOrAfterContent()) {
+    // A marker has no element of its own, so hitting its content is hitting the list item.
+    if (!node && parent() && (parent()->isBeforeOrAfterContent() || parent()->style().isListMarkerStyle())) {
         for (auto* renderer = parent(); renderer && !node; renderer = renderer->parent())
             node = renderer->element();
     }
@@ -3149,13 +3147,12 @@ VisibleInViewportState RenderObject::imageFrameAvailable(CachedImage& image, Ima
 bool RenderObject::isExcludedMarker() const
 {
     // An excluded list marker is the direct child of its list item, never wrapped in an anonymous block, and no part of in-flow layout.
-    // Only markers whose first formatted line lives in a descendant block qualify (see childrenInline)
-    auto* marker = dynamicDowncast<RenderListMarker>(*this);
+    auto* marker = dynamicDowncast<RenderListOutsideMarker>(*this);
     if (!marker)
         return false;
-    if (marker->isInside() || !document().settings().listMarkerPositionedPostLayoutEnabled())
+    if (!document().settings().listMarkerPositionedPostLayoutEnabled())
         return false;
-    return parent() && !parent()->childrenInline();
+    return parent() && parent() == marker->listItem();
 }
 
 #if ENABLE(TREE_DEBUGGING)
@@ -3229,7 +3226,7 @@ void printGraphicsLayerTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame()) {
             WTFLogAlways("Graphics layer tree for root document %p %s", document.ptr(), document->url().string().utf8().data());
-            showGraphicsLayerTreeForCompositor(document->renderView()->compositor());
+            showGraphicsLayerTreeForCompositor(protect(document->renderView())->compositor());
         }
     }
 }

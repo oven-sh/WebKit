@@ -39,7 +39,7 @@ public:
     static unsigned NODELETE calculateBytesPerRow(const IntSize& backendSize, PixelFormat);
 
 protected:
-    ImageBufferCGBackend(const Parameters&, std::unique_ptr<GraphicsContextCG>&& = nullptr);
+    ImageBufferCGBackend(const ImageBufferParameters&, std::unique_ptr<GraphicsContextCG>&& = nullptr);
     void applyBaseTransform(GraphicsContextCG&) const;
 
     std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher() override;

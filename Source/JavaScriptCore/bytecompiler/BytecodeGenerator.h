@@ -380,6 +380,7 @@ namespace JSC {
         const CommonIdentifiers& propertyNames() const { return *m_vm.propertyNames; }
 
         bool isConstructor() const { return m_codeBlock->isConstructor(); }
+        bool allowsTailCallOptimization() const { return m_allowTailCallOptimization; }
         DerivedContextType derivedContextType() const { return m_derivedContextType; }
         bool usesArrowFunction() const { return m_scopeNode->usesArrowFunction(); }
         bool needsToUpdateArrowFunctionContext() const { return m_needsToUpdateArrowFunctionContext; }

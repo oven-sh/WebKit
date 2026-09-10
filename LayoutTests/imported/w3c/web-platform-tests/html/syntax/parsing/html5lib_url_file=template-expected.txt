@@ -110,6 +110,14 @@ PASS <html><head></head><template></template><head>
 PASS <!DOCTYPE HTML><dummy><table><template><table><template><table><script>
 PASS <template><a><table><a>
 PASS <template><form><input name="q"></form><div>second</div></template> (innerHTML in template)
+PASS <template><table><form></table></template>
+PASS <table><form></table> (innerHTML in template)
+PASS <template><form><form><input></template>
+PASS <form><form> (innerHTML in template)
+PASS <template><form><template></template><form></template>
+PASS <template><template><form></template><form></template>
+PASS <form><template><form></template><form>
+PASS <br>BC<form>D<div>E</form>F</div>G (innerHTML in template)
 PASS <!DOCTYPE HTML><template><tr><td>cell</td></tr></template>
 PASS <!DOCTYPE HTML><template> <tr> <td>cell</td> </tr> </template>
 PASS <!DOCTYPE HTML><template><tr><td>cell</td></tr>a</template>

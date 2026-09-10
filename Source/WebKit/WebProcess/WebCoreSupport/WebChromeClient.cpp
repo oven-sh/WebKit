@@ -492,7 +492,7 @@ void WebChromeClient::runModal()
 
 void WebChromeClient::reportProcessCPUTime(Seconds cpuTime, ActivityStateForCPUSampling activityState)
 {
-    WebProcess::singleton().send(Messages::WebProcessPool::ReportWebContentCPUTime(cpuTime, static_cast<uint64_t>(activityState)), 0);
+    WebProcess::singleton().send(Messages::WebProcessPool::ReportWebContentCPUTime(cpuTime, activityState), 0);
 }
 
 bool WebChromeClient::isPopup() const
@@ -1394,7 +1394,7 @@ void WebChromeClient::contentRuleListNotification(const URL& url, const ContentR
 #endif
 }
 
-#if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(CONTENT_EXTENSIONS)
+#if ENABLE(WK_WEB_EXTENSIONS) && ENABLE(CONTENT_EXTENSIONS) && PLATFORM(COCOA)
 static ResourceLoadInfo::Type toResourceLoadInfoType(OptionSet<WebCore::ContentExtensions::ResourceType> type)
 {
     using WebCore::ContentExtensions::ResourceType;
@@ -1788,7 +1788,7 @@ std::optional<ScrollbarOverlayStyle> WebChromeClient::preferredScrollbarOverlayS
 
 Color WebChromeClient::underlayColor() const
 {
-    auto* page = m_page.get();
+    RefPtr page = m_page;
     return page ? page->underlayColor() : Color();
 }
 
@@ -2041,7 +2041,7 @@ RefPtr<API::Object> userDataFromJSONData(JSON::Value& value)
         auto result = API::Dictionary::create();
         RefPtr jsonObject = value.asObject();
         for (auto [key, value] : *jsonObject)
-            result->add(key, userDataFromJSONData(value));
+            result->add(key, userDataFromJSONData(protect(value)));
         return result;
     }
     case JSON::Value::Type::Array: {
@@ -2345,15 +2345,11 @@ void WebChromeClient::didAddOrRemoveViewportConstrainedObjects()
         page->didAddOrRemoveViewportConstrainedObjects();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 void WebChromeClient::textAutosizingUsesIdempotentModeChanged()
 {
     if (RefPtr page = m_page.get())
         page->textAutosizingUsesIdempotentModeChanged();
 }
-
-#endif
 
 bool WebChromeClient::needsScrollGeometryUpdates() const
 {

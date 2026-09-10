@@ -29,8 +29,18 @@
 
 #import <ScreenTime/STWebpageController.h>
 
-@interface STWebpageController ()
-@property (setter=setURLIsBlocked:) BOOL URLIsBlocked;
+@interface STWebpageController (TestWebKitAPIExtras)
+- (void)setURLIsBlocked:(BOOL)urlIsBlocked;
 @end
 
+#ifdef __cplusplus
+extern "C" {
 #endif
+
+Class testSTScreenTimeConfigurationClass(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // ENABLE(SCREEN_TIME)

@@ -68,7 +68,6 @@
 #import <WebCore/FontCacheCoreText.h>
 #import <WebCore/LocalizedDeviceModel.h>
 #import <WebCore/LowPowerModeNotifier.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/NotImplemented.h>
 #import <WebCore/PictureInPictureSupport.h>
 #import <WebCore/PlatformPasteboard.h>
@@ -847,8 +846,8 @@ void WebProcessPool::registerNotificationObservers()
 
 #if !PLATFORM(IOS_FAMILY)
     m_powerObserver = makeUnique<WebCore::PowerObserver>([weakThis = WeakPtr { *this }] {
-        if (weakThis)
-            weakThis->sendToAllProcesses(Messages::WebProcess::SystemWillPowerOn());
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->sendToAllProcesses(Messages::WebProcess::SystemWillPowerOn());
     });
     m_systemSleepListener = PAL::SystemSleepListener::create(*this);
     // Listen for enhanced accessibility changes and propagate them to the WebProcess.

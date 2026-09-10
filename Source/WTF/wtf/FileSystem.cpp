@@ -532,6 +532,12 @@ bool moveFile(const String& oldPath, const String& newPath)
 }
 #endif
 
+int statFile(std::span<const char> pathIncludingNullTerminator, struct stat& result)
+{
+    RELEASE_ASSERT(!pathIncludingNullTerminator.empty() && !pathIncludingNullTerminator.back());
+    return stat(pathIncludingNullTerminator.data(), &result);
+}
+
 std::optional<uint64_t> fileSize(const String& path)
 {
     std::error_code ec;

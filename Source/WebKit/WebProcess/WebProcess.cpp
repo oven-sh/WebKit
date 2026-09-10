@@ -125,7 +125,6 @@
 #include <WebCore/MessagePort.h>
 #include <WebCore/MockRealtimeMediaSourceCenter.h>
 #include <WebCore/NavigatorGamepad.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/Notification.h>
 #include <WebCore/Page.h>
 #include <WebCore/PageGroup.h>
@@ -148,6 +147,7 @@
 #include <WebCore/SharedWorkerContextManager.h>
 #include <WebCore/SharedWorkerThreadProxy.h>
 #include <WebCore/StorageNamespaceProvider.h>
+#include <WebCore/ThirdPartyCookieBlockingMode.h>
 #include <WebCore/UserGestureIndicator.h>
 #include <WebCore/WebKitJSHandle.h>
 #include <WebCore/WorkerGlobalScope.h>
@@ -411,6 +411,10 @@ WebProcess::WebProcess()
 
     WebCore::WebLockRegistry::setSharedRegistry(RemoteWebLockRegistry::create(*this));
     WebCore::PermissionController::setSharedController(WebPermissionController::create(*this));
+
+    WebCore::AXObjectCache::setSyncModeToOtherProcessesCallback([](WebCore::AccessibilityMode mode) {
+        WebProcess::singleton().send(Messages::WebProcessProxy::AccessibilityModeDidChange(mode), 0);
+    });
 }
 
 WebProcess::~WebProcess()
@@ -959,8 +963,9 @@ void WebProcess::registerURLSchemeAsDisplayIsolated(const String& urlScheme) con
 
 void WebProcess::registerURLSchemeAsCORSEnabled(const String& urlScheme)
 {
-    LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(urlScheme);
-    ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::RegisterURLSchemesAsCORSEnabled({ urlScheme }), 0);
+    if (LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(urlScheme) == LegacySchemeRegistry::SchemeRegisteredForTheFirstTime::No)
+        return;
+    protect(ensureNetworkProcessConnection())->connection().send(Messages::NetworkConnectionToWebProcess::RegisterURLSchemesAsCORSEnabled({ urlScheme }), 0);
 }
 
 void WebProcess::registerURLSchemeAsAlwaysRevalidated(const String& urlScheme) const
@@ -1057,6 +1062,9 @@ void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&
 {
     m_hasEverHadAnyWebPages = true;
 
+    // Read before the parameters are moved from.
+    auto accessibilityMode = parameters.accessibilityMode;
+
     auto addResult = m_pageMap.ensure(pageID, [&] {
         return WebPage::create(pageID, WTF::move(parameters));
     });
@@ -1082,6 +1090,9 @@ void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&
 #endif
     } else
         page->reinitializeWebPage(WTF::move(parameters));
+
+    // Bring this process up to the mode the UI process says web content should be in.
+    setAccessibilityMode(accessibilityMode);
 
     if (m_hasPendingAccessibilityUnsuspension) {
         m_hasPendingAccessibilityUnsuspension = false;
@@ -1193,7 +1204,7 @@ void WebProcess::removeWebFrame(FrameIdentifier frameID, WebPage* page)
     if (!frame)
         return;
     if (frame->coreLocalFrame() && m_networkProcessConnection)
-        m_networkProcessConnection->connection().send(Messages::NetworkConnectionToWebProcess::ClearFrameLoadRecordsForStorageAccess(frameID), 0);
+        protect(m_networkProcessConnection->connection())->send(Messages::NetworkConnectionToWebProcess::ClearFrameLoadRecordsForStorageAccess(frameID), 0);
 
     // We can end up here after our connection has closed when WebCore's frame life-support timer
     // fires when the application is shutting down. There's no need (and no way) to update the UI
@@ -1409,7 +1420,7 @@ NetworkProcessConnection& WebProcess::ensureNetworkProcessConnection()
 #if HAVE(AUDIT_TOKEN)
         m_networkProcessConnection->setNetworkProcessAuditToken(connectionInfo.auditToken ? std::optional(connectionInfo.auditToken->auditToken()) : std::nullopt);
 #endif
-        m_networkProcessConnection->connection().send(Messages::NetworkConnectionToWebProcess::RegisterURLSchemesAsCORSEnabled(WebCore::LegacySchemeRegistry::allURLSchemesRegisteredAsCORSEnabled()), 0);
+        protect(m_networkProcessConnection->connection())->send(Messages::NetworkConnectionToWebProcess::RegisterURLSchemesAsCORSEnabled(WebCore::LegacySchemeRegistry::allURLSchemesRegisteredAsCORSEnabled()), 0);
 
         if (!Document::allDocuments().isEmpty() || SharedWorkerThreadProxy::hasInstances())
             protect(protect(m_networkProcessConnection.get())->serviceWorkerConnection())->registerServiceWorkerClients();
@@ -1421,9 +1432,9 @@ NetworkProcessConnection& WebProcess::ensureNetworkProcessConnection()
 #endif
 #if ENABLE(LAUNCHSERVICES_SANDBOX_EXTENSION_BLOCKING)
         if (auto auditToken = auditTokenForSelf()) {
-            m_networkProcessConnection->connection().send(Messages::NetworkConnectionToWebProcess::CheckInWebProcess(*auditToken), 0);
+            protect(m_networkProcessConnection->connection())->send(Messages::NetworkConnectionToWebProcess::CheckInWebProcess(*auditToken), 0);
             if (!m_pendingDisplayName.isNull())
-                m_networkProcessConnection->connection().send(Messages::NetworkConnectionToWebProcess::UpdateActivePages(std::exchange(m_pendingDisplayName, String()), { }, *auditToken), 0);
+                protect(m_networkProcessConnection->connection())->send(Messages::NetworkConnectionToWebProcess::UpdateActivePages(std::exchange(m_pendingDisplayName, String()), { }, *auditToken), 0);
         }
 #endif
     }
@@ -1625,6 +1636,25 @@ void WebProcess::modelProcessConnectionClosed(ModelProcessConnection& connection
 void WebProcess::setEnhancedAccessibility(bool flag)
 {
     WebCore::AXObjectCache::setEnhancedUserInterfaceAccessibility(flag);
+}
+
+void WebProcess::setAccessibilityMode(WebCore::AccessibilityMode mode)
+{
+    if (WebCore::isAccessibilityModeOff(mode)) {
+        // Accessibility is never turned back off in production. The only transition to Off is
+        // AXObjectCache::disableAccessibilityForTesting, which deliberately doesn't sync to other
+        // processes. So receiving Off here just means this process isn't being asked to turn on.
+        return;
+    }
+
+    // RequireSettingOnly, not None. This runs downstream of IPC mode transitions or webpage creation,
+    // both of which may not have an actual client set. Assume that because a peer has seen a client that
+    // allows for isolated tree enablement, we will too.
+    auto preconditions = mode == WebCore::AccessibilityMode::AXThread
+        ? WebCore::AXObjectCache::AXThreadModePreconditions::RequireSettingOnly
+        : WebCore::AXObjectCache::AXThreadModePreconditions::RequireClientAndSetting;
+
+    WebCore::AXObjectCache::enableAccessibility(preconditions);
 }
 
 void WebProcess::startMemorySampler(SandboxExtension::Handle&& sampleLogFileHandle, const String& sampleLogFilePath, const double interval)
@@ -1855,7 +1885,7 @@ void WebProcess::accessibilityRelayProcessSuspended(bool suspended)
     }
 
     // Take the first webpage. We only need to have the process on the other side relay this for the WebProcess.
-    AXRelayProcessSuspendedNotification(m_pageMap.begin()->value, AXRelayProcessSuspendedNotification::AutomaticallySend::No).sendProcessSuspendMessage(suspended);
+    AXRelayProcessSuspendedNotification(protect(m_pageMap.begin()->value), AXRelayProcessSuspendedNotification::AutomaticallySend::No).sendProcessSuspendMessage(suspended);
 }
 
 void WebProcess::markAllLayersVolatile(CompletionHandler<void()>&& completionHandler)
@@ -2185,7 +2215,7 @@ void WebProcess::prefetchDNS(const String& hostname)
         return;
 
     if (m_dnsPrefetchedHosts.add(hostname).isNewEntry)
-        ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::PrefetchDNS(hostname), 0);
+        protect(ensureNetworkProcessConnection())->connection().send(Messages::NetworkConnectionToWebProcess::PrefetchDNS(hostname), 0);
     // The DNS prefetched hosts cache is only to avoid asking for the same hosts too many times
     // in a very short period of time, producing a lot of IPC traffic. So we clear this cache after
     // some time of no DNS requests.
@@ -2241,7 +2271,7 @@ void WebProcess::establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWo
 
 void WebProcess::registerServiceWorkerClients(CompletionHandler<void(bool)>&& completionHandler)
 {
-    ensureNetworkProcessConnection().connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::PingPongForServiceWorkers { }, WTF::move(completionHandler));
+    protect(ensureNetworkProcessConnection())->connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::PingPongForServiceWorkers { }, WTF::move(completionHandler));
 }
 
 void WebProcess::addServiceWorkerRegistration(WebCore::ServiceWorkerRegistrationIdentifier identifier)
@@ -2374,7 +2404,7 @@ void WebProcess::setAppBadge(WebCore::Frame* frame, const WebCore::SecurityOrigi
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
     if (DeprecatedGlobalSettings::builtInNotificationsEnabled()) {
         if (m_sessionID)
-            ensureNetworkProcessConnection().connection().send(Messages::NotificationManagerMessageHandler::SetAppBadge({ origin, badge }), m_sessionID->toUInt64());
+            protect(ensureNetworkProcessConnection())->connection().send(Messages::NotificationManagerMessageHandler::SetAppBadge({ origin, badge }), m_sessionID->toUInt64());
         return;
     }
 #endif

@@ -27,7 +27,7 @@
     DispatchedTo=WebContent
 ]
 messages -> RemoteImageBufferProxy  {
-    DidCreateBackend(std::optional<WebKit::ImageBufferBackendHandle> handle) CanDispatchOutOfOrder
+    DidFailToCreateBackend() CanDispatchOutOfOrder
 }
 
 #endif // ENABLE(GPU_PROCESS)

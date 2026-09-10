@@ -391,7 +391,7 @@ bool TextUtil::mayBreakInBetween(String previousContent, const Style::ComputedSt
         // See the templated CharacterType in nextBreakablePosition for last and lastlast characters.
         nextContent.convertTo16Bit();
     }
-    auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { nextContent, Style::toPlatform(nextContentStyle.computedLocale()), TextUtil::lineBreakIteratorMode(nextContentStyle.lineBreak()), TextUtil::contentAnalysis(nextContentStyle.wordBreak()) };
+    auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { nextContent, Style::toPlatform(nextContentStyle.usedLocale()), TextUtil::lineBreakIteratorMode(nextContentStyle.lineBreak()), TextUtil::contentAnalysis(nextContentStyle.wordBreak()) };
     auto previousContentLength = previousContent.length();
     // FIXME: We should look into the entire uncommitted content for more text context.
     char16_t lastCharacter = previousContentLength ? previousContent[previousContentLength - 1] : 0;
@@ -464,7 +464,7 @@ EnumSet<TextUtil::WordBreakRule> TextUtil::wordBreakBehavior(const Style::Comput
         return { WordBreakRule::AtArbitraryPositionWithinWords };
 
     auto includeHyphenationIfAllowed = [&](std::optional<WordBreakRule> wordBreakRule) -> EnumSet<WordBreakRule> {
-        auto hyphenationIsAllowed = hyphenationIsDisabled == HyphenationIsDisabled::No && style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.computedLocale()));
+        auto hyphenationIsAllowed = hyphenationIsDisabled == HyphenationIsDisabled::No && style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.usedLocale()));
         if (hyphenationIsAllowed) {
             if (wordBreakRule)
                 return { *wordBreakRule, WordBreakRule::AtHyphenationOpportunities };

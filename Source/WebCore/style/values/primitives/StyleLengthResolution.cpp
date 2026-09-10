@@ -124,7 +124,7 @@ static double resolveLh(const ComputedStyle* style, const FontCascade& fallbackF
         auto& fontDescription = fontCascade.fontDescription();
 
         return evaluate<float>(
-            style->specifiedLineHeight(),
+            style->lineHeight(),
             LineHeightEvaluationContext {
                 fontDescription.computedSize(),
                 static_cast<float>(unzoomFontMetric(fontCascade.metricsOfPrimaryFont().lineSpacing(), fontDescription)),
@@ -715,7 +715,7 @@ bool equalForLengthResolution(const ComputedStyle& styleA, const ComputedStyle& 
         return false;
     if (styleA.metricsOfPrimaryFont().lineSpacing() != styleB.metricsOfPrimaryFont().lineSpacing())
         return false;
-    if (styleA.specifiedLineHeight() != styleB.specifiedLineHeight())
+    if (styleA.lineHeight() != styleB.lineHeight())
         return false;
     if (styleA.zoom() != styleB.zoom())
         return false;
