@@ -26,6 +26,7 @@
 #include "config.h"
 #include "AbstractModuleRecord.h"
 
+#include "BuiltinNames.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
 #include "JSCInlines.h"
@@ -1471,11 +1472,13 @@ void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!m_moduleEnvironment);
+    bool putResult = false;
+    constexpr bool shouldThrowReadOnlyError = false;
+    constexpr bool ignoreReadOnlyErrors = true;
+    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+    RETURN_IF_EXCEPTION(scope, void());
     // If module namespace object is materialized, we will materialize *namespace* slot too.
     if (m_moduleNamespaceObject) {
-        bool putResult = false;
-        constexpr bool shouldThrowReadOnlyError = false;
-        constexpr bool ignoreReadOnlyErrors = true;
         symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->starNamespacePrivateName, m_moduleNamespaceObject.get(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
         RETURN_IF_EXCEPTION(scope, void());
     }

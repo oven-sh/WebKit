@@ -117,6 +117,8 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
     {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
+        offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+        exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), SymbolTableEntry(VarOffset(offset)));
     }
     for (auto& exportName : exportNames) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);

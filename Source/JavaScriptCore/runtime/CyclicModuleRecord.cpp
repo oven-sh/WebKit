@@ -232,9 +232,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
         RETURN_IF_EXCEPTION(scope, void());
-        bool putResult = false;
-        symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
-        RETURN_IF_EXCEPTION(scope, void());
     }
 
     auto cleanup = WTF::makeScopeExit([&] {
