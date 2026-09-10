@@ -891,6 +891,22 @@ void Graph::computeRefCounts()
     calculator.calculate();
 }
 
+#if ASSERT_ENABLED
+// Loop unrolling records in each clone the block it was cloned from, so that a graph
+// dump can name it. The clone outlives its source when a later phase removes the
+// source, so drop the pointer before the source block goes away.
+void Graph::clearCloneSource(BasicBlock* dyingBlock)
+{
+    if (!dyingBlock)
+        return;
+    for (BlockIndex blockIndex = 0; blockIndex < numBlocks(); ++blockIndex) {
+        BasicBlock* block = this->block(blockIndex);
+        if (block && block->cloneSource == dyingBlock)
+            block->cloneSource = nullptr;
+    }
+}
+#endif
+
 void Graph::killBlockAndItsContents(BasicBlock* block)
 {
     if (auto& ssaData = block->ssa)
