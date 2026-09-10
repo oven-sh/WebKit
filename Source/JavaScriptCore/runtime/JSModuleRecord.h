@@ -36,8 +36,6 @@ class ModuleProgramExecutable;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
-class ModuleGraphInstance;
-
 class JSModuleRecord final : public CyclicModuleRecord {
     friend class LLIntOffsetsExtractor;
 public:
@@ -68,18 +66,6 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
-    using CyclicModuleRecord::evaluate;
-
-    // Module graph instances (Options::useModuleGraphInstances()): a fresh record
-    // for templateRecord's module inside `instance`, with the template's key,
-    // source, requests and import/export entries, status Unlinked. It gets its
-    // own executable and environment when the instance runs Link() on it.
-    static JSModuleRecord* createForGraphInstance(JSGlobalObject*, VM&, JSModuleRecord* templateRecord, ModuleGraphInstance*);
-    // The record this one was created from (null for a record the loader created).
-    JSModuleRecord* templateRecord() const { return m_templateRecord.get(); }
-    JSModuleRecord* templateRecordOrThis() { return m_templateRecord ? m_templateRecord.get() : this; }
-    // The instance this record belongs to (null: the global object's own module graph).
-    ModuleGraphInstance* graphInstance() const { return m_graphInstance.get(); }
 
     bool isTopLevelExecutionFinished() const;
 
@@ -98,8 +84,6 @@ private:
 
     SourceCode m_sourceCode;
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
-    WriteBarrier<JSModuleRecord> m_templateRecord;
-    WriteBarrier<ModuleGraphInstance> m_graphInstance;
     CodeFeatures m_features;
 };
 

@@ -105,7 +105,6 @@
 #include "ModuleLoaderPayloadInlines.h"
 #include "ModuleProgramCodeBlockInlines.h"
 #include "ModuleProgramExecutableInlines.h"
-#include "ModuleGraphInstanceInlines.h"
 #include "ModuleRegistryEntryInlines.h"
 #include "NarrowingNumberPredictionFuzzerAgent.h"
 #include "NativeExecutable.h"
@@ -375,7 +374,6 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     jsMicrotaskDispatcherStructure.setWithoutWriteBarrier(JSMicrotaskDispatcher::createStructure(*this, nullptr, jsNull()));
     moduleLoaderStructure.setWithoutWriteBarrier(JSModuleLoader::createStructure(*this, nullptr, jsNull()));
     moduleRegistryEntryStructure.setWithoutWriteBarrier(ModuleRegistryEntry::createStructure(*this, nullptr, jsNull()));
-    moduleGraphInstanceStructure.setWithoutWriteBarrier(ModuleGraphInstance::createStructure(*this, nullptr, jsNull()));
     moduleLoadingContextStructure.setWithoutWriteBarrier(ModuleLoadingContext::createStructure(*this, nullptr, jsNull()));
     moduleLoaderPayloadStructure.setWithoutWriteBarrier(ModuleLoaderPayload::createStructure(*this, nullptr, jsNull()));
     moduleGraphLoadingStateStructure.setWithoutWriteBarrier(ModuleGraphLoadingState::createStructure(*this, nullptr, jsNull()));
@@ -2086,7 +2084,6 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(jsMicrotaskDispatcherStructure);
     visitor.append(moduleLoaderStructure);
     visitor.append(moduleRegistryEntryStructure);
-    visitor.append(moduleGraphInstanceStructure);
     visitor.append(moduleLoadingContextStructure);
     visitor.append(moduleLoaderPayloadStructure);
     visitor.append(moduleGraphLoadingStateStructure);

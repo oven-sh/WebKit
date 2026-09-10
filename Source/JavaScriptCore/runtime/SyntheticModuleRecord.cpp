@@ -29,7 +29,6 @@
 #include "ArgList.h"
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
-#include "SourceProvider.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSONObject.h"
@@ -86,15 +85,8 @@ Synchronousness SyntheticModuleRecord::link(JSGlobalObject*, RefPtr<ScriptFetche
     return Synchronousness::Sync;
 }
 
-JSValue SyntheticModuleRecord::evaluate(JSGlobalObject* globalObject)
+JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
 {
-    if (m_primaryPending) [[unlikely]] {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        materializePrimaryIfPending(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-
     return jsUndefined();
 }
 
@@ -171,17 +163,12 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
 #if USE(BUN_JSC_ADDITIONS)
 void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, PropertyName localName)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (m_primaryPending) [[unlikely]] {
-        materializePrimaryIfPending(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
-
     JSObject* source = m_lazyExportsSource.get();
     if (!source)
         return;
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // *namespace* lives in the same symbol table but is not an export; getModuleNamespace() owns that binding.
     if (localName == vm.propertyNames->starNamespacePrivateName)
@@ -249,109 +236,7 @@ SyntheticModuleRecord* SyntheticModuleRecord::parseJSONModule(JSGlobalObject* gl
     JSValue result = JSONParseWithException(globalObject, sourceCode.view());
     RETURN_IF_EXCEPTION(scope, { });
 
-    SyntheticModuleRecord* record = SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleKey, result, SourceProviderSourceType::JSON);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (record && Options::useModuleGraphInstances())
-        record->m_jsonSource = WTF::move(sourceCode);
-    RELEASE_AND_RETURN(scope, record);
-}
-
-bool SyntheticModuleRecord::regeneratesPerGraphInstance() const
-{
-    if (!m_jsonSource.isNull())
-        return true;
-    return m_provider && m_provider->regeneratesPerGraphInstance();
-}
-
-void SyntheticModuleRecord::setSyntheticSourceProvider(RefPtr<SyntheticSourceProvider>&& provider, bool primaryPending)
-{
-    m_provider = WTF::move(provider);
-    m_primaryPending = primaryPending;
-}
-
-// A fresh record for the same module in a graph instance: a JSON module parses
-// its source again; a host module runs its provider again (the caller has made
-// the instance the current loading instance, so the provider can consult it).
-SyntheticModuleRecord* SyntheticModuleRecord::createForGraphInstance(JSGlobalObject* globalObject, SyntheticModuleRecord* templateRecord)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(templateRecord->regeneratesPerGraphInstance());
-    if (!templateRecord->m_jsonSource.isNull())
-        RELEASE_AND_RETURN(scope, parseJSONModule(globalObject, templateRecord->moduleKey(), SourceCode { templateRecord->m_jsonSource }));
-    RefPtr<SyntheticSourceProvider> provider = templateRecord->m_provider;
-    MarkedArgumentBuffer values;
-    Vector<Identifier, 4> names;
-    JSObject* lazyExportsSource = provider->generate(globalObject, templateRecord->moduleKey(), names, values);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (values.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    SyntheticModuleRecord* record = tryCreateWithExportNamesAndValues(globalObject, templateRecord->moduleKey(), names, values, lazyExportsSource);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (record)
-        record->setSyntheticSourceProvider(WTF::move(provider), false);
-    return record;
-}
-
-SyntheticModuleRecord* SyntheticModuleRecord::createPendingPrimary(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, RefPtr<SyntheticSourceProvider>&& provider)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleKey, SourceProviderSourceType::Module);
-    SymbolTable* exportSymbolTable = SymbolTable::create(vm);
-    {
-        auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
-    }
-    for (auto& exportName : exportNames) {
-        auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        exportSymbolTable->add(NoLockingNecessary, exportName.impl(), SymbolTableEntry(VarOffset(offset)));
-        moduleRecord->addExportEntry(ExportEntry::createLocal(exportName, exportName));
-    }
-    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
-    moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    moduleRecord->setSyntheticSourceProvider(WTF::move(provider), true);
-    return moduleRecord;
-}
-
-void SyntheticModuleRecord::materializePrimaryIfPending(JSGlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // While a graph instance is loading, the template's own values are nobody's business yet.
-    if (!m_primaryPending || !m_provider || globalObject->currentGraphInstanceForLoading())
-        return;
-    m_primaryPending = false; // before generate(): the provider may re-enter
-    MarkedArgumentBuffer values;
-    Vector<Identifier, 4> names;
-    JSObject* lazyExportsSource = m_provider->generate(globalObject, moduleKey(), names, values);
-    if (scope.exception()) [[unlikely]] {
-        m_primaryPending = true; // a later use retries
-        return;
-    }
-    if (values.hasOverflowed()) [[unlikely]] {
-        m_primaryPending = true;
-        throwOutOfMemoryError(globalObject, scope);
-        return;
-    }
-    // Genuinely lazy exports of this run are read off the provider's source from now on.
-    m_lazyExportsSource.setMayBeNull(vm, this, lazyExportsSource);
-    JSModuleEnvironment* environment = moduleEnvironment();
-    SymbolTable* symbolTable = environment->symbolTable();
-    for (unsigned i = 0; i < names.size(); ++i) {
-        JSValue value = values.at(i);
-        if (!value)
-            continue;
-        SymbolTableEntry::Fast entry = symbolTable->get(names[i].impl());
-        if (entry.isNull() || environment->variableAt(entry.scopeOffset()).get())
-            continue;
-        bool putResult = false;
-        symbolTablePutTouchWatchpointSet(environment, globalObject, names[i], value, false, true, putResult);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    RELEASE_AND_RETURN(scope, SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleKey, result, SourceProviderSourceType::JSON));
 }
 
 SyntheticModuleRecord* SyntheticModuleRecord::createTextModule(JSGlobalObject* globalObject, const Identifier& moduleKey, SourceCode&& sourceCode)

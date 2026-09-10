@@ -36,7 +36,6 @@
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
-#include "ModuleGraphInstance.h"
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
@@ -82,7 +81,7 @@ static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedM
     using ResolutionKind = PrelinkedModuleGraph::ResolutionKind;
     using Resolution = AbstractModuleRecord::Resolution;
     auto sameModule = [&] {
-        AbstractModuleRecord* byIndex = globalObject->moduleLoader()->prelinkedRecordForResolution(resolvedModule);
+        AbstractModuleRecord* byIndex = actual.moduleRecord ? actual.moduleRecord->moduleLoader()->prelinkedRecordForResolution(resolvedModule) : nullptr;
         return actual.moduleRecord && actual.moduleRecord->prelinkedGraph() == &graph && actual.moduleRecord->prelinkedIndex() == resolvedModule
             && (!byIndex || byIndex == actual.moduleRecord);
     };
@@ -228,10 +227,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
-        JSScope* parentScope = globalObject->moduleEnvironmentParentScope();
-        if (ModuleGraphInstance* instance = jsModule->graphInstance(); instance && instance->parentScope())
-            parentScope = instance->parentScope();
-        env = JSModuleEnvironment::create(vm, globalObject, parentScope, symbolTable, jsTDZValue(), this);
+        // A loader may place its module environments under a scope of its own (the
+        // global lexical environment by default).
+        JSScope* parentScope = moduleLoader()->moduleEnvironmentParentScope();
+        env = JSModuleEnvironment::create(vm, globalObject, parentScope ? parentScope : globalObject->globalLexicalEnvironment(), symbolTable, jsTDZValue(), this);
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
@@ -512,7 +511,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     }
 
     if (jsModule->features() & ImportMetaFeature) {
-        JSObject* metaProperties = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
+        JSObject* metaProperties = moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
         RETURN_IF_EXCEPTION(scope, void());
         bool putResult = false;
         symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().metaPrivateName(), metaProperties, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);

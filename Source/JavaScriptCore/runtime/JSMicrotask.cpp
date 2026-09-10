@@ -59,8 +59,6 @@
 #include "Microtask.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
-#include "SyntheticModuleRecord.h"
-#include "ModuleGraphInstance.h"
 #include "ModuleLoadingContext.h"
 #include "ModuleRegistryEntry.h"
 #include "ObjectConstructor.h"
@@ -967,17 +965,8 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
     promiseResolveThenableJob(globalObject, resolutionObject, then, resolve, reject, microtaskCallCache);
 }
 
-static bool belongsToDisposedGraphInstance(JSModuleRecord* module)
-{
-    ModuleGraphInstance* instance = module->graphInstance();
-    return instance && instance->isCleared();
-}
-
 static void asyncModuleExecutionDone(JSGlobalObject* globalObject, JSModuleRecord* module, JSValue value, JSPromise::Status status)
 {
-    if (belongsToDisposedGraphInstance(module)) [[unlikely]]
-        return; // nothing left to complete
-
     if (status == JSPromise::Status::Fulfilled) {
         module->asyncExecutionFulfilled(globalObject);
         return;
@@ -1010,8 +999,6 @@ void asyncModuleResolveEvaluation(JSGlobalObject* globalObject, VM& vm, ThrowSco
 
 static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSModuleRecord* module, JSValue resolution, JSPromise::Status status)
 {
-    if (belongsToDisposedGraphInstance(module)) [[unlikely]]
-        return; // the instance was disposed while this module body was suspended
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue resumeMode = jsNumber(status == JSPromise::Status::Fulfilled
@@ -1116,7 +1103,8 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->module(vm, module);
-            JSPromise* requestedPromise = globalObject->moduleLoader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
+            module->setModuleLoader(vm, context->loader());
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1131,7 +1119,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         // loadRequestedModules settled: on fulfillment, call finishLoading and update entry
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = context->module();
-            globalObject->moduleLoader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
+            context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1160,7 +1148,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         // Cached loadPromise settled: on fulfillment, call finishLoading
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
-            globalObject->moduleLoader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
+            context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1198,7 +1186,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         if (!arguments[1].inherits<AbstractModuleRecord>()) {
 #endif
         auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-        globalObject->moduleLoader()->provideFetch(globalObject, specifier, type, jsSourceCode);
+        context->loader()->provideFetch(globalObject, specifier, type, jsSourceCode);
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1224,12 +1212,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 #else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
 #endif
-            loadPromise = globalObject->moduleLoader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
+            loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
-            loadPromise = globalObject->moduleLoader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
+            loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
             if (scope.exception()) {
                 intermediatePromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1263,7 +1251,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
             if (failure.isEvaluationError(specifier, type)) {
-                ModuleRegistryEntry* entry = globalObject->moduleLoader()->ensureRegistered(globalObject, specifier, type);
+                ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
                     return;
@@ -1291,7 +1279,7 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
-        if (ModuleRegistryEntry* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(specifier, type))
+        if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1446,7 +1434,7 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
-        ModuleRegistryEntry* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(specifier, type);
+        ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
         if (!entry)
             return;
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
@@ -1573,64 +1561,6 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
         depPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::DynamicImportDeferDependencySettled, capabilityPromise, joinContext);
     }
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-// JSModuleLoader::importIntoGraphInstance: the template graph is loaded.
-// arguments[0] = context { @moduleGraphInstance, name: key, type }, [1] = resolution or error,
-// [2] = ModuleLoaderPayload (import() capability, deferred). Links the template,
-// instantiates it into the instance, then continues exactly like import() does
-// -- on the instance's record.
-static void moduleGraphInstanceLoadSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
-{
-    JSObject* context = asObject(arguments[0]);
-    auto* loaderPayload = uncheckedDowncast<ModuleLoaderPayload>(arguments[2]);
-    JSPromise* capability = loaderPayload->promise();
-    if (static_cast<JSPromise::Status>(payload) != JSPromise::Status::Fulfilled) {
-        capability->reject(vm, arguments[1]);
-        return;
-    }
-    auto* instance = uncheckedDowncast<ModuleGraphInstance>(context->getDirect(vm, vm.propertyNames->builtinNames().moduleGraphInstancePrivateName()));
-    Identifier key = context->getDirect(vm, vm.propertyNames->name).toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    auto type = static_cast<ScriptFetchParameters::Type>(context->getDirect(vm, vm.propertyNames->type).asInt32());
-    if (instance->isCleared()) {
-        capability->reject(vm, createTypeError(globalObject, "Module graph instance has been disposed"_s));
-        return;
-    }
-
-    AbstractModuleRecord* instanceRecord = nullptr;
-    {
-        // Host module providers that run while the template links or the instance
-        // is set up attribute what they create to this instance.
-        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
-        AbstractModuleRecord* templateRecord = globalObject->moduleLoader()->linkModule(globalObject, key, type);
-        if (!scope.exception()) {
-            if (auto* sourceText = dynamicDowncast<JSModuleRecord>(templateRecord))
-                instanceRecord = instance->instantiate(globalObject, sourceText);
-            else if (AbstractModuleRecord* registered = instance->recordFor(templateRecord))
-                instanceRecord = registered;
-            else if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(templateRecord); synthetic && synthetic->regeneratesPerGraphInstance()) {
-                instanceRecord = SyntheticModuleRecord::createForGraphInstance(globalObject, synthetic);
-                if (!scope.exception() && instanceRecord)
-                    instance->add(vm, templateRecord, instanceRecord);
-            } else if (is<CyclicModuleRecord>(templateRecord))
-                throwTypeError(globalObject, scope, makeString("Module '"_s, key.string(), "' cannot be instantiated into a module graph instance (only JavaScript and synthetic modules can)"_s));
-            else
-                instanceRecord = templateRecord; // shared with the template graph
-        }
-    }
-    if (scope.exception()) [[unlikely]] {
-        capability->rejectWithCaughtException(vm, scope);
-        return;
-    }
-    ASSERT(instanceRecord);
-    std::array<JSValue, maxMicrotaskArguments> forwarded { };
-    forwarded[0] = instanceRecord;
-    forwarded[1] = arguments[1];
-    forwarded[2] = loaderPayload;
-    dynamicImportLoadSettled(globalObject, vm, scope, std::span<const JSValue, maxMicrotaskArguments> { forwarded }, static_cast<uint8_t>(JSPromise::Status::Fulfilled), loaderPayload->deferred());
-}
-#endif
 
 static void dynamicImportDeferDependencySettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
 {
@@ -2399,15 +2329,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::DynamicImportDeferDependencySettled: {
         dynamicImportDeferDependencySettled(globalObject, vm, scope, arguments, payload);
-        return;
-    }
-
-    case InternalMicrotask::ModuleGraphInstanceLoadSettled: {
-#if USE(BUN_JSC_ADDITIONS)
-        moduleGraphInstanceLoadSettled(globalObject, vm, scope, arguments, payload);
-#else
-        RELEASE_ASSERT_NOT_REACHED();
-#endif
         return;
     }
 

@@ -34,7 +34,6 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
-#include "ModuleGraphInstance.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
@@ -100,6 +99,7 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     AbstractModuleRecord* thisObject = uncheckedDowncast<AbstractModuleRecord>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_moduleLoader);
     visitor.append(thisObject->m_moduleEnvironment);
     visitor.append(thisObject->m_moduleNamespaceObject);
     visitor.append(thisObject->m_deferredNamespaceObject);
@@ -110,7 +110,6 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
-    visitor.append(thisObject->m_sharedDeclarations);
 }
 
 DEFINE_VISIT_CHILDREN(AbstractModuleRecord);
@@ -186,23 +185,8 @@ void AbstractModuleRecord::addExportEntry(const ExportEntry& entry)
     ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate export entry name '%s'", entry.exportName.impl()->utf8().data());
 }
 
-void AbstractModuleRecord::shareDeclarationsWith(VM& vm, AbstractModuleRecord* templateRecord)
-{
-    ASSERT(m_requestedModules.isEmpty() && m_importEntries.isEmpty() && m_exportEntries.isEmpty());
-    // Chains collapse: always point at the record that owns the tables.
-    if (AbstractModuleRecord* owner = templateRecord->sharedDeclarations())
-        templateRecord = owner;
-    m_sharedDeclarations.set(vm, this, templateRecord);
-    m_hasTLA = templateRecord->hasTLA();
-#if USE(BUN_JSC_ADDITIONS)
-    m_isTypeScript = templateRecord->m_isTypeScript;
-#endif
-}
-
 auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> std::optional<ImportEntry>
 {
-    if (m_sharedDeclarations)
-        return m_sharedDeclarations->tryGetImportEntry(localName);
 #if USE(BUN_JSC_ADDITIONS)
     ensurePrelinkedEntriesMaterialized();
 #endif
@@ -214,8 +198,6 @@ auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> st
 
 auto AbstractModuleRecord::tryGetExportEntry(UniquedStringImpl* exportName) -> std::optional<ExportEntry>
 {
-    if (m_sharedDeclarations)
-        return m_sharedDeclarations->tryGetExportEntry(exportName);
 #if USE(BUN_JSC_ADDITIONS)
     ensurePrelinkedEntriesMaterialized();
 #endif
@@ -255,30 +237,23 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
 }
 
-// A record of a module graph instance keeps no [[LoadedModules]] of its own: its
-// template's dependency, as that module stands in the instance.
-AbstractModuleRecord* AbstractModuleRecord::graphInstanceImportedModule(const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
+JSModuleLoader* AbstractModuleRecord::moduleLoader() const
 {
-    auto* self = dynamicDowncast<JSModuleRecord>(this);
-    if (!self || !self->graphInstance() || !self->templateRecord())
-        return nullptr;
-    AbstractModuleRecord* dependency = self->templateRecord()->hostResolveImportedModule(globalObject(), moduleName, moduleRequestType);
-    if (!dependency)
-        return nullptr;
-    if (AbstractModuleRecord* inInstance = self->graphInstance()->recordFor(dependency))
-        return inInstance;
-    return dependency;
+    if (JSModuleLoader* loader = m_moduleLoader.get())
+        return loader;
+    return globalObject()->moduleLoader();
 }
 
-AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject* globalObject, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
+void AbstractModuleRecord::setModuleLoader(VM& vm, JSModuleLoader* loader)
+{
+    ASSERT(!m_moduleLoader || m_moduleLoader.get() == loader);
+    m_moduleLoader.set(vm, this, loader);
+}
+
+AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
 {
     if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
         return iter->value.m_module.get();
-    if (m_sharedDeclarations) {
-        if (AbstractModuleRecord* dependency = graphInstanceImportedModule(moduleName, moduleRequestType))
-            return dependency;
-    }
-    UNUSED_PARAM(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
     // A prelinked record's graph requests are answered by the loader's index table, not [[LoadedModules]] (until
     // something materializes the by-name view); a record has tens of requests, so find the request by name.
@@ -439,7 +414,7 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRecordForResolution(JSGloba
 {
     if (moduleIndex == m_prelinkedIndex)
         return const_cast<AbstractModuleRecord*>(this);
-    JSModuleLoader* loader = globalObject()->moduleLoader();
+    JSModuleLoader* loader = moduleLoader();
     if (loader->prelinkedModuleGraph() != m_prelinked.get())
         return nullptr;
     AbstractModuleRecord* record = loader->prelinkedRecordForResolution(moduleIndex);

@@ -31,7 +31,6 @@
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "Microtask.h"
-#include "SyntheticModuleRecord.h"
 
 namespace JSC {
 
@@ -150,20 +149,10 @@ JSPromise* ModuleRegistryEntry::loadPromise() const
     return m_loadPromise.get();
 }
 
-JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluationError includeEvaluationError) const
+JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (includeEvaluationError == IncludeEvaluationError::No && m_status == Status::EvaluationFailed) {
-        // Only the record's own evaluation having thrown is excluded; a load
-        // failure of a dependency recorded on this entry still counts.
-        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get());
-        if (cyclic && cyclic->status() == CyclicModuleRecord::Status::Evaluated && cyclic->evaluationError())
-            return { };
-        auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(m_record.get());
-        if (synthetic && synthetic->regeneratesPerGraphInstance())
-            return { };
-    }
     if (JSValue error = m_error.get()) {
         if (m_status == Status::FetchFailed) {
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(error))
@@ -171,21 +160,11 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluati
         }
         RELEASE_AND_RETURN(scope, error);
     }
-    if (m_record && includeEvaluationError == IncludeEvaluationError::Yes) {
+    if (m_record) {
         if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get()))
             RELEASE_AND_RETURN(scope, cyclic->evaluationError());
     }
     return { };
-}
-
-bool ModuleRegistryEntry::hasSettledFailure() const
-{
-    if (m_status == Status::FetchFailed || m_status == Status::InstantiationFailed)
-        return true;
-    if (m_record)
-        return false;
-    auto rejected = [](JSPromise* promise) { return promise && promise->status() == JSPromise::Status::Rejected; };
-    return rejected(m_fetchPromise.get()) || rejected(m_modulePromise.get()) || rejected(m_loadPromise.get());
 }
 
 JSValue ModuleRegistryEntry::fetchError() const

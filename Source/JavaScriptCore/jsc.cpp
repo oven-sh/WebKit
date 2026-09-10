@@ -1154,7 +1154,7 @@ static URL absoluteFileURL(const String& fileName)
     return URL(directoryName, fileName);
 }
 
-JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader*, JSString* moduleNameValue, RefPtr<ScriptFetchParameters> fetchParams, const SourceOrigin& sourceOrigin, bool deferred)
+JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader* loader, JSString* moduleNameValue, RefPtr<ScriptFetchParameters> fetchParams, const SourceOrigin& sourceOrigin, bool deferred)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1177,9 +1177,9 @@ JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, 
 
     auto referrerKey = Identifier::fromString(vm, referrer.string());
 #if USE(BUN_JSC_ADDITIONS)
-    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey));
+    auto* result = JSC::importModule(globalObject, loader, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, loader->asyncEvaluationOrderForKey(referrerKey));
 #else
-    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
+    auto* result = JSC::importModule(globalObject, loader, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
 #endif
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();

@@ -36,6 +36,7 @@ class BytecodeCacheError;
 class CachedBytecode;
 class CallFrame;
 class Exception;
+class JSModuleLoader;
 class JSObject;
 class ParserError;
 class ScriptFetcher;
@@ -89,6 +90,8 @@ JS_EXPORT_PRIVATE JSPromise* loadModule(JSGlobalObject*, SourceCode&&, RefPtr<Sc
 JS_EXPORT_PRIVATE JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetcher>);
 
 JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
+// The same through a specific loader of the global object (see JSModuleLoader).
+JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 
 JS_EXPORT_PRIVATE UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String> retrieveImportAttributesFromDynamicImportOptions(JSGlobalObject*, JSValue, const Vector<RefPtr<UniquedStringImpl>>& supportedAssertions);
 JS_EXPORT_PRIVATE std::optional<ScriptFetchParameters::Type> retrieveTypeImportAttribute(JSGlobalObject*, const UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String>&);

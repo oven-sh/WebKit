@@ -100,6 +100,7 @@ void ModuleLoadingContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<ModuleLoadingContext>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_loader);
     visitor.append(thisObject->m_payload);
     visitor.append(thisObject->m_entry);
     visitor.append(thisObject->m_referrer);

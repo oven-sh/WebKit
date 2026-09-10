@@ -96,7 +96,6 @@ class JSCustomSetterFunction;
 class JSGlobalObjectDebuggable;
 class JSIterator;
 class JSIteratorConstructor;
-class ModuleGraphInstance;
 class JSIteratorHelperPrototype;
 class JSIteratorPrototype;
 class JSModuleLoader;
@@ -352,11 +351,7 @@ public:
     WriteBarrier<JSObject> m_regExpProtoSymbolReplace;
     LazyProperty<JSGlobalObject, GetterSetter> m_throwTypeErrorArgumentsCalleeGetterSetter;
 
-    WriteBarrier<SymbolTable> m_moduleScopeOverlaySymbolTable;
-    WriteBarrier<JSLexicalEnvironment> m_primaryModuleScopeOverlay;
-    WriteBarrier<ModuleGraphInstance> m_currentGraphInstanceForLoading;
-    WriteBarrier<ModuleGraphInstance> m_dynamicImportGraphInstance;
-    bool m_hasCreatedModuleEnvironment { false };
+    bool m_hasAdditionalModuleLoaders { false };
     LazyProperty<JSGlobalObject, JSModuleLoader> m_moduleLoader;
 
     WriteBarrier<ObjectPrototype> m_objectPrototype;
@@ -920,55 +915,10 @@ public:
     GetterSetter* throwTypeErrorArgumentsCalleeGetterSetter() const LIFETIME_BOUND { return m_throwTypeErrorArgumentsCalleeGetterSetter.get(this); }
     
     JSModuleLoader* moduleLoader() const LIFETIME_BOUND { return m_moduleLoader.get(this); }
-
-    // Module graph instances (Options::useModuleGraphInstances()): an optional
-    // lexical environment placed between every module environment and the global
-    // lexical environment, so a fixed set of free identifiers resolve as closure
-    // variables that each graph instance can give its own values (the "scope
-    // overlay"). Configured once, before the first module environment is created;
-    // the primary overlay holds the global object's own values.
-    JS_EXPORT_PRIVATE void configureModuleScopeOverlay(const Vector<Identifier>& names);
-    SymbolTable* moduleScopeOverlaySymbolTable() const { return m_moduleScopeOverlaySymbolTable.get(); }
-    bool isModuleScopeOverlay(JSScope*) const;
-    JSLexicalEnvironment* primaryModuleScopeOverlay() const { return m_primaryModuleScopeOverlay.get(); }
-    // Parent scope of module environments: the primary overlay if configured, else the global lexical environment.
-    JS_EXPORT_PRIVATE JSScope* moduleEnvironmentParentScope();
-    // A new overlay for a graph instance: same shape as the primary's, values from `values` (own properties by name), defaulting to the primary's.
-    JS_EXPORT_PRIVATE JSLexicalEnvironment* createModuleScopeOverlay(JSObject* values, ModuleGraphInstance* = nullptr);
-    // The graph instance code with this scope chain belongs to (its module environment's record, or its overlay), or null.
-    JS_EXPORT_PRIVATE ModuleGraphInstance* graphInstanceForScope(JSScope*, JSScope** overlayOut = nullptr);
-    // While a load or link runs on behalf of a graph instance (synchronously), so
-    // host module providers can attribute what they create to it.
-    ModuleGraphInstance* currentGraphInstanceForLoading() const { return m_currentGraphInstanceForLoading.get(); }
-    JS_EXPORT_PRIVATE void setCurrentGraphInstanceForLoading(VM&, ModuleGraphInstance*);
-    // import() from code of a graph instance: set around the host's import hook
-    // so the load it requests (JSModuleLoader::requestImportModule) goes into the
-    // instance; taken (cleared) by the first request.
-    JS_EXPORT_PRIVATE ModuleGraphInstance* takeDynamicImportGraphInstance();
-    JS_EXPORT_PRIVATE void setDynamicImportGraphInstance(VM&, ModuleGraphInstance*);
-    class DynamicImportGraphInstanceScope {
-    public:
-        DynamicImportGraphInstanceScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
-            : m_globalObject(globalObject)
-        {
-            globalObject->setDynamicImportGraphInstance(globalObject->vm(), instance);
-        }
-        ~DynamicImportGraphInstanceScope() { m_globalObject->setDynamicImportGraphInstance(m_globalObject->vm(), nullptr); }
-    private:
-        JSGlobalObject* m_globalObject;
-    };
-    class GraphInstanceLoadingScope {
-    public:
-        GraphInstanceLoadingScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
-            : m_globalObject(globalObject), m_previous(globalObject->currentGraphInstanceForLoading())
-        {
-            globalObject->setCurrentGraphInstanceForLoading(globalObject->vm(), instance);
-        }
-        ~GraphInstanceLoadingScope() { m_globalObject->setCurrentGraphInstanceForLoading(m_globalObject->vm(), m_previous); }
-    private:
-        JSGlobalObject* m_globalObject;
-        ModuleGraphInstance* m_previous;
-    };
+    // Whether JSModuleLoader::createAdditional was ever used here, so import()
+    // needs to find the calling module's loader.
+    bool hasAdditionalModuleLoaders() const { return m_hasAdditionalModuleLoaders; }
+    void setHasAdditionalModuleLoaders() { m_hasAdditionalModuleLoaders = true; }
 
     ObjectPrototype* objectPrototype() const LIFETIME_BOUND { return m_objectPrototype.get(); }
     FunctionPrototype* functionPrototype() const LIFETIME_BOUND { return m_functionPrototype.get(); }

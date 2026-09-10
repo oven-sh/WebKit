@@ -31,13 +31,12 @@
 #include "JSObject.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
+#include "JSScope.h"
 #include "ModuleMap.h"
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC {
-
-class ModuleGraphInstance;
 
 class ErrorInstance;
 class JSPromise;
@@ -52,9 +51,6 @@ enum class ModuleLoadFlag : uint8_t {
     Dynamic = 1 << 1,
     UseImportMap = 1 << 2,
     Deferred = 1 << 3,
-    // Loading a template on behalf of a module graph instance: an already-loaded
-    // module's evaluation error in the global object's own graph is not this load's failure.
-    ForGraphInstance = 1 << 4,
 };
 
 class JSModuleLoader final : public JSCell {
@@ -90,10 +86,28 @@ public:
     {
         return create(globalObject, vm, vm.moduleLoaderStructure.get());
     }
+    // An additional loader for globalObject (see moduleEnvironmentParentScope()).
+    JS_EXPORT_PRIVATE static JSModuleLoader* createAdditional(JSGlobalObject*, VM&);
 
     DECLARE_INFO;
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+
+    // A global object has one module loader (JSGlobalObject::moduleLoader()); an
+    // embedder may create more with create() to load and evaluate module graphs
+    // again, separately, in the same global object: each loader has its own
+    // registry, so the same specifiers give fresh module records with their own
+    // environments and state. Records remember their loader; import() from module
+    // code loads through the calling module's loader.
+    //
+    // Optional scope to place this loader's module environments under instead of
+    // the global lexical environment (e.g. a JSLexicalEnvironment whose bindings
+    // shadow some global names for this loader's modules).
+    JSScope* moduleEnvironmentParentScope() const { return m_moduleEnvironmentParentScope.get(); }
+    void setModuleEnvironmentParentScope(VM& vm, JSScope* scope) { m_moduleEnvironmentParentScope.setMayBeNull(vm, this, scope); }
+    // For the embedder: whatever it associates with this loader.
+    JSValue embedderData() const { return m_embedderData.get(); }
+    void setEmbedderData(VM& vm, JSValue value) { m_embedderData.set(vm, this, value); }
 
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
@@ -107,20 +121,6 @@ public:
 
     // Platform dependent hooked APIs.
     JSPromise* importModule(JSGlobalObject*, JSString* moduleName, JSValue parameters, const SourceOrigin& referrer, bool deferred = false);
-
-    // Module graph instances (Options::useModuleGraphInstances()).
-    // Link() an already-fetched module graph without Evaluate(), so its records
-    // can serve as templates; returns the record for moduleKey.
-    JS_EXPORT_PRIVATE AbstractModuleRecord* linkModule(JSGlobalObject*, const Identifier& moduleKey, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, RefPtr<ScriptFetcher> = nullptr);
-#if USE(BUN_JSC_ADDITIONS)
-    // Fetch the graph for `key` on behalf of `instance` (through the synchronous
-    // loader; host module providers see the instance as the current loading
-    // instance). Resolves once loaded; nothing is linked or evaluated.
-    JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
-    // Load, link the template, instantiate into `instance` and evaluate there;
-    // resolves with the instance's namespace object for `key`.
-    JS_EXPORT_PRIVATE static JSPromise* importIntoGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*, bool deferred = false);
-#endif
     Identifier resolve(JSGlobalObject*, JSValue name, JSValue referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     Identifier resolve(JSGlobalObject*, const Identifier& name, const Identifier& referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     JSPromise* fetch(JSGlobalObject*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
@@ -242,7 +242,7 @@ public:
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
     }
-    JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&, OptionSet<ModuleLoadFlag> = { ModuleLoadFlag::Evaluate });
+    JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 
     // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
@@ -303,6 +303,9 @@ private:
         UNUSED_PARAM(type);
 #endif
     }
+
+    WriteBarrier<JSScope> m_moduleEnvironmentParentScope;
+    WriteBarrier<Unknown> m_embedderData;
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;

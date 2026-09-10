@@ -228,9 +228,9 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         JS_EXPORT_PRIVATE CallFrame* callerFrame(EntryFrame*&) const;
 
         JS_EXPORT_PRIVATE SourceOrigin callerSourceOrigin(VM&);
-        // The scope the calling JS code closes over (a module environment for
-        // module code; the callee's scope chain for functions), or null for
-        // native callers. Lets import() from a module graph instance load into it.
+        // The scope the calling JS code closes over (its module environment for
+        // module code; the callee's scope chain for functions), or null for native
+        // callers. Lets import() find the calling module's loader.
         JS_EXPORT_PRIVATE JSScope* callerScope(VM&);
 
         static constexpr ptrdiff_t callerFrameOffset() { return OBJECT_OFFSETOF(CallerFrameAndPC, callerFrame); }

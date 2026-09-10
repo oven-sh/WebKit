@@ -55,10 +55,7 @@
 #include "JSCInlines.h"
 #include "JSGlobalProxyInlines.h"
 #include "JSONObject.h"
-#include "JSModuleEnvironment.h"
-#include "JSModuleRecord.h"
-#include "JSModuleNamespaceObject.h"
-#include "ModuleGraphInstance.h"
+#include "JSModuleLoader.h"
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
@@ -2247,7 +2244,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
-static JSC_DECLARE_HOST_FUNCTION(functionInstantiateModuleGraph);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
+static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -3941,41 +3939,35 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObjec
     return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
 }
 
-// $vm.instantiateModuleGraph(namespace[, instance]) -- Options::useModuleGraphInstances():
-// instantiates and evaluates the namespace's module and its dependencies a
-// further time, in `instance` (a value returned by an earlier call; a new
-// ModuleGraphInstance if omitted). Returns { namespace, environment, instance }
-// for the module in that instance.
-JSC_DEFINE_HOST_FUNCTION(functionInstantiateModuleGraph, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// $vm.createModuleLoader(): an additional JSModuleLoader for this global object
+// (wrapped in a plain object as { loader }); modules imported through it are
+// loaded and evaluated afresh, separately from the global object's own loader.
+JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!Options::useModuleGraphInstances())
-        return throwVMTypeError(globalObject, scope, "useModuleGraphInstances is disabled"_s);
-    auto* ns = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
-    if (!ns)
-        return throwVMTypeError(globalObject, scope, "expected a module namespace object"_s);
-    auto* record = dynamicDowncast<JSModuleRecord>(ns->moduleRecord());
-    if (!record)
-        return throwVMTypeError(globalObject, scope, "namespace does not belong to a source text module"_s);
-    JSValue instanceValue = callFrame->argument(1);
-    ModuleGraphInstance* instance = instanceValue.isCell() ? dynamicDowncast<ModuleGraphInstance>(instanceValue.asCell()) : nullptr;
-    if (!instance) {
-        if (!instanceValue.isUndefined())
-            return throwVMTypeError(globalObject, scope, "expected a module graph instance"_s);
-        instance = ModuleGraphInstance::create(vm, globalObject);
-    }
-    JSModuleRecord* instanceRecord = instance->evaluateSync(globalObject, record->templateRecordOrThis());
-    RETURN_IF_EXCEPTION(scope, {});
-    JSModuleNamespaceObject* namespaceObject = instanceRecord->getModuleNamespace(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSModuleLoader* loader = JSModuleLoader::createAdditional(globalObject, vm);
     JSObject* result = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "namespace"_s), namespaceObject);
-    result->putDirect(vm, Identifier::fromString(vm, "environment"_s), instanceRecord->moduleEnvironment());
-    result->putDirect(vm, Identifier::fromString(vm, "instance"_s), instance);
+    result->putDirect(vm, Identifier::fromString(vm, "loader"_s), loader);
     return JSValue::encode(result);
+}
+
+// $vm.moduleLoaderImport({ loader }, specifier): import(specifier) through that loader, relative to the caller.
+JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* holder = callFrame->argument(0).getObject();
+    JSValue loaderValue = holder ? holder->getDirect(vm, Identifier::fromString(vm, "loader"_s)) : JSValue();
+    auto* loader = loaderValue && loaderValue.isCell() ? dynamicDowncast<JSModuleLoader>(loaderValue.asCell()) : nullptr;
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    JSString* specifier = callFrame->argument(1).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
@@ -5690,7 +5682,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
-    addFunction(vm, allowIfNotFuzz, "instantiateModuleGraph"_s, functionInstantiateModuleGraph, 2);
+    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 0);
+    addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);

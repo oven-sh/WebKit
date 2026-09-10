@@ -274,7 +274,6 @@ class Heap;
     v(javaScriptCallFrameSpace, javaScriptCallFrameHeapCellType, Inspector::JSJavaScriptCallFrame) \
     v(jsModuleRecordSpace, jsModuleRecordHeapCellType, JSModuleRecord) \
     v(moduleRegistryEntrySpace, destructibleCellHeapCellType, ModuleRegistryEntry) \
-    v(moduleGraphInstanceSpace, destructibleCellHeapCellType, ModuleGraphInstance) \
     v(moduleLoadingContextSpace, destructibleCellHeapCellType, ModuleLoadingContext) \
     v(sentinelSpace, cellHeapCellType, JSSentinel) \
     v(syntheticModuleRecordSpace, syntheticModuleRecordHeapCellType, SyntheticModuleRecord) \

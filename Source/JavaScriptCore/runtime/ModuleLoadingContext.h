@@ -73,6 +73,9 @@ public:
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
     AbstractModuleRecord* module() const { return m_module.get(); }
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
+    // The loader running this load (a global object may have more than one).
+    JSModuleLoader* loader() const { return m_loader.get(); }
+    void setLoader(VM& vm, JSModuleLoader* loader) { m_loader.set(vm, this, loader); }
 
     bool evaluate() const { return m_flags.contains(ModuleLoadFlag::Evaluate); }
     bool dynamic() const { return m_flags.contains(ModuleLoadFlag::Dynamic); }
@@ -93,6 +96,7 @@ private:
     WriteBarrier<ModuleRegistryEntry> m_entry;
     WriteBarrier<Unknown> m_referrer;
     WriteBarrier<AbstractModuleRecord> m_module;
+    WriteBarrier<JSModuleLoader> m_loader;
 #if USE(BUN_JSC_ADDITIONS)
     int64_t m_referrerAsyncOrder { -1 };
 #endif

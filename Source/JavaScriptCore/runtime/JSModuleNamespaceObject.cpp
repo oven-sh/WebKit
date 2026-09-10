@@ -30,7 +30,6 @@
 #include "CyclicModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
-#include "ModuleGraphInstance.h"
 #include "JSModuleRecord.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
@@ -120,14 +119,6 @@ ALWAYS_INLINE bool JSModuleNamespaceObject::isSymbolLikeNamespaceKey(VM& vm, Pro
 // evaluation side effect since callers already have direct access to m_exports.
 void JSModuleNamespaceObject::ensureDeferredNamespaceEvaluation(JSGlobalObject* globalObject)
 {
-    // A deferred namespace of a disposed module graph instance evaluates nowhere.
-    if (auto* sourceText = dynamicDowncast<JSModuleRecord>(m_moduleRecord.get()); sourceText && sourceText->graphInstance() && sourceText->graphInstance()->isCleared()) [[unlikely]] {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!sourceText->isSCCEvaluated())
-            throwTypeError(globalObject, scope, "Module graph instance was disposed before this deferred module was evaluated"_s);
-        return;
-    }
     // 1. If O.[[Deferred]] is true, then
     ASSERT(m_isDeferred);
     // Fast path: if the module's cycle has already successfully evaluated, EvaluateModuleSync would

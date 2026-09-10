@@ -31,8 +31,6 @@
 
 namespace JSC {
 
-class SyntheticSourceProvider;
-
 class JSGlobalObject;
 
 // https://tc39.es/proposal-json-modules/#sec-synthetic-module-records
@@ -73,23 +71,6 @@ public:
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
-    // Module graph instances: a record whose provider regenerates per instance
-    // (or a JSON module, whose parsed value is mutable) gets a fresh record in
-    // each instance instead of being shared with the template graph.
-    bool regeneratesPerGraphInstance() const;
-    JS_EXPORT_PRIVATE static SyntheticModuleRecord* createForGraphInstance(JSGlobalObject*, SyntheticModuleRecord* templateRecord);
-    void setSyntheticSourceProvider(RefPtr<SyntheticSourceProvider>&&, bool primaryPending);
-    SyntheticSourceProvider* syntheticSourceProvider() const { return m_provider.get(); }
-    // A record first produced while loading for a graph instance keeps the
-    // template's own bindings unset until the template graph first uses them;
-    // then the provider runs again, for the template.
-    bool primaryPending() const { return m_primaryPending; }
-    JS_EXPORT_PRIVATE void materializePrimaryIfPending(JSGlobalObject*);
-    // The template record for a module first loaded on behalf of a graph
-    // instance: export names known (the instance's generation produced them),
-    // bindings left unset until materializePrimaryIfPending().
-    static SyntheticModuleRecord* createPendingPrimary(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, RefPtr<SyntheticSourceProvider>&&);
-
     // No-op unless this record has lazy exports and localName is one of them that nobody has materialized (or
     // overridden through JSModuleNamespaceObject::overrideExportValue) yet. May run arbitrary JS and throw.
     JS_EXPORT_PRIVATE void materializeLazyExport(JSGlobalObject*, PropertyName localName);
@@ -111,9 +92,6 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_lazyExportsSource;
-    RefPtr<SyntheticSourceProvider> m_provider;
-    SourceCode m_jsonSource;
-    bool m_primaryPending { false };
 #endif
 };
 

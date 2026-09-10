@@ -222,13 +222,6 @@ private:
         }
 
         // Returns the object that exports declared without a value are read from, or nullptr if there are none.
-        // Module graph instances: the generator yields a fresh module per call and
-        // honours JSGlobalObject::currentGraphInstanceForLoading(); records made
-        // from this provider are regenerated for each graph instance instead of
-        // being shared with the template graph.
-        void setRegeneratesPerGraphInstance(bool value) { m_regeneratesPerGraphInstance = value; }
-        bool regeneratesPerGraphInstance() const { return m_regeneratesPerGraphInstance; }
-
         JSObject* generate(JSGlobalObject* globalObject, Identifier moduleKey, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
         {
             if (m_lazyGenerator)
@@ -250,7 +243,6 @@ private:
         String m_source;
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
-        bool m_regeneratesPerGraphInstance { false };
     };
 
 #if ENABLE(WEBASSEMBLY)

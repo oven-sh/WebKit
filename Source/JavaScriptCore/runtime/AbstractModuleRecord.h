@@ -43,6 +43,7 @@ namespace JSC {
 
 class CyclicModuleRecord;
 class JSModuleEnvironment;
+class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSMap;
 class JSPromise;
@@ -199,27 +200,23 @@ public:
     };
 
     const Identifier& moduleKey() const { return m_moduleKey; }
+    // The loader whose registry this record belongs to (a global object may have
+    // more than one); records created outside any loader answer the global object's.
+    JSModuleLoader* moduleLoader() const;
+    void setModuleLoader(VM&, JSModuleLoader*);
     ScriptFetchParameters::Type moduleType() const;
-    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->requestedModules() : m_requestedModules; }
-    // Module graph instances: a record created for an instance reads its requests
-    // and import/export entries from its template instead of holding copies.
-    void shareDeclarationsWith(VM&, AbstractModuleRecord* templateRecord);
-    AbstractModuleRecord* sharedDeclarations() const { return m_sharedDeclarations.get(); }
-    // GetImportedModule for a record of a module graph instance: the template's
-    // dependency as it stands in the instance (its record there, else shared). Null for other records.
-    AbstractModuleRecord* graphInstanceImportedModule(const Identifier& moduleName, ScriptFetchParameters::Type);
-
+    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
     // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
-    const ExportEntries& exportEntries() const LIFETIME_BOUND { if (m_sharedDeclarations) return m_sharedDeclarations->exportEntries(); ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
-    const ImportEntries& importEntries() const LIFETIME_BOUND { if (m_sharedDeclarations) return m_sharedDeclarations->importEntries(); ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
-    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { if (m_sharedDeclarations) return m_sharedDeclarations->starExportEntries(); ensurePrelinkedEntriesMaterialized(); return m_starExportEntries; }
+    const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
+    const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
+    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_starExportEntries; }
 #else
-    const ExportEntries& exportEntries() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->exportEntries() : m_exportEntries; }
-    const ImportEntries& importEntries() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->importEntries() : m_importEntries; }
-    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { return m_sharedDeclarations ? m_sharedDeclarations->starExportEntries() : m_starExportEntries; }
+    const ExportEntries& exportEntries() const LIFETIME_BOUND { return m_exportEntries; }
+    const ImportEntries& importEntries() const LIFETIME_BOUND { return m_importEntries; }
+    const StarExportEntries& starExportEntries() const LIFETIME_BOUND { return m_starExportEntries; }
 #endif
     const Vector<WriteBarrier<AbstractModuleRecord>>& asyncParentModules() const LIFETIME_BOUND { return m_asyncParentModules; }
     CyclicModuleRecord* cycleRoot() const { return m_cycleRoot.get(); }
@@ -370,6 +367,7 @@ private:
 
     // The loader resolves the given module name to the module key. The module key is the unique value to represent this module.
     Identifier m_moduleKey;
+    WriteBarrier<JSModuleLoader> m_moduleLoader;
 
     // Map localName -> ImportEntry.
     ImportEntries m_importEntries;
@@ -412,7 +410,6 @@ protected:
     std::optional<int> m_pendingAsyncDependencies;
 
     bool m_hasTLA { false };
-    WriteBarrier<AbstractModuleRecord> m_sharedDeclarations;
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };

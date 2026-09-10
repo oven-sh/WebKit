@@ -36,11 +36,9 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
-#include "ModuleGraphInstance.h"
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
-#include "SyntheticModuleRecord.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/text/MakeString.h>
 
@@ -53,18 +51,6 @@ JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Str
     JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, features);
     instance->finishCreation(globalObject, vm);
     return instance;
-}
-
-JSModuleRecord* JSModuleRecord::createForGraphInstance(JSGlobalObject* globalObject, VM& vm, JSModuleRecord* templateRecord, ModuleGraphInstance* graphInstance)
-{
-    ASSERT(Options::useModuleGraphInstances());
-    JSModuleRecord* record = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, templateRecord->structure(), templateRecord->moduleKey(), templateRecord->sourceCode(), templateRecord->features());
-    record->finishCreation(globalObject, vm);
-    record->m_templateRecord.set(vm, record, templateRecord);
-    record->m_graphInstance.set(vm, record, graphInstance);
-    record->shareDeclarationsWith(vm, templateRecord);
-    record->setStatus(Status::Unlinked);
-    return record;
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -120,8 +106,6 @@ void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleProgramExecutable);
-    visitor.append(thisObject->m_templateRecord);
-    visitor.append(thisObject->m_graphInstance);
 
 #if USE(BUN_JSC_ADDITIONS)
     visitor.reportExtraMemoryVisited(thisObject->sourceCode().memoryCost());
@@ -145,21 +129,6 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Module graph instances: by the first run of the body every dependency's
-    // environment exists; fill the import slots the ModuleVar fast paths read.
-    // A host module first produced for a graph instance gets the template
-    // graph's own values now that the template graph uses it.
-    if (Options::useModuleGraphInstances() && !m_templateRecord && internalField(Field::State).get() == jsNumber(static_cast<int32_t>(State::Init))) [[unlikely]] {
-        for (const auto& request : requestedModules()) {
-            auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(hostResolveImportedModule(globalObject, request.m_specifier, request.type()));
-            RETURN_IF_EXCEPTION(scope, { });
-            if (synthetic && synthetic->primaryPending()) {
-                synthetic->materializePrimaryIfPending(globalObject);
-                RETURN_IF_EXCEPTION(scope, { });
-            }
-        }
-    }
 
     if (JSValue error = evaluationError()) {
         scope.throwException(globalObject, error);
@@ -199,7 +168,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         ASSERT(capability == nullptr);
         // 9.b. Push moduleContext onto the execution context stack; moduleContext is now the running execution context.
         // 9.c. Let result be Completion(Evaluation of module.[[ECMAScriptCode]]).
-        globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         // 9.d. Suspend moduleContext and remove it from the execution context stack.
         // 9.e. Resume the context that is now on the top of the execution context stack as the running execution context.
         // 9.f. If result is an abrupt completion, then
@@ -211,7 +180,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         ASSERT(capability != nullptr);
         // 10.b. Perform AsyncBlockStart(capability, module.[[ECMAScriptCode]], moduleContext).
         asyncCapability(vm, capability);
-        JSValue result = globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        JSValue result = moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         asyncModuleResolveEvaluation(globalObject, vm, scope, this, result);
     }
     // 11. Return unused.
