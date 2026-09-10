@@ -105,9 +105,15 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
         OPERATION_RETURN(scope, callee);
     }
 
-    auto access = [sp, callFrame]<typename V>(auto* arr, int i) -> V* {
-        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(sp)), "](", RawHex(reinterpret_cast<V*>(arr)[i / sizeof(V)]), ")");
-        return &reinterpret_cast<V*>(arr)[i / sizeof(V)];
+    // byteOffset is signed and is negative for a slot below the frame pointer:
+    // the callee's stack arguments here, WasmToJSCallableFunctionSlot in the
+    // wasm-to-JS operations. Offset the pointer in bytes. An array index
+    // (byteOffset / sizeof(V)) converts a negative offset to a huge unsigned
+    // index instead.
+    auto access = [sp, callFrame]<typename V>(auto* arr, ptrdiff_t byteOffset) -> V* {
+        auto* slot = reinterpret_cast<V*>(reinterpret_cast<uint8_t*>(arr) + byteOffset);
+        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (reinterpret_cast<uint8_t*>(slot) - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (reinterpret_cast<uint8_t*>(slot) - reinterpret_cast<uint8_t*>(sp)), "](", RawHex(*slot), ")");
+        return slot;
     };
 
     CallInformation wasmFrameConvention = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
@@ -165,9 +171,10 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
 
     const RTT& signature = callee->rtt();
 
-    auto access = [sp, callFrame]<typename V>(auto* arr, int i) -> V* {
-        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(sp)), "](", reinterpret_cast<V*>(arr)[i / sizeof(V)], ")");
-        return &reinterpret_cast<V*>(arr)[i / sizeof(V)];
+    auto access = [sp, callFrame]<typename V>(auto* arr, ptrdiff_t byteOffset) -> V* {
+        auto* slot = reinterpret_cast<V*>(reinterpret_cast<uint8_t*>(arr) + byteOffset);
+        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (reinterpret_cast<uint8_t*>(slot) - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (reinterpret_cast<uint8_t*>(slot) - reinterpret_cast<uint8_t*>(sp)), "](", *slot, ")");
+        return slot;
     };
 
     if (signature.returnsVoid())
@@ -299,8 +306,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmCalleeStackSize, UCPUStrictInt
 
 JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp, CallFrame* callFrame, void* argumentRegisters, JSWebAssemblyInstance* instance))
 {
-    auto access = []<typename V>(auto* arr, int i) -> V* {
-        return &reinterpret_cast<V*>(arr)[i / sizeof(V)];
+    auto access = []<typename V>(auto* arr, ptrdiff_t byteOffset) -> V* {
+        return reinterpret_cast<V*>(reinterpret_cast<uint8_t*>(arr) + byteOffset);
     };
 
     // We need to set up them immediately before potentially throwing anything.
@@ -442,8 +449,8 @@ ALWAYS_INLINE void assertCalleeIsReferenced(CallFrame* frame, JSWebAssemblyInsta
 
 JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* sp, CallFrame* callFrame, JSWebAssemblyInstance* instance))
 {
-    auto access = []<typename V>(auto* arr, int i) -> V* {
-        return &reinterpret_cast<V*>(arr)[i / sizeof(V)];
+    auto access = []<typename V>(auto* arr, ptrdiff_t byteOffset) -> V* {
+        return reinterpret_cast<V*>(reinterpret_cast<uint8_t*>(arr) + byteOffset);
     };
 
     void* registerSpace = sp;
