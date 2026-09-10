@@ -3575,6 +3575,11 @@ private:
             }
             break;
 
+        case GeneratorClaimResume:
+        case GeneratorPublishResume:
+            fixEdge<CellUse>(node->child1());
+            break;
+
         case GlobalIsFinite: {
             if (node->child1()->shouldSpeculateInt32()) {
                 insertCheck<Int32Use>(node->child1().node());

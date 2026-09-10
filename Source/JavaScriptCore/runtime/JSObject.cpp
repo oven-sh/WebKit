@@ -4891,6 +4891,10 @@ static bool deletePropertyNamedConcurrent(VM& vm, JSObject* thisObject, Property
             // here are quarantined by the table edit (addDeletedOffset,
             // I18/I30).
             RELEASE_ASSERT(removedOffset == lockedOffset);
+            // Upstream 323254: an in-place dictionary delete on a prototype
+            // invalidates the megamorphic store cache like a transitioning one.
+            if (thisObject->mayBePrototype()) [[unlikely]]
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Remove);
             return true;
         }
 
@@ -5784,15 +5788,15 @@ void JSObject::freeze(VM& vm)
         publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
             return Structure::freezeTransition(vm, oldStructure, deferred);
         }));
-        return;
-    }
-    {
+    } else {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::freezeTransition(vm, oldStructure, &deferred));
-        if (mayBePrototype()) [[unlikely]]
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     }
+    // Upstream 320276@main: freezing a prototype makes its properties read-only,
+    // which changes what a cached megamorphic store may do.
+    if (mayBePrototype()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 
 void JSObject::materializeLazyOwnProperties(VM& vm)

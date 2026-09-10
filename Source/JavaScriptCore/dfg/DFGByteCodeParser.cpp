@@ -4025,6 +4025,17 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case GeneratorClaimResumeIntrinsic:
+        case GeneratorPublishResumeIntrinsic: {
+            // Builtin-only (@claimGeneratorResume / @publishGeneratorResume,
+            // GIL off): the argument is a JSGenerator the builtin type-checked.
+            if (argumentCountIncludingThis != 2)
+                return CallOptimizationResult::DidNothing;
+            insertChecks();
+            setResult(addToGraph(intrinsic == GeneratorClaimResumeIntrinsic ? GeneratorClaimResume : GeneratorPublishResume, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
+            return CallOptimizationResult::Inlined;
+        }
+
         case GlobalIsFiniteIntrinsic: {
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;

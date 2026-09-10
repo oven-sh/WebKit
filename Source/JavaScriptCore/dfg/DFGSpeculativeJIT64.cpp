@@ -2856,7 +2856,7 @@ void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const Scope
     // the requested format must follow the node's result type exactly as the
     // non-segmented Double lowering does: InBounds and a SaneChain read with
     // no UsesAsOther consumer are double results, everything else is boxed.
-    JSValueRegs resultRegs;
+    GPRReg resultRegs;
     DataFormat format;
     constexpr bool needsFlush = false;
     std::tie(resultRegs, format) = prefix(node->hasDoubleResult() ? DataFormatDouble : DataFormatJS, needsFlush);
@@ -2890,7 +2890,7 @@ void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const Scope
             boxDouble(resultReg, resultRegs);
             jsValueResult(resultRegs, node);
         } else {
-            ASSERT(format == DataFormatDouble && !resultRegs);
+            ASSERT(format == DataFormatDouble && resultRegs == InvalidGPRReg);
             doubleResult(resultReg, node);
         }
         return;
@@ -2907,18 +2907,18 @@ void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const Scope
         if (format == DataFormatDouble) {
             Jump done = jump();
             slowCases.link(this);
-            speculationCheck(NegativeIndex, JSValueRegs(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
+            speculationCheck(NegativeIndex, JSValueSource(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
             move64ToDouble(TrustedImm64(std::bit_cast<uint64_t>(PNaN)), resultReg);
             done.link(this);
-            ASSERT(!resultRegs);
+            ASSERT(resultRegs == InvalidGPRReg);
             doubleResult(resultReg, node);
         } else {
             slowCases.append(branchIfNaN(resultReg));
             boxDouble(resultReg, resultRegs);
             Jump done = jump();
             slowCases.link(this);
-            speculationCheck(NegativeIndex, JSValueRegs(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
-            move(TrustedImm64(JSValue::encode(jsUndefined())), resultRegs.gpr());
+            speculationCheck(NegativeIndex, JSValueSource(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
+            move(TrustedImm64(JSValue::encode(jsUndefined())), resultRegs);
             done.link(this);
             jsValueResult(resultRegs, node);
         }
@@ -2927,7 +2927,7 @@ void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const Scope
 
     // OutOfBounds (effectful, clobberTop in Clobberize): past-length, stale
     // spine and NaN (hole) take the no-exit boxed-result operation call.
-    ASSERT(format == DataFormatJS && resultRegs);
+    ASSERT(format == DataFormatJS && resultRegs != InvalidGPRReg);
     slowCases.append(branchIfNaN(resultReg));
     boxDouble(resultReg, resultRegs);
     addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, resultRegs, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
@@ -5523,14 +5523,14 @@ void SpeculativeJIT::compile(Node* node)
         GPRReg baseGPR = base.gpr();
         GPRReg t1 = temp1.gpr();
         GPRReg t2 = temp2.gpr();
-        speculationCheck(BadCache, JSValueSource::unboxedCell(baseGPR), node->child1(),
+        speculationCheck(BadCache, JSValueSource(baseGPR), node->child1(),
             branchTestPtr(NonZero, baseGPR, TrustedImm32(PreciseAllocation::halfAlignment)));
         // One owner test for every word (OM r16 N1-I): tag == (currentTID, SW=0).
         load64(Address(baseGPR, JSObject::butterflyOffset()), t1);
         loadButterflyTIDTag(t2);
         xor64(t2, t1);
         urshift64(TrustedImm32(butterflyTIDShift), t1);
-        speculationCheck(BadCache, JSValueSource::unboxedCell(baseGPR), node->child1(), branchTest32(NonZero, t1));
+        speculationCheck(BadCache, JSValueSource(baseGPR), node->child1(), branchTest32(NonZero, t1));
         noResult(node);
         break;
     }
@@ -5945,6 +5945,13 @@ void SpeculativeJIT::compile(Node* node)
         compileGlobalIsFinite(node);
         break;
     }
+
+    case GeneratorClaimResume:
+        compileGeneratorClaimResume(node);
+        break;
+    case GeneratorPublishResume:
+        compileGeneratorPublishResume(node);
+        break;
 
     case NumberIsFinite: {
         compileNumberIsFinite(node);
@@ -9092,7 +9099,7 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
                 // ordinary post-add Structure the enumerator caches. Run the write
                 // predicate on the word the store goes through; failures take the
                 // generic put. scratchGPR (the decoded structure) is dead here.
-                genericOrRecoverCase.append(emitThreadedButterflyLoadForWrite(baseRegs.payloadGPR(), storageGPR, tidScratchGPR, scratchGPR, ThreadedButterflyPlan { }));
+                genericOrRecoverCase.append(emitThreadedButterflyLoadForWrite(baseGPR, storageGPR, tidScratchGPR, scratchGPR, ThreadedButterflyPlan { }));
             }
             move(indexGPR, scratchGPR);
             sub32(Address(enumeratorGPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratchGPR);
@@ -9982,7 +9989,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
                 plan.shape = CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage;
                 JumpList slowCases = emitThreadedButterflyLoadForRead(baseGPR, scratch2GPR, scratch1GPR, plan);
                 if (!slowCases.empty())
-                    speculationCheck(BadIndexingType, JSValueSource::unboxedCell(baseGPR), nullptr, slowCases);
+                    speculationCheck(BadIndexingType, JSValueSource(baseGPR), nullptr, slowCases);
             } else
                 loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
             Jump outOfBounds = branch32(AboveOrEqual, indexGPR, Address(scratch2GPR, Butterfly::offsetOfPublicLength()));
@@ -10010,7 +10017,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
                     if (arrayMode.isInBoundsSaneChain()) {
                         if (expectedType == ArrayWithInt32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
                             Jump hole = branchIfEmpty(resultGPR);
-                            speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41
+                            speculationCheck(BadType, JSValueSource(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41
                             hole.link(this);
                         }
                         move(TrustedImm64(JSValue::encode(jsUndefined())), scratch1GPR);
@@ -10037,7 +10044,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
                 load64(BaseIndex(scratch2GPR, indexGPR, TimesEight), resultGPR);
                 slowJumps.append(branchIfEmpty(resultGPR));
                 if (expectedType == ArrayWithInt32 && arrayMode.isOutOfBoundsSaneChain() && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
-                    speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41; the effectful form is HeapTop-typed
+                    speculationCheck(BadType, JSValueSource(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41; the effectful form is HeapTop-typed
             }
             doneCases.append(jump());
         };
@@ -10255,7 +10262,7 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
                 plan.shape = CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage;
                 JumpList slowCases = emitThreadedButterflyLoadForWrite(baseGPR, scratch2GPR, scratch1GPR, InvalidGPRReg, plan);
                 if (!slowCases.empty())
-                    speculationCheck(BadIndexingType, JSValueSource::unboxedCell(baseGPR), nullptr, slowCases);
+                    speculationCheck(BadIndexingType, JSValueSource(baseGPR), nullptr, slowCases);
             } else
                 loadPtr(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
 

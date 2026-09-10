@@ -1570,6 +1570,11 @@ public:
     LazyUniqueRef<VM, MegamorphicCache> m_megamorphicCache;
     ALWAYS_INLINE MegamorphicCache* megamorphicCache() { return m_megamorphicCache.getIfExists(); }
     MegamorphicCache& ensureMegamorphicCache() { return m_megamorphicCache.get(*this); }
+    // SPEC-jit history §37: the cache a megamorphic slow path fills. GIL off:
+    // the current thread's (created on first use), with its fill stamp taken
+    // now - call it BEFORE the lookup whose result will be cached. Otherwise the
+    // VM's cache above.
+    MegamorphicCache& megamorphicCacheForFill();
 
     LazyUniqueRef<VM, StringSplitCache> m_stringSplitCache;
     ALWAYS_INLINE StringSplitCache* stringSplitCache() { return m_stringSplitCache.getIfExists(); }

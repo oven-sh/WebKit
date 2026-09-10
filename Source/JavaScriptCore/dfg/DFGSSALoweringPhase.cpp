@@ -196,6 +196,27 @@ private:
             if (m_node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
                 m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
             checkInBounds = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, index, Edge(length, KnownInt32Use));
+            // SPEC-jit history §39: GIL off the storage edge may have been
+            // hoisted across a poll; a flat butterfly a foreign thread converted
+            // keeps its lanes only up to its frozen vectorLength while its
+            // publicLength slot goes on growing, so bound the access by the
+            // same storage's vectorLength as well (loop-invariant with the
+            // storage, so LICM hoists the load; one compare stays).
+            if (Options::useJSThreads() && !Options::useThreadGIL() && op == GetArrayLength && storage) [[unlikely]] {
+                switch (m_node->arrayMode().type()) {
+                case Array::Int32:
+                case Array::Double:
+                case Array::Contiguous: {
+                    Node* vectorLength = m_insertionSet.insertNode(
+                        m_nodeIndex, SpecInt32Only, GetVectorLength, m_node->origin,
+                        OpInfo(m_node->arrayMode().asWord()), Edge(base.node(), KnownCellUse), storage);
+                    m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, index, Edge(vectorLength, KnownInt32Use));
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
         }
 
         AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);

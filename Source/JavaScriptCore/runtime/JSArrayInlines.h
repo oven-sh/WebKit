@@ -124,6 +124,14 @@ inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType
                 return type;
             return ArrayWithDouble;
         }
+        // GIL off, arrays that would be Double elsewhere are often Contiguous
+        // (T4-O executes Int32->Double as Int32->Contiguous, T4-C copies Double
+        // sources boxed), so Double meets Contiguous in concat/slice where
+        // flag-off it never does; the copy is Contiguous with the Double lanes
+        // boxed (every fast-copy site already has that leg for T4-C) instead of
+        // the generic element-by-element concat (`stanford-crypto-sha256`).
+        if (g_jscConfig.gilOffProcess && (type == ArrayWithDouble || other == ArrayWithDouble) && (type == ArrayWithContiguous || other == ArrayWithContiguous)) [[unlikely]]
+            return ArrayWithContiguous;
     }
 
     if (type != other)

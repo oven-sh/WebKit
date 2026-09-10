@@ -63,6 +63,8 @@ namespace JSC {
 class Allocator;
 class CallFrame;
 class Exception;
+class MegamorphicCache;
+class StringReplaceCache;
 class MicrotaskQueue;
 class QueuedTask;
 class RegExp;
@@ -442,6 +444,27 @@ public:
     // thread close would drop the tasks. Owner-thread-only (I11). The main
     // thread's carrier, GIL-on and flag-off count on the VM word.
     uint64_t drainMicrotaskDelayScopeCount { 0 };
+
+    // SPEC-jit history §37: this thread's megamorphic cache in a GIL-off
+    // process, created by the owner's first fill (VM::megamorphicCacheForFill)
+    // and probed by JIT code through offsetOfMegamorphicCache(); null until
+    // then and always null GIL-on / flag-off (the VM's cache is used). Only the
+    // owner reads or writes its entries; the conductor of a Full collection
+    // clears it inside the stop; it dies with the lite (~VMLite runs after the
+    // lite is unregistered, so the collector's registry walk never sees it).
+    // SPEC-ungil §N.5: this thread's generator-resume claim token (an encoded
+    // int32 below JSGenerator::State::Executing, derived from the installing
+    // thread's uid) so the DFG/FTL claim/publish intrinsics CAS with the same
+    // value the host functions use. Written by setCurrent on install.
+    EncodedJSValue generatorClaimToken { 0 };
+    static constexpr ptrdiff_t offsetOfGeneratorClaimToken() { return OBJECT_OFFSETOF(VMLite, generatorClaimToken); }
+    MegamorphicCache* megamorphicCache { nullptr }; // owned; freed in ~VMLite
+    static constexpr ptrdiff_t offsetOfMegamorphicCache() { return OBJECT_OFFSETOF(VMLite, megamorphicCache); }
+    // GIL off: this thread's String.prototype.replace search cache (the VM's is
+    // shared and unlocked, so GIL off it is not used). Cleared by the collector
+    // at every cycle end (Heap::finalize), world stopped; freed in ~VMLite.
+    std::unique_ptr<StringReplaceCache> stringReplaceCache;
+    StringReplaceCache& ensureStringReplaceCache();
 
     // B14 / MC-DOS S7 amendment note: a per-lite observedRetireEpoch slot was
     // proposed here as an "explicit per-LITE witness regardless of the

@@ -1738,8 +1738,11 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     // sharing is UNDETECTABLE, so the only sound flag-on choice is the stop;
     // flatten is rare and already expensive, and genuinely owner-local
     // objects keep their TTL sets (the firing below stays conditional).
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useJSThreads()) [[unlikely]] {
+        if (vm.gilOff())
+            return flattenDictionaryStructureByTransitionConcurrent(vm, object);
         return flattenDictionaryStructureUnderStop(vm, object);
+    }
 
     // Holds our values compacted by insertion order. Pre-sized here so the impl
     // never allocates it under the stop closure on the shared path (O4); on
@@ -1755,6 +1758,97 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     // flag-on this point is unreachable (routed above).
     RELEASE_ASSERT(result);
     return result;
+}
+
+static thread_local JSObject* t_deferredFlattenGILOff;
+
+void Structure::requestDeferredFlattenGILOff(JSObject* object)
+{
+    ASSERT(object->vm().gilOff());
+    if (!Options::useGILOffDictionaryFlatten()) [[unlikely]]
+        return; // kill switch (SPEC-jit history §38): the IC gives up as in the seventh round.
+    t_deferredFlattenGILOff = object; // reachable from the requesting frame's base value; used before the next safepoint
+}
+
+void Structure::runDeferredFlattenGILOff(VM& vm)
+{
+    JSObject* object = std::exchange(t_deferredFlattenGILOff, nullptr);
+    if (!object) [[likely]]
+        return;
+    ASSERT(vm.gilOff());
+    Structure* structure = object->structure();
+    if (structure->isDictionary() && !structure->hasBeenFlattenedBefore())
+        structure->flattenDictionaryStructureByTransitionConcurrent(vm, object);
+}
+
+Structure* Structure::flattenDictionaryStructureByTransitionConcurrent(VM& vm, JSObject* object)
+{
+    ASSERT(vm.gilOff());
+    JSTHREADS_COUNT(dictionaryFlattenByTransition);
+    // O1: the clone below allocates (a Structure, a PropertyTable) and the
+    // publication takes the cell lock; defer collection across the whole
+    // attempt, ahead of any lock.
+    DeferGC deferGC(vm);
+    const bool useSAL = Options::useStructureAllocationLock();
+    while (true) {
+        Structure* source = object->structure();
+        if (!source->isDictionary() || source->hasBeenFlattenedBefore())
+            return source; // Raced with another flatten, or nothing to do.
+        ASSERT(source->isObject());
+
+        // A pinned dictionary table is edited in place under the cell lock,
+        // each edit bumping the count after it lands; the count read here,
+        // before the clone, is re-checked under the cell lock at publication,
+        // so the clone the new structure pins is the table as it stands then.
+        // A cacheable dictionary made by a delete can hold an UNPINNED table
+        // (as upstream): its edits publish a new StructureID until something
+        // pins it, so the publication instead requires it still unpinned.
+        PropertyTable* plannedTable = source->pinnedPropertyTableForConcurrentReadStamp();
+        uint32_t plannedEditCount = plannedTable ? plannedTable->concurrentEditCount() : 0;
+
+        Structure* flattened;
+        {
+            // Leaving `source` fires its transition set (deferred to the end of
+            // this scope, outside SAL); a dictionary is rarely watched, and a
+            // watcherless fire takes no stop.
+            DeferredStructureTransitionWatchpointFire deferredFire(vm, source);
+            {
+                std::optional<SharedVMState::StructureAllocationLocker> structureAllocationLocker;
+                if (useSAL) [[unlikely]]
+                    structureAllocationLocker.emplace(vm);
+                flattened = Structure::create(vm, source, &deferredFire);
+            }
+            // copyPropertyTableForPinning clones under source->m_lock, or
+            // materializes an unpinned table that was dropped.
+            PropertyTable* table = source->copyPropertyTableForPinning(vm, flattened);
+            PropertyOffset maxOffset = source->maxOffset();
+            flattened->pin(Locker { flattened->m_lock }, vm, table);
+            flattened->setMaxOffset(vm, maxOffset);
+            flattened->setDictionaryKind(NoneDictionaryKind);
+            flattened->setHasBeenDictionary(true);
+            flattened->setHasBeenFlattenedBefore(true);
+            // F3 without the stop: the clone is not published yet, so nobody
+            // watches its thread-locality sets; if either of the source's has
+            // fired, both of the clone's start out fired (the constructor's F4
+            // mirrored them one by one).
+            if (!source->transitionThreadLocalIsStillValid() || !source->writeThreadLocalIsStillValid()) {
+                if (flattened->transitionThreadLocalIsStillValid())
+                    flattened->m_transitionThreadLocalWatchpointSet.invalidate(vm, StringFireDetail("F3: flatten-by-transition from a structure with a fired thread-locality set"));
+                if (flattened->writeThreadLocalIsStillValid())
+                    flattened->m_writeThreadLocalWatchpointSet.invalidate(vm, StringFireDetail("F3: flatten-by-transition from a structure with a fired thread-locality set"));
+            }
+        }
+
+        // N2: nothing but the StructureID lane changes - same table contents,
+        // same offsets, same butterfly - so a reader that still holds the old
+        // structure reads exactly what it read before.
+        if (tryStructureOnlyTransition(vm, object, source, flattened, invalidOffset, JSValue(), plannedTable, plannedEditCount, /* requireSourceStillUnpinnedIfNoPlan */ true)) {
+            flattened->checkOffsetConsistency(); // only meaningful once no edit raced the clone
+            return flattened;
+        }
+        JSTHREADS_COUNT(dictionaryFlattenByTransitionRestart);
+        // RESTART: a racing edit or transition; the clone is garbage.
+    }
 }
 
 bool Structure::flattenTriggerIsShared(JSObject* object) const

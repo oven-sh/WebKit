@@ -32,6 +32,7 @@
 #include "ParseInt.h"
 #include "StringPrototype.h"
 #include "StringReplaceCacheInlines.h"
+#include "VMLite.h"
 #include "RegExpGlobalData.h"
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpObject.h"
@@ -804,11 +805,11 @@ ALWAYS_INLINE JSCellButterfly* addToRegExpSearchCache(VM& vm, JSGlobalObject* gl
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // AUD1.N2 residual (C) minimal slice (RegExp.cpp banner; K4.II.7 owns the
-    // real per-lite split): the VM-shared StringReplaceCache is fully
-    // unlocked — GIL-off, bypass it (pure value cache; a miss is only a perf
-    // event). Flag-off/GIL-on identical.
-    if (auto* entry = vm.gilOff() ? nullptr : vm.stringReplaceCache.get(source, regExp)) {
+    // The VM's StringReplaceCache is unlocked; GIL off each thread uses its
+    // own (VMLite::stringReplaceCache, emptied by the collector every cycle).
+    // Flag-off/GIL-on identical.
+    StringReplaceCache& replaceCache = vm.gilOff() ? VMLite::current().ensureStringReplaceCache() : vm.stringReplaceCache;
+    if (auto* entry = replaceCache.get(source, regExp)) {
         auto lastMatch = entry->m_lastMatch;
         auto matchResult = entry->m_matchResult;
         threadRegExpGlobalData(globalObject).resetResultFromCache(globalObject, regExp, string, matchResult, lastMatch.span());
@@ -869,10 +870,7 @@ ALWAYS_INLINE JSCellButterfly* addToRegExpSearchCache(VM& vm, JSGlobalObject* gl
         return nullptr;
     }
 
-    // AUD1.N2 residual (C) minimal slice: GIL-off, never publish into the
-    // unlocked VM-shared cache (see the get-side bypass above).
-    if (!vm.gilOff()) [[likely]]
-        vm.stringReplaceCache.set(source, regExp, result, threadRegExpGlobalData(globalObject).matchResult(), regExp->ovectorSpan(vm));
+    replaceCache.set(source, regExp, result, threadRegExpGlobalData(globalObject).matchResult(), regExp->ovectorSpan(vm));
     RELEASE_AND_RETURN(scope, result);
 }
 

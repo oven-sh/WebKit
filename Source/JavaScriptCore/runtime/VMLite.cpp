@@ -26,6 +26,9 @@
 #include "config.h"
 #include "VMLite.h"
 
+#include "MegamorphicCache.h"
+#include "StringReplaceCache.h"
+
 #include "JSThreadsCounters.h"
 
 #include "Allocator.h"           // sizeof/triviality asserts on the TLC table element the emitters index.
@@ -45,6 +48,9 @@
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
+
+EncodedJSValue generatorClaimTokenForThread(Thread&); // JSGlobalObject.cpp
+
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(VMLite);
 
@@ -99,6 +105,11 @@ VMLite::~VMLite()
     // entry destruction happens after release inside the callee. Safe for
     // never-entered/flag-off lites (empty-table scan).
     purgePerLiteRealmStateForLite(*this);
+
+    // §37: the lite is unregistered by now, so no collector walk can reach the
+    // cache, and only this (owner or teardown) thread ever probed it.
+    delete std::exchange(megamorphicCache, nullptr);
+    stringReplaceCache = nullptr; // GIL off atoms live in the shared table, so the subjects deref from any thread
 
     // `vm` is never dereferenced here: a DETACHED carrier (and a live carrier
     // between its unregistration and this free) can be destroyed after ~VM
@@ -165,6 +176,8 @@ VMLite* VMLite::setCurrent(VMLite* lite)
     // This store IS the slot the loadVMLite emitters read (ELF TPOFF), so
     // every install and uninstall (including null) goes through here.
     VMLite* previous = g_jscCurrentVMLite;
+    if (lite)
+        lite->generatorClaimToken = generatorClaimTokenForThread(Thread::currentSingleton());
     g_jscCurrentVMLite = lite;
 
     // §6.7: invoke the TID-tag hook AFTER the TLS write, with the new tid (0
@@ -763,4 +776,13 @@ void releaseCarrierTIDIfHooked(uint16_t tid)
         hook(tid);
 }
 
+} // namespace JSC
+
+namespace JSC {
+StringReplaceCache& VMLite::ensureStringReplaceCache()
+{
+    if (!stringReplaceCache) [[unlikely]]
+        stringReplaceCache = makeUnique<StringReplaceCache>();
+    return *stringReplaceCache;
+}
 } // namespace JSC

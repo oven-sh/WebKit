@@ -1,4 +1,5 @@
-//@ requireOptions("--useJSThreads=1")
+//@ runDefault("--useJSThreads=1")
+//@ runDefault("--useJSThreads=1", "--verifyGC=1")
 // JSON.stringify's fast path walks an object's structure once and asserted
 // (Debug) that the structure cannot change during the walk - true for one
 // thread (it ruled out getters, toJSON and proxies first), not when another
@@ -6,7 +7,12 @@
 // gives up when it sees the structure move and the generic stringifier
 // finishes the job. Found by the mirror harness (stress/symbol-with-json.js,
 // Debug). Also a semantic check: every result parses, and only ever holds
-// property values some thread stored.
+// property values some thread stored. The second run adds the GC verifier:
+// the reader walks strings the other thread just allocated from blocks it
+// swept, and the verifier re-marks from the roots at every collection and
+// stops the process if a reachable cell was left unmarked (TSAN-RESULTS,
+// eighth round, F32: the sweep-versus-read report TSAN gave here was the
+// free-list word of a cell handed out after the sweep, not a live cell).
 load("../harness.js", "caller relative");
 
 const shared = { o: { a: 1, b: "x" } };

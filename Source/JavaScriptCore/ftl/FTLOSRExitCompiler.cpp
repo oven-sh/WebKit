@@ -931,18 +931,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         // Exits are rare and trigger reoptimization, so the extra thunk
         // round-trips are noise.
         OSRExitGenerationLocker locker(vm, callFrame);
-        if (!exit.m_code) {
+        void* published = WTF::atomicLoad(&exit.m_codePtrForConcurrentReaders, std::memory_order_relaxed); // writers hold this lock
+        if (!published) {
             JSTHREADS_COUNT(osrExitFTLCompile);
-            JSTHREADS_COUNT(osrExitFTLCompile);
-    compileStub(vm, exitID, jitCode, exit, exitValues, codeBlock);
+            jitCode->m_osrExitStubs.append({ exitID, compileStub(vm, exitID, jitCode, exit, exitValues, valueReps, codeBlock) });
+            published = jitCode->m_osrExitStubs.last().code.code().taggedPtr();
             jsThreadsBumpStopGeneration(); // before the publish below: "saw the pointer" implies "saw the bump"
-            WTF::atomicStore(&exit.m_codePtrForConcurrentReaders, exit.m_code.code().taggedPtr(), std::memory_order_release);
+            WTF::atomicStore(&exit.m_codePtrForConcurrentReaders, published, std::memory_order_release);
         } else {
             // The stub was compiled and finalized on another thread while we
             // contended for the lock; sync this PE before jumping into it.
             jsThreadsSyncToStopGenerationBeforeJITEntry();
         }
-        return exit.m_code.code().taggedPtr();
+        return published;
     }
 
     jitCode->m_osrExitStubs.append({ exitID, compileStub(vm, exitID, jitCode, exit, exitValues, valueReps, codeBlock) });

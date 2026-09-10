@@ -565,8 +565,10 @@ void VMTraps::jettisonOptimizedCodeOnStackAfterConductorHeapFactRewrite()
     // compiles in 40 s), each install churning every incoming call site's
     // link record until the retired-record list exhausted memory. Counting
     // gives the stock exponential back-off (and the give-up cap).
-    for (CodeBlock* codeBlock : codeBlocksToJettison)
+    for (CodeBlock* codeBlock : codeBlocksToJettison) {
+        JSTHREADS_COUNT(heapFactRewriteOnStackJettison);
         codeBlock->jettison(Profiler::JettisonDueToVMTraps, CountReoptimization);
+    }
 }
 
 WorkQueue& VMTraps::queue()

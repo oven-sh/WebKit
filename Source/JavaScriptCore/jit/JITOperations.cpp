@@ -378,6 +378,29 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdDirectOptimize, EncodedJSValue, (Encode
     OPERATION_RETURN(scope, JSValue::encode(found ? slot.getValue(globalObject, identifier) : jsUndefined()));
 }
 
+// SPEC-jit history §37: the megamorphic cache a slow path fills and the key
+// it may fill under. Flag-off / GIL-on: the VM's cache and the base's current
+// StructureID, as before. GIL off: the current thread's cache, whose fill
+// stamp megamorphicCacheForFill() takes now, BEFORE the lookup (G3), and the
+// base's StructureID as read now; canFill() refuses the fill when the base has
+// transitioned by the time the result is known (this thread's own static
+// property reification, or another thread's add), so no entry pairs a lookup
+// result with a structure it was not computed against.
+struct MegamorphicFill {
+    MegamorphicFill(VM& vm, JSObject* base)
+        : cache(vm.megamorphicCacheForFill())
+        , base(base)
+        , keyAtStart(base->structureID())
+    {
+    }
+    bool canFill() const { return !cache.isThreadCache() || base->structureID() == keyAtStart; }
+    StructureID key() const { return cache.isThreadCache() ? keyAtStart : base->structureID(); }
+
+    MegamorphicCache& cache;
+    JSObject* base;
+    StructureID keyAtStart;
+};
+
 template<GetByKind kind>
 static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame, PropertyInlineCache* propertyCache, JSValue baseValue, JSValue thisValue, CacheableIdentifier identifier)
 {
@@ -398,6 +421,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
     } else
         baseObject = asObject(baseValue);
 
+    MegamorphicFill fill(vm, baseObject);
     JSObject* object = baseObject;
     bool shouldGiveUp = false;
     bool cacheable = true;
@@ -422,7 +446,8 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
         if (hasProperty) {
             if (cacheable && slot.isCacheableValue() && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
                 if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
-                    vm.megamorphicCache()->initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseValue);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsHit(fill.key(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseValue);
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
@@ -432,7 +457,8 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
             } else if constexpr (kind == GetByKind::ById) {
                 if (cacheable && slot.isCacheableGetter() && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
                     if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
-                        vm.megamorphicCache()->initAsGetterHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseValue);
+                        if (fill.canFill()) [[likely]]
+                            fill.cache.initAsGetterHit(fill.key(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseValue);
                     else {
                         if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
@@ -460,7 +486,8 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
         if (!prototype.isObject()) {
             if (cacheable) [[likely]] {
                 if (!baseObject->structure()->isDictionary()) [[likely]] {
-                    vm.megamorphicCache()->initAsMiss(baseObject->structureID(), uid);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsMiss(fill.key(), uid);
                     return jsUndefined();
                 }
                 if (!baseObject->structure()->hasBeenFlattenedBefore()) [[likely]]
@@ -747,6 +774,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
     }
 
     JSObject* baseObject = asObject(baseValue);
+    MegamorphicFill fill(vm, baseObject);
     JSObject* object = baseObject;
     bool shouldGiveUp = false;
     bool cacheable = true;
@@ -769,7 +797,8 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
         if (hasProperty) {
             if (cacheable && slot.isCacheable()) [[likely]] {
                 if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
-                    vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), uid);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsHasHit(fill.key(), uid);
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
@@ -798,7 +827,8 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
         if (!prototype.isObject()) {
             if (cacheable) [[likely]] {
                 if (!baseObject->structure()->isDictionary()) [[likely]] {
-                    vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), uid);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsHasMiss(fill.key(), uid);
                     return jsBoolean(false);
                 }
                 if (!baseObject->structure()->hasBeenFlattenedBefore()) [[likely]]
@@ -938,6 +968,7 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
     }
 
     PropertySlot slot(baseValue, PropertySlot::InternalMethodType::HasProperty);
+    MegamorphicFill fill(vm, baseObject);
     JSObject* object = baseObject;
     bool shouldGiveUp = false;
     bool cacheable = true;
@@ -960,7 +991,8 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         if (hasProperty) {
             if (cacheable && slot.isCacheable()) [[likely]] {
                 if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
-                    vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), uid);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsHasHit(fill.key(), uid);
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         dataLogLnIf(verbose, " ", __LINE__);
@@ -988,7 +1020,8 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         if (!prototype.isObject()) {
             if (cacheable) [[likely]] {
                 if (!baseObject->structure()->isDictionary()) [[likely]] {
-                    vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), uid);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsHasMiss(fill.key(), uid);
                     return jsBoolean(false);
                 }
                 if (!baseObject->structure()->hasBeenFlattenedBefore()) [[likely]]
@@ -1186,6 +1219,10 @@ ALWAYS_INLINE static void putMegamorphic(JSGlobalObject* globalObject, VM& vm, C
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // §37: the fill stamp is taken here, before the put; the entries below are
+    // keyed on oldStructure, read before it, and the previousID / same-structure
+    // checks already refuse a result that a concurrent transition produced.
+    MegamorphicCache& cache = vm.megamorphicCacheForFill();
     Structure* oldStructure = baseObject->structure();
     baseObject->putInline(globalObject, uid, value, slot);
     RETURN_IF_EXCEPTION(scope, void());
@@ -1201,7 +1238,7 @@ ALWAYS_INLINE static void putMegamorphic(JSGlobalObject* globalObject, VM& vm, C
     if (slot.type() == PutPropertySlot::ExistingProperty) {
         if (oldStructure == newStructure && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
             oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset()); // Ensure invalidating watchpoint set.
-            vm.megamorphicCache()->initAsReplace(StructureID::encode(oldStructure), uid, slot.cachedOffset());
+            cache.initAsReplace(StructureID::encode(oldStructure), uid, slot.cachedOffset());
         }
         return;
     }
@@ -1220,7 +1257,7 @@ ALWAYS_INLINE static void putMegamorphic(JSGlobalObject* globalObject, VM& vm, C
 
     bool reallocating = newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity();
     if (slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]]
-        vm.megamorphicCache()->initAsTransition(StructureID::encode(oldStructure), StructureID::encode(newStructure), uid, slot.cachedOffset(), reallocating);
+        cache.initAsTransition(StructureID::encode(oldStructure), StructureID::encode(newStructure), uid, slot.cachedOffset(), reallocating);
 }
 
 ALWAYS_INLINE static void putByIdMegamorphic(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame, PropertyInlineCache* propertyCache, JSValue baseValue, JSValue value, CacheableIdentifier identifier, PutByKind kind)
@@ -1329,12 +1366,13 @@ JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPoi
     Structure* newStructure = WTF::opaque(entry->m_newStructureID.decode());
     PropertyOffset offset = entry->m_offset;
 
-    ASSERT(oldStructure == entry->m_oldStructureID.decode());
     if (Options::useJSThreads()) [[unlikely]] {
         // Flag-on a reallocating transition installs a new butterfly, which is a
         // tagged-word publication with its owner/claim protocol (SPEC-objectmodel
         // E4 / E4-C / §4.3): go through it, and take the generic add when it asks
-        // for a RESTART (a racing writer settled the object elsewhere).
+        // for a RESTART (a racing writer settled the object elsewhere). GIL off
+        // another thread may also have transitioned the object since the stub's
+        // probe matched the entry, so the structure is compared, not asserted.
         Structure* expected = entry->m_oldStructureID.decode();
         if (oldStructure != expected || !baseObject->tryCompleteCachedTransitionConcurrent(vm, expected, newStructure, offset, JSValue::decode(encodedValue))) {
             PutPropertySlot slot(baseObject);
@@ -1342,6 +1380,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPoi
         }
         OPERATION_RETURN(scope);
     }
+    ASSERT(oldStructure == entry->m_oldStructureID.decode());
     Butterfly* newButterfly = baseObject->allocateMoreOutOfLineStorage(vm, oldStructure->outOfLineCapacity(), newStructure->outOfLineCapacity());
     baseObject->nukeStructureAndSetButterfly(vm, StructureID::encode(oldStructure), newButterfly);
     baseObject->putDirectOffset(vm, offset, JSValue::decode(encodedValue));
@@ -3257,6 +3296,28 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
     
     CodeBlock* optimizedCodeBlock = codeBlock->replacement();
     ASSERT(optimizedCodeBlock && JSC::JITCode::isOptimizingJIT(optimizedCodeBlock->jitType()));
+
+    // SPEC-ungil eighth round: GIL off, a Baseline frame at a loop cannot
+    // enter an FTL function-entry replacement; enter the DFG code it
+    // superseded instead (kept by installCode, dropped when jettisoned), from
+    // where the DFG's own loop tier-up reaches the FTL. Otherwise every thread
+    // still in this function's Baseline code when one thread's tier-up
+    // installed the FTL stayed there, failing this entry on every threshold.
+    if (bytecodeIndex && optimizedCodeBlock->jitType() == JITType::FTLJIT && vm.gilOffWithProcessGate()) [[unlikely]] {
+        if (CodeBlock* dfgForLoopEntry = codeBlock->gilOffDFGForLoopEntry(); dfgForLoopEntry && !dfgForLoopEntry->isJettisoned() && dfgForLoopEntry->jitType() == JITType::DFGJIT) {
+            if (void* dataBuffer = DFG::prepareOSREntry(vm, callFrame, dfgForLoopEntry, bytecodeIndex)) {
+                JSTHREADS_COUNT(loopEntryIntoSupersededDFGGILOff);
+                CODEBLOCK_LOG_EVENT(dfgForLoopEntry, "osrEntry", ("at bc#", bytecodeIndex, " (superseded DFG, GIL off)"));
+                dataLogLnIf(Options::verboseOSR(), "Performing OSR ", codeBlock, " -> ", dfgForLoopEntry, " (superseded DFG: the replacement is FTL)");
+                codeBlock->optimizeSoon();
+                codeBlock->unlinkedCodeBlock()->setDidOptimize(TriState::True);
+                void* targetPC = untagCodePtr<JITThunkPtrTag>(vm.getCTIStub(DFG::osrEntryThunkGenerator).code().taggedPtr());
+                targetPC = tagCodePtrWithStackPointerForJITCall(targetPC, callFrame);
+                OPERATION_RETURN(scope, encodeResult(targetPC, dataBuffer));
+            }
+        } else
+            JSTHREADS_COUNT(loopEntryRefusedReplacementIsFTLGILOff);
+    }
     
     if (void* dataBuffer = DFG::prepareOSREntry(vm, callFrame, optimizedCodeBlock, bytecodeIndex)) {
         CODEBLOCK_LOG_EVENT(optimizedCodeBlock, "osrEntry", ("at bc#", bytecodeIndex));
@@ -3831,6 +3892,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
     }
 
     PropertySlot slot(thisValue, PropertySlot::InternalMethodType::Get);
+    MegamorphicFill fill(vm, baseObject);
     JSObject* object = baseObject;
     bool shouldGiveUp = false;
     bool cacheable = true;
@@ -3855,7 +3917,8 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         if (hasProperty) {
             if (cacheable && slot.isCacheableValue() && slot.cachedOffset() <= MegamorphicCache::maxOffset) [[likely]] {
                 if (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())
-                    vm.megamorphicCache()->initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsHit(fill.key(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
@@ -3879,7 +3942,8 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         if (!prototype.isObject()) {
             if (cacheable) [[likely]] {
                 if (!baseObject->structure()->isDictionary()) [[likely]] {
-                    vm.megamorphicCache()->initAsMiss(baseObject->structureID(), uid);
+                    if (fill.canFill()) [[likely]]
+                        fill.cache.initAsMiss(fill.key(), uid);
                     return jsUndefined();
                 }
                 if (!baseObject->structure()->hasBeenFlattenedBefore()) [[likely]]
@@ -4910,6 +4974,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPutByTransitionReallocatingConcurrent
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     RELEASE_ASSERT(Options::useJSThreads());
+    // TSAN only: the AFTER side of the BEFORE keyed on the access case where
+    // the stub that calls this was compiled (InlineCacheCompiler.cpp); the
+    // case pointer arrives from JIT'd code. No-op otherwise.
+    TSAN_ANNOTATE_HAPPENS_AFTER(accessCase);
 
     Structure* oldStructure = accessCase->structure();
     Structure* newStructure = accessCase->newStructure();

@@ -344,6 +344,14 @@ void BlockDirectory::prepareForAllocation()
     m_emptyCursor = 0;
     
     assertSweeperIsSuspended();
+    // SPEC-heap §10E (eighth round): remember which blocks this cycle
+    // allocated into before the set is cleared for the next cycle; the
+    // shared heap's cycle-end retention (shrinkWhileCapacityAbove, which runs
+    // later in the same stop) frees only empty blocks OUTSIDE this set - the
+    // blocks a steady program fills and empties every cycle are exactly the
+    // ones it needs again. Flag-off nothing reads the copy.
+    if (markedSpace().heap().isSharedServer()) [[unlikely]]
+        edenLastCycleBits() = edenBits();
     edenBits().clearAll();
 
     if (Options::useImmortalObjects()) [[unlikely]] {
@@ -566,7 +574,7 @@ bool BlockDirectory::shrinkWhileCapacityAbove(size_t targetCapacity)
     for (size_t index = 0; index < m_blocks.size(); ++index) {
         if (markedSpace().capacity() <= targetCapacity)
             return true;
-        index = (emptyBits() & ~destructibleBits() & ~inUseBits()).findBit(index, true);
+        index = (emptyBits() & ~destructibleBits() & ~inUseBits() & ~edenLastCycleBits()).findBit(index, true); // never a block the last cycle allocated into (§10E churn set)
         if (index >= m_blocks.size())
             break;
         ASSERT(!isInUse(index));

@@ -176,10 +176,11 @@ struct OSRExit : public DFG::OSRExitBase {
 
     unsigned m_valueRepsOffset;
     OSRExitDescriptor* m_descriptor;
-    MacroAssemblerCodeRef<OSRExitPtrTag> m_code;
     // GIL-off lock-free readers of the compiled ramp (operationCompileFTLOSRExit
-    // fast path): published release AFTER m_code is set under the exit
-    // generation lock and after the stop-generation bump; null until then.
+    // fast path): published release AFTER the stub is appended to the JITCode's
+    // exit-stub list under the exit generation lock and after the stop-generation
+    // bump; null until then (and always null GIL-on, where the exit jump is
+    // repatched to the stub instead).
     void* m_codePtrForConcurrentReaders { nullptr }; // accessed with WTF::atomicLoad/atomicStore (OSRExit must stay movable)
     // This tells us where to place a jump.
     CodeLocationJump<JSInternalPtrTag> m_patchableJump;

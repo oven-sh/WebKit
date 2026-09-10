@@ -936,6 +936,17 @@ public:
 
     bool isJettisoned() const { return m_isJettisoned; }
 
+    // SPEC-ungil (eighth round, "loop entry into the superseded DFG code"):
+    // GIL off, on a Baseline-JIT block, the DFG block an FTL function-entry
+    // replacement superseded, kept enterable at loops for this block's frames
+    // that are still running on other threads; null otherwise (and always
+    // null without Baseline JIT data, whose loops do not enter the DFG).
+    // Lives in BaselineJITData; written under installCode's compilation
+    // lock, read racily by operationOptimize (relaxed atomic), barriered on
+    // store, visited strongly, cleared when that DFG block is jettisoned.
+    CodeBlock* gilOffDFGForLoopEntry() const;
+    void setGILOffDFGForLoopEntry(VM&, CodeBlock*); // null clears
+
     enum SteppingMode {
         SteppingModeDisabled,
         SteppingModeEnabled

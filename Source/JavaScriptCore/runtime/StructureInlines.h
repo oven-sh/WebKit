@@ -161,12 +161,15 @@ void Structure::forEachProperty(VM& vm, const Functor& functor)
     // rehash or steal the table mid-walk - the same reason the flag-off walk
     // needs no lock against re-entrant JS. Flag-off: the lock-free walk below.
     if (Options::useJSThreads() && g_jscConfig.gilOffProcess) [[unlikely]] {
-        Vector<PropertyTableEntry, 16> entries;
+        Vector<PropertyTableEntry, 64> entries;
         while (true) {
             PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
             if (!table)
                 return;
-            GCSafeConcurrentJSLocker locker(m_lock, vm);
+            // Plain locker: nothing under the lock allocates from the GC heap
+            // (the snapshot vector is fastMalloc'd), so no DeferGC is needed
+            // and the lock is never held across a collection request (O1).
+            ConcurrentJSLocker locker(m_lock);
             if (propertyTableOrNull() != table)
                 continue; // Stolen by a racing transition: rebuild and retry.
             entries.reserveCapacity(table->size());

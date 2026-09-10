@@ -27,6 +27,8 @@
 
 #include "Structure.h"
 #include <wtf/TZoneMalloc.h>
+#include <atomic>
+#include <memory>
 
 namespace JSC {
 
@@ -217,25 +219,67 @@ public:
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
 
-    // GIL-off (useJSThreads in a GIL-off process) the VM-global cache is
-    // inert: a fill is a multi-word entry write including a RefPtr
-    // reassignment that N unsynchronized mutators cannot share, so the inline
-    // probes bail (AssemblyHelpers::findMegamorphicCacheEntry), fills and epoch
-    // bumps are no-ops and no entry is ever live; a per-thread cache is the
-    // recorded follow-up. GIL-on (r17) the cache is live as flag-off: one
-    // mutator of the VM runs at a time and the GIL is handed off only inside
-    // blocking calls, never inside a probe or a fill. Flag-off this costs one
-    // predicted-false byte test on already-slow paths.
-    ALWAYS_INLINE static bool disabledForProcess()
+    // SPEC-jit history §37 (eighth round). In a GIL-off process the VM's cache
+    // (this class as flag-off and GIL-on use it: one mutator at a time, r17)
+    // cannot be shared - a fill is a multi-word entry write with a RefPtr
+    // uid - so every JS thread owns one of these (VMLite::megamorphicCache,
+    // created on the thread's first fill; VM::megamorphicCacheForFill) and only
+    // its owner probes or fills it (G1). Invalidation is one process-wide
+    // counter: what used to bump the VM cache's m_epoch bumps it, the JIT
+    // probes compare an entry's 16-bit stamp with its low half, and a fill
+    // stamps its entry with the value read BEFORE its lookup (beginFill(),
+    // G3), so a mutation racing the lookup leaves a dead entry. Collection
+    // end (world stopped) bumps it too and clears every thread's cache on a
+    // Full collection. Flag-off / GIL-on: none of this is reached; one
+    // predicted-false byte test on slow paths.
+    ALWAYS_INLINE static bool usesPerThreadCaches()
     {
         return Options::useJSThreads() && g_jscConfig.gilOffProcess;
     }
-    ALWAYS_INLINE static bool fillsDisabledUnderJSThreads() { return disabledForProcess(); }
+    static uint32_t processEpoch() { return s_processEpoch.load(std::memory_order_acquire); }
+    static const uint32_t* addressOfProcessEpoch() { return reinterpret_cast<const uint32_t*>(&s_processEpoch); } // JIT probes load its low 16 bits (little-endian).
+    // Any thread. Skips values whose low half is invalidEpoch so a cleared
+    // entry's stamp never equals the counter's low half.
+    static void bumpProcessEpoch()
+    {
+        uint32_t value = s_processEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+        if (static_cast<uint16_t>(value) == invalidEpoch) [[unlikely]]
+            s_processEpoch.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    // Per-thread caches only, owner thread only, BEFORE the lookup whose
+    // result the following init* call will cache (G3): adopts the process
+    // counter's low half as the stamp for this fill, and clears the cache
+    // first if the high half moved since the last fill (G4: a wrapped low half
+    // must not revalidate old entries).
+    void beginFill()
+    {
+        ASSERT(m_isThreadCache);
+        uint32_t epoch = processEpoch();
+        uint16_t high = static_cast<uint16_t>(epoch >> 16);
+        if (high != m_seenProcessEpochHigh) [[unlikely]] {
+            clearEntriesAndKeys();
+            m_seenProcessEpochHigh = high;
+        }
+        m_epoch = static_cast<uint16_t>(epoch);
+        if (m_epoch == invalidEpoch) [[unlikely]]
+            m_epoch = static_cast<uint16_t>(processEpoch()); // a bump was skipping past it; take the next value (a stale stamp at worst).
+    }
+
+    static std::unique_ptr<MegamorphicCache> createForThread()
+    {
+        auto cache = makeUnique<MegamorphicCache>();
+        cache->m_isThreadCache = true;
+        cache->m_seenProcessEpochHigh = static_cast<uint16_t>(processEpoch() >> 16);
+        return cache;
+    }
+    bool isThreadCache() const { return m_isThreadCache; }
+    // World stopped (collection end) or owner thread: drop every entry and the
+    // uid references, and zero the keys so no epoch value can match them.
+    JS_EXPORT_PRIVATE void clearEntriesAndKeys();
 
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -247,8 +291,6 @@ public:
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -260,8 +302,6 @@ public:
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & getterCachePrimaryMask;
         auto& entry = m_getterCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -273,8 +313,6 @@ public:
 
     void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, bool reallocating)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         // Flag-on the probe's transition arm is the claim-first form and refuses
         // PreciseAllocation, copy-on-write and ArrayStorage instances at runtime
         // (SPEC-jit §5.5); sources of those shapes are not worth an entry.
@@ -294,8 +332,6 @@ public:
 
     void initAsReplace(StructureID structureID, UniquedStringImpl* uid, uint16_t offset)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(structureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -307,8 +343,6 @@ public:
 
     void initAsHasHit(StructureID structureID, UniquedStringImpl* uid)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -320,8 +354,6 @@ public:
 
     void initAsHasMiss(StructureID structureID, UniquedStringImpl* uid)
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
-            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -335,8 +367,11 @@ public:
 
     void bumpEpoch()
     {
-        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+        ASSERT(!m_isThreadCache);
+        if (usesPerThreadCaches()) [[unlikely]] {
+            bumpProcessEpoch();
             return;
+        }
         ++m_epoch;
         if (m_epoch == invalidEpoch) [[unlikely]]
             clearEntries();
@@ -354,6 +389,10 @@ private:
     std::array<GetterEntry, getterCachePrimarySize> m_getterCachePrimaryEntries { };
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
     uint16_t m_epoch { 1 };
+    uint16_t m_seenProcessEpochHigh { 0 };
+    bool m_isThreadCache { false };
+
+    JS_EXPORT_PRIVATE static std::atomic<uint32_t> s_processEpoch;
 };
 
 } // namespace JSC

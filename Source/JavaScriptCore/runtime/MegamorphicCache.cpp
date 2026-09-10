@@ -76,6 +76,47 @@ void MegamorphicCache::age(CollectionScope collectionScope)
     }
 }
 
+std::atomic<uint32_t> MegamorphicCache::s_processEpoch { 1 };
+
+void MegamorphicCache::clearEntriesAndKeys()
+{
+    auto clear = [](auto& entries) {
+        for (auto& entry : entries) {
+            entry.m_uid = nullptr;
+            entry.m_epoch = invalidEpoch;
+        }
+    };
+    clear(m_loadCachePrimaryEntries);
+    clear(m_loadCacheSecondaryEntries);
+    clear(m_hasCachePrimaryEntries);
+    clear(m_hasCacheSecondaryEntries);
+    clear(m_getterCachePrimaryEntries);
+    clear(m_getterCacheSecondaryEntries);
+    for (auto& entry : m_storeCachePrimaryEntries) {
+        entry.m_uid = nullptr;
+        entry.m_epoch = invalidEpoch;
+        entry.m_oldStructureID = { };
+    }
+    for (auto& entry : m_storeCacheSecondaryEntries) {
+        entry.m_uid = nullptr;
+        entry.m_epoch = invalidEpoch;
+        entry.m_oldStructureID = { };
+    }
+    for (auto& entry : m_loadCachePrimaryEntries)
+        entry.m_structureID = { };
+    for (auto& entry : m_loadCacheSecondaryEntries)
+        entry.m_structureID = { };
+    for (auto& entry : m_hasCachePrimaryEntries)
+        entry.m_structureID = { };
+    for (auto& entry : m_hasCacheSecondaryEntries)
+        entry.m_structureID = { };
+    for (auto& entry : m_getterCachePrimaryEntries)
+        entry.m_structureID = { };
+    for (auto& entry : m_getterCacheSecondaryEntries)
+        entry.m_structureID = { };
+    m_epoch = 1;
+}
+
 void MegamorphicCache::clearEntries()
 {
     for (auto& entry : m_loadCachePrimaryEntries)

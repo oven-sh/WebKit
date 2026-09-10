@@ -314,6 +314,9 @@ public:
     JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
     JumpList findMegamorphicCacheEntry(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    enum class LoadEpoch : bool { Yes, OnlyIfClobbered };
+    enum class OffsetImmediate : bool { Int32, Pointer };
+    void emitMegamorphicEntryAddressAndEpoch(VM&, ptrdiff_t tableOffset, OffsetImmediate, GPRReg entryGPR, GPRReg epochGPR, LoadEpoch, JumpList& slowCases);
     std::tuple<JumpList, JumpList> storeMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList hasMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadCacheableIdentifierImpl(GPRReg propertyGPR, GPRReg destGPR, bool propertyIsString, bool propertyIsSymbol, bool canBeRope = true);
@@ -1010,6 +1013,25 @@ public:
     {
         ASSERT(noOverlap(stringGPR, implGPR));
         JumpList notAtomCases;
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            // SPEC-ungil §N.2, reader rule for the known-atom bit. GIL off another
+            // thread can resolve this rope, or swap in the atom, between the
+            // caller's impl load and the bit test below; the writer publishes the
+            // impl before the bit, so the bit vouches only for an impl loaded
+            // AFTER it was observed. When the bit is set, re-load the impl (the
+            // caller keeps using implGPR); when it is clear, check the impl the
+            // caller loaded, as before.
+            Jump notKnownAtom = branchTest8(Zero, Address(stringGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
+            loadFence(); // bit -> impl (no instruction on x86-64)
+            loadPtr(Address(stringGPR, JSString::offsetOfValue()), implGPR);
+            Jump knownAtom = jump();
+            notKnownAtom.link(this);
+            if (canBeRope)
+                notAtomCases.append(branchIfRopeStringImpl(implGPR));
+            notAtomCases.append(branchTest32(Zero, Address(implGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+            knownAtom.link(this);
+            return notAtomCases;
+        }
         Jump knownAtom = branchTest8(NonZero, Address(stringGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
         if (canBeRope)
             notAtomCases.append(branchIfRopeStringImpl(implGPR));

@@ -680,7 +680,7 @@ void AssemblyHelpers::storeProperty(GPRReg value, GPRReg object, GPRReg offset, 
     storeValue(value, BaseIndex(scratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 }
 
-void AssemblyHelpers::loadPropertyTagged(GPRReg object, GPRReg offset, JSValueRegs result, GPRReg storageScratch, JumpList& slowCases)
+void AssemblyHelpers::loadPropertyTagged(GPRReg object, GPRReg offset, GPRReg result, GPRReg storageScratch, JumpList& slowCases)
 {
     ASSERT(Options::useJSThreads());
     ASSERT(noOverlap(offset, result));
@@ -717,7 +717,7 @@ void AssemblyHelpers::loadPropertyTagged(GPRReg object, GPRReg offset, JSValueRe
         result);
 }
 
-void AssemblyHelpers::storePropertyTagged(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg scratch2, JumpList& slowCases)
+void AssemblyHelpers::storePropertyTagged(GPRReg value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg scratch2, JumpList& slowCases)
 {
     ASSERT(Options::useJSThreads());
     ASSERT(noOverlap(offset, scratch));
@@ -756,21 +756,48 @@ void AssemblyHelpers::storePropertyTagged(JSValueRegs value, GPRReg object, GPRR
     storeValue(value, BaseIndex(scratch, offset, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 }
 
+// SPEC-jit history §37. entryGPR arrives holding the entry's byte offset into
+// its table and leaves holding the entry's address; epochGPR leaves holding the
+// epoch a hit must carry. Flag-off / GIL on the base is the VM's cache and the
+// epoch its own: the primary form (LoadEpoch::Yes) materializes the base in
+// epochGPR and then loads the epoch over it, the secondary form
+// (OnlyIfClobbered) folds the base into the immediate and keeps the epoch the
+// primary form loaded - byte-identical to the code before this helper. GIL off
+// the base is the current thread's cache, loaded from its VMLite (a thread that
+// never filled has none: slow path), and the epoch is the low half of the
+// process counter; the secondary form has to reload both (epochGPR was the only
+// register free to address through).
+void AssemblyHelpers::emitMegamorphicEntryAddressAndEpoch(VM& vm, ptrdiff_t tableOffset, OffsetImmediate offsetImmediate, GPRReg entryGPR, GPRReg epochGPR, LoadEpoch loadEpoch, JumpList& slowCases)
+{
+    if (MegamorphicCache::usesPerThreadCaches()) [[unlikely]] {
+        loadVMLite(epochGPR);
+        loadPtr(Address(epochGPR, VMLite::offsetOfMegamorphicCache()), epochGPR);
+        slowCases.append(branchTestPtr(Zero, epochGPR));
+        addPtr(epochGPR, entryGPR);
+        if (tableOffset)
+            addPtr(TrustedImm32(static_cast<int32_t>(tableOffset)), entryGPR);
+        move(TrustedImmPtr(MegamorphicCache::addressOfProcessEpoch()), epochGPR);
+        load16(Address(epochGPR), epochGPR);
+        return;
+    }
+    auto& cache = vm.ensureMegamorphicCache();
+    if (loadEpoch == LoadEpoch::OnlyIfClobbered) {
+        addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(&cache) + tableOffset), entryGPR);
+        return;
+    }
+    move(TrustedImmPtr(&cache), epochGPR);
+    addPtr(epochGPR, entryGPR);
+    if (offsetImmediate == OffsetImmediate::Pointer)
+        addPtr(TrustedImmPtr(tableOffset), entryGPR);
+    else if (tableOffset)
+        addPtr(TrustedImm32(static_cast<int32_t>(tableOffset)), entryGPR);
+    load16(Address(epochGPR, MegamorphicCache::offsetOfEpoch()), epochGPR);
+}
+
 template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
 AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     using Entry = MegamorphicCache::LoadEntry;
-    if (MegamorphicCache::disabledForProcess()) [[unlikely]] {
-        // GIL-off: the VM-global MegamorphicCache is unusable by N unsynchronized
-        // mutators (torn multi-word entries, the entries' RefPtr uid); every
-        // megamorphic access defers to the generic operation until a per-thread
-        // cache exists. GIL-on (r17): one mutator at a time, no hand-off inside
-        // a probe or a fill, so the cache is used as flag-off, with the tagged
-        // butterfly handled by loadPropertyTagged/storePropertyTagged.
-        JumpList slowCases;
-        slowCases.append(jump());
-        return slowCases;
-    }
 
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
     if (!uid)
@@ -806,13 +833,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
         lshift32(TrustedImm32(getLSBSet(sizeof(Entry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(Entry)), scratch3GPR, scratch3GPR);
-    auto& cache = vm.ensureMegamorphicCache();
-    move(TrustedImmPtr(&cache), scratch2GPR);
-    addPtr(scratch2GPR, scratch3GPR);
-    if constexpr (primaryEntriesOffset)
-        addPtr(TrustedImm32(primaryEntriesOffset), scratch3GPR);
-
-    load16(Address(scratch2GPR, MegamorphicCache::offsetOfEpoch()), scratch2GPR);
+    emitMegamorphicEntryAddressAndEpoch(vm, primaryEntriesOffset, OffsetImmediate::Int32, scratch3GPR, scratch2GPR, LoadEpoch::Yes, slowCases);
 
     primaryFail.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, Entry::offsetOfStructureID())));
     if (uid)
@@ -840,7 +861,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
         lshift32(TrustedImm32(getLSBSet(sizeof(Entry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(Entry)), scratch3GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(&cache) + secondaryEntriesOffset), scratch3GPR);
+    emitMegamorphicEntryAddressAndEpoch(vm, secondaryEntriesOffset, OffsetImmediate::Int32, scratch3GPR, scratch2GPR, LoadEpoch::OnlyIfClobbered, slowCases);
 
     slowCases.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, Entry::offsetOfStructureID())));
     if (uid)
@@ -902,13 +923,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicGetterSetter(VM& vm, G
 
 std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers::storeMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
-    if (MegamorphicCache::disabledForProcess()) [[unlikely]] {
-        // GIL-off: see findMegamorphicCacheEntry.
-        JumpList slowCases;
-        slowCases.append(jump());
-        return { WTF::move(slowCases), JumpList() };
-    }
-
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
 
     if (!uid)
@@ -946,12 +960,7 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         lshift32(TrustedImm32(getLSBSet(sizeof(MegamorphicCache::StoreEntry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(MegamorphicCache::StoreEntry)), scratch3GPR, scratch3GPR);
-    auto& cache = vm.ensureMegamorphicCache();
-    move(TrustedImmPtr(&cache), scratch2GPR);
-    addPtr(scratch2GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(MegamorphicCache::offsetOfStoreCachePrimaryEntries()), scratch3GPR);
-
-    load16(Address(scratch2GPR, MegamorphicCache::offsetOfEpoch()), scratch2GPR);
+    emitMegamorphicEntryAddressAndEpoch(vm, MegamorphicCache::offsetOfStoreCachePrimaryEntries(), OffsetImmediate::Pointer, scratch3GPR, scratch2GPR, LoadEpoch::Yes, slowCases);
 
     primaryFail.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOldStructureID())));
     if (uid)
@@ -982,7 +991,7 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // code cannot make).
         Jump isTransition = branch32(NotEqual, scratch2GPR, scratch1GPR);
         load16(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOffset()), scratch3GPR);
-        storePropertyTagged(JSValueRegs { valueGPR }, baseGPR, scratch3GPR, scratch1GPR, scratch2GPR, slowCases);
+        storePropertyTagged(valueGPR, baseGPR, scratch3GPR, scratch1GPR, scratch2GPR, slowCases);
         Jump replaced = jump();
 
         isTransition.link(this);
@@ -1041,7 +1050,7 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         lshift32(TrustedImm32(getLSBSet(sizeof(MegamorphicCache::StoreEntry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(MegamorphicCache::StoreEntry)), scratch3GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(&cache) + MegamorphicCache::offsetOfStoreCacheSecondaryEntries()), scratch3GPR);
+    emitMegamorphicEntryAddressAndEpoch(vm, MegamorphicCache::offsetOfStoreCacheSecondaryEntries(), OffsetImmediate::Pointer, scratch3GPR, scratch2GPR, LoadEpoch::OnlyIfClobbered, slowCases);
 
     slowCases.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOldStructureID())));
     if (uid)
@@ -1058,17 +1067,9 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
 
 AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
-        // SPEC-jit section 5.5 (Task 8): see loadMegamorphicProperty above.
-        // This emitter was missed by the Task 8 sweep: it reads the shared
-        // HasEntry words (incl. the RefPtr'd uid slot) with no
-        // synchronization. With MegamorphicCache fills disabled flag-on
-        // (MegamorphicCache.h) a hit is impossible anyway; bail like the
-        // load/store emitters.
-        JumpList slowCases;
-        slowCases.append(jump());
-        return slowCases;
-    }
+    // Flag-on (both modes, eighth round): the probe reads nothing but the
+    // entry - no butterfly - so it needs no §5.5 leg; GIL on the VM cache is
+    // one mutator's at a time (r17), GIL off the cache is this thread's (§37).
 
     // uidGPR can be InvalidGPRReg if uid is non-nullptr.
 
@@ -1105,12 +1106,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         lshift32(TrustedImm32(getLSBSet(sizeof(MegamorphicCache::HasEntry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(MegamorphicCache::HasEntry)), scratch3GPR, scratch3GPR);
-    auto& cache = vm.ensureMegamorphicCache();
-    move(TrustedImmPtr(&cache), scratch2GPR);
-    addPtr(scratch2GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(MegamorphicCache::offsetOfHasCachePrimaryEntries()), scratch3GPR);
-
-    load16(Address(scratch2GPR, MegamorphicCache::offsetOfEpoch()), scratch2GPR);
+    emitMegamorphicEntryAddressAndEpoch(vm, MegamorphicCache::offsetOfHasCachePrimaryEntries(), OffsetImmediate::Pointer, scratch3GPR, scratch2GPR, LoadEpoch::Yes, slowCases);
 
     primaryFail.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, MegamorphicCache::HasEntry::offsetOfStructureID())));
     if (uid)
@@ -1141,7 +1137,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         lshift32(TrustedImm32(getLSBSet(sizeof(MegamorphicCache::HasEntry))), scratch3GPR);
     else
         mul32(TrustedImm32(sizeof(MegamorphicCache::HasEntry)), scratch3GPR, scratch3GPR);
-    addPtr(TrustedImmPtr(std::bit_cast<uint8_t*>(&cache) + MegamorphicCache::offsetOfHasCacheSecondaryEntries()), scratch3GPR);
+    emitMegamorphicEntryAddressAndEpoch(vm, MegamorphicCache::offsetOfHasCacheSecondaryEntries(), OffsetImmediate::Pointer, scratch3GPR, scratch2GPR, LoadEpoch::OnlyIfClobbered, slowCases);
 
     slowCases.append(branch32(NotEqual, scratch1GPR, Address(scratch3GPR, MegamorphicCache::HasEntry::offsetOfStructureID())));
     if (uid)

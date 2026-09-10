@@ -411,7 +411,7 @@ std::expected<PageCount, GrowFailReason> Memory::grow(VM& vm, PageCount delta)
             // Keeps the old mapping alive across the swap; a resizable buffer
             // over it takes its own quarantine ref inside success().
             Ref<BufferMemoryHandle> retiredHandle = m_handle.copyRef();
-            Expected<PageCount, GrowFailReason> result = oldPageCount;
+            std::expected<PageCount, GrowFailReason> result = oldPageCount;
             JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "Wasm BoundsChecking relocating grow");
             JSThreadsSafepoint::stopTheWorldAndRun(vm, ScopedLambda<void()>([&] {
                 m_handle->transferAnchors(newHandle.get());

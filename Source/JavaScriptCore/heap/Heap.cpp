@@ -3610,6 +3610,29 @@ void Heap::runCollectionEpilogue()
         cache->clear();
     if (auto* cache = vm().megamorphicCache())
         cache->age(m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? CollectionScope::Full : CollectionScope::Eden);
+    // SPEC-jit history §37: GIL off every thread owns a megamorphic cache whose
+    // entries hold raw holder pointers. World stopped here: one process-epoch
+    // bump kills every thread's entries as the VM cache's age() bump does, and
+    // a Full collection also drops their uid references (registry walk; ~VMLite
+    // frees a cache only after its lite left the registry).
+    if (MegamorphicCache::usesPerThreadCaches()) [[unlikely]] {
+        MegamorphicCache::bumpProcessEpoch();
+        bool isFull = m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full;
+        auto& registry = VMLiteRegistry::singleton();
+        Locker locker { registry.lock };
+        for (VMLite* lite : registry.lites) {
+            if (isFull) {
+                if (auto* cache = lite->megamorphicCache)
+                    cache->clearEntriesAndKeys();
+            }
+            // GIL off each thread has its own replace cache (StringPrototype
+            // addToRegExpSearchCache); it is never visited, so it is emptied at
+            // every collection, world stopped, before a swept result could be
+            // read from it.
+            if (auto* cache = lite->stringReplaceCache.get())
+                cache->clear();
+        }
+    }
 
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         vm().jsonAtomStringCache.clear();
@@ -4813,6 +4836,21 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
         bool isCritical = overCriticalMemoryThreshold();
         if (isCritical)
             bytesAllowedThisCycle = std::min(m_maxEdenSizeWhenCritical, bytesAllowedThisCycle);
+        else if (isSharedServer()) [[unlikely]] {
+            // SPEC-heap §10F (eighth round): the eden budget above is one
+            // thread's nursery; k threads allocating in parallel fill it k
+            // times as fast and every eden collection stops all of them, so
+            // the pause count per wall-second grew with the thread count
+            // (raytrace-like at four threads: 63 edens, 47 ms of 275). Each
+            // additional client that is really allocating this cycle (the
+            // F4-burst distinct count, which a client joins only after a
+            // quarter of a fair share) adds one more nursery, capped at the
+            // large-heap minimum, so the eden rate stays near one thread's;
+            // the pause itself is set by survivors, which this does not change.
+            unsigned allocatingClients = m_distinctAllocatingClientsThisCycle.load(std::memory_order_relaxed);
+            if (allocatingClients >= 2)
+                bytesAllowedThisCycle += static_cast<size_t>(allocatingClients - 1) * std::min<size_t>(m_maxEdenSize, Options::largeHeapSize());
+        }
 
         size_t bytesAllocatedThisCycle = totalBytesAllocatedThisCycle();
 
@@ -7329,14 +7367,31 @@ void Heap::reclaimSharedGCMemoryAtCycleEnd()
     // embedder's server process kept 3 GB resident where the sixth round kept
     // under 0.8 GB (Bun's serve-body-leak tests, GIL off). Eden cycles, which
     // carry the steady-state churn P1 measured, use the retention rule below.
-    if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
+    // Eighth round: only a Full collection somebody ASKED for (the embedder's
+    // gc(), a memory-pressure or idle notification, $vm - the request names
+    // the scope) returns everything; a Full the heap chose for itself because
+    // allocation outgrew the eden budget is steady-state churn like an eden
+    // and takes the retention rule below. Sweeping 200 MB synchronously and
+    // freeing half of it inside every allocation-paced Full pause, then
+    // re-allocating, committing and pre-touching the same blocks during the
+    // next cycle, cost `splay` GIL off 4x the block allocations of GIL on and
+    // its worst-case iteration time (SPEC-heap history §28 amendment).
+    bool fullWasRequested = m_currentRequest.scope && *m_currentRequest.scope == CollectionScope::Full;
+    if (fullWasRequested && m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         size_t slackBase = std::max(m_sizeAfterLastCollect, minHeapSize(m_heapType, m_ramSize));
         if (m_objectSpace.capacity() > slackBase + slackBase / 2) {
             sweepSynchronously(); // includes the world-stopped shrink of every empty block
             return;
         }
     }
-    size_t budget = std::max({ m_sizeBeforeLastEdenCollect, m_maxHeapSize, minHeapSize(m_heapType, m_ramSize) });
+    // The working size is the heap at the start of the cycle that just ran,
+    // whichever kind it was: after an allocation-paced Full that is the peak
+    // the program reaches every cycle (keying it on the last EDEN start there
+    // shrank to the mid-cycle size and re-minted the difference every
+    // Full/Eden pair - `splay` GIL off, eighth round); a peak the program
+    // stops reaching still decays, from the next cycle's lower start.
+    size_t lastCycleStart = m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? m_sizeBeforeLastFullCollect : m_sizeBeforeLastEdenCollect;
+    size_t budget = std::max({ lastCycleStart, m_maxHeapSize, minHeapSize(m_heapType, m_ramSize) });
     size_t capacity = m_objectSpace.capacity();
     size_t allowed = budget + budget / 4;
     bool shrinks = capacity > allowed;

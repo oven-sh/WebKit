@@ -909,7 +909,18 @@ public:
     // codegen to the plain load on x86-64/arm64 (flag-off unchanged).
     ALWAYS_INLINE uint64_t taggedButterflyWord() const // raw 64-bit load, never masked
     {
+#if TSAN_ENABLED
+        // TSAN model only: every publication of this word is a seq_cst CAS
+        // (casButterfly / storeTaggedButterflyWordConcurrent), and what a
+        // reader does with the storage it decodes is address-dependent on this
+        // load, which TSAN cannot see; an acquire here stands for that
+        // dependency, so pre-publication initialization of a fresh butterfly
+        // (lane fills, header) is ordered before the reader's lane loads. An
+        // in-place lane write after publication is still reported.
+        uint64_t word = WTF::atomicLoad(std::bit_cast<uint64_t*>(std::bit_cast<uintptr_t>(this) + butterflyOffset()), std::memory_order_acquire);
+#else
         uint64_t word = butterflyConcurrentLoad(std::bit_cast<const uint64_t*>(std::bit_cast<const char*>(this) + butterflyOffset()));
+#endif
         if (type() == WebAssemblyGCObjectType) [[unlikely]]
             word = 0;
         return word;
@@ -1626,8 +1637,12 @@ public:
 
     ALWAYS_INLINE uint64_t taggedButterflyWord() const // raw 64-bit load, never masked (§9.5)
     {
-        // TSAN-TRIAGE §3.15: relaxed atomic load — see JSObject::taggedButterflyWord().
+        // TSAN-TRIAGE §3.15: relaxed atomic load — see JSObject::taggedButterflyWord() (acquire under TSAN only).
+#if TSAN_ENABLED
+        return WTF::atomicLoad(std::bit_cast<uint64_t*>(const_cast<AuxiliaryBarrier<Butterfly*>*>(&m_butterfly)), std::memory_order_acquire);
+#else
         return butterflyConcurrentLoad(std::bit_cast<const uint64_t*>(&m_butterfly));
+#endif
     }
 
     // NOTE (SPEC-objectmodel Task 2 audit): flag-on the loaded pointer is the

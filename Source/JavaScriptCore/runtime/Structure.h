@@ -1373,6 +1373,20 @@ private:
     // inside that stop (owner-local objects keep their sets).
     bool flattenTriggerIsShared(JSObject*) const;
     Structure* flattenDictionaryStructureUnderStop(VM&, JSObject*);
+    // GIL off (SPEC-jit history §38): flatten is a structure-only transition
+    // to a fresh non-dictionary clone of this structure - same property table
+    // contents, same offsets, same storage, new StructureID - published by the
+    // N2 core; no stop, no compaction. Returns the object's structure after
+    // the attempt (the clone, or whatever a racing transition installed).
+    Structure* flattenDictionaryStructureByTransitionConcurrent(VM&, JSObject*);
+public:
+    // GIL off, IC-caching paths hold codeBlock->m_lock and must not flatten
+    // inline (a flatten can fire watched sets, i.e. request a stop); they
+    // record the object here and the repatch entry point flattens it once the
+    // lock is dropped.
+    static void requestDeferredFlattenGILOff(JSObject*);
+    static void runDeferredFlattenGILOff(VM&);
+private:
     // Sizing of the shrunk flat butterfly the impl's shift leg
     // (JSObject::shiftButterflyAfterFlattening) publishes. Flag-on it is
     // computed and allocated outside the stop and re-derived inside it; any

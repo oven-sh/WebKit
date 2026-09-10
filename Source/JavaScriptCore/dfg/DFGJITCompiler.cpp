@@ -91,6 +91,16 @@ void JITCompiler::linkOSRExits()
     
     JumpList dispatchCases;
     JumpList dispatchCasesWithoutLinkedFailures;
+    // GIL off an exit's patchable jump is never repatched to its compiled ramp
+    // (SPEC-jit I2/P3: no patching of reachable code outside a stop), so with
+    // the linked form every exit of an already-compiled ramp went through the
+    // generation thunk - all registers saved, operationCompileOSRExit, the
+    // published-ramp lookup, all registers restored (about 22,000 times a run
+    // on `gbemu`). Dispatch through the JITData exit vector instead, as
+    // unlinked code does: setExitCode publishes the ramp's pointer into the
+    // slot the far jump reads, so from the second exit on the site jumps
+    // straight to its ramp. Flag-off / GIL-on keep the patchable jump.
+    const bool dispatchThroughExitVector = m_graph.m_plan.isUnlinked() || vm().gilOff();
     for (unsigned i = 0; i < m_osrExit.size(); ++i) {
         OSRExitCompilationInfo& info = m_exitCompilationInfo[i];
         JumpList& failureJumps = info.m_failureJumps;
@@ -101,7 +111,7 @@ void JITCompiler::linkOSRExits()
 
         jitAssertHasValidCallFrame();
         move(TrustedImm32(i), GPRInfo::numberTagRegister);
-        if (m_graph.m_plan.isUnlinked()) {
+        if (dispatchThroughExitVector) {
             if (info.m_replacementDestination.isSet())
                 dispatchCasesWithoutLinkedFailures.append(jump());
             else
@@ -110,7 +120,7 @@ void JITCompiler::linkOSRExits()
             info.m_patchableJump = patchableJump();
     }
 
-    if (m_graph.m_plan.isUnlinked()) {
+    if (dispatchThroughExitVector) {
         // When jumping to OSR exit handler via exception, we do not have proper callFrameRegister and jitDataRegister.
         // We should reload appropriate callFrameRegister from VM::callFrameForCatch to materialize constants buffer register.
         // FIXME: The following code can be a DFG Thunk.
@@ -281,11 +291,14 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
         MacroAssemblerCodeRef<JITThunkPtrTag> osrExitThunk = vm().getCTIStub(osrExitGenerationThunkGenerator);
         auto target = CodeLocationLabel<JITThunkPtrTag>(osrExitThunk.code());
         Vector<JumpReplacement> jumpReplacements;
+        const bool dispatchThroughExitVector = vm().gilOff(); // see linkOSRExits: no patchable jump to link GIL off; invalidation points still get their jump replacements
         for (unsigned i = 0; i < m_osrExit.size(); ++i) {
             OSRExitCompilationInfo& info = m_exitCompilationInfo[i];
-            linkBuffer.link(info.m_patchableJump.m_jump, target);
             OSRExit& exit = m_osrExit[i];
-            exit.m_patchableJumpLocation = linkBuffer.locationOf<JSInternalPtrTag>(info.m_patchableJump);
+            if (!dispatchThroughExitVector) {
+                linkBuffer.link(info.m_patchableJump.m_jump, target);
+                exit.m_patchableJumpLocation = linkBuffer.locationOf<JSInternalPtrTag>(info.m_patchableJump);
+            }
             if (info.m_replacementSource.isSet()) {
                 jumpReplacements.append(JumpReplacement(
                     linkBuffer.locationOf<JSInternalPtrTag>(info.m_replacementSource),

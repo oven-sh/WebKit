@@ -328,6 +328,8 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case GlobalIsNaN:
     case NumberIsNaN:
     case GlobalIsFinite:
+    case GeneratorClaimResume:
+    case GeneratorPublishResume:
     case NumberIsFinite:
     case NumberIsSafeInteger:
     case IsObject:

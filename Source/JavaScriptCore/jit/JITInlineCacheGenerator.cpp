@@ -385,15 +385,15 @@ static void generatePutByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
         outSlowCases.append(doNotInlineAccess);
         if (CCallHelpers::supportsXorButterflyTIDTagInPlace()) {
             auto isInline = jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset));
-            jit.load64(CCallHelpers::Address(baseJSR.payloadGPR(), JSObject::butterflyOffset()), scratch3GPR);
+            jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch3GPR);
             jit.xorButterflyTIDTagInPlace(scratch3GPR);
             outSlowCases.append(jit.branch64(CCallHelpers::AboveOrEqual, scratch3GPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(1ull << butterflyTIDShift))));
             jit.neg32(scratch1GPR);
             jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
-            jit.storeValue(valueJSR, CCallHelpers::BaseIndex(scratch3GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
+            jit.storeValue(valueGPR, CCallHelpers::BaseIndex(scratch3GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
             auto done = jit.jump();
             isInline.link(&jit);
-            jit.storeValue(valueJSR, CCallHelpers::BaseIndex(baseJSR.payloadGPR(), scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+            jit.storeValue(valueGPR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
             done.link(&jit);
             return;
         }

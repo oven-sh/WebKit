@@ -41,6 +41,7 @@ namespace JSC {
     macro(canAllocate, CanAllocate) /* The set of all blocks are live and not retired (i.e. are more than minMarkedBlockUtilization full). Note: This also implies they wouldn't be allocated. */ \
     macro(destructible, Destructible) /* The set of all blocks that may have destructors to run. */\
     macro(eden, Eden) /* The set of all blocks that have new objects since the last GC. */\
+    macro(edenLastCycle, EdenLastCycle) /* SPEC-heap §10E: the Eden set as it stood when the last collection ended (blocks the program allocated into during that cycle); the cycle-end retention never frees these. */\
     macro(unswept, Unswept) /* The set of all blocks that could be swept by the incremental sweeper. */\
     macro(inUse, InUse) /* This tells us if a block is currently being allocated from or swept. This acts like a lock bit. */\
     \

@@ -154,6 +154,7 @@ WatchpointSet::WatchpointSet(WatchpointState state, WatchpointSetClassification 
     m_state.storeRelaxed(state);
     m_setIsNotEmpty.storeRelaxed(false);
     m_invalidatesCode.storeRelaxed(classification == WatchpointSetClassification::InvalidatesCode);
+    m_everLinked.storeRelaxed(false);
     // TSAN r11 (reports 14/15/25/26/27/28): publication choke point for the
     // consume-published fresh set — pairs with the HAPPENS_AFTER in state()
     // and InferredValueWatchpointSet::inferredValue(). The real edge is the
@@ -177,7 +178,15 @@ WatchpointSet::~WatchpointSet()
     //
     // AB18-G: this destructor can run during lazy sweep on a LIVE mutator
     // (AB18-C) while another mutator destroys one of the member watchpoints
-    // (~Watchpoint -> remove()), so the drain takes the membership lock.
+    // (~Watchpoint -> remove()), so the drain takes the membership lock -
+    // unless nothing was ever linked into this set (m_everLinked), in which
+    // case no remover can be touching its sentinel: the temporary sets of the
+    // deferred-fire scopes on the transition paths would otherwise take the
+    // process-wide lock once per array conversion.
+    if (Options::useJSThreads() && !m_everLinked.loadRelaxed()) [[unlikely]] {
+        ASSERT(m_set.isEmpty());
+        return;
+    }
     MembershipLocker locker;
     while (!m_set.isEmpty())
         m_set.begin()->remove();
@@ -212,6 +221,7 @@ bool WatchpointSet::add(Watchpoint* watchpoint)
         }
         m_set.push(watchpoint);
         m_setIsNotEmpty.storeRelaxed(true);
+        m_everLinked.storeRelaxed(true);
         return true;
     }
     m_set.push(watchpoint);
@@ -382,7 +392,16 @@ void WatchpointSet::fireAllNow(VM& vm, const FireDetail& detail)
 void WatchpointSet::fireAllSlow(VM& vm, const FireDetail& detail)
 {
     JSTHREADS_COUNT(watchpointFireAll);
-    ASSERT(state() == IsWatched);
+    // Flag-on two mutators can pass fireAll()'s lock-free IsWatched pre-check
+    // for the same set (two megamorphic replace fills arming the same
+    // property-replacement set, two relabels leaving one array structure); the
+    // loser arrives here already IsInvalidated and every leg below re-checks or
+    // claims atomically, so only the flag-off form of the assertion is exact,
+    // and the loser has nothing left to do (the same outcome as losing at the
+    // pre-check; without this it would queue a Class-A stop that fires nothing).
+    ASSERT(state() == IsWatched || (Options::useJSThreads() && state() == IsInvalidated));
+    if (Options::useJSThreads() && state() != IsWatched) [[unlikely]]
+        return;
 
     // SPEC-jit section 5.6: flag on, Class-A fires ALWAYS run world-stopped —
     // deliberately no ">1 mutator" gate (G7/I10: VM construction does not
@@ -555,6 +574,7 @@ void WatchpointSet::take(WatchpointSet* other)
     MembershipLocker locker;
     m_set.takeFrom(other->m_set);
     m_setIsNotEmpty.storeRelaxed(other->m_setIsNotEmpty.loadRelaxed());
+    m_everLinked.storeRelaxed(true);
     if (Options::useJSThreads()) [[unlikely]] {
         // B-relabelrace: the claiming CAS in the deferred fireAllSlow flipped
         // the source to IsInvalidated BEFORE this transfer (claim-then-splice;

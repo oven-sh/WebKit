@@ -1203,3 +1203,46 @@ gives back part of P1's gain with it (37 k -> 70 k blocks minted per run, 94 k
 under the sixth round's policy); `Basic` and the other allocation-heavy tests
 run few Full collections and keep theirs.
 
+
+### 29. Eighth landing round: only a requested Full returns everything; the eden allowance grows with the allocating threads
+
+Two amendments to the cycle-end retention of §28 / SPEC-heap §10E and one
+to the allocation trigger (§10F).
+
+(a) The Full arm of §28 - synchronous sweep and free every empty block when
+capacity exceeds 1.5x the Full's live size - was taken by every Full,
+including the ones the heap upgrades to on its own because allocation outgrew
+the eden budget. JetStream `splay` GIL off runs eleven such Fulls a run: each
+swept 200 MB in the pause (12 ms) and freed 100 MB of blocks that the next
+cycle re-minted through the block allocator, first-touch faults and the
+warm-up thread - 69,650 marked blocks minted per run against GIL on's 17,570,
+and a worst-case iteration (splay is latency-scored) at 0.44 of GIL on's. Now
+only a Full somebody requested (the request carries the scope: the embedder's
+`gc()`, an idle or memory-pressure collection, `$vm`) takes that arm; an
+allocation-paced Full is steady-state churn and takes the eden retention
+rule. Bun's idle and forced collections request Full explicitly, so the
+`serve-body-leak` behaviour §28's second follow-up restored is kept.
+(b) The retention rule's working size was keyed on the size at the start of
+the last EDEN; after an allocation-paced Full that is the mid-cycle size, so
+capacity shrank to it and the following eden minted the difference back
+(36,682 blocks per run with (a) alone). It is now the size at the start of
+the cycle that just ran, whichever kind; a peak the program stops reaching
+still decays from the next, lower cycle start. `splay` GIL off after both:
+gcShrink 0 per run in steady state, score 252 -> 283 (three-run medians, GIL
+on 420).
+(c) §10F: with k >= 2 clients actively allocating, the allocation trigger
+allows (k - 1) additional capped nurseries per cycle, so the eden pause rate
+per second of wall time stays near one thread's instead of growing with the
+thread count. Measured in PERF-RESULTS §2 (eighth round).
+(d) Found by the corpus after (c): `heap-shared-retains-blocks.js` GIL off
+minted 12,600 blocks in its steady phase (150 before (c)). One cycle ran with
+the doubled allowance while the test's short-lived second thread counted as
+allocating; its extra blocks were surplus afterwards, and the budget rule of
+§28 shed "half the excess" by walking directories in order - freeing the
+empty blocks of the first directories, which are the ones the churn refills,
+while the surplus sat in others - so every later cycle freed ~530 blocks and
+minted ~580. The retention arm now excludes from freeing any block the
+just-ended cycle allocated into (a per-directory copy of the Eden set taken
+at the end of the collection); surplus is what is empty AND was not used.
+After: 0 shrinks in the steady phase, capacity settles at the churn set.
+

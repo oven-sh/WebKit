@@ -1386,6 +1386,8 @@ void CodeBlock::visitChildren(Visitor& visitor)
         m_visitChildrenSkippedDueToOldAge = false;
         if (CodeBlock* otherBlock = specialOSREntryBlockOrNull())
             visitor.appendUnbarriered(otherBlock);
+        if (CodeBlock* dfgForLoopEntry = gilOffDFGForLoopEntry()) [[unlikely]]
+            visitor.appendUnbarriered(dfgForLoopEntry);
 
         size_t extraMemory = 0;
         if (m_metadata)
@@ -2639,6 +2641,32 @@ DFG::CapabilityLevel CodeBlock::computeCapabilityLevel()
 
 #endif // ENABLE(JIT)
 
+CodeBlock* CodeBlock::gilOffDFGForLoopEntry() const
+{
+#if ENABLE(JIT)
+    if (auto* jitData = const_cast<CodeBlock*>(this)->baselineJITData())
+        return jitData->m_gilOffDFGForLoopEntry.loadRelaxed();
+#endif
+    return nullptr;
+}
+
+void CodeBlock::setGILOffDFGForLoopEntry(VM& vm, CodeBlock* dfgCodeBlock)
+{
+    ASSERT(Options::useJSThreads());
+    ASSERT(!dfgCodeBlock || dfgCodeBlock->jitType() == JITType::DFGJIT);
+#if ENABLE(JIT)
+    auto* jitData = baselineJITData();
+    if (!jitData)
+        return;
+    jitData->m_gilOffDFGForLoopEntry.storeRelaxed(dfgCodeBlock);
+    if (dfgCodeBlock)
+        vm.writeBarrier(this, dfgCodeBlock);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(dfgCodeBlock);
+#endif
+}
+
 void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mode, const FireDetail* detail)
 {
     JSTHREADS_COUNT(jettison);
@@ -2688,6 +2716,17 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     RELEASE_ASSERT(!Options::useJSThreads() || reason == Profiler::JettisonDueToOldAge || JSThreadsSafepoint::worldIsStopped(vm));
 
     m_isJettisoned = true;
+
+    // SPEC-ungil eighth round: a superseded DFG block kept for loop entry is
+    // no longer enterable once jettisoned (its code is being invalidated in
+    // this same window). The old-age arm reaches here for a block the GC
+    // found dead; its baseline alternative may be dead too, so only touch a
+    // marked one there.
+    if (Options::useJSThreads() && JSC::JITCode::isOptimizingJIT(jitType()) && m_alternative) [[unlikely]] {
+        CodeBlock* baseline = baselineAlternative();
+        if (baseline != this && (reason != Profiler::JettisonDueToOldAge || vm.heap.isMarked(baseline)) && baseline->gilOffDFGForLoopEntry() == this)
+            baseline->setGILOffDFGForLoopEntry(vm, nullptr);
+    }
 
 #if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     // Baseline code is cached on the UnlinkedCodeBlock so a re-created CodeBlock can reuse it; when this block dies of

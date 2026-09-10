@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ArrayAllocationProfile.h"
 
+#include "ConcurrentButterfly.h"
 #include "JSCConfig.h"
 #include "JSThreadsCounters.h"
 
@@ -33,6 +34,46 @@
 #include <algorithm>
 
 namespace JSC {
+
+// GIL off (SPEC-objectmodel history §28): an Int32 array that meets a double
+// is relabelled Contiguous, not Double (T4-O), so the profile of its
+// allocation site would learn Contiguous and every later array from the site
+// would keep its doubles boxed. If the array that demoted the recommendation
+// holds nothing but numbers, and at least one that is not an int32, the site
+// is a numeric one and its arrays should be born Double instead: no
+// conversion then ever happens to them.
+static bool lastArrayLooksLikeDoubles(JSArray* array)
+{
+    // Sample only an array this thread owns (its butterfly carries this
+    // thread's tag): a shared profile's last array can belong to a thread that
+    // is writing it right now, and the decision can wait for that thread's own
+    // profile update instead of reading its lanes from here.
+    if (!butterflyWordOwnedByCurrentThread(array->taggedButterflyWord()))
+        return false;
+    unsigned length = array->length();
+    if (!length)
+        return false;
+    bool sawNonInt32 = false;
+    auto numeric = [&](unsigned i) {
+        JSValue v = array->tryGetIndexQuickly(i);
+        if (!v)
+            return true; // hole
+        if (!v.isNumber())
+            return false;
+        sawNonInt32 |= !v.isInt32();
+        return true;
+    };
+    unsigned prefix = std::min(length, 24u);
+    for (unsigned i = 0; i < prefix; ++i) {
+        if (!numeric(i))
+            return false;
+    }
+    for (unsigned k = 1; k <= 8 && prefix < length; ++k) {
+        if (!numeric(prefix + (length - prefix) * k / 9))
+            return false;
+    }
+    return sawNonInt32;
+}
 
 void ArrayAllocationProfile::updateProfile()
 {
@@ -71,6 +112,13 @@ void ArrayAllocationProfile::updateProfile()
     if (Options::useArrayAllocationProfiling()) [[likely]] {
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.
         IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArray->indexingType());
+        if (g_jscConfig.gilOffProcess && hasContiguous(indexingType) && !hasContiguous(current.indexingType()) && !hasDouble(current.indexingType())
+            && m_gilOffDoubleDemotionSet.isStillValid() && lastArrayLooksLikeDoubles(lastArray)) [[unlikely]] {
+            // Once only per site: if Double turns out wrong, the demotion below
+            // fires the set and this branch is never taken again.
+            JSTHREADS_COUNT(arrayAllocationProfilePromotedToDoubleGILOff);
+            indexingType = (indexingType & ~IndexingShapeMask) | DoubleShape;
+        }
         if (isCopyOnWrite(current.indexingType())) {
             if (indexingType > ArrayWithContiguous)
                 indexingType = ArrayWithContiguous;

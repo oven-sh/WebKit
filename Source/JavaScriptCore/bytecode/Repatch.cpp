@@ -464,16 +464,13 @@ static InlineCacheAction actionForCell(VM& vm, JSCell* cell)
         if (structure->hasBeenFlattenedBefore())
             return GiveUpOnCache;
         if (vm.gilOff()) [[unlikely]] {
-            // O2/GT11 (stw-watchdog-timeout root cause, transition-vs-write):
-            // every tryCache* caller holds codeBlock->m_lock (rank 6b) here,
-            // and flag-on flattenDictionaryObject routes through
-            // flattenDictionaryStructureUnderStop — a §10.6 per-event stop.
-            // Requesting a stop while holding a lock that other mutators
-            // block on WITH heap access held (ConcurrentJSLocker has no
-            // access-release bracket) wedges the conductor's quiescence
-            // predicate into the 30s watchdog. Skip the inline flatten: the
-            // IC stays uncached this round and the access keeps taking the
-            // slow path — a perf forgone, never a correctness change.
+            // Every tryCache* caller holds codeBlock->m_lock (rank 6b) with
+            // heap access; a flatten may fire watched sets (a stop request),
+            // which would wedge the conductor behind threads blocked on that
+            // lock. GIL off the flatten is a transition (SPEC-jit history §38)
+            // run by the repatch entry point once the lock is dropped; this
+            // attempt retries after it.
+            Structure::requestDeferredFlattenGILOff(asObject(cell));
             return RetryCacheLater;
         }
         // Flattening could have changed the offset, so return early for another try.
@@ -743,8 +740,14 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                 // retry condition would never clear. Uncacheable dictionaries
                 // mutate their uid->offset table under the same StructureID,
                 // so getConcurrently() cannot validate the slot's offset below.
-                if (validationStructure->isUncacheableDictionary())
+                if (validationStructure->isUncacheableDictionary()) {
+                    // §38: flattened (by transition, once the lock is dropped)
+                    // the holder gets a StructureID getConcurrently() can
+                    // validate against; the retry after that caches.
+                    if (!validationStructure->hasBeenFlattenedBefore())
+                        Structure::requestDeferredFlattenGILOff(slot.slotBase() == baseValue ? asObject(baseCell) : slotBaseObject);
                     return RetryCacheLater;
+                }
                 unsigned attributes;
                 PropertyOffset tableOffset = validationStructure->getConcurrently(propertyName.uid(), attributes);
                 if (tableOffset != slot.cachedOffset())
@@ -781,8 +784,11 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                 // need to be informed if the custom goes away since we cache the
                 // constant function pointer.
 
-                if (!prepareChainForCaching(globalObject, slot.slotBase(), propertyName.uid(), slot.slotBase()))
+                auto selfCustomStatus = prepareChainForCaching(globalObject, slot.slotBase(), propertyName.uid(), slot.slotBase());
+                if (!selfCustomStatus)
                     return GiveUpOnCache;
+                if (selfCustomStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                    return RetryCacheLater; // §38
             }
 
             if (slot.isUnset() || slot.slotBase() != baseValue) {
@@ -793,15 +799,8 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                     if (structure->hasBeenFlattenedBefore())
                         return GiveUpOnCache;
                     if (vm.gilOff()) [[unlikely]] {
-                        // O2/GT11 (AB17e: sibling site of the actionForCell
-                        // gate): we hold codeBlock->m_lock (rank 6b) with
-                        // heap access, and flag-on flattenDictionaryStructure
-                        // ALWAYS routes through the §10.6 per-event stop —
-                        // requesting a stop here wedges the conductor's
-                        // quiescence predicate into the 30s watchdog. Rule:
-                        // gilOff, NEVER flatten from any IC-caching path;
-                        // flattening happens only from unlocked runtime
-                        // sites. Perf forgone, never a correctness change.
+                        // See actionForCell: deferred to the unlocked caller.
+                        Structure::requestDeferredFlattenGILOff(uncheckedDowncast<JSObject>(baseCell));
                         return RetryCacheLater;
                     }
                     structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
@@ -817,6 +816,8 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                     auto cacheStatus = prepareChainForCaching(globalObject, baseCell, propertyName.uid(), slot);
                     if (!cacheStatus)
                         return GiveUpOnCache;
+                    if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                        return RetryCacheLater; // §38: the flatten runs once the lock is dropped
 
                     if (cacheStatus->flattenedDictionary) {
                         // Property offsets may have changed due to flattening. We'll cache later.
@@ -827,6 +828,8 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                         prototypeAccessChain = PolyProtoAccessChain::tryCreate(globalObject, baseCell, propertyName, slot);
                         if (!prototypeAccessChain)
                             return GiveUpOnCache;
+                        if (vm.gilOff() && !slot.isCacheableCustom() && prototypeAccessChain->slotBaseStructure(vm, structure)->get(vm, propertyName.uid()) != offset) [[unlikely]]
+                            return RetryCacheLater; // OM-1 racing-holder-transition guard, poly-proto form (the access would load through the chain's CURRENT offset, which this attempt no longer trusts)
                         ASSERT(slot.isCacheableCustom() || prototypeAccessChain->slotBaseStructure(vm, structure)->get(vm, propertyName.uid()) == offset);
                     } else {
                         // We use ObjectPropertyConditionSet instead for faster accesses.
@@ -947,7 +950,9 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
 {
     SuperSamplerScope superSamplerScope(false);
 
-    switch (tryCacheGetBy(globalObject, codeBlock, baseValue, propertyName, slot, propertyCache, kind, isNonStringPrimitiveKey)) {
+    InlineCacheAction action = tryCacheGetBy(globalObject, codeBlock, baseValue, propertyName, slot, propertyCache, kind, isNonStringPrimitiveKey);
+    Structure::runDeferredFlattenGILOff(globalObject->vm()); // §38: codeBlock->m_lock is no longer held
+    switch (action) {
     case PromoteToMegamorphic: {
         switch (kind) {
         case GetByKind::ById:
@@ -1103,6 +1108,8 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
                 auto cacheStatus = prepareChainForCaching(globalObject, base, nullptr, nullptr);
                 if (!cacheStatus)
                     return GiveUpOnCache;
+                if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                    return RetryCacheLater; // §38: the flatten runs once the lock is dropped
 
                 if (cacheStatus->usesPolyProto)
                     return GiveUpOnCache;
@@ -1137,7 +1144,9 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
 
 void repatchArrayGetByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, JSValue index, PropertyInlineCache& propertyCache, GetByKind kind)
 {
-    switch (tryCacheArrayGetByVal(globalObject, codeBlock, base, index, propertyCache)) {
+    InlineCacheAction action = tryCacheArrayGetByVal(globalObject, codeBlock, base, index, propertyCache);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    switch (action) {
     case PromoteToMegamorphic: {
         switch (kind) {
         case GetByKind::ById:
@@ -1511,6 +1520,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                     auto cacheStatus = prepareChainForCaching(globalObject, baseCell, propertyName.uid(), nullptr);
                     if (!cacheStatus)
                         return GiveUpOnCache;
+                    if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                        return RetryCacheLater; // §38: the flatten runs once the lock is dropped
 
                     if (cacheStatus->usesPolyProto) {
                         prototypeAccessChain = PolyProtoAccessChain::tryCreate(globalObject, baseCell, propertyName, nullptr);
@@ -1551,6 +1562,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 auto cacheStatus = prepareChainForCaching(globalObject, baseCell, propertyName.uid(), slot.base());
                 if (!cacheStatus)
                     return GiveUpOnCache;
+                if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                    return RetryCacheLater; // §38: the flatten runs once the lock is dropped
 
                 if (slot.base() != baseValue) {
                     if (cacheStatus->usesPolyProto) {
@@ -1597,6 +1610,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                     auto cacheStatus = prepareChainForCaching(globalObject, baseCell, propertyName.uid(), slot.base());
                     if (!cacheStatus)
                         return GiveUpOnCache;
+                    if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                        return RetryCacheLater; // §38: the flatten runs once the lock is dropped
                     if (cacheStatus->flattenedDictionary)
                         return RetryCacheLater;
 
@@ -1686,7 +1701,9 @@ void repatchPutBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
 {
     SuperSamplerScope superSamplerScope(false);
 
-    switch (tryCachePutBy(globalObject, codeBlock, baseValue, oldStructure, propertyName, slot, propertyCache, putByKind, isNonStringPrimitiveKey)) {
+    InlineCacheAction action = tryCachePutBy(globalObject, codeBlock, baseValue, oldStructure, propertyName, slot, propertyCache, putByKind, isNonStringPrimitiveKey);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    switch (action) {
     case PromoteToMegamorphic: {
         switch (putByKind) {
         case PutByKind::ByIdStrict:
@@ -1824,7 +1841,9 @@ static InlineCacheAction tryCacheArrayPutByVal(JSGlobalObject* globalObject, Cod
 
 void repatchArrayPutByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, JSValue index, PropertyInlineCache& propertyCache, PutByKind putByKind)
 {
-    switch (tryCacheArrayPutByVal(globalObject, codeBlock, base, index, propertyCache, putByKind)) {
+    InlineCacheAction action = tryCacheArrayPutByVal(globalObject, codeBlock, base, index, propertyCache, putByKind);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    switch (action) {
     case PromoteToMegamorphic: {
         switch (putByKind) {
         case PutByKind::ByIdStrict:
@@ -1881,6 +1900,11 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
         if (baseValue.asCell()->structure()->isDictionary()) {
             if (baseValue.asCell()->structure()->hasBeenFlattenedBefore())
                 return GiveUpOnCache;
+            if (vm.gilOff()) [[unlikely]] {
+                // See actionForCell: deferred to the unlocked caller.
+                Structure::requestDeferredFlattenGILOff(uncheckedDowncast<JSObject>(baseValue));
+                return RetryCacheLater;
+            }
             uncheckedDowncast<JSObject>(baseValue)->flattenDictionaryObject(vm);
             return RetryCacheLater;
         }
@@ -1931,7 +1955,9 @@ void repatchDeleteBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, DeleteP
 {
     SuperSamplerScope superSamplerScope(false);
 
-    if (tryCacheDeleteBy(globalObject, codeBlock, slot, baseValue, oldStructure, propertyName, propertyCache, kind, ecmaMode) == GiveUpOnCache) {
+    InlineCacheAction action = tryCacheDeleteBy(globalObject, codeBlock, slot, baseValue, oldStructure, propertyName, propertyCache, kind, ecmaMode);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    if (action == GiveUpOnCache) {
         LOG_IC((ICEvent::DelByReplaceWithGeneric, baseValue.classInfoOrNull()));
         switch (kind) {
         case DelByKind::ByIdStrict:
@@ -2048,6 +2074,8 @@ static InlineCacheAction tryCacheInBy(
                 auto cacheStatus = prepareChainForCaching(globalObject, base, propertyName.uid(), slot);
                 if (!cacheStatus)
                     return GiveUpOnCache;
+                if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                    return RetryCacheLater; // §38: the flatten runs once the lock is dropped
                 if (cacheStatus->flattenedDictionary)
                     return RetryCacheLater;
 
@@ -2055,6 +2083,8 @@ static InlineCacheAction tryCacheInBy(
                     prototypeAccessChain = PolyProtoAccessChain::tryCreate(globalObject, base, propertyName, slot);
                     if (!prototypeAccessChain)
                         return GiveUpOnCache;
+                    if (vm.gilOff() && !slot.isCacheableCustom() && prototypeAccessChain->slotBaseStructure(vm, structure)->get(vm, propertyName.uid()) != slot.cachedOffset()) [[unlikely]]
+                        return RetryCacheLater; // same racing-holder-transition guard as below
                     ASSERT(slot.isCacheableCustom() || prototypeAccessChain->slotBaseStructure(vm, structure)->get(vm, propertyName.uid()) == slot.cachedOffset());
                 } else {
                     prototypeAccessChain = nullptr;
@@ -2062,6 +2092,15 @@ static InlineCacheAction tryCacheInBy(
                         vm, codeBlock, globalObject, structure, slot.slotBase(), ident.impl());
                     if (!conditionSet.isValid())
                         return GiveUpOnCache;
+                    // GIL off the holder is re-walked after the lookup that filled
+                    // `slot`; a racing transition of the holder - since the eighth
+                    // round also a dictionary flatten, which renumbers offsets under
+                    // a NEW structure (SPEC-jit history §38) - can leave the fresh
+                    // condition's offset disagreeing with the slot's. Benign here (an
+                    // InHit never loads through the offset) but retried rather than
+                    // asserted, as tryCacheGetBy's OM-1 guard does.
+                    if (vm.gilOff() && !slot.isCacheableCustom() && conditionSet.slotBaseCondition().offset() != slot.cachedOffset()) [[unlikely]]
+                        return RetryCacheLater;
                     ASSERT(slot.isCacheableCustom() || conditionSet.slotBaseCondition().offset() == slot.cachedOffset());
                 }
             }
@@ -2072,6 +2111,8 @@ static InlineCacheAction tryCacheInBy(
             auto cacheStatus = prepareChainForCaching(globalObject, base, propertyName.uid(), nullptr);
             if (!cacheStatus)
                 return GiveUpOnCache;
+            if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                return RetryCacheLater; // §38: the flatten runs once the lock is dropped
 
             if (cacheStatus->usesPolyProto) {
                 prototypeAccessChain = PolyProtoAccessChain::tryCreate(globalObject, base, propertyName, slot);
@@ -2107,7 +2148,9 @@ void repatchInBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSObject* b
 {
     SuperSamplerScope superSamplerScope(false);
 
-    switch (tryCacheInBy(globalObject, codeBlock, baseObject, propertyName, wasFound, slot, propertyCache, kind)) {
+    InlineCacheAction action = tryCacheInBy(globalObject, codeBlock, baseObject, propertyName, wasFound, slot, propertyCache, kind);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    switch (action) {
     case PromoteToMegamorphic: {
         switch (kind) {
         case InByKind::ById:
@@ -2168,7 +2211,9 @@ void repatchHasPrivateBrand(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
 {
     SuperSamplerScope superSamplerScope(false);
 
-    if (tryCacheHasPrivateBrand(globalObject, codeBlock, baseObject, brandID, wasFound, propertyCache) == GiveUpOnCache)
+    InlineCacheAction action = tryCacheHasPrivateBrand(globalObject, codeBlock, baseObject, brandID, wasFound, propertyCache);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    if (action == GiveUpOnCache)
         repatchSlowPathCallLocking(codeBlock, propertyCache, operationHasPrivateBrandGaveUp);
 }
 
@@ -2210,7 +2255,9 @@ void repatchCheckPrivateBrand(JSGlobalObject* globalObject, CodeBlock* codeBlock
 {
     SuperSamplerScope superSamplerScope(false);
 
-    if (tryCacheCheckPrivateBrand(globalObject, codeBlock, baseObject, brandID, propertyCache) == GiveUpOnCache)
+    InlineCacheAction action = tryCacheCheckPrivateBrand(globalObject, codeBlock, baseObject, brandID, propertyCache);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    if (action == GiveUpOnCache)
         repatchSlowPathCallLocking(codeBlock, propertyCache, operationCheckPrivateBrandGaveUp);
 }
 
@@ -2270,7 +2317,9 @@ void repatchSetPrivateBrand(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
 {
     SuperSamplerScope superSamplerScope(false);
 
-    if (tryCacheSetPrivateBrand(globalObject, codeBlock, baseObject, oldStructure,  brandID, propertyCache) == GiveUpOnCache)
+    InlineCacheAction action = tryCacheSetPrivateBrand(globalObject, codeBlock, baseObject, oldStructure,  brandID, propertyCache);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    if (action == GiveUpOnCache)
         repatchSlowPathCallLocking(codeBlock, propertyCache, operationSetPrivateBrandGaveUp);
 }
 
@@ -2299,7 +2348,9 @@ static InlineCacheAction tryCacheInstanceOf(JSGlobalObject* globalObject, CodeBl
             } else if (structure->prototypeQueriesAreCacheable()) {
                 // FIXME: Teach this to do poly proto.
                 // https://bugs.webkit.org/show_bug.cgi?id=185663
-                prepareChainForCaching(globalObject, value, nullptr, wasFound ? prototype : nullptr);
+                auto cacheStatus = prepareChainForCaching(globalObject, value, nullptr, wasFound ? prototype : nullptr);
+                if (cacheStatus && cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                    return RetryCacheLater; // §38
                 ObjectPropertyConditionSet conditionSet = generateConditionsForInstanceOf(
                     vm, codeBlock, globalObject, structure, prototype, wasFound);
 
@@ -2427,6 +2478,8 @@ static InlineCacheAction tryCacheArrayInByVal(JSGlobalObject* globalObject, Code
                 auto cacheStatus = prepareChainForCaching(globalObject, base, nullptr, nullptr);
                 if (!cacheStatus)
                     return GiveUpOnCache;
+                if (cacheStatus->flattenedDictionary && vm.gilOff()) [[unlikely]]
+                    return RetryCacheLater; // §38: the flatten runs once the lock is dropped
 
                 if (cacheStatus->usesPolyProto)
                     return GiveUpOnCache;
@@ -2458,7 +2511,9 @@ static InlineCacheAction tryCacheArrayInByVal(JSGlobalObject* globalObject, Code
 
 void repatchArrayInByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, JSValue index, PropertyInlineCache& propertyCache, InByKind kind)
 {
-    switch (tryCacheArrayInByVal(globalObject, codeBlock, base, index, propertyCache)) {
+    InlineCacheAction action = tryCacheArrayInByVal(globalObject, codeBlock, base, index, propertyCache);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    switch (action) {
     case PromoteToMegamorphic: {
         switch (kind) {
         case InByKind::ById:
@@ -2487,7 +2542,9 @@ void repatchInstanceOf(
     bool wasFound)
 {
     SuperSamplerScope superSamplerScope(false);
-    if (tryCacheInstanceOf(globalObject, codeBlock, valueValue, prototypeValue, propertyCache, wasFound) == GiveUpOnCache)
+    InlineCacheAction action = tryCacheInstanceOf(globalObject, codeBlock, valueValue, prototypeValue, propertyCache, wasFound);
+    Structure::runDeferredFlattenGILOff(globalObject->vm());
+    if (action == GiveUpOnCache)
         repatchSlowPathCallLocking(codeBlock, propertyCache, operationInstanceOfGaveUp);
 }
 

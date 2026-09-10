@@ -42,12 +42,43 @@ void OSRExitHandle::emitExitThunk(State& state, CCallHelpers& jit)
     CCallHelpers::Label myLabel = jit.label();
     label = myLabel;
     jit.pushToSaveImmediateWithoutTouchingRegisters(CCallHelpers::TrustedImm32(m_index));
+#if CPU(X86_64)
+    // GIL off the patchable jump below is never repatched to the compiled ramp
+    // (no patching of reachable code outside a stop), so every exit of an
+    // already-compiled ramp went through the generation thunk and
+    // operationCompileFTLOSRExit's published-pointer fast path. Read the
+    // pointer compileStub publishes (release) here instead and jump to the
+    // ramp directly once it exists; every register is live at an exit, so the
+    // one we borrow is saved on the stack and the jump is a ret through it.
+    // Flag-off / GIL-on: the patchable jump alone, as before.
+    CCallHelpers::JumpList notYetCompiled;
+    CCallHelpers::DataLabelPtr codePtrSlot;
+    const bool readPublishedRamp = state.vm().gilOff();
+    if (readPublishedRamp) {
+        jit.subPtr(CCallHelpers::TrustedImm32(sizeof(void*)), CCallHelpers::stackPointerRegister); // slot for the ramp address
+        jit.pushToSave(X86Registers::eax);
+        codePtrSlot = jit.moveWithPatch(CCallHelpers::TrustedImmPtr(nullptr), X86Registers::eax); // &m_osrExit[i].m_codePtrForConcurrentReaders, patched at link
+        jit.loadPtr(CCallHelpers::Address(X86Registers::eax), X86Registers::eax);
+        notYetCompiled.append(jit.branchTestPtr(CCallHelpers::Zero, X86Registers::eax));
+        jit.storePtr(X86Registers::eax, CCallHelpers::Address(CCallHelpers::stackPointerRegister, sizeof(void*)));
+        jit.popToRestore(X86Registers::eax);
+        jit.ret(); // pops the ramp address; the exit index stays pushed, as the ramp expects
+        notYetCompiled.link(&jit);
+        jit.popToRestore(X86Registers::eax);
+        jit.addPtr(CCallHelpers::TrustedImm32(sizeof(void*)), CCallHelpers::stackPointerRegister);
+    }
+#else
+    const bool readPublishedRamp = false;
+    CCallHelpers::DataLabelPtr codePtrSlot;
+#endif
     CCallHelpers::PatchableJump jump = jit.patchableJump();
     jump.linkThunk(CodeLocationLabel<JITThunkPtrTag>(state.vm().getCTIStub(osrExitGenerationThunkGenerator).code()), &jit);
     RefPtr<OSRExitHandle> self = this;
     jit.addLinkTask(
-        [self, jump, myLabel, compilation] (LinkBuffer& linkBuffer) {
+        [self, jump, myLabel, compilation, readPublishedRamp, codePtrSlot] (LinkBuffer& linkBuffer) {
             self->m_jitCode->m_osrExit[self->m_index].m_patchableJump = CodeLocationJump<JSInternalPtrTag>(linkBuffer.locationOf<JSInternalPtrTag>(jump));
+            if (readPublishedRamp)
+                linkBuffer.patch(codePtrSlot, &self->m_jitCode->m_osrExit[self->m_index].m_codePtrForConcurrentReaders); // m_osrExit is complete by link time, so the element no longer moves
             if (compilation)
                 compilation->addOSRExitSite({ linkBuffer.locationOf<JSInternalPtrTag>(myLabel) });
         });

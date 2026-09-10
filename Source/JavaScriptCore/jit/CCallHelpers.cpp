@@ -254,7 +254,7 @@ auto CCallHelpers::loadButterflyForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg 
     return slowCases;
 }
 
-void CCallHelpers::loadProperty(GPRReg object, GPRReg offset, JSValueRegs result, GPRReg storageScratch, JumpList& slowCases, GPRReg structureIDGPR)
+void CCallHelpers::loadProperty(GPRReg object, GPRReg offset, GPRReg result, GPRReg storageScratch, JumpList& slowCases, GPRReg structureIDGPR)
 {
     if (!Options::useJSThreads()) [[likely]] {
         AssemblyHelpers::loadProperty(object, offset, result);
@@ -285,7 +285,7 @@ void CCallHelpers::loadProperty(GPRReg object, GPRReg offset, JSValueRegs result
         result);
 }
 
-void CCallHelpers::storeProperty(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg tidScratch, JumpList& slowCases, GPRReg structureIDGPR)
+void CCallHelpers::storeProperty(GPRReg value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg tidScratch, JumpList& slowCases, GPRReg structureIDGPR)
 {
     if (!Options::useJSThreads()) [[likely]] {
         AssemblyHelpers::storeProperty(value, object, offset, scratch);

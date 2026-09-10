@@ -427,6 +427,12 @@ private:
     Atomic<WatchpointState> m_state;
     Atomic<bool> m_setIsNotEmpty;
     Atomic<int8_t> m_invalidatesCode; // SPEC-jit section 5.6 classification bit; immutable after construction (I10).
+    // Flag-on: set (under the membership lock) the first time a watchpoint is
+    // linked or spliced in, never cleared. A set that never linked anything -
+    // every DeferredWatchpointFire's private set whose source fire found no
+    // watchers, i.e. the hot transition paths - has no member that could be
+    // mid-removal, so its destructor skips the global membership lock.
+    Atomic<bool> m_everLinked;
 
     SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>> m_set;
 };

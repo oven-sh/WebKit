@@ -408,6 +408,23 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
             debugger->registerCodeBlock(genericCodeBlock);
     }
 
+    // SPEC-ungil eighth round ("loop entry into the superseded DFG code"):
+    // GIL off, several threads can be running one function's Baseline code in
+    // long loops when an FTL function-entry replacement is installed over its
+    // DFG code. Those frames can change tier only by loop OSR entry, which
+    // needs a DFG target; with the replacement now FTL every attempt failed
+    // ("target code block is not DFG"), counted as an exit against the FTL
+    // code, and the frames stayed in Baseline until enough failures
+    // jettisoned it - on the scaling suite's string-heavy, 1,900 failed
+    // entries and four threads at 0.9x of one. Keep the superseded DFG block
+    // enterable for them: it is still valid code (frames may be running it),
+    // and it is dropped again when it is jettisoned.
+    if (vm.gilOffWithProcessGate() && genericCodeBlock && oldCodeBlock && oldCodeBlock != genericCodeBlock
+        && genericCodeBlock->jitType() == JITType::FTLJIT && oldCodeBlock->jitType() == JITType::DFGJIT && !oldCodeBlock->isJettisoned()) [[unlikely]] {
+        if (CodeBlock* baseline = genericCodeBlock->baselineAlternative(); baseline && baseline != genericCodeBlock && baseline == oldCodeBlock->baselineAlternative())
+            baseline->setGILOffDFGForLoopEntry(vm, oldCodeBlock);
+    }
+
     if (oldCodeBlock)
         oldCodeBlock->unlinkOrUpgradeIncomingCalls(vm, genericCodeBlock);
 

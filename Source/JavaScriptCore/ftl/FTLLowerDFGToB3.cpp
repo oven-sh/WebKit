@@ -1714,6 +1714,12 @@ private:
         case GlobalIsFinite:
             compileGlobalIsFinite();
             break;
+        case GeneratorClaimResume:
+            compileGeneratorClaimResume();
+            break;
+        case GeneratorPublishResume:
+            compileGeneratorPublishResume();
+            break;
         case NumberIsFinite:
             compileNumberIsFinite();
             break;
@@ -5073,13 +5079,13 @@ private:
             if (Options::useHandlerICInFTL()) {
                 // Handler-IC protocol: operands, cache pointer and result live in
                 // the Baseline data-IC registers (see configurePatchpointForHandlerIC).
-                ASSERT(resultGPR == BaselineJITRegisters::GetByValWithThis::resultJSR.payloadGPR());
+                ASSERT(resultGPR == BaselineJITRegisters::GetByValWithThis::resultGPR);
                 jit.shuffleRegisters<GPRReg, 3>(
                     { baseGPR, propertyGPR, thisValueGPR },
-                    { BaselineJITRegisters::GetByValWithThis::baseJSR.payloadGPR(), BaselineJITRegisters::GetByValWithThis::propertyJSR.payloadGPR(), BaselineJITRegisters::GetByValWithThis::thisJSR.payloadGPR() });
-                baseGPR = BaselineJITRegisters::GetByValWithThis::baseJSR.payloadGPR();
-                propertyGPR = BaselineJITRegisters::GetByValWithThis::propertyJSR.payloadGPR();
-                thisValueGPR = BaselineJITRegisters::GetByValWithThis::thisJSR.payloadGPR();
+                    { BaselineJITRegisters::GetByValWithThis::baseGPR, BaselineJITRegisters::GetByValWithThis::propertyGPR, BaselineJITRegisters::GetByValWithThis::thisGPR });
+                baseGPR = BaselineJITRegisters::GetByValWithThis::baseGPR;
+                propertyGPR = BaselineJITRegisters::GetByValWithThis::propertyGPR;
+                thisValueGPR = BaselineJITRegisters::GetByValWithThis::thisGPR;
                 propertyCacheGPR = BaselineJITRegisters::GetByValWithThis::propertyCacheGPR;
             }
 
@@ -5243,12 +5249,12 @@ private:
                 GPRReg propertyGPR = params[2].gpr();
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
-                    ASSERT(resultGPR == BaselineJITRegisters::GetByVal::resultJSR.payloadGPR());
+                    ASSERT(resultGPR == BaselineJITRegisters::GetByVal::resultGPR);
                     jit.shuffleRegisters<GPRReg, 2>(
                         { baseGPR, propertyGPR },
-                        { BaselineJITRegisters::GetByVal::baseJSR.payloadGPR(), BaselineJITRegisters::GetByVal::propertyJSR.payloadGPR() });
-                    baseGPR = BaselineJITRegisters::GetByVal::baseJSR.payloadGPR();
-                    propertyGPR = BaselineJITRegisters::GetByVal::propertyJSR.payloadGPR();
+                        { BaselineJITRegisters::GetByVal::baseGPR, BaselineJITRegisters::GetByVal::propertyGPR });
+                    baseGPR = BaselineJITRegisters::GetByVal::baseGPR;
+                    propertyGPR = BaselineJITRegisters::GetByVal::propertyGPR;
                     propertyCacheGPR = BaselineJITRegisters::GetByVal::propertyCacheGPR;
                 }
 
@@ -5401,9 +5407,9 @@ private:
             if (Options::useHandlerICInFTL()) {
                 jit.shuffleRegisters<GPRReg, 2>(
                     { baseGPR, brandGPR },
-                    { BaselineJITRegisters::PrivateBrand::baseJSR.payloadGPR(), BaselineJITRegisters::PrivateBrand::propertyJSR.payloadGPR() });
-                baseGPR = BaselineJITRegisters::PrivateBrand::baseJSR.payloadGPR();
-                brandGPR = BaselineJITRegisters::PrivateBrand::propertyJSR.payloadGPR();
+                    { BaselineJITRegisters::PrivateBrand::baseGPR, BaselineJITRegisters::PrivateBrand::propertyGPR });
+                baseGPR = BaselineJITRegisters::PrivateBrand::baseGPR;
+                brandGPR = BaselineJITRegisters::PrivateBrand::propertyGPR;
                 propertyCacheGPR = BaselineJITRegisters::PrivateBrand::propertyCacheGPR;
             }
 
@@ -5660,10 +5666,10 @@ private:
             if (Options::useHandlerICInFTL()) {
                 jit.shuffleRegisters<GPRReg, 3>(
                     { baseGPR, propertyGPR, valueGPR },
-                    { BaselineJITRegisters::PutByVal::baseJSR.payloadGPR(), BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR(), BaselineJITRegisters::PutByVal::valueJSR.payloadGPR() });
-                baseGPR = BaselineJITRegisters::PutByVal::baseJSR.payloadGPR();
-                propertyGPR = BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR();
-                valueGPR = BaselineJITRegisters::PutByVal::valueJSR.payloadGPR();
+                    { BaselineJITRegisters::PutByVal::baseGPR, BaselineJITRegisters::PutByVal::propertyGPR, BaselineJITRegisters::PutByVal::valueGPR });
+                baseGPR = BaselineJITRegisters::PutByVal::baseGPR;
+                propertyGPR = BaselineJITRegisters::PutByVal::propertyGPR;
+                valueGPR = BaselineJITRegisters::PutByVal::valueGPR;
                 propertyCacheGPR = BaselineJITRegisters::PutByVal::propertyCacheGPR;
             }
 
@@ -6064,9 +6070,9 @@ private:
                 if (Options::useHandlerICInFTL()) {
                     jit.shuffleRegisters<GPRReg, 2>(
                         { baseGPR, valueGPR },
-                        { BaselineJITRegisters::PutById::baseJSR.payloadGPR(), BaselineJITRegisters::PutById::valueJSR.payloadGPR() });
-                    baseGPR = BaselineJITRegisters::PutById::baseJSR.payloadGPR();
-                    valueGPR = BaselineJITRegisters::PutById::valueJSR.payloadGPR();
+                        { BaselineJITRegisters::PutById::baseGPR, BaselineJITRegisters::PutById::valueGPR });
+                    baseGPR = BaselineJITRegisters::PutById::baseGPR;
+                    valueGPR = BaselineJITRegisters::PutById::valueGPR;
                     propertyCacheGPR = BaselineJITRegisters::PutById::propertyCacheGPR;
                     scratchGPR = BaselineJITRegisters::PutById::scratch1GPR;
                 }
@@ -6432,7 +6438,37 @@ private:
     {
         if (!(isInt32Mode && Options::useJSThreads() && !Options::useThreadGIL())) [[likely]]
             return;
-        speculate(BadType, noValue(), nullptr, m_out.bitAnd(m_out.notZero64(lane), isNotInt32(lane)));
+        // One compare: lane - 1 wraps a hole (0) to the top of the range, so
+        // "not a hole and below the number tag" is (lane - 1) < (numberTag - 1)
+        // unsigned (eighth round: the and-of-two-flags form cost seven
+        // instructions per element load in `crypto`'s inner loops).
+        speculate(BadType, noValue(), nullptr, m_out.below(m_out.sub(lane, m_out.constInt64(1)), m_out.constInt64(JSValue::NumberTag - 1)));
+    }
+
+    // SPEC-jit history §39: GIL off the FTL keeps a GetButterfly result across
+    // polls. A flat butterfly that a foreign thread has since converted to
+    // segmented storage keeps serving the lanes below its frozen vectorLength
+    // (they are aliased), but its publicLength slot is the segmented array's
+    // and can grow past that vectorLength (SPEC-objectmodel I9b). So a bound
+    // taken from publicLength through a storage edge is clamped to the same
+    // butterfly's vectorLength (scans and reads: the access linearizes before
+    // the foreign appends), and in-place mutators take their slow path when
+    // the two disagree. Flag-off / GIL-on: publicLength as is.
+    bool storageMayBeHoistedAcrossPolls() const { return Options::useJSThreads() && !Options::useThreadGIL(); }
+    LValue publicLengthForBounds(LValue storage)
+    {
+        LValue publicLength = m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength);
+        if (!storageMayBeHoistedAcrossPolls()) [[likely]]
+            return publicLength;
+        LValue vectorLength = m_out.load32NonNegative(storage, m_heaps.Butterfly_vectorLength);
+        return m_out.select(m_out.below(publicLength, vectorLength), publicLength, vectorLength);
+    }
+    // For the in-place mutators (pop/shift/unshift): true when the storage's
+    // publicLength no longer fits its vectorLength, i.e. the storage is stale.
+    LValue storageIsStaleForMutation(LValue storage, LValue publicLength)
+    {
+        ASSERT(storageMayBeHoistedAcrossPolls());
+        return m_out.above(publicLength, m_out.load32NonNegative(storage, m_heaps.Butterfly_vectorLength));
     }
 
     ThreadedButterflyAccess threadedButterflyLoadForRead(LValue base, const ThreadedButterflyPlan& plan)
@@ -7044,6 +7080,11 @@ IGNORE_CLANG_WARNINGS_END
         case Array::SlowPutArrayStorage:
             setInt32(m_out.load32NonNegative(lowStorage(m_node->child2()), m_heaps.ArrayStorage_vectorLength));
             return;
+        case Array::Int32:
+        case Array::Double:
+        case Array::Contiguous:
+            setInt32(m_out.load32NonNegative(lowStorage(m_node->child2()), m_heaps.Butterfly_vectorLength)); // §39 bound, GIL off
+            return;
         default:
             return;
         }
@@ -7135,8 +7176,7 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock continuation = m_out.newBlock();
 
             m_out.branch(
-                m_out.aboveOrEqual(
-                    index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)),
+                m_out.aboveOrEqual(index, publicLengthForBounds(storage)),
                 rarely(slowCase), usually(fastCase));
 
             LBasicBlock lastNext = m_out.appendTo(fastCase, slowCase);
@@ -7190,8 +7230,7 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock continuation = m_out.newBlock();
 
             m_out.branch(
-                m_out.aboveOrEqual(
-                    index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)),
+                m_out.aboveOrEqual(index, publicLengthForBounds(storage)),
                 rarely(slowCase), usually(inBounds));
 
             LBasicBlock lastNext = m_out.appendTo(inBounds, boxPath);
@@ -7395,12 +7434,12 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg propertyGPR = params[2].gpr();
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
-                    ASSERT(resultGPR == BaselineJITRegisters::GetByVal::resultJSR.payloadGPR());
+                    ASSERT(resultGPR == BaselineJITRegisters::GetByVal::resultGPR);
                     jit.shuffleRegisters<GPRReg, 2>(
                         { baseGPR, propertyGPR },
-                        { BaselineJITRegisters::GetByVal::baseJSR.payloadGPR(), BaselineJITRegisters::GetByVal::propertyJSR.payloadGPR() });
-                    baseGPR = BaselineJITRegisters::GetByVal::baseJSR.payloadGPR();
-                    propertyGPR = BaselineJITRegisters::GetByVal::propertyJSR.payloadGPR();
+                        { BaselineJITRegisters::GetByVal::baseGPR, BaselineJITRegisters::GetByVal::propertyGPR });
+                    baseGPR = BaselineJITRegisters::GetByVal::baseGPR;
+                    propertyGPR = BaselineJITRegisters::GetByVal::propertyGPR;
                     propertyCacheGPR = BaselineJITRegisters::GetByVal::propertyCacheGPR;
                 }
 
@@ -8160,10 +8199,10 @@ IGNORE_CLANG_WARNINGS_END
                 if (Options::useHandlerICInFTL()) {
                     jit.shuffleRegisters<GPRReg, 3>(
                         { baseGPR, propertyGPR, valueGPR },
-                        { BaselineJITRegisters::PutByVal::baseJSR.payloadGPR(), BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR(), BaselineJITRegisters::PutByVal::valueJSR.payloadGPR() });
-                    baseGPR = BaselineJITRegisters::PutByVal::baseJSR.payloadGPR();
-                    propertyGPR = BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR();
-                    valueGPR = BaselineJITRegisters::PutByVal::valueJSR.payloadGPR();
+                        { BaselineJITRegisters::PutByVal::baseGPR, BaselineJITRegisters::PutByVal::propertyGPR, BaselineJITRegisters::PutByVal::valueGPR });
+                    baseGPR = BaselineJITRegisters::PutByVal::baseGPR;
+                    propertyGPR = BaselineJITRegisters::PutByVal::propertyGPR;
+                    valueGPR = BaselineJITRegisters::PutByVal::valueGPR;
                     propertyCacheGPR = BaselineJITRegisters::PutByVal::propertyCacheGPR;
                 }
 
@@ -8822,7 +8861,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 auto base = params[1].gpr();
                 auto returnGPR = params[0].gpr();
-                ASSERT(base.gpr() != returnGPR);
+                ASSERT(base != returnGPR);
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
                     // The handler protocol's baseJSR is argumentGPR0, which is
@@ -9315,7 +9354,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue sourceArray = lowCell(m_graph.varArgChild(m_node, 0));
         LValue sourceStorage = lowStorage(m_graph.varArgChild(m_node, m_node->numChildren() - 1));
-        LValue inputLength = m_out.load32(sourceStorage, m_heaps.Butterfly_publicLength);
+        LValue inputLength = publicLengthForBounds(sourceStorage); // §39: copy what this storage holds
 
         LValue startIndex = nullptr;
         LValue resultLength = nullptr;
@@ -9482,7 +9521,7 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LValue base = lowCell(m_graph.varArgChild(m_node, 0));
         LValue storage = lowStorage(m_node->numChildren() == 3 ? m_graph.varArgChild(m_node, 2) : m_graph.varArgChild(m_node, 3));
-        LValue length = m_out.load32(storage, m_heaps.Butterfly_publicLength);
+        LValue length = publicLengthForBounds(storage); // §39: scan what this storage holds
 
         LValue startIndex;
         if (m_node->numChildren() == 4) {
@@ -9879,6 +9918,12 @@ IGNORE_CLANG_WARNINGS_END
 
             Vector<ValueFromBlock, 3> results;
             results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
+            if (storageMayBeHoistedAcrossPolls()) [[unlikely]] {
+                // §39: a stale (foreign-converted) storage pops through the runtime.
+                LBasicBlock notStale = m_out.newBlock();
+                m_out.branch(storageIsStaleForMutation(storage, prevLength), rarely(slowCase), usually(notStale));
+                m_out.appendTo(notStale);
+            }
             m_out.branch(
                 m_out.isZero32(prevLength), rarely(continuation), usually(fastCase));
 
@@ -10005,6 +10050,11 @@ IGNORE_CLANG_WARNINGS_END
 
             Vector<ValueFromBlock, 4> results;
             results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
+            if (storageMayBeHoistedAcrossPolls()) [[unlikely]] {
+                LBasicBlock notStale = m_out.newBlock(); // §39
+                m_out.branch(storageIsStaleForMutation(storage, prevLength), rarely(slowCase), usually(notStale));
+                m_out.appendTo(notStale);
+            }
             m_out.branch(m_out.isZero32(prevLength), rarely(continuation), usually(checkLengthOne));
 
             LBasicBlock lastNext = m_out.appendTo(checkLengthOne, notLengthOneCase);
@@ -17609,6 +17659,53 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
+    // SPEC-ungil §N.5: see DFG::SpeculativeJIT::compileGeneratorClaimResume.
+    LValue generatorClaimToken()
+    {
+        return m_out.load64(m_out.address(m_heaps.root, currentVMLitePointer(), VMLite::offsetOfGeneratorClaimToken()));
+    }
+    void compileGeneratorClaimResume()
+    {
+        LValue generator = lowCell(m_node->child1());
+        LValue token = generatorClaimToken();
+        TypedPointer state = m_out.address(generator, m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSGenerator::Field::State)]);
+        LValue completedBits = m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Completed))));
+        LValue executingBits = m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Executing))));
+
+        LBasicBlock loop = m_out.newBlock();
+        LBasicBlock notCompleted = m_out.newBlock();
+        LBasicBlock suspended = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 3> results;
+        m_out.jump(loop);
+
+        LBasicBlock lastNext = m_out.appendTo(loop, notCompleted);
+        LValue observed = m_out.load64(state);
+        results.append(m_out.anchor(observed));
+        m_out.branch(m_out.equal(observed, completedBits), unsure(continuation), unsure(notCompleted));
+
+        m_out.appendTo(notCompleted, suspended);
+        results.append(m_out.anchor(executingBits));
+        m_out.branch(m_out.greaterThan(m_out.castToInt32(observed), m_out.constInt32(static_cast<int32_t>(JSGenerator::State::Executing))), usually(suspended), rarely(continuation));
+
+        m_out.appendTo(suspended, continuation);
+        LValue witnessed = m_out.atomicStrongCAS(observed, token, state, Width64);
+        results.append(m_out.anchor(observed));
+        m_out.branch(m_out.equal(witnessed, observed), usually(continuation), rarely(loop));
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, results));
+    }
+    void compileGeneratorPublishResume()
+    {
+        LValue generator = lowCell(m_node->child1());
+        LValue token = generatorClaimToken();
+        TypedPointer state = m_out.address(generator, m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSGenerator::Field::State)]);
+        LValue completedBits = m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSGenerator::State::Completed))));
+        LValue witnessed = m_out.atomicStrongCAS(token, completedBits, state, Width64);
+        setBoolean(m_out.equal(witnessed, token));
+    }
+
     void compileGlobalIsFinite()
     {
         switch (m_node->child1().useKind()) {
@@ -19616,12 +19713,12 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg prototypeGPR = params[2].gpr();
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
-                    ASSERT(resultGPR == BaselineJITRegisters::Instanceof::resultJSR.payloadGPR());
+                    ASSERT(resultGPR == BaselineJITRegisters::Instanceof::resultGPR);
                     jit.shuffleRegisters<GPRReg, 2>(
                         { valueGPR, prototypeGPR },
-                        { BaselineJITRegisters::Instanceof::valueJSR.payloadGPR(), BaselineJITRegisters::Instanceof::protoJSR.payloadGPR() });
-                    valueGPR = BaselineJITRegisters::Instanceof::valueJSR.payloadGPR();
-                    prototypeGPR = BaselineJITRegisters::Instanceof::protoJSR.payloadGPR();
+                        { BaselineJITRegisters::Instanceof::valueGPR, BaselineJITRegisters::Instanceof::protoGPR });
+                    valueGPR = BaselineJITRegisters::Instanceof::valueGPR;
+                    prototypeGPR = BaselineJITRegisters::Instanceof::protoGPR;
                     propertyCacheGPR = BaselineJITRegisters::Instanceof::propertyCacheGPR;
                 }
 
@@ -19815,8 +19912,7 @@ IGNORE_CLANG_WARNINGS_END
             if (!mode.isInBounds()) {
                 LBasicBlock checkHole = m_out.newBlock();
                 m_out.branch(
-                    m_out.aboveOrEqual(
-                        index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)),
+                    m_out.aboveOrEqual(index, publicLengthForBounds(storage)), // §39
                     rarely(slowCase), usually(checkHole));
                 lastNext = m_out.appendTo(checkHole, slowCase);
             } else
@@ -19852,8 +19948,7 @@ IGNORE_CLANG_WARNINGS_END
             if (!m_node->arrayMode().isInBounds()) {
                 LBasicBlock checkHole = m_out.newBlock();
                 m_out.branch(
-                    m_out.aboveOrEqual(
-                        index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)),
+                    m_out.aboveOrEqual(index, publicLengthForBounds(storage)), // §39
                     rarely(slowCase), usually(checkHole));
                 lastNext = m_out.appendTo(checkHole, slowCase);
             } else
@@ -20141,7 +20236,7 @@ IGNORE_CLANG_WARNINGS_END
                 case Array::Contiguous:
                 case Array::Double: {
                     LValue storage = lowStorage(m_graph.varArgChild(m_node, m_node->storageChildIndex()));
-                    speculate(OutOfBounds, noValue(), nullptr, m_out.aboveOrEqual(propertyIndex, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)));
+                    speculate(OutOfBounds, noValue(), nullptr, m_out.aboveOrEqual(propertyIndex, publicLengthForBounds(storage))); // §39
                     break;
                 }
                 case Array::ArrayStorage: {
@@ -20586,10 +20681,10 @@ IGNORE_CLANG_WARNINGS_END
             if (Options::useHandlerICInFTL()) {
                 jit.shuffleRegisters<GPRReg, 3>(
                     { baseGPR, propertyGPR, valueGPR },
-                    { BaselineJITRegisters::PutByVal::baseJSR.payloadGPR(), BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR(), BaselineJITRegisters::PutByVal::valueJSR.payloadGPR() });
-                baseGPR = BaselineJITRegisters::PutByVal::baseJSR.payloadGPR();
-                propertyGPR = BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR();
-                valueGPR = BaselineJITRegisters::PutByVal::valueJSR.payloadGPR();
+                    { BaselineJITRegisters::PutByVal::baseGPR, BaselineJITRegisters::PutByVal::propertyGPR, BaselineJITRegisters::PutByVal::valueGPR });
+                baseGPR = BaselineJITRegisters::PutByVal::baseGPR;
+                propertyGPR = BaselineJITRegisters::PutByVal::propertyGPR;
+                valueGPR = BaselineJITRegisters::PutByVal::valueGPR;
                 propertyCacheGPR = BaselineJITRegisters::PutByVal::propertyCacheGPR;
             }
 
@@ -22582,11 +22677,11 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg baseGPR = params[1].gpr();
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
-                    ASSERT(resultGPR == BaselineJITRegisters::GetById::resultJSR.payloadGPR());
+                    ASSERT(resultGPR == BaselineJITRegisters::GetById::resultGPR);
                     jit.shuffleRegisters<GPRReg, 1>(
                         { baseGPR },
-                        { BaselineJITRegisters::GetById::baseJSR.payloadGPR() });
-                    baseGPR = BaselineJITRegisters::GetById::baseJSR.payloadGPR();
+                        { BaselineJITRegisters::GetById::baseGPR });
+                    baseGPR = BaselineJITRegisters::GetById::baseGPR;
                     propertyCacheGPR = BaselineJITRegisters::GetById::propertyCacheGPR;
                 }
 
@@ -22679,12 +22774,12 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg thisGPR = params[2].gpr();
                 GPRReg propertyCacheGPR = InvalidGPRReg;
                 if (Options::useHandlerICInFTL()) {
-                    ASSERT(resultGPR == BaselineJITRegisters::GetByIdWithThis::resultJSR.payloadGPR());
+                    ASSERT(resultGPR == BaselineJITRegisters::GetByIdWithThis::resultGPR);
                     jit.shuffleRegisters<GPRReg, 2>(
                         { baseGPR, thisGPR },
-                        { BaselineJITRegisters::GetByIdWithThis::baseJSR.payloadGPR(), BaselineJITRegisters::GetByIdWithThis::thisJSR.payloadGPR() });
-                    baseGPR = BaselineJITRegisters::GetByIdWithThis::baseJSR.payloadGPR();
-                    thisGPR = BaselineJITRegisters::GetByIdWithThis::thisJSR.payloadGPR();
+                        { BaselineJITRegisters::GetByIdWithThis::baseGPR, BaselineJITRegisters::GetByIdWithThis::thisGPR });
+                    baseGPR = BaselineJITRegisters::GetByIdWithThis::baseGPR;
+                    thisGPR = BaselineJITRegisters::GetByIdWithThis::thisGPR;
                     propertyCacheGPR = BaselineJITRegisters::GetByIdWithThis::propertyCacheGPR;
                 }
 
@@ -26099,8 +26194,7 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock performStore =
                 m_out.newBlock();
 
-            LValue isNotInBounds = m_out.aboveOrEqual(
-                index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength));
+            LValue isNotInBounds = m_out.aboveOrEqual(index, publicLengthForBounds(storage)); // §39: a stale storage's grown publicLength routes to the vectorLength check below
             m_out.branch(isNotInBounds, unsure(notInBoundsCase), unsure(performStore));
 
             LBasicBlock lastNext = m_out.appendTo(notInBoundsCase, performStore);
@@ -28966,6 +29060,21 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (!m_interpreter.needsTypeCheck(edge, SpecStringIdent | ~SpecString))
             return;
+
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            // SPEC-ungil §N.2, reader rule for the known-atom bit: `stringImpl`
+            // was loaded before any bit test and is what the caller goes on to
+            // use, so GIL off the bit cannot vouch for it (another thread may
+            // have resolved the rope in between); check the loaded impl itself.
+            speculate(BadStringType, jsValueValue(string), edge.node(), m_out.testNonZeroPtr(stringImpl, m_out.constIntPtr(JSString::isRopeInPointer)));
+            speculate(
+                BadStringType, jsValueValue(string), edge.node(),
+                m_out.testIsZero32(
+                    m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags),
+                    m_out.constInt32(StringImpl::flagIsAtom())));
+            m_interpreter.filter(edge, SpecStringIdent | ~SpecString);
+            return;
+        }
 
         LBasicBlock checkCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();

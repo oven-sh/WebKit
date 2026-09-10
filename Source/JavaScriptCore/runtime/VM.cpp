@@ -3827,8 +3827,26 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
 
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 {
+    // §37: GIL off the invalidation reaches every thread's cache through the
+    // process counter, whether or not this VM ever made its own cache.
+    if (MegamorphicCache::usesPerThreadCaches()) [[unlikely]] {
+        MegamorphicCache::bumpProcessEpoch();
+        return;
+    }
     if (auto* megamorphicCache = this->megamorphicCache())
         megamorphicCache->bumpEpoch();
+}
+
+MegamorphicCache& VM::megamorphicCacheForFill()
+{
+    if (MegamorphicCache::usesPerThreadCaches()) [[unlikely]] {
+        MegamorphicCache*& slot = VMLite::current().megamorphicCache;
+        if (!slot) [[unlikely]]
+            slot = MegamorphicCache::createForThread().release(); // read by this thread's JIT probes and, world stopped, by the collector; freed by ~VMLite
+        slot->beginFill();
+        return *slot;
+    }
+    return ensureMegamorphicCache();
 }
 
 VM::DrainMicrotaskDelayScope::DrainMicrotaskDelayScope(VM& vm)
