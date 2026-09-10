@@ -62,24 +62,26 @@ ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, Step step, const JSMo
     return context;
 }
 
-ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, JSValue importerAsyncContext)
     : Base(vm, structure)
     , m_moduleRequest(WTF::move(moduleRequest))
     , m_scriptFetcher(WTF::move(scriptFetcher))
 #if USE(BUN_JSC_ADDITIONS)
+    , m_importerAsyncContext(importerAsyncContext, WriteBarrierEarlyInit)
     , m_referrerAsyncOrder(referrerAsyncOrder)
 #endif
     , m_flags(flags)
 {
 #if !USE(BUN_JSC_ADDITIONS)
     UNUSED_PARAM(referrerAsyncOrder);
+    UNUSED_PARAM(importerAsyncContext);
 #endif
 }
 
-ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, JSValue importerAsyncContext)
 {
     AbstractModuleRecord::ModuleRequest requestCopy { moduleRequest };
-    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder, importerAsyncContext);
     context->finishCreation(vm);
     return context;
 }
@@ -104,6 +106,9 @@ void ModuleLoadingContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_entry);
     visitor.append(thisObject->m_referrer);
     visitor.append(thisObject->m_module);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_importerAsyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleLoadingContext);
