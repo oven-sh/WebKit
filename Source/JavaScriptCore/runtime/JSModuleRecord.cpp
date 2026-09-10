@@ -58,35 +58,13 @@ JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Str
 JSModuleRecord* JSModuleRecord::createForGraphInstance(JSGlobalObject* globalObject, VM& vm, JSModuleRecord* templateRecord, ModuleGraphInstance* graphInstance)
 {
     ASSERT(Options::useModuleGraphInstances());
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // The executable is what the instance shares with the template; a template
-    // keeps its executable past evaluation for this (see evaluate()).
-    ModuleProgramExecutable* executable = templateRecord->getOrMakeExecutable(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     JSModuleRecord* record = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, templateRecord->structure(), templateRecord->moduleKey(), templateRecord->sourceCode(), templateRecord->features());
     record->finishCreation(globalObject, vm);
     record->m_templateRecord.set(vm, record, templateRecord);
     record->m_graphInstance.set(vm, record, graphInstance);
-    record->m_moduleProgramExecutable.set(vm, record, executable);
     record->shareDeclarationsWith(vm, templateRecord);
-    if (templateRecord->hasImportedRecords())
-        record->adoptImportedRecords(vm, *templateRecord);
     record->setStatus(Status::Unlinked);
     return record;
-}
-
-void JSModuleRecord::setFunctionDeclarationExecutables(VM& vm, Vector<WriteBarrier<FunctionExecutable>>&& executables)
-{
-    {
-        // The concurrent marker iterates the vector under the cell lock.
-        Locker locker { cellLock() };
-        m_functionDeclarationExecutables = WTF::move(executables);
-    }
-    for (auto& barrier : m_functionDeclarationExecutables) {
-        if (barrier)
-            vm.writeBarrier(this, barrier.get());
-    }
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -144,11 +122,6 @@ void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_moduleProgramExecutable);
     visitor.append(thisObject->m_templateRecord);
     visitor.append(thisObject->m_graphInstance);
-    {
-        Locker locker { thisObject->cellLock() };
-        for (auto& barrier : thisObject->m_functionDeclarationExecutables)
-            visitor.append(barrier);
-    }
 
 #if USE(BUN_JSC_ADDITIONS)
     visitor.reportExtraMemoryVisited(thisObject->sourceCode().memoryCost());
@@ -175,21 +148,17 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
 
     // Module graph instances: by the first run of the body every dependency's
     // environment exists; fill the import slots the ModuleVar fast paths read.
-    if (Options::useModuleGraphInstances() && internalField(Field::State).get() == jsNumber(static_cast<int32_t>(State::Init))) [[unlikely]] {
-        // A host module first produced for a graph instance gets the template
-        // graph's own values now that the template graph uses it.
-        if (!m_templateRecord) {
-            for (const auto& request : requestedModules()) {
-                auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(hostResolveImportedModule(globalObject, request.m_specifier, request.type()));
+    // A host module first produced for a graph instance gets the template
+    // graph's own values now that the template graph uses it.
+    if (Options::useModuleGraphInstances() && !m_templateRecord && internalField(Field::State).get() == jsNumber(static_cast<int32_t>(State::Init))) [[unlikely]] {
+        for (const auto& request : requestedModules()) {
+            auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(hostResolveImportedModule(globalObject, request.m_specifier, request.type()));
+            RETURN_IF_EXCEPTION(scope, { });
+            if (synthetic && synthetic->primaryPending()) {
+                synthetic->materializePrimaryIfPending(globalObject);
                 RETURN_IF_EXCEPTION(scope, { });
-                if (synthetic && synthetic->primaryPending()) {
-                    synthetic->materializePrimaryIfPending(globalObject);
-                    RETURN_IF_EXCEPTION(scope, { });
-                }
             }
         }
-        if (m_moduleEnvironment && m_moduleEnvironment->importSlotCount())
-            m_moduleEnvironment->fillImportSlots(vm);
     }
 
     if (JSValue error = evaluationError()) {
@@ -201,9 +170,7 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, { });
 
-    // A record the loader created keeps its executable when it may serve as the
-    // template of module graph instances (they share it).
-    if (isTopLevelExecutionFinished() && !(Options::useModuleGraphInstances() && !m_templateRecord))
+    if (isTopLevelExecutionFinished())
         m_moduleProgramExecutable.clear();
 
     RELEASE_AND_RETURN(scope, resultOrAwaitedValue);

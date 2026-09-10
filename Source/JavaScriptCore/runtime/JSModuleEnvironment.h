@@ -63,57 +63,15 @@ public:
         return offset;
     }
 
-    // Number of import slots this environment was allocated with (raw word).
-    static size_t offsetOfImportSlotCount(SymbolTable* symbolTable)
+    static size_t allocationSize(SymbolTable* symbolTable)
     {
         return offsetOfModuleRecord(symbolTable) + sizeof(WriteBarrier<AbstractModuleRecord>);
     }
-
-    static size_t offsetOfImportSlot(SymbolTable* symbolTable, unsigned index)
-    {
-        return offsetOfImportSlotCount(symbolTable) + sizeof(uintptr_t) + sizeof(WriteBarrier<Unknown>) * index;
-    }
-    // Import slot `index` addressed as a variable of this environment (past the
-    // symbol table's own variables), so JITs can treat it like a closure variable.
-    static ScopeOffset importSlotScopeOffset(SymbolTable* symbolTable, unsigned index)
-    {
-        size_t byteOffset = offsetOfImportSlot(symbolTable, index) - offsetOfVariables();
-        ASSERT(!(byteOffset % sizeof(WriteBarrier<Unknown>)));
-        return ScopeOffset(byteOffset / sizeof(WriteBarrier<Unknown>));
-    }
-
-    static size_t allocationSize(SymbolTable* symbolTable, unsigned importSlotCount = 0)
-    {
-        return offsetOfImportSlot(symbolTable, importSlotCount);
-    }
-
-    unsigned importSlotCount() { return static_cast<unsigned>(importSlotCountSlot()); }
-    WriteBarrierBase<Unknown>& importSlot(unsigned index)
-    {
-        RELEASE_ASSERT(index < importSlotCount());
-        return *std::bit_cast<WriteBarrierBase<Unknown>*>(std::bit_cast<char*>(this) + offsetOfImportSlot(symbolTable(), index));
-    }
-    // Point every import slot at the exporter's environment in this graph
-    // instance (or the exporter's primary environment). Slots whose exporter has
-    // no environment yet (link-time cycles) stay empty and are filled on first use.
-    void fillImportSlots(VM&);
 
     AbstractModuleRecord* moduleRecord()
     {
         return moduleRecordSlot().get();
     }
-
-    // Options::useModuleGraphInstances(): the environment of `exporter` (a record
-    // of the global object's own module graph) as seen from this environment --
-    // the environment of the record standing for it in this environment's graph
-    // instance, else exporter's own. Never allocates; null if that record has no
-    // environment yet.
-    JSModuleEnvironment* importedEnvironmentFor(AbstractModuleRecord* exporter);
-    // op_resolve_scope slow path for a ModuleVar with an import slot that is not
-    // filled yet: walk `depth` scopes from `scope` to the importing module
-    // environment and resolve `linkedExporter` (the environment the CodeBlock was
-    // linked against) into that environment's graph instance.
-    static JSObject* resolveModuleVarScope(JSGlobalObject*, JSScope*, unsigned depth, JSModuleEnvironment* linkedExporter);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -131,17 +89,12 @@ private:
     {
         return *std::bit_cast<WriteBarrierBase<AbstractModuleRecord>*>(std::bit_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
     }
-    uintptr_t& importSlotCountSlot()
-    {
-        return *std::bit_cast<uintptr_t*>(std::bit_cast<char*>(this) + offsetOfImportSlotCount(symbolTable()));
-    }
 };
 
 inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue, AbstractModuleRecord* moduleRecord)
     : Base(vm, structure, currentScope, symbolTable, initialValue)
 {
     this->moduleRecordSlot().setWithoutWriteBarrier(moduleRecord);
-    this->importSlotCountSlot() = 0;
 }
 
 } // namespace JSC

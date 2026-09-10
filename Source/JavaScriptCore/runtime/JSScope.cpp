@@ -31,7 +31,6 @@
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
-#include "JSModuleRecord.h"
 #include "JSScopeInlines.h"
 #include "JSWithScope.h"
 #include "TopExceptionScope.h"
@@ -85,12 +84,6 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
         if (scope->type() == ModuleEnvironmentType) {
             JSModuleEnvironment* moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(scope);
             AbstractModuleRecord* moduleRecord = moduleEnvironment->moduleRecord();
-            // A record of a module graph instance shares its CodeBlocks with the
-            // template graph: link against the template's records so the constant
-            // below is never an instance's environment (instances reach theirs
-            // through the import slot).
-            if (auto* sourceText = dynamicDowncast<JSModuleRecord>(moduleRecord); sourceText && sourceText->templateRecord())
-                moduleRecord = sourceText->templateRecord();
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             AbstractModuleRecord::Resolution resolution = moduleRecord->resolveImport(globalObject, ident);
             catchScope.releaseAssertNoException();
@@ -104,8 +97,6 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                 SymbolTableEntry& entry = iter->value;
                 ASSERT(!entry.isNull());
                 op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, importedEnvironment, entry.watchpointSet(), entry.scopeOffset().offset(), resolution.localName.impl());
-                if (auto slotIndex = moduleRecord->importSlotIndexFor(importedRecord))
-                    op.moduleImportSlot = 1 + JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), *slotIndex).offset();
                 return true;
             }
         }

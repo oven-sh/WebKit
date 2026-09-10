@@ -247,14 +247,6 @@ JSModuleRecord* ModuleGraphInstance::instantiate(JSGlobalObject* globalObject, J
         return nullptr;
     }
 
-    // Every environment of the sub-graph exists now: point the import slots of
-    // the newly created ones at this instance's exporter environments.
-    for (AbstractModuleRecord* templateOfCreated : created) {
-        if (JSModuleRecord* createdRecord = sourceTextRecordFor(templateOfCreated)) {
-            if (JSModuleEnvironment* environment = createdRecord->moduleEnvironmentMayBeNull())
-                environment->fillImportSlots(vm);
-        }
-    }
     return record;
 }
 

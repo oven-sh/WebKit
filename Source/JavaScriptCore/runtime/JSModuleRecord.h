@@ -36,7 +36,6 @@ class ModuleProgramExecutable;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
-class FunctionExecutable;
 class ModuleGraphInstance;
 
 class JSModuleRecord final : public CyclicModuleRecord {
@@ -73,21 +72,14 @@ public:
 
     // Module graph instances (Options::useModuleGraphInstances()): a fresh record
     // for templateRecord's module inside `instance`, with the template's key,
-    // source, requests and import/export entries and *the same*
-    // ModuleProgramExecutable (so the same CodeBlocks and function executables),
-    // status Unlinked. The caller fills [[LoadedModules]] and runs Link().
+    // source, requests and import/export entries, status Unlinked. It gets its
+    // own executable and environment when the instance runs Link() on it.
     static JSModuleRecord* createForGraphInstance(JSGlobalObject*, VM&, JSModuleRecord* templateRecord, ModuleGraphInstance*);
     // The record this one was created from (null for a record the loader created).
     JSModuleRecord* templateRecord() const { return m_templateRecord.get(); }
     JSModuleRecord* templateRecordOrThis() { return m_templateRecord ? m_templateRecord.get() : this; }
     // The instance this record belongs to (null: the global object's own module graph).
     ModuleGraphInstance* graphInstance() const { return m_graphInstance.get(); }
-    // Function executables of the module's environment-allocated function
-    // declarations, as the environment was initialized (so instances create their
-    // function objects over the same executables). Empty unless
-    // Options::useModuleGraphInstances().
-    const Vector<WriteBarrier<FunctionExecutable>>& functionDeclarationExecutables() const { return m_functionDeclarationExecutables; }
-    void setFunctionDeclarationExecutables(VM&, Vector<WriteBarrier<FunctionExecutable>>&&);
 
     bool isTopLevelExecutionFinished() const;
 
@@ -108,7 +100,6 @@ private:
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
     WriteBarrier<JSModuleRecord> m_templateRecord;
     WriteBarrier<ModuleGraphInstance> m_graphInstance;
-    Vector<WriteBarrier<FunctionExecutable>> m_functionDeclarationExecutables;
     CodeFeatures m_features;
 };
 

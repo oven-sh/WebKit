@@ -223,35 +223,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 3. Let realm be module.[[Realm]].
     // 4. Assert: realm is not undefined.
     SymbolTable* symbolTable = nullptr;
-    // Module graph instances: a record created for an instance shares the
-    // template's executable, function executables and import-slot layout.
-    JSModuleRecord* templateRecord = jsModule ? jsModule->templateRecord() : nullptr;
     if (jsModule) {
-        // Import slots: the distinct exporter records of the named imports, fixed
-        // before the environment is sized (a record made for a graph instance has
-        // adopted its template's).
-        if (Options::useModuleGraphInstances() && !hasImportedRecords()) {
-            Vector<AbstractModuleRecord*> importedRecords;
-            UncheckedKeyHashSet<AbstractModuleRecord*> seenRecords;
-            for (const auto& [key, in] : importEntries()) {
-#if USE(BUN_JSC_ADDITIONS)
-                if (in.type != ImportEntryType::Single && in.type != ImportEntryType::SingleTypeScript)
-                    continue;
-#else
-                if (in.type != ImportEntryType::Single)
-                    continue;
-#endif
-                AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, in.moduleRequest, in.moduleRequestType);
-                RETURN_IF_EXCEPTION(scope, void());
-                Resolution resolution = importedModule->resolveExport(globalObject, in.importName);
-                RETURN_IF_EXCEPTION(scope, void());
-                if (resolution.type != Resolution::Type::Resolved)
-                    continue;
-                if (seenRecords.add(resolution.moduleRecord).isNewEntry)
-                    importedRecords.append(resolution.moduleRecord);
-            }
-            setImportedRecords(vm, importedRecords);
-        }
         // 5. Let env be NewModuleEnvironment(realm.[[GlobalEnv]]).
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -500,10 +472,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
     // create, so do not look those up by name (the name may still be in the bytecode cache).
     size_t numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
-    const Vector<WriteBarrier<FunctionExecutable>>* templateFunctionExecutables = templateRecord ? &templateRecord->functionDeclarationExecutables() : nullptr;
-    Vector<WriteBarrier<FunctionExecutable>> functionExecutables;
-    if (Options::useModuleGraphInstances() && !templateRecord)
-        functionExecutables.grow(numberOfFunctions);
     for (size_t i = 0; i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then
@@ -523,13 +491,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             }
             // 24.a.iii. If d is either a FunctionDeclaration, a GeneratorDeclaration, an AsyncFunctionDeclaration, or an AsyncGeneratorDeclaration, then
             // 24.a.iii.1. Let fo be InstantiateFunctionObject of d with arguments env and privateEnv.
-            FunctionExecutable* executable = templateFunctionExecutables && i < templateFunctionExecutables->size() ? templateFunctionExecutables->at(i).get() : nullptr;
-            if (!executable) {
-                executable = unlinkedFunctionExecutable->link(vm, moduleProgramExecutable, moduleProgramExecutable->source());
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-            if (i < functionExecutables.size())
-                functionExecutables[i].setWithoutWriteBarrier(executable);
+            auto* executable = unlinkedFunctionExecutable->link(vm, moduleProgramExecutable, moduleProgramExecutable->source());
+            RETURN_IF_EXCEPTION(scope, void());
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
             if (isAsyncGeneratorWrapperParseMode(parseMode))
@@ -547,9 +510,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
-
-    if (!functionExecutables.isEmpty())
-        jsModule->setFunctionDeclarationExecutables(vm, WTF::move(functionExecutables));
 
     if (jsModule->features() & ImportMetaFeature) {
         JSObject* metaProperties = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);

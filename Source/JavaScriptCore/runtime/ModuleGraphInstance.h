@@ -43,9 +43,8 @@ class JSScope;
 // An instance maps a *template* record (the one the module loader registry
 // holds) to the record that stands for that module inside this instance:
 //   - a Source Text Module Record gets a fresh JSModuleRecord (ModuleGraphInstance::instantiate)
-//     with its own environment, namespace and evaluation state, sharing the
-//     template's ModuleProgramExecutable -- and with it every CodeBlock, function
-//     executable and piece of JIT code;
+//     with its own executable, environment, namespace and evaluation state (the
+//     unlinked code comes from the code cache, so nothing is parsed or generated again);
 //   - any other record (synthetic / host modules) is shared with the template
 //     graph unless the embedder registers a replacement first (add()).
 // Everything else -- Link(), Evaluate(), namespaces, top-level await -- is the

@@ -110,7 +110,6 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
-    visitor.append(thisObject->m_importedRecords.begin(), thisObject->m_importedRecords.end());
     visitor.append(thisObject->m_sharedDeclarations);
 }
 
@@ -1491,29 +1490,6 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject)
         throwException(globalObject, scope, promise->result());
     }
     // 5. Return UNUSED.
-}
-
-void AbstractModuleRecord::setImportedRecords(VM& vm, const Vector<AbstractModuleRecord*>& records)
-{
-    ASSERT(!m_importedRecordsSet);
-    m_importedRecordsSet = true;
-    auto importedRecords = WTF::map(records, [&](AbstractModuleRecord* record) {
-        return WriteBarrier<AbstractModuleRecord>(vm, this, record);
-    });
-    // The concurrent marker iterates m_importedRecords under the cell lock.
-    Locker locker { cellLock() };
-    m_importedRecords = WTF::move(importedRecords);
-}
-
-void AbstractModuleRecord::adoptImportedRecords(VM& vm, const AbstractModuleRecord& templateRecord)
-{
-    ASSERT(templateRecord.m_importedRecordsSet);
-    auto importedRecords = WTF::map(templateRecord.m_importedRecords, [&](const WriteBarrier<AbstractModuleRecord>& record) {
-        return WriteBarrier<AbstractModuleRecord>(vm, this, record.get());
-    });
-    m_importedRecordsSet = true;
-    Locker locker { cellLock() };
-    m_importedRecords = WTF::move(importedRecords);
 }
 
 JSPromise* AbstractModuleRecord::asyncCapability() const

@@ -32,8 +32,6 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
-#include "ModuleGraphInstance.h"
-#include "JSModuleRecord.h"
 
 namespace JSC {
 
@@ -53,16 +51,11 @@ JSModuleEnvironment* JSModuleEnvironment::create(
     //
     // JSModuleEnvironment:
     //     [ JSLexicalEnvironment ][ variable slots ][ additional slots for JSModuleEnvironment ]
-    //     ... [ module record ][ import slot count ][ import slots (importSlotCount) ]
-    unsigned importSlotCount = moduleRecord ? moduleRecord->importSlotCount() : 0;
     JSModuleEnvironment* result =
         new (
             NotNull,
-            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable, importSlotCount)))
+            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable)))
         JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord);
-    result->importSlotCountSlot() = importSlotCount;
-    for (unsigned i = 0; i < importSlotCount; ++i)
-        result->importSlot(i).setStartingValue(JSValue());
     result->finishCreation(vm);
     return result;
 }
@@ -75,71 +68,6 @@ void JSModuleEnvironment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.appendValues(thisObject->variables(), thisObject->symbolTable()->scopeSize());
     visitor.append(thisObject->moduleRecordSlot());
-    if (unsigned count = thisObject->importSlotCount())
-        visitor.appendValues(std::bit_cast<WriteBarrierBase<Unknown>*>(std::bit_cast<char*>(thisObject) + offsetOfImportSlot(thisObject->symbolTable(), 0)), count);
-}
-
-// The record of the global object's own module graph that `record` stands for.
-static AbstractModuleRecord* templateOf(AbstractModuleRecord* record)
-{
-    if (auto* sourceText = dynamicDowncast<JSModuleRecord>(record); sourceText && sourceText->templateRecord())
-        return sourceText->templateRecord();
-    return record;
-}
-
-static ModuleGraphInstance* graphInstanceOf(AbstractModuleRecord* record)
-{
-    auto* sourceText = dynamicDowncast<JSModuleRecord>(record);
-    return sourceText ? sourceText->graphInstance() : nullptr;
-}
-
-JSModuleEnvironment* JSModuleEnvironment::importedEnvironmentFor(AbstractModuleRecord* exporter)
-{
-    AbstractModuleRecord* record = moduleRecord();
-    AbstractModuleRecord* target = exporter;
-    if (ModuleGraphInstance* instance = graphInstanceOf(record)) {
-        if (AbstractModuleRecord* inInstance = instance->recordFor(templateOf(exporter)))
-            target = inInstance;
-    }
-    return target->moduleEnvironmentMayBeNull();
-}
-
-void JSModuleEnvironment::fillImportSlots(VM& vm)
-{
-    AbstractModuleRecord* record = moduleRecord();
-    if (!record)
-        return;
-    ASSERT(importSlotCount() == record->importSlotCount());
-    unsigned count = std::min(importSlotCount(), record->importSlotCount());
-    for (unsigned i = 0; i < count; ++i) {
-        if (importSlot(i).get())
-            continue;
-        if (JSModuleEnvironment* target = importedEnvironmentFor(record->importedRecordAt(i)))
-            importSlot(i).set(vm, this, target);
-    }
-}
-
-JSObject* JSModuleEnvironment::resolveModuleVarScope(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, JSModuleEnvironment* linkedExporter)
-{
-    // The CodeBlock was linked against one instantiation of the importing module;
-    // the importing module environment on THIS scope chain decides which
-    // instantiation of the exporter applies.
-    VM& vm = globalObject->vm();
-    JSScope* cursor = scope;
-    for (unsigned i = 0; i < depth; ++i)
-        cursor = cursor->next();
-    auto* importer = dynamicDowncast<JSModuleEnvironment>(cursor);
-    if (!importer)
-        return linkedExporter;
-    JSModuleEnvironment* environment = importer->importedEnvironmentFor(linkedExporter->moduleRecord());
-    if (!environment)
-        return linkedExporter;
-    // Fill the slot so the interpreter and JIT fast paths take over from here.
-    if (AbstractModuleRecord* record = importer->moduleRecord()) {
-        if (auto slotIndex = record->importSlotIndexFor(templateOf(linkedExporter->moduleRecord())))
-            importer->importSlot(*slotIndex).set(vm, importer, environment);
-    }
-    return environment;
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleEnvironment);

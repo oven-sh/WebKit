@@ -3589,28 +3589,9 @@ void LOLJIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar) {
-        if (!Options::useModuleGraphInstances())
-            loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), destGPR);
-        else {
-            // Module graph instances (see JIT::emit_op_resolve_scope): slot index
-            // from metadata; 0 = constant environment, otherwise walk to the
-            // importing module environment and load its import slot (empty = slow).
-            load32FromMetadata(bytecode, Metadata::offsetOfModuleImportSlot(), s_scratch);
-            Jump hasImportSlot = branchTest32(NonZero, s_scratch);
-            loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), destGPR);
-            Jump done = jump();
-            hasImportSlot.link(this);
-            move(scopeGPR, destGPR);
-            unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
-            for (unsigned index = 0; index < localScopeDepth; ++index)
-                loadPtr(Address(destGPR, JSScope::offsetOfNext()), destGPR);
-            sub32(TrustedImm32(1), s_scratch);
-            load64(BaseIndex(destGPR, s_scratch, TimesEight, JSLexicalEnvironment::offsetOfVariables()), destGPR);
-            addSlowCase(branchIfEmpty(destGPR));
-            done.link(this);
-        }
-    } else if (profiledResolveType == ClosureVar) {
+    if (profiledResolveType == ModuleVar)
+        loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), destGPR);
+    else if (profiledResolveType == ClosureVar) {
         move(scopeGPR, destGPR);
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
         if (localScopeDepth < 8) {
@@ -3832,10 +3813,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> LOLJIT::generateOpResolveScopeThunk(VM& vm
             emitResolveClosure(needsVarInjectionChecks(resolveType));
             break;
         case Dynamic:
-        case ModuleVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
+        case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

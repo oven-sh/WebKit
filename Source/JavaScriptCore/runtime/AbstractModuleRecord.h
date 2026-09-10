@@ -209,27 +209,6 @@ public:
     // dependency as it stands in the instance (its record there, else shared). Null for other records.
     AbstractModuleRecord* graphInstanceImportedModule(const Identifier& moduleName, ScriptFetchParameters::Type);
 
-    // Import slots (Options::useModuleGraphInstances()): the distinct records this
-    // module's named imports resolve to, fixed when its environment is first
-    // initialized. Every JSModuleEnvironment of the module carries one trailing
-    // slot per entry holding the environment of that exporter *in the same graph
-    // instance*, so a ModuleVar access in code shared between instances is "walk
-    // to the importing environment, load slot" in every tier. A record created for
-    // a graph instance adopts its template's list (the layout is what the shared
-    // CodeBlocks encode).
-    bool hasImportedRecords() const { return m_importedRecordsSet; }
-    unsigned importSlotCount() const { return m_importedRecords.size(); }
-    AbstractModuleRecord* importedRecordAt(unsigned index) const { return m_importedRecords[index].get(); }
-    std::optional<unsigned> importSlotIndexFor(AbstractModuleRecord* exporter) const
-    {
-        for (unsigned i = 0; i < m_importedRecords.size(); ++i) {
-            if (m_importedRecords[i].get() == exporter)
-                return i;
-        }
-        return std::nullopt;
-    }
-    void setImportedRecords(VM&, const Vector<AbstractModuleRecord*>&);
-    void adoptImportedRecords(VM&, const AbstractModuleRecord& templateRecord);
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
@@ -433,8 +412,6 @@ protected:
     std::optional<int> m_pendingAsyncDependencies;
 
     bool m_hasTLA { false };
-    bool m_importedRecordsSet { false };
-    Vector<WriteBarrier<AbstractModuleRecord>> m_importedRecords;
     WriteBarrier<AbstractModuleRecord> m_sharedDeclarations;
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
