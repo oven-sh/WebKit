@@ -4002,7 +4002,8 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* holder = callFrame->argument(0).getObject();
-    auto* loader = holder ? dynamicDowncast<JSModuleLoader>(holder->getDirect(vm, Identifier::fromString(vm, "loader"_s))) : nullptr;
+    JSValue loaderValue = holder ? holder->getDirect(vm, Identifier::fromString(vm, "loader"_s)) : JSValue();
+    auto* loader = loaderValue ? dynamicDowncast<JSModuleLoader>(loaderValue) : nullptr;
     if (!loader)
         return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
     JSString* specifier = callFrame->argument(1).toString(globalObject);

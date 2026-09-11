@@ -9,6 +9,8 @@ shouldBe(a.run(1000), 1000);
 $vm.deleteAllCodeWhenIdle();
 await new Promise((resolve) => setTimeout(resolve, 0));
 const b = await load();
+shouldBe(JSON.stringify([b.run(10), a.run(1)]), `[10,1001]`);
+shouldBe($vm.codeBlockFor(a.run) === $vm.codeBlockFor(b.run), false);
 const c = await load();
-shouldBe(JSON.stringify([b.run(10), c.run(20), a.run(1)]), `[10,20,1001]`);
-shouldBe($vm.codeBlockFor(b.run) === $vm.codeBlockFor(c.run), true);
+shouldBe(typeof $vm.codeBlockFor(c.run), "string"); // never called, and already has b's code
+shouldBe(c.run(20), 20);
