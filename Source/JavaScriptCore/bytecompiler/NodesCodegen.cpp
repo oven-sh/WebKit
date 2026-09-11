@@ -243,7 +243,7 @@ RegisterID* ImportNode::emitBytecode(BytecodeGenerator& generator, RegisterID* d
     generator.emitLoad(arguments.argumentRegister(2), jsBoolean(m_deferred));
     Variable moduleLoader = generator.variable(generator.propertyNames().builtinNames().moduleLoaderPrivateName());
     RefPtr<RegisterID> scope = generator.emitResolveScope(generator.newTemporary(), moduleLoader);
-    generator.emitGetFromScope(arguments.argumentRegister(3), scope.get(), moduleLoader, DoNotThrowIfNotFound);
+    generator.emitGetFromScope(arguments.argumentRegister(3), scope.get(), moduleLoader, ThrowIfNotFound);
     return generator.emitCall(generator.finalDestination(dst, importModule.get()), importModule.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 

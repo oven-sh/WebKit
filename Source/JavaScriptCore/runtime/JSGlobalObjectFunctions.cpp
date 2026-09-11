@@ -819,9 +819,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
-    JSModuleLoader* loader = dynamicDowncast<JSModuleLoader>(callFrame->argument(3));
-    if (!loader)
-        loader = globalObject->moduleLoader();
+    auto* loader = uncheckedDowncast<JSModuleLoader>(callFrame->argument(3));
     auto* importPromise = loader->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();
