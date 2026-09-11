@@ -73,6 +73,8 @@ public:
     struct LinkingData {
         Ref<UnlinkedMetadataTable> unlinkedMetadata;
         std::atomic<unsigned> refCount;
+        // One SpeculatedType per value profile, allocated the first time one of them has something to predict.
+        std::atomic<SpeculatedType*> valueProfilePredictions { nullptr };
     };
 
     ~UnlinkedMetadataTable();
@@ -145,7 +147,7 @@ private:
     unsigned totalSize() const
     {
         ASSERT(m_isFinalized);
-        unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
+        unsigned valueProfileSize = m_numValueProfiles * sizeof(EncodedJSValue);
         if (m_isBackedBySteps && !m_isLinked)
             return valueProfileSize + expandSteps<Offset32>(std::span { m_steps, m_stepsCount }, nullptr);
         if (m_is32Bit)
@@ -174,7 +176,7 @@ private:
     static constexpr unsigned s_offset32TableSize = roundUpToMultipleOf<s_maxMetadataAlignment>(s_offsetTableEntries * sizeof(Offset32));
 
     // While no MetadataTable shares m_rawBuffer (!m_isLinked), the buffer holds only the offset table.
-    unsigned prefixSize() const { return m_isLinked ? m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) : 0; }
+    unsigned prefixSize() const { return m_isLinked ? m_numValueProfiles * sizeof(EncodedJSValue) + sizeof(LinkingData) : 0; }
     void* buffer() const { return m_rawBuffer + prefixSize(); }
     Offset32* preprocessBuffer() const { return std::bit_cast<Offset32*>(m_rawBuffer); }
 

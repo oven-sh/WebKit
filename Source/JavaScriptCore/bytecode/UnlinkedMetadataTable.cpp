@@ -149,7 +149,7 @@ bool UnlinkedMetadataTable::finalize()
         // Reject any function whose metadata cannot be addressed within those limits. The value profiles
         // and the LinkingData are allocated by link(), which sizes that allocation from totalSize().
         CheckedUint32 checkedValueProfileSize = m_numValueProfiles;
-        checkedValueProfileSize *= static_cast<unsigned>(sizeof(ValueProfile));
+        checkedValueProfileSize *= static_cast<unsigned>(sizeof(EncodedJSValue));
 
         // On 32-bits, also guard against potential malloc size overflow in the link()
         // allocation, where we add sizeof(LinkingData). On 64-bit, sizes are

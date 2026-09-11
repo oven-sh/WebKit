@@ -42,7 +42,7 @@ void CodeBlock::forEachValueProfile(const Functor& func)
         func(profile, true);
 
     if (m_metadata) {
-        auto wrapper = [&] (ValueProfile& profile) {
+        auto wrapper = [&] (ValueProfileRef profile) {
             func(profile, false);
         };
         m_metadata->forEachValueProfile(wrapper);

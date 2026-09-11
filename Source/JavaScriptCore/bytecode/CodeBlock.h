@@ -435,10 +435,10 @@ public:
 
     FixedVector<ArgumentValueProfile>& argumentValueProfiles() LIFETIME_BOUND { return m_argumentValueProfiles; }
 
-    ValueProfile& valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
+    ValueProfileRef valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
 
-    ValueProfile* NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
-    ValueProfile& NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
     SpeculatedType valueProfilePredictionForBytecodeIndex(BytecodeIndex, JSValue* specFailValue = nullptr);
 
     template<typename Functor> void forEachValueProfile(const Functor&);
@@ -774,11 +774,15 @@ public:
 #endif
 
     bool shouldOptimizeNowFromBaseline();
-    void updateAllNonLazyValueProfilePredictions();
+    // What to do with the samples in the buckets of the metadata table's value profiles: fold them into the predictions, or, for
+    // code that keepsValueProfileSamplesInBuckets(), leave them alone (Keep), except for the ones that just died (KeepIfLive).
+    enum class ValueProfileSamples : uint8_t { Record, Keep, KeepIfLive };
+    bool keepsValueProfileSamplesInBuckets();
+    void updateAllNonLazyValueProfilePredictions(ValueProfileSamples = ValueProfileSamples::Record);
     void updateAllLazyValueProfilePredictions();
     void updateAllArrayProfilePredictions();
     void updateAllArrayAllocationProfilePredictions();
-    void updateAllPredictions();
+    void updateAllPredictions(ValueProfileSamples = ValueProfileSamples::Record);
 
     unsigned frameRegisterCount();
     int stackPointerOffset();
@@ -968,7 +972,7 @@ private:
     
     void noticeIncomingCall(JSCell* caller);
 
-    void updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles);
+    void updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles, ValueProfileSamples = ValueProfileSamples::Record);
 
     Vector<unsigned> setConstantRegisters(const FixedVector<WriteBarrier<Unknown>>& constants, const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation);
     void initializeTemplateObjects(ScriptExecutable* topLevelExecutable, const Vector<unsigned>& templateObjectIndices);

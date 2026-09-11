@@ -76,8 +76,8 @@ end
 
 macro valueProfile(size, opcodeStruct, profileName, value, scratch)
     getu(size, opcodeStruct, profileName, scratch)
-    mulq constexpr (-sizeof(ValueProfile)), scratch
-    storeq value, constexpr (-sizeof(UnlinkedMetadataTable::LinkingData)) + ValueProfile::m_buckets[metadataTable, scratch, 1]
+    negq scratch
+    storeq value, constexpr (-sizeof(UnlinkedMetadataTable::LinkingData))[metadataTable, scratch, 8]
 end
 
 # After calling, calling bytecode is claiming input registers are not used.
