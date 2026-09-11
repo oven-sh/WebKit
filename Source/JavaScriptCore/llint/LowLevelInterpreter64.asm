@@ -2925,7 +2925,21 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
     loadi OpGetFromScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t0
     andi ResolveTypeMask, t0
 
-#gGlobalProperty:
+#gClosureVar:
+    bineq t0, ClosureVar, .gLazyClosureVar
+    loadVariable(get, m_scope, t0)
+    getClosureVar()
+
+.gLazyClosureVar:
+    bineq t0, LazyClosureVar, .gGlobalProperty
+    loadVariable(get, m_scope, t0)
+    loadp OpGetFromScope::Metadata::m_operand[t5], t1
+    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+    bqeq t0, ValueEmpty, .gDynamic
+    valueProfile(size, OpGetFromScope, m_valueProfile, t0, t5)
+    return(t0)
+
+.gGlobalProperty:
     bineq t0, GlobalProperty, .gGlobalVar
     loadScopeWithStructureCheck(OpGetFromScope, get, t5, t0, t1, .gDynamic) # This structure check includes lexical binding epoch check since when the epoch is changed, scope will be changed too.
     getProperty()
@@ -2935,25 +2949,11 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
     getGlobalVar(macro(v) end)
 
 .gGlobalLexicalVar:
-    bineq t0, GlobalLexicalVar, .gClosureVar
+    bineq t0, GlobalLexicalVar, .gGlobalPropertyWithVarInjectionChecks
     getGlobalVar(
         macro (value)
             bqeq value, ValueEmpty, .gDynamic
         end)
-
-.gClosureVar:
-    bineq t0, ClosureVar, .gLazyClosureVar
-    loadVariable(get, m_scope, t0)
-    getClosureVar()
-
-.gLazyClosureVar:
-    bineq t0, LazyClosureVar, .gGlobalPropertyWithVarInjectionChecks
-    loadVariable(get, m_scope, t0)
-    loadp OpGetFromScope::Metadata::m_operand[t5], t1
-    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
-    bqeq t0, ValueEmpty, .gDynamic
-    valueProfile(size, OpGetFromScope, m_valueProfile, t0, t5)
-    return(t0)
 
 .gGlobalPropertyWithVarInjectionChecks:
     bineq t0, GlobalPropertyWithVarInjectionChecks, .gGlobalVarWithVarInjectionChecks
