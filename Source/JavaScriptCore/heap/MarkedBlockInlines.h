@@ -263,7 +263,14 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     bool isMarking = space()->isMarking();
     uint64_t secret = vm.heapRandom().getUint64();
 
+    // Cells in a page that was decommitted after an earlier sweep read as zapped. Reading them would only fault the page back in.
+    uint16_t zeroPages = m_zeroPagesDuringSweep;
+    unsigned logPageSize = zeroPages ? WTF::ctz(WTF::pageSize()) : 0;
     auto destroy = [&] (void* cell) {
+        if (zeroPages) [[unlikely]] {
+            if (zeroPages & (1u << ((std::bit_cast<char*>(cell) - std::bit_cast<char*>(&block)) >> logPageSize)))
+                return;
+        }
         JSCell* jsCell = static_cast<JSCell*>(cell);
         if (!jsCell->isZapped()) {
             destroyFunc(vm, jsCell);

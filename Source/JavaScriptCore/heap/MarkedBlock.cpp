@@ -36,6 +36,7 @@
 #include <wtf/CommaPrinter.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/Scope.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/CrashReporter.h>
@@ -616,6 +617,10 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
         return;
     }
 
+    m_zeroPagesDuringSweep = m_decommittedPages;
+    auto clearZeroPages = makeScopeExit([&] {
+        m_zeroPagesDuringSweep = 0;
+    });
     if (sweepMode == SweepToFreeList)
         recommitPages();
 
