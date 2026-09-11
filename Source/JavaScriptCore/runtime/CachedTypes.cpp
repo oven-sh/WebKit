@@ -3763,7 +3763,6 @@ public:
         int numVars;
         int numCalleeLocals;
         int numParameters;
-        unsigned numValueProfiles;
         unsigned numArrayProfiles;
         unsigned numBinaryArithProfiles;
         unsigned numUnaryArithProfiles;
@@ -4148,11 +4147,12 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_hasCheckpoints = scalars.hasCheckpoints;
     m_parseMode = scalars.parseMode;
     m_codeGenerationMode = scalars.codeGenerationMode;
-    m_valueProfiles = FixedVector<UnlinkedValueProfile>(scalars.numValueProfiles);
-    m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(scalars.numArrayProfiles);
+    m_numberOfArrayProfiles = scalars.numArrayProfiles;
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(scalars.numBinaryArithProfiles);
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(scalars.numUnaryArithProfiles);
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
+    if (!Options::useLazyUnlinkedValueAndArrayProfiles())
+        ensureValueAndArrayProfiles();
 }
 
 template<typename CodeBlockType>
@@ -4719,8 +4719,7 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
     writer.i32(codeBlock.m_numVars);
     writer.i32(codeBlock.m_numCalleeLocals);
     writer.i32(codeBlock.m_numParameters);
-    writer.u32(codeBlock.m_valueProfiles.size());
-    writer.u32(codeBlock.m_arrayProfiles.size());
+    writer.u32(codeBlock.m_numberOfArrayProfiles);
     writer.u32(codeBlock.m_binaryArithProfiles.size());
     writer.u32(codeBlock.m_unaryArithProfiles.size());
 }
@@ -4796,7 +4795,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.numVars = reader.i32();
     s.numCalleeLocals = reader.i32();
     s.numParameters = reader.i32();
-    s.numValueProfiles = reader.u32();
     s.numArrayProfiles = reader.u32();
     s.numBinaryArithProfiles = reader.u32();
     s.numUnaryArithProfiles = reader.u32();
@@ -4931,7 +4929,8 @@ protected:
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
     // @importModule. 6: op_iterator_close_check (opcode numbering). 7: op_new_reg_exp_shared (opcode numbering). 8: op_iterator_close_check jumps.
-    static constexpr uint32_t cachedTypesFormatRevision = 8;
+    // 9: a code block's scalars lost the number of value profiles.
+    static constexpr uint32_t cachedTypesFormatRevision = 9;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
