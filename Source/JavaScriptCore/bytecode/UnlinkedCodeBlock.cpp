@@ -30,6 +30,7 @@
 #include "BaselineJITCode.h"
 #include "BytecodeLivenessAnalysis.h"
 #include "BytecodeStructs.h"
+#include "CachedBytecode.h"
 #include "CachedTypes.h"
 #include "ClassInfo.h"
 #include "ExecutableInfo.h"
@@ -255,6 +256,12 @@ bool UnlinkedCodeBlock::typeProfilerExpressionInfoForBytecodeOffset(unsigned byt
 UnlinkedCodeBlock::~UnlinkedCodeBlock()
 {
     delete m_valueAndArrayProfiles;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_cachedPayloadIndex) {
+        if (auto* payloads = vm().persistentBytecodePayloadsIfExists())
+            payloads->release(m_cachedPayloadIndex);
+    }
+#endif
     if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
         if (auto* instructions = m_instructions.get()) {
             VM& vm = this->vm();

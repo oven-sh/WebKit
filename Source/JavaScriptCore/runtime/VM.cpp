@@ -35,6 +35,7 @@
 #include "ArgList.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeIntrinsicRegistry.h"
+#include "CachedBytecode.h"
 #include "CallMode.h"
 #include "CheckpointOSRExitSideState.h"
 #include "CodeBlock.h"
@@ -673,6 +674,8 @@ VM::~VM()
     ASSERT(currentThreadIsHoldingAPILock());
     m_apiLock->willDestroyVM(this);
     smallStrings.setIsInitialized(false);
+    if (m_persistentBytecodePayloads)
+        m_persistentBytecodePayloads->clearChildExecutables();
     heap.lastChanceToFinalize();
 
     while (!m_microtaskQueues.isEmpty())
@@ -1082,6 +1085,13 @@ MacroAssemblerCodeRef<JITStubRoutinePtrTag> VM::getCTIVirtualCall(CallMode callM
     return LLInt::getCodeRef<JITStubRoutinePtrTag>(llint_virtual_call_trampoline);
 }
 
+PersistentBytecodePayloads& VM::persistentBytecodePayloads()
+{
+    if (!m_persistentBytecodePayloads)
+        m_persistentBytecodePayloads = makeUnique<PersistentBytecodePayloads>(*this);
+    return *m_persistentBytecodePayloads;
+}
+
 void VM::whenIdle(Function<void()>&& callback)
 {
     if (!entryScope) {
@@ -1099,34 +1109,80 @@ void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)
     });
 }
 
+void VM::deleteAllRegExpCode()
+{
+    m_regExpCache->deleteAllCode();
+    // The RegExp interpreter's backtracking pools past its first page are only a cache
+    // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
+    // compiler threads that interpret take this lock.
+    Locker locker { m_regExpAllocatorLock };
+    m_regExpAllocator.releaseRetainedPools();
+}
+
 void VM::deleteAllCode(DeleteAllCodeEffort effort)
 {
     whenIdle([=, this] () {
         m_codeCache->clear();
         m_builtinExecutables->clear();
-        m_regExpCache->deleteAllCode();
-        {
-            // The RegExp interpreter's backtracking pools past its first page are only a cache
-            // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
-            // compiler threads that interpret take this lock.
-            Locker locker { m_regExpAllocatorLock };
-            m_regExpAllocator.releaseRetainedPools();
-        }
+        deleteAllRegExpCode();
         heap.deleteAllCodeBlocks(effort);
-        heap.deleteAllUnlinkedCodeBlocks(effort);
+        // All of it: also what could be decoded again from a bytecode cache.
+        heap.deleteAllUnlinkedCodeBlocks(effort, { UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
         heap.reportAbandonedObjectGraph();
     });
 }
 
-void VM::shrinkFootprintWhenIdle()
+bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
+{
+    // Not under JS, and not from inside the collector (a finalizer, a heap observer): deleting code waits for a
+    // collection that is under way to finish.
+    if (entryScope || heap.currentThreadIsDoingGCWork())
+        return false;
+
+    MonotonicTime before;
+    if (Options::logGC()) [[unlikely]]
+        before = MonotonicTime::now();
+    auto logTime = makeScopeExit([&] {
+        dataLogLnIf(Options::logGC(), "[shrinkFootprint: ", (MonotonicTime::now() - before).milliseconds(), " ms]");
+    });
+    sanitizeStackForVM(*this);
+    // The last exception thrown keeps the code on its captured stack alive (linked code, and through it the unlinked code
+    // that is about to be dropped and would then exist twice). No JS is running, so nobody is looking at it.
+    clearLastException();
+    bool keepCodeInUse = mode.contains(ShrinkFootprint::KeepCodeInUse);
+    if (keepCodeInUse || mode.contains(ShrinkFootprint::KeepCodeThatNeedsParsing)) {
+        // Linked code first: that finishes the compiler threads' plans, and optimized code may call RegExp code directly.
+        if (!keepCodeInUse)
+            heap.deleteAllCodeBlocks(PreventCollectionAndDeleteAllCode, true);
+        OptionSet<UnlinkedCodeToDelete> unlinkedCode { UnlinkedCodeToDelete::RecoverableFromCache };
+        if (keepCodeInUse)
+            unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+        heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
+        if (Options::useCodeRecoveryFromBytecodeCache())
+            m_codeCache->clearCodeDecodedFromPersistentPayloads();
+        if (!keepCodeInUse)
+            deleteAllRegExpCode();
+        heap.reportAbandonedObjectGraph();
+    } else {
+        // This mode does not wait for a collection: if one is under way the code stays and the caller is told so.
+        if (heap.collectionScope())
+            return false;
+        deleteAllCode(DeleteAllCodeIfNotCollecting);
+    }
+    clearSourceProviderCaches();
+    if (mode.contains(ShrinkFootprint::LeaveCollectionToCaller))
+        return true;
+    heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    // FIXME: Consider stopping various automatic threads here.
+    // https://bugs.webkit.org/show_bug.cgi?id=185447
+    WTF::releaseFastMallocFreeMemory();
+    return true;
+}
+
+void VM::shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> mode)
 {
     whenIdle([=, this] () {
-        sanitizeStackForVM(*this);
-        deleteAllCode(DeleteAllCodeIfNotCollecting);
-        heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
-        // FIXME: Consider stopping various automatic threads here.
-        // https://bugs.webkit.org/show_bug.cgi?id=185447
-        WTF::releaseFastMallocFreeMemory();
+        shrinkFootprintNow(mode);
     });
 }
 
