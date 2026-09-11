@@ -649,9 +649,10 @@ public:
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
     KeyAtomStringCache keyAtomStringCache;
-    // Bytecode-cache decode: one lazy 65536-entry [c0|c1<<8] -> atom table for the bulk of minified identifiers, shared by every Decoder.
+    // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
+    static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;
     AtomStringImpl** ensureCachedBytecodeTwoCharacterAtoms();
-    // And a direct-mapped cache for 3-character ones (Decoder::atomForInlineString); entries hold a ref, hits verify the characters.
+    // And a direct-mapped cache for 3-character ones and the other 2-character ones (Decoder::atomForInlineString); entries hold a ref, hits verify the characters.
     static constexpr unsigned cachedBytecodeThreeCharacterAtomsLog2Size = 12;
     AtomStringImpl** ensureCachedBytecodeThreeCharacterAtoms();
     Vector<unsigned> stringSplitIndice;
@@ -1327,7 +1328,7 @@ private:
     DeletePropertyMode m_deletePropertyMode { DeletePropertyMode::Default };
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
-    std::unique_ptr<std::array<AtomStringImpl*, 65536>> m_cachedBytecodeTwoCharacterAtoms;
+    std::unique_ptr<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>> m_cachedBytecodeTwoCharacterAtoms;
     std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;

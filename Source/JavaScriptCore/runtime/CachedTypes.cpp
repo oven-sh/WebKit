@@ -168,13 +168,30 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
     m_atomsByOrdinal[ordinal] = &atom;
 }
 
-// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters) a small direct-mapped cache in front of the atom table.
+// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 64x64 table on the VM, indexed by identifier character class (shared by every Decoder, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters), and length 2 with a character outside those classes, a small direct-mapped cache in front of the atom table.
 static std::span<const Latin1Character> inlineStringCharacters(std::span<const uint8_t, 4> slot)
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
     unsigned length = (slot[0] >> 2) & 3;
     return slot.subspan(1).first(length);
 }
+
+// $ 0-9 A-Z _ a-z, in that order; 0xff for every other character.
+static constexpr std::array<uint8_t, 256> identifierCharacterClasses = [] {
+    std::array<uint8_t, 256> classes;
+    classes.fill(0xff);
+    uint8_t next = 0;
+    classes['$'] = next++;
+    for (unsigned character = '0'; character <= '9'; ++character)
+        classes[character] = next++;
+    for (unsigned character = 'A'; character <= 'Z'; ++character)
+        classes[character] = next++;
+    classes['_'] = next++;
+    for (unsigned character = 'a'; character <= 'z'; ++character)
+        classes[character] = next++;
+    return classes;
+}();
+static_assert(identifierCharacterClasses['z'] == 63 && VM::cachedBytecodeTwoCharacterAtomsSize == 64 * 64);
 
 Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)
 {
@@ -183,21 +200,25 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
     if (length == 1)
         return vm.smallStrings.singleCharacterStringRep(characters[0]);
     if (length == 2) {
-        AtomStringImpl*& entry = vm.ensureCachedBytecodeTwoCharacterAtoms()[characters[0] | characters[1] << 8];
-        if (entry) [[likely]]
-            return *entry;
-        Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
-        atom->ref();
-        entry = atom.ptr();
-        return atom;
+        unsigned first = identifierCharacterClasses[characters[0]];
+        unsigned second = identifierCharacterClasses[characters[1]];
+        if ((first | second) < 64) [[likely]] {
+            AtomStringImpl*& entry = vm.ensureCachedBytecodeTwoCharacterAtoms()[first << 6 | second];
+            if (entry) [[likely]]
+                return *entry;
+            Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
+            atom->ref();
+            entry = atom.ptr();
+            return atom;
+        }
     }
 #if USE(BUN_JSC_ADDITIONS)
     if (Options::useFastCachedAtoms()) {
-        uint32_t packed = characters[0] | characters[1] << 8 | characters[2] << 16;
+        uint32_t packed = characters[0] | characters[1] << 8 | (length == 3 ? characters[2] << 16 : 0xff0000);
         AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
-        if (entry && entry->length() == 3 && entry->is8Bit()) [[likely]] {
+        if (entry && entry->length() == length && entry->is8Bit()) [[likely]] {
             auto cached = entry->span8();
-            if (cached[0] == characters[0] && cached[1] == characters[1] && cached[2] == characters[2]) [[likely]]
+            if (cached[0] == characters[0] && cached[1] == characters[1] && (length == 2 || cached[2] == characters[2])) [[likely]]
                 return *entry;
         }
         Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
