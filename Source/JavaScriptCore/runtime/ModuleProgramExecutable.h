@@ -58,7 +58,10 @@ public:
     };
     using ImportedBindings = Vector<ImportedBinding>;
 
-    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&);
+    // moduleScopeSymbolTables: the symbol tables of the lexical environments between
+    // the module environment and the global lexical environment (JSModuleLoader::moduleScope);
+    // linked code embeds their variables' offsets too.
+    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&, const Vector<SymbolTable*>& moduleScopeSymbolTables);
 
     static void destroy(JSCell*);
 
@@ -94,6 +97,9 @@ public:
     // executables live here rather than per record.
     FunctionExecutable* functionDeclaration(VM&, unsigned index);
     const std::optional<ImportedBindings>& importedBindings() const { return m_importedBindings; }
+    bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
+    // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
+    bool resolvesInGlobalScope() const { return m_moduleScopeSymbolTables.isEmpty(); }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -101,11 +107,12 @@ private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&);
+    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&, const Vector<SymbolTable*>& moduleScopeSymbolTables);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
     std::optional<ImportedBindings> m_importedBindings;
+    FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
 

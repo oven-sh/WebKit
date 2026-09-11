@@ -165,7 +165,6 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
     return recursivelyGenerateUnlinkedCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, depth, optimize);
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedGlobalCodeBlock* unlinkedCodeBlock)
 {
     unsigned lineCount = unlinkedCodeBlock->lineCount();
@@ -178,7 +177,6 @@ void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const Source
     if (unlinkedCodeBlock->sourceMappingURLDirective())
         source.provider()->setSourceMappingURLDirective(unlinkedCodeBlock->sourceMappingURLDirective());
 }
-#endif
 
 template<class UnlinkedCodeBlockType, class ExecutableType>
 UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableType* executable, const SourceCode& source, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
@@ -189,21 +187,24 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         source, String(), CacheTypes<UnlinkedCodeBlockType>::codeType, executable->lexicallyScopedFeatures(), scriptMode,
         derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode,
         std::nullopt);
+    if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>) {
+        // Code of a module whose loader has a module scope of its own resolves that
+        // scope's variables as closure variables where other records of the same source
+        // resolve globals, so it cannot use the unlinked code those share (the baseline
+        // code cached on it assumes one resolution: JIT::emit_op_resolve_scope); it gets
+        // its own, which the records that share its executable then use.
+        if (!executable->resolvesInGlobalScope()) {
+            UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
+            if (unlinkedCodeBlock) {
+                recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
+                return unlinkedCodeBlock;
+            }
+            return generateUnlinkedCodeBlock<UnlinkedCodeBlockType, ExecutableType>(vm, executable, source, scriptMode, codeGenerationMode, error, evalContextType);
+        }
+    }
     UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
     if (unlinkedCodeBlock && Options::useCodeCache()) {
-#if USE(BUN_JSC_ADDITIONS)
         recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
-#else
-        unsigned lineCount = unlinkedCodeBlock->lineCount();
-        unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
-        bool endColumnIsOnStartLine = !lineCount;
-        unsigned endColumn = unlinkedCodeBlock->endColumn() + (endColumnIsOnStartLine ? startColumn : 1);
-        executable->recordParse(unlinkedCodeBlock->codeFeatures(), unlinkedCodeBlock->lexicallyScopedFeatures(), unlinkedCodeBlock->hasCapturedVariables(), source.firstLine().oneBasedInt() + lineCount, endColumn);
-        if (unlinkedCodeBlock->sourceURLDirective())
-            source.provider()->setSourceURLDirective(unlinkedCodeBlock->sourceURLDirective());
-        if (unlinkedCodeBlock->sourceMappingURLDirective())
-            source.provider()->setSourceMappingURLDirective(unlinkedCodeBlock->sourceMappingURLDirective());
-#endif
         return unlinkedCodeBlock;
     }
 

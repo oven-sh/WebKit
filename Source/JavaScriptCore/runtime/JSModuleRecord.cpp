@@ -33,6 +33,7 @@
 #include "JSCInlines.h"
 #include "JSGeneratorFunction.h"
 #include "JSMicrotask.h"
+#include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
@@ -282,26 +283,37 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Linked module code embeds, for each imported binding, its ScopeOffset in the
-    // exporting module's environment, which that module's source text determines. So
-    // records in one global object with the same URL and source text whose imports
-    // resolve to the same sources and names share the executable: CodeBlocks, JIT
-    // code and the function declarations' executables. A record whose dependencies
-    // differ links its own, which later records are then compared against.
+    // exporting module's environment, which that module's source text determines, and
+    // for variables of the loader's module scope, their offsets in its lexical
+    // environments. So records in one global object with the same URL and source text
+    // whose imports resolve to the same sources and names, and whose loaders' module
+    // scopes have the same symbol tables, share the executable: CodeBlocks, JIT code
+    // and the function declarations' executables. A record for which these differ
+    // links its own, which later records are then compared against.
     std::optional<ModuleProgramExecutable::ImportedBindings> bindings = importedBindings(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    Vector<SymbolTable*> moduleScopeSymbolTables;
+    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next()) {
+        auto* lexicalEnvironment = moduleScope ? dynamicDowncast<JSLexicalEnvironment>(moduleScope) : nullptr;
+        if (!lexicalEnvironment) {
+            bindings = std::nullopt;
+            break;
+        }
+        moduleScopeSymbolTables.append(lexicalEnvironment->symbolTable());
+    }
     const String& url = sourceCode().provider()->sourceURL();
     auto& executables = globalObject->moduleProgramExecutables();
     if (!url.isEmpty() && bindings) {
         ModuleProgramExecutable* shared = executables.get(url);
         // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
         // share and no symbol table to instantiate an environment from.)
-        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables) && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
         }
     }
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings));
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings), moduleScopeSymbolTables);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
     if (!url.isEmpty() && executable->importedBindings())

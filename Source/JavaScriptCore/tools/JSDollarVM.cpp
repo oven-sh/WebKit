@@ -56,6 +56,8 @@
 #include "JSGlobalProxyInlines.h"
 #include "JSONObject.h"
 #include "JSModuleLoader.h"
+#include "JSMap.h"
+#include "JSLexicalEnvironmentInlines.h"
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
@@ -3940,12 +3942,53 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObjec
 }
 
 // $vm.createModuleLoader(): another JSModuleLoader for this global object, as { loader }.
-JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObject, CallFrame*))
+// $vm.createModuleLoader(bindings?): another module loader for this global object. With
+// `bindings`, the loader's modules see that object's own enumerable properties as variables
+// of a lexical environment between them and the global scope; loaders created with the
+// same property names share that environment's symbol table.
+JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm);
+    JSScope* moduleScope = globalObject->globalLexicalEnvironment();
+    if (JSObject* bindings = callFrame->argument(0).getObject()) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        bindings->methodTable()->getOwnPropertyNames(bindings, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+        StringBuilder keyBuilder;
+        for (auto& name : names)
+            keyBuilder.append(name.string(), '\n');
+        JSObject* dollarVM = callFrame->thisValue().getObject();
+        Identifier symbolTablesName = Identifier::fromString(vm, "moduleScopeSymbolTables"_s);
+        JSValue symbolTablesValue = dollarVM ? dollarVM->getDirect(vm, symbolTablesName) : JSValue();
+        JSMap* symbolTables = symbolTablesValue ? dynamicDowncast<JSMap>(symbolTablesValue) : nullptr;
+        if (!symbolTables) {
+            symbolTables = JSMap::create(vm, globalObject->mapStructure());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (dollarVM)
+                dollarVM->putDirect(vm, symbolTablesName, symbolTables, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        }
+        JSString* key = jsString(vm, keyBuilder.toString());
+        JSValue symbolTableValue = symbolTables->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* symbolTable = symbolTableValue ? dynamicDowncast<SymbolTable>(symbolTableValue) : nullptr;
+        if (!symbolTable) {
+            symbolTable = SymbolTable::create(vm);
+            for (auto& name : names)
+                symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
+            symbolTables->set(globalObject, key, symbolTable);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
+        for (auto& name : names) {
+            JSValue value = bindings->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            environment->variableAt(symbolTable->get(name.impl()).scopeOffset()).set(vm, environment, value);
+        }
+        moduleScope = environment;
+    }
+    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, moduleScope);
     JSObject* result = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirect(vm, Identifier::fromString(vm, "loader"_s), loader);
@@ -5679,7 +5722,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
-    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 0);
+    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 1);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 

@@ -242,9 +242,20 @@ bool JSModuleLoader::attachErrorInfo(JSGlobalObject* globalObject, ThrowScope& s
 
 const ClassInfo JSModuleLoader::s_info = { "ModuleLoader"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleLoader) };
 
-JSModuleLoader::JSModuleLoader(VM& vm, Structure* structure)
+JSModuleLoader::JSModuleLoader(VM& vm, Structure* structure, JSScope* moduleScope)
     : JSCell(vm, structure)
+    , m_moduleScope(moduleScope, WriteBarrierEarlyInit)
 {
+}
+
+JSModuleLoader* JSModuleLoader::create(JSGlobalObject* globalObject, VM& vm, JSScope* moduleScope)
+{
+    return create(globalObject, vm, vm.moduleLoaderStructure.get(), moduleScope);
+}
+
+JSModuleLoader* JSModuleLoader::create(JSGlobalObject* globalObject, VM& vm)
+{
+    return create(globalObject, vm, globalObject->globalLexicalEnvironment());
 }
 
 void JSModuleLoader::destroy(JSCell* cell)
@@ -265,6 +276,7 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSModuleLoader* thisObject = uncheckedDowncast<JSModuleLoader>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_moduleScope);
     Locker locker { thisObject->cellLock() };
     auto moduleMapValues = thisObject->m_moduleMap.values();
     visitor.append(moduleMapValues.begin(), moduleMapValues.end());

@@ -74,17 +74,19 @@ public:
         Ready,
     };
 
-    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm, Structure* structure)
+    // moduleScope: the scope the environments of this loader's modules are created
+    // in; the global lexical environment, or lexical environments ending in it.
+    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSScope* moduleScope)
     {
-        JSModuleLoader* object = new (NotNull, allocateCell<JSModuleLoader>(vm)) JSModuleLoader(vm, structure);
+        JSModuleLoader* object = new (NotNull, allocateCell<JSModuleLoader>(vm)) JSModuleLoader(vm, structure, moduleScope);
         object->finishCreation(globalObject, vm);
         return object;
     }
 
-    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm)
-    {
-        return create(globalObject, vm, vm.moduleLoaderStructure.get());
-    }
+    JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
+    JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&);
+
+    JSScope* moduleScope() const { return m_moduleScope.get(); }
 
     DECLARE_INFO;
 
@@ -255,7 +257,7 @@ public:
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
 private:
-    JSModuleLoader(VM&, Structure*);
+    JSModuleLoader(VM&, Structure*, JSScope* moduleScope);
     void finishCreation(JSGlobalObject*, VM&);
 
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
@@ -288,6 +290,7 @@ private:
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
+    WriteBarrier<JSScope> m_moduleScope;
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
     ResolutionMap<WriteBarrier<Unknown>> m_resolutionFailures;

@@ -227,7 +227,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
-        env = JSModuleEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsTDZValue(), this);
+        env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
