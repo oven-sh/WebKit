@@ -240,16 +240,20 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
             // At that time, error occurs since |value| is an empty, and later |value| becomes an undefined.
             // https://github.com/WebAssembly/esm-integration/tree/master/proposals/esm-integration#js---wasm-cycle-where-js-is-higher-in-the-module-graph
             if (importedEnvironment) {
-                SymbolTable* symbolTable = importedEnvironment->symbolTable();
-                ConcurrentJSLocker locker(symbolTable->m_lock);
-                auto iter = symbolTable->find(locker, resolution.localName.impl());
-                ASSERT(iter != symbolTable->end(locker));
-                SymbolTableEntry& entry = iter->value;
-                ASSERT(!entry.isNull());
-                ASSERT(importedEnvironment->isValidScopeOffset(entry.scopeOffset()));
+                ScopeOffset scopeOffset;
+                {
+                    SymbolTable* symbolTable = importedEnvironment->symbolTable();
+                    ConcurrentJSLocker locker(symbolTable->m_lock);
+                    auto iter = symbolTable->find(locker, resolution.localName.impl());
+                    ASSERT(iter != symbolTable->end(locker));
+                    SymbolTableEntry& entry = iter->value;
+                    ASSERT(!entry.isNull());
+                    ASSERT(importedEnvironment->isValidScopeOffset(entry.scopeOffset()));
+                    scopeOffset = entry.scopeOffset();
+                }
 
                 // Snapshotting a value.
-                value = importedEnvironment->variableAt(entry.scopeOffset()).get();
+                value = importedEnvironment->readVariable(vm, scopeOffset);
             }
             if (!value) {
                 if (auto* wasmRecord = dynamicDowncast<WebAssemblyModuleRecord>(importedRecord)) {

@@ -55,6 +55,7 @@
 #include "JSGeneratorFunction.h"
 #include "JSGlobalObjectFunctions.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleEnvironment.h"
 #include "JSMicrotask.h"
 #include "JSSentinel.h"
 #include "JSString.h"
@@ -2357,6 +2358,9 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
 
     // ModuleVar is always converted to ClosureVar for get_from_scope.
     ASSERT(metadata.m_getPutInfo.resolveType() != ModuleVar);
+
+    if (metadata.m_getPutInfo.resolveType() == LazyClosureVar)
+        LLINT_RETURN_PROFILED(JSModuleEnvironment::readLazyClosureVar(vm, scope, ScopeOffset(metadata.m_operand)));
 
     LLINT_RETURN(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {

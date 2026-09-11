@@ -920,6 +920,7 @@ namespace JSC {
         RegisterID* emitResolveConstantLocal(RegisterID* dst, const Variable&);
         RegisterID* emitResolveScope(RegisterID* dst, const Variable&);
         RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode);
+        bool isLazyModuleFunctionDeclaration(const Variable&) const;
         RegisterID* emitPutToScope(RegisterID* scope, const Variable&, RegisterID* value, ResolveMode, InitializationMode);
         RegisterID* emitPutToScopeDynamic(RegisterID* scope, const Identifier&, RegisterID* value, ResolveMode, InitializationMode);
 
@@ -1419,6 +1420,9 @@ namespace JSC {
         bool m_needsGeneratorification { false };
 
         Strong<SymbolTable> m_generatorFrameSymbolTable;
+        // ModuleCode: the heap allocated function declarations of the module environment (see ResolvedLazyClosureVar).
+        std::optional<int> m_moduleEnvironmentSymbolTableConstantIndex;
+        UncheckedKeyHashSet<UniquedStringImpl*> m_lazyModuleFunctionDeclarations;
         int m_generatorFrameSymbolTableIndex { 0 };
 
         enum FunctionVariableType : uint8_t { NormalFunctionVariable, TopLevelFunctionVariable };

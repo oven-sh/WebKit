@@ -33,6 +33,7 @@
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSModuleRecord.h"
+#include "SymbolTableInlines.h"
 
 namespace JSC {
 
@@ -97,6 +98,31 @@ void JSModuleEnvironment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleEnvironment);
 
+bool JSModuleEnvironment::isFunctionDeclarationSlot(ScopeOffset offset)
+{
+    auto* record = dynamicDowncast<JSModuleRecord>(moduleRecord());
+    return record && record->isFunctionDeclarationSlot(offset);
+}
+
+JSValue JSModuleEnvironment::readVariable(VM& vm, ScopeOffset offset)
+{
+    JSValue value = variableAt(offset).get();
+    if (value) [[likely]]
+        return value;
+    if (auto* record = dynamicDowncast<JSModuleRecord>(moduleRecord()))
+        return record->readFunctionDeclarationSlot(vm, this, offset);
+    return { };
+}
+
+JSValue JSModuleEnvironment::readLazyClosureVar(VM& vm, JSObject* scope, ScopeOffset offset)
+{
+    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(scope);
+    RELEASE_ASSERT(environment->isValidScopeOffset(offset));
+    if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(environment))
+        return moduleEnvironment->readVariable(vm, offset);
+    return environment->variableAt(offset).get();
+}
+
 bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -116,7 +142,16 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
         slot.setValue(thisObject, redirectSlot.attributes(), value);
         return true;
     }
-    return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
+    if (!Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot))
+        return false;
+    if (slot.isValue() && slot.slotBase() == thisObject && !slot.getValue(globalObject, propertyName)) [[unlikely]] {
+        SymbolTableEntry::Fast entry = thisObject->symbolTable()->get(propertyName.uid());
+        if (!entry.isNull() && thisObject->isValidScopeOffset(entry.scopeOffset())) {
+            if (JSValue value = thisObject->readVariable(vm, entry.scopeOffset()))
+                slot.setValue(thisObject, slot.attributes(), value);
+        }
+    }
+    return true;
 }
 
 void JSModuleEnvironment::getOwnSpecialPropertyNames(JSObject* cell, JSGlobalObject*, PropertyNameArrayBuilder& propertyNamesArray, DontEnumPropertiesMode)

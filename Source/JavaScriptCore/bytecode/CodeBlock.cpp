@@ -646,13 +646,26 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
                 break;
             }
+            // Every CodeBlock of an UnlinkedCodeBlock has to link a given get_from_scope the same way as far as
+            // ClosureVar vs. LazyClosureVar goes (the baseline JIT's code for either is shared between them). What a
+            // statically located variable or a name found in an environment record is does not depend on the CodeBlock;
+            // what an import resolves to does, so those are all LazyClosureVar.
+            ResolveType closureVarType = Options::useLazyModuleFunctionDeclarations() ? LazyClosureVar : ClosureVar;
+            if (bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar) {
+                metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), closureVarType, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
+                break;
+            }
 
             const Identifier& ident = identifier(bytecode.m_var);
             ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_getPutInfo.resolveType(), InitializationMode::NotInitialization);
 
-            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), op.type, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
-            if (op.type == ModuleVar)
-                metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
+            ResolveType linkedType = op.type;
+            if (linkedType == ModuleVar)
+                linkedType = closureVarType;
+            else if ((linkedType == ClosureVar || linkedType == ClosureVarWithVarInjectionChecks) && op.lexicalEnvironment->type() == ModuleEnvironmentType
+                && uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)->isFunctionDeclarationSlot(ScopeOffset(op.operand)))
+                linkedType = makeType(LazyClosureVar, needsVarInjectionChecks(linkedType));
+            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), linkedType, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
             if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
                 metadata.m_watchpointSet = op.watchpointSet;
             else if (op.structure)
