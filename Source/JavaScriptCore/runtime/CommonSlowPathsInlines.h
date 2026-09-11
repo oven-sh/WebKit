@@ -54,7 +54,8 @@ void cacheGlobalLexicalVar(CodeBlock* codeBlock, Metadata& metadata, JSGlobalLex
     }
     ConcurrentJSLocker locker(codeBlock->m_lock);
     metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
-    metadata.m_watchpointSet = watchpointSet;
+    if constexpr (std::is_same_v<Metadata, OpPutToScope::Metadata>)
+        metadata.m_watchpointSet = watchpointSet;
     metadata.m_operand = reinterpret_cast<uintptr_t>(globalLexicalEnvironment->variableAt(offset).slot());
 }
 
