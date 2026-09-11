@@ -77,6 +77,12 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                     return true;
                 }
 
+                // A put from here is a write the variable's watchpoint set never observes, so linking it
+                // invalidates the set (CodeBlock::finishCreation). The set has to exist for that: code that
+                // declares the variable creates it when it links, but a module's functions can link before
+                // the module's own code does (called from another module in an import cycle).
+                if (getOrPut == Put)
+                    entry.prepareToWatch();
                 op = ResolveOp(makeType(ClosureVar, needsVarInjectionChecks), depth, nullptr, lexicalEnvironment, entry.watchpointSet(), entry.scopeOffset().offset());
                 return true;
             }
