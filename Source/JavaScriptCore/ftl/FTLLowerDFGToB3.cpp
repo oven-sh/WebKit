@@ -1491,6 +1491,9 @@ private:
         case GetClosureVar:
             compileGetClosureVar();
             break;
+        case GetLazyClosureVar:
+            compileGetLazyClosureVar();
+            break;
         case PutClosureVar:
             compilePutClosureVar();
             break;
@@ -13203,6 +13206,25 @@ IGNORE_CLANG_WARNINGS_END
     {
         LValue globalProxy = lowGlobalProxy(m_node->child1());
         setJSValue(m_out.loadPtr(globalProxy, m_heaps.JSGlobalProxy_target));
+    }
+
+    void compileGetLazyClosureVar()
+    {
+        LValue base = lowCell(m_node->child1());
+        LValue value = m_out.load64(base, m_heaps.JSLexicalEnvironment_variables[m_node->scopeOffset().offset()]);
+
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        ValueFromBlock fastResult = m_out.anchor(value);
+        m_out.branch(m_out.isZero64(value), rarely(slowCase), usually(continuation));
+
+        LBasicBlock lastNext = m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationGetLazyClosureVar, m_vmValue, base, m_out.constInt32(m_node->scopeOffset().offset())));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, fastResult, slowResult));
     }
 
     void compileGetClosureVar()

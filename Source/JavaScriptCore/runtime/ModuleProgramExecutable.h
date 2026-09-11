@@ -100,6 +100,11 @@ public:
     // executable (JSModuleRecord::getOrMakeExecutable), so the function declarations'
     // executables live here rather than per record.
     FunctionExecutable* functionDeclaration(VM&, unsigned index);
+    // The same for a caller that has the declaration's unlinked executable from elsewhere (a module record that instantiates
+    // a declaration when its binding is first read may do so after this executable let go of its unlinked code):
+    // linkedFunctionDeclaration() first, and linkFunctionDeclaration() with the module's own functionDecl(index) if that is null.
+    FunctionExecutable* linkedFunctionDeclaration(unsigned index) const { return index < m_functionDeclarations.size() ? m_functionDeclarations[index].get() : nullptr; }
+    FunctionExecutable* linkFunctionDeclaration(VM&, unsigned index, UnlinkedFunctionExecutable*);
     const std::optional<ImportedBindings>& importedBindings() const { return m_importedBindings; }
     bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
