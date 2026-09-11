@@ -36,6 +36,7 @@
 #include "InstructionStream.h"
 #include "JSCJSValueInlines.h"
 #include "UnlinkedMetadataTableInlines.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/CompilationThread.h>
 #include <wtf/DataLog.h>
 
@@ -129,6 +130,18 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(UnlinkedCodeBlock);
+
+UnlinkedFunctionExecutable* UnlinkedCodeBlock::functionDeclSlow(unsigned index)
+{
+    ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+    auto* moduleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(this);
+    ModuleFunctionDeclarationSlots* slots = moduleProgramCodeBlock ? moduleProgramCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr;
+    if (!slots || !slots->hasDecodeSource() || index >= slots->size())
+        return nullptr;
+    UnlinkedFunctionExecutable* executable = slots->decode(vm(), index);
+    m_functionDecls[index].set(vm(), this, executable);
+    return executable;
+}
 
 size_t UnlinkedCodeBlock::estimatedSize(JSCell* cell, VM& vm)
 {

@@ -114,8 +114,7 @@ void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         Locker locker { thisObject->cellLock() };
         if (auto* uninstantiated = thisObject->m_uninstantiatedFunctionDeclarations.get()) {
             visitor.append(uninstantiated->executable);
-            for (auto& declaration : uninstantiated->declarations)
-                visitor.append(declaration);
+            visitor.append(uninstantiated->unlinkedCodeBlock);
         }
     }
 
@@ -134,9 +133,7 @@ void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable
         RELEASE_ASSERT(slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         uninstantiated = makeUnique<UninstantiatedFunctionDeclarations>();
         uninstantiated->executable.set(vm, this, executable);
-        uninstantiated->declarations = FixedVector<WriteBarrier<UnlinkedFunctionExecutable>>(slots->size());
-        for (unsigned i = 0; i < slots->size(); ++i)
-            uninstantiated->declarations[i].set(vm, this, unlinkedCodeBlock->functionDecl(i));
+        uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
         uninstantiated->remaining = slots->size();
     }
     Locker locker { cellLock() };
@@ -162,20 +159,18 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     std::optional<unsigned> index = m_functionDeclarationSlots->find(offset);
     if (!index)
         return { };
-    UnlinkedFunctionExecutable* unlinkedExecutable = uninstantiated->declarations[*index].get();
-    if (!unlinkedExecutable)
-        return { };
-    ModuleProgramExecutable* executable = uninstantiated->executable.get();
-
-    // InitializeEnvironment step 24.a.iii, for this one declaration.
-    JSGlobalObject* globalObject = environment->globalObject();
     // Records that share the executable share the declarations' executables (and so their code): the first one to read a
-    // declaration links it.
+    // declaration links it, from this record's reference to the module's unlinked code.
+    ModuleProgramExecutable* executable = uninstantiated->executable.get();
     // The declaration's code is every record's, and what it is specialized on is the executable's symbol table.
     RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
     FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
     if (!functionExecutable)
-        functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
+        functionExecutable = executable->linkFunctionDeclaration(vm, *index, uninstantiated->unlinkedCodeBlock->functionDecl(*index));
+    UnlinkedFunctionExecutable* unlinkedExecutable = functionExecutable->unlinkedExecutable();
+
+    // InitializeEnvironment step 24.a.iii, for this one declaration.
+    JSGlobalObject* globalObject = environment->globalObject();
     JSFunction* function = nullptr;
     SourceParseMode parseMode = functionExecutable->parseMode();
     if (isAsyncGeneratorWrapperParseMode(parseMode))
@@ -199,7 +194,8 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     }
     symbolTablePutTouchWatchpointSet(vm, environment, unlinkedExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
 
-    uninstantiated->declarations[*index].clear();
+    // An empty slot is one that was never stored to, so each declaration gets here at most once.
+    ASSERT(uninstantiated->remaining);
     if (!--uninstantiated->remaining) {
         std::unique_ptr<UninstantiatedFunctionDeclarations> done;
         Locker locker { cellLock() };
