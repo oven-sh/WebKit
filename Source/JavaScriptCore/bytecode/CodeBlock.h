@@ -1092,6 +1092,7 @@ private:
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);
     FunctionExecutable* materializeFunctionExecutable(WriteBarrier<FunctionExecutable>&, UnlinkedFunctionExecutable*);
+    FunctionExecutable* linkFunctionExpr(unsigned index, UnlinkedFunctionExecutable*);
 
     WriteBarrier<CodeBlock> m_alternative;
 
