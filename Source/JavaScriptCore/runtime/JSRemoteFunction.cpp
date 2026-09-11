@@ -70,11 +70,16 @@ static inline JSValue wrapArgument(JSGlobalObject* globalObject, JSGlobalObject*
     RELEASE_AND_RETURN(scope, result);
 }
 
-static inline JSValue wrapReturnValue(JSGlobalObject* globalObject, JSGlobalObject* targetGlobalObject, JSValue value)
+// https://tc39.es/proposal-shadowrealm/#sec-ordinarywrappedfunctioncall wraps
+// the return value for the caller realm, which is the realm of the wrapped
+// function itself. `globalObject` is that realm: a host function gets its
+// global object from the callee's scope. So this takes one global object, not
+// the pair that `wrapArgument` needs.
+static inline JSValue wrapReturnValue(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = wrapValue(globalObject, targetGlobalObject, value);
+    JSValue result = wrapValue(globalObject, globalObject, value);
     RETURN_IF_EXCEPTION(scope, { });
     if (!result)
         throwTypeError(globalObject, scope, "value passing between realms must be callable or primitive"_s);
@@ -119,7 +124,7 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
     auto result = call(targetGlobalObject, targetFunction, callData, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, globalObject, result)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, result)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallGeneric, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -155,7 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallGeneric, (JSGlobalObject* globalObjec
     auto result = call(targetGlobalObject, targetFunction, callData, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, targetGlobalObject, result)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, result)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(isRemoteFunction, (JSGlobalObject*, CallFrame* callFrame))
