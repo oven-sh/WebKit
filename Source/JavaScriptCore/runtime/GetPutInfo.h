@@ -92,6 +92,8 @@ enum ResolveType : unsigned {
     Dynamic
 };
 
+static_assert(Dynamic <= 0xff && GlobalProperty < GlobalVar && GlobalVar < GlobalLexicalVar && GlobalLexicalVar < ClosureVar, "The LLInt's op_get_from_scope reads the resolve type as the low byte of a GetPutInfo and tells the global types from the others with one compare");
+
 // Only in the resolveType operand of an *unlinked* op_resolve_scope emitted by the bytecode optimizer: the variable
 // lives in the environment record staticClosureVarHops(type) hops out from the function's own scope (plus the
 // instruction's localScopeDepth). CodeBlock linking turns it into ordinary ClosureVar metadata without name lookups;
