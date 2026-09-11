@@ -194,6 +194,9 @@ private:
     JS_EXPORT_PRIVATE void appendSlow(JSCell*, Dependency);
     JS_EXPORT_PRIVATE void appendHiddenSlow(JSCell*, Dependency);
     void appendHiddenSlowImpl(JSCell*, Dependency);
+#if USE(BUN_JSC_ADDITIONS)
+    NEVER_INLINE NO_RETURN_DUE_TO_CRASH void reportMisalignedMark(JSCell*);
+#endif
     
     template<typename ContainerType>
     void setMarkedAndAppendToMarkStack(ContainerType&, JSCell*, Dependency);
