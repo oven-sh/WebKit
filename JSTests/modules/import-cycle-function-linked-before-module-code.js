@@ -4,7 +4,7 @@ import { lexical, hoisted, addLexical, readLexical, addLexicalThreeTimes, addHoi
 
 // 2.js called addLexical() and addHoisted() while 1.js was not evaluated yet, so both functions were linked
 // before the module code that declares the variables they write. Every read has to see every write, in every tier.
-for (let i = 0; i < 1e5; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
     let base = i * 4;
 
     shouldBe(addLexical(1), base + 1);
