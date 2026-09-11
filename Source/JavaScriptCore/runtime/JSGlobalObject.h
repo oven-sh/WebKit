@@ -691,6 +691,9 @@ public:
     bool m_webAssemblyEnabled { true };
     bool m_needsSiteSpecificQuirks { false };
     bool m_canDoASCIIUCADUCETLocaleCompare { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_allowsProxyInPrototypeChain { false };
+#endif
     unsigned m_globalLexicalBindingEpoch { 1 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
@@ -1347,6 +1350,16 @@ public:
 
     bool needsSiteSpecificQuirks() const { return m_needsSiteSpecificQuirks; }
     JS_EXPORT_PRIVATE void exposeDollarVM(VM&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A global object is normally an immutable prototype exotic object, so a Proxy can never reach its
+    // prototype chain, and ProgramExecutable::initializeGlobalProperties rejects a chain that holds one.
+    // An embedder whose global object has a mutable prototype (node:vm contexts, where jsdom installs a
+    // Proxy in the chain of the window) opts out of that rejection here. Global declaration instantiation
+    // only reads own properties of the global object, so no Proxy trap runs while a program links.
+    bool allowsProxyInPrototypeChain() const { return m_allowsProxyInPrototypeChain; }
+    void setAllowsProxyInPrototypeChain(bool allows) { m_allowsProxyInPrototypeChain = allows; }
+#endif
 
 #if JSC_OBJC_API_ENABLED
     JSWrapperMap* wrapperMap() const { return m_wrapperMap.get(); }
