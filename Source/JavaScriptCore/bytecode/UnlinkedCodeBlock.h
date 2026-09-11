@@ -45,6 +45,7 @@
 #include "VirtualRegister.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
+#include <wtf/ButterflyArray.h>
 #include <wtf/FixedVector.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/TriState.h>
@@ -358,10 +359,28 @@ public:
         return !isBuiltinFunction();
     }
     void allocateSharedProfiles(unsigned numBinaryArithProfiles, unsigned numUnaryArithProfiles);
-    FixedVector<UnlinkedValueProfile>& unlinkedValueProfiles() LIFETIME_BOUND { return m_valueProfiles; }
-    FixedVector<UnlinkedArrayProfile>& unlinkedArrayProfiles() LIFETIME_BOUND { return m_arrayProfiles; }
-    unsigned numberOfValueProfiles() const { return m_valueProfiles.size(); }
-    unsigned numberOfArrayProfiles() const { return m_arrayProfiles.size(); }
+
+    // What the CodeBlocks of this code fold their value and array profiles into and seed them from. Null until the
+    // mutator calls ensureValueAndArrayProfiles(), which it does when a CodeBlock is first handed to the Baseline JIT;
+    // collector and compiler threads read the pointer, once per use, while they fold.
+    class ValueAndArrayProfiles final : public ButterflyArray<ValueAndArrayProfiles, UnlinkedArrayProfile, UnlinkedValueProfile> {
+        using Base = ButterflyArray<ValueAndArrayProfiles, UnlinkedArrayProfile, UnlinkedValueProfile>;
+        friend Base;
+    public:
+        static std::unique_ptr<ValueAndArrayProfiles> create(unsigned numberOfValueProfiles, unsigned numberOfArrayProfiles) { return std::unique_ptr<ValueAndArrayProfiles> { createImpl(numberOfArrayProfiles, numberOfValueProfiles) }; }
+        std::span<UnlinkedValueProfile> valueProfiles() LIFETIME_BOUND { return trailingSpan(); }
+        std::span<UnlinkedArrayProfile> arrayProfiles() LIFETIME_BOUND { return leadingSpan(); }
+
+    private:
+        ValueAndArrayProfiles(unsigned numberOfArrayProfiles, unsigned numberOfValueProfiles)
+            : Base(numberOfArrayProfiles, numberOfValueProfiles)
+        {
+        }
+    };
+    ValueAndArrayProfiles* valueAndArrayProfiles() { return WTF::atomicLoad(&m_valueAndArrayProfiles, std::memory_order_acquire); }
+    void ensureValueAndArrayProfiles();
+    unsigned numberOfValueProfiles() const { return numParameters() + (m_metadata->hasMetadata() ? m_metadata->numValueProfiles() : 0); }
+    unsigned numberOfArrayProfiles() const { return m_numberOfArrayProfiles; }
 
 #if ASSERT_ENABLED
     bool hasIdentifier(UniquedStringImpl*);
@@ -422,6 +441,7 @@ private:
     bool m_hasCheckpoints : 1;
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
+    unsigned m_numberOfArrayProfiles { 0 };
 
 public:
     ConcurrentJSLock m_lock;
@@ -498,8 +518,7 @@ private:
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
     uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
-    FixedVector<UnlinkedValueProfile> m_valueProfiles;
-    FixedVector<UnlinkedArrayProfile> m_arrayProfiles;
+    ValueAndArrayProfiles* m_valueAndArrayProfiles { nullptr };
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;
     FixedVector<UnaryArithProfile> m_unaryArithProfiles;
 

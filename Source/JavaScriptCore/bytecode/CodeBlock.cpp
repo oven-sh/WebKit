@@ -3396,7 +3396,8 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
     unsigned index = 0;
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
-    auto unlinkedValueProfiles = unlinkedCodeBlock->unlinkedValueProfiles().mutableSpan();
+    auto* unlinkedProfiles = isBuiltinFunction ? nullptr : unlinkedCodeBlock->valueAndArrayProfiles();
+    auto unlinkedValueProfiles = unlinkedProfiles ? unlinkedProfiles->valueProfiles() : std::span<UnlinkedValueProfile> { };
     forEachValueProfile([&](auto& profile, bool isArgument) {
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
@@ -3406,8 +3407,10 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
             if (!isArgument)
                 ++numberOfLiveNonArgumentValueProfiles;
         }
-        if (!isBuiltinFunction)
+        if (unlinkedProfiles) {
+            ASSERT(index < unlinkedValueProfiles.size());
             unlinkedValueProfiles[index].update(profile);
+        }
         ++index;
     });
 
@@ -3443,11 +3446,14 @@ void CodeBlock::updateAllArrayProfilePredictions()
     unsigned index = 0;
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
-    auto unlinkedArrayProfiles = unlinkedCodeBlock->unlinkedArrayProfiles().mutableSpan();
+    auto* unlinkedProfiles = isBuiltinFunction ? nullptr : unlinkedCodeBlock->valueAndArrayProfiles();
+    auto unlinkedArrayProfiles = unlinkedProfiles ? unlinkedProfiles->arrayProfiles() : std::span<UnlinkedArrayProfile> { };
     auto process = [&] (ArrayProfile& profile) {
         profile.computeUpdatedPrediction(this);
-        if (!isBuiltinFunction)
+        if (unlinkedProfiles) {
+            ASSERT(index < unlinkedArrayProfiles.size());
             unlinkedArrayProfiles[index].update(profile);
+        }
         ++index;
     };
 
