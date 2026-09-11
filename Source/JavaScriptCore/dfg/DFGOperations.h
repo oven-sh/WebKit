@@ -300,6 +300,7 @@ JSC_DECLARE_JIT_OPERATION(operationEnsureDouble, Butterfly*, (VM*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationEnsureContiguous, Butterfly*, (VM*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationEnsureArrayStorage, Butterfly*, (VM*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationSingleCharacterString, JSString*, (VM*, int32_t));
+JSC_DECLARE_JIT_OPERATION(operationGetLazyClosureVar, EncodedJSValue, (VM*, JSCell*, uint32_t));
 
 JSC_DECLARE_JIT_OPERATION(operationStringSubstr, JSCell*, (JSGlobalObject*, JSCell*, int32_t, int32_t));
 JSC_DECLARE_JIT_OPERATION(operationStringSubstrGeneric, JSCell*, (JSGlobalObject*, JSCell*, int32_t, int32_t));

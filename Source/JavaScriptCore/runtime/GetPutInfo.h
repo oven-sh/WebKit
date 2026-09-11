@@ -49,6 +49,8 @@ enum ResolveMode {
     v(ClosureVar) \
     v(ResolvedClosureVar) \
     v(ModuleVar) \
+    v(LazyClosureVar) \
+    v(ResolvedLazyClosureVar) \
     v(GlobalPropertyWithVarInjectionChecks) \
     v(GlobalVarWithVarInjectionChecks) \
     v(GlobalLexicalVarWithVarInjectionChecks) \
@@ -65,6 +67,13 @@ enum ResolveType : unsigned {
     ClosureVar,
     ResolvedClosureVar,
     ModuleVar,
+
+    // ClosureVar whose slot may still hold the empty value because it belongs to a module's function declaration that
+    // has not been instantiated yet (Options::useLazyModuleFunctionDeclarations()), or because it is an import, whose
+    // exporter may be such a slot. get_from_scope fills the slot in on the slow path. ResolvedLazyClosureVar is the
+    // ResolvedClosureVar flavor: only in unlinked bytecode, linked as LazyClosureVar.
+    LazyClosureVar,
+    ResolvedLazyClosureVar,
 
     // Ditto, but at least one intervening scope used non-strict eval, which
     // can inject an intercepting var delcaration at runtime.
@@ -121,6 +130,8 @@ ALWAYS_INLINE const char* resolveTypeName(ResolveType type)
         "ClosureVar",
         "ResolvedClosureVar",
         "ModuleVar",
+        "LazyClosureVar",
+        "ResolvedLazyClosureVar",
         "GlobalPropertyWithVarInjectionChecks",
         "GlobalVarWithVarInjectionChecks",
         "GlobalLexicalVarWithVarInjectionChecks",
@@ -176,6 +187,9 @@ ALWAYS_INLINE ResolveType makeType(ResolveType type, bool needsVarInjectionCheck
         return ClosureVarWithVarInjectionChecks;
     case UnresolvedProperty:
         return UnresolvedPropertyWithVarInjectionChecks;
+    case LazyClosureVar:
+    case ResolvedLazyClosureVar:
+        return Dynamic;
     case ModuleVar:
     case GlobalPropertyWithVarInjectionChecks:
     case GlobalVarWithVarInjectionChecks:
@@ -199,6 +213,8 @@ ALWAYS_INLINE bool needsVarInjectionChecks(ResolveType type)
     case ClosureVar:
     case ResolvedClosureVar:
     case ModuleVar:
+    case LazyClosureVar:
+    case ResolvedLazyClosureVar:
     case UnresolvedProperty:
         return false;
     case GlobalPropertyWithVarInjectionChecks:

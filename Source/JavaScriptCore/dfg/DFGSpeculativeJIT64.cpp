@@ -4981,6 +4981,11 @@ void SpeculativeJIT::compile(Node* node)
         compileGetClosureVar(node);
         break;
     }
+
+    case GetLazyClosureVar: {
+        compileGetLazyClosureVar(node);
+        break;
+    }
     case PutClosureVar: {
         compilePutClosureVar(node);
         break;

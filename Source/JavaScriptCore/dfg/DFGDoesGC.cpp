@@ -450,6 +450,7 @@ bool doesGC(Graph& graph, Node* node)
     case NewAsyncGeneratorFunction:
     case NewAsyncFunction:
     case NewBoundFunction:
+    case GetLazyClosureVar:
     case NewTypedArray:
     case NewTypedArrayBuffer:
     case ThrowStaticError:
