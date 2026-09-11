@@ -117,6 +117,9 @@ public:
     {
         HandlerInfo* currentExceptionHandler = nullptr;
         Operands<bool> liveAtCatchHead(0, m_graph.block(0)->variablesAtTail.numberOfLocals(), m_graph.block(0)->variablesAtTail.numberOfTmps());
+        // catchHandler() fills this one. It only becomes liveAtCatchHead once the handler we are leaving has been flushed
+        // with its own live set: two try ranges can be adjacent, with no instruction outside both in between.
+        Operands<bool> liveAtNewCatchHead(OperandsLike, liveAtCatchHead, false);
 
         HandlerInfo* cachedHandlerResult;
         CodeOrigin cachedCodeOrigin;
@@ -133,11 +136,11 @@ public:
                 InlineCallFrame* inlineCallFrame = origin.inlineCallFrame();
                 CodeBlock* codeBlock = m_graph.baselineCodeBlockFor(inlineCallFrame);
                 if (HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(bytecodeIndexToCheck)) {
-                    liveAtCatchHead.fill(false);
+                    liveAtNewCatchHead.fill(false);
 
                     BytecodeIndex catchBytecodeIndex = BytecodeIndex(handler->target);
                     m_graph.forAllLocalsAndTmpsLiveInBytecode(CodeOrigin(catchBytecodeIndex, inlineCallFrame), [&] (Operand operand) {
-                        liveAtCatchHead.operand(operand) = true;
+                        liveAtNewCatchHead.operand(operand) = true;
                     });
 
                     cachedHandlerResult = handler;
@@ -188,9 +191,13 @@ public:
 
             {
                 HandlerInfo* newHandler = catchHandler(node->origin.semantic);
-                if (newHandler != currentExceptionHandler && currentExceptionHandler)
-                    flushEverything(node->origin, nodeIndex);
-                currentExceptionHandler = newHandler;
+                if (newHandler != currentExceptionHandler) {
+                    if (currentExceptionHandler)
+                        flushEverything(node->origin, nodeIndex);
+                    if (newHandler)
+                        liveAtCatchHead = liveAtNewCatchHead;
+                    currentExceptionHandler = newHandler;
+                }
             }
 
             if (currentExceptionHandler && (node->op() == SetLocal || node->op() == SetArgumentDefinitely || node->op() == SetArgumentMaybe)) {
