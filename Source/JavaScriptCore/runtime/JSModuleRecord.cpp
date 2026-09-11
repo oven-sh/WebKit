@@ -285,11 +285,11 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     // Linked module code embeds, for each imported binding, its ScopeOffset in the
     // exporting module's environment, which that module's source text determines, and
     // for variables of the loader's module scope, their offsets in its lexical
-    // environments. So records in one global object with the same URL and source text
-    // whose imports resolve to the same sources and names, and whose loaders' module
-    // scopes have the same symbol tables, share the executable: CodeBlocks, JIT code
-    // and the function declarations' executables. A record for which these differ
-    // links its own, which later records are then compared against.
+    // environments. So records in one global object for the same module key (URL) and
+    // source text whose imports resolve to the same sources and names, and whose
+    // loaders' module scopes have the same symbol tables, share the executable:
+    // CodeBlocks, JIT code and the function declarations' executables. A record for
+    // which these differ links its own, which later records are then compared against.
     std::optional<ModuleProgramExecutable::ImportedBindings> bindings = importedBindings(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     Vector<SymbolTable*> moduleScopeSymbolTables;
@@ -301,13 +301,15 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         }
         moduleScopeSymbolTables.append(lexicalEnvironment->symbolTable());
     }
-    const String& url = sourceCode().provider()->sourceURL();
+    // Keyed by the module key's impl: a live entry whose key died and was reused for
+    // another module fails the URL / source comparison and is replaced.
     auto& executables = globalObject->moduleProgramExecutables();
-    if (!url.isEmpty() && bindings) {
-        ModuleProgramExecutable* shared = executables.get(url);
+    if (bindings) {
+        ModuleProgramExecutable* shared = executables.get(moduleKey().impl());
         // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
         // share and no symbol table to instantiate an environment from.)
-        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables) && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+            && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
         }
@@ -316,8 +318,8 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings), moduleScopeSymbolTables);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
-    if (!url.isEmpty() && executable->importedBindings())
-        executables.set(url, Weak<ModuleProgramExecutable>(executable));
+    if (executable->importedBindings())
+        executables.set(moduleKey().impl(), Weak<ModuleProgramExecutable>(executable));
     return executable;
 }
 

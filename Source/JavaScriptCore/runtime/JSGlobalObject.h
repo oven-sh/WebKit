@@ -514,7 +514,7 @@ public:
 
     StructureCache m_structureCache;
     WeakGCMap<SymbolTable*, SymbolTable> m_symbolTableCache;
-    WeakGCMap<String, ModuleProgramExecutable> m_moduleProgramExecutables;
+    WeakGCMap<UniquedStringImpl*, ModuleProgramExecutable, PtrHash<UniquedStringImpl*>> m_moduleProgramExecutables; // by module key: JSModuleRecord::getOrMakeExecutable
 
     String m_name;
 
@@ -1177,7 +1177,7 @@ public:
 
     StructureCache& structureCache() LIFETIME_BOUND { return m_structureCache; }
     WeakGCMap<SymbolTable*, SymbolTable>& symbolTableCache() { return m_symbolTableCache; }
-    WeakGCMap<String, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
+    WeakGCMap<UniquedStringImpl*, ModuleProgramExecutable, PtrHash<UniquedStringImpl*>>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
 
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }
