@@ -3298,10 +3298,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> LOLJIT::generateOpGetFromScopeThunk(VM& vm
             jit.loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
             break;
         case Dynamic:
-        case ModuleVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
+        case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

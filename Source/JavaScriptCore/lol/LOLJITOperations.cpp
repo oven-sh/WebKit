@@ -90,7 +90,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     auto& metadata = bytecode.metadata(codeBlock);
 
     if (metadata.m_resolveType == ModuleVar) {
-        JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, environment, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot), ident);
+        JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, environment, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
     }

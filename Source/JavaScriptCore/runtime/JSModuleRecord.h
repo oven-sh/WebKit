@@ -77,10 +77,14 @@ public:
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
 
-    // Import slots of this record's environment (JSModuleEnvironment::importSlot):
-    // one per import entry, in entry order.
-    unsigned importSlotCount() const;
+    // Local names of the import entries that bind a single export (namespace imports
+    // are variables of this module's environment), sorted: the environment has one
+    // import slot per name in this order (JSModuleEnvironment::importSlot), so the order
+    // is the same for every record of the same source.
+    const Vector<Identifier>& importSlotNames();
+    unsigned importSlotCount() { return importSlotNames().size(); }
     unsigned importSlotIndex(UniquedStringImpl* localName);
+    JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
 
 private:
@@ -90,6 +94,7 @@ private:
 
     SourceCode m_sourceCode;
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
+    std::optional<Vector<Identifier>> m_importSlotNames;
     CodeFeatures m_features;
 };
 

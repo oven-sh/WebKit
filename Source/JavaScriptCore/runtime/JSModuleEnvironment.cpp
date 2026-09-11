@@ -72,24 +72,15 @@ inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JS
         importSlot(i).clear();
 }
 
-JSModuleEnvironment* JSModuleEnvironment::fillImportSlot(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, ScopeOffset slot, const Identifier& localName)
+JSModuleEnvironment* JSModuleEnvironment::fillImportSlot(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, ScopeOffset slot)
 {
-    VM& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
     for (unsigned i = 0; i < depth; ++i)
         scope = scope->next();
     auto* importer = uncheckedDowncast<JSModuleEnvironment>(scope);
     unsigned index = slot.offset() - importSlotScopeOffset(importer->symbolTable(), 0).offset();
     if (JSModuleEnvironment* environment = importer->importSlot(index).get())
         return environment;
-
-    AbstractModuleRecord::Resolution resolution = importer->moduleRecord()->resolveImport(globalObject, localName);
-    RETURN_IF_EXCEPTION(throwScope, nullptr);
-    RELEASE_ASSERT(resolution.type == AbstractModuleRecord::Resolution::Type::Resolved);
-    JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironment();
-    importer->importSlot(index).set(vm, importer, environment);
-    return environment;
+    return uncheckedDowncast<JSModuleRecord>(importer->moduleRecord())->fillImportSlot(globalObject, index);
 }
 
 template<typename Visitor>

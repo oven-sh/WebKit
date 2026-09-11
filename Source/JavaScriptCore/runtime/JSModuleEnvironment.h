@@ -100,10 +100,10 @@ public:
         ASSERT(index < importSlotCount());
         return *std::bit_cast<WriteBarrierBase<JSModuleEnvironment>*>(std::bit_cast<char*>(this) + offsetOfImportSlot(symbolTable(), index));
     }
-    // op_resolve_scope ModuleVar with an empty slot: `depth` scopes up from `scope` is the
-    // importing environment; resolve `localName` for its record, fill the slot with the
-    // environment the binding lives in and return it.
-    static JSModuleEnvironment* fillImportSlot(JSGlobalObject*, JSScope*, unsigned depth, ScopeOffset slot, const Identifier& localName);
+    // op_resolve_scope ModuleVar with an empty slot (module code running before the module
+    // is evaluated, in an import cycle): `depth` scopes up from `scope` is the importing
+    // environment; fill the slot from its record's import resolution and return it.
+    static JSModuleEnvironment* fillImportSlot(JSGlobalObject*, JSScope*, unsigned depth, ScopeOffset slot);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);

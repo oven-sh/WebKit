@@ -120,7 +120,6 @@ public:
         Identifier moduleRequest;
         Identifier importName;
         Identifier localName;
-        unsigned slotIndex { 0 }; // position among the record's import entries; set by addImportEntry
     };
 
     using StarExportEntry = std::pair<RefPtr<UniquedStringImpl>, ScriptFetchParameters::Type>;

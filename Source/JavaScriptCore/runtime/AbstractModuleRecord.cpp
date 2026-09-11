@@ -173,9 +173,7 @@ void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName, Scri
 
 void AbstractModuleRecord::addImportEntry(const ImportEntry& entry)
 {
-    ImportEntry added = entry;
-    added.slotIndex = m_importEntries.size();
-    bool isNewEntry = m_importEntries.add(entry.localName.impl(), WTF::move(added)).isNewEntry;
+    bool isNewEntry = m_importEntries.add(entry.localName.impl(), entry).isNewEntry;
     UNUSED_PARAM(isNewEntry);
     // This is guaranteed by the parser.
     ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate import entry name '%s'", entry.localName.impl()->utf8().data());

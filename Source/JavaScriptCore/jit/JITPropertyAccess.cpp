@@ -1102,10 +1102,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
             emitResolveClosure(needsVarInjectionChecks(resolveType));
             break;
         case Dynamic:
-        case ModuleVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
+        case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

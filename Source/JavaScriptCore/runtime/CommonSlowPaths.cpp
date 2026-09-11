@@ -1392,7 +1392,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
     if (metadata.m_resolveType == ModuleVar) {
-        JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, scope, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot), ident);
+        JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, scope, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
         CHECK_EXCEPTION();
         RETURN(result);
     }

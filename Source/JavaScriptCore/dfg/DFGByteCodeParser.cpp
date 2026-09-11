@@ -78,6 +78,7 @@
 #include "JSIteratorHelper.h"
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
+#include "ModuleProgramExecutable.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
@@ -10437,7 +10438,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     break;
                 case ModuleVar:
                     moduleImportSlot = metadata.m_moduleImportSlot;
-                    symbolTable = metadata.m_symbolTable.get();
+                    if (auto* moduleProgramExecutable = dynamicDowncast<ModuleProgramExecutable>(m_inlineStackTop->executable()->topLevelExecutable()))
+                        symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
                     break;
                 case ResolvedClosureVar:
                 case ClosureVar:

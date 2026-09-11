@@ -136,6 +136,19 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
         return { };
     }
 
+    // Every module this one imports from has its environment now. Filling the import
+    // slots here rather than on first use (JSModuleEnvironment::fillImportSlot) keeps
+    // optimized code shared with other records from meeting an empty slot per record.
+    JSModuleEnvironment* environment = moduleEnvironment();
+    for (unsigned i = 0, count = importSlotCount(); i < count; ++i) {
+        if (environment->importSlot(i))
+            continue;
+        Resolution resolution = resolveImport(globalObject, importSlotNames()[i]);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (resolution.type == Resolution::Type::Resolved)
+            environment->importSlot(i).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
+    }
+
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, { });
@@ -187,28 +200,49 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     // 11. Return unused.
 }
 
-unsigned JSModuleRecord::importSlotCount() const
+const Vector<Identifier>& JSModuleRecord::importSlotNames()
 {
+    if (!m_importSlotNames) {
+        Vector<Identifier> names;
 #if USE(BUN_JSC_ADDITIONS)
-    if (importEntriesArePrelinked())
-        return prelinkedGraph()->imports(prelinkedModule()).size();
+        if (importEntriesArePrelinked()) {
+            for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
+                if (!import.isNamespace())
+                    names.append(prelinkedGraph()->identifier(import.localSid));
+            }
+        } else
 #endif
-    return importEntries().size();
+        {
+            for (const auto& entry : importEntries().values()) {
+                if (entry.type != ImportEntryType::Namespace)
+                    names.append(entry.localName);
+            }
+        }
+        std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
+        m_importSlotNames = WTF::move(names);
+    }
+    return *m_importSlotNames;
 }
 
 unsigned JSModuleRecord::importSlotIndex(UniquedStringImpl* localName)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    if (importEntriesArePrelinked()) {
-        const auto& module = prelinkedModule();
-        const PrelinkedModuleGraph::Import* import = prelinkedGraph()->findImport(module, localName);
-        RELEASE_ASSERT(import);
-        return import - prelinkedGraph()->imports(module).data();
-    }
-#endif
-    auto iterator = importEntries().find(localName);
-    RELEASE_ASSERT(iterator != importEntries().end());
-    return iterator->value.slotIndex;
+    const Vector<Identifier>& names = importSlotNames();
+    auto iterator = std::lower_bound(names.begin(), names.end(), localName, [](const Identifier& name, UniquedStringImpl* localName) { return codePointCompare(StringView(name.string()), StringView(*localName)) < 0; });
+    RELEASE_ASSERT(iterator != names.end() && iterator->impl() == localName);
+    return iterator - names.begin();
+}
+
+JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject, unsigned index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Resolution resolution = resolveImport(globalObject, importSlotNames()[index]);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(resolution.type == Resolution::Type::Resolved);
+    JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironment();
+    moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
+    return environment;
 }
 
 std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importedBindings(JSGlobalObject* globalObject)
@@ -216,25 +250,8 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Vector<Identifier> localNames;
-#if USE(BUN_JSC_ADDITIONS)
-    if (importEntriesArePrelinked()) {
-        for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
-            if (!import.isNamespace())
-                localNames.append(prelinkedGraph()->identifier(import.localSid));
-        }
-    } else
-#endif
-    {
-        for (const auto& entry : importEntries().values()) {
-            if (entry.type != ImportEntryType::Namespace)
-                localNames.append(entry.localName);
-        }
-    }
-    std::sort(localNames.begin(), localNames.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
-
     ModuleProgramExecutable::ImportedBindings bindings;
-    for (const Identifier& localName : localNames) {
+    for (const Identifier& localName : importSlotNames()) {
         Resolution resolution = resolveImport(globalObject, localName);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (resolution.type != Resolution::Type::Resolved)
@@ -276,7 +293,9 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     auto& executables = globalObject->moduleProgramExecutables();
     if (!url.isEmpty() && bindings) {
         ModuleProgramExecutable* shared = executables.get(url);
-        if (shared && shared->importedBindings() == bindings && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+        // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
+        // share and no symbol table to instantiate an environment from.)
+        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
         }
