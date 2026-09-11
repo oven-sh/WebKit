@@ -466,7 +466,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
-        m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
+        m_functionExprs[i].set(vm, this, linkFunctionExpr(i, unlinkedExecutable));
     }
 
     if (unlinkedCodeBlock->numberOfExceptionHandlers()) {
@@ -878,6 +878,14 @@ FunctionExecutable* CodeBlock::materializeFunctionExecutable(WriteBarrier<Functi
     return executable;
 }
 
+FunctionExecutable* CodeBlock::linkFunctionExpr(unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    ScriptExecutable* ownerExecutable = this->ownerExecutable();
+    if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables())
+        return uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable)->functionExpression(vm(), index, m_functionExprs.size(), unlinkedExecutable);
+    return unlinkedExecutable->link(vm(), ownerExecutable->topLevelExecutable(), ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+}
+
 FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 {
     ASSERT(index >= firstLazilyMaterializedFunctionDecl());
@@ -886,6 +894,14 @@ FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 
 FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
 {
+    if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables()) {
+        ASSERT(!m_functionExprs[index] && m_numberOfUnmaterializedFunctionExecutables);
+        RELEASE_ASSERT(!isCompilationThread());
+        FunctionExecutable* executable = linkFunctionExpr(index, m_unlinkedCode->functionExpr(index));
+        m_functionExprs[index].set(vm(), this, executable);
+        m_numberOfUnmaterializedFunctionExecutables--;
+        return executable;
+    }
     return materializeFunctionExecutable(m_functionExprs[index], m_unlinkedCode->functionExpr(index));
 }
 

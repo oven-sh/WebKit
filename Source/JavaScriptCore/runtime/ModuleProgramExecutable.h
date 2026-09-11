@@ -31,6 +31,7 @@ namespace JSC {
 
 class FunctionExecutable;
 class SymbolTable;
+class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
 
 class ModuleProgramExecutable final : public GlobalExecutable {
@@ -112,6 +113,22 @@ public:
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
+    // Options::useSharedModuleFunctionExpressionExecutables(): the executable of function expression `index` of the
+    // module's top-level code, linked from `unlinkedExecutable` the first time.
+    FunctionExecutable* functionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable*);
+
+    // Every record that is going to evaluate the module with this executable says so (JSModuleRecord::getOrMakeExecutable),
+    // and says when its body ran to completion. Once none is left, and until another record adopts the executable, nothing
+    // needs the linked code; the unlinked code is dropped too if it can be had back for the asking.
+    void willBeEvaluatedByAnotherRecord() { ++m_recordsYetToFinishEvaluation; }
+    void didFinishEvaluation(VM&);
+    bool hasFinishedEvaluation() const { return m_hasBeenEvaluated && !m_recordsYetToFinishEvaluation; }
+    // releaseUnlinkedCodeIfRecoverable() took the unlinked code; getUnlinkedCodeBlock() decodes the same code again.
+    bool hasReleasedUnlinkedCode() const { return m_hasReleasedUnlinkedCode; }
+    // Only once the body has finished (an environment made for code that has yet to run is tied to that very code, see
+    // UnlinkedModuleProgramCodeBlock.h), and only if getUnlinkedCodeBlock() can decode the same code again.
+    void releaseUnlinkedCodeIfRecoverable(VM&);
+
 private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
@@ -122,6 +139,10 @@ private:
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
     std::optional<ImportedBindings> m_importedBindings;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
+    FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
+    unsigned m_recordsYetToFinishEvaluation { 0 };
+    bool m_hasBeenEvaluated { false };
+    bool m_hasReleasedUnlinkedCode { false };
     OptionSet<CodeGenerationMode> m_codeGenerationMode;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
