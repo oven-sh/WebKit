@@ -131,6 +131,19 @@ static constexpr unsigned bitWidthForMaxBytecodeStructLength = WTF::getMSBSet(ma
     macro(OpSuperConstructVarargs) \
     macro(OpCallIgnoreResult) \
 
+// The other opcodes with a CallLinkInfo have varargs; those get theirs at link time.
+#define FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(macro) \
+    macro(OpCall) \
+    macro(OpTailCall) \
+    macro(OpCallDirectEval) \
+    macro(OpConstruct) \
+    macro(OpSuperConstruct) \
+    macro(OpIteratorOpen) \
+    macro(OpIteratorNext) \
+    macro(OpAsyncIteratorOpen) \
+    macro(OpAsyncIteratorNext) \
+    macro(OpCallIgnoreResult) \
+
 #define FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(macro) \
     macro(OpGetLength) \
     macro(OpGetByVal) \
