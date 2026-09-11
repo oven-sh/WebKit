@@ -133,7 +133,11 @@ void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable
         RELEASE_ASSERT(slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         uninstantiated = makeUnique<UninstantiatedFunctionDeclarations>();
         uninstantiated->executable.set(vm, this, executable);
-        uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
+        // Code that ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable() lets go of once the module has run is not
+        // kept alive from here: its declarations are still in the payload the slots decode from.
+        bool declarationsOutliveTheCodeBlock = slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex() && Options::useCodeRecoveryFromBytecodeCache();
+        if (!declarationsOutliveTheCodeBlock)
+            uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
         uninstantiated->remaining = slots->size();
     }
     Locker locker { cellLock() };
@@ -160,13 +164,23 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     if (!index)
         return { };
     // Records that share the executable share the declarations' executables (and so their code): the first one to read a
-    // declaration links it, from this record's reference to the module's unlinked code.
+    // declaration links it. What it links from is this record's copy of the module's unlinked code if it has to keep one,
+    // else the executable's while it has one (not released yet, or fetched again), else the bytecode cache payload.
     ModuleProgramExecutable* executable = uninstantiated->executable.get();
     // The declaration's code is every record's, and what it is specialized on is the executable's symbol table.
     RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
     FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
-    if (!functionExecutable)
-        functionExecutable = executable->linkFunctionDeclaration(vm, *index, uninstantiated->unlinkedCodeBlock->functionDecl(*index));
+    if (!functionExecutable) {
+        UnlinkedFunctionExecutable* unlinkedExecutable = nullptr;
+        if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get())
+            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
+        else if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->unlinkedCodeBlock())
+            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
+        else
+            unlinkedExecutable = m_functionDeclarationSlots->decode(vm, *index);
+        RELEASE_ASSERT(unlinkedExecutable);
+        functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
+    }
     UnlinkedFunctionExecutable* unlinkedExecutable = functionExecutable->unlinkedExecutable();
 
     // InitializeEnvironment step 24.a.iii, for this one declaration.
@@ -242,8 +256,10 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (isTopLevelExecutionFinished())
+    if (isTopLevelExecutionFinished()) {
         m_moduleProgramExecutable.clear();
+        executable->didFinishEvaluation(vm);
+    }
 
     RELEASE_AND_RETURN(scope, resultOrAwaitedValue);
 }
@@ -391,10 +407,18 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     if (bindings) {
         ModuleProgramExecutable* shared = executables.get(key);
         // (An executable whose code was deleted, ScriptExecutable::clearCode, is left to the
-        // records that have it. The executable's code is in the mode of its first code, see
-        // getUnlinkedCodeBlock, which has to be the one this record would ask for.)
-        if (shared && shared->unlinkedCodeBlock() && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+        // records that have it. One that only let go of unlinked code it can decode again,
+        // releaseUnlinkedCodeIfRecoverable, is adopted and decodes it again. Either way the
+        // executable's code is in the mode of its first code, see getUnlinkedCodeBlock, which
+        // has to be the one this record would ask for.)
+        if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
+            && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+            if (!shared->unlinkedCodeBlock()) {
+                shared->getUnlinkedCodeBlock(globalObject);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+            shared->willBeEvaluatedByAnotherRecord();
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
         }
@@ -402,6 +426,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
 
     executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings), moduleScopeSymbolTables);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);
     if (executable->importedBindings())
         executables.set(key, Weak<ModuleProgramExecutable>(executable));

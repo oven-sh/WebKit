@@ -117,7 +117,7 @@ private:
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);
         WriteBarrier<ModuleProgramExecutable> executable;
-        WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots
+        WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots; null when the slots can decode the declarations without it
         unsigned remaining { 0 }; // released when it reaches zero; a slot that was assigned to before it was read keeps it above
     };
     RefPtr<ModuleFunctionDeclarationSlots> m_functionDeclarationSlots;
