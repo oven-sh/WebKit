@@ -90,7 +90,11 @@ public:
 
     bool isAsync() const { return features() & AwaitFeature; }
 
+    // One per executable, from its first unlinked code on: every environment of every record that shares the executable
+    // is made from it (see getUnlinkedCodeBlock).
     SymbolTable* moduleEnvironmentSymbolTable() LIFETIME_BOUND { return m_moduleEnvironmentSymbolTable.get(); }
+    // The mode of the code that table came from, and of any code fetched for this executable later.
+    OptionSet<CodeGenerationMode> codeGenerationMode() const { return m_codeGenerationMode; }
 
     // Records for one URL and source text whose imports resolve alike share this
     // executable (JSModuleRecord::getOrMakeExecutable), so the function declarations'
@@ -113,6 +117,7 @@ private:
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
     std::optional<ImportedBindings> m_importedBindings;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
+    OptionSet<CodeGenerationMode> m_codeGenerationMode;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
 
