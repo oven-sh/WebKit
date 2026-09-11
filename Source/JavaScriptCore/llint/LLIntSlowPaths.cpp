@@ -626,6 +626,79 @@ extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame* calleeFrame, CallLink
     return encodeResult(callTarget, nullptr);
 }
 
+static LazyCallLinkInfo& lazyCallLinkInfoFor(CodeBlock* codeBlock, const JSInstruction* instruction)
+{
+    switch (instruction->opcodeID()) {
+#define CASE(__op) \
+    case __op::opcodeID: \
+        return instruction->as<__op>().metadata(codeBlock).m_callLinkInfo;
+
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+// The first call of a call site does not touch a CallLinkInfo when the callee is a JS function. Returns null when that is not
+// the case, or when the call throws.
+static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame, CodeSpecializationKind kind)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* function = dynamicDowncast<JSFunction>(calleeFrame->guaranteedJSValueCallee());
+    if (!function) [[unlikely]]
+        return nullptr;
+    ExecutableBase* executable = function->executable();
+    if (executable->isHostFunction()) [[unlikely]]
+        return nullptr;
+    auto* functionExecutable = uncheckedDowncast<FunctionExecutable>(executable);
+    if (!isCall(kind) && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct) [[unlikely]]
+        return nullptr;
+
+    DeferTraps deferTraps(vm); // We can't jettison if we're going to call this CodeBlock.
+    CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
+    functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *codeBlockSlot);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    ArityCheckMode arity = calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
+    return functionExecutable->entrypointFor(kind, arity).taggedPtr();
+}
+
+// Where the CallLinkInfos shared by the call sites that have not run twice yet send their calls. The first call of a site does
+// not need a CallLinkInfo of its own; the second one gets it and links it, as llint_default_call would have.
+extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLinkInfo*)
+{
+    CallFrame* callerFrame = calleeFrame->callerFrame();
+    CodeBlock* owner = callerFrame->codeBlock();
+    VM& vm = owner->vm();
+    NativeCallFrameTracer tracer(vm, calleeFrame);
+    sanitizeStackForVM(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const JSInstruction* instruction = callerFrame->currentVPC();
+    BytecodeIndex bytecodeIndex { owner->bytecodeOffset(instruction) };
+    auto callType = CallLinkInfo::callTypeFor(instruction->opcodeID());
+    LazyCallLinkInfo& lazyCallLinkInfo = lazyCallLinkInfoFor(owner, instruction);
+    calleeFrame->setCodeBlock(nullptr);
+    void* callTarget;
+    if (lazyCallLinkInfo.hasNeverExecuted(vm)) {
+        lazyCallLinkInfo.setExecutedOnce(vm);
+        callTarget = firstCallToJSFunction(vm, calleeFrame, CallLinkInfo::specializationKindFor(callType));
+        if (!callTarget && !scope.exception()) {
+            DataOnlyCallLinkInfo callLinkInfo;
+            callLinkInfo.initialize(vm, owner, callType, CodeOrigin { bytecodeIndex });
+            ASSERT(!callLinkInfo.isTailCall());
+            JSCell* calleeAsFunctionCellIgnored;
+            calleeFrame->setCodeBlock(nullptr);
+            callTarget = virtualForWithFunction(vm, owner, calleeFrame, &callLinkInfo, calleeAsFunctionCellIgnored);
+        }
+    } else
+        callTarget = linkFor(vm, owner, calleeFrame, &lazyCallLinkInfo.ensure(vm, owner, callType, CodeOrigin { bytecodeIndex }));
+    ensureStillAliveHere(owner);
+    if (scope.exception()) [[unlikely]]
+        return encodeResult(callTarget, std::bit_cast<void*>(&vm));
+    return encodeResult(callTarget, nullptr);
+}
+
 extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
 {
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
@@ -2148,6 +2221,15 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     assertIsTaggedWith<JSEntryPtrTag>(codePtr.taggedPtr());
     auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_ensure_call_link_info)
+{
+    LLINT_BEGIN_NO_SET_PC();
+    UNUSED_VARIABLE(globalObject);
+    UNUSED_VARIABLE(throwScope);
+    auto& callLinkInfo = lazyCallLinkInfoFor(codeBlock, pc).ensure(vm, codeBlock, CallLinkInfo::callTypeFor(pc->opcodeID()), CodeOrigin { BytecodeIndex(codeBlock->bytecodeOffset(pc)) });
+    LLINT_RETURN_TWO(pc, &callLinkInfo);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)

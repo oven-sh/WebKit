@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ArrayProfile.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
 #include "CallFrameShuffleData.h"
@@ -166,13 +167,18 @@ public:
         return m_hasSeenShouldRepatch;
     }
 
+    // See LazyCallLinkInfo. Nothing may ever change such a CallLinkInfo.
+    bool isSharedByUnlinkedCallSites() const { return m_isSharedByUnlinkedCallSites; }
+
     void clearSeen()
     {
+        RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
         m_hasSeenShouldRepatch = false;
     }
 
     void setSeen()
     {
+        RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
         m_hasSeenShouldRepatch = true;
     }
 
@@ -292,6 +298,7 @@ protected:
     bool m_hasSeenClosure : 1 { false };
     bool m_clearedByGC : 1 { false };
     bool m_clearedByVirtual : 1 { false };
+    bool m_isSharedByUnlinkedCallSites : 1 { false };
     unsigned m_callType : 4 { CallType::None }; // CallType
     unsigned m_type : 1; // Type
     unsigned m_mode : 3 { static_cast<unsigned>(Mode::Init) }; // Mode
@@ -314,6 +321,84 @@ public:
     }
 
     void initialize(VM&, CodeBlock*, CallType, CodeOrigin);
+    void initializeAsSharedByUnlinkedCallSites(CodePtr<JSEntryPtrTag> unlinkedCallThunk, bool executedOnce);
+};
+
+// What a call site in LLInt / Baseline metadata profiles: its call IC and, for op_call / op_call_ignore_result / op_tail_call, the
+// ArrayProfile of |this|.
+struct CallSiteData {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CallSiteData);
+
+    // The VM's two CallSiteDatas for the call sites that have not run twice yet.
+    static CallSiteData* createShared(bool executedOnce);
+
+    static constexpr ptrdiff_t offsetOfArrayProfile() { return OBJECT_OFFSETOF(CallSiteData, m_arrayProfile); }
+
+    DataOnlyCallLinkInfo m_callLinkInfo;
+    ArrayProfile m_arrayProfile;
+};
+
+// A call site gets its own CallSiteData when it runs for the second time or when its CodeBlock gets Baseline code, and keeps it
+// for as long as the metadata lives. Until then it points at one of two CallSiteDatas that all such sites of the VM share: their
+// CallLinkInfo looks like a polymorphic call to llint_unlinked_call, has no owner and never changes, and their ArrayProfile is
+// only ever written by the LLInt.
+class LazyCallLinkInfo {
+    WTF_MAKE_NONCOPYABLE(LazyCallLinkInfo);
+    friend class LLIntOffsetsExtractor;
+public:
+    LazyCallLinkInfo() = default;
+    ~LazyCallLinkInfo();
+
+    static void initialize(CodePtr<JSEntryPtrTag> unlinkedCallThunk) { s_unlinkedCallThunk = unlinkedCallThunk; }
+    static CodePtr<JSEntryPtrTag> unlinkedCallThunk() { return s_unlinkedCallThunk; }
+
+    void setNeverExecuted(VM&);
+    bool hasNeverExecuted(VM&) const;
+    void setExecutedOnce(VM&);
+    bool hasExecutedOnce() const
+    {
+        CallSiteData* data = m_data;
+        return data && data->m_callLinkInfo.isSharedByUnlinkedCallSites() && data->m_callLinkInfo.seenOnce();
+    }
+
+    DataOnlyCallLinkInfo* get() const
+    {
+        if (CallSiteData* data = ownData())
+            return &data->m_callLinkInfo;
+        return nullptr;
+    }
+
+    ArrayProfile* arrayProfile() const
+    {
+        if (CallSiteData* data = ownData())
+            return &data->m_arrayProfile;
+        return nullptr;
+    }
+
+    DataOnlyCallLinkInfo& ensure(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)
+    {
+        if (auto* callLinkInfo = get()) [[likely]]
+            return *callLinkInfo;
+        return ensureSlow(vm, owner, callType, codeOrigin);
+    }
+
+    static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(LazyCallLinkInfo, m_data); }
+
+private:
+    CallSiteData* ownData() const
+    {
+        // The CallLinkInfo of a call site of a CodeBlock has an owner, the ones that such sites share do not.
+        CallSiteData* data = m_data;
+        if (!data || !data->m_callLinkInfo.owner())
+            return nullptr;
+        return data;
+    }
+
+    DataOnlyCallLinkInfo& ensureSlow(VM&, CodeBlock*, CallLinkInfo::CallType, CodeOrigin);
+
+    static CodePtr<JSEntryPtrTag> s_unlinkedCallThunk;
+
+    CallSiteData* m_data { nullptr };
 };
 
 struct UnlinkedCallLinkInfo { };
