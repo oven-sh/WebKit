@@ -1025,7 +1025,7 @@ static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, Thr
 #endif
     if (status == JSPromise::Status::Fulfilled) {
         auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-        JSPromise* makeModulePromise = JSModuleLoader::makeModule(globalObject, entry->key(), jsSourceCode);
+        JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), jsSourceCode);
         if (scope.exception()) {
             modulePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1103,7 +1103,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->module(vm, module);
-            JSPromise* requestedPromise = globalObject->moduleLoader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1118,7 +1118,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         // loadRequestedModules settled: on fulfillment, call finishLoading and update entry
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = context->module();
-            globalObject->moduleLoader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
+            context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1147,7 +1147,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         // Cached loadPromise settled: on fulfillment, call finishLoading
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
-            globalObject->moduleLoader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
+            context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1185,7 +1185,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         if (!arguments[1].inherits<AbstractModuleRecord>()) {
 #endif
         auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-        globalObject->moduleLoader()->provideFetch(globalObject, specifier, type, jsSourceCode);
+        context->loader()->provideFetch(globalObject, specifier, type, jsSourceCode);
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1211,12 +1211,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 #else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
 #endif
-            loadPromise = globalObject->moduleLoader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
+            loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
-            loadPromise = globalObject->moduleLoader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
+            loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
             if (scope.exception()) {
                 intermediatePromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1250,7 +1250,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
             if (failure.isEvaluationError(specifier, type)) {
-                ModuleRegistryEntry* entry = globalObject->moduleLoader()->ensureRegistered(globalObject, specifier, type);
+                ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
                     return;
@@ -1278,7 +1278,7 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
-        if (ModuleRegistryEntry* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(specifier, type))
+        if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1433,7 +1433,7 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
-        ModuleRegistryEntry* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(specifier, type);
+        ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
         if (!entry)
             return;
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {

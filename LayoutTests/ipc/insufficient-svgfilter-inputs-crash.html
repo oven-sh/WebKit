@@ -28,11 +28,10 @@
             renderingPurpose: 0,
             resolutionScale: 1.0,
             colorSpace: sRGBColorSpace(),
-            bufferFormat: { pixelFormat: 1, useLosslessCompression: 0 },
+            bufferFormat: { pixelFormat: 2, useLosslessCompression: 0 },
             identifier: imageBufferIdentifier,
             contextIdentifier: contextIdentifier,
         });
-        const didCreateBackendReply = streamConnection.connection.waitForMessage(imageBufferIdentifier, IPC.messages.RemoteImageBufferProxy_DidCreateBackend.name, 1);
     
         const remoteImageBuffer = streamConnection.newInterface("RemoteImageBuffer", imageBufferIdentifier);
     

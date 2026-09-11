@@ -160,6 +160,14 @@ void RenderSVGInline::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) co
         quads.append(localToAbsoluteQuad(FloatRect(textBoundingBox.x() + box->x(), textBoundingBox.y() + box->y(), box->logicalWidth(), box->logicalHeight()), MapCoordinatesMode::UseTransforms, wasFixed));
 }
 
+#if PLATFORM(IOS_FAMILY)
+void RenderSVGInline::absoluteQuadsForSelection(Vector<FloatQuad>& quads) const
+{
+    // Unlike absoluteQuads(), selection geometry is built from the line box rects even with the legacy SVG engine.
+    RenderInline::absoluteQuads(quads, nullptr);
+}
+#endif
+
 void RenderSVGInline::willBeDestroyed()
 {
     if (document().settings().layerBasedSVGEngineEnabled()) {

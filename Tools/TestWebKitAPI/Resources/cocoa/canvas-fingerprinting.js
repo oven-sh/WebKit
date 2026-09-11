@@ -149,3 +149,14 @@ async function fullCanvasHash(data) {
         data = fullTextCanvasImageData();
     return await digestMessage(data.data);
 }
+
+function getImageDataColorSpace(colorSpace) {
+    let canvas = document.createElement("canvas");
+    canvas.width = 10;
+    canvas.height = 10;
+    document.body.appendChild(canvas);
+    let ctx = canvas.getContext("2d", { colorSpace: colorSpace });
+    ctx.fillStyle = "green";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return ctx.getImageData(0, 0, canvas.width, canvas.height, { colorSpace: colorSpace }).colorSpace;
+}

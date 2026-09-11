@@ -384,7 +384,7 @@ void ComplexTextController::collectComplexTextRuns()
     RefPtr<const Font> smallSynthesizedFont;
     RefPtr<const Font> halfWidthFont;
 
-    CachedTextBreakIterator graphemeClusterIterator(m_run->text(), { }, TextBreakIterator::CharacterMode { }, m_fontCascade->fontDescription().computedLocale());
+    CachedTextBreakIterator graphemeClusterIterator(m_run->text(), { }, TextBreakIterator::CharacterMode { }, m_fontCascade->fontDescription().usedLocale());
 
     char32_t baseCharacter;
     advanceByCombiningCharacterSequence(graphemeClusterIterator, currentIndex, baseCharacter);

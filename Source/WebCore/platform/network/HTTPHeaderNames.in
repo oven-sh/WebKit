@@ -114,6 +114,7 @@ Trailer
 Transfer-Encoding
 Upgrade
 Upgrade-Insecure-Requests
+Use-As-Dictionary
 User-Agent
 Vary
 Via

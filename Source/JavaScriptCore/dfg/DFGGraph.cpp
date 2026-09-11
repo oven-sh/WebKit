@@ -49,6 +49,7 @@
 #include "GetterSetter.h"
 #include "JIT.h"
 #include "JSLexicalEnvironment.h"
+#include "JSModuleEnvironment.h"
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "OperandsInlines.h"
@@ -1453,6 +1454,15 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
         return JSValue();
     
     SymbolTable* symbolTable = activation->symbolTable();
+
+    // A module environment's import slot is written once (empty until then), so a
+    // filled slot is a constant without a watchpoint.
+    if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(activation)) {
+        unsigned firstImportSlot = JSModuleEnvironment::importSlotScopeOffset(symbolTable, 0).offset();
+        if (offset.offset() >= firstImportSlot && offset.offset() - firstImportSlot < moduleEnvironment->importSlotCount())
+            return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
+    }
+
     JSValue value;
     InlineWatchpointSet* set;
     {
@@ -1582,19 +1592,24 @@ ObjectPropertyConditionSet Graph::tryEnsureAbsence(JSGlobalObject* globalObject,
     return result;
 }
 
+static RegExp* constantRegExpFor(Graph& graph, Node* node, JSGlobalObject*& globalObject)
+{
+    if (RegExpObject* regExpObject = node->dynamicCastConstant<RegExpObject*>()) {
+        globalObject = regExpObject->realm();
+        return regExpObject->regExp();
+    }
+    if (node->op() == NewRegExp) {
+        globalObject = graph.globalObjectFor(node->origin.semantic);
+        return node->castOperand<RegExp*>();
+    }
+    return nullptr;
+}
+
 const WTF::BitSet<256>* Graph::tryGetConstantRegExpFirstCharacterBitmap(Node* node, FirstCharacterFilterPosition position)
 {
     JSGlobalObject* globalObject = nullptr;
-    RegExp* regExp = nullptr;
-    if (RegExpObject* regExpObject = node->dynamicCastConstant<RegExpObject*>()) {
-        globalObject = regExpObject->realm();
-        regExp = regExpObject->regExp();
-    } else if (node->op() == NewRegExp) {
-        globalObject = globalObjectFor(node->origin.semantic);
-        regExp = node->castOperand<RegExp*>();
-    }
-
-    if (!globalObject || !regExp)
+    RegExp* regExp = constantRegExpFor(*this, node, globalObject);
+    if (!regExp)
         return nullptr;
 
     // The filter reads one fixed position, so the flags must guarantee a match can only begin there.
@@ -1621,6 +1636,29 @@ const WTF::BitSet<256>* Graph::tryGetConstantRegExpFirstCharacterBitmap(Node* no
     // realm jettison code that baked no bitmap at all.
     watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
     return bitmap;
+}
+
+// nullopt: not a constant or not compiled yet, read RegExp::m_minimumSize at runtime. 0: constant, but no input length can be rejected.
+std::optional<unsigned> Graph::tryGetConstantRegExpTestMinimumSize(Node* node)
+{
+    JSGlobalObject* globalObject = nullptr;
+    RegExp* regExp = constantRegExpFor(*this, node, globalObject);
+    if (!regExp || globalObject->isRegExpRecompiled())
+        return std::nullopt;
+
+    unsigned minimumSize = 0;
+    {
+        Locker locker { regExp->cellLock() };
+        if (!regExp->hasCode())
+            return std::nullopt;
+        minimumSize = regExp->minimumSize();
+    }
+
+    if (regExp->globalOrSticky() || !minimumSize)
+        return 0;
+
+    watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
+    return minimumSize;
 }
 
 const WTF::BitSet<256>* Graph::regExpFirstCharacterBitmap(RegExp* regExp, FirstCharacterFilterPosition position)

@@ -271,7 +271,7 @@ TEST(EnhancedSecurityPolicies, test_name) \
 } \
 
 #define TEST_WITH_SITE_ISOLATION(test_name) \
-TEST(EnhancedSecurityPolicies, DISABLED_##test_name##WithSiteIsolation) \
+TEST(EnhancedSecurityPolicies, test_name##WithSiteIsolation) \
 { \
     run##test_name(true); \
 }
@@ -495,6 +495,40 @@ static void runHttpToHttpsRedirectNoEnhancedSecurityProcess(bool useSiteIsolatio
     EXPECT_FALSE(sawEnhancedSecurityProcess);
 }
 TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpToHttpsRedirectNoEnhancedSecurityProcess)
+
+static void runIframeKeepsSiteOutOfEnhancedSecurityProcess(bool useSiteIsolation)
+{
+    HTTPServer plaintextServer({
+        { "http://insecure.example.internal/iframe"_s, { "<script>alert('iframe-in-page')</script>"_s } },
+        { "http://insecure.example.internal/first"_s, { "<script>alert('with-iframe-alive')</script>"_s } },
+        { "http://insecure.example.internal/second"_s, { "<script>alert('after-iframe-gone')</script>"_s } },
+    });
+
+    auto webView = enhancedSecurityTestConfiguration(&plaintextServer, nullptr, useSiteIsolation);
+
+    runActionAndCheckEnhancedSecurityAlerts(webView, [webView] {
+        [webView loadHTMLString:@"<iframe src='http://insecure.example.internal/iframe'></iframe>" baseURL:nil];
+    }, {
+        { "iframe-in-page"_s, ExpectedEnhancedSecurity::Disabled }
+    });
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/first", {
+        { "with-iframe-alive"_s, ExpectedEnhancedSecurity::Disabled }
+    });
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/first");
+
+    auto pidWithoutEnhancedSecurity = [webView _webProcessIdentifier];
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/second", {
+        { "after-iframe-gone"_s, ExpectedEnhancedSecurity::Enabled }
+    });
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/second");
+    EXPECT_NE([webView _webProcessIdentifier], pidWithoutEnhancedSecurity);
+    EXPECT_EQ(plaintextServer.totalRequests(), 3u);
+}
+TEST_WITH_SITE_ISOLATION(IframeKeepsSiteOutOfEnhancedSecurityProcess)
 
 // MARK: - HTTPS First Upgrade Tests
 

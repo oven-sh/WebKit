@@ -131,8 +131,6 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
             continue;
         }
 
-        // The classifications below take a code unit. A supplementary code point must not be
-        // narrowed into them: U+2002A is not '*' and U+20009 is not a tab.
         bool isASCIICodePoint = isASCII(codePoint);
 
         if (isASCIICodePoint && StringView("^$\\.*+?()[]{}|/"_s).contains(static_cast<char16_t>(codePoint))) {

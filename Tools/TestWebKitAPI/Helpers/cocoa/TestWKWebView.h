@@ -54,15 +54,17 @@
 @protocol BEExtendedTextInputTraits;
 #endif
 
+NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+
 @interface WKWebView (AdditionalDeclarations)
 #if PLATFORM(MAC)
-- (void)copy:(id)sender;
-- (void)paste:(id)sender;
-- (void)changeAttributes:(id)sender;
-- (void)changeColor:(id)sender;
-- (void)superscript:(id)sender;
-- (void)subscript:(id)sender;
-- (void)unscript:(id)sender;
+- (void)copy:(nullable id)sender;
+- (void)paste:(nullable id)sender;
+- (void)changeAttributes:(nullable id)sender;
+- (void)changeColor:(nullable id)sender;
+- (void)superscript:(nullable id)sender;
+- (void)subscript:(nullable id)sender;
+- (void)unscript:(nullable id)sender;
 #endif
 @end
 
@@ -84,26 +86,30 @@ namespace WebCore {
 class Color;
 }
 
+#endif
+
 @interface WKWebView (TestWebKitAPI)
 #if PLATFORM(IOS_FAMILY)
 @property (nonatomic, readonly) CGRect selectionClipRect;
 @property (nonatomic, readonly) BOOL hasAsyncTextInput;
 #if USE(BROWSERENGINEKIT)
-@property (nonatomic, readonly) id<BETextInput> asyncTextInput;
-@property (nonatomic, readonly) id<BEExtendedTextInputTraits> extendedTextInputTraits;
+@property (nonatomic, readonly, nullable) id<BETextInput> asyncTextInput;
+@property (nonatomic, readonly, nullable) id<BEExtendedTextInputTraits> extendedTextInputTraits;
 #endif
 #if HAVE(UI_WK_DOCUMENT_CONTEXT)
-- (void)synchronouslyAdjustSelectionWithDelta:(NSRange)range;
+- (void)synchronouslyAdjustSelectionWithDelta:(NSRange)range NS_SWIFT_UNAVAILABLE("Spins the run loop");
 #endif
+@property (nonatomic, readonly, nullable) id<UITextInputTraits_Private> effectiveTextInputTraits;
+#ifdef __cplusplus
 @property (nonatomic, readonly) TestWebKitAPI::AutocorrectionContext autocorrectionContext;
-@property (nonatomic, readonly) id<UITextInputTraits_Private> effectiveTextInputTraits;
 - (std::pair<CGRect, CGRect>)autocorrectionRectsForString:(NSString *)string;
-- (NSArray<_WKTextInputContext *> *)synchronouslyRequestTextInputContextsInRect:(CGRect)rect;
+#endif
+- (nullable NSArray<_WKTextInputContext *> *)synchronouslyRequestTextInputContextsInRect:(CGRect)rect NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)replaceText:(NSString *)input withText:(NSString *)correction shouldUnderline:(BOOL)shouldUnderline completion:(void(^)())completion;
 - (void)insertText:(NSString *)primaryString alternatives:(NSArray<NSString *> *)alternatives;
 - (void)handleKeyEvent:(WebEvent *)event completion:(void (^)(WebEvent *theEvent, BOOL handled))completion;
 - (void)selectTextForContextMenuWithLocationInView:(CGPoint)locationInView completion:(void(^)(BOOL shouldPresent))completion;
-- (void)selectTextInGranularity:(UITextGranularity)granularity atPoint:(CGPoint)locationInView;
+- (void)selectTextInGranularity:(UITextGranularity)granularity atPoint:(CGPoint)locationInView NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)defineSelection;
 - (void)shareSelection;
 - (void)moveSelectionToStartOfParagraph;
@@ -113,118 +119,119 @@ class Color;
 - (void)insertTextSuggestion:(UITextSuggestion *)textSuggestion;
 - (void)focusInWindow;
 #if HAVE(UI_WK_DOCUMENT_CONTEXT)
-- (UIWKDocumentContext *)synchronouslyRequestDocumentContext:(UIWKDocumentRequest *)request;
+- (nullable UIWKDocumentContext *)synchronouslyRequestDocumentContext:(UIWKDocumentRequest *)request NS_SWIFT_UNAVAILABLE("Spins the run loop");
 #endif
 #endif // PLATFORM(IOS_FAMILY)
 
-- (CALayer *)firstLayerWithName:(NSString *)layerName;
-- (CALayer *)firstLayerWithNameContaining:(NSString *)layerName;
+- (nullable CALayer *)firstLayerWithName:(NSString *)layerName;
+- (nullable CALayer *)firstLayerWithNameContaining:(NSString *)layerName;
+#ifdef __cplusplus
 - (void)forEachCALayer:(IterationStatus(^)(CALayer *))visitor;
+#endif
 
-@property (nonatomic, readonly) CGImageRef snapshotAfterScreenUpdates;
-@property (nonatomic, readonly) NSUInteger gpuToWebProcessConnectionCount;
-@property (nonatomic, readonly) NSUInteger modelProcessModelPlayerCount;
-@property (nonatomic, readonly) NSString *contentsAsString;
-@property (nonatomic, readonly) NSData *contentsAsWebArchive;
-@property (nonatomic, readonly) NSArray<NSString *> *tagsInBody;
-@property (nonatomic, readonly) NSString *selectedText;
+@property (nonatomic, readonly, nullable) CGImageRef snapshotAfterScreenUpdates NS_SWIFT_UNAVAILABLE("Spins the run loop");
+@property (nonatomic, readonly) NSUInteger gpuToWebProcessConnectionCount NS_SWIFT_UNAVAILABLE("Spins the run loop");
+@property (nonatomic, readonly) NSUInteger modelProcessModelPlayerCount NS_SWIFT_UNAVAILABLE("Spins the run loop");
+@property (nonatomic, readonly, nullable) NSString *contentsAsString NS_SWIFT_UNAVAILABLE("Spins the run loop");
+@property (nonatomic, readonly, nullable) NSData *contentsAsWebArchive NS_SWIFT_UNAVAILABLE("Spins the run loop");
+@property (nonatomic, readonly, nullable) NSArray<NSString *> *tagsInBody NS_SWIFT_UNAVAILABLE("Spins the run loop");
+@property (nonatomic, readonly) NSString *selectedText NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)loadTestPageNamed:(NSString *)pageName;
-- (void)synchronouslyGoBack;
-- (void)synchronouslyGoForward;
-- (void)synchronouslyLoadHTMLString:(NSString *)html;
-- (void)synchronouslyLoadHTMLString:(NSString *)html baseURL:(NSURL *)url;
-- (void)synchronouslyLoadHTMLString:(NSString *)html preferences:(WKWebpagePreferences *)preferences;
-- (void)synchronouslyLoadRequest:(NSURLRequest *)request;
-- (void)synchronouslyLoadSimulatedRequest:(NSURLRequest *)request responseHTMLString:(NSString *)htmlString;
-- (void)synchronouslyLoadRequest:(NSURLRequest *)request preferences:(WKWebpagePreferences *)preferences;
-- (void)synchronouslyLoadRequestIgnoringSSLErrors:(NSURLRequest *)request;
-- (void)synchronouslyLoadTestPageNamed:(NSString *)pageName;
-- (void)synchronouslyLoadTestPageNamed:(NSString *)pageName asStringWithBaseURL:(NSURL *)url;
-- (void)synchronouslyLoadTestPageNamed:(NSString *)pageName preferences:(WKWebpagePreferences *)preferences;
-- (BOOL)_synchronouslyExecuteEditCommand:(NSString *)command argument:(NSString *)argument;
-- (void)expectElementTagsInOrder:(NSArray<NSString *> *)tagNames;
-- (void)expectElementCount:(NSInteger)count querySelector:(NSString *)querySelector;
-- (void)expectElementTag:(NSString *)tagName toComeBefore:(NSString *)otherTagName;
-- (BOOL)evaluateMediaQuery:(NSString *)query;
-- (NSString *)stringByEvaluatingJavaScript:(NSString *)script;
-- (NSString *)stringByEvaluatingJavaScript:(NSString *)script inFrame:(WKFrameInfo *)frame;
-- (id)objectByEvaluatingJavaScriptWithUserGesture:(NSString *)script;
-- (id)objectByEvaluatingJavaScript:(NSString *)script;
-- (id)objectByEvaluatingJavaScript:(NSString *)script inFrame:(WKFrameInfo *)frame;
-- (id)objectByEvaluatingJavaScript:(NSString *)script inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)world;
-- (id)objectByEvaluatingJavaScriptWithUserGesture:(NSString *)script inFrame:(WKFrameInfo *)frame;
-- (id)objectByCallingAsyncFunction:(NSString *)script withArguments:(NSDictionary *)arguments;
-- (id)objectByCallingAsyncFunction:(NSString *)script withArguments:(NSDictionary *)arguments error:(NSError **)errorOut;
-- (id)objectByCallingAsyncFunction:(NSString *)script withArguments:(NSDictionary *)arguments inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)world;
-- (unsigned)waitUntilClientWidthIs:(unsigned)expectedClientWidth;
-- (CGRect)elementRectFromSelector:(NSString *)selector;
-- (CGPoint)elementMidpointFromSelector:(NSString *)selector;
-- (_WKJSHandle *)querySelector:(NSString *)selector frame:(WKFrameInfo *)frame world:(WKContentWorld *)world;
+- (void)synchronouslyGoBack NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyGoForward NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyLoadHTMLString:(NSString *)html NS_SWIFT_UNAVAILABLE("Use async load(html:baseURL:) instead");
+- (void)synchronouslyLoadHTMLString:(NSString *)html baseURL:(nullable NSURL *)url NS_SWIFT_UNAVAILABLE("Use async load(html:baseURL:) instead");
+- (void)synchronouslyLoadHTMLString:(NSString *)html preferences:(WKWebpagePreferences *)preferences NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyLoadRequest:(NSURLRequest *)request NS_SWIFT_UNAVAILABLE("Use async loadAndWait(_:) instead");
+- (void)synchronouslyLoadSimulatedRequest:(NSURLRequest *)request responseHTMLString:(NSString *)htmlString NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyLoadRequest:(NSURLRequest *)request preferences:(WKWebpagePreferences *)preferences NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyLoadRequestIgnoringSSLErrors:(NSURLRequest *)request NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyLoadTestPageNamed:(NSString *)pageName NS_SWIFT_UNAVAILABLE("Use async load(testPageNamed:) instead");
+- (void)synchronouslyLoadTestPageNamed:(NSString *)pageName asStringWithBaseURL:(nullable NSURL *)url NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)synchronouslyLoadTestPageNamed:(NSString *)pageName preferences:(WKWebpagePreferences *)preferences NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (BOOL)_synchronouslyExecuteEditCommand:(NSString *)command argument:(nullable NSString *)argument NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)expectElementTagsInOrder:(NSArray<NSString *> *)tagNames NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)expectElementCount:(NSInteger)count querySelector:(NSString *)querySelector NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)expectElementTag:(NSString *)tagName toComeBefore:(NSString *)otherTagName NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (BOOL)evaluateMediaQuery:(NSString *)query NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (NSString *)stringByEvaluatingJavaScript:(NSString *)script NS_SWIFT_UNAVAILABLE("Use async callJavaScript(returning:_:) instead");
+- (NSString *)stringByEvaluatingJavaScript:(NSString *)script inFrame:(nullable WKFrameInfo *)frame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable id)objectByEvaluatingJavaScriptWithUserGesture:(NSString *)script NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable id)objectByEvaluatingJavaScript:(NSString *)script NS_SWIFT_UNAVAILABLE("Use async callJavaScript(returning:_:) instead");
+- (nullable id)objectByEvaluatingJavaScript:(NSString *)script inFrame:(nullable WKFrameInfo *)frame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable id)objectByEvaluatingJavaScript:(NSString *)script inFrame:(nullable WKFrameInfo *)frame inContentWorld:(WKContentWorld *)world NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable id)objectByEvaluatingJavaScriptWithUserGesture:(NSString *)script inFrame:(nullable WKFrameInfo *)frame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable id)objectByCallingAsyncFunction:(NSString *)script withArguments:(nullable NSDictionary *)arguments NS_SWIFT_UNAVAILABLE("Use async callJavaScript(returning:_:) instead");
+- (nullable id)objectByCallingAsyncFunction:(NSString *)script withArguments:(nullable NSDictionary *)arguments error:(NSError **)errorOut NS_SWIFT_UNAVAILABLE("Use async callJavaScript(returning:_:) instead");
+- (nullable id)objectByCallingAsyncFunction:(NSString *)script withArguments:(nullable NSDictionary *)arguments inFrame:(nullable WKFrameInfo *)frame inContentWorld:(WKContentWorld *)world NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (unsigned)waitUntilClientWidthIs:(unsigned)expectedClientWidth NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (CGRect)elementRectFromSelector:(NSString *)selector NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (CGPoint)elementMidpointFromSelector:(NSString *)selector NS_SWIFT_UNAVAILABLE("Use async elementMidpoint(selector:) instead");
+- (nullable _WKJSHandle *)querySelector:(NSString *)selector frame:(nullable WKFrameInfo *)frame world:(WKContentWorld *)world NS_SWIFT_UNAVAILABLE("Use async querySelector(_:in:frame:) instead");
 - (void)visitUnsafeSite;
 @end
-
-#endif // __cplusplus
 
 @interface WKWebView (TestWebKitAPI_NonCpp)
 
 #if PLATFORM(IOS_FAMILY)
-@property (nonatomic, readonly) UIView <UITextInputPrivate, UITextInputInternal, UITextInputMultiDocument, UIWKInteractionViewProtocol_Staging_95652872, UITextInputTokenizer> *textInputContentView;
+@property (nonatomic, readonly, nullable) UIView <UITextInputPrivate, UITextInputInternal, UITextInputMultiDocument, UIWKInteractionViewProtocol_Staging_95652872, UITextInputTokenizer> *textInputContentView;
 #endif
 
 @end
 
-#ifdef __cplusplus
-
+NS_SWIFT_UI_ACTOR
 @interface TestMessageHandler : NSObject <WKScriptMessageHandler>
 - (void)addMessage:(NSString *)message withHandler:(dispatch_block_t)handler;
-@property (nonatomic, copy) void (^didReceiveScriptMessage)(NSString *);
-@property (nonatomic, readonly) NSArray<NSString *> *receivedMessages;
+@property (nonatomic, copy, nullable) void (^didReceiveScriptMessage)(NSString *);
+@property (nonatomic, readonly, nullable) NSArray<NSString *> *receivedMessages;
 @end
 
 @interface TestWKWebView : WKWebView
 - (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration processPoolConfiguration:(_WKProcessPoolConfiguration *)processPoolConfiguration;
 - (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration addToWindow:(BOOL)addToWindow;
-- (void)synchronouslyLoadHTMLStringAndWaitUntilAllImmediateChildFramesPaint:(NSString *)html;
+- (void)synchronouslyLoadHTMLStringAndWaitUntilAllImmediateChildFramesPaint:(NSString *)html NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)clearMessageHandlers:(NSArray *)messageNames;
 - (void)performAfterReceivingMessage:(NSString *)message action:(dispatch_block_t)action;
 - (void)performAfterReceivingAnyMessage:(void (^)(NSString *))action;
-- (void)waitForMessage:(NSString *)message;
-- (void)waitForMessages:(NSArray<NSString *> *)messages;
-- (void)waitForMessagesUnordered:(NSArray<NSString *> *)messages;
+- (void)waitForMessage:(NSString *)message NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)waitForMessages:(NSArray<NSString *> *)messages NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)waitForMessagesUnordered:(NSArray<NSString *> *)messages NS_SWIFT_UNAVAILABLE("Spins the run loop");
 
 // This function waits until a DOM load event is fired.
 // FIXME: Rename this function to better describe what "after loading" means.
 - (void)performAfterLoading:(dispatch_block_t)actions;
 
-- (void)waitForNextPresentationUpdate;
-- (void)waitForNextVisibleContentRectUpdate;
-- (void)waitUntilActivityStateUpdateDone;
+- (void)waitForNextPresentationUpdate NS_SWIFT_UNAVAILABLE("Use async nextPresentationUpdate() instead");
+- (void)waitForNextVisibleContentRectUpdate NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)waitUntilActivityStateUpdateDone NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)forceLightMode;
 - (void)forceDarkMode;
-- (NSString *)stylePropertyAtSelectionStart:(NSString *)propertyName;
-- (NSString *)stylePropertyAtSelectionEnd:(NSString *)propertyName;
+- (NSString *)stylePropertyAtSelectionStart:(NSString *)propertyName NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (NSString *)stylePropertyAtSelectionEnd:(NSString *)propertyName NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)collapseToStart;
 - (void)collapseToEnd;
 - (void)addToTestWindow;
 - (void)removeFromTestWindow;
-- (BOOL)selectionRangeHasStartOffset:(int)start endOffset:(int)end;
-- (BOOL)selectionRangeHasStartOffset:(int)start endOffset:(int)end inFrame:(WKFrameInfo *)frameInfo;
+- (BOOL)selectionRangeHasStartOffset:(int)start endOffset:(int)end NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (BOOL)selectionRangeHasStartOffset:(int)start endOffset:(int)end inFrame:(nullable WKFrameInfo *)frameInfo NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)clickOnElementID:(NSString *)elementID;
-- (void)waitForPendingMouseEvents;
+- (void)waitForPendingMouseEvents NS_SWIFT_UNAVAILABLE("Spins the run loop");
 - (void)focus;
+#ifdef __cplusplus
 - (std::optional<CGPoint>)getElementMidpoint:(NSString *)selector;
 - (Vector<WebCore::Color>)sampleColors;
 - (Vector<WebCore::Color>)sampleColorsInRect:(CGRect)rect;
 - (Vector<WebCore::Color>)sampleColorsWithInterval:(unsigned)interval;
 - (RetainPtr<_WKFrameTreeNode>)frameTree;
+#endif
 - (void)typeCharacter:(char)character;
-- (void)setVisibility:(BOOL)isVisible;
+- (void)setVisibility:(BOOL)isVisible NS_SWIFT_UNAVAILABLE("Spins the run loop");
 @end
 
 #if PLATFORM(IOS_FAMILY)
 @interface UIView (WKTestingUIViewUtilities)
-- (UIView *)wkFirstSubviewWithClass:(Class)targetClass;
-- (UIView *)wkFirstSubviewWithBoundsSize:(CGSize)size;
+- (nullable UIView *)wkFirstSubviewWithClass:(Class)targetClass;
+- (nullable UIView *)wkFirstSubviewWithBoundsSize:(CGSize)size;
 @end
 #endif
 
@@ -236,14 +243,14 @@ class Color;
 @property (nonatomic) UIEdgeInsets overrideSafeAreaInset;
 @property (nonatomic, readonly) CGRect caretViewRectInContentCoordinates;
 @property (nonatomic, readonly) NSArray<NSValue *> *selectionViewRectsInContentCoordinates;
-@property (nonatomic, readonly) NSString *textForSpeakSelection;
+@property (nonatomic, readonly, nullable) NSString *textForSpeakSelection NS_SWIFT_UNAVAILABLE("Spins the run loop");
 #if HAVE(UI_TEXT_SELECTION_DISPLAY_INTERACTION)
-@property (nonatomic, readonly) UIView *selectionHighlightView;
+@property (nonatomic, readonly, nullable) UIView *selectionHighlightView;
 #endif
-- (_WKActivatedElementInfo *)activatedElementAtPosition:(CGPoint)position;
-- (void)evaluateJavaScriptAndWaitForInputSessionToChange:(NSString *)script;
-- (void)evaluateJavaScriptAndWaitForInputSessionToChange:(NSString *)script inFrame:(WKFrameInfo *)frame;
-- (WKContentView *)wkContentView;
+- (nullable _WKActivatedElementInfo *)activatedElementAtPosition:(CGPoint)position NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)evaluateJavaScriptAndWaitForInputSessionToChange:(NSString *)script NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)evaluateJavaScriptAndWaitForInputSessionToChange:(NSString *)script inFrame:(nullable WKFrameInfo *)frame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable WKContentView *)wkContentView;
 - (void)setZoomScaleSimulatingUserTriggeredZoom:(CGFloat)zoomScale;
 @end
 #endif
@@ -264,34 +271,34 @@ class Color;
 - (void)wheelEventAtPoint:(CGPoint)pointInWindow wheelDelta:(CGSize)delta;
 - (void)wheelEventAtPoint:(CGPoint)pointInWindow wheelDelta:(CGSize)delta phase:(CGScrollPhase)phase momentumPhase:(CGMomentumScrollPhase)momentumPhase;
 - (BOOL)acceptsFirstMouseAtPoint:(NSPoint)pointInWindow;
-- (NSWindow *)hostWindow;
-- (NSEvent *)_mouseEventWithType:(NSEventType)type atLocation:(NSPoint)pointInWindow;
+- (nullable NSWindow *)hostWindow;
+- (nullable NSEvent *)_mouseEventWithType:(NSEventType)type atLocation:(NSPoint)pointInWindow;
 - (void)typeCharacter:(char)character modifiers:(NSEventModifierFlags)modifiers;
 - (void)sendKey:(NSString *)characters code:(unsigned short)keyCode isDown:(BOOL)isDown modifiers:(NSEventModifierFlags)modifiers;
 - (void)setEventTimestampOffset:(NSTimeInterval)offset;
-@property (nonatomic, readonly) NSArray<NSString *> *collectLogsForNewConnections;
+@property (nonatomic, readonly) NSArray<NSString *> *collectLogsForNewConnections NS_SWIFT_UNAVAILABLE("Spins the run loop");
 @property (nonatomic, readonly) NSTimeInterval eventTimestamp;
 @property (nonatomic) BOOL forceWindowToBecomeKey;
 @end
 #endif
 
 @interface TestWKWebView (SiteIsolation)
-- (_WKFrameTreeNode *)mainFrame;
-- (WKFrameInfo *)firstChildFrame;
-- (WKFrameInfo *)secondChildFrame;
-- (void)evaluateJavaScript:(NSString *)string inFrame:(WKFrameInfo *)frame completionHandler:(void(^)(id, NSError *))completionHandler;
-- (WKFindResult *)findStringAndWait:(NSString *)string withConfiguration:(WKFindConfiguration *)configuration;
+- (_WKFrameTreeNode *)mainFrame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable WKFrameInfo *)firstChildFrame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (WKFrameInfo *)secondChildFrame NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (void)evaluateJavaScript:(NSString *)string inFrame:(nullable WKFrameInfo *)frame completionHandler:(nullable void(^)(id _Nullable, NSError * _Nullable))completionHandler;
+- (WKFindResult *)findStringAndWait:(NSString *)string withConfiguration:(WKFindConfiguration *)configuration NS_SWIFT_UNAVAILABLE("Spins the run loop");
 @end
 
 #if PLATFORM(MAC)
-using MenuItemFilter = BOOL(^)(NSMenuItem *);
+typedef BOOL (^MenuItemFilter)(NSMenuItem *);
 #endif
 
 @interface TestWKWebView (ContextMenu)
 #if PLATFORM(MAC)
-- (void)rightClick:(NSPoint)clickLocation andSelectItemMatching:(MenuItemFilter)filter;
-- (_WKContextMenuElementInfo *)rightClickAtPointAndWaitForContextMenu:(NSPoint)clickLocation;
+- (void)rightClick:(NSPoint)clickLocation andSelectItemMatching:(MenuItemFilter)filter NS_SWIFT_UNAVAILABLE("Spins the run loop");
+- (nullable _WKContextMenuElementInfo *)rightClickAtPointAndWaitForContextMenu:(NSPoint)clickLocation NS_SWIFT_UNAVAILABLE("Spins the run loop");
 #endif
 @end
 
-#endif // __cplusplus
+NS_HEADER_AUDIT_END(nullability, sendability)

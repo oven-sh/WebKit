@@ -2388,12 +2388,14 @@ Style::ComputedStyle HTMLInputElement::createInnerTextStyle(const Style::Compute
 
     auto shouldUseInitialLineHeight = [&] {
         // Do not allow line-height to be smaller than our default.
-        if (textBlockStyle.metricsOfPrimaryFont().intLineSpacing() > style.computedLineHeight())
+        if (textBlockStyle.metricsOfPrimaryFont().intLineSpacing() > style.usedLineHeight())
             return true;
         return isText() && !style.logicalHeight().isAuto() && !hasAutofillStrongPasswordButton();
     };
-    if (shouldUseInitialLineHeight())
+    if (shouldUseInitialLineHeight()) {
         textBlockStyle.setLineHeight(Style::ComputedStyle::initialLineHeight());
+        textBlockStyle.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
+    }
 
     return textBlockStyle;
 }

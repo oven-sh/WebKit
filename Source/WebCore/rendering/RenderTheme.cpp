@@ -521,7 +521,7 @@ static void updateApplePayButtonPartForRenderer(ApplePayButtonPart& applePayButt
     CheckedRef style = renderer.style();
 
     auto platformLocale = [&] -> String {
-        auto locale = style->computedLocale();
+        auto locale = style->usedLocale();
         if (locale.isAuto())
             return defaultLanguage(ShouldMinimizeLanguages::No);
         return Style::toPlatform(locale);
@@ -1499,6 +1499,8 @@ void RenderTheme::adjustButtonOrCheckboxOrColorWellOrInnerSpinButtonOrRadioStyle
     if (auto controlFont = this->controlFont(appearance, fontCascade.get(), style.usedZoom())) {
         // If overriding the specified font with the theme font, also override the line height with the standard line height.
         style.setLineHeight(Style::ComputedStyle::initialLineHeight());
+        style.setTextAutosizingAdjustedLineHeight(Style::ComputedStyle::initialLineHeight());
+
         style.setFontDescription(WTF::move(controlFont.value()));
     }
 

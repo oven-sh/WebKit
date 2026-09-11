@@ -3051,7 +3051,7 @@ void SpeculativeJIT::compileRegExpTestInline(Node* node)
 {
     RegExp* regExp = uncheckedDowncast<RegExp>(node->cellOperand2()->value());
 
-    auto jitCodeBlock = regExp->getRegExpJITCodeBlock();
+    auto jitCodeBlock = regExp->getRegExpJITCodeBlockConcurrently();
     ASSERT(jitCodeBlock);
     auto inlineCodeStats8Bit = jitCodeBlock->get8BitInlineStats();
 
@@ -3116,7 +3116,7 @@ void SpeculativeJIT::compileRegExpTestInline(Node* node)
 
         auto commonData = jitCode()->dfgCommon();
         move(TrustedImm32(0), yarrRegisters.index);
-        Yarr::jitCompileInlinedTest(&m_graph.m_stackChecker, regExp->pattern(), regExp->flags(), Yarr::CharSize::Char8, &vm(), commonData->m_boyerMooreData, *this, yarrRegisters);
+        Yarr::jitCompileInlinedTest(&m_graph.m_stackChecker, regExp->pattern(), regExp->flags(), Yarr::CharSize::Char8, &vm(), commonData->m_boyerMooreData, *this, yarrRegisters, m_graph.m_parameterSlots * sizeof(Register));
 
         slowCases.append(branch32(Equal, yarrRegisters.returnRegister, TrustedImm32(static_cast<int32_t>(Yarr::JSRegExpResult::JITCodeFailure))));
 
@@ -10392,6 +10392,35 @@ void SpeculativeJIT::emitRegExpStickyFirstCharacterFilterGuards(const uint8_t* b
     loadPtr(Address(scratch1GPR, StringImpl::dataOffset()), scratch1GPR);
     load8(BaseIndex(scratch1GPR, scratch2GPR, TimesOne), scratch3GPR);
     emitFirstCharacterBitmapMatch(bitmap, scratch3GPR, scratch1GPR, scratch2GPR, slowCases);
+}
+
+void SpeculativeJIT::emitRegExpMinimumLengthFilterGuards(std::optional<unsigned> constantMinimumSize, GPRReg baseGPR, GPRReg argumentGPR, bool argumentCanBeRope, GPRReg scratch1GPR, GPRReg scratch2GPR, JumpList& slowCases)
+{
+    ASSERT(noOverlap(baseGPR, argumentGPR, scratch1GPR, scratch2GPR));
+
+    loadPtr(Address(argumentGPR, JSString::offsetOfValue()), scratch1GPR);
+    Jump isRope;
+    if (argumentCanBeRope)
+        isRope = branchIfRopeStringImpl(scratch1GPR);
+    load32(Address(scratch1GPR, StringImpl::lengthMemoryOffset()), scratch1GPR);
+    if (isRope.isSet()) {
+        auto done = jump();
+        isRope.link(this);
+        load32(Address(argumentGPR, JSRopeString::offsetOfLength()), scratch1GPR);
+        done.link(this);
+    }
+
+    if (constantMinimumSize)
+        slowCases.append(branch32(AboveOrEqual, scratch1GPR, TrustedImm32(static_cast<int32_t>(*constantMinimumSize))));
+    else {
+        loadPtr(Address(baseGPR, RegExpObject::offsetOfRegExpAndFlags()), scratch2GPR);
+        andPtr(TrustedImmPtr(RegExpObject::regExpMask), scratch2GPR);
+        slowCases.append(branch32(AboveOrEqual, scratch1GPR, Address(scratch2GPR, RegExp::offsetOfMinimumSize())));
+        slowCases.append(branchTest16(NonZero, Address(scratch2GPR, RegExp::offsetOfFlags()), TrustedImm32(RegExp::globalOrStickyFlagsMask)));
+    }
+
+    load64(Address(baseGPR, RegExpObject::offsetOfLastIndex()), scratch1GPR);
+    slowCases.append(branchIfNotInt32(scratch1GPR));
 }
 
 } } // namespace JSC::DFG

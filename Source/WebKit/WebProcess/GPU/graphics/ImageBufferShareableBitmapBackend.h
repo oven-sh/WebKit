@@ -57,16 +57,16 @@ class ImageBufferShareableBitmapBackend final : public ImageBufferShareableBitma
     WTF_MAKE_NONCOPYABLE(ImageBufferShareableBitmapBackend);
 
 public:
-    static WebCore::IntSize calculateSafeBackendSize(const Parameters&);
-    static unsigned calculateBytesPerRow(const Parameters&, const WebCore::IntSize& backendSize);
-    static size_t calculateMemoryCost(const Parameters&);
+    static WebCore::IntSize calculateSafeBackendSize(const WebCore::ImageBufferParameters&);
+    static unsigned calculateBytesPerRow(const WebCore::IntSize& backendSize, WebCore::PixelFormat, const WebCore::ColorSpace&);
 
-    static std::unique_ptr<ImageBufferShareableBitmapBackend> create(const Parameters&, const WebCore::ImageBufferCreationContext&);
-    static std::unique_ptr<ImageBufferShareableBitmapBackend> create(const Parameters&, WebCore::ShareableBitmap::Handle);
+    static std::unique_ptr<ImageBufferShareableBitmapBackend> create(const WebCore::ImageBufferParameters&, const WebCore::ImageBufferCreationContext&);
+    static std::unique_ptr<ImageBufferShareableBitmapBackend> create(const WebCore::ImageBufferParameters&, WebCore::ShareableBitmap::Handle);
 
-    ImageBufferShareableBitmapBackend(const Parameters&, Ref<WebCore::ShareableBitmap>&&, std::unique_ptr<WebCore::GraphicsContext>&&);
+    ImageBufferShareableBitmapBackend(const WebCore::ImageBufferParameters&, Ref<WebCore::ShareableBitmap>&&, std::unique_ptr<WebCore::GraphicsContext>&&);
     virtual ~ImageBufferShareableBitmapBackend();
 
+    size_t memoryCost() const final { return WebCore::ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size(), pixelFormat(), colorSpace())); }
     bool canMapBackingStore() const final;
     WebCore::GraphicsContext& context() final { return *m_context; }
 

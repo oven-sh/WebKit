@@ -86,15 +86,6 @@ webkit.org/b/320062 imported/w3c/web-platform-tests/web-animations/responsive/to
 
 # Accessibility
 webkit.org/b/214341 [ Debug ] accessibility/datalist.html [ Crash Failure Pass ]
-webkit.org/b/215405 accessibility/gtk/text-for-range-combo-box.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-embedded-objects.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-entry-and-password.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-formatted.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-heading.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-list-items.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-simple.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-table-cells.html [ Failure ]
-webkit.org/b/223862 accessibility/gtk/text-for-range-with-link.html [ Failure ]
 
 # Tests failing with ATSPI implementation.
 webkit.org/b/235941 accessibility/gtk/text-at-offset-embedded-objects.html [ Failure ]
@@ -1267,7 +1258,6 @@ webkit.org/b/321107 imported/w3c/web-platform-tests/css/selectors/media/media-lo
 webkit.org/b/322626 fast/events/touch/touch-target-limited.html [ Timeout ]
 webkit.org/b/322627 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-box-shadow-spread-elliptical.html [ ImageOnlyFailure ]
 webkit.org/b/322628 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-outline-offset-bevel.html [ ImageOnlyFailure ]
-webkit.org/b/322629 imported/w3c/web-platform-tests/css/css-transforms/transform-input-017.html [ ImageOnlyFailure ]
 webkit.org/b/322630 media/video-background-tab-playback.html [ Failure Pass ]
 webkit.org/b/322631 [ Release ] media/media-controller-playbackrate.html [ Pass Failure ]
 webkit.org/b/322632 [ Release ] inspector/dom-debugger/dom-breakpoint-subtree-modified-remove.html [ Pass Crash ]
@@ -1292,3 +1282,23 @@ webkit.org/b/323007 [ Debug ] media/video-seek-with-negative-playback.html [ Pas
 webkit.org/b/322632 [ Release ] inspector/dom-debugger/dom-breakpoint-attribute-modified.html [ Pass Crash ]
 webkit.org/b/323049 [ Debug ] imported/w3c/web-platform-tests/webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=nested&visibility=zero-size [ Crash Pass ]
 webkit.org/b/323049 [ Debug ] imported/w3c/web-platform-tests/service-workers/service-worker/static-router-main-resource.https.html [ Crash Failure Pass ]
+
+# Gardening 2026-09-08
+webkit.org/b/323667 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-disabled-tracks.https.html [ Crash Pass Timeout ]
+
+# Gardening 2026-09-09
+webkit.org/b/323784 css3/filters/filter-repaint-blur-nested-pixel-moving-filter.html [ ImageOnlyFailure ]
+webkit.org/b/323612 imported/w3c/web-platform-tests/css/css-counter-styles/counter-style-at-rule/disclosure-line-height.html [ ImageOnlyFailure ]
+webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-004-rtl.html [ ImageOnlyFailure Pass ]
+webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-006-rtl.html [ ImageOnlyFailure Pass ]
+webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-008-rtl.html [ ImageOnlyFailure Pass ]
+webkit.org/b/323666 [ Release ] imported/w3c/web-platform-tests/webrtc-extensions/RTCRtpSynchronizationSource-senderCaptureTimeOffset.html [ Crash Pass ]
+webkit.org/b/323778 [ Debug ] media/media-source/media-source-addsourcebuffer-after-canplaytype.html [ Crash Pass ]
+
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/held.https.any.sharedworker.html [ Failure Pass ]
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/idlharness.https.any.sharedworker.html [ Failure Pass ]
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/ifAvailable.https.any.sharedworker.html [ Failure Pass ]
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/lock-attributes.https.any.sharedworker.html [ Failure Pass ]
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/mode-exclusive.https.any.sharedworker.html [ Failure Pass ]
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/mode-mixed.https.any.sharedworker.html [ Failure Pass ]
+webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/mode-shared.https.any.sharedworker.html [ Failure Pass ]

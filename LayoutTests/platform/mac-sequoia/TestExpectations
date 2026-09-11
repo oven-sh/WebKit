@@ -48,6 +48,10 @@ accessibility/mac/intersection-with-selection-range.html [ Skip ]
 imported/w3c/web-platform-tests/webtransport [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/connect-src-webtransport-blocked.sub.https.html [ Skip ]
 
+# The IPC payload hardcodes the HAVE(WK_SECURE_CODING_SECTRUST) shape of WebKit::CoreIPCSecTrust,
+# which is only serialized that way on macOS 26 and later. Sequoia sends a bare std::span instead.
+ipc/cocoa/sectrust-null-data-crash.html [ Skip ]
+
 
 
 

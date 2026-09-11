@@ -124,33 +124,28 @@ void IOSurfacePool::didUseSurfaceOfSize(IntSize size)
 std::unique_ptr<IOSurface> IOSurfacePool::takeSurface(IntSize size, const ColorSpace& colorSpace, IOSurface::Format format, UseLosslessCompression useLosslessCompression)
 {
     Locker locker { m_lock };
-    CachedSurfaceMap::iterator mapIter = m_cachedSurfaces.find(size);
+    if (auto mapIter = m_cachedSurfaces.find(size); mapIter != m_cachedSurfaces.end()) {
+        for (auto surfaceIter = mapIter->value.begin(); surfaceIter != mapIter->value.end(); ++surfaceIter) {
+            if (!surfaceMatchesParameters(*surfaceIter->get(), size, colorSpace, format, useLosslessCompression))
+                continue;
 
-    if (mapIter == m_cachedSurfaces.end()) {
-        DUMP_POOL_STATISTICS(stream << "IOSurfacePool::takeSurface [" << m_poolIdentifier << "] - failed to find surface matching size " << size << " color space " << colorSpace << " format " << format << "\n" << poolStatistics());
-        return nullptr;
-    }
+            auto surface = WTF::move(*surfaceIter);
+            mapIter->value.remove(surfaceIter);
 
-    for (auto surfaceIter = mapIter->value.begin(); surfaceIter != mapIter->value.end(); ++surfaceIter) {
-        if (!surfaceMatchesParameters(*surfaceIter->get(), size, colorSpace, format, useLosslessCompression))
-            continue;
+            didUseSurfaceOfSize(size);
 
-        auto surface = WTF::move(*surfaceIter);
-        mapIter->value.remove(surfaceIter);
+            if (mapIter->value.isEmpty()) {
+                m_cachedSurfaces.remove(mapIter);
+                m_sizesInPruneOrder.removeLast();
+            }
 
-        didUseSurfaceOfSize(size);
+            didRemoveSurface(*surface, false);
 
-        if (mapIter->value.isEmpty()) {
-            m_cachedSurfaces.remove(mapIter);
-            m_sizesInPruneOrder.removeLast();
+            surface->setVolatile(false);
+
+            DUMP_POOL_STATISTICS(stream << "IOSurfacePool::takeSurface [" << m_poolIdentifier << "] - taking surface " << surface.get() << " with size " << size << " color space " << colorSpace << " format " << format << "\n" << poolStatistics());
+            return surface;
         }
-
-        didRemoveSurface(*surface, false);
-
-        surface->setVolatile(false);
-
-        DUMP_POOL_STATISTICS(stream << "IOSurfacePool::takeSurface [" << m_poolIdentifier << "] - taking surface " << surface.get() << " with size " << size << " color space " << colorSpace << " format " << format << "\n" << poolStatistics());
-        return surface;
     }
 
     // Some of the in-use surfaces may no longer actually be in-use, but we haven't moved them over yet.

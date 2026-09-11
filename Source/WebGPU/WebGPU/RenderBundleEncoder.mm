@@ -198,6 +198,10 @@ RenderBundleEncoder::RenderBundleEncoder(MTLIndirectCommandBufferDescriptor *ind
     m_descriptor.colorFormats = m_descriptorColorFormats.size() ? &m_descriptorColorFormats[0] : nullptr;
     m_icbArray = [NSMutableArray array];
     m_bindGroupDynamicOffsets = BindGroupDynamicOffsetsContainer();
+    // The ICB path stores the ICB in an argument buffer and writes its render_command slots from a
+    // shader, both of which require argument buffers tier 2. Fall back to command replay otherwise.
+    if (!m_device->supportsIndirectCommandBuffersInArgumentBuffers())
+        m_requiresCommandReplay = true;
 #if ENABLE(WEBGPU_ALWAYS_USE_ICB_REPLAY)
     m_requiresCommandReplay = true;
 #endif

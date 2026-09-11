@@ -2982,8 +2982,11 @@ bool UnifiedPDFPlugin::isEditingCommandEnabled(const String& commandName)
     if (equalLettersIgnoringASCIICase(commandName, "selectall"_s))
         return true;
 
-    if (equalLettersIgnoringASCIICase(commandName, "copy"_s) || equalLettersIgnoringASCIICase(commandName, "takefindstringfromselection"_s))
+    if (equalLettersIgnoringASCIICase(commandName, "takefindstringfromselection"_s))
         return hasSelection();
+
+    if (equalLettersIgnoringASCIICase(commandName, "copy"_s))
+        return hasSelection() && [m_pdfDocument allowsCopying];
 
     return false;
 }
@@ -4887,12 +4890,12 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
 
     auto selectedString = String { [selection string] };
     state.postLayoutData = EditorState::PostLayoutData { };
+    state.postLayoutData->selectedTextLength = selectedString.length();
+    state.postLayoutData->canCopy = !selectedString.isEmpty() && [m_pdfDocument allowsCopying];
 #if PLATFORM(IOS_FAMILY)
     state.postLayoutData->isStableStateUpdate = true;
     state.postLayoutData->wordAtSelection = WTF::move(selectedString);
 #endif
-    state.postLayoutData->selectedTextLength = selectedString.length();
-    state.postLayoutData->canCopy = !selectedString.isEmpty();
 
     state.visualData = EditorState::VisualData { };
     state.visualData->rootFrameID = rootFrameID;

@@ -40,13 +40,13 @@
 #include <WebCore/CookieJar.h>
 #include <WebCore/DocumentStorageAccess.h>
 #include <WebCore/KeyedCoding.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/OrganizationStorageAccessPromptQuirk.h>
 #include <WebCore/PermissionState.h>
 #include <WebCore/ResourceLoadStatistics.h>
 #include <WebCore/SQLiteDatabase.h>
 #include <WebCore/SQLiteStatement.h>
 #include <WebCore/SQLiteStatementAutoResetScope.h>
+#include <WebCore/StorageAccessQuirks.h>
 #include <WebCore/UserGestureIndicator.h>
 #include <ranges>
 #include <wtf/CallbackAggregator.h>
@@ -1866,9 +1866,9 @@ void ResourceLoadStatisticsStore::grantStorageAccess(SubFrameDomain&& subFrameDo
         CanRequestStorageAccessWithoutUserInteraction canRequestStorageAccessWithoutUserInteraction { CanRequestStorageAccessWithoutUserInteraction::No };
 
         if (CheckedPtr networkSession = store->networkSession()) {
-            if (CheckedPtr storageSession = networkSession->networkStorageSession()) {
-                additionalDomainGrants = storageSession->storageAccessQuirkForDomainPair(subFrameDomain, topFrameDomain);
-                canRequestStorageAccessWithoutUserInteraction = storageSession->canRequestStorageAccessForLoginOrCompatibilityPurposesWithoutPriorUserInteraction(subFrameDomain, topFrameDomain) ? CanRequestStorageAccessWithoutUserInteraction::Yes : CanRequestStorageAccessWithoutUserInteraction::No;
+            if (networkSession->networkStorageSession()) {
+                additionalDomainGrants = WebCore::storageAccessQuirkForDomainPair(subFrameDomain, topFrameDomain);
+                canRequestStorageAccessWithoutUserInteraction = WebCore::canRequestStorageAccessForLoginOrCompatibilityPurposesWithoutPriorUserInteraction(subFrameDomain, topFrameDomain) ? CanRequestStorageAccessWithoutUserInteraction::Yes : CanRequestStorageAccessWithoutUserInteraction::No;
             }
         }
         workQueue->dispatch([weakThis = WTF::move(weakThis), additionalDomainGrants = crossThreadCopy(WTF::move(additionalDomainGrants)), subFrameDomain = crossThreadCopy(WTF::move(subFrameDomain)), topFrameDomain = crossThreadCopy(WTF::move(topFrameDomain)), addGrant = WTF::move(addGrant), canRequestStorageAccessWithoutUserInteraction, completionHandler = WTF::move(completionHandler)] () mutable {

@@ -29,6 +29,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
+#include <wtf/ThreadAssertions.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -50,11 +51,11 @@ public:
     WEBCORE_EXPORT static Ref<Range> create(Document&);
     WEBCORE_EXPORT ~Range();
 
-    Node& startContainer() const final { return m_start.container(); }
-    unsigned startOffset() const final { return m_start.offset(); }
-    Node& endContainer() const final { return m_end.container(); }
-    unsigned endOffset() const final { return m_end.offset(); }
-    bool collapsed() const final { return m_start == m_end; }
+    Node& startContainer() const final { assertIsOwnerThread(); return m_start.container(); }
+    unsigned startOffset() const final { assertIsOwnerThread(); return m_start.offset(); }
+    Node& endContainer() const final { assertIsOwnerThread(); return m_end.container(); }
+    unsigned endOffset() const final { assertIsOwnerThread(); return m_end.offset(); }
+    bool collapsed() const final { assertIsOwnerThread(); return m_start == m_end; }
     WEBCORE_EXPORT Node* commonAncestorContainer() const;
 
     void resetDidChangeForHighlight() { m_didChangeForHighlight = false; }
@@ -146,9 +147,12 @@ private:
     ExceptionOr<RefPtr<DocumentFragment>> processContents(ActionType);
 
     Ref<Document> m_ownerDocument;
-    RangeBoundaryPoint m_start;
-    RangeBoundaryPoint m_end;
+    // Only mutated on the main thread while holding m_boundaryPointLock, so main-thread reads use
+    // assertIsOwnerThread() instead of locking; the GC thread must lock even to read.
+    RangeBoundaryPoint m_start WTF_GUARDED_BY_LOCK(m_boundaryPointLock);
+    RangeBoundaryPoint m_end WTF_GUARDED_BY_LOCK(m_boundaryPointLock);
     mutable Lock m_boundaryPointLock;
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_boundaryPointLock, mainThreadLike);
     bool m_isAssociatedWithSelection { false };
     bool m_didChangeForHighlight { false };
     bool m_isAssociatedWithHighlight { false };

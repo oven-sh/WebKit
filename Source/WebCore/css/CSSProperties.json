@@ -1007,18 +1007,20 @@
             }
         },
         "font-palette": {
-            "animation-type": "discrete",
-            "animation-type-comment": "Current spec animation type is 'by computed value'",
+            "animation-type": "by computed value",
             "inherited": true,
             "initial": "normal",
             "codegen-properties": {
                 "font-property": true,
                 "high-priority": true,
+                "computed-style-getter-nodelete": false,
                 "computed-style-storage-container": "opaque",
                 "computed-style-storage-path": ["m_inheritedData", "fontData", "fontCascade"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::FontPalette",
-                "parser-grammar": "normal | light | dark | <palette-identifier>"
+                "parser-function": "consumeFontPalette",
+                "parser-grammar-unused": "normal | light | dark | <palette-identifier> | <palette-mix()>",
+                "parser-grammar-unused-reason": "Needs support for the strong value representation."
             },
             "specification": {
                 "category": "css-fonts",
@@ -1505,7 +1507,6 @@
                 "none"
             ],
             "codegen-properties": {
-                "enable-if": "ENABLE_TEXT_AUTOSIZING",
                 "settings-flag": "textAutosizingEnabled",
                 "high-priority": true,
                 "style-builder-custom": "Value",
@@ -4004,7 +4005,8 @@
                 "aliases": [
                     "-webkit-box-sizing"
                 ],
-                "computed-style-storage-path": ["m_nonInheritedData", "boxData"],
+                "computed-style-storage-path": ["m_nonInheritedFlags"],
+                "computed-style-storage-container": "struct",
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "BoxSizing",
                 "parser-grammar": "<<values>>"
@@ -5480,29 +5482,16 @@
             "values": [
                 "normal"
             ],
-            "codegen-properties": [
-                {
-                    "enable-if": "ENABLE_TEXT_AUTOSIZING",
-                    "animation-wrapper-requires-getter": "specifiedLineHeight",
-                    "animation-wrapper-requires-setter": "setSpecifiedLineHeightFromAnimation",
-                    "style-builder-custom": "All",
-                    "style-extractor-custom": true,
-                    "computed-style-storage-path": ["m_inheritedData"],
-                    "computed-style-storage-kind": "reference",
-                    "computed-style-type": "Style::LineHeight",
-                    "parser-grammar": "normal | <number [0,inf]> | <length-percentage [0,inf]>",
-                    "parser-exported": true
-                },
-                {
-                    "enable-if": "!ENABLE_TEXT_AUTOSIZING",
-                    "style-extractor-custom": true,
-                    "computed-style-storage-path": ["m_inheritedData"],
-                    "computed-style-storage-kind": "reference",
-                    "computed-style-type": "Style::LineHeight",
-                    "parser-grammar": "normal | <number [0,inf]> | <length-percentage [0,inf]>",
-                    "parser-exported": true
-                }
-            ],
+            "codegen-properties": {
+                "animation-wrapper-requires-setter": "setLineHeightFromAnimation",
+                "style-builder-custom": "All",
+                "style-extractor-custom": true,
+                "computed-style-storage-path": ["m_inheritedData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::LineHeight",
+                "parser-grammar": "normal | <number [0,inf]> | <length-percentage [0,inf]>",
+                "parser-exported": true
+            },
             "specification": {
                 "category": "css-inline",
                 "url": "https://www.w3.org/TR/css-inline-3/#line-height-property"
@@ -10510,7 +10499,7 @@
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::AlignItems",
                 "parser-function": "consumeAlignItems",
-                "parser-grammar-unused": "normal | stretch | <baseline-position> | [ <overflow-position>? <self-position> ]",
+                "parser-grammar-unused": "[ <overflow-position>? normal ] | stretch | <baseline-position> | [ <overflow-position>? <self-position> ]",
                 "parser-grammar-unused-reason": "Needs support for default values on optionals.",
                 "comment": "Alternate definition in css-flexbox - flex-start | flex-end | center | baseline | stretch"
             },
@@ -10549,7 +10538,7 @@
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::AlignSelf",
                 "parser-function": "consumeAlignSelf",
-                "parser-grammar-unused": "auto | normal | stretch | <baseline-position> | [ <overflow-position>? <self-position> ]",
+                "parser-grammar-unused": "auto | [ <overflow-position>? normal ] | stretch | <baseline-position> | [ <overflow-position>? <self-position> ]",
                 "parser-grammar-unused-reason": "Needs support for default values on optionals.",
                 "comment": "Alternate definition in css-flexbox - auto | flex-start | flex-end | center | baseline | stretch"
             },
@@ -10624,7 +10613,7 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "miscData", "flexibleBox"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::FlexBasis",
-                "parser-grammar": "auto | content | <width-or-height-keyword> | <length-percentage [0,inf]>"
+                "parser-grammar": "auto | content | <width-or-height-keyword> | <calc-size> | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-flexbox",
@@ -10688,6 +10677,22 @@
             "specification": {
                 "category": "css-flexbox",
                 "url": "https://www.w3.org/TR/css-flexbox-1/#propdef-flex-grow"
+            }
+        },
+        "flex-line-count": {
+            "animation-type": "by computed value",
+            "initial": "1",
+            "codegen-properties": {
+                "settings-flag": "cssFlexWrapBalanceEnabled",
+                "computed-style-initial-constexpr": true,
+                "computed-style-storage-path": ["m_nonInheritedData", "miscData", "flexibleBox"],
+                "computed-style-storage-kind": "value",
+                "computed-style-type": "Style::FlexLineCount",
+                "parser-grammar": "<integer [1,inf]>"
+            },
+            "specification": {
+                "category": "css-flexbox-2",
+                "url": "https://drafts.csswg.org/css-flexbox-2/#flex-line-count-property"
             }
         },
         "flex-shrink": {
@@ -10825,7 +10830,7 @@
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::JustifySelf",
                 "parser-function": "consumeJustifySelf",
-                "parser-grammar-unused": "auto | normal | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ]",
+                "parser-grammar-unused": "auto | [ <overflow-position>? normal ] | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ]",
                 "parser-grammar-unused-reason": "Needs support for default values on optionals."
             },
             "specification": {
@@ -10845,7 +10850,7 @@
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::JustifyItems",
                 "parser-function": "consumeJustifyItems",
-                "parser-grammar-unused": "[ normal | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ] | legacy | legacy ] && [ left | right | center ]",
+                "parser-grammar-unused": "[ [ <overflow-position>? normal ] | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ] | legacy | legacy ] && [ left | right | center ]",
                 "parser-grammar-unused-reason": "Needs support for default values on optionals."
             },
             "specification": {
@@ -12131,7 +12136,6 @@
             "animation-type": "not animatable (internal)",
             "inherited": true,
             "codegen-properties": {
-                "enable-if": "ENABLE_TEXT_AUTOSIZING",
                 "skip-style-builder": true,
                 "skip-parser": true,
                 "skip-computed-style": true,
@@ -13654,10 +13658,11 @@
                 "auto"
             ],
             "codegen-properties": {
+                "comment": "The '#'-delimited attachment point is proposed in the Spatial CSS explainer, not yet in a specification: https://github.com/WebKit/explainers/blob/main/css-spatial/explainer.md",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::PositionAnchor",
-                "parser-grammar": "normal | none | auto | <dashed-ident>"
+                "parser-grammar": "normal | none | auto | <pinned-anchor-name>"
             },
             "specification": {
                 "category": "css-anchor-position",
@@ -14678,6 +14683,11 @@
             "longname": "CSS Viewport Module",
             "url": "https://drafts.csswg.org/css-viewport/"
         },
+        "css-values": {
+            "shortname": "CSS Values and Units",
+            "longname": "CSS Values and Units Module Level 5",
+            "url": "https://drafts.csswg.org/css-values-5/"
+        },
         "css-view-transitions": {
             "shortname": "CSS View Transitions",
             "longname": "CSS View Transitions Module",
@@ -14710,6 +14720,15 @@
         }
     },
     "shared-grammar-rules": {
+        "<pinned-anchor-name>": {
+            "grammar-unused": "<anchor-name> [ '#' <ident> ]?",
+            "grammar-unused-reason": "Needs support for token adjacency: the '#' must immediately follow the anchor name, which grammar notation cannot express.",
+            "grammar-function": "consumePinnedAnchorName",
+            "specification": {
+                "category": "css-anchor-position",
+                "url": "https://github.com/WebKit/explainers/blob/main/css-spatial/explainer.md"
+            }
+        },
         "<opacity-value>": {
             "grammar": "<number-or-percentage-resolved-to-number>",
             "specification": {
@@ -14845,8 +14864,17 @@
         "<width-or-height-keyword>": {
             "grammar":  "stretch | intrinsic | min-intrinsic | min-content | -webkit-min-content | max-content | -webkit-max-content | -webkit-fill-available | fit-content | -webkit-fit-content"
         },
+        "<calc-size>": {
+            "grammar-function": "consumeCalcSize",
+            "grammar-unused": "calc-size( <calc-size-basis>, <calc-sum> )",
+            "grammar-unused-reason": "The valid basis keywords depend on the property, and the calculation can use the `size` keyword.",
+            "specification": {
+                "category": "css-values",
+                "url": "https://drafts.csswg.org/css-values-5/#calc-size"
+            }
+        },
         "<width-or-height>": {
-            "grammar":  "auto | <width-or-height-keyword> | <length-percentage [0,inf] anchor-size=allowed>",
+            "grammar":  "auto | <width-or-height-keyword> | <calc-size> | <length-percentage [0,inf] anchor-size=allowed>",
             "exported": true,
             "comment": "Doesn't match current specification",
             "specification": {
@@ -14855,7 +14883,7 @@
             }
         },
         "<max-width-or-height>": {
-            "grammar": "none | <width-or-height-keyword> | <length-percentage [0,inf] anchor-size=allowed>",
+            "grammar": "none | <width-or-height-keyword> | <calc-size> | <length-percentage [0,inf] anchor-size=allowed>",
             "comment": "Doesn't match current specification",
             "specification": {
                 "category": "css-sizing",

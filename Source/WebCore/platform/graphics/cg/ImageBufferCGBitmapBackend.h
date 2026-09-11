@@ -39,14 +39,14 @@ class ImageBufferCGBitmapBackend final : public ImageBufferCGBackend {
 public:
     ~ImageBufferCGBitmapBackend();
 
-    static size_t NODELETE calculateMemoryCost(const Parameters&);
 
-    static std::unique_ptr<ImageBufferCGBitmapBackend> create(const Parameters&, const ImageBufferCreationContext&);
+    static std::unique_ptr<ImageBufferCGBitmapBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
+    size_t memoryCost() const final { return ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size(), pixelFormat())); }
     bool canMapBackingStore() const final;
     GraphicsContext& NODELETE context() final;
 
 private:
-    ImageBufferCGBitmapBackend(const Parameters&, std::span<uint8_t> data, RetainPtr<CGDataProviderRef>&&, std::unique_ptr<GraphicsContextCG>&&);
+    ImageBufferCGBitmapBackend(const ImageBufferParameters&, std::span<uint8_t> data, RetainPtr<CGDataProviderRef>&&, std::unique_ptr<GraphicsContextCG>&&);
 
     unsigned bytesPerRow() const final;
 

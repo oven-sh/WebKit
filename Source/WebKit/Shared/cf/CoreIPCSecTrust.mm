@@ -640,6 +640,17 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     m_data = WTF::move(secTrustData);
 }
 
+static bool appendDataObject(NSMutableArray *array, const CoreIPCData& data, ASCIILiteral description)
+{
+    RetainPtr nsData = data.toID();
+    if (!nsData) {
+        RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrust had a null value in %" PUBLIC_LOG_STRING, description.characters());
+        return false;
+    }
+    [array addObject:nsData.get()];
+    return true;
+}
+
 static RetainPtr<NSDictionary> createPolicyDictionary(const CoreIPCSecTrustData::PolicyOption& options)
 {
     RetainPtr<NSMutableDictionary> dict = adoptNS([[NSMutableDictionary alloc] initWithCapacity:options.size()]);
@@ -669,12 +680,8 @@ static RetainPtr<NSDictionary> createPolicyDictionary(const CoreIPCSecTrustData:
             [&] (const CoreIPCSecTrustData::PolicyArrayOfData& a) {
                 RetainPtr array = adoptNS([[NSMutableArray alloc] initWithCapacity:a.size()]);
                 for (const auto& d : a) {
-                    if (RetainPtr nsD = d.toID())
-                        [array addObject:d.toID().get()];
-                    else {
-                        RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrustData had an null value in policy dictionary");
-                        ASSERT_NOT_REACHED();
-                    }
+                    if (!appendDataObject(array, d, "policy dictionary"_s))
+                        return;
                 }
                 value = array;
             },
@@ -703,25 +710,24 @@ static RetainPtr<NSDictionary> createPolicyDictionary(const CoreIPCSecTrustData:
                 value = d;
             }
         );
+        if (!value)
+            return nullptr;
         [dict setObject:value.get() forKey:key.get()];
     }
     return dict;
 }
 
-static void addToDictFromOptionalDataHelper(const std::optional<Vector<CoreIPCData>>& opt, RetainPtr<NSMutableDictionary> dict, NSString* key)
+static bool addToDictFromOptionalDataHelper(const std::optional<Vector<CoreIPCData>>& opt, RetainPtr<NSMutableDictionary> dict, NSString* key)
 {
     if (!opt)
-        return;
+        return true;
     RetainPtr array = adoptNS([[NSMutableArray alloc] initWithCapacity:opt->size()]);
     for (const CoreIPCData& d : *opt) {
-        if (RetainPtr nsD = d.toID())
-            [array addObject:nsD.get()];
-        else {
-            RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrustData had an null value in data helper");
-            ASSERT_NOT_REACHED();
-        }
+        if (!appendDataObject(array, d, "data helper"_s))
+            return false;
     }
     [dict.get() setObject:array.get() forKey:key];
+    return true;
 }
 
 RetainPtr<SecTrustRef> CoreIPCSecTrust::createSecTrust() const
@@ -774,12 +780,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!m_data->certificates.isEmpty()) {
         RetainPtr certificates = adoptNS([[NSMutableArray alloc] initWithCapacity:m_data->certificates.size()]);
         for (const CoreIPCData& cert : m_data->certificates) {
-            if (RetainPtr nsCert = cert.toID())
-                [certificates addObject:nsCert.get()];
-            else {
-                RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrustData had an null value in certificates");
-                ASSERT_NOT_REACHED();
-            }
+            if (!appendDataObject(certificates, cert, "certificates"_s))
+                return { nullptr };
         }
         [dict setObject:certificates.get() forKey:@"certificates"];
     }
@@ -787,12 +789,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!m_data->chain.isEmpty()) {
         RetainPtr chain = adoptNS([[NSMutableArray alloc] initWithCapacity:m_data->chain.size()]);
         for (const CoreIPCData& cert : m_data->chain) {
-            if (RetainPtr nsCert = cert.toID())
-                [chain addObject:nsCert.get()];
-            else {
-                RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrustData had an null value in chain");
-                ASSERT_NOT_REACHED();
-            }
+            if (!appendDataObject(chain, cert, "chain"_s))
+                return { nullptr };
         }
         [dict setObject:chain.get() forKey:@"chain"];
     }
@@ -811,10 +809,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
                             value = s.toID();
                         },
                         [&] (const CoreIPCSecTrustData::PolicyOption& options) {
-                            RetainPtr<NSDictionary> d = createPolicyDictionary(options);
-                            value = d;
+                            value = createPolicyDictionary(options);
                         }
                     );
+                    if (!value)
+                        return { nullptr };
                     [policy setObject:value.get() forKey:key.get()];
                 }
                 [policies addObject:policy.get()];
@@ -874,6 +873,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
                                         subValue = d.toID();
                                     }
                                 );
+                                if (!subValue) {
+                                    RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrust had a null value in 'info' revocation sub-dictionary");
+                                    return;
+                                }
                                 [subDict setObject:subValue.get() forKey:subPair.first.toID().get()];
                             }
                             [entryDict setObject:subDict.get() forKey:entryPair.first.toID().get()];
@@ -889,15 +892,21 @@ ALLOW_DEPRECATED_DECLARATIONS_END
                     value = subDict;
                 }
             );
+            if (!value)
+                return { nullptr };
             [info setObject:value.get() forKey:key.get()];
         }
         [dict setObject:info.get() forKey:@"info"];
     }
 
-    addToDictFromOptionalDataHelper(m_data->responses, dict, @"responses");
-    addToDictFromOptionalDataHelper(m_data->scts, dict, @"scts");
-    addToDictFromOptionalDataHelper(m_data->anchors, dict, @"anchors");
-    addToDictFromOptionalDataHelper(m_data->trustedLogs, dict, @"trustedLogs");
+    // Not short circuited, so every helper still runs and logs, as before.
+    bool addedOptionalData = true;
+    addedOptionalData &= addToDictFromOptionalDataHelper(m_data->responses, dict, @"responses");
+    addedOptionalData &= addToDictFromOptionalDataHelper(m_data->scts, dict, @"scts");
+    addedOptionalData &= addToDictFromOptionalDataHelper(m_data->anchors, dict, @"anchors");
+    addedOptionalData &= addToDictFromOptionalDataHelper(m_data->trustedLogs, dict, @"trustedLogs");
+    if (!addedOptionalData)
+        return { nullptr };
 
     if (m_data->exceptions) {
         RetainPtr exceptions = adoptNS([[NSMutableArray alloc] initWithCapacity:m_data->exceptions->size()]);
@@ -917,6 +926,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
                         value = n.toID();
                     }
                 );
+                if (!value) {
+                    RELEASE_LOG_ERROR(IPC, "CoreIPCSecTrust had a null value in 'exceptions'");
+                    return { nullptr };
+                }
                 [exception setObject:value.get() forKey:key.get()];
             }
             [exceptions addObject:exception.get()];

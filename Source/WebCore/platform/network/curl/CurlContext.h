@@ -109,7 +109,7 @@ public:
     // Alt-Svc
     const String& alternativeServicesStorageFile() const LIFETIME_BOUND { return m_alternativeServicesStorageFile; }
     void setAlternativeServicesStorageFile(const String& cacheFile) { m_alternativeServicesStorageFile = cacheFile; }
-    void clearAlternativeServicesStorageFile();
+    WEBCORE_EXPORT void clearAlternativeServicesStorageFile();
 
     // Proxy
     const CurlProxySettings& proxySettings() const LIFETIME_BOUND { return m_proxySettings; }
@@ -207,7 +207,7 @@ public:
     }
 
     void append(const char* str) { m_list = curl_slist_append(m_list, str); }
-    void append(const String& str) { append(str.latin1().data()); }
+    void append(const String& str) { append(str.utf8().data()); }
 
 private:
     struct curl_slist* m_list { nullptr };

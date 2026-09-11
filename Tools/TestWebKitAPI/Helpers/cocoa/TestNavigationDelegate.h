@@ -26,52 +26,59 @@
 #import <WebKit/WKNavigationDelegatePrivate.h>
 #import <WebKit/WebKit.h>
 
+NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+
 @class _WKContentRuleListAction;
 
+NS_SWIFT_UI_ACTOR
 @interface TestNavigationDelegate : NSObject <WKNavigationDelegate>
 
-@property (nonatomic, copy) void (^decidePolicyForNavigationAction)(WKNavigationAction *, void (^)(WKNavigationActionPolicy));
-@property (nonatomic, copy) void (^decidePolicyForNavigationActionWithPreferences)(WKNavigationAction *, WKWebpagePreferences *, void (^)(WKNavigationActionPolicy, WKWebpagePreferences *));
-@property (nonatomic, copy) void (^decidePolicyForNavigationResponse)(WKNavigationResponse *, void (^)(WKNavigationResponsePolicy));
-@property (nonatomic, copy) void (^didFailProvisionalNavigation)(WKWebView *, WKNavigation *, NSError *);
-@property (nonatomic, copy) void (^didFailProvisionalLoadWithRequestInFrameWithError)(WKWebView *, NSURLRequest *, WKFrameInfo *, NSError *);
-@property (nonatomic, copy) void (^didFailProvisionalLoadInSubframeWithError)(WKWebView *, WKFrameInfo *, NSError *);
-@property (nonatomic, copy) void (^didStartProvisionalNavigation)(WKWebView *, WKNavigation *);
-@property (nonatomic, copy) void (^didCommitNavigation)(WKWebView *, WKNavigation *);
-@property (nonatomic, copy) void (^didCommitLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
-@property (nonatomic, copy) void (^didFinishNavigation)(WKWebView *, WKNavigation *);
-@property (nonatomic, copy) void (^didFinishLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
-@property (nonatomic, copy) void (^didSameDocumentNavigation)(WKWebView *, WKNavigation *);
-@property (nonatomic, copy) void (^renderingProgressDidChange)(WKWebView *, _WKRenderingProgressEvents);
-@property (nonatomic, copy) void (^webContentProcessDidTerminate)(WKWebView *, _WKProcessTerminationReason);
-@property (nonatomic, copy) void (^didReceiveAuthenticationChallenge)(WKWebView *, NSURLAuthenticationChallenge *, void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *));
-@property (nonatomic, copy) void (^contentRuleListPerformedAction)(WKWebView *, NSString *, _WKContentRuleListAction *, NSURL *);
-@property (nonatomic, copy) void (^didChangeLookalikeCharactersFromURL)(WKWebView *, NSURL *, NSURL *);
-@property (nonatomic, copy) void (^didPromptForStorageAccess)(WKWebView *, NSString *, NSString *, BOOL);
-@property (nonatomic, copy) void (^navigationActionDidBecomeDownload)(WKNavigationAction *, WKDownload *);
-@property (nonatomic, copy) void (^navigationResponseDidBecomeDownload)(WKNavigationResponse *, WKDownload *);
-@property (nonatomic, copy) void (^didGeneratePageLoadTiming)(_WKPageLoadTiming *);
-@property (nonatomic, copy) void (^willSubmitForm)(WKFormInfo*);
+@property (nonatomic, copy, nullable) void (^decidePolicyForNavigationAction)(WKNavigationAction *, void (^)(WKNavigationActionPolicy));
+@property (nonatomic, copy, nullable) void (^decidePolicyForNavigationActionWithPreferences)(WKNavigationAction *, WKWebpagePreferences *, void (^)(WKNavigationActionPolicy, WKWebpagePreferences *));
+@property (nonatomic, copy, nullable) void (^decidePolicyForNavigationResponse)(WKNavigationResponse *, void (^)(WKNavigationResponsePolicy));
+@property (nonatomic, copy, nullable) void (^didFailProvisionalNavigation)(WKWebView *, WKNavigation * _Null_unspecified, NSError *);
+@property (nonatomic, copy, nullable) void (^didFailProvisionalLoadWithRequestInFrameWithError)(WKWebView *, NSURLRequest *, WKFrameInfo *, NSError *);
+@property (nonatomic, copy, nullable) void (^didFailProvisionalLoadInSubframeWithError)(WKWebView *, WKFrameInfo *, NSError *);
+@property (nonatomic, copy, nullable) void (^didStartProvisionalNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^didCommitNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^didCommitLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
+@property (nonatomic, copy, nullable) void (^didFinishNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^didFinishLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
+@property (nonatomic, copy, nullable) void (^didSameDocumentNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^renderingProgressDidChange)(WKWebView *, _WKRenderingProgressEvents);
+@property (nonatomic, copy, nullable) void (^webContentProcessDidTerminate)(WKWebView *, _WKProcessTerminationReason);
+@property (nonatomic, copy, nullable) void (^didReceiveAuthenticationChallenge)(WKWebView *, NSURLAuthenticationChallenge *, void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential * _Nullable));
+@property (nonatomic, copy, nullable) void (^contentRuleListPerformedAction)(WKWebView *, NSString *, _WKContentRuleListAction *, NSURL *);
+@property (nonatomic, copy, nullable) void (^didChangeLookalikeCharactersFromURL)(WKWebView *, NSURL *, NSURL *);
+@property (nonatomic, copy, nullable) void (^didPromptForStorageAccess)(WKWebView *, NSString *, NSString *, BOOL);
+@property (nonatomic, copy, nullable) void (^navigationActionDidBecomeDownload)(WKNavigationAction *, WKDownload *);
+@property (nonatomic, copy, nullable) void (^navigationResponseDidBecomeDownload)(WKNavigationResponse *, WKDownload *);
+@property (nonatomic, copy, nullable) void (^didGeneratePageLoadTiming)(_WKPageLoadTiming *);
+@property (nonatomic, copy, nullable) void (^willSubmitForm)(WKFormInfo *);
 
 - (void)allowAnyTLSCertificate;
-- (void)waitForDidStartProvisionalNavigation;
-- (void)waitForDidFinishNavigation;
-- (void)waitForDidFinishLoadInSubframe;
-- (void)waitForDidFinishNavigationAndLoadInSubframe;
-- (void)waitForDidFinishNavigationWithPreferences:(WKWebpagePreferences *)preferences;
-- (void)waitForDidSameDocumentNavigation;
-- (_WKProcessTerminationReason)waitForWebContentProcessDidTerminate;
-- (NSError *)waitForDidFailProvisionalNavigation;
+- (void)waitForDidStartProvisionalNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)waitForDidFinishNavigation NS_SWIFT_UNAVAILABLE("Use the async variant instead.");
+- (void)waitForDidFinishNavigationWithCompletionHandler:(void (^)(NSError * _Nullable))completionHandler;
+- (void)waitForDidFinishLoadInSubframe NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)waitForDidFinishNavigationAndLoadInSubframe NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)waitForDidFinishNavigationWithPreferences:(WKWebpagePreferences *)preferences NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)waitForDidSameDocumentNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (_WKProcessTerminationReason)waitForWebContentProcessDidTerminate NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (NSError *)waitForDidFailProvisionalNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 
 @end
 
 @interface WKWebView (TestWebKitAPIExtras)
-- (void)_test_waitForDidStartProvisionalNavigation;
-- (void)_test_waitForDidFinishNavigation;
-- (void)_test_waitForDidSameDocumentNavigation;
-- (void)_test_waitForDidFinishNavigationWithPreferences:(WKWebpagePreferences *)preferences;
-- (void)_test_waitForDidFinishNavigationWithoutPresentationUpdate;
-- (void)_test_waitForDidFinishNavigationWhileIgnoringSSLErrors;
-- (void)_test_waitForDidFailProvisionalNavigation;
-- (_WKProcessTerminationReason)_test_waitForWebContentProcessDidTerminate;
+- (void)_test_waitForDidStartProvisionalNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)_test_waitForDidFinishNavigation NS_SWIFT_UNAVAILABLE("Use the async variant instead.");
+- (void)_test_waitForDidFinishNavigationWithCompletionHandler:(void (^)(NSError * _Nullable))completionHandler;
+- (void)_test_waitForDidSameDocumentNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)_test_waitForDidFinishNavigationWithPreferences:(WKWebpagePreferences *)preferences NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)_test_waitForDidFinishNavigationWithoutPresentationUpdate NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)_test_waitForDidFinishNavigationWhileIgnoringSSLErrors NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)_test_waitForDidFailProvisionalNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (_WKProcessTerminationReason)_test_waitForWebContentProcessDidTerminate NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 @end
+
+NS_HEADER_AUDIT_END(nullability, sendability)

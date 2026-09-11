@@ -42,9 +42,9 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferShareableBitmapBackend);
 
-IntSize ImageBufferShareableBitmapBackend::calculateSafeBackendSize(const Parameters& parameters)
+IntSize ImageBufferShareableBitmapBackend::calculateSafeBackendSize(const WebCore::ImageBufferParameters& parameters)
 {
-    IntSize backendSize = parameters.backendSize;
+    IntSize backendSize = parameters.backendSize();
     if (backendSize.isEmpty())
         return { };
 
@@ -55,18 +55,13 @@ IntSize ImageBufferShareableBitmapBackend::calculateSafeBackendSize(const Parame
     return backendSize;
 }
 
-unsigned ImageBufferShareableBitmapBackend::calculateBytesPerRow(const Parameters& parameters, const IntSize& backendSize)
+unsigned ImageBufferShareableBitmapBackend::calculateBytesPerRow(const IntSize& backendSize, PixelFormat pixelFormat, const ColorSpace& colorSpace)
 {
     ASSERT(!backendSize.isEmpty());
-    return ShareableBitmapConfiguration::calculateBytesPerRow(backendSize, parameters.bufferFormat.pixelFormat, parameters.colorSpace);
+    return ShareableBitmapConfiguration::calculateBytesPerRow(backendSize, pixelFormat, colorSpace);
 }
 
-size_t ImageBufferShareableBitmapBackend::calculateMemoryCost(const Parameters& parameters)
-{
-    return ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters, parameters.backendSize));
-}
-
-std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBackend::create(const Parameters& parameters, const ImageBufferCreationContext& creationContext)
+std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBackend::create(const WebCore::ImageBufferParameters& parameters, const ImageBufferCreationContext& creationContext)
 {
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     ASSERT(parameters.bufferFormat.pixelFormat == PixelFormat::BGRA8 || parameters.bufferFormat.pixelFormat == PixelFormat::BGRX8 || parameters.bufferFormat.pixelFormat == PixelFormat::RGBA16F);
@@ -90,10 +85,28 @@ std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBac
     return makeUnique<ImageBufferShareableBitmapBackend>(parameters, bitmap.releaseNonNull(), WTF::move(context));
 }
 
-std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBackend::create(const Parameters& parameters, ShareableBitmap::Handle handle)
+std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBackend::create(const WebCore::ImageBufferParameters& parameters, ShareableBitmap::Handle handle)
 {
     auto bitmap = ShareableBitmap::create(WTF::move(handle), SharedMemory::Protection::ReadWrite, SharedMemory::CopyOnWrite::No);
     if (!bitmap)
+        return nullptr;
+
+    // ShareableBitmap validates the handle against its own configuration, but that
+    // configuration travels with the handle and so is not implied by `parameters`. Pixel
+    // access mixes the two: ImageBufferBackend::getPixelBuffer() takes pixelFormat() and
+    // size() from `parameters` while bytesPerRow() comes from the bitmap, and it offsets
+    // into the mapping before any bounds check. Require the bitmap to be exactly what
+    // this backend would have allocated for these parameters. Note the configuration
+    // normalises the color space, so compare against the normalised value rather than
+    // against `parameters.colorSpace`.
+    auto requestedSize = calculateSafeBackendSize(parameters);
+    if (requestedSize.isEmpty())
+        return nullptr;
+    ShareableBitmapConfiguration requestedConfiguration { requestedSize, parameters.colorSpace, parameters.bufferFormat.pixelFormat };
+    if (bitmap->size() != requestedConfiguration.size()
+        || bitmap->pixelFormat() != requestedConfiguration.pixelFormat()
+        || bitmap->colorSpace() != requestedConfiguration.colorSpace()
+        || bitmap->bytesPerRow() != requestedConfiguration.bytesPerRow())
         return nullptr;
 
     auto context = bitmap->createGraphicsContext();
@@ -103,7 +116,7 @@ std::unique_ptr<ImageBufferShareableBitmapBackend> ImageBufferShareableBitmapBac
     return makeUnique<ImageBufferShareableBitmapBackend>(parameters, bitmap.releaseNonNull(), WTF::move(context));
 }
 
-ImageBufferShareableBitmapBackend::ImageBufferShareableBitmapBackend(const Parameters& parameters, Ref<ShareableBitmap>&& bitmap, std::unique_ptr<GraphicsContext>&& context)
+ImageBufferShareableBitmapBackend::ImageBufferShareableBitmapBackend(const WebCore::ImageBufferParameters& parameters, Ref<ShareableBitmap>&& bitmap, std::unique_ptr<GraphicsContext>&& context)
     : ImageBufferShareableBitmapBackendBase(parameters)
     , m_bitmap(WTF::move(bitmap))
     , m_context(WTF::move(context))

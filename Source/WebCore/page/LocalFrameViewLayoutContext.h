@@ -48,7 +48,7 @@ class RenderBlock;
 class RenderBlockFlow;
 class RenderBox;
 class RenderLayoutState;
-class RenderListMarker;
+class RenderListOutsideMarker;
 class RenderView;
 namespace Layout {
 class LayoutState;
@@ -198,7 +198,7 @@ public:
 
     bool repaintsBlocked() const { return m_repaintsBlocked; }
 
-    using ExcludedMarkerList = Vector<SingleThreadWeakPtr<RenderListMarker>>;
+    using ExcludedMarkerList = Vector<SingleThreadWeakPtr<RenderListOutsideMarker>>;
     const ExcludedMarkerList& excludedMarkers() const LIFETIME_BOUND { return m_excludedMarkers; }
 
 private:
@@ -227,9 +227,8 @@ private:
 
     void NODELETE setSubtreeLayoutRoot(RenderElement&);
 
-#if ENABLE(TEXT_AUTOSIZING)
     void applyTextSizingIfNeeded(RenderElement& layoutRoot);
-#endif
+
     void updateStyleForLayout();
 
     // These functions may only be accessed by LayoutStateMaintainer.
@@ -358,7 +357,7 @@ private:
 
 class ListItemExcludedMarkerScope {
 public:
-    ListItemExcludedMarkerScope(LocalFrameViewLayoutContext&, RenderListMarker&);
+    ListItemExcludedMarkerScope(LocalFrameViewLayoutContext&, RenderListOutsideMarker&);
     ~ListItemExcludedMarkerScope();
 
 private:

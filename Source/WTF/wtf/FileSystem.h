@@ -31,6 +31,7 @@
 #pragma once
 
 #include <span>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <utility>
@@ -52,6 +53,10 @@
 
 #if USE(CF)
 typedef const struct __CFData* CFDataRef;
+#endif
+
+#if !OS(WINDOWS)
+struct stat;
 #endif
 
 OBJC_CLASS NSString;
@@ -137,6 +142,10 @@ WTF_EXPORT_PRIVATE CString fileSystemRepresentation(const String&);
 #if !PLATFORM(WIN)
 WTF_EXPORT_PRIVATE String stringFromFileSystemRepresentation(const char*);
 #endif
+
+// stat() needs a null-terminated path, so these take the span including the terminator and check for it.
+WTF_EXPORT_PRIVATE int statFile(std::span<const char> pathIncludingNullTerminator, struct stat&);
+inline int statFile(std::span<const char8_t> pathIncludingNullTerminator, struct stat& result) { return statFile(byteCast<char>(pathIncludingNullTerminator), result); }
 
 using Salt = std::array<uint8_t, 8>;
 WTF_EXPORT_PRIVATE std::optional<Salt> readOrMakeSalt(const String& path);

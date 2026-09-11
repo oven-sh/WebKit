@@ -43,13 +43,13 @@ class ImageBufferShareableMappedIOSurfaceBitmapBackend final : public WebCore::I
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferShareableMappedIOSurfaceBitmapBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferShareableMappedIOSurfaceBitmapBackend);
 public:
-    static std::unique_ptr<ImageBufferShareableMappedIOSurfaceBitmapBackend> create(const Parameters&, const WebCore::ImageBufferCreationContext&);
-    static size_t calculateMemoryCost(const Parameters& parameters) { return WebCore::ImageBufferIOSurfaceBackend::calculateMemoryCost(parameters); }
+    static std::unique_ptr<ImageBufferShareableMappedIOSurfaceBitmapBackend> create(const WebCore::ImageBufferParameters&, const WebCore::ImageBufferCreationContext&);
 
-    ImageBufferShareableMappedIOSurfaceBitmapBackend(const Parameters&, std::unique_ptr<WebCore::IOSurface>, WebCore::IOSurface::LockAndContext&&, WebCore::IOSurfacePool*);
+    ImageBufferShareableMappedIOSurfaceBitmapBackend(const WebCore::ImageBufferParameters&, std::unique_ptr<WebCore::IOSurface>, WebCore::IOSurface::LockAndContext&&, WebCore::IOSurfacePool*);
     ~ImageBufferShareableMappedIOSurfaceBitmapBackend();
 
-    static constexpr WebCore::RenderingMode renderingMode = WebCore::RenderingMode::Accelerated;
+    WebCore::RenderingMode renderingMode() const final { return WebCore::RenderingMode::Accelerated; }
+    size_t memoryCost() const final { return WebCore::ImageBufferBackend::calculateMemoryCost(size(), WebCore::ImageBufferIOSurfaceBackend::calculateBytesPerRow(size(), pixelFormat())); }
     bool canMapBackingStore() const final;
 
     std::optional<ImageBufferBackendHandle> createBackendHandle(WebCore::SharedMemory::Protection = WebCore::SharedMemory::Protection::ReadWrite) const final;

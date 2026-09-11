@@ -233,16 +233,17 @@ RegisterID* SuperNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
 RegisterID* ImportNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     RefPtr<RegisterID> importModule = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::importModule);
-    unsigned argumentCount = m_deferred ? 3 : (m_option ? 2 : 1);
-    CallArguments arguments(generator, nullptr, argumentCount);
+    CallArguments arguments(generator, nullptr, 4);
     generator.emitLoad(arguments.thisRegister(), jsUndefined());
     generator.emitNode(arguments.argumentRegister(0), m_expr);
     if (m_option)
         generator.emitNode(arguments.argumentRegister(1), m_option);
-    else if (m_deferred)
+    else
         generator.emitLoad(arguments.argumentRegister(1), jsUndefined());
-    if (m_deferred)
-        generator.emitLoad(arguments.argumentRegister(2), jsBoolean(true));
+    generator.emitLoad(arguments.argumentRegister(2), jsBoolean(m_deferred));
+    Variable moduleLoader = generator.variable(generator.propertyNames().builtinNames().moduleLoaderPrivateName());
+    RefPtr<RegisterID> scope = generator.emitResolveScope(generator.newTemporary(), moduleLoader);
+    generator.emitGetFromScope(arguments.argumentRegister(3), scope.get(), moduleLoader, ThrowIfNotFound);
     return generator.emitCall(generator.finalDestination(dst, importModule.get()), importModule.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 
@@ -1334,6 +1335,19 @@ RegisterID* EvalFunctionCallNode::emitBytecode(BytecodeGenerator& generator, Reg
             generator.emitCallDirectEval(returnValue.get(), func.get(), directEvalArguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
             generator.emitJump(done.get());
         }
+
+        generator.emitLabel(notEvalFunction.get());
+        generator.emitCallInTailPosition(returnValue.get(), func.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
+        generator.emitLabel(done.get());
+    } else if (generator.allowsTailCallOptimization()) {
+        // A callee named "eval" is a direct eval only if it really is the built-in eval function.
+        // Otherwise this is an ordinary call, and an ordinary call in a tail position is a tail call.
+        Ref<Label> notEvalFunction = generator.newLabel();
+        Ref<Label> done = generator.newLabel();
+        generator.emitJumpIfNotEvalFunction(func.get(), notEvalFunction.get());
+
+        generator.emitCallDirectEval(returnValue.get(), func.get(), callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+        generator.emitJump(done.get());
 
         generator.emitLabel(notEvalFunction.get());
         generator.emitCallInTailPosition(returnValue.get(), func.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);

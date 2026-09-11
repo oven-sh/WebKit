@@ -126,7 +126,7 @@ String WebExtensionContext::stateFilePath() const
 {
     if (!storageIsPersistent())
         return nullString();
-    return FileSystem::pathByAppendingComponent(storageDirectory(), plistFileName());
+    return FileSystem::pathByAppendingComponent(storageDirectory(), stateFileName());
 }
 
 void WebExtensionContext::setBaseURL(URL&& url)
@@ -644,7 +644,9 @@ WebExtensionContext::PermissionsMap& WebExtensionContext::removeExpired(Permissi
     if (removedPermissions.isEmpty() || notification == PermissionNotification::None)
         return permissionMap;
 
+#if PLATFORM(COCOA)
     permissionsDidChange(notification, removedPermissions);
+#endif
 
     return permissionMap;
 }
@@ -675,7 +677,9 @@ WebExtensionContext::PermissionMatchPatternsMap& WebExtensionContext::removeExpi
     if (removedMatchPatterns.isEmpty() || notification == PermissionNotification::None)
         return matchPatternMap;
 
+#if PLATFORM(COCOA)
     permissionsDidChange(notification, removedMatchPatterns);
+#endif
 
     return matchPatternMap;
 }
@@ -935,12 +939,12 @@ WebExtensionContext::PermissionState WebExtensionContext::permissionState(const 
     };
 
     for (auto& deniedPermissionEntry : deniedPermissionMatchPatterns) {
-        if (urlMatchesPatternIgnoringWildcardHostPatterns(deniedPermissionEntry.key))
+        if (urlMatchesPatternIgnoringWildcardHostPatterns(protect(deniedPermissionEntry.key)))
             return cacheResultAndReturn(PermissionState::DeniedExplicitly);
     }
 
     for (auto& grantedPermissionEntry : grantedPermissionMatchPatterns) {
-        if (urlMatchesPatternIgnoringWildcardHostPatterns(grantedPermissionEntry.key))
+        if (urlMatchesPatternIgnoringWildcardHostPatterns(protect(grantedPermissionEntry.key)))
             return cacheResultAndReturn(PermissionState::GrantedExplicitly);
     }
 
@@ -954,12 +958,12 @@ WebExtensionContext::PermissionState WebExtensionContext::permissionState(const 
     };
 
     for (auto& deniedPermissionEntry : deniedPermissionMatchPatterns) {
-        if (urlMatchesWildcardHostPatterns(deniedPermissionEntry.key))
+        if (urlMatchesWildcardHostPatterns(protect(deniedPermissionEntry.key)))
             return cacheResultAndReturn(PermissionState::DeniedImplicitly);
     }
 
     for (auto& grantedPermissionEntry : grantedPermissionMatchPatterns) {
-        if (urlMatchesWildcardHostPatterns(grantedPermissionEntry.key))
+        if (urlMatchesWildcardHostPatterns(protect(grantedPermissionEntry.key)))
             return cacheResultAndReturn(PermissionState::GrantedImplicitly);
     }
 
@@ -1033,12 +1037,12 @@ WebExtensionContext::PermissionState WebExtensionContext::permissionState(const 
     };
 
     for (auto& deniedPermissionEntry : deniedPermissionMatchPatterns) {
-        if (urlMatchesPatternIgnoringWildcardHostPatterns(deniedPermissionEntry.key))
+        if (urlMatchesPatternIgnoringWildcardHostPatterns(protect(deniedPermissionEntry.key)))
             return PermissionState::DeniedExplicitly;
     }
 
     for (auto& grantedPermissionEntry : grantedPermissionMatchPatterns) {
-        if (urlMatchesPatternIgnoringWildcardHostPatterns(grantedPermissionEntry.key))
+        if (urlMatchesPatternIgnoringWildcardHostPatterns(protect(grantedPermissionEntry.key)))
             return PermissionState::GrantedExplicitly;
     }
 
@@ -1053,12 +1057,12 @@ WebExtensionContext::PermissionState WebExtensionContext::permissionState(const 
     };
 
     for (auto& deniedPermissionEntry : deniedPermissionMatchPatterns) {
-        if (urlMatchesWildcardHostPatterns(deniedPermissionEntry.key))
+        if (urlMatchesWildcardHostPatterns(protect(deniedPermissionEntry.key)))
             return PermissionState::DeniedImplicitly;
     }
 
     for (auto& grantedPermissionEntry : grantedPermissionMatchPatterns) {
-        if (urlMatchesWildcardHostPatterns(grantedPermissionEntry.key))
+        if (urlMatchesWildcardHostPatterns(protect(grantedPermissionEntry.key)))
             return PermissionState::GrantedImplicitly;
     }
 
@@ -1655,7 +1659,9 @@ WebExtensionContext::WebExtensionContext()
     webExtensionContexts().add(identifier(), *this);
 }
 
+#if !USE(GLIB)
 WebExtensionContext::~WebExtensionContext() = default;
+#endif
 
 WebExtensionContextIdentifier WebExtensionContext::privilegedIdentifier() const
 {
@@ -1686,7 +1692,7 @@ WebExtensionContextParameters WebExtensionContext::parameters(IncludePrivilegedI
         extension->serializeManifest(),
         extension->manifestVersion(),
         m_storageAccessLevels,
-        extensionController()->configuration().defaultWebsiteDataStore().sessionID(),
+        protect(extensionController()->configuration())->defaultWebsiteDataStore().sessionID(),
         backgroundPageIdentifier(destinationProcess),
 #if ENABLE(INSPECTOR_EXTENSIONS)
         inspectorPageIdentifiers(),
@@ -1816,6 +1822,26 @@ void WebExtensionContext::loadBackgroundWebViewDuringLoad()
             loadBackgroundWebView();
     } else
         loadBackgroundWebView();
+}
+
+void WebExtensionContext::scheduleBackgroundContentToUnload()
+{
+    if (!m_backgroundWebView || protect(extension())->backgroundContentIsPersistent())
+        return;
+
+#ifdef NDEBUG
+    static const auto testRunnerDelayBeforeUnloading = 3_s;
+#else
+    static const auto testRunnerDelayBeforeUnloading = 6_s;
+#endif
+
+    static const auto delayBeforeUnloading = isNotRunningInTestRunner() ? 30_s : testRunnerDelayBeforeUnloading;
+
+    RELEASE_LOG_DEBUG(Extensions, "Scheduling background content to unload in %.0f seconds", delayBeforeUnloading.seconds());
+
+    if (!m_unloadBackgroundWebViewTimer)
+        m_unloadBackgroundWebViewTimer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "WebExtensionContext::UnloadBackgroundWebViewTimer"_s, this, &WebExtensionContext::unloadBackgroundContentIfPossible);
+    m_unloadBackgroundWebViewTimer->startOneShot(delayBeforeUnloading);
 }
 
 bool WebExtensionContext::isBackgroundPage(WebCore::FrameIdentifier frameIdentifier) const

@@ -256,14 +256,14 @@ public:
     template<typename... Params>
     Node* addNode(Params... params)
     {
-        Node* node = m_nodes.addNew(params...);
+        Node* node = m_nodes.addNew(WTF::move(params)...);
         return node;
     }
 
     template<typename... Params>
     Node* addNode(SpeculatedType type, Params... params)
     {
-        Node* node = addNode(params...);
+        Node* node = addNode(WTF::move(params)...);
         node->predict(type);
         return node;
     }
@@ -1087,6 +1087,7 @@ public:
 
     const WTF::BitSet<256>* tryGetConstantRegExpFirstCharacterBitmap(Node*, FirstCharacterFilterPosition);
     const WTF::BitSet<256>* regExpFirstCharacterBitmap(RegExp*, FirstCharacterFilterPosition);
+    std::optional<unsigned> tryGetConstantRegExpTestMinimumSize(Node*);
 
     // Returns false if the key is already invalid or unwatchable. If this is a Presence condition,
     // this also makes it cheap to query if the condition holds. Also makes sure that the GC knows

@@ -198,6 +198,7 @@ private:
         DocumentFragment* fragment() const;
         Element& NODELETE contextElement();
         HTMLStackItem& NODELETE contextElementStackItem() LIFETIME_BOUND;
+        bool contextElementIsTemplate() const;
 
     private:
         WeakPtr<DocumentFragment, WeakPtrImplWithEventTargetData> m_fragment;

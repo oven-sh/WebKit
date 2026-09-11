@@ -36,16 +36,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferCGPDFDocumentBackend);
 
-size_t ImageBufferCGPDFDocumentBackend::calculateMemoryCost(const Parameters& parameters)
+std::unique_ptr<ImageBufferCGPDFDocumentBackend> ImageBufferCGPDFDocumentBackend::create(const ImageBufferParameters& parameters, const ImageBufferCreationContext&)
 {
-    // FIXME: This is fairly meaningless, because we don't actually have a bitmap, and
-    // should really be based on the PDF document size.
-    return ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters.backendSize, parameters.bufferFormat.pixelFormat));
-}
-
-std::unique_ptr<ImageBufferCGPDFDocumentBackend> ImageBufferCGPDFDocumentBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
-{
-    IntSize backendSize = parameters.backendSize;
+    IntSize backendSize = parameters.backendSize();
     if (backendSize.isEmpty())
         return nullptr;
 
@@ -68,7 +61,7 @@ std::unique_ptr<ImageBufferCGPDFDocumentBackend> ImageBufferCGPDFDocumentBackend
     return std::unique_ptr<ImageBufferCGPDFDocumentBackend>(new ImageBufferCGPDFDocumentBackend(parameters, WTF::move(data), WTF::move(context)));
 }
 
-ImageBufferCGPDFDocumentBackend::ImageBufferCGPDFDocumentBackend(const Parameters& parameters, RetainPtr<CFDataRef>&& data, std::unique_ptr<GraphicsContextCG>&& context)
+ImageBufferCGPDFDocumentBackend::ImageBufferCGPDFDocumentBackend(const ImageBufferParameters& parameters, RetainPtr<CFDataRef>&& data, std::unique_ptr<GraphicsContextCG>&& context)
     : ImageBufferCGBackend(parameters, WTF::move(context))
     , m_data(WTF::move(data))
 {

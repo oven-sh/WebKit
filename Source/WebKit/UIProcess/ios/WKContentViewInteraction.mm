@@ -4907,7 +4907,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
     if (action == @selector(copy:)) {
-        if (editorState.isInPasswordField && !editorState.selectionIsRangeInAutoFilledAndViewableField)
+        bool selectionIsInAutoFilledAndViewablePasswordField = editorState.isInPasswordField && !editorState.selectionIsRangeInAutoFilledAndViewableField;
+        bool selectionIsInPluginWithCopyingDisallowed = editorState.isInPlugin && editorState.hasPostLayoutData() && !editorState.postLayoutData->canCopy;
+        if (selectionIsInAutoFilledAndViewablePasswordField || selectionIsInPluginWithCopyingDisallowed)
             return NO;
         return editorState.selectionType == WebCore::SelectionType::Range;
     }
@@ -11984,6 +11986,17 @@ static RetainPtr<UITargetedPreview> createFallbackTargetedPreview(UIView *rootVi
     auto targetedPreview = createFallbackTargetedPreview(self, self.containerForContextMenuHintPreviews, previewRect, backgroundColor.get());
 
     [self _updateTargetedPreviewScrollViewUsingContainerScrollingNodeID:_focusedElementInformation.containerScrollingNodeID];
+
+    _contextMenuInteractionTargetedPreview = WTF::move(targetedPreview);
+    return _contextMenuInteractionTargetedPreview.get();
+}
+
+- (UITargetedPreview *)_createTargetedContextMenuHintPreviewForRootViewRect:(CGRect)rectInRootViewCoordinates
+{
+    auto targetedPreview = createFallbackTargetedPreview(self, self.containerForContextMenuHintPreviews, rectInRootViewCoordinates, nil);
+
+    // No hit test result, so no container scroller to track.
+    [self _updateTargetedPreviewScrollViewUsingContainerScrollingNodeID:std::nullopt];
 
     _contextMenuInteractionTargetedPreview = WTF::move(targetedPreview);
     return _contextMenuInteractionTargetedPreview.get();

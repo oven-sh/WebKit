@@ -180,10 +180,6 @@ if (USE_LIBHYPHEN)
     list(APPEND WebCore_PRIVATE_LIBRARIES Hyphen::Hyphen)
 endif ()
 
-if (USE_LIBSECRET)
-    list(APPEND WebCore_PRIVATE_LIBRARIES Secret::Secret)
-endif ()
-
 if (USE_VULKAN)
     list(APPEND WebCore_PRIVATE_LIBRARIES volk::volk)
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES

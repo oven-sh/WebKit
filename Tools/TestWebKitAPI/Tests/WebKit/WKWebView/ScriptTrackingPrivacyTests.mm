@@ -368,6 +368,24 @@ TEST(ScriptTrackingPrivacyTests, Canvas2D)
         NSLog(@"FAIL: Expected hashes to be different: %@", [hashes firstObject]);
 }
 
+TEST(ScriptTrackingPrivacyTests, Canvas2DColorSpace)
+{
+    if (!supportsFingerprintingScriptRequests())
+        return;
+
+    FingerprintingScriptsRequestSwizzler swizzler { @[ @"tainted.example" ] };
+
+    RetainPtr webView = setUpWebViewForFingerprintingTests(@"test://top-domain.org/index.html", @{
+        @"test://top-domain.org/index.html" : simpleIndexHTML.createNSString().autorelease(),
+        @"test://top-domain.org/script.js" : getBundleResourceAsText(@"canvas-fingerprinting", @"js"),
+        @"test://pure.com/script.js" : @"window.colorSpaceForPureScript = getImageDataColorSpace('display-p3');",
+        @"test://tainted.example/script.js" : @"window.colorSpaceForTaintedScript = getImageDataColorSpace('display-p3');",
+    });
+
+    EXPECT_WK_STREQ("display-p3", [webView stringByEvaluatingJavaScript:@"window.colorSpaceForPureScript"]);
+    EXPECT_WK_STREQ("display-p3", [webView stringByEvaluatingJavaScript:@"window.colorSpaceForTaintedScript"]);
+}
+
 TEST(ScriptTrackingPrivacyTests, AudioSamples)
 {
     if (!supportsFingerprintingScriptRequests())

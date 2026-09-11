@@ -148,9 +148,9 @@ NetworkRTCTCPSocketCocoa::NetworkRTCTCPSocketCocoa(LibWebRTCSocketIdentifier ide
         }
     }).get());
 
-    processIncomingData(m_nwConnection.get(), [identifier = m_identifier, connection = m_connection.copyRef(), ip = remoteAddress.ipaddr(), port = remoteAddress.port(), isSTUN = m_isSTUN](Vector<uint8_t>&& buffer) mutable {
+    processIncomingData(m_nwConnection.get(), [identifier = m_identifier, connection = m_connection.copyRef(), remoteAddress, isSTUN = m_isSTUN](Vector<uint8_t>&& buffer) mutable {
         return WebRTC::extractMessages(WTF::move(buffer), isSTUN ? WebRTC::MessageType::STUN : WebRTC::MessageType::Data, [&](auto data) {
-            connection->send(Messages::LibWebRTCNetwork::SignalReadPacket { identifier, data, RTCNetwork::IPAddress(ip), port, webrtc::TimeMicros(), WebRTCNetwork::EcnMarking::kNotEct }, 0);
+            connection->send(Messages::LibWebRTCNetwork::SignalReadPacket { identifier, data, RTCNetwork::SocketAddress(remoteAddress), webrtc::TimeMicros(), WebRTCNetwork::EcnMarking::kNotEct }, 0);
         });
     });
 

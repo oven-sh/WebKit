@@ -78,6 +78,8 @@ static inline String loggingKeyForActivityState(ActivityStateForCPUSampling stat
     case ActivityStateForCPUSampling::VisibleAndActive:
         return DiagnosticLoggingKeys::visibleAndActiveStateKey();
     }
+    RELEASE_ASSERT_NOT_REACHED();
+    return DiagnosticLoggingKeys::nonVisibleStateKey();
 }
 
 void PerActivityStateCPUUsageSampler::loggingTimerFired()

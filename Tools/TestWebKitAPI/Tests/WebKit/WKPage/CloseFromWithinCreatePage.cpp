@@ -80,7 +80,8 @@ TEST(WebKit, CloseFromWithinCreatePage)
     auto configuration = adoptWK(WKPageCopyPageConfiguration(webView.page()));
     auto preferences = WKPageConfigurationGetPreferences(configuration.get());
     WKPreferencesSetUniversalAccessFromFileURLsAllowed(preferences, true);
-    
+    WKPreferencesSetJavaScriptCanOpenWindowsAutomatically(preferences, true);
+
     WKRetainPtr<WKURLRef> url = adoptWK(Util::createURLForResource("close-from-within-create-page", "html"));
     WKPageLoadURL(webView.page(), url.get());
 
@@ -124,6 +125,7 @@ TEST(WebKit, CreatePageThenDocumentOpenMIMEType)
     auto configuration = adoptWK(WKPageCopyPageConfiguration(webView.page()));
     auto preferences = WKPageConfigurationGetPreferences(configuration.get());
     WKPreferencesSetUniversalAccessFromFileURLsAllowed(preferences, true);
+    WKPreferencesSetJavaScriptCanOpenWindowsAutomatically(preferences, true);
 
     testDone = false;
     WKRetainPtr<WKURLRef> url = adoptWK(Util::createURLForResource("window-open-then-document-open", "html"));
