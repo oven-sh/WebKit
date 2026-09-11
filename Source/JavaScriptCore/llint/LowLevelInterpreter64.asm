@@ -2922,8 +2922,11 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
         return(t0)
     end
 
-    loadi OpGetFromScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t0
-    andi ResolveTypeMask, t0
+    # The resolve type is the low bits of the GetPutInfo and fits in a byte (GetPutInfo.h asserts it).
+    # Global accesses and closure variable accesses are each other's most common case, in scripts and in modules: one
+    # compare tells them apart, so that neither waits for the other's three.
+    loadb OpGetFromScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t0
+    bia t0, GlobalLexicalVar, .gClosureVar
 
 #gGlobalProperty:
     bineq t0, GlobalProperty, .gGlobalVar
@@ -2935,7 +2938,6 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
     getGlobalVar(macro(v) end)
 
 .gGlobalLexicalVar:
-    bineq t0, GlobalLexicalVar, .gClosureVar
     getGlobalVar(
         macro (value)
             bqeq value, ValueEmpty, .gDynamic
