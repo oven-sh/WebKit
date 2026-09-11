@@ -100,10 +100,11 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
     }
     case ModuleProgramExecutableType: {
         ModuleProgramExecutable* executable = static_cast<ModuleProgramExecutable*>(this);
+        // The environment's symbol table and the function declarations' executables stay
+        // (ModuleProgramExecutable::getUnlinkedCodeBlock). What goes is the offer to later records:
+        // JSModuleRecord::getOrMakeExecutable does not adopt an executable whose code was deleted.
         executable->m_codeBlock.clear();
         executable->m_unlinkedCodeBlock.clear();
-        // m_moduleEnvironmentSymbolTable stays: the module's one environment was made from it and a module that is
-        // suspended at a top-level await goes on using that (ModuleProgramExecutable::getUnlinkedCodeBlock).
         break;
     }
     default:
@@ -288,9 +289,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->getUnlinkedCodeBlock(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
-        // The body is about to run in this code, and it can be suspended at a top-level await from then on.
-        if (executable->isAsync())
-            pinCodeGenerationModeForResumableBody();
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
     }
 
