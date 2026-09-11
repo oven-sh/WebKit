@@ -3094,7 +3094,7 @@ void LOLJIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
         move(s_scratch, destGPR);
     } else {
         // Inlined fast path for common types.
-        constexpr size_t metadataMinAlignment = alignof(Metadata);
+        constexpr size_t metadataMinAlignment = 4;
         constexpr size_t metadataPointerAlignment = alignof(void*);
         static_assert(!(metadataPointerAlignment % metadataMinAlignment));
         static_assert(!(Metadata::offsetOfGetPutInfo() % metadataMinAlignment));
