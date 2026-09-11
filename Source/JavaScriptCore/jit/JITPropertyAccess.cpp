@@ -907,6 +907,7 @@ void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
         load32FromMetadata(bytecode, Metadata::offsetOfModuleImportSlot(), scratch1GPR);
         static_assert(sizeof(WriteBarrier<Unknown>) == 8);
         loadPtr(BaseIndex(returnValueGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
+        addSlowCase(branchIfEmpty(returnValueGPR));
     } else if (profiledResolveType == ClosureVar) {
         emitGetVirtualRegister(scope, scopeGPR);
         static_assert(scopeGPR == returnValueGPR);
@@ -1101,10 +1102,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
             emitResolveClosure(needsVarInjectionChecks(resolveType));
             break;
         case Dynamic:
+        case ModuleVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
-        case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

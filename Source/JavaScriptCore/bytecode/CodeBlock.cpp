@@ -642,8 +642,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
             if (op.type == ModuleVar) {
+                JSScope* importingEnvironment = scope;
+                for (unsigned i = bytecode.m_localScopeDepth; i < op.depth; ++i)
+                    importingEnvironment = importingEnvironment->next();
+                metadata.m_symbolTable.set(vm, this, uncheckedDowncast<JSModuleEnvironment>(importingEnvironment)->symbolTable());
                 metadata.m_moduleImportSlot = op.moduleImportSlot;
-                metadata.m_globalObject.clear();
             } else if (op.lexicalEnvironment)
                 metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
             else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {

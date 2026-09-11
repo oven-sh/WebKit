@@ -36,8 +36,9 @@ namespace JSC {
 
 const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleProgramExecutable) };
 
-ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source)
+ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
+    , m_importedBindings(WTF::move(importedBindings))
 {
     SourceProviderSourceType sourceType = source.provider()->sourceType();
     ASSERT(sourceType == SourceProviderSourceType::Module
@@ -83,6 +84,15 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
 
+bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const
+{
+    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || !exporterSource != !other.exporterSource)
+        return false;
+    if (!exporterSource || exporterSource == other.exporterSource)
+        return true;
+    return exporterSource->hash() == other.exporterSource->hash() && exporterSource->source() == other.exporterSource->source();
+}
+
 FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigned index)
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
@@ -93,12 +103,12 @@ FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigne
     return executable;
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source)
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source);
+    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, WTF::move(importedBindings));
     executable->finishCreation(vm);
     if (!executable->getUnlinkedCodeBlock(globalObject)) [[unlikely]] // This generates and binds unlinked code block.
         return nullptr;

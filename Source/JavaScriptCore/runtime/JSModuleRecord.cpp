@@ -211,78 +211,48 @@ unsigned JSModuleRecord::importSlotIndex(UniquedStringImpl* localName)
     return iterator->value.slotIndex;
 }
 
-template<typename Functor>
-static void forEachSingleImport(JSModuleRecord& record, const Functor& functor)
-{
-    // functor(slotIndex, localName) for every non-namespace import entry.
-#if USE(BUN_JSC_ADDITIONS)
-    if (record.importEntriesArePrelinked()) {
-        PrelinkedModuleGraph* graph = record.prelinkedGraph();
-        auto imports = graph->imports(record.prelinkedModule());
-        for (unsigned i = 0; i < imports.size(); ++i) {
-            if (!imports[i].isNamespace())
-                functor(i, graph->identifier(imports[i].localSid));
-        }
-        return;
-    }
-#endif
-    for (const auto& entry : record.importEntries().values()) {
-        if (entry.type != AbstractModuleRecord::ImportEntryType::Namespace)
-            functor(entry.slotIndex, entry.localName);
-    }
-}
-
-std::optional<Vector<unsigned>> JSModuleRecord::importSlotLayout(JSGlobalObject* globalObject)
+std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importedBindings(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Vector<unsigned> layout(importSlotCount(), [](size_t) { return UINT_MAX; });
-    bool known = true;
-    forEachSingleImport(*this, [&](unsigned slotIndex, const Identifier& localName) {
-        if (!known || scope.exception())
-            return;
+    Vector<Identifier> localNames;
+#if USE(BUN_JSC_ADDITIONS)
+    if (importEntriesArePrelinked()) {
+        for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
+            if (!import.isNamespace())
+                localNames.append(prelinkedGraph()->identifier(import.localSid));
+        }
+    } else
+#endif
+    {
+        for (const auto& entry : importEntries().values()) {
+            if (entry.type != ImportEntryType::Namespace)
+                localNames.append(entry.localName);
+        }
+    }
+    std::sort(localNames.begin(), localNames.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
+
+    ModuleProgramExecutable::ImportedBindings bindings;
+    for (const Identifier& localName : localNames) {
         Resolution resolution = resolveImport(globalObject, localName);
-        if (scope.exception() || resolution.type != Resolution::Type::Resolved)
-            return;
-        SymbolTable* symbolTable = nullptr;
-        if (JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull())
-            symbolTable = environment->symbolTable();
-        else if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
-            ModuleProgramExecutable* executable = sourceTextModule->getOrMakeExecutable(globalObject);
-            if (scope.exception())
-                return;
-            symbolTable = executable->moduleEnvironmentSymbolTable();
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (resolution.type != Resolution::Type::Resolved)
+            continue;
+        if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
+            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0 });
+            continue;
         }
-        if (!symbolTable) {
-            known = false;
-            return;
-        }
+        JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
+        if (!environment)
+            return std::nullopt;
+        SymbolTable* symbolTable = environment->symbolTable();
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iterator = symbolTable->find(locker, resolution.localName.impl());
-        if (iterator != symbolTable->end(locker))
-            layout[slotIndex] = iterator->value.scopeOffset().offset();
-    });
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (!known)
-        return std::nullopt;
-    return layout;
-}
-
-void JSModuleRecord::fillImportSlots(JSGlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSModuleEnvironment* environment = moduleEnvironment();
-    forEachSingleImport(*this, [&](unsigned slotIndex, const Identifier& localName) {
-        if (scope.exception())
-            return;
-        Resolution resolution = resolveImport(globalObject, localName);
-        if (scope.exception() || resolution.type != Resolution::Type::Resolved)
-            return;
-        environment->importSlot(slotIndex).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
-    });
+        RELEASE_ASSERT(iterator != symbolTable->end(locker));
+        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset() });
+    }
+    return bindings;
 }
 
 ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* globalObject)
@@ -294,27 +264,29 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode());
+    // Linked module code embeds, for each imported binding, its ScopeOffset in the
+    // exporting module's environment, which that module's source text determines. So
+    // records in one global object with the same URL and source text whose imports
+    // resolve to the same sources and names share the executable: CodeBlocks, JIT
+    // code and the function declarations' executables. A record whose dependencies
+    // differ links its own, which later records are then compared against.
+    std::optional<ModuleProgramExecutable::ImportedBindings> bindings = importedBindings(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    const String& url = sourceCode().provider()->sourceURL();
+    auto& executables = globalObject->moduleProgramExecutables();
+    if (!url.isEmpty() && bindings) {
+        ModuleProgramExecutable* shared = executables.get(url);
+        if (shared && shared->importedBindings() == bindings && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+            m_moduleProgramExecutable.set(vm, this, shared);
+            return shared;
+        }
+    }
+
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings));
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
-
-    // Share the executable (CodeBlocks, JIT code, function declaration executables)
-    // of an earlier record for the same URL and source when this record's imports
-    // resolve to environments laid out the same way, so linked ModuleVar accesses hold.
-    const String& url = sourceCode().provider()->sourceURL();
-    if (url.isEmpty())
-        return executable;
-    std::optional<Vector<unsigned>> layout = importSlotLayout(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!layout)
-        return executable;
-    auto& executables = globalObject->moduleProgramExecutables();
-    if (ModuleProgramExecutable* shared = executables.get(url); shared && shared->unlinkedCodeBlock() == executable->unlinkedCodeBlock() && shared->importSlotLayout() == *layout) {
-        m_moduleProgramExecutable.set(vm, this, shared);
-        return shared;
-    }
-    executable->setImportSlotLayout(WTF::move(*layout));
-    executables.set(url, Weak<ModuleProgramExecutable>(executable));
+    if (!url.isEmpty() && executable->importedBindings())
+        executables.set(url, Weak<ModuleProgramExecutable>(executable));
     return executable;
 }
 

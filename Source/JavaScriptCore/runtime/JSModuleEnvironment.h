@@ -97,9 +97,13 @@ public:
     unsigned importSlotCount() { return static_cast<unsigned>(importSlotCountSlot()); }
     WriteBarrierBase<JSModuleEnvironment>& importSlot(unsigned index)
     {
-        RELEASE_ASSERT(index < importSlotCount());
+        ASSERT(index < importSlotCount());
         return *std::bit_cast<WriteBarrierBase<JSModuleEnvironment>*>(std::bit_cast<char*>(this) + offsetOfImportSlot(symbolTable(), index));
     }
+    // op_resolve_scope ModuleVar with an empty slot: `depth` scopes up from `scope` is the
+    // importing environment; resolve `localName` for its record, fill the slot with the
+    // environment the binding lives in and return it.
+    static JSModuleEnvironment* fillImportSlot(JSGlobalObject*, JSScope*, unsigned depth, ScopeOffset slot, const Identifier& localName);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);

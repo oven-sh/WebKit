@@ -10437,6 +10437,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     break;
                 case ModuleVar:
                     moduleImportSlot = metadata.m_moduleImportSlot;
+                    symbolTable = metadata.m_symbolTable.get();
                     break;
                 case ResolvedClosureVar:
                 case ClosureVar:
@@ -10479,24 +10480,27 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 break;
             }
             case ModuleVar: {
-                // The exporting environment is the importing module environment's
-                // import slot: a closure-variable-like load `depth` scopes up. It
-                // folds to a constant when the scope register is a constant here
-                // (import slots never change once filled).
+                // The exporting environment is the importing module environment's import
+                // slot `depth` scopes up. With one importing environment (its symbol
+                // table's singleton) the filled slot is a constant; otherwise it is a
+                // closure-variable-like load that Graph::tryGetConstantClosureVar can still
+                // fold once the scope is known. An empty slot exits to the baseline slow
+                // path, which fills it.
                 Node* localBase = get(bytecode.m_scope);
                 addToGraph(Phantom, localBase);
-                if (JSScope* scope = localBase->dynamicCastConstant<JSScope*>()) {
-                    for (unsigned n = depth; n--;)
-                        scope = scope->next();
-                    if (JSValue exporter = uncheckedDowncast<JSModuleEnvironment>(scope)->variables()[moduleImportSlot].get()) {
-                        set(bytecode.m_dst, weakJSConstant(exporter.asCell()));
-                        break;
+                if (symbolTable) {
+                    if (JSScope* scope = symbolTable->singleton().inferredValue()) {
+                        if (JSModuleEnvironment* exporter = uncheckedDowncast<JSModuleEnvironment>(scope)->importSlot(moduleImportSlot - JSModuleEnvironment::importSlotScopeOffset(symbolTable, 0).offset()).get()) {
+                            m_graph.watchpoints().addLazily(m_graph, symbolTable);
+                            set(bytecode.m_dst, weakJSConstant(exporter));
+                            break;
+                        }
                     }
                 }
                 for (unsigned n = depth; n--;)
                     localBase = addToGraph(SkipScope, localBase);
                 Node* exporter = addToGraph(GetClosureVar, OpInfo(moduleImportSlot), OpInfo(SpecObjectOther), localBase);
-                addToGraph(Check, Edge(exporter, KnownCellUse));
+                addToGraph(CheckNotEmpty, exporter);
                 set(bytecode.m_dst, exporter);
                 break;
             }

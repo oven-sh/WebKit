@@ -523,14 +523,14 @@ op :resolve_scope,
     },
     metadata: {
         resolveType: ResolveType, # offset 4
-        moduleImportSlot: unsigned, # ModuleVar: index of the import slot among the importing environment's variables
+        moduleImportSlot: unsigned, # ModuleVar: the import slot, as a variable index in the importing environment
         _0: { # offset 5
             localScopeDepth: unsigned,
             globalLexicalBindingEpoch: unsigned,
         },
         _1: { # offset 6
              # written during linking
-             symbolTable: WriteBarrierBase[SymbolTable], # lexicalEnvironment (ClosureVar)
+             symbolTable: WriteBarrierBase[SymbolTable], # ClosureVar: the scope's; ModuleVar: the importing module environment's
 
              constantScope: WriteBarrierBase[JSScope],
 

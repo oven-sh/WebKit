@@ -2862,6 +2862,7 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
     btinz t2, .rModuleVarWalk
 .rModuleVarLoad:
     loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+    btqz t0, .rDynamic
     return(t0)
 
 .rGlobalPropertyWithVarInjectionChecks:

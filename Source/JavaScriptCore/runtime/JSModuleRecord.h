@@ -27,12 +27,12 @@
 
 #include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ModuleProgramExecutable.h>
 #include <JavaScriptCore/ParserModes.h>
 #include <JavaScriptCore/SourceCode.h>
 
 namespace JSC {
 
-class ModuleProgramExecutable;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
@@ -81,13 +81,7 @@ public:
     // one per import entry, in entry order.
     unsigned importSlotCount() const;
     unsigned importSlotIndex(UniquedStringImpl* localName);
-    // The environment's import slots get the environments this record's import
-    // entries resolve to. Every module the entries resolve to has its environment.
-    void fillImportSlots(JSGlobalObject*);
-    // For each import slot, the ScopeOffset the entry's binding has in the
-    // environment it resolves to (UINT_MAX for namespace imports and unresolved
-    // entries); nullopt if some exporting environment's layout is not known yet.
-    std::optional<Vector<unsigned>> importSlotLayout(JSGlobalObject*);
+    std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
 
 private:
     JSModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, const SourceCode&, CodeFeatures);

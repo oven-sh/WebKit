@@ -1996,10 +1996,6 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule);
             // 13.b.iv. Set requiredModule.[[Status]] to LINKED.
             cyclic->setStatus(Status::Linked);
-            if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(cyclic)) {
-                sourceTextModule->fillImportSlots(globalObject);
-                RETURN_IF_EXCEPTION(scope, invalid);
-            }
             // 13.b.v. If requiredModule and module are the same Module Record, set done to true.
             done = requiredModule == module;
         } while (!done);

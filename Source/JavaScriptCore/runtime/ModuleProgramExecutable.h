@@ -45,7 +45,20 @@ public:
         return vm.moduleProgramExecutableSpace<mode>();
     }
 
-    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&);
+    // What an imported binding read by this executable's code resolves to: the
+    // exporting module's source (whose text fixes the binding's ScopeOffset) and the
+    // binding's name there, or for exporters that are not source text modules the
+    // ScopeOffset itself.
+    struct ImportedBinding {
+        RefPtr<UniquedStringImpl> localName;
+        RefPtr<SourceProvider> exporterSource;
+        RefPtr<UniquedStringImpl> exporterLocalName;
+        unsigned offset { 0 };
+        bool operator==(const ImportedBinding&) const;
+    };
+    using ImportedBindings = Vector<ImportedBinding>;
+
+    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&);
 
     static void destroy(JSCell*);
 
@@ -76,13 +89,11 @@ public:
 
     SymbolTable* moduleEnvironmentSymbolTable() LIFETIME_BOUND { return m_moduleEnvironmentSymbolTable.get(); }
 
-    // Records for the same URL and source in one global object share this
-    // executable (and so its CodeBlocks and its function declarations' executables)
-    // when their imports resolve to environments of the same layout; see
-    // JSModuleRecord::getOrMakeExecutable.
-    const Vector<unsigned>& importSlotLayout() const { return m_importSlotLayout; }
-    void setImportSlotLayout(Vector<unsigned>&& layout) { m_importSlotLayout = WTF::move(layout); }
+    // Records for one URL and source text whose imports resolve alike share this
+    // executable (JSModuleRecord::getOrMakeExecutable), so the function declarations'
+    // executables live here rather than per record.
     FunctionExecutable* functionDeclaration(VM&, unsigned index);
+    const std::optional<ImportedBindings>& importedBindings() const { return m_importedBindings; }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -90,11 +101,11 @@ private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&);
+    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
-    Vector<unsigned> m_importSlotLayout;
+    std::optional<ImportedBindings> m_importedBindings;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
 
