@@ -2942,9 +2942,18 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
         end)
 
 .gClosureVar:
-    bineq t0, ClosureVar, .gGlobalPropertyWithVarInjectionChecks
+    bineq t0, ClosureVar, .gLazyClosureVar
     loadVariable(get, m_scope, t0)
     getClosureVar()
+
+.gLazyClosureVar:
+    bineq t0, LazyClosureVar, .gGlobalPropertyWithVarInjectionChecks
+    loadVariable(get, m_scope, t0)
+    loadp OpGetFromScope::Metadata::m_operand[t5], t1
+    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+    bqeq t0, ValueEmpty, .gDynamic
+    valueProfile(size, OpGetFromScope, m_valueProfile, t0, t5)
+    return(t0)
 
 .gGlobalPropertyWithVarInjectionChecks:
     bineq t0, GlobalPropertyWithVarInjectionChecks, .gGlobalVarWithVarInjectionChecks

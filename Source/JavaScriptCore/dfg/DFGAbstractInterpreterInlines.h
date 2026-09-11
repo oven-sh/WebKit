@@ -4453,6 +4453,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case GetLazyClosureVar: {
+        if (JSValue value = m_graph.tryGetConstantClosureVar(forNode(node->child1()), node->scopeOffset()))
+            setConstant(node, *m_graph.freeze(value));
+        else
+            makeBytecodeTopForNode(node);
+        break;
+    }
+
     case GetClosureVar: {
         JSValue value = m_graph.tryGetConstantClosureVar(forNode(node->child1()), node->scopeOffset());
         if (node->hasDoubleResult()) {

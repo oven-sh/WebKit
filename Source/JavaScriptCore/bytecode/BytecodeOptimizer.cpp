@@ -90,6 +90,7 @@ struct Insn {
     // beyond the function's own scope; get_from_scope gets ResolvedClosureVar with a known slot.
     std::optional<unsigned> staticOuterHops;
     std::optional<unsigned> staticScopeOffset;
+    bool staticScopeOffsetIsLazyFunctionSlot { false };
 
     bool clobbers(VirtualRegister r) const { return r.isLocal() && static_cast<unsigned>(r.toLocal()) >= clobberFrom && static_cast<unsigned>(r.toLocal()) < clobberEnd; }
 
@@ -187,7 +188,7 @@ static bool isPure(const Insn& insn)
         return insn.staticOuterHops || type == GlobalProperty || type == GlobalPropertyWithVarInjectionChecks || type == ModuleVar;
     }
     case op_get_from_scope:
-        return insn.staticScopeOffset || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
+        return insn.staticScopeOffset || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedLazyClosureVar;
     default:
         return false;
     }
@@ -452,6 +453,7 @@ void BytecodeOptimizerAccess::replaceWith(Insn& insn, Insn::Kind kind, VirtualRe
     insn.knownConstants.shrink(0);
     insn.staticOuterHops = std::nullopt;
     insn.staticScopeOffset = std::nullopt;
+    insn.staticScopeOffsetIsLazyFunctionSlot = false;
     computeUseDef(insn);
 }
 
@@ -1337,6 +1339,7 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
                     bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32();
                     if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.hops == it->value.hops && fits) {
                         insn.staticScopeOffset = resolution.offset;
+                        insn.staticScopeOffsetIsLazyFunctionSlot = resolution.isLazyFunctionSlot;
                         changed = true;
                         m_staticGets++;
                     }
@@ -1971,7 +1974,7 @@ struct BytecodeOptimizerAccess::Mapper {
     GetPutInfo operator()(BytecodeOperandName, GetPutInfo info)
     {
         if (insn->staticScopeOffset && insn->effectiveOpcode() == op_get_from_scope)
-            return GetPutInfo(info.resolveMode(), ResolvedClosureVar, info.initializationMode(), info.ecmaMode());
+            return GetPutInfo(info.resolveMode(), insn->staticScopeOffsetIsLazyFunctionSlot ? ResolvedLazyClosureVar : ResolvedClosureVar, info.initializationMode(), info.ecmaMode());
         return info;
     }
 

@@ -7008,6 +7008,8 @@ bool NODELETE ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opco
     case ClosureVar:
     case ResolvedClosureVar:
     case ModuleVar:
+    case LazyClosureVar:
+    case ResolvedLazyClosureVar:
         return false;
 
     case UnresolvedProperty:
@@ -10542,6 +10544,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantNull)));
                 break;
             }
+            case LazyClosureVar:
+            case ResolvedLazyClosureVar:
             case Dynamic:
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
@@ -10719,9 +10723,35 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 set(bytecode.m_dst, addToGraph(GetClosureVar, OpInfo(operand), OpInfo(prediction), scopeNode));
                 break;
             }
+            case LazyClosureVar: {
+                Node* scopeNode = get(bytecode.m_scope);
+                addToGraph(Phantom, scopeNode); // As for ClosureVar.
+
+                if (JSValue value = m_graph.tryGetConstantClosureVar(scopeNode, ScopeOffset(operand))) {
+                    set(bytecode.m_dst, weakJSConstant(value));
+                    break;
+                }
+
+                // A slot of a given environment never goes back to being empty once it has held a value.
+                SpeculatedType prediction;
+                if (Options::predictFunctionForUnprofiledLazyClosureVarForTesting()) [[unlikely]] {
+                    prediction = getPredictionWithoutOSRExit();
+                    if (prediction == SpecNone)
+                        prediction = SpecFunction;
+                } else
+                    prediction = getPrediction();
+                NodeType op = GetLazyClosureVar;
+                if (auto* environment = scopeNode->dynamicCastConstant<JSLexicalEnvironment*>()) {
+                    if (environment->isValidScopeOffset(ScopeOffset(operand)) && environment->variableAt(ScopeOffset(operand)).get())
+                        op = GetClosureVar;
+                }
+                set(bytecode.m_dst, addToGraph(op, OpInfo(operand), OpInfo(prediction), scopeNode));
+                break;
+            }
             case UnresolvedProperty:
             case UnresolvedPropertyWithVarInjectionChecks:
             case ModuleVar:
+            case ResolvedLazyClosureVar:
             case Dynamic:
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
@@ -10837,6 +10867,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 break;
 
             case Dynamic:
+            case LazyClosureVar:
+            case ResolvedLazyClosureVar:
             case UnresolvedProperty:
             case UnresolvedPropertyWithVarInjectionChecks:
                 RELEASE_ASSERT_NOT_REACHED();
