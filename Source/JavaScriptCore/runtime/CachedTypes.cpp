@@ -4032,6 +4032,7 @@ class CachedModuleCodeBlock : public CachedGlobalCodeBlock<UnlinkedModuleProgram
 
 public:
     UnlinkedModuleProgramCodeBlock* decode(Decoder&) const;
+    unsigned numberOfFunctionDeclsToLeaveInPayload(Decoder&, const Tail&) const;
 
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedModuleProgramCodeBlock& codeBlock)
@@ -4223,7 +4224,17 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
     decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
+    if constexpr (std::is_same_v<CodeBlockType, UnlinkedModuleProgramCodeBlock>) {
+        // The first ones stay in the payload until UnlinkedCodeBlock::functionDecl() asks: see CachedModuleCodeBlock::decode().
+        unsigned firstToDecode = static_cast<const CachedModuleCodeBlock*>(this)->numberOfFunctionDeclsToLeaveInPayload(decoder, tail);
+        if (unsigned count = layout.functionDecls.count) {
+            codeBlock.m_functionDecls = UnlinkedCodeBlock::FunctionExpressionVector(count);
+            auto* buffer = at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls);
+            for (unsigned i = firstToDecode; i < count; ++i)
+                ::JSC::decode(decoder, buffer[i], codeBlock.m_functionDecls[i], &codeBlock);
+        }
+    } else
+        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
 }
 
@@ -4252,7 +4263,31 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
     decodeOwnMembers(decoder, *codeBlock);
+    if (numberOfFunctionDeclsToLeaveInPayload(decoder, tail))
+        codeBlock->m_heapAllocatedFunctionDeclSlots->setDecodeSource(Ref { decoder }, at<CachedWriteBarrier<CachedFunctionExecutable>>(tail.layout, tail.layout.functionDecls));
     return codeBlock;
+}
+
+// The function declarations InitializeEnvironment instantiates: with Options::useLazyModuleFunctionDeclarations() most
+// are never instantiated, so their UnlinkedFunctionExecutables need not be made either.
+unsigned CachedModuleCodeBlock::numberOfFunctionDeclsToLeaveInPayload(Decoder& decoder, const Tail& tail) const
+{
+    if (!Options::useLazyModuleFunctionDeclarations() || !decoder.canDeferIntoPayload())
+        return 0;
+    unsigned count = m_numberOfHeapAllocatedFunctionDecls;
+    if (count > tail.layout.functionDecls.count || count != m_heapAllocatedFunctionDeclScopeOffsets.size())
+        return 0;
+    auto* records = at<CachedWriteBarrier<CachedFunctionExecutable>>(tail.layout, tail.layout.functionDecls);
+    if (!decoder.payloadContains(records, sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count))
+        return 0;
+    return count;
+}
+
+UnlinkedFunctionExecutable* ModuleFunctionDeclarationSlots::decode(VM&, unsigned index) const
+{
+    RELEASE_ASSERT(m_cachedFunctionDecls && index < size());
+    auto* records = static_cast<const CachedWriteBarrier<CachedFunctionExecutable>*>(m_cachedFunctionDecls);
+    return records[index].ptr().decode(*m_decoder);
 }
 
 UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
@@ -4909,6 +4944,8 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         for (unsigned i = 0; i < slots.count; ++i)
             slot[i].encode(encoder, executables[i]);
     };
+    for (unsigned i = 0; i < codeBlock.m_functionDecls.size(); ++i)
+        const_cast<UnlinkedCodeBlock&>(static_cast<const UnlinkedCodeBlock&>(codeBlock)).functionDecl(i); // a module's may still be in the payload it was decoded from
     encodeChildren(layout.functionDecls, codeBlock.m_functionDecls);
     encodeChildren(layout.functionExprs, codeBlock.m_functionExprs);
     return record;

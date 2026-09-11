@@ -260,7 +260,15 @@ public:
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
-    UnlinkedFunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
+    UnlinkedFunctionExecutable* functionDecl(int index)
+    {
+        if (auto* executable = m_functionDecls[index].get()) [[likely]]
+            return executable;
+        return functionDeclSlow(index);
+    }
+    // Any thread. Null for a module's function declaration that is still only in its bytecode cache payload
+    // (UnlinkedModuleProgramCodeBlock::functionDeclSlots()); only the mutator's functionDecl() decodes it.
+    UnlinkedFunctionExecutable* functionDeclIfDecoded(int index) const { return m_functionDecls[index].get(); }
     size_t numberOfFunctionDecls() { return m_functionDecls.size(); }
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const { return m_functionDecls.span(); }
     UnlinkedFunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
@@ -416,6 +424,7 @@ private:
 
     BytecodeLivenessAnalysis& livenessAnalysisSlow(CodeBlock*);
     ExpressionInfo& expressionInfoSlow();
+    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* functionDeclSlow(unsigned index);
 
     VirtualRegister m_thisRegister;
     VirtualRegister m_scopeRegister;

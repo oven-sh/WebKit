@@ -31,7 +31,6 @@
 #include <JavaScriptCore/ParserModes.h>
 #include <JavaScriptCore/ScopeOffset.h>
 #include <JavaScriptCore/SourceCode.h>
-#include <wtf/FixedVector.h>
 
 namespace JSC {
 
@@ -118,8 +117,8 @@ private:
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);
         WriteBarrier<ModuleProgramExecutable> executable;
-        FixedVector<WriteBarrier<UnlinkedFunctionExecutable>> declarations; // parallel to m_functionDeclarationSlots; null once instantiated
-        unsigned remaining { 0 };
+        WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots
+        unsigned remaining { 0 }; // released when it reaches zero; a slot that was assigned to before it was read keeps it above
     };
     RefPtr<ModuleFunctionDeclarationSlots> m_functionDeclarationSlots;
     std::unique_ptr<UninstantiatedFunctionDeclarations> m_uninstantiatedFunctionDeclarations; // released under cellLock()
