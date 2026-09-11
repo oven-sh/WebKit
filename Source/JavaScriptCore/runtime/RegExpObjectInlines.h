@@ -127,6 +127,25 @@ ALWAYS_INLINE bool RegExpObject::isSymbolMatchAllFastAndNonObservable()
     return true;
 }
 
+ALWAYS_INLINE bool RegExpObject::canShareLiteralAsReceiver(JSGlobalObject* globalObject, bool forTest)
+{
+    // "exec" (and with it everything the builtin test looks at) is the original, and so is "test" where the call goes through it.
+    if (globalObject->regExpPrimordialPropertiesWatchpointSet().state() != IsWatched)
+        return false;
+    return !forTest || globalObject->regExpPrototypeTestWatchpointSet().state() == IsWatched;
+}
+
+ALWAYS_INLINE JSObject* RegExpObject::literalAsReceiver(JSGlobalObject* globalObject, CodeBlock* codeBlock, RegExp* regExp, bool forTest, WriteBarrier<JSCell>& cachedObject)
+{
+    // The slot is only ever filled while the option is on.
+    if (JSCell* cached = cachedObject.get()) [[likely]] {
+        auto* object = uncheckedDowncast<RegExpObject>(cached);
+        if (canShareLiteralAsReceiver(globalObject, forTest) && object->isSharedLiteralInInitialState(globalObject->regExpStructure(), regExp)) [[likely]]
+            return object;
+    }
+    return literalAsReceiverSlow(globalObject, codeBlock, regExp, forTest, cachedObject);
+}
+
 ALWAYS_INLINE bool RegExpObject::isSymbolReplaceFastAndNonObservable()
 {
     JSGlobalObject* globalObject = this->realm();

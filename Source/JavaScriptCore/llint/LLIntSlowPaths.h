@@ -67,6 +67,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_new_object);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_new_array);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_new_array_with_size);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_new_reg_exp);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_new_reg_exp_shared);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_instanceof);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_create_lexical_environment);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_create_direct_arguments);

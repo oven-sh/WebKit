@@ -471,6 +471,7 @@ namespace JSC {
         void emit_op_new_async_generator_func_exp(const JSInstruction*);
         void emit_op_new_object(const JSInstruction*);
         void emit_op_new_reg_exp(const JSInstruction*);
+        void emit_op_new_reg_exp_shared(const JSInstruction*);
         void emit_op_create_lexical_environment(const JSInstruction*);
         void emit_op_create_direct_arguments(const JSInstruction*);
         void emit_op_create_scoped_arguments(const JSInstruction*);

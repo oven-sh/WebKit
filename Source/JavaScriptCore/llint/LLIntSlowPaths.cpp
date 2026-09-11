@@ -69,7 +69,7 @@
 #include "ObjectConstructor.h"
 #include "ObjectPropertyConditionSet.h"
 #include "ProtoCallFrameInlines.h"
-#include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
 #include "SuperSampler.h"
@@ -767,6 +767,14 @@ LLINT_SLOW_PATH_DECL(slow_path_new_reg_exp)
     RegExp* regExp = uncheckedDowncast<RegExp>(getOperand(callFrame, bytecode.m_regexp));
     static constexpr bool areLegacyFeaturesEnabled = true;
     LLINT_RETURN(RegExpObject::create(vm, globalObject->regExpStructure(), regExp, areLegacyFeaturesEnabled));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_new_reg_exp_shared)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpNewRegExpShared>();
+    RegExp* regExp = uncheckedDowncast<RegExp>(getOperand(callFrame, bytecode.m_regexp));
+    LLINT_RETURN(RegExpObject::literalAsReceiver(globalObject, codeBlock, regExp, bytecode.m_forTest, bytecode.metadata(codeBlock).m_cachedObject));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_create_lexical_environment)

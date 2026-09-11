@@ -5049,7 +5049,8 @@ protected:
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
     // @importModule. 6: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number
     // of value profiles; LazyClosureVar resolve types, module function slot table. 7: op_iterator_close_check (opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 7;
+    // 8: op_new_reg_exp_shared (opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 8;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
