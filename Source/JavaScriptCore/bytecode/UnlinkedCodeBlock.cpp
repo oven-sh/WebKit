@@ -143,6 +143,7 @@ size_t UnlinkedCodeBlock::RareData::sizeInBytes(const AbstractLocker&) const
 {
     size_t size = sizeof(RareData);
     size += m_exceptionHandlers.byteSize();
+    size += m_outOfLineJumpTargets.capacity() * sizeof(decltype(m_outOfLineJumpTargets)::KeyValuePairType);
     size += m_unlinkedSwitchJumpTables.byteSize();
     size += m_unlinkedStringSwitchJumpTables.byteSize();
     size += m_typeProfilerInfoMap.capacity() * sizeof(decltype(m_typeProfilerInfoMap)::KeyValuePairType);
@@ -292,8 +293,10 @@ BytecodeLivenessAnalysis& UnlinkedCodeBlock::livenessAnalysisSlow(CodeBlock* cod
 
 int UnlinkedCodeBlock::outOfLineJumpOffset(JSInstructionStream::Offset bytecodeOffset)
 {
-    ASSERT(m_outOfLineJumpTargets.contains(bytecodeOffset));
-    return m_outOfLineJumpTargets.get(bytecodeOffset);
+    ASSERT(m_rareData && m_rareData->m_outOfLineJumpTargets.contains(bytecodeOffset));
+    if (!m_rareData)
+        return 0;
+    return m_rareData->m_outOfLineJumpTargets.get(bytecodeOffset);
 }
 
 #if ASSERT_ENABLED
