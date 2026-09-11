@@ -36,6 +36,7 @@
 #include "InstructionStream.h"
 #include "JSCJSValueInlines.h"
 #include "UnlinkedMetadataTableInlines.h"
+#include <wtf/CompilationThread.h>
 #include <wtf/DataLog.h>
 
 namespace JSC {
@@ -239,6 +240,7 @@ bool UnlinkedCodeBlock::typeProfilerExpressionInfoForBytecodeOffset(unsigned byt
 
 UnlinkedCodeBlock::~UnlinkedCodeBlock()
 {
+    delete m_valueAndArrayProfiles;
     if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
         if (auto* instructions = m_instructions.get()) {
             VM& vm = this->vm();
@@ -340,15 +342,6 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
 {
     RELEASE_ASSERT(!m_metadata->isFinalized());
 
-    {
-        unsigned numberOfValueProfiles = numParameters();
-        if (m_metadata->hasMetadata()) {
-            numberOfValueProfiles += m_metadata->numValueProfiles();
-        }
-
-        m_valueProfiles = FixedVector<UnlinkedValueProfile>(numberOfValueProfiles);
-    }
-
     if (m_metadata->hasMetadata()) {
         unsigned numberOfArrayProfiles = 0;
 
@@ -356,11 +349,21 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
         FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(COUNT)
 #undef COUNT
         numberOfArrayProfiles += m_metadata->numEntries<OpIteratorNext>();
-        m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(numberOfArrayProfiles);
+        m_numberOfArrayProfiles = numberOfArrayProfiles;
     }
 
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(numBinaryArithProfiles);
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(numUnaryArithProfiles);
+    if (!Options::useLazyUnlinkedValueAndArrayProfiles())
+        ensureValueAndArrayProfiles();
+}
+
+void UnlinkedCodeBlock::ensureValueAndArrayProfiles()
+{
+    ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+    if (m_valueAndArrayProfiles || isBuiltinFunction())
+        return;
+    WTF::atomicStore(&m_valueAndArrayProfiles, ValueAndArrayProfiles::create(numberOfValueProfiles(), m_numberOfArrayProfiles).release(), std::memory_order_release);
 }
 
 } // namespace JSC
