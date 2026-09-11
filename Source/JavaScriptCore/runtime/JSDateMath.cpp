@@ -118,9 +118,6 @@ void OpaqueICUTimeZoneDeleter::operator()(OpaqueICUTimeZone* timeZone)
 }
 
 // Get the combined UTC + DST offset for the time passed in.
-//
-// NOTE: The implementation relies on the fact that no time zones have
-// more than one daylight savings offset change per month.
 // If this function is called with NaN it returns random value.
 LocalTimeOffset DateCache::calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType)
 {
@@ -151,6 +148,53 @@ LocalTimeOffset DateCache::calculateLocalTimeOffset(double millisecondsFromEpoch
     }
 
     return { !!dstOffset, rawOffset + dstOffset };
+}
+
+// Where the run of one offset around millisecondsFromEpoch ends, from ICU's table of the zone's transitions. Forward:
+// the first instant after millisecondsFromEpoch at which calculateLocalTimeOffset() can return another value, or
+// noOffsetChangeAfter. Backward: the last instant at or before it at which the offset changed, or noOffsetChangeBefore.
+int64_t DateCache::offsetChange(Direction direction, int64_t millisecondsFromEpoch, TimeType inputTimeType)
+{
+    bool forward = direction == Direction::Forward;
+    auto* calendar = timeZoneCache()->m_calendar.get();
+    UErrorCode status = U_ZERO_ERROR;
+    auto transitionFrom = [&](int64_t base, UTimeZoneTransitionType type) -> std::optional<int64_t> {
+        ucal_setMillis(calendar, base, &status);
+        UDate transition = 0;
+        if (U_FAILURE(status) || !ucal_getTimeZoneTransitionDate(calendar, type, &transition, &status) || U_FAILURE(status))
+            return std::nullopt;
+        return static_cast<int64_t>(transition);
+    };
+
+    int64_t result = forward ? noOffsetChangeAfter : noOffsetChangeBefore;
+    if (inputTimeType != TimeType::LocalTime) {
+        if (auto transition = transitionFrom(millisecondsFromEpoch, forward ? UCAL_TZ_TRANSITION_NEXT : UCAL_TZ_TRANSITION_PREVIOUS_INCLUSIVE))
+            result = *transition;
+    } else {
+        // A transition at T from offset a to offset b moves the local time offset at T + max(a, b): local times that do
+        // not exist or exist twice get the former offset (UCAL_TZ_LOCAL_FORMER above). Two transitions less than a day
+        // apart can move it out of order, so the answer is the nearest such instant on the wanted side of
+        // millisecondsFromEpoch over all the transitions that can reach it.
+        constexpr int64_t maxOffset = WTF::Int64Milliseconds::secondsPerDay * 1000;
+        int64_t base = forward ? millisecondsFromEpoch - maxOffset : millisecondsFromEpoch + maxOffset;
+        auto type = forward ? UCAL_TZ_TRANSITION_NEXT : UCAL_TZ_TRANSITION_PREVIOUS_INCLUSIVE;
+        while (auto transition = transitionFrom(base, type)) {
+            if (forward ? *transition - maxOffset >= result : *transition + maxOffset <= result)
+                break;
+            LocalTimeOffset before = calculateLocalTimeOffset(*transition - 1, TimeType::UTCTime);
+            LocalTimeOffset after = calculateLocalTimeOffset(*transition, TimeType::UTCTime);
+            int64_t change = *transition + std::max(before.offset, after.offset);
+            if (forward ? change > millisecondsFromEpoch : change <= millisecondsFromEpoch)
+                result = forward ? std::min(result, change) : std::max(result, change);
+            base = *transition;
+            type = forward ? UCAL_TZ_TRANSITION_NEXT : UCAL_TZ_TRANSITION_PREVIOUS;
+        }
+    }
+    // Without an answer the cache must not assume anything beyond millisecondsFromEpoch.
+    if (U_FAILURE(status))
+        return forward ? millisecondsFromEpoch + 1 : millisecondsFromEpoch;
+    ASSERT(forward ? result > millisecondsFromEpoch : result <= millisecondsFromEpoch);
+    return result;
 }
 
 LocalTimeOffsetCache* DateCache::DSTCache::leastRecentlyUsed(LocalTimeOffsetCache* exclude)
@@ -202,24 +246,32 @@ std::tuple<LocalTimeOffsetCache*, LocalTimeOffsetCache*> DateCache::DSTCache::pr
     return std::tuple { before, after };
 }
 
-void DateCache::DSTCache::extendTheAfterCache(int64_t millisecondsFromEpoch, LocalTimeOffset offset)
+void DateCache::DSTCache::extendTheAfterCache(DateCache& dateCache, int64_t millisecondsFromEpoch, LocalTimeOffset offset, TimeType inputTimeType)
 {
     if (m_after->offset == offset && m_after->start - defaultDSTDeltaInMilliseconds <= millisecondsFromEpoch && millisecondsFromEpoch <= m_after->end) {
-        // Extend the m_after cache.
-        m_after->start = millisecondsFromEpoch;
-        dataLogLnIf(JSDateMathInternal::verbose, "Cache extended1 from ", millisecondsFromEpoch, " to ", m_after->end, " ", offset.offset, " ", offset.isDST);
-    } else {
-        // The m_after cache is either invalid or starts too late.
-        if (!m_after->isEmpty()) {
-            // If the m_after cache is valid, replace it with a new cache.
-            m_after = leastRecentlyUsed(m_before);
-        }
-        m_after->start = millisecondsFromEpoch;
-        m_after->end = millisecondsFromEpoch;
-        m_after->offset = offset;
+        // millisecondsFromEpoch is shortly before m_after with the same offset. Extend m_after back over the whole run
+        // of that offset it starts in, but not over m_before. That covers millisecondsFromEpoch unless the offset
+        // changed and changed back in between.
+        int64_t runStart = std::max(dateCache.offsetChange(Direction::Backward, m_after->start, inputTimeType), WTF::Int64Milliseconds::minECMAScriptTime);
+        if (!m_before->isEmpty())
+            runStart = std::max(runStart, m_before->end + 1);
+        m_after->start = runStart;
         m_after->epoch = bumpEpoch();
-        dataLogLnIf(JSDateMathInternal::verbose, "Cache miss, recompute2 ", millisecondsFromEpoch, " ", offset.offset, " ", offset.isDST);
+        dataLogLnIf(JSDateMathInternal::verbose, "Cache extended1 from ", m_after->start, " to ", m_after->end, " ", offset.offset, " ", offset.isDST);
+        if (runStart <= millisecondsFromEpoch)
+            return;
     }
+
+    // The m_after cache is either invalid or starts too late.
+    if (!m_after->isEmpty()) {
+        // If the m_after cache is valid, replace it with a new cache.
+        m_after = leastRecentlyUsed(m_before);
+    }
+    m_after->start = millisecondsFromEpoch;
+    m_after->end = millisecondsFromEpoch;
+    m_after->offset = offset;
+    m_after->epoch = bumpEpoch();
+    dataLogLnIf(JSDateMathInternal::verbose, "Cache miss, recompute2 ", millisecondsFromEpoch, " ", offset.offset, " ", offset.isDST);
 }
 
 LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64_t millisecondsFromEpoch, TimeType inputTimeType)
@@ -250,84 +302,58 @@ LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64
     ASSERT(m_before->isEmpty() || m_before->start <= millisecondsFromEpoch);
     ASSERT(m_after->isEmpty() || millisecondsFromEpoch < m_after->start);
 
-    if (m_before->isEmpty()) {
-        // Cache miss!
-        // Compute the DST offset for the time and shrink the cache interval
-        // to only contain the time. This allows fast repeated DST offset
-        // computations for the same time.
-        LocalTimeOffset offset = dateCache.calculateLocalTimeOffset(millisecondsFromEpoch, inputTimeType);
-        m_before->offset = offset;
-        m_before->start = millisecondsFromEpoch;
-        m_before->end = millisecondsFromEpoch;
-        m_before->epoch = bumpEpoch();
-        dataLogLnIf(JSDateMathInternal::verbose, "Cache miss, recompute1 ", millisecondsFromEpoch, " ", offset.offset, " ", offset.isDST);
-        return offset;
-    }
-
     // Cache hit!
     // If the time fits in the cached interval, return the cached offset.
-    if (millisecondsFromEpoch <= m_before->end) {
+    if (!m_before->isEmpty() && millisecondsFromEpoch <= m_before->end) {
         dataLogLnIf(JSDateMathInternal::verbose, "Cache hit, simple ", millisecondsFromEpoch, " ", m_before->offset.offset, " ", m_before->offset.isDST);
         m_before->epoch = bumpEpoch();
         return m_before->offset;
     }
 
-    if ((millisecondsFromEpoch - defaultDSTDeltaInMilliseconds) > m_before->end) {
+    if (m_before->isEmpty() || (millisecondsFromEpoch - defaultDSTDeltaInMilliseconds) > m_before->end) {
+        // Cache miss, and not shortly past a cached interval: compute the offset for the time, and extend the m_after
+        // cache back over it when the time is in its run, or else start a cache interval with only the time in it.
         LocalTimeOffset offset = dateCache.calculateLocalTimeOffset(millisecondsFromEpoch, inputTimeType);
-        extendTheAfterCache(millisecondsFromEpoch, offset);
+        extendTheAfterCache(dateCache, millisecondsFromEpoch, offset, inputTimeType);
         std::swap(m_before, m_after);
-        dataLogLnIf(JSDateMathInternal::verbose, "Cache hit, extend ", millisecondsFromEpoch, " ", offset.offset, " ", offset.isDST);
+        dataLogLnIf(JSDateMathInternal::verbose, "Cache miss, far ", millisecondsFromEpoch, " ", offset.offset, " ", offset.isDST);
         return offset;
     }
 
     m_before->epoch = bumpEpoch();
 
-    // Check if m_after is invalid or starts too late.
-    // Note that start of invalid caches is maxECMAScriptTime.
-    int64_t newAfterStart = m_before->end < WTF::Int64Milliseconds::maxECMAScriptTime - defaultDSTDeltaInMilliseconds ? m_before->end + defaultDSTDeltaInMilliseconds : WTF::Int64Milliseconds::maxECMAScriptTime;
-    if (newAfterStart <= m_after->start) {
-        LocalTimeOffset offset = dateCache.calculateLocalTimeOffset(newAfterStart, inputTimeType);
-        extendTheAfterCache(newAfterStart, offset);
-    } else {
-        // Update the usage counter of m_after since it is going to be used.
-        ASSERT(!m_after->isEmpty());
-        m_after->epoch = bumpEpoch();
-    }
-
-    // Now the millisecondsFromEpoch is between m_before->end and m_after->start.
-    // Only one daylight savings offset change can occur in this interval.
-
-    if (m_before->offset == m_after->offset) {
-        // Merge two caches if they have the same offset.
-        m_before->end = m_after->end;
-        *m_after = LocalTimeOffsetCache {};
+    // millisecondsFromEpoch is at most defaultDSTDeltaInMilliseconds past m_before, so it is probably in the same run
+    // of one offset. ICU's transition table says where that run ends. Probing the offset at the two ends of the gap
+    // cannot: the offset may change and change back in between (America/Recife was on DST from 2000-10-08 to 10-15).
+    int64_t change = dateCache.offsetChange(Direction::Forward, m_before->end, inputTimeType);
+    if (millisecondsFromEpoch < change) {
+        int64_t end = std::min(change - 1, WTF::Int64Milliseconds::maxECMAScriptTime);
+        if (!m_after->isEmpty() && m_after->start <= end) {
+            // m_after lies in the run too: absorb it.
+            if (m_after->offset == m_before->offset) {
+                end = std::max(end, m_after->end);
+                *m_after = LocalTimeOffsetCache {};
+            } else
+                end = m_after->start - 1;
+        }
+        m_before->end = end;
+        dataLogLnIf(JSDateMathInternal::verbose, "Cache extended2 from ", m_before->start, " to ", m_before->end, " ", m_before->offset.offset, " ", m_before->offset.isDST);
         return m_before->offset;
     }
 
-    // Binary search for daylight savings offset change point,
-    // but give up if we don't find it in five iterations.
-    for (int i = 4; i >= 0; --i) {
-        int64_t delta = m_after->start - m_before->end;
-        int64_t middle = !i ? millisecondsFromEpoch : m_before->end + delta / 2;
-        LocalTimeOffset offset = dateCache.calculateLocalTimeOffset(middle, inputTimeType);
-        if (m_before->offset == offset) {
-            m_before->end = middle;
-            dataLogLnIf(JSDateMathInternal::verbose, "Cache extended2 from ", m_before->start, " to ", m_before->end, " ", offset.offset, " ", offset.isDST);
-            if (millisecondsFromEpoch <= m_before->end)
-                return offset;
-        } else {
-            ASSERT(m_after->offset == offset);
-            m_after->start = middle;
-            dataLogLnIf(JSDateMathInternal::verbose, "Cache extended3 from ", m_after->start, " to ", m_after->end, " ", offset.offset, " ", offset.isDST);
-            if (millisecondsFromEpoch >= m_after->start) {
-                // This swap helps the optimistic fast check in subsequent invocations.
-                std::swap(m_before, m_after);
-                return offset;
-            }
-        }
-    }
-
-    return {};
+    // The run of m_before ends at `change`, and millisecondsFromEpoch is past it: compute its offset and start an
+    // interval with only millisecondsFromEpoch in it. The next lookup shortly past it settles its run.
+    m_before->end = change - 1;
+    LocalTimeOffset offset = dateCache.calculateLocalTimeOffset(millisecondsFromEpoch, inputTimeType);
+    if (!m_after->isEmpty())
+        m_after = leastRecentlyUsed(m_before);
+    m_after->offset = offset;
+    m_after->start = millisecondsFromEpoch;
+    m_after->end = millisecondsFromEpoch;
+    m_after->epoch = bumpEpoch();
+    dataLogLnIf(JSDateMathInternal::verbose, "Cache miss, recompute3 ", millisecondsFromEpoch, " ", offset.offset, " ", offset.isDST);
+    std::swap(m_before, m_after);
+    return offset;
 }
 
 double DateCache::gregorianDateTimeToMS(int32_t year, int32_t month, int32_t monthDay, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType inputTimeType)
