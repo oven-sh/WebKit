@@ -391,6 +391,10 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // The most recent collection boundary: the end of the last one, or the start of the one in progress.
     MonotonicTime lastGCBoundaryTime() const { return std::max(m_lastGCEndTime, m_currentGCStartTime); }
+    // Live size of the heap (cells and extra memory) as of the last finished collection, eden or full.
+    size_t sizeAfterLastCollection() const { return m_sizeAfterLastCollect; }
+    // Everything the mutator has allocated (cells and reported extra memory), the current cycle included. Mutator thread only.
+    uint64_t totalBytesAllocated() const { return m_bytesAllocatedInPastCycles + m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
 #endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
@@ -891,6 +895,7 @@ private:
     std::atomic<ApproximateTime> m_lastActiveCollectionTime { ApproximateTime() };
     ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
+    uint64_t m_bytesAllocatedInPastCycles { 0 };
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };
