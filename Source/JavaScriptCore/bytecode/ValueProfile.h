@@ -41,6 +41,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 class UnlinkedValueProfile;
+class ValueProfileRef;
 
 template<unsigned numberOfBucketsArgument, unsigned numberOfSpecFailBucketsArgument>
 struct ValueProfileBase {
@@ -83,6 +84,7 @@ struct ValueProfileBase {
     }
 
     bool isSampledBefore() const { return m_prediction != SpecNone; }
+    SpeculatedType prediction() const { return m_prediction; }
     
     CString briefDescription()
     {
@@ -215,12 +217,7 @@ class UnlinkedValueProfile {
 public:
     UnlinkedValueProfile() = default;
 
-    void update(ValueProfile& profile)
-    {
-        SpeculatedType newType = profile.m_prediction | m_prediction;
-        profile.m_prediction = newType;
-        m_prediction = newType;
-    }
+    inline void update(ValueProfileRef&);
 
     void update(ArgumentValueProfile& profile)
     {
