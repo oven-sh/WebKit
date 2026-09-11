@@ -107,8 +107,11 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
             // (ModuleProgramExecutable::getUnlinkedCodeBlock). What goes is the offer to later records:
             // JSModuleRecord::getOrMakeExecutable does not adopt an executable whose code was deleted.
             clearGlobalCode(executable, true);
-        } else
-            executable->m_codeBlock.clear(); // a module's environment is tied to its unlinked code (UnlinkedModuleProgramCodeBlock.h)
+            executable->m_hasReleasedUnlinkedCode = false;
+        } else {
+            executable->m_codeBlock.clear();
+            executable->releaseUnlinkedCodeIfRecoverable(vm());
+        }
         break;
     }
     default:
@@ -248,7 +251,8 @@ bool ScriptExecutable::hasClearableCode() const
 
     } else if (structure()->classInfoForCells() == ModuleProgramExecutable::info()) {
         auto* executable = static_cast<const ModuleProgramExecutable*>(this);
-        if (executable->m_codeBlock || executable->m_unlinkedCodeBlock)
+        // (Or unlinked code that a later record would have decoded again: clearCode() withdraws that.)
+        if (executable->m_codeBlock || executable->m_unlinkedCodeBlock || executable->m_hasReleasedUnlinkedCode)
             return true;
     }
     return false;

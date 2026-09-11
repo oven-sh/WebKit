@@ -57,6 +57,15 @@ void CodeCacheMap::pruneSlowCase()
     }
 }
 
+void CodeCacheMap::removeIfHolds(const SourceCodeKey& key, JSCell* cell)
+{
+    iterator it = m_map.find(key);
+    if (it == m_map.end() || it->value.cell.get() != cell)
+        return;
+    writeCodeBlock(it->key, it->value);
+    remove(it);
+}
+
 void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
 {
     m_map.removeIf([&](auto& entry) {
@@ -244,6 +253,15 @@ UnlinkedEvalCodeBlock* CodeCache::getUnlinkedEvalCodeBlock(VM& vm, IndirectEvalE
 UnlinkedModuleProgramCodeBlock* CodeCache::getUnlinkedModuleProgramCodeBlock(VM& vm, ModuleProgramExecutable* executable, const SourceCode& source, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error)
 {
     return getUnlinkedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, executable, source, JSParserScriptMode::Module, codeGenerationMode, error, EvalContextType::None);
+}
+
+void CodeCache::forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable* executable, const SourceCode& source, UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock)
+{
+    SourceCodeKey key(
+        source, String(), SourceCodeType::ModuleType, executable->lexicallyScopedFeatures(), JSParserScriptMode::Module,
+        executable->derivedContextType(), EvalContextType::None, executable->isArrowFunctionContext(), unlinkedCodeBlock->codeGenerationMode(),
+        std::nullopt);
+    m_sourceCode.removeIfHolds(key, unlinkedCodeBlock);
 }
 
 UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& vm, const Identifier& name, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, OptionSet<CodeGenerationMode> codeGenerationMode, std::optional<int> functionConstructorParametersEndPosition, ParserError& error)
