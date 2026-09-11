@@ -521,7 +521,13 @@ void pas_scavenger_notify_eligibility_if_needed(void)
         int result;
         pas_scavenger_current_state = pas_scavenger_state_polling;
         result = pthread_create(&thread, NULL, scavenger_thread_main, NULL);
-        PAS_ASSERT(!result);
+        if (result) {
+            /* EAGAIN from a pids or nproc limit. Decommit waits until a later
+               notification can start the thread. */
+            pas_scavenger_current_state = pas_scavenger_state_no_thread;
+            pas_scavenger_eligibility_notification_has_been_deferred = true;
+            goto done;
+        }
         pthread_detach(thread);
     }
 

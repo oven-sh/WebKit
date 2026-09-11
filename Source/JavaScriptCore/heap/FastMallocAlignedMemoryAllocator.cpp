@@ -70,7 +70,9 @@ public:
 
     WarmUpBlockProvider()
         : m_lock(Box<Lock>::create())
-        , m_condition(AutomaticThreadCondition::create())
+        // A helper the OS refuses to create (pthread_create EAGAIN under a thread or pid limit) only
+        // means the mutator faults its pages in itself; the next miss in tryTake() retries.
+        , m_condition(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
         , m_thread(adoptRef(*new WarmUpThread(Locker { *m_lock }, *this)))
     {
     }

@@ -100,6 +100,8 @@ private:
 
     template<typename MatchFunction>
     void removeMatchingPlansForVM(VM&, const MatchFunction&);
+    template<typename MatchFunction>
+    void removeMatchingPlansForVMWithLock(const AbstractLocker&, VM&, const MatchFunction&);
 
     State removeAllReadyPlansForVM(VM&, Vector<Ref<JITPlan>, 8>&, JITCompilationKey);
 

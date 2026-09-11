@@ -43,7 +43,9 @@ WorkQueueBase::WorkQueueBase(RunLoop& runLoop)
 
 void WorkQueueBase::platformInitialize(ASCIILiteral name, Type, QOS qos)
 {
-    m_runLoop = RunLoop::create(name, ThreadType::Unknown, qos);
+    m_runLoop = RunLoop::tryCreate(name, ThreadType::Unknown, qos);
+    if (!m_runLoop)
+        return; // WorkQueue::create() asserts; WorkQueue::tryCreate() returns nullptr.
     BinarySemaphore semaphore;
     m_runLoop->dispatch([&] {
         m_threadID = currentThreadID();
