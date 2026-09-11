@@ -57,6 +57,18 @@ void CodeCacheMap::pruneSlowCase()
     }
 }
 
+void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
+{
+    m_map.removeIf([&](auto& entry) {
+        auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(entry.value.cell.get());
+        if (!codeBlock || !codeBlock->cachedPayloadIndex())
+            return false;
+        writeCodeBlock(entry.key, entry.value); // as clear() and removeIfHolds() do for what they drop
+        m_size -= entry.key.length();
+        return true;
+    });
+}
+
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
     if (!depth)
@@ -195,7 +207,9 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     bool privateToExecutable = false;
     if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
         privateToExecutable = !executable->resolvesInGlobalScope();
-    UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
+    // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
+    // and provider, which the shared code of the same source may have as well.)
+    UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
     if (unlinkedCodeBlock && Options::useCodeCache()) {
         recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
         return unlinkedCodeBlock;
