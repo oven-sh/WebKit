@@ -28,14 +28,21 @@
 
 #include "CodeCache.h"
 #include "Debugger.h"
+#include "FunctionExecutable.h"
+#include "UnlinkedFunctionExecutable.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
 
 namespace JSC {
 
 const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleProgramExecutable) };
 
-ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source)
+ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings, const Vector<SymbolTable*>& moduleScopeSymbolTables)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
+    , m_importedBindings(WTF::move(importedBindings))
+    , m_moduleScopeSymbolTables(moduleScopeSymbolTables.size())
 {
+    for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
+        m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
     SourceProviderSourceType sourceType = source.provider()->sourceType();
     ASSERT(sourceType == SourceProviderSourceType::Module
     #if USE(BUN_JSC_ADDITIONS)
@@ -73,15 +80,49 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
     SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
     m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+    {
+        Locker locker { cellLock() };
+        m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
+    }
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source)
+bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTable*>& symbolTables) const
+{
+    if (m_moduleScopeSymbolTables.size() != symbolTables.size())
+        return false;
+    for (unsigned i = 0; i < symbolTables.size(); ++i) {
+        if (m_moduleScopeSymbolTables[i].get() != symbolTables[i])
+            return false;
+    }
+    return true;
+}
+
+bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const
+{
+    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || !exporterSource != !other.exporterSource)
+        return false;
+    if (!exporterSource || exporterSource == other.exporterSource)
+        return true;
+    return exporterSource->hash() == other.exporterSource->hash() && exporterSource->source() == other.exporterSource->source();
+}
+
+FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigned index)
+{
+    if (FunctionExecutable* executable = m_functionDeclarations[index].get())
+        return executable;
+    FunctionExecutable* executable = unlinkedCodeBlock()->functionDecl(index)->link(vm, this, source());
+    Locker locker { cellLock() };
+    m_functionDeclarations[index].set(vm, this, executable);
+    return executable;
+}
+
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings, const Vector<SymbolTable*>& moduleScopeSymbolTables)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source);
+    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, WTF::move(importedBindings), moduleScopeSymbolTables);
     executable->finishCreation(vm);
     if (!executable->getUnlinkedCodeBlock(globalObject)) [[unlikely]] // This generates and binds unlinked code block.
         return nullptr;
@@ -106,6 +147,12 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironmentSymbolTable);
+    visitor.append(thisObject->m_moduleScopeSymbolTables.begin(), thisObject->m_moduleScopeSymbolTables.end());
+    {
+        Locker locker { thisObject->cellLock() };
+        for (auto& functionDeclaration : thisObject->m_functionDeclarations)
+            visitor.append(functionDeclaration);
+    }
     if (TemplateObjectMap* map = thisObject->m_templateObjectMap.get()) {
         Locker locker { thisObject->cellLock() };
         for (auto& entry : *map)

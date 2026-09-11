@@ -32,6 +32,7 @@
 namespace JSC {
 
 class JSGlobalObject;
+class JSModuleLoader;
 
 // https://tc39.es/proposal-json-modules/#sec-synthetic-module-records
 class SyntheticModuleRecord final : public AbstractModuleRecord {
@@ -53,10 +54,10 @@ public:
     }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
+    static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier& moduleKey, SourceProviderSourceType);
 
-    static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
-    static SyntheticModuleRecord* createTextModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
+    static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
+    static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
     JS_EXPORT_PRIVATE JSValue NODELETE evaluate(JSGlobalObject*);
@@ -67,7 +68,7 @@ public:
     // and is filled in by materializeLazyExport(), which reads the property of the same name off lazyExportsSource.
     // That happens the first time something binds to the export, i.e. when an importing module links a named import
     // of it or when it is read off a module namespace object.
-    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
+    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
@@ -80,12 +81,12 @@ public:
 #endif
 
 private:
-    SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
+    SyntheticModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier& moduleKey, SourceProviderSourceType);
 
-    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
-    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType);
+    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType);
 #if USE(BUN_JSC_ADDITIONS)
-    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource);
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource);
 #endif
 
     void finishCreation(JSGlobalObject*, VM&);

@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
+#include "JSModuleRecord.h"
 #include "JSScopeInlines.h"
 #include "JSWithScope.h"
 #include "TopExceptionScope.h"
@@ -96,7 +97,8 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                 ASSERT(iter != symbolTable->end(locker));
                 SymbolTableEntry& entry = iter->value;
                 ASSERT(!entry.isNull());
-                op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, importedEnvironment, entry.watchpointSet(), entry.scopeOffset().offset(), resolution.localName.impl());
+                unsigned moduleImportSlot = JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), uncheckedDowncast<JSModuleRecord>(moduleRecord)->importSlotIndex(ident.impl())).offset();
+                op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, importedEnvironment, entry.watchpointSet(), entry.scopeOffset().offset(), resolution.localName.impl(), moduleImportSlot);
                 return true;
             }
         }

@@ -63,9 +63,27 @@ public:
         return offset;
     }
 
-    static size_t allocationSize(SymbolTable* symbolTable)
+    static size_t offsetOfImportSlotCount(SymbolTable* symbolTable)
     {
         return offsetOfModuleRecord(symbolTable) + sizeof(WriteBarrier<AbstractModuleRecord>);
+    }
+
+    static size_t offsetOfImportSlot(SymbolTable* symbolTable, unsigned index)
+    {
+        return offsetOfImportSlotCount(symbolTable) + sizeof(uintptr_t) + sizeof(WriteBarrier<JSModuleEnvironment>) * index;
+    }
+
+    // An import slot addressed like a variable of this environment, past the symbol table's own.
+    static ScopeOffset importSlotScopeOffset(SymbolTable* symbolTable, unsigned index)
+    {
+        size_t byteOffset = offsetOfImportSlot(symbolTable, index) - offsetOfVariables();
+        ASSERT(!(byteOffset % sizeof(WriteBarrier<Unknown>)));
+        return ScopeOffset(byteOffset / sizeof(WriteBarrier<Unknown>));
+    }
+
+    static size_t allocationSize(SymbolTable* symbolTable, unsigned importSlotCount)
+    {
+        return offsetOfImportSlot(symbolTable, importSlotCount);
     }
 
     AbstractModuleRecord* moduleRecord()
@@ -73,13 +91,27 @@ public:
         return moduleRecordSlot().get();
     }
 
+    // One slot per import entry of the record: the environment that entry's
+    // binding lives in, as resolved for this record (op_resolve_scope ModuleVar
+    // reads it instead of a linked constant, so linked code can be shared).
+    unsigned importSlotCount() { return static_cast<unsigned>(importSlotCountSlot()); }
+    WriteBarrierBase<JSModuleEnvironment>& importSlot(unsigned index)
+    {
+        ASSERT(index < importSlotCount());
+        return *std::bit_cast<WriteBarrierBase<JSModuleEnvironment>*>(std::bit_cast<char*>(this) + offsetOfImportSlot(symbolTable(), index));
+    }
+    // op_resolve_scope ModuleVar with an empty slot (module code running before the module
+    // is evaluated, in an import cycle): `depth` scopes up from `scope` is the importing
+    // environment; fill the slot from its record's import resolution and return it.
+    static JSModuleEnvironment* fillImportSlot(JSGlobalObject*, JSScope*, unsigned depth, ScopeOffset slot);
+
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
 private:
-    JSModuleEnvironment(VM&, Structure*, JSScope*, SymbolTable*, JSValue initialValue, AbstractModuleRecord*);
+    JSModuleEnvironment(VM&, Structure*, JSScope*, SymbolTable*, JSValue initialValue, AbstractModuleRecord*, unsigned importSlotCount);
 
     static JSModuleEnvironment* create(VM&, Structure*, JSScope*, SymbolTable*, JSValue initialValue, AbstractModuleRecord*);
 
@@ -89,13 +121,11 @@ private:
     {
         return *std::bit_cast<WriteBarrierBase<AbstractModuleRecord>*>(std::bit_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
     }
+    uintptr_t& importSlotCountSlot()
+    {
+        return *std::bit_cast<uintptr_t*>(std::bit_cast<char*>(this) + offsetOfImportSlotCount(symbolTable()));
+    }
 };
-
-inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue, AbstractModuleRecord* moduleRecord)
-    : Base(vm, structure, currentScope, symbolTable, initialValue)
-{
-    this->moduleRecordSlot().setWithoutWriteBarrier(moduleRecord);
-}
 
 } // namespace JSC
 
