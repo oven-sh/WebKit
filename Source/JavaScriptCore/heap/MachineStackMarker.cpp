@@ -118,7 +118,13 @@ static void NODELETE copyMemory(void* dst, const void* src, size_t size)
 // See: https://bugs.webkit.org/show_bug.cgi?id=146297
 void MachineThreads::tryCopyOtherThreadStack(const ThreadSuspendLocker& locker, Thread& thread, void* buffer, size_t capacity, size_t* size)
 {
-    PlatformRegisters registers;
+    // Value-initialize so that any bytes getRegisters() does not populate are zero rather
+    // than uninitialized collector-thread stack. On Windows in particular, PlatformRegisters
+    // is the full CONTEXT struct but only the integer/control portion is requested; the
+    // remainder otherwise carries stale JSCell* from prior SlotVisitor frames and gets
+    // scanned as false roots. This must stay malloc-free (the target thread is suspended),
+    // which value-initialization of an aggregate is.
+    PlatformRegisters registers { };
     size_t registersSize = thread.getRegisters(locker, registers);
 
     // This is a workaround for <rdar://problem/27607384>. libdispatch recycles work
@@ -172,6 +178,16 @@ bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void
                         WTFReportError(__FILE__, __LINE__, WTF_PRETTY_FUNCTION,
                             "JavaScript garbage collection encountered an invalid thread (err 0x%x): Thread [%d/%d: %p].",
                             result.error(), index, threads.size(), thread.ptr());
+#elif OS(WINDOWS)
+                        // Thread::suspend already retries transient SuspendThread /
+                        // GetThreadContext failures. A thread that has finished didExit() is
+                        // no longer in this set (removal happens under the group lock we hold),
+                        // so any thread we iterate is live at the WTF level. If it still cannot
+                        // be suspended, proceeding would skip scanning its stack for this GC
+                        // cycle, dropping its roots; objects it references could then be swept
+                        // while still live. Crash now with a real signature rather than risk a
+                        // use-after-free several GCs later.
+                        RELEASE_ASSERT_NOT_REACHED(static_cast<uint64_t>(result.error()), index, threads.size());
 #endif
                     }
                 }
