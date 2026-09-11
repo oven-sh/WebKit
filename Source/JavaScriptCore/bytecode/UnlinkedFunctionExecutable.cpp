@@ -28,6 +28,7 @@
 
 #include "BuiltinExecutables.h"
 #include "BytecodeGenerator.h"
+#include "CachedBytecode.h"
 #include "CachedTypes.h"
 #include "ClassInfo.h"
 #include "CodeCache.h"
@@ -187,8 +188,17 @@ void UnlinkedFunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visito
         markIfProfitable(thisObject->m_unlinkedCodeBlockForCall);
         markIfProfitable(thisObject->m_unlinkedCodeBlockForConstruct);
     } else if (!thisObject->m_isCached) {
-        visitor.append(thisObject->m_unlinkedCodeBlockForCall);
-        visitor.append(thisObject->m_unlinkedCodeBlockForConstruct);
+        // The slots are code blocks while m_isCached is false and a Decoder and offsets while it is true, and go back and
+        // forth (decodeCachedCodeBlocks, returnCodeToCache). Both publish with the flag in the middle (code blocks, fence,
+        // false; empty, fence, true, fence, Decoder), so: the flag, the slots, and the flag again.
+        WTF::loadLoadFence();
+        UnlinkedFunctionCodeBlock* forCall = thisObject->m_unlinkedCodeBlockForCall.get();
+        UnlinkedFunctionCodeBlock* forConstruct = thisObject->m_unlinkedCodeBlockForConstruct.get();
+        WTF::loadLoadFence();
+        if (!thisObject->m_isCached) {
+            visitor.appendUnbarriered(forCall);
+            visitor.appendUnbarriered(forConstruct);
+        }
     }
 }
 
@@ -300,14 +310,71 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     // m_unlinkedCodeBlockForCall shares its slot with the decoder we just moved out, so it is already null; the construct
     // slot still holds the two offsets, and a decode that rejects a damaged block leaves its slot untouched.
     m_unlinkedCodeBlockForConstruct.clear();
-    if (cachedCodeBlockForCallOffset)
-        decodeFunctionCodeBlock(*decoder, cachedCodeBlockForCallOffset, m_unlinkedCodeBlockForCall, this);
-    if (cachedCodeBlockForConstructOffset)
-        decodeFunctionCodeBlock(*decoder, cachedCodeBlockForConstructOffset, m_unlinkedCodeBlockForConstruct, this);
+    auto decode = [&](int32_t offset, WriteBarrier<UnlinkedFunctionCodeBlock>& slot) {
+        if (offset > 0)
+            decodeFunctionCodeBlock(*decoder, offset, slot, this);
+        else if (offset < 0)
+            decodeFunctionCodeBlockFromRecord(*decoder, -static_cast<int64_t>(offset), slot, this);
+    };
+    decode(cachedCodeBlockForCallOffset, m_unlinkedCodeBlockForCall);
+    decode(cachedCodeBlockForConstructOffset, m_unlinkedCodeBlockForConstruct);
 
     WTF::storeStoreFence();
     m_isCached = false;
     vm.writeBarrier(this);
+}
+
+bool UnlinkedFunctionExecutable::returnCodeToCache(VM& vm, const UncheckedKeyHashSet<UnlinkedCodeBlock*>& linkedAgainst)
+{
+    if (m_isCached)
+        return false;
+    ASSERT(!vm.heap.collectionScope() && !isCompilationThread());
+
+    UnlinkedFunctionCodeBlock* forCall = m_unlinkedCodeBlockForCall.get();
+    UnlinkedFunctionCodeBlock* forConstruct = m_unlinkedCodeBlockForConstruct.get();
+    if (!forCall && !forConstruct)
+        return false;
+    if (!linkedAgainst.isEmpty() && ((forCall && linkedAgainst.contains(forCall)) || (forConstruct && linkedAgainst.contains(forConstruct))))
+        return false;
+    uint16_t payloadIndex = (forCall ? forCall : forConstruct)->cachedPayloadIndex();
+    if (!payloadIndex)
+        return false;
+    int32_t offsets[2] = { 0, 0 };
+    UnlinkedFunctionCodeBlock* codeBlocks[2] = { forCall, forConstruct };
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!codeBlocks[i])
+            continue;
+        uint32_t recordOffset = codeBlocks[i]->cachedRecordOffset();
+        if (codeBlocks[i]->cachedPayloadIndex() != payloadIndex || !recordOffset || recordOffset > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
+            return false;
+        offsets[i] = -static_cast<int32_t>(recordOffset);
+    }
+    auto& payloads = vm.persistentBytecodePayloads();
+    RefPtr<Decoder> decoder = payloads.decoderFor(vm, payloadIndex);
+    if (!decoder)
+        return false;
+
+    for (UnlinkedFunctionCodeBlock* codeBlock : codeBlocks) {
+        if (!codeBlock)
+            continue;
+        // Tiering up starts over, as for any function whose code was thrown away.
+        payloads.rememberChildExecutables(*codeBlock);
+    }
+
+    // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
+    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
+    // No collection is running and none can start (Heap::deleteAllUnlinkedCodeBlocks). All the same, in the order that a
+    // visitor which looks at m_isCached first can live with: empty slots, then the flag, then what the slots become.
+    RELEASE_ASSERT(!vm.heap.collectionScope());
+    m_unlinkedCodeBlockForCall.clear();
+    m_unlinkedCodeBlockForConstruct.clear();
+    WTF::storeStoreFence();
+    m_isCached = true;
+    WTF::storeStoreFence();
+    new (&m_decoder) RefPtr<Decoder>(WTF::move(decoder));
+    m_cachedCodeBlockForCallOffset = offsets[0];
+    m_cachedCodeBlockForConstructOffset = offsets[1];
+    return true;
 }
 
 UnlinkedFunctionExecutable::RareData& UnlinkedFunctionExecutable::ensureRareDataSlow()

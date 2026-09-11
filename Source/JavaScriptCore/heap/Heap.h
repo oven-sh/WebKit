@@ -515,8 +515,17 @@ public:
     size_t sizeBeforeLastFullCollection() const { return m_sizeBeforeLastFullCollect; }
     size_t sizeAfterLastFullCollection() const { return m_sizeAfterLastFullCollect; }
 
-    void deleteAllCodeBlocks(DeleteAllCodeEffort);
-    void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
+    void deleteAllCodeBlocks(DeleteAllCodeEffort, bool keepWhatNeedsParsing = false);
+    void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort, OptionSet<UnlinkedCodeToDelete> = UnlinkedCodeToDelete::Generated);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
+    // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge), and an
+    // embedder can. Written by whichever thread runs the collection, read from any. ApproximateTime() (zero) until the
+    // first such collection: a VM that has not allocated Options::optimizedCodeAgingQuietAllocationMB in total yet reads
+    // as quiet since the epoch, which is the right answer for "has it been busy lately".
+    ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime.load(std::memory_order_relaxed); }
+#endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
 
@@ -720,9 +729,6 @@ private:
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
 #if USE(BUN_JSC_ADDITIONS)
-    // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
-    // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge).
-    ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime; }
     // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
     // clock for every block it visits.
     ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
@@ -882,7 +888,7 @@ private:
     const size_t m_minBytesPerCycle;
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
 #if USE(BUN_JSC_ADDITIONS)
-    ApproximateTime m_lastActiveCollectionTime;
+    std::atomic<ApproximateTime> m_lastActiveCollectionTime { ApproximateTime() };
     ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
 #endif

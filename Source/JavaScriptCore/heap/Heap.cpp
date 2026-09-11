@@ -1140,7 +1140,7 @@ TypeCountSet Heap::objectTypeCounts()
     return result;
 }
 
-void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
+void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsParsing)
 {
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
@@ -1162,7 +1162,7 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
             set.forEachLiveCell(
                 [&] (HeapCell* cell, HeapCell::Kind) {
                     ScriptExecutable* executable = static_cast<ScriptExecutable*>(cell);
-                    executable->clearCode(set);
+                    executable->clearCode(set, keepWhatNeedsParsing ? ScriptExecutable::ClearCode::KeepWhatNeedsParsing : ScriptExecutable::ClearCode::All);
                 });
         });
 
@@ -1189,7 +1189,7 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
 #endif
 }
 
-void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
+void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<UnlinkedCodeToDelete> which)
 {
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
@@ -1199,12 +1199,44 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
 
     RELEASE_ASSERT(!m_collectionScope);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Compiler threads read unlinked code blocks through the CodeBlocks they compile: either those keep theirs, or
+    // there are none left to compile. Finishing the compilations that are ready allocates (DFG::LazyJSValue), so that
+    // happens before the heap is prepared for iteration, as in deleteAllCodeBlocks().
+    // What they allocate must not start a collection either (this thread could still start one): returning code to its
+    // cache rewrites an executable's code block slots into something a marker must not see half done.
+    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache) && Options::useCodeRecoveryFromBytecodeCache();
+    UncheckedKeyHashSet<UnlinkedCodeBlock*> linkedAgainst;
+    std::optional<DeferGC> deferGC;
+    if (returnsCodeToCache) {
+        deferGC.emplace(vm);
+        if (which.contains(UnlinkedCodeToDelete::OnlyWithoutLinkedCode)) {
+            forEachCodeBlock([&](CodeBlock* codeBlock) {
+                linkedAgainst.add(codeBlock->unlinkedCodeBlock());
+            });
+        } else
+            completeAllJITPlans();
+        RELEASE_ASSERT(!m_collectionScope);
+    }
+#endif
+
     HeapIterationScope heapIterationScope(*this);
-    unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
-        [&] (HeapCell* cell, HeapCell::Kind) {
-            UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
-            executable->clearCode(vm);
-        });
+#if USE(BUN_JSC_ADDITIONS)
+    if (returnsCodeToCache) {
+        // Executables decoded from a cache are not in the set below; it only tracks the ones holding generated code.
+        unlinkedFunctionExecutableSpaceAndSet.space.forEachLiveCell(
+            [&] (HeapCell* cell, HeapCell::Kind) {
+                static_cast<UnlinkedFunctionExecutable*>(cell)->returnCodeToCache(vm, linkedAgainst);
+            });
+    }
+#endif
+    if (which.contains(UnlinkedCodeToDelete::Generated)) {
+        unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
+            [&] (HeapCell* cell, HeapCell::Kind) {
+                UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                executable->clearCode(vm);
+            });
+    }
 
 #if ENABLE(JIT)
     // Shareable Baseline JIT code is cached on UnlinkedCodeBlock::m_unlinkedBaselineCode (populated by
@@ -1214,7 +1246,8 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
     // executable memory across memory warnings indefinitely. Drop the cache eagerly here: any still-linked
     // CodeBlock holds its own ref to the BaselineJITCode (so we never free code that is still in use),
     // while a cache-only entry is freed as soon as its last ref goes away, synchronously here.
-    if (Options::useBaselineJITCodeSharing()) {
+    // (Not when only code that nothing links against goes: what stays linked would recompile what it shares.)
+    if (Options::useBaselineJITCodeSharing() && !which.contains(UnlinkedCodeToDelete::OnlyWithoutLinkedCode)) {
         auto clearUnlinkedBaselineCode = [] (HeapCell* cell, HeapCell::Kind) {
             static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode = nullptr;
         };
@@ -1577,7 +1610,7 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
     m_bytesAllocatedSinceLastActiveCollection += totalBytesAllocatedThisCycle();
     if (m_bytesAllocatedSinceLastActiveCollection > Options::optimizedCodeAgingQuietAllocationMB() * MB) {
         m_bytesAllocatedSinceLastActiveCollection = 0;
-        m_lastActiveCollectionTime = m_currentGCStartApproximateTime;
+        m_lastActiveCollectionTime.store(m_currentGCStartApproximateTime, std::memory_order_relaxed);
     }
 #endif
 

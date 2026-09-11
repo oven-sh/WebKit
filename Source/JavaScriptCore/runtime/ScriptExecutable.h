@@ -98,7 +98,10 @@ public:
     CodeBlock* newCodeBlockFor(CodeSpecializationKind, JSFunction*, JSScope*);
     CodeBlock* newReplacementCodeBlockFor(CodeSpecializationKind);
 
-    void clearCode(IsoCellSet&);
+    // KeepWhatNeedsParsing: linked code goes; unlinked code of a program, eval or module only if a bytecode cache can
+    // hand it back, and a module keeps the symbol table its environment was made from.
+    enum class ClearCode : uint8_t { All, KeepWhatNeedsParsing };
+    void clearCode(IsoCellSet&, ClearCode = ClearCode::All);
 
     Intrinsic intrinsic() const
     {
