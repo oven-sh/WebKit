@@ -444,6 +444,8 @@ public:
     template<typename Functor> void forEachValueProfile(const Functor&);
     template<typename Functor> void forEachArrayAllocationProfile(const Functor&);
     template<typename Functor> void forEachObjectAllocationProfile(const Functor&);
+    void ensureCallLinkInfos();
+
     template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(const Functor&);
 
     BinaryArithProfile* NODELETE binaryArithProfileForBytecodeIndex(BytecodeIndex);

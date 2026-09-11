@@ -2459,19 +2459,17 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
 end)
 
 
-# we assume t5 contains the metadata, and we should not scratch that
-macro arrayProfileForCall(opcodeStruct, getu)
-    getu(m_argv, t3)
-    negp t3
-    loadq ThisArgumentOffset[cfr, t3, 8], t0
-    btqnz t0, notCellMask, .done
-    loadi JSCell::m_structureID[t0], t3
-    storei t3, %opcodeStruct%::Metadata::m_arrayProfile.m_lastSeenStructureID[t5]
+# t3 is the callee frame and t5 the call site's CallSiteData, which we should not scratch
+macro arrayProfileForCall()
+    loadq ThisArgumentOffset[t3], t1
+    btqnz t1, notCellMask, .done
+    loadi JSCell::m_structureID[t1], t1
+    storei t1, CallSiteData::m_arrayProfile + ArrayProfile::m_lastSeenStructureID[t5]
 .done:
 end
 
 # t5 holds metadata.
-macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, dstVirtualRegister, prepareCall, invokeCall, prepareSlowCall, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCountIncludingThis)
+macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, dstVirtualRegister, prepareCall, invokeCall, prepareSlowCall, prepareCallSite, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCountIncludingThis)
     getCallee(t1)
 
     loadConstantOrVariable(size, t1, t0)
@@ -2490,40 +2488,69 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
     move t3, sp
     addp CallerFrameAndPCSize, sp
 
-    loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_callee[t5], t1
+    loadp %opcodeStruct%::Metadata::m_callLinkInfo + LazyCallLinkInfo::m_data[t5], t5 # CallLinkInfo* in t5
+    prepareCallSite()
+
+    loadp CallLinkInfo::m_callee[t5], t1
     btpz t1, (constexpr CallLinkInfo::polymorphicCalleeMask), .notPolymorphic
     prepareCall(t2, t3, t4, t1, macro(address)
-        loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_codeBlock[t5], t2
+        loadp CallLinkInfo::m_codeBlock[t5], t2
         storep t2, address
     end)
-    addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2
+    move t5, t2 # CallLinkInfo* in t2
     jmp .goPolymorphic
 
 .notPolymorphic:
     bqneq t0, t1, .opCallSlow
     prepareCall(t2, t3, t4, t1, macro(address)
-        loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_codeBlock[t5], t2
+        loadp CallLinkInfo::m_codeBlock[t5], t2
         storep t2, address
     end)
 
 .goPolymorphic:
-    loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_monomorphicCallDestination[t5], t5
+    loadp CallLinkInfo::m_monomorphicCallDestination[t5], t5
 .dispatch:
     invokeCall(opcodeName, size, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch, t5, t1, JSEntryPtrTag)
 
 .opCallSlow:
     # t0 is callee
-    # t2 is CallLinkInfo*
+    # t5 is CallLinkInfo*
     prepareCall(t2, t3, t4, t1, macro(address)
         storep 0, address
     end)
-    addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2
+    move t5, t2 # CallLinkInfo* in t2
     leap _g_config, t5
     loadp JSCConfigOffset + constexpr JSC::offsetOfJSCConfigDefaultCallThunk[t5], t5
     jmp .dispatch
 end
 
-macro commonCallOp(opcodeName, opcodeStruct, prepareCall, invokeCall, prepareSlowCall, prologue, dispatchAfterCall)
+# t0 is the callee, t3 the callee frame and t5 the CallLinkInfo*, at the start of the call site's CallSiteData.
+# A call site that has not run twice yet shares its CallSiteData with all such sites, and its calls go to llint_unlinked_call,
+# which finds the site through the caller's frame.
+macro prepareCallSiteForConstruct()
+end
+
+macro prepareCallSiteForRegularCall()
+    arrayProfileForCall()
+end
+
+# A tail call has given that frame up by then.
+macro prepareCallSiteForTailCall()
+    btpnz CallLinkInfo::m_owner[t5], .hasCallLinkInfo
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    cCall2(_llint_slow_path_ensure_call_link_info)
+    restoreStateAfterCCall()
+    move r1, t5
+    loadq Callee - CallerFrameAndPCSize[sp], t0
+    move sp, t3
+    subp CallerFrameAndPCSize, t3
+.hasCallLinkInfo:
+    arrayProfileForCall()
+end
+
+macro commonCallOp(opcodeName, opcodeStruct, prepareCall, invokeCall, prepareSlowCall, prepareCallSite, prologue, dispatchAfterCall)
     llintOpWithMetadata(opcodeName, opcodeStruct, macro (size, get, dispatch, metadata, return)
         metadata(t5, t0)
 
@@ -2544,7 +2571,7 @@ macro commonCallOp(opcodeName, opcodeStruct, prepareCall, invokeCall, prepareSlo
         end
 
         # t5 holds metadata
-        callHelper(opcodeName, opcodeStruct, dispatchAfterCall, m_valueProfile, m_dst, prepareCall, invokeCall, prepareSlowCall, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCount)
+        callHelper(opcodeName, opcodeStruct, dispatchAfterCall, m_valueProfile, m_dst, prepareCall, invokeCall, prepareSlowCall, prepareCallSite, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCount)
     end)
 end
 
@@ -3322,7 +3349,7 @@ macro iteratorOpenGenericImpl(size, get, dispatch, metadata, opcodeStruct, opcod
     end
 
     updateArrayProfile(get, metadata)
-    callHelper(opcodeName, opcodeStruct, dispatchAfterRegularCall, m_iteratorValueProfile, m_iterator, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, size, gotoGetByIdCheckpoint, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
+    callHelper(opcodeName, opcodeStruct, dispatchAfterRegularCall, m_iteratorValueProfile, m_iterator, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, gotoGetByIdCheckpoint, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
 
 .getByIdStart:
     macro storeNextAndDispatch(value)
@@ -3399,7 +3426,7 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
     loadh OpIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5], t0
     ori constexpr IterationMode::Generic, t0
     storeh t0, OpIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5]
-    callHelper(op_iterator_next, OpIteratorNext, dispatchAfterRegularCall, m_nextResultValueProfile, m_value, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, size, gotoGetDoneCheckpoint, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
+    callHelper(op_iterator_next, OpIteratorNext, dispatchAfterRegularCall, m_nextResultValueProfile, m_value, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, gotoGetDoneCheckpoint, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
 
 .getDoneStart:
     macro storeDoneAndJmpToGetValue(doneValue)
@@ -3472,7 +3499,7 @@ llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, ge
     loadh OpAsyncIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5], t0
     ori constexpr IterationMode::Generic, t0
     storeh t0, OpAsyncIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5]
-    callHelper(op_async_iterator_next, OpAsyncIteratorNext, dispatchAfterRegularCall, m_valueProfile, m_dst, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, size, dispatch, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
+    callHelper(op_async_iterator_next, OpAsyncIteratorNext, dispatchAfterRegularCall, m_valueProfile, m_dst, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
 end)
 
 llintOpWithMetadata(op_async_iterator_open, OpAsyncIteratorOpen, macro (size, get, dispatch, metadata, return)

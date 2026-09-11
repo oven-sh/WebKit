@@ -41,6 +41,7 @@
 #include "Repatch.h"
 #include "ThunkGenerators.h"
 #include <wtf/ListDump.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
 
@@ -90,12 +91,15 @@ void CallLinkInfo::clearStub()
     if (!stub())
         return;
 
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
+
     m_stub->unlinkForcefully();
     m_stub = nullptr;
 }
 
 void CallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     // We could be called even if we're not linked anymore because of how polymorphic calls
     // work. Each callsite within the polymorphic call stub may separately ask us to unlink().
     if (isOnList())
@@ -135,6 +139,7 @@ void CallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBloc
 
 void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee, CodeBlock* codeBlock, CodePtr<JSEntryPtrTag> codePtr)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(callee) & polymorphicCalleeMask));
     m_callee.set(vm, owner, callee);
     m_codeBlock = codeBlock;
@@ -144,6 +149,7 @@ void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee,
 
 void CallLinkInfo::clearCallee()
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     m_callee.clear();
     m_codeBlock = nullptr;
     m_monomorphicCallDestination = nullptr;
@@ -157,6 +163,7 @@ JSObject* CallLinkInfo::callee()
 
 void CallLinkInfo::setLastSeenCallee(VM& vm, const JSCell* owner, JSObject* callee)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     m_lastSeenCallee.set(vm, owner, callee);
 }
 
@@ -172,6 +179,7 @@ bool CallLinkInfo::haveLastSeenCallee() const
 
 void CallLinkInfo::reconcileWeakReferencesAtGCEnd(VM& vm)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     auto handleSpecificCallee = [&] (JSFunction* callee) {
         if (vm.heap.isMarked(callee->executable()))
             m_hasSeenClosure = true;
@@ -220,6 +228,7 @@ void CallLinkInfo::reconcileWeakReferencesAtGCEnd(VM& vm)
 
 void CallLinkInfo::revertCallToStub()
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     RELEASE_ASSERT(stub());
     // The start of our JIT code is now a jump to the polymorphic stub. Rewrite the first instruction
     // to be what we need for non stub ICs.
@@ -246,6 +255,65 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
         setVirtualCall(vm);
 }
 
+void DataOnlyCallLinkInfo::initializeAsSharedByUnlinkedCallSites(CodePtr<JSEntryPtrTag> unlinkedCallThunk, bool executedOnce)
+{
+    ASSERT(!m_owner);
+    m_callee.clear();
+    *std::bit_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
+    m_hasSeenShouldRepatch = executedOnce;
+    m_monomorphicCallDestination = unlinkedCallThunk;
+    m_isSharedByUnlinkedCallSites = true;
+}
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CallSiteData);
+
+static_assert(!OBJECT_OFFSETOF(CallSiteData, m_callLinkInfo));
+
+CallSiteData* CallSiteData::createShared(bool executedOnce)
+{
+    auto* data = new CallSiteData();
+    data->m_callLinkInfo.initializeAsSharedByUnlinkedCallSites(LazyCallLinkInfo::unlinkedCallThunk(), executedOnce);
+    return data;
+}
+
+CodePtr<JSEntryPtrTag> LazyCallLinkInfo::s_unlinkedCallThunk;
+
+LazyCallLinkInfo::~LazyCallLinkInfo()
+{
+    if (CallSiteData* data = ownData())
+        delete data;
+}
+
+void LazyCallLinkInfo::setNeverExecuted(VM& vm)
+{
+    ASSERT(!m_data);
+    m_data = vm.neverExecutedCallSiteData();
+}
+
+bool LazyCallLinkInfo::hasNeverExecuted(VM& vm) const
+{
+    return m_data == vm.neverExecutedCallSiteData();
+}
+
+void LazyCallLinkInfo::setExecutedOnce(VM& vm)
+{
+    ASSERT(m_data == vm.neverExecutedCallSiteData());
+    m_data = vm.executedOnceCallSiteData();
+}
+
+DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)
+{
+    auto* data = new CallSiteData();
+    data->m_callLinkInfo.initialize(vm, owner, callType, codeOrigin);
+    if (hasExecutedOnce())
+        data->m_callLinkInfo.setSeen();
+
+    // Compiler threads walk the metadata for CallLinkInfos and ArrayProfiles. They get to see this one when it is ready.
+    WTF::storeStoreFence();
+    m_data = data;
+    return data->m_callLinkInfo;
+}
+
 std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner)
 {
     auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
@@ -259,6 +327,7 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
 
 void CallLinkInfo::reset(VM&)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     if (stub())
         revertCallToStub();
     clearCallee(); // This also clears the inline cache both for data and code-based caches.
@@ -279,6 +348,7 @@ void CallLinkInfo::revertCall(VM& vm)
 
 void CallLinkInfo::setVirtualCall(VM& vm)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     reset(vm);
     m_callee.clear();
     *std::bit_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
@@ -305,6 +375,7 @@ JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
 
 void CallLinkInfo::setStub(Ref<PolymorphicCallStubRoutine>&& newStub)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     clearStub();
     m_stub = WTF::move(newStub);
 
