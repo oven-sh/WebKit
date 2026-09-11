@@ -1,6 +1,7 @@
 //@ defaultRun
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=0")
+//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useCodeRecoveryFromBytecodeCache=0")
 
 // Records of several module loaders share one ModuleProgramExecutable, its function declarations' executables and with
 // them their optimized code, while each record has its own environment. The optimizing tiers treat the scope of a symbol

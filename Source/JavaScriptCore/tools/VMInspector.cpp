@@ -26,6 +26,7 @@
 #include "config.h"
 #include "VMInspector.h"
 
+#include "CachedBytecode.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
 #include "HeapInlines.h"
@@ -631,7 +632,7 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 // Counts of live linked and unlinked code, and the bytes of the out-of-line parts that dominate them:
 // { llint, baseline, dfg, ftl, function, module, program, eval, metadataBytes, jitBytes,
 //   unlinkedFunction, unlinkedModule, unlinkedProgram, unlinkedEval, unlinkedBytes, cachedExecutables, regExpsWithCode,
-//   moduleExecutablesWithLinkedCode, moduleExecutablesWithUnlinkedCode }
+//   moduleExecutablesWithLinkedCode, moduleExecutablesWithUnlinkedCode, and what PersistentBytecodePayloads holds on to }
 JSObject* VMInspector::codeBlockCensus(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -720,6 +721,16 @@ JSObject* VMInspector::codeBlockCensus(JSGlobalObject* globalObject)
     put("regExpsWithCode"_s, regExpsWithCode);
     put("moduleExecutablesWithLinkedCode"_s, moduleExecutablesWithLinkedCode);
     put("moduleExecutablesWithUnlinkedCode"_s, moduleExecutablesWithUnlinkedCode);
+    // What stays behind for code that can be decoded again from a bytecode cache payload.
+    PersistentBytecodePayloads::Statistics payloads;
+    if (auto* existing = vm.persistentBytecodePayloadsIfExists())
+        payloads = existing->statistics();
+    put("persistentPayloads"_s, payloads.payloads);
+    put("persistentPayloadDecoders"_s, payloads.liveDecoders);
+    put("decoderMappedPointers"_s, payloads.decoderMappedPointers);
+    put("decoderAtomsByOrdinal"_s, payloads.decoderAtomsByOrdinal);
+    put("decoderFinalizers"_s, payloads.decoderFinalizers);
+    put("parentsWithRememberedChildren"_s, payloads.parentsWithRememberedChildren);
     return result;
 }
 
