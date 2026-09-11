@@ -2293,7 +2293,7 @@ Wasm::DebugState* VM::debugState()
 AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
 {
     if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]]
-        m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+        m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>>();
     return m_cachedBytecodeTwoCharacterAtoms->data();
 }
 
