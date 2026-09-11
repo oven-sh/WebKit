@@ -824,16 +824,21 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
         return rejectWithCaughtException();
 
 #if USE(BUN_JSC_ADDITIONS)
+    // importPromise is loader-internal: requestImportModule() marks it as handled, and an embedder's
+    // moduleLoaderImportModule hook may hand back a promise it got from user code. So import() returns
+    // a fresh promise that mirrors it. The mirroring must not be observable: ContinueDynamicImport settles
+    // the import() promise through its capability only, so a replaced Promise.prototype.then (which
+    // resolve() would look up and call on importPromise) cannot decide what import() resolves with.
+    // PromiseResolveWithoutHandlerJob is the reaction resolve()'s thenable job attaches for an untouched
+    // %Promise%; attaching it directly skips the lookup and that job's microtask. Unlike pipeFrom()'s job it
+    // is not diverted by VM::m_synchronousModuleQueue, so a require(esm) that finishes this import's graph
+    // does not also settle the import() promise (and resume whatever awaits it) inside the require().
     scope.release();
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
-    if (importPromise->status() == JSPromise::Status::Fulfilled) {
-        auto result = importPromise->result();
-        promise->fulfill(vm, result);
-    } else {
-        promise->resolve(globalObject, vm, importPromise);
-    }
-
+    if (importPromise->status() == JSPromise::Status::Fulfilled)
+        promise->fulfill(vm, importPromise->result());
+    else
+        importPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promise, jsUndefined());
     return JSValue::encode(promise);
 #else
     return JSValue::encode(importPromise);
