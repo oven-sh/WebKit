@@ -2300,6 +2300,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
+static JSC_DECLARE_HOST_FUNCTION(functionTotalBytesAllocated);
 #if ENABLE(JIT)
 static JSC_DECLARE_HOST_FUNCTION(functionJITSizeStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpJITSizeStatistics);
@@ -4693,6 +4694,14 @@ JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithScopeExtension, (JSGlobalObject* gl
     return JSValue::encode(result);
 }
 
+// Usage: $vm.totalBytesAllocated()
+// Bytes handed out by the GC's allocators since the VM was created (counted a free list at a time).
+JSC_DEFINE_HOST_FUNCTION(functionTotalBytesAllocated, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(static_cast<double>(globalObject->vm().heap.totalBytesAllocated())));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionCodeBlockCensus, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -5844,6 +5853,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
     addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
+    addFunction(vm, alwaysAllow, "totalBytesAllocated"_s, functionTotalBytesAllocated, 0);
 
 #if ENABLE(JIT)
     addFunction(vm, allowIfNotFuzz, "jitSizeStatistics"_s, functionJITSizeStatistics, 0);
