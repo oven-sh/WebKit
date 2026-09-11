@@ -960,6 +960,7 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_linkTimeConstants(numberOfLinkTimeConstants)
     , m_structureCache(vm)
     , m_symbolTableCache(vm)
+    , m_moduleProgramExecutables(vm)
     , m_masqueradesAsUndefinedWatchpointSet(WatchpointSet::create(IsWatched))
     , m_havingABadTimeWatchpointSet(WatchpointSet::create(IsWatched))
     , m_varInjectionWatchpointSet(WatchpointSet::create(IsWatched))
@@ -1081,6 +1082,8 @@ SUPPRESS_ASAN inline void JSGlobalObject::initStaticGlobals(VM& vm)
         GlobalPropertyInfo(vm.propertyNames->NaN, jsNaN(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->Infinity, jsNumber(std::numeric_limits<double>::infinity()), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->undefinedKeyword, jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        // import() loads through the @moduleLoader in scope: this one, unless a module environment or a loader's module scope declares a nearer one.
+        GlobalPropertyInfo(vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
 #if ASSERT_ENABLED
         GlobalPropertyInfo(vm.propertyNames->builtinNames().assertPrivateName(), JSFunction::create(vm, this, 1, String(), assertCall, ImplementationVisibility::Public), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
 #endif
@@ -1877,7 +1880,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_moduleLoader.initLater(
         [] (const Initializer<JSModuleLoader>& init) {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
-            init.set(JSModuleLoader::create(init.owner, init.vm));
+            init.set(JSModuleLoader::create(init.owner, init.vm, init.owner->globalLexicalEnvironment()));
             catchScope.releaseAssertNoException();
         });
     if (Options::exposeInternalModuleLoader())

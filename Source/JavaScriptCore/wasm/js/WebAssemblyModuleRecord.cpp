@@ -60,15 +60,15 @@ Structure* WebAssemblyModuleRecord::createStructure(VM& vm, JSGlobalObject* glob
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-WebAssemblyModuleRecord* WebAssemblyModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const Wasm::ModuleInformation& moduleInformation)
+WebAssemblyModuleRecord* WebAssemblyModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Wasm::ModuleInformation& moduleInformation)
 {
-    WebAssemblyModuleRecord* instance = new (NotNull, allocateCell<WebAssemblyModuleRecord>(vm)) WebAssemblyModuleRecord(vm, structure, moduleKey);
+    WebAssemblyModuleRecord* instance = new (NotNull, allocateCell<WebAssemblyModuleRecord>(vm)) WebAssemblyModuleRecord(vm, structure, moduleLoader, moduleKey);
     instance->finishCreation(globalObject, vm, moduleInformation);
     return instance;
 }
 
-WebAssemblyModuleRecord::WebAssemblyModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey)
-    : Base(vm, structure, moduleKey, SourceProviderSourceType::WebAssembly)
+WebAssemblyModuleRecord::WebAssemblyModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey)
+    : Base(vm, structure, moduleLoader, moduleKey, SourceProviderSourceType::WebAssembly)
 {
 }
 

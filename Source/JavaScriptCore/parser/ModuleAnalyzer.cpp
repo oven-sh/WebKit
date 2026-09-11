@@ -35,9 +35,9 @@
 
 namespace JSC {
 
-ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
+ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
     : m_vm(globalObject->vm())
-    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, features))
+    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleLoader, moduleKey, sourceCode, features))
 {
 }
 

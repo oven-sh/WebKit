@@ -78,6 +78,7 @@
 #include "JSIteratorHelper.h"
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
+#include "ModuleProgramExecutable.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
@@ -10420,7 +10421,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             ResolveType resolveType;
             unsigned depth;
             JSScope* constantScope = nullptr;
-            JSCell* lexicalEnvironment = nullptr;
+            unsigned moduleImportSlot = 0;
             SymbolTable* symbolTable = nullptr;
             {
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
@@ -10436,7 +10437,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     constantScope = metadata.m_constantScope.get();
                     break;
                 case ModuleVar:
-                    lexicalEnvironment = metadata.m_lexicalEnvironment.get();
+                    moduleImportSlot = metadata.m_moduleImportSlot;
+                    if (auto* moduleProgramExecutable = dynamicDowncast<ModuleProgramExecutable>(m_inlineStackTop->executable()->topLevelExecutable()))
+                        symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
                     break;
                 case ResolvedClosureVar:
                 case ClosureVar:
@@ -10479,11 +10482,30 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 break;
             }
             case ModuleVar: {
-                // Module environment is already strongly referenced by the CodeBlock.
-                set(bytecode.m_dst, weakJSConstant(lexicalEnvironment));
-                // BytecodeUseDef reports m_scope as a use regardless of resolve type,
-                // so we need to keep it OSR-available even though LLInt won't read it.
-                addToGraph(Phantom, get(bytecode.m_scope));
+                // The exporting environment is the importing module environment's import
+                // slot `depth` scopes up. With one importing environment (its symbol
+                // table's singleton) the filled slot is a constant; otherwise it is a
+                // closure-variable-like load that Graph::tryGetConstantClosureVar can still
+                // fold once the scope is known. An empty slot exits to the baseline slow
+                // path, which fills it.
+                Node* localBase = get(bytecode.m_scope);
+                addToGraph(Phantom, localBase);
+                if (symbolTable) {
+                    if (JSScope* scope = symbolTable->singleton().inferredValue()) {
+                        if (JSModuleEnvironment* exporter = uncheckedDowncast<JSModuleEnvironment>(scope)->importSlot(moduleImportSlot - JSModuleEnvironment::importSlotScopeOffset(symbolTable, 0).offset()).get()) {
+                            m_graph.watchpoints().addLazily(m_graph, symbolTable);
+                            set(bytecode.m_dst, weakJSConstant(exporter));
+                            break;
+                        }
+                    }
+                }
+                for (unsigned n = depth; n--;)
+                    localBase = addToGraph(SkipScope, localBase);
+                Node* exporter = addToGraph(GetClosureVar, OpInfo(moduleImportSlot), OpInfo(SpecObjectOther), localBase);
+                // Empty (not filled yet: exit and let the baseline slow path fill it) or the exporting
+                // JSModuleEnvironment; get_from_scope's KnownCellUse of this scope relies on nothing else being stored there.
+                addToGraph(CheckNotEmpty, exporter);
+                set(bytecode.m_dst, exporter);
                 break;
             }
             case ResolvedClosureVar:

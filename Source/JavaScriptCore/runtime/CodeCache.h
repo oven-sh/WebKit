@@ -161,16 +161,6 @@ public:
 
     int64_t age() { return m_age; }
 
-private:
-    template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* fetchFromDiskImpl(VM& vm, const SourceCodeKey& key)
-    {
-        RefPtr<CachedBytecode> cachedBytecode = key.source().provider().cachedBytecode();
-        if (!cachedBytecode || !cachedBytecode->size())
-            return nullptr;
-        return decodeCodeBlock<UnlinkedCodeBlockType>(vm, key, *cachedBytecode);
-    }
-
     template<typename UnlinkedCodeBlockType>
     UnlinkedCodeBlockType* fetchFromDisk(VM& vm, const SourceCodeKey& key)
     {
@@ -188,6 +178,16 @@ private:
             UNUSED_PARAM(key);
             return nullptr;
         }
+    }
+
+private:
+    template<typename UnlinkedCodeBlockType>
+    UnlinkedCodeBlockType* fetchFromDiskImpl(VM& vm, const SourceCodeKey& key)
+    {
+        RefPtr<CachedBytecode> cachedBytecode = key.source().provider().cachedBytecode();
+        if (!cachedBytecode || !cachedBytecode->size())
+            return nullptr;
+        return decodeCodeBlock<UnlinkedCodeBlockType>(vm, key, *cachedBytecode);
     }
 
     // This constant factor biases cache capacity toward allowing a minimum
@@ -285,11 +285,9 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
 // bound stay in the cache as executables whose bodies are generated from source when first called).
 JS_EXPORT_PRIVATE void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM&, UnlinkedFunctionExecutable*, const SourceCode& parentSource, ParserError&, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
 
-#if USE(BUN_JSC_ADDITIONS)
 // What a CodeCache hit does besides returning the block: the executable learns the parse results
 // (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
 void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedGlobalCodeBlock*);
-#endif
 
 void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);
 RefPtr<CachedBytecode> serializeBytecode(VM&, UnlinkedCodeBlock*, const SourceCode&, SourceCodeType, LexicallyScopedFeatures, JSParserScriptMode, FileSystem::FileHandle&, BytecodeCacheError&, OptionSet<CodeGenerationMode>);

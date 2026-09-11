@@ -406,20 +406,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
 }
 
-static FunctionExecutable* instantiatedModuleFunctionExecutable(JSModuleEnvironment* moduleEnvironment, ScriptExecutable* topLevelExecutable, UnlinkedFunctionExecutable* unlinkedExecutable)
-{
-    SymbolTableEntry::Fast entry = moduleEnvironment->symbolTable()->get(unlinkedExecutable->name().impl());
-    if (entry.isNull())
-        return nullptr;
-    auto* function = dynamicDowncast<JSFunction>(moduleEnvironment->variableAt(entry.scopeOffset()).get());
-    if (!function)
-        return nullptr;
-    auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    if (!executable || executable->unlinkedExecutable() != unlinkedExecutable || executable->topLevelExecutable() != topLevelExecutable)
-        return nullptr;
-    return executable;
-}
-
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
 // of linking is taking an abstract representation of bytecode and tying it to a GlobalObject and scope
 // chain. For example, this process allows us to cache the depth of lexical environment reads that reach
@@ -449,10 +435,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     // We already have the cloned symbol table for the module environment since we need to instantiate
     // the module environments before linking the code block. We replace the stored symbol table with the already cloned one.
-    JSModuleEnvironment* moduleEnvironment = nullptr;
+    ModuleProgramExecutable* moduleProgramExecutable = nullptr;
     if (UnlinkedModuleProgramCodeBlock* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(unlinkedCodeBlock)) {
-        moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(scope);
-        SymbolTable* clonedSymbolTable = uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable)->moduleEnvironmentSymbolTable();
+        moduleProgramExecutable = uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable);
+        SymbolTable* clonedSymbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
         if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes()) {
             ConcurrentJSLocker locker(clonedSymbolTable->m_lock);
             clonedSymbolTable->prepareForTypeProfiling(locker);
@@ -472,9 +458,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
-        FunctionExecutable* executable = moduleEnvironment ? instantiatedModuleFunctionExecutable(moduleEnvironment, topLevelExecutable, unlinkedExecutable) : nullptr;
-        if (!executable)
-            executable = unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+        FunctionExecutable* executable = moduleProgramExecutable ? moduleProgramExecutable->functionDeclaration(vm, i) : unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
         m_functionDecls[i].set(vm, this, executable);
     }
 
@@ -502,9 +486,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             }
         }
     }
-
-    // Bookkeep the strongly referenced module environments.
-    UncheckedKeyHashSet<JSModuleEnvironment*> stronglyReferencedModuleEnvironments;
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
@@ -642,15 +623,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
-            if (op.lexicalEnvironment) {
-                if (op.type == ModuleVar) {
-                    // Keep the linked module environment strongly referenced.
-                    if (stronglyReferencedModuleEnvironments.add(uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)).isNewEntry)
-                        addConstant(ConcurrentJSLocker(m_lock), op.lexicalEnvironment);
-                    metadata.m_lexicalEnvironment.set(vm, this, op.lexicalEnvironment);
-                } else
-                    metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
-            } else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
+            if (op.type == ModuleVar)
+                metadata.m_moduleImportSlot = op.moduleImportSlot;
+            else if (op.lexicalEnvironment)
+                metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
+            else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
                 metadata.m_constantScope.set(vm, this, constantScope);
                 if (op.type == GlobalProperty || op.type == GlobalPropertyWithVarInjectionChecks)
                     metadata.m_globalLexicalBindingEpoch = m_globalObject->globalLexicalBindingEpoch();
@@ -866,7 +843,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
 // A module's heap-allocated function declarations got their FunctionExecutable when the module environment was created
 // (moduleDeclarationInstantiation) and no new_func names them, so their entries stay null for good (the eager path
-// looks the existing one up instead, instantiatedModuleFunctionExecutable()).
+// takes them from the ModuleProgramExecutable, which owns them).
 unsigned CodeBlock::firstLazilyMaterializedFunctionDecl() const
 {
     if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
@@ -1919,6 +1896,8 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             // Right now this isn't strictly necessary. Any symbol tables that this will refer to
             // are for outer functions, and we refer to those functions strongly, and they refer
             // to the symbol table strongly. But it's nice to be on the safe side.
+            if (metadata.m_resolveType == ModuleVar)
+                return; // m_moduleImportSlot, not a cell.
             WriteBarrierBase<SymbolTable>& symbolTable = metadata.m_symbolTable;
             if (!symbolTable || vm.heap.isMarked(symbolTable.get()))
                 return;
