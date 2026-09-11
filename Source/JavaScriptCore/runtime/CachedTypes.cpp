@@ -2277,6 +2277,7 @@ public:
     void encode(Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
     {
         m_exceptionHandlers.encode(encoder, rareData.m_exceptionHandlers);
+        m_outOfLineJumpTargets.encode(encoder, rareData.m_outOfLineJumpTargets);
         m_unlinkedSwitchJumpTables.encode(encoder, rareData.m_unlinkedSwitchJumpTables);
         m_unlinkedStringSwitchJumpTables.encode(encoder, rareData.m_unlinkedStringSwitchJumpTables);
         m_typeProfilerInfoMap.encode(encoder, rareData.m_typeProfilerInfoMap);
@@ -2291,6 +2292,7 @@ public:
     {
         UnlinkedCodeBlock::RareData* rareData = new UnlinkedCodeBlock::RareData { };
         m_exceptionHandlers.decode(decoder, rareData->m_exceptionHandlers);
+        m_outOfLineJumpTargets.decode(decoder, rareData->m_outOfLineJumpTargets);
         m_unlinkedSwitchJumpTables.decode(decoder, rareData->m_unlinkedSwitchJumpTables);
         m_unlinkedStringSwitchJumpTables.decode(decoder, rareData->m_unlinkedStringSwitchJumpTables);
         m_typeProfilerInfoMap.decode(decoder, rareData->m_typeProfilerInfoMap);
@@ -2304,6 +2306,7 @@ public:
 
 private:
     CachedVector<CachedHandlerInfo> m_exceptionHandlers;
+    CachedHashMap<JSInstructionStream::Offset, int> m_outOfLineJumpTargets;
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
@@ -3719,15 +3722,13 @@ struct CachedCodeBlockExtras {
     void encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
     {
         rareData.encode(encoder, codeBlock.m_rareData.get());
-        outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
     }
     static bool isNeeded(const UnlinkedCodeBlock& codeBlock)
     {
-        return codeBlock.m_rareData || !codeBlock.m_outOfLineJumpTargets.isEmpty();
+        return !!codeBlock.m_rareData;
     }
 
     CachedPtr<CachedCodeBlockRareData> rareData;
-    CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
 };
 
 // A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, child slots,
@@ -4195,8 +4196,6 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     } else
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    if (auto* e = extras(layout))
-        e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
     decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
@@ -4928,7 +4927,8 @@ protected:
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
-    // @importModule. 6: a code block's scalars lost the number of value profiles.
+    // @importModule. 6: a code block's scalars lost the number of value profiles; out-of-line jump targets moved into
+    // CachedCodeBlockRareData.
     static constexpr uint32_t cachedTypesFormatRevision = 6;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
@@ -5229,8 +5229,8 @@ static_assert(sizeof(CachedPrivateNameEnvironment) == 8);
 static_assert(sizeof(CachedBigInt) == 12);
 static_assert(sizeof(CachedBitVector) == 8);
 static_assert(sizeof(CachedClassElementDefinition) == 24);
-static_assert(sizeof(CachedCodeBlockExtras) == 12);
-static_assert(sizeof(CachedCodeBlockRareData) == 60);
+static_assert(sizeof(CachedCodeBlockExtras) == 4);
+static_assert(sizeof(CachedCodeBlockRareData) == 68);
 static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
 static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
 static_assert(sizeof(CachedEvalCodeBlock) == 40);
