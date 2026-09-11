@@ -550,10 +550,7 @@ op :get_from_scope,
     },
     metadata: {
         getPutInfo: GetPutInfo,
-        _: {
-            watchpointSet: InlineWatchpointSet.*,
-            structureID: WriteBarrierStructureID,
-        },
+        structureID: WriteBarrierStructureID,
         operand: uintptr_t,
     },
     metadata_initializers: {
