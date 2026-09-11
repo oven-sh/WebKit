@@ -645,8 +645,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         case op_get_from_scope: {
             INITIALIZE_METADATA(OpGetFromScope)
 
-            metadata.m_watchpointSet = nullptr;
-
             ASSERT(!isInitialization(bytecode.m_getPutInfo.initializationMode()));
             if (bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar) {
                 metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
@@ -672,9 +670,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 && uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)->isFunctionDeclarationSlot(ScopeOffset(op.operand)))
                 linkedType = makeType(LazyClosureVar, needsVarInjectionChecks(linkedType));
             metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), linkedType, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
-            if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
-                metadata.m_watchpointSet = op.watchpointSet;
-            else if (op.structure)
+            if (op.structure)
                 metadata.m_structureID.set(vm, this, op.structure);
             metadata.m_operand = op.operand;
             break;

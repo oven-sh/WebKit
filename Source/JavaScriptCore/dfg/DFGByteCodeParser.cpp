@@ -10575,11 +10575,19 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
                 getPutInfo = metadata.m_getPutInfo;
                 resolveType = getPutInfo.resolveType();
-                if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks || resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks)
-                    watchpoints = metadata.m_watchpointSet;
-                else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
+                if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
                     structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
+            }
+
+            // The metadata of op_get_from_scope does not keep the variable's watchpoint set; the entry in the scope's symbol table has it.
+            if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks || resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks) {
+                JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+                SymbolTable* symbolTable = (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks) ? globalObject->symbolTable() : globalObject->globalLexicalEnvironment()->symbolTable();
+                ConcurrentJSLocker locker(symbolTable->m_lock);
+                auto iter = symbolTable->find(locker, uid);
+                if (iter != symbolTable->end(locker))
+                    watchpoints = iter->value.watchpointSet();
             }
 
             if (needsDynamicLookup(resolveType, op_get_from_scope)) {
