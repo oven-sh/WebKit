@@ -1401,7 +1401,7 @@ void CodeBlock::visitChildren(Visitor& visitor)
     // Update profiles from concurrent markers to reduce the cost of update at the GC end phase as its execution is serialized.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType())) {
-            updateAllNonLazyValueProfilePredictions();
+            updateAllNonLazyValueProfilePredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::Keep : ValueProfileSamples::Record);
             updateAllLazyValueProfilePredictions();
         }
     }
@@ -2056,7 +2056,7 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
     if (JITCode::isBaselineCode(jitType()))
-        updateAllPredictions();
+        updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
 
     if (JITCode::couldBeInterpreted(jitType())) {
         reconcileLLIntInlineCachesAtGCEnd();
@@ -3440,7 +3440,16 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
 }
 #endif
 
-void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
+bool CodeBlock::keepsValueProfileSamplesInBuckets()
+{
+    // The predictions of the value profiles cost as much as their buckets. Code that has run a couple of times and may
+    // never run again only gets them when a compiler asks; until then a collection leaves the samples where they are.
+    if (jitType() != JITType::InterpreterThunk || !m_metadata || m_metadata->valueProfilePredictions())
+        return false;
+    return m_unlinkedCode->llintExecuteCounter().count() < Options::thresholdForValueProfilePredictions();
+}
+
+void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles, ValueProfileSamples samples)
 {
     numberOfLiveNonArgumentValueProfiles = 0;
     numberOfSamplesInProfiles = 0;
@@ -3450,9 +3459,23 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
     auto* unlinkedProfiles = isBuiltinFunction ? nullptr : unlinkedCodeBlock->valueAndArrayProfiles();
     auto unlinkedValueProfiles = unlinkedProfiles ? unlinkedProfiles->valueProfiles() : std::span<UnlinkedValueProfile> { };
+    if (samples != ValueProfileSamples::Record && !keepsValueProfileSamplesInBuckets())
+        samples = ValueProfileSamples::Record;
     forEachValueProfile([&](auto& profile, bool isArgument) {
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
+        if constexpr (std::is_same_v<Profile, ValueProfileRef>) {
+            if (samples != ValueProfileSamples::Record) {
+                // Nothing marks the cell in a bucket. Once it is dead the sample has to go.
+                if (samples == ValueProfileSamples::KeepIfLive) {
+                    JSValue value = JSValue::decodeConcurrent(profile.m_buckets);
+                    if (value && value.isCell() && !vm().heap.isMarked(value.asCell()))
+                        updateEncodedJSValueConcurrent(*profile.m_buckets, JSValue::encode(JSValue()));
+                }
+                ++index;
+                return;
+            }
+        }
         bool wasLive = profile.computeUpdatedPrediction() != SpecNone;
         if (wasLive) {
             ++numberOfSamplesInProfiles;
@@ -3477,10 +3500,10 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
     }
 }
 
-void CodeBlock::updateAllNonLazyValueProfilePredictions()
+void CodeBlock::updateAllNonLazyValueProfilePredictions(ValueProfileSamples samples)
 {
     unsigned ignoredValue1, ignoredValue2;
-    updateAllNonLazyValueProfilePredictionsAndCountLiveness(ignoredValue1, ignoredValue2);
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(ignoredValue1, ignoredValue2, samples);
 }
 
 void CodeBlock::updateAllLazyValueProfilePredictions()
@@ -3533,9 +3556,9 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 // Folds each profile's sampled value into a pointer-free SpeculatedType and clears the sample.
 // The samples are untraced JSValues and StructureIDs, so this only runs while they are still
 // readable, which means any time from marking up to the sweep that would free them.
-void CodeBlock::updateAllPredictions()
+void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
 {
-    updateAllNonLazyValueProfilePredictions();
+    updateAllNonLazyValueProfilePredictions(samples);
     updateAllLazyValueProfilePredictions();
     updateAllArrayAllocationProfilePredictions();
     updateAllArrayProfilePredictions();
@@ -3694,7 +3717,7 @@ void CodeBlock::dumpValueProfiles()
             dataLogF("   arg: ");
         else
             dataLogF("   bc: ");
-        if (!profile.numberOfSamples() && profile.m_prediction == SpecNone) {
+        if (!profile.numberOfSamples() && profile.prediction() == SpecNone) {
             dataLogF("<empty>\n");
             continue;
         }
@@ -3787,49 +3810,49 @@ String CodeBlock::nameForRegister(VirtualRegister virtualRegister)
     return out.toString();
 }
 
-ValueProfile* CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
+ValueProfileRef CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
     auto instruction = instructions().at(bytecodeIndex);
     switch (instruction->opcodeID()) {
 
 #define CASE(Op) \
     case Op::opcodeID: \
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(instruction->as<Op>().m_valueProfile)];
+        return m_metadata->valueProfileForOffset(instruction->as<Op>().m_valueProfile);
 
         FOR_EACH_OPCODE_WITH_VALUE_PROFILE(CASE)
 
 #undef CASE
 
     case op_iterator_open:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpIteratorOpen>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpIteratorOpen>(), bytecodeIndex.checkpoint()));
     case op_async_iterator_open:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpAsyncIteratorOpen>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpAsyncIteratorOpen>(), bytecodeIndex.checkpoint()));
     case op_iterator_next:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpIteratorNext>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpIteratorNext>(), bytecodeIndex.checkpoint()));
     case op_instanceof:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpInstanceof>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpInstanceof>(), bytecodeIndex.checkpoint()));
 
     default:
-        return nullptr;
+        return { };
 
     }
 }
 
 SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(BytecodeIndex bytecodeIndex, JSValue* specFailValue)
 {
-    if (ValueProfile* valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
+    if (ValueProfileRef valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
         if (specFailValue)
-            valueProfile->computeUpdatedPredictionForExtraValue(*specFailValue);
-        return valueProfile->computeUpdatedPrediction();
+            valueProfile.computeUpdatedPredictionForExtraValue(*specFailValue);
+        return valueProfile.computeUpdatedPrediction();
     }
     return SpecNone;
 }
 
-ValueProfile& CodeBlock::valueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
+ValueProfileRef CodeBlock::valueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    ValueProfile* profile = tryGetValueProfileForBytecodeIndex(bytecodeIndex);
+    ValueProfileRef profile = tryGetValueProfileForBytecodeIndex(bytecodeIndex);
     ASSERT(profile);
-    return *profile;
+    return profile;
 }
 
 void CodeBlock::validate()
