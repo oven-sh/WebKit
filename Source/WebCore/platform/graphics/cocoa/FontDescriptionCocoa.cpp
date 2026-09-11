@@ -105,7 +105,7 @@ AtomString FontDescription::platformResolveGenericFamily(UScriptCode script, con
         if (fontName.isEmpty())
             return false;
         if (fontName.startsWith('.')) {
-            LOG(Fonts, "CoreText returned reserved font name '%s'; using settings-based font resolution instead", fontName.utf8().data());
+            LOG(Fonts, "CoreText returned reserved font name '%s'; using settings-based font resolution instead", fontName.utf8().legacyCStringPointer());
             return false;
         }
         return true;

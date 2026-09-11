@@ -238,7 +238,7 @@ void TypingCommand::insertText(Ref<Document>&& document, const String& text, Eve
 // FIXME: We shouldn't need to take selectionForInsertion. It should be identical to FrameSelection's current selection.
 void TypingCommand::insertText(Ref<Document>&& document, const String& text, Event* triggeringEvent, const VisibleSelection& selectionForInsertion, OptionSet<Option> options, TextCompositionType compositionType)
 {
-    LOG(Editing, "TypingCommand::insertText (text %s)", text.utf8().data());
+    LOG(Editing, "TypingCommand::insertText (text %s)", text.utf8().legacyCStringPointer());
 
     VisibleSelection currentSelection = document->selection().selection();
 
@@ -545,7 +545,7 @@ void TypingCommand::insertText(const String& text, bool selectInsertedText)
 
 void TypingCommand::insertTextAndNotifyAccessibility(const String& text, bool selectInsertedText)
 {
-    LOG(Editing, "TypingCommand %p insertTextAndNotifyAccessibility (text %s, selectInsertedText %d)", this, text.utf8().data(), selectInsertedText);
+    LOG(Editing, "TypingCommand %p insertTextAndNotifyAccessibility (text %s, selectInsertedText %d)", this, text.utf8().legacyCStringPointer(), selectInsertedText);
 
     AccessibilityReplacedText replacedText(document().selection().selection());
     insertText(text, selectInsertedText);

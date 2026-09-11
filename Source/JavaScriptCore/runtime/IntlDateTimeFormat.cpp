@@ -195,13 +195,13 @@ Vector<String> IntlDateTimeFormat::localeData(const String& locale, RelevantExte
     switch (key) {
     case RelevantExtensionKey::Ca: {
         UErrorCode status = U_ZERO_ERROR;
-        auto calendars = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_getKeywordValuesForLocale("calendar", locale.utf8().data(), false, &status));
+        auto calendars = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_getKeywordValuesForLocale("calendar", locale.utf8().legacyCStringPointer(), false, &status));
         ASSERT(U_SUCCESS(status));
 
         int32_t nameLength;
         while (const char* availableName = uenum_next(calendars.get(), &nameLength, &status)) {
             ASSERT(U_SUCCESS(status));
-            String calendar = String(unsafeMakeSpan(availableName, static_cast<size_t>(nameLength)));
+            String calendar = String::fromLatin1(unsafeMakeSpan(availableName, static_cast<size_t>(nameLength)));
             // Adding "islamicc" candidate for backward compatibility.
             if (calendar == "islamic-civil"_s)
                 keyLocaleData.append("islamicc"_s);

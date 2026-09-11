@@ -658,7 +658,7 @@ String CaptionUserPreferencesMediaAF::captionsStyleSheetOverride() const
     if (!windowColor.isEmpty() || !windowCornerRadius.isEmpty())
         captionsOverrideStyleSheet.append(" ::"_s, UserAgentParts::webkitMediaTextTrackDisplayBackdrop(), '{', windowColor, windowCornerRadius, '}');
 
-    LOG(Media, "CaptionUserPreferencesMediaAF::captionsStyleSheetOverrideSetting style to:\n%s", captionsOverrideStyleSheet.toString().utf8().data());
+    LOG(Media, "CaptionUserPreferencesMediaAF::captionsStyleSheetOverrideSetting style to:\n%s", captionsOverrideStyleSheet.toString().utf8().legacyCStringPointer());
 
     return captionsOverrideStyleSheet.toString();
 }
@@ -873,19 +873,19 @@ Vector<Ref<TextTrack>> CaptionUserPreferencesMediaAF::sortedTrackListForMenu(Tex
         String language = displayNameForLanguageLocale(track->validBCP47Language());
 
         if (displayMode == CaptionDisplayMode::Manual) {
-            LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because selection mode is 'manual'", track->kindKeyword().string().utf8().data(), language.utf8().data());
+            LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because selection mode is 'manual'", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
             tracksForMenu.append(WTF::move(track));
             continue;
         }
 
         if (requestingCaptionsOrDescriptionsOrSubtitles) {
             if (track->containsOnlyForcedSubtitles()) {
-                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it contains only forced subtitles", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it contains only forced subtitles", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
                 continue;
             }
 
             if (track->isEasyToRead()) {
-                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because it is 'easy to read'", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because it is 'easy to read'", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
                 if (!language.isEmpty())
                     languagesIncluded.add(language);
                 tracksForMenu.append(WTF::move(track));
@@ -893,7 +893,7 @@ Vector<Ref<TextTrack>> CaptionUserPreferencesMediaAF::sortedTrackListForMenu(Tex
             }
 
             if (track->mode() == TextTrack::Mode::Showing) {
-                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because it is already visible", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because it is already visible", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
                 if (!language.isEmpty())
                     languagesIncluded.add(language);
                 tracksForMenu.append(WTF::move(track));
@@ -905,17 +905,17 @@ Vector<Ref<TextTrack>> CaptionUserPreferencesMediaAF::sortedTrackListForMenu(Tex
                 if (prefersAccessibilityTracks) {
                     // In the first pass, include only caption tracks if the user prefers accessibility tracks.
                     if (!isAccessibilityTrack && filterTrackList) {
-                        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it is NOT an accessibility track", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it is NOT an accessibility track", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
                         continue;
                     }
                 } else {
                     // In the first pass, only include the first non-CC or SDH track with each language if the user prefers translation tracks.
                     if (isAccessibilityTrack && filterTrackList) {
-                        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it is an accessibility track", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it is an accessibility track", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
                         continue;
                     }
                     if (languagesIncluded.contains(language) && filterTrackList) {
-                        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it is not the first with this language", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - skipping '%s' track with language '%s' because it is not the first with this language", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
                         continue;
                     }
                 }
@@ -927,7 +927,7 @@ Vector<Ref<TextTrack>> CaptionUserPreferencesMediaAF::sortedTrackListForMenu(Tex
 
         tracksForMenu.append(track);
 
-        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s', is%s main program content", track->kindKeyword().string().utf8().data(), language.utf8().data(), track->isMainProgramContent() ? "" : " NOT");
+        LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s', is%s main program content", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer(), track->isMainProgramContent() ? "" : " NOT");
     }
 
     if (requestingCaptionsOrDescriptionsOrSubtitles) {
@@ -952,7 +952,7 @@ Vector<Ref<TextTrack>> CaptionUserPreferencesMediaAF::sortedTrackListForMenu(Tex
             if (!languagesIncluded.contains(language) && track->isMainProgramContent()) {
                 languagesIncluded.add(language);
                 tracksForMenu.append(track);
-                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because it is the only track with this language", track->kindKeyword().string().utf8().data(), language.utf8().data());
+                LOG(Media, "CaptionUserPreferencesMediaAF::sortedTrackListForMenu - adding '%s' track with language '%s' because it is the only track with this language", track->kindKeyword().string().utf8().legacyCStringPointer(), language.utf8().legacyCStringPointer());
             }
         }
     }

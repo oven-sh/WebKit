@@ -1215,7 +1215,7 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
         return makeUnexpected(ResourceError { errorDomainWebKitInternal, 0, url, "URL is invalid"_s });
     }
 
-    LOG(ResourceLoading, "CachedResourceLoader::requestResource '%.255s', charset '%s', priority=%d, forPreload=%u", url.stringCenterEllipsizedToLength().utf8().data(), request.charset().utf8().data(), request.priority() ? static_cast<int>(request.priority().value()) : -1, forPreload == ForPreload::Yes);
+    LOG(ResourceLoading, "CachedResourceLoader::requestResource '%.255s', charset '%s', priority=%d, forPreload=%u", url.stringCenterEllipsizedToLength().utf8().legacyCStringPointer(), request.charset().utf8().legacyCStringPointer(), request.priority() ? static_cast<int>(request.priority().value()) : -1, forPreload == ForPreload::Yes);
 
     request.setDestinationIfNotSet(destinationForType(type, frame));
 
@@ -1553,7 +1553,7 @@ Ref<CachedResource> CachedResourceLoader::loadResource(CachedResource::Type type
     ASSERT(!request.allowsCaching() || mayAddToMemoryCache == MayAddToMemoryCache::No || !memoryCache->resourceForRequest(request.resourceRequest(), sessionID)
         || request.resourceRequest().cachePolicy() == ResourceRequestCachePolicy::DoNotUseAnyCache || request.resourceRequest().cachePolicy() == ResourceRequestCachePolicy::ReloadIgnoringCacheData || request.resourceRequest().cachePolicy() == ResourceRequestCachePolicy::RefreshAnyCacheData);
 
-    LOG(ResourceLoading, "Loading CachedResource for '%s'.", request.resourceRequest().url().stringCenterEllipsizedToLength().utf8().data());
+    LOG(ResourceLoading, "Loading CachedResource for '%s'.", request.resourceRequest().url().stringCenterEllipsizedToLength().utf8().legacyCStringPointer());
 
     auto resource = createResource(type, WTF::move(request), sessionID, &cookieJar, settings, protect(document()).get());
 

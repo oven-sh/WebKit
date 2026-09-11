@@ -81,7 +81,7 @@ TEST(WTF, StringStartsWithEmptyVsNull)
 static inline const char* testStringNumberFixedPrecision(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, String::numberToStringFixedPrecision(number).utf8().data(), 99);
+    std::strncpy(testBuffer, String::numberToStringFixedPrecision(number).utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 
@@ -130,7 +130,7 @@ TEST(WTF, StringNumberFixedPrecision)
 static inline const char* testStringNumberFixedWidth(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, String::numberToStringFixedWidth(number, 6).utf8().data(), 99);
+    std::strncpy(testBuffer, String::numberToStringFixedWidth(number, 6).utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 
@@ -177,7 +177,7 @@ TEST(WTF, StringNumberFixedWidth)
 static inline const char* testStringNumber(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, String::number(number).utf8().data(), 99);
+    std::strncpy(testBuffer, String::number(number).utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 
@@ -242,38 +242,38 @@ TEST(WTF, StringReplaceWithLiteral)
     String testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '2', ""_s);
-    EXPECT_STREQ("14", testString.utf8().data());
+    EXPECT_STREQ("14", testString.utf8().legacyCStringPointer());
 
     testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '2', "3"_s);
-    EXPECT_STREQ("1334", testString.utf8().data());
+    EXPECT_STREQ("1334", testString.utf8().legacyCStringPointer());
 
     testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '2', "555"_s);
-    EXPECT_STREQ("15555554", testString.utf8().data());
+    EXPECT_STREQ("15555554", testString.utf8().legacyCStringPointer());
 
     testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '3', "NotFound"_s);
-    EXPECT_STREQ("1224", testString.utf8().data());
+    EXPECT_STREQ("1224", testString.utf8().legacyCStringPointer());
 
     // Cases for 16Bit source.
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, char16_t(0x00E9 /*U+00E9 is 'é'*/), "e"_s);
-    EXPECT_STREQ("resume", testString.utf8().data());
+    EXPECT_STREQ("resume", testString.utf8().legacyCStringPointer());
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, char16_t(0x00E9 /*U+00E9 is 'é'*/), ""_s);
-    EXPECT_STREQ("rsum", testString.utf8().data());
+    EXPECT_STREQ("rsum", testString.utf8().legacyCStringPointer());
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '3', "NotFound"_s);
-    EXPECT_STREQ("résumé", testString.utf8().data());
+    EXPECT_STREQ("résumé", testString.utf8().legacyCStringPointer());
 }
 
 TEST(WTF, StringIsolatedCopy)
@@ -488,13 +488,13 @@ TEST(WTF, StringSplitWithConsecutiveSeparators)
     Vector<String> expected { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (auto i = 0u; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 
     actual = string.splitAllowingEmptyEntries(' ');
     expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (auto i = 0u; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringMakeStringByJoining)

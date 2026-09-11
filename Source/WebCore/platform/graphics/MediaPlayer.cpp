@@ -669,7 +669,7 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 
     // Don't delete and recreate the player unless it comes from a different engine.
     if (!engine) {
-        LOG(Media, "MediaPlayer::loadWithNextMediaEngine - no media engine found for type \"%s\"", contentType().raw().utf8().data());
+        LOG(Media, "MediaPlayer::loadWithNextMediaEngine - no media engine found for type \"%s\"", contentType().raw().utf8().legacyCStringPointer());
         m_currentMediaEngine = engine.get();
         m_private = nullptr;
     } else if (m_currentMediaEngine.get() != engine.get()) {

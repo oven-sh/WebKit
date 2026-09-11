@@ -196,7 +196,10 @@ void BlobRegistryImpl::registerInternalBlobURL(const URL& url, Vector<BlobPart>&
             break;
         }
         case BlobPart::Type::Blob: {
-            if (RefPtr blob = m_blobs.get(part.url().string()))
+            auto& partURLKey = part.url().string();
+            if (!m_blobs.isValidKey(partURLKey))
+                break;
+            if (RefPtr blob = m_blobs.get(partURLKey))
                 blobData->m_items.appendVector(blob->items());
             break;
         }
@@ -282,8 +285,10 @@ void BlobRegistryImpl::registerInternalBlobURLForSlice(const URL& url, const URL
 void BlobRegistryImpl::unregisterBlobURL(const URL& url, const std::optional<WebCore::SecurityOriginData>& topOrigin)
 {
     ASSERT(isMainThread());
-    ASSERT(BlobURL::isInternalURL(url) || topOrigin);
     auto& urlKey = url.string();
+    if (!m_blobs.isValidKey(urlKey))
+        return;
+    ASSERT(BlobURL::isInternalURL(url) || topOrigin);
     if (topOrigin && topOrigin != m_allowedBlobURLTopOrigins.get(urlKey)) {
         RELEASE_LOG_ERROR(Network, "BlobRegistryImpl::unregisterBlobURL: (%p) Rejecting unregistering blob URL with incorrect top origin.", this);
         return;
@@ -298,6 +303,8 @@ BlobData* BlobRegistryImpl::blobDataFromURL(const URL& url, const std::optional<
 {
     ASSERT(isMainThread());
     auto urlKey = url.stringWithoutFragmentIdentifier();
+    if (!m_blobs.isValidKey(urlKey))
+        return nullptr;
     if (topOrigin && topOrigin != m_allowedBlobURLTopOrigins.get(urlKey)) {
         RELEASE_LOG_ERROR(Network, "BlobRegistryImpl::blobDataFromURL: (%p) Requested blob URL with incorrect top origin.", this);
         return nullptr;
@@ -367,7 +374,7 @@ static bool writeFilePathsOrDataBuffersToFile(const Vector<Variant<String, Ref<D
         bool success = WTF::switchOn(part,
             [&](const String& filePath) {
                 if (!file.appendFileContents(filePath)) {
-                    LOG_ERROR("Failed copying File contents to a Blob temporary file (%s to %s)", filePath.utf8().data(), path.utf8().data());
+                    LOG_ERROR("Failed copying File contents to a Blob temporary file (%s to %s)", filePath.utf8().legacyCStringPointer(), path.utf8().legacyCStringPointer());
                     return false;
                 }
                 return true;
@@ -433,6 +440,8 @@ Vector<Ref<BlobDataFileReference>> BlobRegistryImpl::filesInBlob(const URL& url,
 
 void BlobRegistryImpl::addBlobData(const String& url, Ref<BlobData>&& blobData, const std::optional<WebCore::SecurityOriginData>& topOrigin)
 {
+    if (!m_blobs.isValidKey(url))
+        return;
     ASSERT(BlobURL::isInternalURL(URL { { }, url }) || topOrigin);
     auto addResult = m_blobs.set(url, WTF::move(blobData));
     if (!addResult.isNewEntry)
@@ -444,8 +453,10 @@ void BlobRegistryImpl::addBlobData(const String& url, Ref<BlobData>&& blobData, 
 
 void BlobRegistryImpl::registerBlobURLHandle(const URL& url, const std::optional<WebCore::SecurityOriginData>& topOrigin)
 {
-    ASSERT(BlobURL::isInternalURL(url) || topOrigin);
     auto urlKey = url.stringWithoutFragmentIdentifier();
+    if (!m_blobs.isValidKey(urlKey))
+        return;
+    ASSERT(BlobURL::isInternalURL(url) || topOrigin);
     if (!m_blobs.contains(urlKey))
         return;
     if (topOrigin && topOrigin != m_allowedBlobURLTopOrigins.get(urlKey)) {
@@ -457,8 +468,10 @@ void BlobRegistryImpl::registerBlobURLHandle(const URL& url, const std::optional
 
 void BlobRegistryImpl::unregisterBlobURLHandle(const URL& url, const std::optional<WebCore::SecurityOriginData>& topOrigin)
 {
-    ASSERT(BlobURL::isInternalURL(url) || topOrigin);
     auto urlKey = url.stringWithoutFragmentIdentifier();
+    if (!m_blobs.isValidKey(urlKey))
+        return;
+    ASSERT(BlobURL::isInternalURL(url) || topOrigin);
     if (topOrigin && topOrigin != m_allowedBlobURLTopOrigins.get(urlKey)) {
         RELEASE_LOG_ERROR(Network, "BlobRegistryImpl::unregisterBlobURLHandle: (%p) Rejecting unregistering blob URL handle with incorrect top origin", this);
         return;

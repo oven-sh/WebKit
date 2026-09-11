@@ -3884,9 +3884,6 @@ fast/css/css2-system-color.html [ Skip ]
 # Test disabled in r64074 after dropping -khtml prefix support
 fast/css/limited-vendor-prefix-behavior.html [ Skip ]
 
-# Test disabled in r42420 since it hits test-only release assert
-fast/dom/gc-8.html [ Skip ]
-
 # Test disabled in r27657
 fast/dom/Window/window-resize-nan.html [ Skip ]
 
@@ -5134,7 +5131,6 @@ webgl/1.0.x/conformance/textures/misc/texture-corner-case-videos.html [ Failure 
 webgl/2.0.y/conformance/textures/misc/texture-corner-case-videos.html [ Failure ]
 
 # WebGL tests to be investigated and categorized.
-webkit.org/b/292182 webgl/1.0.x/conformance/textures/image_bitmap_from_video/tex-2d-luminance-luminance-unsigned_byte.html [ Pass Timeout ]
 webkit.org/b/292182 [ x86_64 ] webgl/1.0.x/conformance/textures/misc/copytexsubimage2d-large-partial-copy-corruption.html [ Failure Pass ]
 webkit.org/b/292182 webgl/1.0.x/conformance/textures/misc/texture-video-transparent.html [ Failure Pass ]
 webkit.org/b/292182 [ x86_64 ] webgl/2.0.y/conformance/textures/misc/copytexsubimage2d-large-partial-copy-corruption.html [ Failure Pass ]
@@ -5839,10 +5835,6 @@ imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal
 imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-003.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/highlight-image-currentcolor.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/highlight-image-stacked.html [ ImageOnlyFailure ]
-
-http/tests/webgl/1.0.x/conformance/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
-http/tests/webgl/2.0.y/conformance/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
-http/tests/webgl/2.0.y/conformance2/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
 
 # These are only enabled on Cocoa WK2 ports
 webanimations/multiple-transform-properties-and-multiple-transform-properties-animation-with-delay-on-forced-layer.html [ Skip ]
@@ -6620,16 +6612,12 @@ webkit.org/b/297734 imported/w3c/web-platform-tests/css/css-counter-styles/count
 imported/w3c/web-platform-tests/css/css-counter-styles/counter-suffix.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-counter-styles/hebrew/counter-hebrew-nested.html [ ImageOnlyFailure ]
 
-# Missing support for extended range
-imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-informal/counter-korean-hanja-informal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/japanese-informal/counter-japanese-informal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/japanese-formal/counter-japanese-formal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-formal/counter-korean-hanja-formal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/korean-hangul-formal/counter-korean-hangul-formal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/simp-chinese-formal/counter-simp-chinese-formal.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-counter-styles/simp-chinese-informal/counter-simp-chinese-informal.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-counter-styles/trad-chinese-formal/counter-trad-chinese-formal.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-counter-styles/trad-chinese-informal/counter-trad-chinese-informal.html [ ImageOnlyFailure ]
+# These number past 2147483647, which a counter value cannot hold. webkit.org/b/323698
+imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-informal/counter-korean-hanja-informal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/japanese-informal/counter-japanese-informal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/japanese-formal/counter-japanese-formal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-formal/counter-korean-hanja-formal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/korean-hangul-formal/counter-korean-hangul-formal-extended.html [ ImageOnlyFailure ]
 
 # Newly imported ruby WPTs
 imported/w3c/web-platform-tests/css/css-ruby/block-ruby-001.html [ ImageOnlyFailure ]

@@ -239,11 +239,11 @@ WebKitHitTestResult* webkitHitTestResultCreate(const WebHitTestResultData& hitTe
 
     return WEBKIT_HIT_TEST_RESULT(g_object_new(WEBKIT_TYPE_HIT_TEST_RESULT,
         "context", context,
-        "link-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_LINK ? hitTestResult.absoluteLinkURL.utf8().data() : nullptr,
-        "image-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_IMAGE ? hitTestResult.absoluteImageURL.utf8().data() : nullptr,
-        "media-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_MEDIA ? hitTestResult.absoluteMediaURL.utf8().data() : nullptr,
-        "link-title", !hitTestResult.linkTitle.isEmpty() ? hitTestResult.linkTitle.utf8().data() : nullptr,
-        "link-label", !hitTestResult.linkLabel.isEmpty() ? hitTestResult.linkLabel.utf8().data() : nullptr,
+        "link-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_LINK ? hitTestResult.absoluteLinkURL.utf8().legacyCStringPointer() : nullptr,
+        "image-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_IMAGE ? hitTestResult.absoluteImageURL.utf8().legacyCStringPointer() : nullptr,
+        "media-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_MEDIA ? hitTestResult.absoluteMediaURL.utf8().legacyCStringPointer() : nullptr,
+        "link-title", !hitTestResult.linkTitle.isEmpty() ? hitTestResult.linkTitle.utf8().legacyCStringPointer() : nullptr,
+        "link-label", !hitTestResult.linkLabel.isEmpty() ? hitTestResult.linkLabel.utf8().legacyCStringPointer() : nullptr,
         nullptr));
 }
 

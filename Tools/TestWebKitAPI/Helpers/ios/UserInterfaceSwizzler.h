@@ -25,7 +25,7 @@
 
 #pragma once
 
-#ifdef __cplusplus
+#if defined(__cplusplus) && !defined(__swift__)
 
 #if PLATFORM(IOS_FAMILY)
 

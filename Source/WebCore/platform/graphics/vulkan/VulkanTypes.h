@@ -42,7 +42,7 @@ using Result = std::expected<Type, VkResult>;
 
 struct ApplicationInfo : Structure<VkApplicationInfo, VK_STRUCTURE_TYPE_APPLICATION_INFO> {
     ApplicationInfo(const String& applicationName, uint32_t apiVersion = VK_API_VERSION_1_3)
-        : ApplicationInfo(applicationName.utf8().data(), apiVersion)
+        : ApplicationInfo(applicationName.utf8().legacyCStringPointer(), apiVersion)
     {
     }
 

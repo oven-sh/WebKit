@@ -1568,7 +1568,7 @@ bool WebPageProxy::suspendCurrentPageIfPossible(API::Navigation& navigation, Ref
     // handled by the CallbackAggregator which removes the BFCache entry,
     // destroying this SuspendedPageProxy and triggering teardown().
 
-    LOG(ProcessSwapping, "WebPageProxy %" PRIu64 " created suspended page %s for process pid %i, back/forward item %s" PRIu64, identifier().toUInt64(), suspendedPage->loggingString().utf8().data(), m_legacyMainFrameProcess->processID(), fromItem ? fromItem->identifier().toString().utf8().data() : "0"_s);
+    LOG(ProcessSwapping, "WebPageProxy %" PRIu64 " created suspended page %s for process pid %i, back/forward item %s" PRIu64, identifier().toUInt64(), suspendedPage->loggingString().utf8().legacyCStringPointer(), m_legacyMainFrameProcess->processID(), fromItem ? fromItem->identifier().toString().utf8().legacyCStringPointer() : "0"_s);
 
     m_lastSuspendedPage = suspendedPage.get();
 
@@ -2135,7 +2135,7 @@ void WebPageProxy::maybeInitializeSandboxExtensionHandle(WebProcessProxy& proces
     auto urlHash = url.isValid() ? WTF::URLHash::hash(url) : 0;
     auto resourceDirectoryURLHash = resourceDirectoryURL.isValid() ? WTF::URLHash::hash(resourceDirectoryURL) : 0;
 #endif
-    WEBPAGEPROXY_RELEASE_LOG(Sandbox, "maybeInitializeSandboxExtensionHandle: url(%u) = %" PRIVATE_LOG_STRING ", resourceDirectoryURL(%u) = %" PRIVATE_LOG_STRING ", checkAssumedReadAccessToResourceURL = %d", urlHash, url.string().utf8().data(), resourceDirectoryURLHash, resourceDirectoryURL.string().utf8().data(), checkAssumedReadAccessToResourceURL);
+    WEBPAGEPROXY_RELEASE_LOG(Sandbox, "maybeInitializeSandboxExtensionHandle: url(%u) = %" PRIVATE_LOG_STRING ", resourceDirectoryURL(%u) = %" PRIVATE_LOG_STRING ", checkAssumedReadAccessToResourceURL = %d", urlHash, url.string().utf8().legacyCStringPointer(), resourceDirectoryURLHash, resourceDirectoryURL.string().utf8().legacyCStringPointer(), checkAssumedReadAccessToResourceURL);
 
 #if HAVE(AUDIT_TOKEN)
     // If the process is still launching then it does not have a PID yet. We will take care of creating the sandbox extension
@@ -2878,7 +2878,7 @@ RefPtr<API::Navigation> WebPageProxy::goToBackForwardItem(WebBackForwardListFram
     if (!item)
         return nullptr;
 
-    LOG(Loading, "WebPageProxy %p goToBackForwardItem to item URL %s", this, item->url().utf8().data());
+    LOG(Loading, "WebPageProxy %p goToBackForwardItem to item URL %s", this, item->url().utf8().legacyCStringPointer());
 
     if (m_isClosed) {
         WEBPAGEPROXY_RELEASE_LOG(Loading, "goToBackForwardItem: page is closed");
@@ -6075,7 +6075,7 @@ void WebPageProxy::receivedNavigationActionPolicyDecision(WebProcessProxy& proce
         if (navigationChangesFrameProcess) {
             policyAction = PolicyAction::LoadWillContinueInAnotherProcess;
             WEBPAGEPROXY_RELEASE_LOG(ProcessSwapping, "decidePolicyForNavigationAction, swapping process %i with process %i for navigation, reason=%" PUBLIC_LOG_STRING, legacyMainFrameProcessID(), processNavigatingTo->processID(), reason.characters());
-            LOG(ProcessSwapping, "(ProcessSwapping) Switching from process %i to new process (%i) for navigation %" PRIu64 " '%s'", legacyMainFrameProcessID(), processNavigatingTo->processID(), navigation->navigationID().toUInt64(), navigation->loggingString().utf8().data());
+            LOG(ProcessSwapping, "(ProcessSwapping) Switching from process %i to new process (%i) for navigation %" PRIu64 " '%s'", legacyMainFrameProcessID(), processNavigatingTo->processID(), navigation->navigationID().toUInt64(), navigation->loggingString().utf8().legacyCStringPointer());
         } else {
             WEBPAGEPROXY_RELEASE_LOG(ProcessSwapping, "decidePolicyForNavigationAction: keep using process %i for navigation, reason=%" PUBLIC_LOG_STRING, legacyMainFrameProcessID(), reason.characters());
             frame->takeProvisionalFrame();
@@ -6444,7 +6444,7 @@ void WebPageProxy::destroyProvisionalPage()
 void WebPageProxy::continueNavigationInNewProcess(API::Navigation& navigation, WebFrameProxy& frame, RefPtr<SuspendedPageProxy>&& suspendedPage, BrowsingContextGroup& browsingContextGroup, Ref<WebProcessProxy>&& newProcess, ProcessSwapRequestedByClient processSwapRequestedByClient, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive loadedWebArchive, NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior, WebCore::ProcessSwapDisposition processSwapDisposition, WebsiteDataStore* replacedDataStoreForWebArchiveLoad, MonotonicTime originalNavigationStartTime)
 {
     WEBPAGEPROXY_RELEASE_LOG(Loading, "continueNavigationInNewProcess: newProcessPID=%i, hasSuspendedPage=%i", newProcess->processID(), !!suspendedPage);
-    LOG(Loading, "Continuing navigation %" PRIu64 " '%s' in a new web process", navigation.navigationID().toUInt64(), navigation.loggingString().utf8().data());
+    LOG(Loading, "Continuing navigation %" PRIu64 " '%s' in a new web process", navigation.navigationID().toUInt64(), navigation.loggingString().utf8().legacyCStringPointer());
     RELEASE_ASSERT(!newProcess->isInProcessCache());
     ASSERT(shouldTreatAsContinuingLoad != ShouldTreatAsContinuingLoad::No);
     navigation.setProcessID(newProcess->coreProcessIdentifier());
@@ -6484,7 +6484,7 @@ void WebPageProxy::continueNavigationInNewProcess(API::Navigation& navigation, W
 
     RefPtr websitePolicies = navigation.websitePolicies();
     bool isServerSideRedirect = shouldTreatAsContinuingLoad == ShouldTreatAsContinuingLoad::YesAfterNavigationPolicyDecision && navigation.currentRequestIsRedirect();
-    bool shouldInheritOriginFromInitiator = currentRequestURL.isAboutBlank() && navigation.originatingFrameInfo();
+    bool shouldInheritOriginFromInitiator = (currentRequestURL.isAboutBlank() || currentRequestURL.isAboutSrcDoc()) && navigation.originatingFrameInfo();
     Site navigationSite { shouldInheritOriginFromInitiator ? Site { navigation.originatingFrameInfo()->securityOrigin } : Site { currentRequestURL } };
 
     if (siteIsolationEnabled && (!frame.isMainFrame() || newProcess->coreProcessIdentifier() == frame.process().coreProcessIdentifier())) {
@@ -6505,7 +6505,7 @@ void WebPageProxy::continueNavigationInNewProcess(API::Navigation& navigation, W
         // send GoToBackForwardItem so the new process performs a proper history navigation using
         // the FrameState stored on the Navigation object.
         if (RefPtr frameState = navigation.backForwardFrameState()) {
-            WEBPAGEPROXY_RELEASE_LOG(Loading, "continueNavigationInNewProcess: Sending GoToBackForwardItem for child frame to new process, URL=%" SENSITIVE_LOG_STRING, frameState->urlString.utf8().data());
+            WEBPAGEPROXY_RELEASE_LOG(Loading, "continueNavigationInNewProcess: Sending GoToBackForwardItem for child frame to new process, URL=%" SENSITIVE_LOG_STRING, frameState->urlString.utf8().legacyCStringPointer());
             auto publicSuffix = WebCore::PublicSuffixStore::singleton().publicSuffix(currentRequestURL);
             frame.prepareForProvisionalLoadInProcess(newProcess, navigation, browsingContextGroup, originator, [
                 navigationID = navigation.navigationID(),
@@ -6584,7 +6584,7 @@ void WebPageProxy::continueNavigationInNewProcess(API::Navigation& navigation, W
     Function<void()> continuation = [this, protectedThis = Ref { *this }, navigation = protect(navigation), shouldTreatAsContinuingLoad, websitePolicies = WTF::move(websitePolicies), existingNetworkResourceLoadIdentifierToResume, navigationUpgradeToHTTPSBehavior, processSwapDisposition, originalNavigationStartTime]() mutable {
         RefPtr provisionalPage = m_provisionalPage;
         if (RefPtr item = navigation->targetItem()) {
-            LOG(Loading, "WebPageProxy %p continueNavigationInNewProcess to back item URL %s", this, item->url().utf8().data());
+            LOG(Loading, "WebPageProxy %p continueNavigationInNewProcess to back item URL %s", this, item->url().utf8().legacyCStringPointer());
 
             Ref pageLoadState = internals().pageLoadState;
             auto transaction = pageLoadState->transaction();
@@ -8419,7 +8419,7 @@ void WebPageProxy::didStartProvisionalLoadForFrameShared(Ref<WebProcessProxy>&& 
     if (navigation && frame->isMainFrame() && navigation->currentRequest().url().isValid())
         MESSAGE_CHECK(process, navigation->currentRequest().url() == url);
 
-    LOG(Loading, "WebPageProxy %" PRIu64 " in process pid %i didStartProvisionalLoadForFrame to frameID %" PRIu64 ", navigationID %" PRIu64 ", url %s", identifier().toUInt64(), process->processID(), frameID.toUInt64(), navigationID ? navigationID->toUInt64() : 0, url.string().utf8().data());
+    LOG(Loading, "WebPageProxy %" PRIu64 " in process pid %i didStartProvisionalLoadForFrame to frameID %" PRIu64 ", navigationID %" PRIu64 ", url %s", identifier().toUInt64(), process->processID(), frameID.toUInt64(), navigationID ? navigationID->toUInt64() : 0, url.string().utf8().legacyCStringPointer());
     WEBPAGEPROXY_RELEASE_LOG(Loading, "didStartProvisionalLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d", frameID.toUInt64(), frame->isMainFrame());
 
     Ref pageLoadState = internals().pageLoadState;
@@ -8494,7 +8494,7 @@ void WebPageProxy::didReceiveServerRedirectForProvisionalLoadForFrame(IPC::Conne
 
 void WebPageProxy::didReceiveServerRedirectForProvisionalLoadForFrameShared(Ref<WebProcessProxy>&& process, FrameIdentifier frameID, std::optional<WebCore::NavigationIdentifier> navigationID, ResourceRequest&& request, const UserData& userData)
 {
-    LOG(Loading, "WebPageProxy::didReceiveServerRedirectForProvisionalLoadForFrame to frameID %" PRIu64 ", navigationID %" PRIu64 ", url %s", frameID.toUInt64(), navigationID ? navigationID->toUInt64() : 0, request.url().string().utf8().data());
+    LOG(Loading, "WebPageProxy::didReceiveServerRedirectForProvisionalLoadForFrame to frameID %" PRIu64 ", navigationID %" PRIu64 ", url %s", frameID.toUInt64(), navigationID ? navigationID->toUInt64() : 0, request.url().string().utf8().legacyCStringPointer());
 
     RefPtr protectedPageClient { pageClient() };
 
@@ -8615,8 +8615,8 @@ void WebPageProxy::didFailProvisionalLoadForFrame(IPC::Connection& connection, F
 
 void WebPageProxy::didFailProvisionalLoadForFrameShared(Ref<WebProcessProxy>&& process, WebFrameProxy& frame, FrameInfoData&& frameInfo, WebCore::ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, String&& provisionalURL, ResourceError&& error, WillContinueLoading willContinueLoading, const UserData& userData, WillInternallyHandleFailure willInternallyHandleFailure)
 {
-    LOG(Loading, "(Loading) WebPageProxy %" PRIu64 " in web process pid %i didFailProvisionalLoadForFrame to provisionalURL %s", identifier().toUInt64(), process->processID(), provisionalURL.utf8().data());
-    WEBPAGEPROXY_RELEASE_LOG_ERROR(Process, "didFailProvisionalLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d, domain=%s, code=%d, isMainFrame=%d, willInternallyHandleFailure=%d", frame.frameID().toUInt64(), frame.isMainFrame(), error.domain().utf8().data(), error.errorCode(), frame.isMainFrame(), willInternallyHandleFailure == WillInternallyHandleFailure::Yes);
+    LOG(Loading, "(Loading) WebPageProxy %" PRIu64 " in web process pid %i didFailProvisionalLoadForFrame to provisionalURL %s", identifier().toUInt64(), process->processID(), provisionalURL.utf8().legacyCStringPointer());
+    WEBPAGEPROXY_RELEASE_LOG_ERROR(Process, "didFailProvisionalLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d, domain=%s, code=%d, isMainFrame=%d, willInternallyHandleFailure=%d", frame.frameID().toUInt64(), frame.isMainFrame(), error.domain().utf8().legacyCStringPointer(), error.errorCode(), frame.isMainFrame(), willInternallyHandleFailure == WillInternallyHandleFailure::Yes);
 
     MESSAGE_CHECK_URL(process, provisionalURL);
     MESSAGE_CHECK_URL(process, error.failingURL());
@@ -8818,7 +8818,7 @@ void WebPageProxy::didCommitLoadForFrame(IPC::Connection& connection, FrameIdent
 #if ENABLE(BACK_FORWARD_LIST_SWIFT)
     LOG(BackForward, "(Back/Forward) After load commit, back/forward list is now:%s", std::string(backForwardList().loggingString()).data());
 #else
-    LOG(BackForward, "(Back/Forward) After load commit, back/forward list is now:%s", backForwardList().loggingString().utf8().data());
+    LOG(BackForward, "(Back/Forward) After load commit, back/forward list is now:%s", backForwardList().loggingString().utf8().legacyCStringPointer());
 #endif
 
     RefPtr protectedPageClient { pageClient() };
@@ -8852,12 +8852,15 @@ void WebPageProxy::didCommitLoadForFrame(IPC::Connection& connection, FrameIdent
             URL requesterURL { requesterOrigin.toString() };
             if (!currentDomain.matches(requesterURL)) {
                 Ref websiteDataStore = m_websiteDataStore;
-                protect(websiteDataStore->networkProcess())->didCommitCrossSiteLoadWithDataTransfer(websiteDataStore->sessionID(), RegistrableDomain { requesterURL }, currentDomain, navigationDataTransfer, identifier(), m_webPageID, request.didFilterLinkDecoration() ? DidFilterKnownLinkDecoration::Yes : DidFilterKnownLinkDecoration::No);
+                protect(websiteDataStore->networkProcess())->didCommitCrossSiteLoadWithDataTransfer(websiteDataStore->sessionID(), RegistrableDomain { requesterURL }, currentDomain, navigationDataTransfer, identifier(), request.didFilterLinkDecoration() ? DidFilterKnownLinkDecoration::Yes : DidFilterKnownLinkDecoration::No);
             }
         }
         if (RefPtr websitePolicies = navigation->websitePolicies(); websitePolicies && !m_provisionalPage)
             m_mainFrameWebsitePolicies = websitePolicies->copy();
     }
+
+    if (frame->isMainFrame())
+        protect(protect(m_websiteDataStore)->networkProcess())->didCommitMainFrameNavigation(m_websiteDataStore->sessionID(), identifier(), RegistrableDomain { request.url() }, RegistrableDomain { frame->url() }, restoredFromBackForwardCache);
 
     if (redirectReplaceFrameState) {
         MESSAGE_CHECK_BASE(!frame->isMainFrame(), connection);
@@ -9154,7 +9157,7 @@ void WebPageProxy::broadcastDocumentSyncData(IPC::Connection& connection, const 
     forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         if (webProcess == process)
             return;
-        webProcess.send(Messages::WebPage::TopDocumentSyncDataChangedInAnotherProcess(data), pageID);
+        webProcess.send(Messages::WebPage::TopDocumentSyncDataChangedInAnotherProcess(WebCore::DocumentSyncSerializationData { data }), pageID);
     });
 }
 
@@ -9221,7 +9224,7 @@ void WebPageProxy::broadcastFrameTreeSyncData(IPC::Connection& connection, Frame
     forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         if (webProcess == process)
             return;
-        webProcess.send(Messages::WebPage::FrameTreeSyncDataChangedInAnotherProcess(frameID, data), pageID);
+        webProcess.send(Messages::WebPage::FrameTreeSyncDataChangedInAnotherProcess(frameID, WebCore::FrameTreeSyncSerializationData { data }), pageID);
     });
 }
 
@@ -9419,11 +9422,11 @@ void WebPageProxy::didFailLoadForFrame(IPC::Connection& connection, FrameIdentif
     // load is continuing in another process.
     Ref process = WebProcessProxy::fromConnection(connection);
     if (m_provisionalPage && frame->isMainFrame() && m_provisionalPage->process() != process.get()) {
-        WEBPAGEPROXY_RELEASE_LOG(Loading, "didFailLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d, domain=%s, code=%d, provisionalPID=%i", frameID.toUInt64(), frame->isMainFrame(), error.domain().utf8().data(), error.errorCode(), m_provisionalPage->process().processID());
+        WEBPAGEPROXY_RELEASE_LOG(Loading, "didFailLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d, domain=%s, code=%d, provisionalPID=%i", frameID.toUInt64(), frame->isMainFrame(), error.domain().utf8().legacyCStringPointer(), error.errorCode(), m_provisionalPage->process().processID());
         return;
     }
 
-    WEBPAGEPROXY_RELEASE_LOG_ERROR(Loading, "didFailLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d, domain=%s, code=%d", frameID.toUInt64(), frame->isMainFrame(), error.domain().utf8().data(), error.errorCode());
+    WEBPAGEPROXY_RELEASE_LOG_ERROR(Loading, "didFailLoadForFrame: frameID=%" PRIu64 ", isMainFrame=%d, domain=%s, code=%d", frameID.toUInt64(), frame->isMainFrame(), error.domain().utf8().legacyCStringPointer(), error.errorCode());
 
     MESSAGE_CHECK_URL(process, error.failingURL());
 
@@ -9882,7 +9885,7 @@ void WebPageProxy::decidePolicyForNavigationAction(Ref<WebProcessProxy>&& proces
     RefPtr<FrameState> frameStateForBackForwardNavigation;
     if (protect(preferences())->useUIProcessForBackForwardItemLoading() && navigationActionData.navigationType == WebCore::NavigationType::BackForward && navigationActionData.targetBackForwardItemIdentifier) {
         if (RefPtr frameState = frameStateForBackForwardChildFrame(frame, *navigationActionData.targetBackForwardItemIdentifier)) {
-            WEBPAGEPROXY_RELEASE_LOG(Loading, "frameStateForBackForwardChildFrame: Back/Forward child frame, rewriting URL to %" SENSITIVE_LOG_STRING, frameState->urlString.utf8().data());
+            WEBPAGEPROXY_RELEASE_LOG(Loading, "frameStateForBackForwardChildFrame: Back/Forward child frame, rewriting URL to %" SENSITIVE_LOG_STRING, frameState->urlString.utf8().legacyCStringPointer());
             navigationActionData.request.setURL(URL { frameState->urlString });
 
             frameStateForBackForwardNavigation = WTF::move(frameState);
@@ -9906,7 +9909,7 @@ void WebPageProxy::decidePolicyForNavigationAction(Ref<WebProcessProxy>&& proces
 
     WEBPAGEPROXY_RELEASE_LOG(Loading, "decidePolicyForNavigationAction: frameID=%" PRIu64 ", isMainFrame=%d, navigationID=%" PRIu64, frame.frameID().toUInt64(), frame.isMainFrame(), navigationID ? navigationID->toUInt64() : 0);
 
-    LOG(Loading, "WebPageProxy::decidePolicyForNavigationAction - Original URL %s, current target URL %s", originalRequest.url().string().utf8().data(), request.url().string().utf8().data());
+    LOG(Loading, "WebPageProxy::decidePolicyForNavigationAction - Original URL %s, current target URL %s", originalRequest.url().string().utf8().legacyCStringPointer(), request.url().string().utf8().legacyCStringPointer());
 
     RefPtr protectedPageClient { pageClient() };
 
@@ -11316,9 +11319,21 @@ void WebPageProxy::closePage()
     m_uiClient->close(this);
 }
 
+static bool isInDisplayedFrameTree(WebFrameProxy& frame, WebFrameProxy* currentMainFrame)
+{
+    RefPtr<WebFrameProxy> topFrame = &frame;
+    while (RefPtr parent = topFrame->parentFrame())
+        topFrame = WTF::move(parent);
+
+    return topFrame.get() == currentMainFrame;
+}
+
 void WebPageProxy::runModalJavaScriptDialog(RefPtr<WebFrameProxy>&& frame, FrameInfoData&& frameInfo, String&& message, CompletionHandler<void(WebPageProxy&, WebFrameProxy* frame, FrameInfoData&& frameInfo, String&& message2, CompletionHandler<void()>&&, DialogDisposition)>&& runDialogCallback)
 {
-    m_queuedModalDialogs.append([weakThis = WeakPtr { *this }, frame = WTF::move(frame), frameInfo = WTF::move(frameInfo), message = WTF::move(message), runDialogCallback = WTF::move(runDialogCallback)](DialogDisposition disposition) mutable {
+    if (frame && !isInDisplayedFrameTree(*frame, m_mainFrame.get()))
+        return runDialogCallback(*this, frame.get(), WTF::move(frameInfo), WTF::move(message), [] { }, DialogDisposition::Cancel);
+
+    m_queuedModalDialogs.append({ frame, [weakThis = WeakPtr { *this }, frame = WTF::move(frame), frameInfo = WTF::move(frameInfo), message = WTF::move(message), runDialogCallback = WTF::move(runDialogCallback)](DialogDisposition disposition) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -11338,7 +11353,7 @@ void WebPageProxy::runModalJavaScriptDialog(RefPtr<WebFrameProxy>&& frame, Frame
                 protectedThis->runNextModalJavaScriptDialogIfNeeded();
             }, DialogDisposition::Show);
         });
-    });
+    } });
     runNextModalJavaScriptDialogIfNeeded();
 }
 
@@ -11348,17 +11363,27 @@ void WebPageProxy::runNextModalJavaScriptDialogIfNeeded()
     if (m_isSafeBrowsingCheckInProgress)
         return;
 #endif
-    if (m_isRunningModalJavaScriptDialog || m_queuedModalDialogs.isEmpty())
+    if (m_isRunningModalJavaScriptDialog)
         return;
 
-    m_isRunningModalJavaScriptDialog = true;
-    m_queuedModalDialogs.takeFirst()(DialogDisposition::Show);
+    while (!m_queuedModalDialogs.isEmpty()) {
+        auto dialog = m_queuedModalDialogs.takeFirst();
+        // The frame tree can change while a request waits in the queue.
+        RefPtr frame = dialog.frame.get();
+        if (!frame || !isInDisplayedFrameTree(*frame, m_mainFrame.get())) {
+            dialog.show(DialogDisposition::Cancel);
+            continue;
+        }
+        m_isRunningModalJavaScriptDialog = true;
+        dialog.show(DialogDisposition::Show);
+        return;
+    }
 }
 
 void WebPageProxy::purgeQueuedModalDialogs()
 {
     for (auto& dialog : std::exchange(m_queuedModalDialogs, { }))
-        dialog(DialogDisposition::Cancel);
+        dialog.show(DialogDisposition::Cancel);
 }
 
 void WebPageProxy::runJavaScriptAlert(IPC::Connection& connection, FrameIdentifier frameID, FrameInfoData&& frameInfo, String&& message, CompletionHandler<void()>&& reply)
@@ -11804,7 +11829,7 @@ void WebPageProxy::showDigitalCredentialsChooser(IPC::Connection& connection, st
 {
     WTF::switchOn(requestData,
         [&](const auto& requestData) {
-            LOG(DigitalCredentials, "WebPageProxy::showDigitalCredentialsChooser() - UIProcess: received IPC from WebProcess for origin: %s", requestData.topOrigin.toString().utf8().data());
+            LOG(DigitalCredentials, "WebPageProxy::showDigitalCredentialsChooser() - UIProcess: received IPC from WebProcess for origin: %s", requestData.topOrigin.toString().utf8().legacyCStringPointer());
             MESSAGE_CHECK_COMPLETION_BASE(
                 protect(preferences())->digitalCredentialsEnabled(),
                 connection,
@@ -11921,7 +11946,7 @@ void WebPageProxy::setVirtualWalletBehaviorForTesting(const String& action, cons
         parsedAction = VirtualWalletAction::Wait;
 
     if (!parsedAction) {
-        ASSERT_NOT_REACHED_WITH_MESSAGE("Unknown virtual wallet action: %s", action.utf8().data());
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Unknown virtual wallet action: %s", action.utf8().legacyCStringPointer());
         return;
     }
 
@@ -12312,17 +12337,12 @@ void WebPageProxy::showColorPicker(IPC::Connection& connection, const WebCore::C
     if (!pageClient)
         return;
 
-    internals().colorPicker = pageClient->createColorPicker(*this, initialColor, elementRect, supportsAlpha, WTF::move(suggestions), rootFrameID);
+    RefPtr colorPicker = pageClient->createColorPicker(*this, initialColor, elementRect, supportsAlpha, WTF::move(suggestions), rootFrameID);
+    internals().colorPicker = colorPicker;
 
-    convertRectToMainFrameCoordinates(elementRect, rootFrameID, [weakThis = WeakPtr { *this }, initialColor](std::optional<FloatRect> convertedRect) mutable {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis || !convertedRect)
-            return;
-
-        // FIXME: Remove this conditional once all ports have a functional PageClientImpl::createColorPicker.
-        if (RefPtr colorPicker = protectedThis->internals().colorPicker)
-            colorPicker->showColorPicker(initialColor, IntRect(*convertedRect));
-    });
+    // FIXME: Remove this conditional once all ports have a functional PageClientImpl::createColorPicker.
+    if (colorPicker)
+        colorPicker->showColorPicker(initialColor, elementRect);
 }
 
 void WebPageProxy::setColorPickerColor(const WebCore::Color& color)
@@ -13991,7 +14011,7 @@ void WebPageProxy::logScrollingEvent(uint32_t eventType, MonotonicTime timestamp
         break;
     case PerformanceLoggingClient::ScrollingEvent::SwitchedScrollingMode:
         if (data)
-            WTFLogAlways("SCROLLING: Switching to main-thread scrolling mode. Time: %f Reason(s): %s\n", timestamp.secondsSinceEpoch().value(), PerformanceLoggingClient::synchronousScrollingReasonsAsString(OptionSet<SynchronousScrollingReason>::fromRaw(data)).utf8().data());
+            WTFLogAlways("SCROLLING: Switching to main-thread scrolling mode. Time: %f Reason(s): %s\n", timestamp.secondsSinceEpoch().value(), PerformanceLoggingClient::synchronousScrollingReasonsAsString(OptionSet<SynchronousScrollingReason>::fromRaw(data)).utf8().legacyCStringPointer());
         else
             WTFLogAlways("SCROLLING: Switching to threaded scrolling mode. Time: %f\n", timestamp.secondsSinceEpoch().value());
         break;
@@ -18808,7 +18828,7 @@ void WebPageProxy::gpuProcessDidFinishLaunching()
         pageClient->gpuProcessDidFinishLaunching();
 #if ENABLE(EXTENSION_CAPABILITIES)
     if (RefPtr mediaCapability = this->mediaCapability()) {
-        WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "gpuProcessDidFinishLaunching[envID=%" PUBLIC_LOG_STRING "]: updating media capability", mediaCapability->environmentIdentifier().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "gpuProcessDidFinishLaunching[envID=%" PUBLIC_LOG_STRING "]: updating media capability", mediaCapability->environmentIdentifier().utf8().legacyCStringPointer());
         updateMediaCapability();
     }
 #endif
@@ -19863,7 +19883,7 @@ void WebPageProxy::didCacheBackForwardItem(BackForwardItemIdentifier itemID, Com
 {
     RefPtr item = WebBackForwardListItem::itemForID(itemID);
     if (!item) {
-        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didCacheBackForwardItem: unknown itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didCacheBackForwardItem: unknown itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().legacyCStringPointer());
         return completionHandler(false);
     }
 
@@ -19872,7 +19892,7 @@ void WebPageProxy::didCacheBackForwardItem(BackForwardItemIdentifier itemID, Com
     // against that stale item, re-home the entry onto the current item: it describes the same
     // main-frame document and is what a subsequent Back will actually traverse.
     if (RefPtr currentItem = backForwardList().currentItem(); currentItem && currentItem != item && item->hasSameMainFrameHistoryEntry(*currentItem)) {
-        WEBPAGEPROXY_RELEASE_LOG(ProcessSwapping, "didCacheBackForwardItem: redirecting cache from stale itemID %" PUBLIC_LOG_STRING " to current itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().data(), currentItem->identifier().toString().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG(ProcessSwapping, "didCacheBackForwardItem: redirecting cache from stale itemID %" PUBLIC_LOG_STRING " to current itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().legacyCStringPointer(), currentItem->identifier().toString().utf8().legacyCStringPointer());
         item = WTF::move(currentItem);
         itemID = item->identifier();
     }
@@ -19880,13 +19900,13 @@ void WebPageProxy::didCacheBackForwardItem(BackForwardItemIdentifier itemID, Com
     // Race guard: skip when the item is the target of a pending API navigation
     // (e.g. an in-flight back/forward to the same item).
     if (auto& pendingURL = internals().pageLoadState.pendingAPIRequestURL(); pendingURL.isValid() && pendingURL == item->url()) {
-        WEBPAGEPROXY_RELEASE_LOG(ProcessSwapping, "didCacheBackForwardItem: skipping; itemID %" PUBLIC_LOG_STRING " is the target of a pending navigation", itemID.toString().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG(ProcessSwapping, "didCacheBackForwardItem: skipping; itemID %" PUBLIC_LOG_STRING " is the target of a pending navigation", itemID.toString().utf8().legacyCStringPointer());
         return completionHandler(false);
     }
 
     RefPtr mainFrame = m_mainFrame;
     if (!mainFrame) {
-        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didCacheBackForwardItem: m_mainFrame is null for itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didCacheBackForwardItem: m_mainFrame is null for itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().legacyCStringPointer());
         return completionHandler(false);
     }
 
@@ -19894,7 +19914,7 @@ void WebPageProxy::didCacheBackForwardItem(BackForwardItemIdentifier itemID, Com
 
     RefPtr entry = item->backForwardCacheEntry();
     if (!entry) {
-        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didCacheBackForwardItem: cache entry missing after addEntry for itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didCacheBackForwardItem: cache entry missing after addEntry for itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().legacyCStringPointer());
         return completionHandler(false);
     }
 
@@ -19946,7 +19966,7 @@ void WebPageProxy::didTakeBackForwardItemForRestoration(BackForwardItemIdentifie
     // the UI-side entry.
     RefPtr item = WebBackForwardListItem::itemForID(itemID);
     if (!item) {
-        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didTakeBackForwardItemForRestoration: unknown itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().data());
+        WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "didTakeBackForwardItemForRestoration: unknown itemID %" PUBLIC_LOG_STRING, itemID.toString().utf8().legacyCStringPointer());
         return;
     }
     if (!item->backForwardCacheEntry())

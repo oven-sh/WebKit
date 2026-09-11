@@ -112,7 +112,7 @@ webrtc::SocketAddress SocketAddress::rtcAddress() const
 SocketAddress::SocketAddress(const webrtc::SocketAddress& value)
     : port(value.port())
     , scopeID(value.scope_id())
-    , hostname(value.hostname())
+    , hostname(String::fromUTF8(value.hostname()))
     , ipAddress(value.IsUnresolvedIP() ? std::nullopt : std::optional(IPAddress(value.ipaddr())))
 {
 }

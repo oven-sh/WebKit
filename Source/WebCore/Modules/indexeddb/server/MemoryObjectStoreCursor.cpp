@@ -46,7 +46,7 @@ MemoryObjectStoreCursor::MemoryObjectStoreCursor(MemoryObjectStore& objectStore,
     , m_objectStore(objectStore)
     , m_remainingRange(info.range())
 {
-    LOG(IndexedDB, "MemoryObjectStoreCursor::MemoryObjectStoreCursor %s", info.range().loggingString().utf8().data());
+    LOG(IndexedDB, "MemoryObjectStoreCursor::MemoryObjectStoreCursor %s", info.range().loggingString().utf8().legacyCStringPointer());
 
     auto* orderedKeys = objectStore.orderedKeys();
     if (!orderedKeys)
@@ -323,7 +323,7 @@ void MemoryObjectStoreCursor::incrementReverseIterator(IDBKeyDataSet& set, const
 
 void MemoryObjectStoreCursor::iterate(const IDBKeyData& key, const IDBKeyData& primaryKeyData, uint32_t count, IDBGetResult& outData)
 {
-    LOG(IndexedDB, "MemoryObjectStoreCursor::iterate to key %s", key.loggingString().utf8().data());
+    LOG(IndexedDB, "MemoryObjectStoreCursor::iterate to key %s", key.loggingString().utf8().legacyCStringPointer());
 
     ASSERT_UNUSED(primaryKeyData, primaryKeyData.isNull());
 

@@ -57,7 +57,7 @@ String::String(std::span<const char8_t> characters)
 {
 }
 
-// Construct a string with Latin-1 data.
+// Construct a string with Latin-1 data. Intentionally private; `char` carries no encoding.
 String::String(std::span<const char> characters)
     : m_impl(characters.data() ? RefPtr { StringImpl::create(byteCast<Latin1Character>(characters)) } : nullptr)
 {

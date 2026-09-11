@@ -40,6 +40,9 @@
 
 #if USE(ACCELERATE) && USE(CG)
 #include <Accelerate/Accelerate.h>
+#if HAVE(ARM_NEON_INTRINSICS)
+#include <arm_neon.h>
+#endif
 #elif USE(SKIA)
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkPixmap.h>
@@ -182,6 +185,61 @@ static bool convertImagePixelsAcceleratedAnyToAny(const ConstPixelBufferConversi
     return true;
 }
 
+#if HAVE(ARM_NEON_INTRINSICS)
+template<bool shouldUnpremultiply>
+static bool convertSmallImageAlpha(const ConstPixelBufferConversionView& source, const PixelBufferConversionView& destination, const IntSize& size)
+{
+    if (size.width() <= 0 || size.height() <= 0)
+        return false;
+    auto pixelCount = static_cast<uint64_t>(size.width()) * size.height();
+    if (pixelCount > 16384 || static_cast<uint64_t>(size.width()) * 4 != source.bytesPerRow || source.bytesPerRow != destination.bytesPerRow)
+        return false;
+
+    auto sourceBytes = source.rows.first(pixelCount * 4);
+    auto destinationBytes = destination.rows.first(pixelCount * 4);
+    size_t offset = 0;
+    if constexpr (!shouldUnpremultiply) {
+        for (; offset + 32 <= sourceBytes.size(); offset += 32) {
+            auto pixels = vld4_u8(sourceBytes.subspan(offset).data());
+            auto premultiply = [&](uint8x8_t channel) {
+                // This produces exactly the same results as (channel * alpha + 127) / 255 in vImagePremultiplyData_ARGB8888().
+                auto product = vmlal_u8(vdupq_n_u16(128), channel, pixels.val[3]);
+                return vshrn_n_u16(vaddq_u16(product, vshrq_n_u16(product, 8)), 8);
+            };
+            pixels.val[0] = premultiply(pixels.val[0]);
+            pixels.val[1] = premultiply(pixels.val[1]);
+            pixels.val[2] = premultiply(pixels.val[2]);
+            vst4_u8(destinationBytes.subspan(offset).data(), pixels);
+        }
+        for (; offset < sourceBytes.size(); offset += 4) {
+            unsigned alpha = sourceBytes[offset + 3];
+            for (unsigned channel = 0; channel < 3; ++channel)
+                destinationBytes[offset + channel] = (sourceBytes[offset + channel] * alpha + 127) / 255;
+            destinationBytes[offset + 3] = alpha;
+        }
+    } else {
+        for (; offset + 64 <= sourceBytes.size(); offset += 64) {
+            auto pixels = vld4q_u8(sourceBytes.subspan(offset).data());
+            auto alpha = pixels.val[3];
+            auto binaryAlpha = vorrq_u8(vceqq_u8(alpha, vdupq_n_u8(0)), vceqq_u8(alpha, vdupq_n_u8(255)));
+            if (vminvq_u8(binaryAlpha) != 255)
+                break;
+            pixels.val[0] = vandq_u8(pixels.val[0], alpha);
+            pixels.val[1] = vandq_u8(pixels.val[1], alpha);
+            pixels.val[2] = vandq_u8(pixels.val[2], alpha);
+            vst4q_u8(destinationBytes.subspan(offset).data(), pixels);
+        }
+        if (offset != sourceBytes.size()) {
+            auto remainingBytes = sourceBytes.size() - offset;
+            vImage_Buffer sourceBuffer { const_cast<uint8_t*>(sourceBytes.subspan(offset).data()), 1, remainingBytes / 4, remainingBytes };
+            vImage_Buffer destinationBuffer { destinationBytes.subspan(offset).data(), 1, remainingBytes / 4, remainingBytes };
+            vImageUnpremultiplyData_RGBA8888(&sourceBuffer, &destinationBuffer, kvImageNoFlags);
+        }
+    }
+    return true;
+}
+#endif
+
 static bool convertImagePixelsAcceleratedMatchingSize(const ConstPixelBufferConversionView& sourceView, const PixelBufferConversionView& destinationView, const IntSize& destinationSize)
 {
     auto sourceVImageBuffer = makeVImageBuffer(sourceView, destinationSize);
@@ -204,28 +262,38 @@ static bool convertImagePixelsAcceleratedMatchingSize(const ConstPixelBufferConv
 
     if (isAlphaApplied(sourceAlphaFormat) != isAlphaApplied(destinationAlphaFormat)) {
         bool shouldUnpremultiply = !isAlphaApplied(destinationAlphaFormat);
-        switch (sourceView.format.pixelFormat) {
-#if ENABLE(PIXEL_FORMAT_RGBA16F)
-        case PixelFormat::RGBA16F:
-            if (shouldUnpremultiply)
-                vImageUnpremultiplyData_RGBA16F(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
-            else
-                vImagePremultiplyData_RGBA16F(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
-            break;
+        bool converted = false;
+#if HAVE(ARM_NEON_INTRINSICS)
+        if (PixelBuffer::bytesPerPixelComponent(sourceView.format.pixelFormat) == 1) {
+            converted = shouldUnpremultiply
+                ? convertSmallImageAlpha<true>(sourceView, destinationView, destinationSize)
+                : convertSmallImageAlpha<false>(sourceView, destinationView, destinationSize);
+        }
 #endif
-        case PixelFormat::RGBA8:
-            if (shouldUnpremultiply)
-                vImageUnpremultiplyData_RGBA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
-            else
-                vImagePremultiplyData_RGBA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
-            break;
-        default:
-            ASSERT(sourceView.format.pixelFormat == PixelFormat::BGRA8);
-            if (shouldUnpremultiply)
-                vImageUnpremultiplyData_BGRA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
-            else
-                vImagePremultiplyData_BGRA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
-            break;
+        if (!converted) {
+            switch (sourceView.format.pixelFormat) {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+            case PixelFormat::RGBA16F:
+                if (shouldUnpremultiply)
+                    vImageUnpremultiplyData_RGBA16F(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
+                else
+                    vImagePremultiplyData_RGBA16F(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
+                break;
+#endif
+            case PixelFormat::RGBA8:
+                if (shouldUnpremultiply)
+                    vImageUnpremultiplyData_RGBA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
+                else
+                    vImagePremultiplyData_RGBA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
+                break;
+            default:
+                ASSERT(sourceView.format.pixelFormat == PixelFormat::BGRA8);
+                if (shouldUnpremultiply)
+                    vImageUnpremultiplyData_BGRA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
+                else
+                    vImagePremultiplyData_BGRA8888(&sourceVImageBuffer, &destinationVImageBuffer, kvImageNoFlags);
+                break;
+            }
         }
 
         sourceVImageBuffer = destinationVImageBuffer;

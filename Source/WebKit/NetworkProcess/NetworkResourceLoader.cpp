@@ -278,7 +278,7 @@ void NetworkResourceLoader::startRequest(const ResourceRequest& newRequest)
 
             WTF::switchOn(result,
                 [protectedThis] (ResourceError& error) {
-                    LOADER_RELEASE_LOG_WITH_THIS(protectedThis, "start: NetworkLoadChecker::check returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d, isCancellation=%d)", error.domain().utf8().data(), error.errorCode(), error.isCancellation());
+                    LOADER_RELEASE_LOG_WITH_THIS(protectedThis, "start: NetworkLoadChecker::check returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d, isCancellation=%d)", error.domain().utf8().legacyCStringPointer(), error.errorCode(), error.isCancellation());
                     if (!error.isCancellation())
                         protectedThis->didFailLoading(error);
                 },
@@ -429,7 +429,7 @@ bool NetworkResourceLoader::shouldSendResourceLoadMessages() const
 bool NetworkResourceLoader::isLocalFileLoadAllowed(const URL& url)
 {
     bool pathIsAllowed = !pathIsBlockedForSandboxExtensions(url.fileSystemPath());
-    LOADER_RELEASE_LOG("isLocalFileLoadAllowed: allowed = %d, path = %{public}s", pathIsAllowed, url.fileSystemPath().utf8().data());
+    LOADER_RELEASE_LOG("isLocalFileLoadAllowed: allowed = %d, path = %{public}s", pathIsAllowed, url.fileSystemPath().utf8().legacyCStringPointer());
     return pathIsAllowed;
 }
 #endif // ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
@@ -519,7 +519,7 @@ void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoa
         networkLoad->startWithScheduling();
 
     if (weakThis && networkLoad)
-        LOADER_RELEASE_LOG("startNetworkLoad: Going to the network (description=%" PUBLIC_LOG_STRING ")", networkLoad->description().utf8().data());
+        LOADER_RELEASE_LOG("startNetworkLoad: Going to the network (description=%" PUBLIC_LOG_STRING ")", networkLoad->description().utf8().legacyCStringPointer());
 }
 
 ResourceLoadInfo NetworkResourceLoader::resourceLoadInfo()
@@ -1170,7 +1170,7 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
     };
 #endif
 
-    LOADER_RELEASE_LOG("didReceiveResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, hasCachedEntryForValidation=%d, hasNetworkLoadChecker=%d)", receivedResponse.httpStatusCode(), receivedResponse.mimeType().utf8().data(), receivedResponse.expectedContentLength(), !!m_cacheEntryForValidation, !!m_networkLoadChecker);
+    LOADER_RELEASE_LOG("didReceiveResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, hasCachedEntryForValidation=%d, hasNetworkLoadChecker=%d)", receivedResponse.httpStatusCode(), receivedResponse.mimeType().utf8().legacyCStringPointer(), receivedResponse.expectedContentLength(), !!m_cacheEntryForValidation, !!m_networkLoadChecker);
 
 #if ENABLE(CONTENT_FILTERING)
     if (m_contentFilter && !protect(m_contentFilter)->continueAfterResponseReceived(receivedResponse))
@@ -1258,7 +1258,7 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
     if (networkLoadChecker) {
         auto error = networkLoadChecker->validateResponse(m_networkLoad ? m_networkLoad->currentRequest() : originalRequest(), m_response);
         if (!error.isNull()) {
-            LOADER_RELEASE_LOG_ERROR("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8().data(), error.errorCode());
+            LOADER_RELEASE_LOG_ERROR("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8().legacyCStringPointer(), error.errorCode());
             RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }, error = WTF::move(error)] {
                 if (protectedThis->m_networkLoad)
                     protectedThis->didFailLoading(error);
@@ -2419,28 +2419,28 @@ void NetworkResourceLoader::logCookieInformation() const
     CheckedPtr networkStorageSession = protect(connectionToWebProcess().networkProcess())->storageSession(sessionID());
     ASSERT(networkStorageSession);
 
-    logCookieInformation(protect(m_connection), "NetworkResourceLoader"_s, reinterpret_cast<const void*>(this), *networkStorageSession, originalRequest().firstPartyForCookies(), SameSiteInfo::create(originalRequest()), originalRequest().url(), originalRequest().httpReferrer(), frameID(), pageID(), coreIdentifier());
+    logCookieInformation(protect(m_connection), "NetworkResourceLoader"_s, reinterpret_cast<const void*>(this), *networkStorageSession, originalRequest().firstPartyForCookies(), SameSiteInfo::create(originalRequest()), originalRequest().url(), originalRequest().httpReferrer(), frameID(), webPageProxyID(), coreIdentifier());
 }
 
-static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
+static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
 {
     ASSERT(NetworkResourceLoader::shouldLogCookieInformation(connection, networkStorageSession.sessionID()));
 
     auto escapedURL = escapeForJSON(url.string());
     auto escapedFirstParty = escapeForJSON(firstParty.string());
     auto escapedFrameID = escapeIDForJSON(frameID);
-    auto escapedPageID = escapeIDForJSON(pageID);
+    auto escapedWebPageProxyID = escapeIDForJSON(webPageProxyID);
     auto escapedIdentifier = escapeIDForJSON(identifier);
     auto escapedReferrer = escapeForJSON(referrer);
 
 #define LOCAL_LOG_IF_ALLOWED(fmt, ...) RELEASE_LOG_IF(connection.isAlwaysOnLoggingAllowed(), Network, "%p - %s::" fmt, loggedObject, label.characters(), ##__VA_ARGS__)
 #define LOCAL_LOG(str, ...) \
-    LOCAL_LOG_IF_ALLOWED("logCookieInformation: BLOCKED cookie access for webPageID=%s, frameID=%s, resourceID=%s, firstParty=%s: " str, escapedPageID.utf8().data(), escapedFrameID.utf8().data(), escapedIdentifier.utf8().data(), escapedFirstParty.utf8().data(), ##__VA_ARGS__)
+    LOCAL_LOG_IF_ALLOWED("logCookieInformation: BLOCKED cookie access for webPageProxyID=%s, frameID=%s, resourceID=%s, firstParty=%s: " str, escapedWebPageProxyID.utf8().legacyCStringPointer(), escapedFrameID.utf8().legacyCStringPointer(), escapedIdentifier.utf8().legacyCStringPointer(), escapedFirstParty.utf8().legacyCStringPointer(), ##__VA_ARGS__)
 
-    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
+    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", "BLOCKED");
     LOCAL_LOG("  \"hasStorageAccess\": %" PUBLIC_LOG_STRING ",", "false");
-    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().data());
+    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"isSameSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isSameSite ? "true" : "false");
     LOCAL_LOG("  \"isTopSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isTopSite ? "true" : "false");
     LOCAL_LOG("  \"cookies\": []");
@@ -2449,30 +2449,30 @@ static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connectio
 #undef LOCAL_LOG_IF_ALLOWED
 }
 
-static void logCookieInformationInternal(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const WebCore::SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
+static void logCookieInformationInternal(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const WebCore::SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
 {
     ASSERT(NetworkResourceLoader::shouldLogCookieInformation(connection, networkStorageSession.sessionID()));
 
     Vector<WebCore::Cookie> cookies;
-    if (!networkStorageSession.getRawCookies(firstParty, sameSiteInfo, url, frameID, pageID, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, cookies))
+    if (!networkStorageSession.getRawCookies(firstParty, sameSiteInfo, url, frameID, webPageProxyID, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, cookies))
         return;
 
     auto escapedURL = escapeForJSON(url.string());
     auto escapedPartition = escapeForJSON(emptyString());
     auto escapedReferrer = escapeForJSON(referrer);
     auto escapedFrameID = escapeIDForJSON(frameID);
-    auto escapedPageID = escapeIDForJSON(pageID);
+    auto escapedWebPageProxyID = escapeIDForJSON(webPageProxyID);
     auto escapedIdentifier = escapeIDForJSON(identifier);
-    bool hasStorageAccess = (frameID && pageID) ? networkStorageSession.hasStorageAccess(WebCore::RegistrableDomain { url }, WebCore::RegistrableDomain { firstParty }, frameID.value(), pageID.value()) : false;
+    bool hasStorageAccess = (frameID && webPageProxyID) ? networkStorageSession.hasStorageAccess(WebCore::RegistrableDomain { url }, WebCore::RegistrableDomain { firstParty }, frameID, webPageProxyID) : false;
 
 #define LOCAL_LOG_IF_ALLOWED(fmt, ...) RELEASE_LOG_IF(connection.isAlwaysOnLoggingAllowed(), Network, "%p - %s::" fmt, loggedObject, label.characters(), ##__VA_ARGS__)
 #define LOCAL_LOG(str, ...) \
-    LOCAL_LOG_IF_ALLOWED("logCookieInformation: webPageID=%s, frameID=%s, resourceID=%s: " str, escapedPageID.utf8().data(), escapedFrameID.utf8().data(), escapedIdentifier.utf8().data(), ##__VA_ARGS__)
+    LOCAL_LOG_IF_ALLOWED("logCookieInformation: webPageProxyID=%s, frameID=%s, resourceID=%s: " str, escapedWebPageProxyID.utf8().legacyCStringPointer(), escapedFrameID.utf8().legacyCStringPointer(), escapedIdentifier.utf8().legacyCStringPointer(), ##__VA_ARGS__)
 
-    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
-    LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", escapedPartition.utf8().data());
+    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().legacyCStringPointer());
+    LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", escapedPartition.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"hasStorageAccess\": %" PUBLIC_LOG_STRING ",", hasStorageAccess ? "true" : "false");
-    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().data());
+    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"isSameSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isSameSite ? "true" : "false");
     LOCAL_LOG("  \"isTopSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isTopSite ? "true" : "false");
     LOCAL_LOG("  \"cookies\": [");
@@ -2492,17 +2492,17 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
         auto escapedCommentURL = escapeForJSON(cookie.commentURL.string());
         // FIXME: Log Same-Site policy for each cookie. See <https://bugs.webkit.org/show_bug.cgi?id=184894>.
 
-        LOCAL_LOG("  { \"name\": \"%" PUBLIC_LOG_STRING "\",", escapedName.utf8().data());
-        LOCAL_LOG("    \"value\": \"%" PUBLIC_LOG_STRING "\",", escapedValue.utf8().data());
-        LOCAL_LOG("    \"domain\": \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8().data());
-        LOCAL_LOG("    \"path\": \"%" PUBLIC_LOG_STRING "\",", escapedPath.utf8().data());
+        LOCAL_LOG("  { \"name\": \"%" PUBLIC_LOG_STRING "\",", escapedName.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"value\": \"%" PUBLIC_LOG_STRING "\",", escapedValue.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"domain\": \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"path\": \"%" PUBLIC_LOG_STRING "\",", escapedPath.utf8().legacyCStringPointer());
         LOCAL_LOG("    \"created\": %f,", cookie.created);
         LOCAL_LOG("    \"expires\": %f,", cookie.expires.value_or(0));
         LOCAL_LOG("    \"httpOnly\": %" PUBLIC_LOG_STRING ",", cookie.httpOnly ? "true" : "false");
         LOCAL_LOG("    \"secure\": %" PUBLIC_LOG_STRING ",", cookie.secure ? "true" : "false");
         LOCAL_LOG("    \"session\": %" PUBLIC_LOG_STRING ",", cookie.session ? "true" : "false");
-        LOCAL_LOG("    \"comment\": \"%" PUBLIC_LOG_STRING "\",", escapedComment.utf8().data());
-        LOCAL_LOG("    \"commentURL\": \"%" PUBLIC_LOG_STRING "\"", escapedCommentURL.utf8().data());
+        LOCAL_LOG("    \"comment\": \"%" PUBLIC_LOG_STRING "\",", escapedComment.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"commentURL\": \"%" PUBLIC_LOG_STRING "\"", escapedCommentURL.utf8().legacyCStringPointer());
         LOCAL_LOG("  }%" PUBLIC_LOG_STRING, trailingComma.characters());
     }
     LOCAL_LOG("]}");
@@ -2510,14 +2510,14 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
 #undef LOCAL_LOG_IF_ALLOWED
 }
 
-void NetworkResourceLoader::logCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
+void NetworkResourceLoader::logCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
 {
     ASSERT(shouldLogCookieInformation(connection, networkStorageSession.sessionID()));
 
-    if (networkStorageSession.shouldBlockCookies(firstParty, url, frameID, pageID, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No))
-        logBlockedCookieInformation(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, pageID, identifier);
+    if (networkStorageSession.shouldBlockCookies(firstParty, url, frameID, webPageProxyID, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No))
+        logBlockedCookieInformation(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, webPageProxyID, identifier);
     else
-        logCookieInformationInternal(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, pageID, identifier);
+        logCookieInformationInternal(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, webPageProxyID, identifier);
 }
 #endif // !RELEASE_LOG_DISABLED
 

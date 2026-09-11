@@ -266,7 +266,7 @@ bool SWContextManager::stopRunningDebuggerTasksOnServiceWorker(ServiceWorkerIden
 void SWContextManager::serviceWorkerFailedToTerminate(ServiceWorkerIdentifier serviceWorkerIdentifier)
 {
     UNUSED_PARAM(serviceWorkerIdentifier);
-    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8().data());
+    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8().legacyCStringPointer());
     ASSERT_NOT_REACHED();
     terminateProcess(EXIT_FAILURE);
 }

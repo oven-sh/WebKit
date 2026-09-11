@@ -46,7 +46,7 @@ RenderBundleImpl::~RenderBundleImpl() = default;
 
 void RenderBundleImpl::setLabelInternal(const String& label)
 {
-    wgpuRenderBundleSetLabel(m_backing.get(), label.utf8().data());
+    wgpuRenderBundleSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

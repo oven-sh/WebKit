@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,10 +42,6 @@
 #include "FontCustomPlatformData.h"
 #include "GlyphPage.h"
 #include "SharedBuffer.h"
-
-#if ENABLE(MATHML)
-#include "OpenTypeMathData.h"
-#endif
 
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
@@ -94,20 +90,12 @@ Ref<Font> Font::create(FontInternalAttributes&& attributes, FontPlatformData&& p
 }
 
 Font::Font(const FontPlatformData& platformData, Origin origin, IsInterstitial interstitial, Visibility visibility, IsOrientationFallback orientationFallback, std::optional<RenderingResourceIdentifier> renderingResourceIdentifier)
-    : m_platformData(platformData)
-    , m_attributes({ renderingResourceIdentifier, origin, interstitial, visibility, orientationFallback })
-    , m_treatAsFixedPitch(false)
-    , m_isBrokenIdeographFallback(false)
-    , m_hasVerticalGlyphs(false)
-    , m_isUsedInSystemFallbackFontCache(false)
-    , m_allowsAntialiasing(true)
-#if PLATFORM(IOS_FAMILY)
-    , m_shouldNotBeUsedForArabic(false)
-#endif
+    : FontBase(platformData, origin, interstitial, visibility, orientationFallback, renderingResourceIdentifier)
 {
     platformInit();
     platformGlyphInit();
     platformCharWidthInit();
+    platformCharHeightInit();
 #if ENABLE(OPENTYPE_VERTICAL)
     if (platformData.orientation() == FontOrientation::Vertical && !isTextOrientationFallback()) {
         m_verticalData = FontCache::forCurrentThread().verticalData(platformData);
@@ -122,25 +110,6 @@ Font::Font(IsSystemFallbackFontPlaceholder isSystemFontFallbackPlaceholder)
 {
     // This ctor is to be used only for representing a system font fallback placeholder (createSystemFallbackFontPlaceholder)
     ASSERT(isSystemFontFallbackPlaceholder == IsSystemFallbackFontPlaceholder::Yes);
-}
-
-void Font::applyFontMetricsOverrides()
-{
-    if (m_platformData.metricsOverrides().ascentOverride.isNormal()
-        && m_platformData.metricsOverrides().descentOverride.isNormal()
-        && m_platformData.metricsOverrides().lineGapOverride.isNormal())
-        return;
-
-    if (!m_platformData.metricsOverrides().ascentOverride.isNormal())
-        m_fontMetrics.setAscent(*m_platformData.metricsOverrides().ascentOverride.value * platformData().size());
-
-    if (!m_platformData.metricsOverrides().descentOverride.isNormal())
-        m_fontMetrics.setDescent(*m_platformData.metricsOverrides().descentOverride.value * platformData().size());
-
-    if (!m_platformData.metricsOverrides().lineGapOverride.isNormal())
-        m_fontMetrics.setLineGap(*m_platformData.metricsOverrides().lineGapOverride.value * platformData().size());
-
-    m_fontMetrics.setLineSpacing(lroundf(m_fontMetrics.ascent()) + lroundf(m_fontMetrics.descent()) + lroundf(m_fontMetrics.lineGap()));
 }
 
 // Estimates of avgCharWidth and maxCharWidth for platforms that don't support accessing these values from the font.
@@ -234,18 +203,6 @@ Font::~Font()
 {
     if (auto* cache = SystemFallbackFontCache::forCurrentThreadIfExists())
         cache->remove(this);
-}
-
-RenderingResourceIdentifier Font::renderingResourceIdentifier() const
-{
-    return m_attributes.ensureRenderingResourceIdentifier();
-}
-
-RenderingResourceIdentifier FontInternalAttributes::ensureRenderingResourceIdentifier() const
-{
-    if (!renderingResourceIdentifier)
-        renderingResourceIdentifier = RenderingResourceIdentifier::generate();
-    return *renderingResourceIdentifier;
 }
 
 static bool fillGlyphPage(GlyphPage& pageToFill, std::span<const char16_t> buffer, const Font& font)
@@ -581,6 +538,10 @@ const Font& Font::brokenIdeographFont() const
 
 #if !USE(CORE_TEXT)
 
+void Font::platformCharHeightInit()
+{
+}
+
 bool Font::isProbablyOnlyUsedToRenderIcons() const
 {
     // FIXME: Not implemented yet.
@@ -596,20 +557,6 @@ String Font::description() const
         return "[custom font]"_s;
 
     return platformData().description();
-}
-#endif
-
-#if ENABLE(MATHML)
-const OpenTypeMathData* Font::mathData() const
-{
-    if (isInterstitial())
-        return nullptr;
-    if (!m_mathData) {
-        Ref mathData = OpenTypeMathData::create(m_platformData);
-        if (mathData->hasMathData())
-            m_mathData = WTF::move(mathData);
-    }
-    return m_mathData.get();
 }
 #endif
 

@@ -71,8 +71,8 @@ public:
 
     // Construct a string with Latin-1 data.
     WTF_EXPORT_PRIVATE String(std::span<const Latin1Character> characters);
-    WTF_EXPORT_PRIVATE String(std::span<const char> characters);
     ALWAYS_INLINE static String fromLatin1(const char* characters) { return String { characters }; }
+    ALWAYS_INLINE static String fromLatin1(std::span<const char> characters) { return String { characters }; }
 
     // Construct a string with UTF-8 data, null string if it contains invalid UTF-8 sequences.
     WTF_EXPORT_PRIVATE String(std::span<const char8_t>);
@@ -131,8 +131,9 @@ public:
     WTF_EXPORT_PRIVATE ASCIICString ascii() const;
     WTF_EXPORT_PRIVATE Latin1CString latin1() const;
 
-    // FIXME: Should return a UTF8CString, like tryGetUTF8() below already does. Blocked on the
-    // ~2900 call sites, most of which pass utf8().data() to a %s and would need characters().
+    // FIXME: Should return a UTF8CString, like tryGetUTF8() below already does. The call sites that
+    // hand the result to a %s or a C API now use legacyCStringPointer(), which keeps returning
+    // const char* once this is retyped, so the remaining work is the retype itself.
     WTF_EXPORT_PRIVATE CString utf8(ConversionMode = LenientConversion) const;
 
     template<typename Func>
@@ -348,8 +349,10 @@ private:
     template<bool allowEmptyEntries> Vector<String> splitInternal(char16_t separator) const;
     template<bool allowEmptyEntries> Vector<String> splitInternal(StringView separator) const;
 
-    // This is intentionally private. Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
+    // These are intentionally private, because `char` carries no encoding.
+    // Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
     WTF_EXPORT_PRIVATE explicit String(const char* characters);
+    WTF_EXPORT_PRIVATE explicit String(std::span<const char> characters);
 
     RefPtr<StringImpl> m_impl;
 } SWIFT_ESCAPABLE;

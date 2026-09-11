@@ -457,7 +457,7 @@ ExceptionOr<Ref<IDBRequest>> IDBObjectStore::clear()
 
 ExceptionOr<Ref<IDBIndex>> IDBObjectStore::createIndex(const String& name, IDBKeyPath&& keyPath, const IndexParameters& parameters)
 {
-    LOG(IndexedDB, "IDBObjectStore::createIndex %s (keyPath: %s, unique: %i, multiEntry: %i)", name.utf8().data(), loggingString(keyPath).utf8().data(), parameters.unique, parameters.multiEntry);
+    LOG(IndexedDB, "IDBObjectStore::createIndex %s (keyPath: %s, unique: %i, multiEntry: %i)", name.utf8().legacyCStringPointer(), loggingString(keyPath).utf8().legacyCStringPointer(), parameters.unique, parameters.multiEntry);
     Ref transaction = m_transaction.get();
     ASSERT(canCurrentThreadAccessThreadLocalData(transaction->database().originThread()));
 
@@ -531,7 +531,7 @@ ExceptionOr<Ref<IDBIndex>> IDBObjectStore::index(const String& indexName)
 
 ExceptionOr<void> IDBObjectStore::deleteIndex(const String& name)
 {
-    LOG(IndexedDB, "IDBObjectStore::deleteIndex %s", name.utf8().data());
+    LOG(IndexedDB, "IDBObjectStore::deleteIndex %s", name.utf8().legacyCStringPointer());
     Ref transaction = m_transaction.get();
     ASSERT(canCurrentThreadAccessThreadLocalData(transaction->database().originThread()));
 

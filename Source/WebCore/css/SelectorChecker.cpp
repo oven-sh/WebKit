@@ -814,6 +814,11 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, LocalContext& c
     if (selector.match() == CSSSelector::Match::Class)
         return element->hasClassName(selector.value());
 
+    if (selector.isEquivalentToClassSelector()) {
+        ASSERT(m_strictParsing);
+        return element->hasClassName(selector.value());
+    }
+
     if (selector.match() == CSSSelector::Match::Id) {
         ASSERT(!selector.value().isNull());
         return element->idForStyleResolution() == selector.value();

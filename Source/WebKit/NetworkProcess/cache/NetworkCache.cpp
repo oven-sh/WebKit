@@ -402,7 +402,7 @@ void Cache::startAsyncRevalidationIfNeeded(const WebCore::ResourceRequest& reque
                 return;
             ASSERT(protectedThis->m_pendingAsyncRevalidations.contains(key));
             protectedThis->m_pendingAsyncRevalidations.remove(key);
-            LOG(NetworkCache, "(NetworkProcess) revalidation completed for '%s' with result %d", key.identifier().utf8().data(), static_cast<int>(result));
+            LOG(NetworkCache, "(NetworkProcess) revalidation completed for '%s' with result %d", key.identifier().utf8().legacyCStringPointer(), static_cast<int>(result));
         });
         addResult.iterator->value.add(revalidation.get());
         return revalidation;
@@ -544,7 +544,7 @@ std::unique_ptr<Entry> Cache::store(const WebCore::ResourceRequest& request, con
 {
     ASSERT(responseData);
 
-    LOG(NetworkCache, "(NetworkProcess) storing %s, partition %s", request.url().stringWithoutFragmentIdentifier().utf8().data(), makeCacheKey(RecordType::Resource, request).partition().utf8().data());
+    LOG(NetworkCache, "(NetworkProcess) storing %s, partition %s", request.url().stringWithoutFragmentIdentifier().utf8().legacyCStringPointer(), makeCacheKey(RecordType::Resource, request).partition().utf8().legacyCStringPointer());
 
     StoreDecision storeDecision = makeStoreDecision(request, response, responseData ? responseData->size() : 0);
     if (storeDecision != StoreDecision::Yes) {
@@ -588,7 +588,7 @@ std::unique_ptr<Entry> Cache::store(const WebCore::ResourceRequest& request, con
 
 std::unique_ptr<Entry> Cache::storeRedirect(const WebCore::ResourceRequest& request, const WebCore::ResourceResponse& response, const WebCore::ResourceRequest& redirectRequest, std::optional<Seconds> maxAgeCap)
 {
-    LOG(NetworkCache, "(NetworkProcess) storing redirect %s -> %s", request.url().string().utf8().data(), redirectRequest.url().string().utf8().data());
+    LOG(NetworkCache, "(NetworkProcess) storing redirect %s -> %s", request.url().string().utf8().legacyCStringPointer(), redirectRequest.url().string().utf8().legacyCStringPointer());
 
     StoreDecision storeDecision = makeStoreDecision(request, response, 0);
     if (storeDecision != StoreDecision::Yes) {
@@ -599,7 +599,7 @@ std::unique_ptr<Entry> Cache::storeRedirect(const WebCore::ResourceRequest& requ
     auto cacheEntry = makeRedirectEntry(request, response, redirectRequest);
 
     if (maxAgeCap) {
-        LOG(NetworkCache, "(NetworkProcess) capping max age for redirect %s -> %s", request.url().string().utf8().data(), redirectRequest.url().string().utf8().data());
+        LOG(NetworkCache, "(NetworkProcess) capping max age for redirect %s -> %s", request.url().string().utf8().legacyCStringPointer(), redirectRequest.url().string().utf8().legacyCStringPointer());
         cacheEntry->capMaxAge(maxAgeCap.value());
     }
 
@@ -648,7 +648,7 @@ std::optional<URL> Cache::TraversalRecord::url() const
 
 std::unique_ptr<Entry> Cache::update(const WebCore::ResourceRequest& originalRequest, const Entry& existingEntry, const WebCore::ResourceResponse& validatingResponse, PrivateRelayed privateRelayed)
 {
-    LOG(NetworkCache, "(NetworkProcess) updating %s", originalRequest.url().string().utf8().data());
+    LOG(NetworkCache, "(NetworkProcess) updating %s", originalRequest.url().string().utf8().legacyCStringPointer());
 
     WebCore::ResourceResponse response = existingEntry.response();
     WebCore::updateResponseHeadersAfterRevalidation(response, validatingResponse);

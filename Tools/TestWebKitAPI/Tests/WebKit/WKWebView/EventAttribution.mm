@@ -326,7 +326,7 @@ static void signUnlinkableTokenAndSendSecretToken(TokenSigningParty signingParty
                     connection.receiveHTTPRequest([signingParty, connection, &rsaPrivateKey, &modulusNBytes, &rng, &keyData, &done, &secKey] (Vector<char>&& request2) {
                         EXPECT_TRUE(contains(request2.span(), "POST / HTTP/1.1\r\n"_span));
 
-                        auto request2String = String(request2.span());
+                        auto request2String = String::fromLatin1(request2.span());
                         auto key = signingParty == TokenSigningParty::Source ? "source_unlinkable_token"_s : "destination_unlinkable_token"_s;
                         auto start = request2String.find(key);
                         start += key.length() + 3;
@@ -362,7 +362,7 @@ static void signUnlinkableTokenAndSendSecretToken(TokenSigningParty signingParty
                                         EXPECT_FALSE(contains(request4.span(), token.utf8().span()));
                                         EXPECT_FALSE(contains(request4.span(), unlinkableToken.utf8().span()));
 
-                                        auto request4String = String(request4.span());
+                                        auto request4String = String::fromLatin1(request4.span());
 
                                         auto key = signingParty == TokenSigningParty::Source ? "source_secret_token"_s : "destination_secret_token"_s;
                                         auto start = request4String.find(key);

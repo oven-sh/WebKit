@@ -319,7 +319,7 @@ void WebKitAutomationClient::requestAutomationSession(const String& sessionIdent
 {
     if (m_webContext->priv->automationSession)
         g_critical("WebKitWebContext already has an active automation session.");
-    m_webContext->priv->automationSession = adoptGRef(webkitAutomationSessionCreate(m_webContext, sessionIdentifier.utf8().data(), capabilities));
+    m_webContext->priv->automationSession = adoptGRef(webkitAutomationSessionCreate(m_webContext, sessionIdentifier.utf8().legacyCStringPointer(), capabilities));
     g_signal_emit(m_webContext, signals[AUTOMATION_STARTED], 0, m_webContext->priv->automationSession.get());
     m_webContext->priv->processPool->setAutomationSession(&webkitAutomationSessionGetSession(m_webContext->priv->automationSession.get()));
 }
@@ -1581,7 +1581,7 @@ const gchar* const* webkit_web_context_get_spell_checking_languages(WebKitWebCon
     static GRefPtr<GPtrArray> languagesToReturn;
     languagesToReturn = adoptGRef(g_ptr_array_new_with_free_func(g_free));
     for (const auto& language : spellCheckingLanguages)
-        g_ptr_array_add(languagesToReturn.get(), g_strdup(language.utf8().data()));
+        g_ptr_array_add(languagesToReturn.get(), g_strdup(language.utf8().legacyCStringPointer()));
     g_ptr_array_add(languagesToReturn.get(), nullptr);
 
     return reinterpret_cast<char**>(languagesToReturn->pdata);

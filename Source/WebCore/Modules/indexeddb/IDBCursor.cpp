@@ -248,7 +248,7 @@ ExceptionOr<void> IDBCursor::continueFunction(JSGlobalObject& execState, JSValue
 
 ExceptionOr<void> IDBCursor::continueFunction(const IDBKeyData& key)
 {
-    LOG(IndexedDB, "IDBCursor::continueFunction (to key %s)", key.loggingString().utf8().data());
+    LOG(IndexedDB, "IDBCursor::continueFunction (to key %s)", key.loggingString().utf8().legacyCStringPointer());
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
     if (!m_request)
@@ -333,7 +333,7 @@ ExceptionOr<Ref<WebCore::IDBRequest>> IDBCursor::deleteFunction()
 
 bool IDBCursor::setGetResult(IDBRequest& request, const IDBGetResult& getResult, uint64_t operationID)
 {
-    LOG(IndexedDB, "IDBCursor::setGetResult - current key %s", getResult.keyData().loggingString().left(100).utf8().data());
+    LOG(IndexedDB, "IDBCursor::setGetResult - current key %s", getResult.keyData().loggingString().left(100).utf8().legacyCStringPointer());
     ASSERT(canCurrentThreadAccessThreadLocalData(effectiveObjectStore().transaction().database().originThread()));
 
     RefPtr context = request.scriptExecutionContext();

@@ -1052,7 +1052,7 @@ void Storage::dispatchWriteOperation(std::unique_ptr<WriteOperation> writeOperat
         auto recordSize = recordData.size();
 
         if (!FileSystem::overwriteEntireFile(recordPath, recordData.span()))
-            RELEASE_LOG_ERROR(NetworkCacheStorage, "Failed to write %zu bytes of network cache record data to %" PUBLIC_LOG_STRING, recordSize, recordPath.utf8().data());
+            RELEASE_LOG_ERROR(NetworkCacheStorage, "Failed to write %zu bytes of network cache record data to %" PUBLIC_LOG_STRING, recordSize, recordPath.utf8().legacyCStringPointer());
 
         RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }, identifier, recordSize]() mutable {
             m_approximateRecordsSize += recordSize;
@@ -1393,7 +1393,7 @@ void Storage::deleteOldVersions()
             if (!directoryVersion || *directoryVersion >= version)
                 return;
             auto oldVersionPath = FileSystem::pathByAppendingComponent(cachePath, subdirName);
-            LOG(NetworkCacheStorage, "(NetworkProcess) deleting old cache version, path %s", oldVersionPath.utf8().data());
+            LOG(NetworkCacheStorage, "(NetworkProcess) deleting old cache version, path %s", oldVersionPath.utf8().legacyCStringPointer());
             FileSystem::deleteNonEmptyDirectory(oldVersionPath);
         });
     });

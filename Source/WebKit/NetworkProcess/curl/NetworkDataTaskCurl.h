@@ -29,7 +29,6 @@
 #include "NetworkLoadParameters.h"
 #include <WebCore/CurlRequestClient.h>
 #include <WebCore/FrameIdentifier.h>
-#include <WebCore/PageIdentifier.h>
 #include <WebCore/ProtectionSpace.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
@@ -102,7 +101,6 @@ private:
     void deleteDownloadFile();
 
     Markable<WebCore::FrameIdentifier> m_frameID;
-    Markable<WebCore::PageIdentifier> m_pageID;
     Markable<WebPageProxyIdentifier> m_webPageProxyID;
     RefPtr<WebCore::SecurityOrigin> m_sourceOrigin;
 

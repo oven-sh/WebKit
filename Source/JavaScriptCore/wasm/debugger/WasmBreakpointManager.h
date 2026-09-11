@@ -49,8 +49,8 @@ public:
     bool hasBreakpoints();
     bool hasOneTimeBreakpoints();
 
-    Breakpoint* findBreakpoint(VirtualAddress);
-    void setBreakpoint(VirtualAddress, Breakpoint&&);
+    RefPtr<Breakpoint> findBreakpoint(VirtualAddress);
+    void setBreakpoint(VirtualAddress, Ref<Breakpoint>&&);
     bool removeBreakpoint(VirtualAddress);
     void clearAllOneTimeBreakpoints();
     void clearAllBreakpoints();
@@ -59,7 +59,7 @@ private:
     bool removeBreakpointImpl(VirtualAddress) WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
-    UncheckedKeyHashMap<VirtualAddress, Breakpoint> m_breakpoints WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<VirtualAddress, Ref<Breakpoint>> m_breakpoints WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashSet<VirtualAddress> m_oneTimeBreakpoints WTF_GUARDED_BY_LOCK(m_lock);
 };
 

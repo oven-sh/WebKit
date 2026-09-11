@@ -155,9 +155,9 @@ public:
         auto manifest = parseString(rawJSON);
         auto value = manifest.rawJSON;
         if (isValidJSON)
-            EXPECT_STREQ(rawJSON.utf8().data(), value.utf8().data());
+            EXPECT_STREQ(rawJSON.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
         else
-            ASSERT_STREQ(rawJSON.utf8().data(), value.utf8().data());
+            ASSERT_STREQ(rawJSON.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
     }
 
     void testManifestURL(const String& expectedValue)
@@ -169,7 +169,7 @@ public:
     {
         auto manifest = ApplicationManifestParser::parse("{ \"name\": \"Example\" }"_s, expectedValue, m_documentURL);
         auto value = manifest.manifestURL;
-        EXPECT_STREQ(expectedValue.string().utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.string().utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
     }
 
     void testStartURL(const String& rawJSON, const String& expectedValue)
@@ -181,7 +181,7 @@ public:
     {
         auto manifest = parseTopLevelProperty("start_url"_s, rawJSON);
         auto value = manifest.startURL;
-        EXPECT_STREQ(expectedValue.string().utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.string().utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
     }
 
     void testDir(const String& rawJSON, ApplicationManifest::Direction expectedValue)
@@ -212,21 +212,21 @@ public:
     {
         auto manifest = parseTopLevelProperty("name"_s, rawJSON);
         auto value = manifest.name;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
     }
 
     void testDescription(const String& rawJSON, const String& expectedValue)
     {
         auto manifest = parseTopLevelProperty("description"_s, rawJSON);
         auto value = manifest.description;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
     }
 
     void testShortName(const String& rawJSON, const String& expectedValue)
     {
         auto manifest = parseTopLevelProperty("short_name"_s, rawJSON);
         auto value = manifest.shortName;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
     }
 
     void testScope(const String& rawJSON, const String& startURL, const String& expectedValue, bool expectedIsDefaultScope)
@@ -234,7 +234,7 @@ public:
         auto manifestContent = makeString("{ \"scope\" : "_s, rawJSON, ", \"start_url\" : \""_s, startURL, "\" }"_s);
         auto manifest = parseString(manifestContent);
         auto value = manifest.scope;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
         EXPECT_EQ(expectedIsDefaultScope, manifest.isDefaultScope);
     }
 
@@ -295,22 +295,22 @@ public:
     {
         auto manifest = parseIconFirstTopLevelPropertyForSrc("src"_s, rawJSON);
         auto value = manifest.icons[0].src;
-        EXPECT_STREQ(expectedValue.string().utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.string().utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
 
         auto shortcutManifest = parseShortcutIconFirstTopLevelPropertyForSrc("src"_s, rawJSON);
         auto shortcutValue = shortcutManifest.shortcuts[0].icons[0].src;
-        EXPECT_STREQ(expectedValue.string().utf8().data(), shortcutValue.string().utf8().data());
+        EXPECT_STREQ(expectedValue.string().utf8().legacyCStringPointer(), shortcutValue.string().utf8().legacyCStringPointer());
     }
 
     void testIconsType(const String &rawJSON, const String& expectedValue)
     {
         auto manifest = parseIconFirstTopLevelProperty("type"_s, rawJSON);
         auto value = manifest.icons[0].type;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
 
         auto shortcutManifest = parseShortcutIconFirstTopLevelProperty("type"_s, rawJSON);
         auto shortcutValue = shortcutManifest.shortcuts[0].icons[0].type;
-        EXPECT_STREQ(expectedValue.utf8().data(), shortcutValue.utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), shortcutValue.utf8().legacyCStringPointer());
     }
 
     void testIconsSizes(const String &rawJSON, size_t expectedCount, size_t testIndex, const String& expectedValue)
@@ -319,13 +319,13 @@ public:
         auto value = manifest.icons[0].sizes;
         EXPECT_EQ(expectedCount, value.size());
         EXPECT_TRUE(testIndex < value.size());
-        EXPECT_STREQ(expectedValue.utf8().data(), value[testIndex].utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value[testIndex].utf8().legacyCStringPointer());
 
         auto shortcutManifest = parseShortcutIconFirstTopLevelProperty("sizes"_s, rawJSON);
         auto shortcutValue = shortcutManifest.shortcuts[0].icons[0].sizes;
         EXPECT_EQ(expectedCount, shortcutValue.size());
         EXPECT_TRUE(testIndex < shortcutValue.size());
-        EXPECT_STREQ(expectedValue.utf8().data(), shortcutValue[testIndex].utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), shortcutValue[testIndex].utf8().legacyCStringPointer());
     }
 
     void testIconsPurposes(const String &rawJSON, OptionSet<ApplicationManifest::Icon::Purpose> expectedValues)
@@ -343,21 +343,21 @@ public:
     {
         auto manifest = parseShortcutFirstTopLevelPropertyForURL("url"_s, rawJSON);
         auto value = manifest.shortcuts[0].url;
-        EXPECT_STREQ(expectedValue.string().utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.string().utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
     }
 
     void testShortcutsName(const String &rawJSON, const String& expectedValue)
     {
         auto manifest = parseShortcutFirstTopLevelProperty("name"_s, rawJSON);
         auto value = manifest.shortcuts[0].name;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer());
     }
 
     void testId(const String& rawJSON, const URL& expectedValue)
     {
         auto manifest = parseTopLevelProperty("id"_s, rawJSON);
         auto value = manifest.id;
-        EXPECT_STREQ(expectedValue.string().utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.string().utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
     }
 
     void testId(const String& rawJSON, const URL& startURL, const String& expectedValue)
@@ -365,7 +365,7 @@ public:
         auto manifestContent = makeString("{ \"id\" : \""_s, rawJSON, "\", \"start_url\" : \""_s, startURL.string(), "\" }"_s);
         auto manifest = parseString(manifestContent);
         auto value = manifest.id;
-        EXPECT_STREQ(expectedValue.utf8().data(), value.string().utf8().data());
+        EXPECT_STREQ(expectedValue.utf8().legacyCStringPointer(), value.string().utf8().legacyCStringPointer());
     }
 };
 
@@ -374,9 +374,9 @@ static void assertManifestHasDefaultValues(const URL& manifestURL, const URL& do
     EXPECT_TRUE(manifest.name.isNull());
     EXPECT_TRUE(manifest.shortName.isNull());
     EXPECT_TRUE(manifest.description.isNull());
-    EXPECT_STREQ("https://example.com/", manifest.scope.string().utf8().data());
-    EXPECT_STREQ(documentURL.string().utf8().data(), manifest.startURL.string().utf8().data());
-    EXPECT_STREQ(manifest.id.string().utf8().data(), manifest.startURL.string().utf8().data());
+    EXPECT_STREQ("https://example.com/", manifest.scope.string().utf8().legacyCStringPointer());
+    EXPECT_STREQ(documentURL.string().utf8().legacyCStringPointer(), manifest.startURL.string().utf8().legacyCStringPointer());
+    EXPECT_STREQ(manifest.id.string().utf8().legacyCStringPointer(), manifest.startURL.string().utf8().legacyCStringPointer());
 }
 
 TEST_F(ApplicationManifestParserTest, DefaultManifest)
@@ -800,7 +800,7 @@ TEST_F(ApplicationManifestParserTest, Whitespace)
 {
     auto manifest = parseString("  { \"name\": \"PASS\" }\n"_s);
 
-    EXPECT_STREQ("PASS", manifest.name.utf8().data());
+    EXPECT_STREQ("PASS", manifest.name.utf8().legacyCStringPointer());
 }
 
 TEST_F(ApplicationManifestParserTest, Icons)

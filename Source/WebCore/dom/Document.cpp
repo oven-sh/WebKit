@@ -834,6 +834,9 @@ Document::~Document()
         ASSERT(m_intersectionObserverData->registrations.isEmpty());
     }
 
+    ASSERT(m_localIntersectionObservers.isEmpty());
+    ASSERT(m_remoteIntersectionObservers.isEmpty());
+
     removeFromDocumentsMap();
 
     // We need to remove from the contexts map very early in the destructor so that calling postTask() on this Document from another thread is safe.
@@ -1016,6 +1019,12 @@ void Document::commonTeardown()
     for (auto& weakLocalIntersectionObserver : localIntersectionObservers) {
         if (RefPtr localIntersectionObserver = weakLocalIntersectionObserver.get())
             localIntersectionObserver->disconnect();
+    }
+
+    auto remoteIntersectionObservers = m_remoteIntersectionObservers;
+    for (auto& weakRemoteIntersectionObserver : remoteIntersectionObservers) {
+        if (RefPtr remoteIntersectionObserver = weakRemoteIntersectionObserver.get())
+            remoteIntersectionObserver->disconnect();
     }
 
     auto resizeObservers = m_resizeObservers;
@@ -2056,7 +2065,7 @@ void Document::setReadyState(ReadyState readyState)
                 eventTiming->domLoading = now;
             // We do this here instead of in the Document constructor because monotonicTimestamp() is 0 when the Document constructor is running.
             if (!url().isEmpty())
-                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8().data(), frame() && frame()->isMainFrame());
+                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8().legacyCStringPointer(), frame() && frame()->isMainFrame());
             WTFEmitSignpost(this, NavigationAndPaintTiming, "domLoading");
         }
         break;
@@ -8586,7 +8595,7 @@ void Document::enforceSandboxFlags(SandboxFlags flags, SandboxFlagsSource source
     bool wasSandboxedOrigin = isSandboxed(SandboxFlag::Origin);
     SecurityContext::enforceSandboxFlags(flags, source);
 
-    if (RefPtr page = this->page(); page && page->hasRemoteFrames()) {
+    if (RefPtr page = this->page(); page && page->mainFrame().tree().containsRemoteFrame()) {
         bool sandboxedStateDidChange = wasSandboxedOrigin != isSandboxed(SandboxFlag::Origin);
         if (!sandboxedStateDidChange)
             return;
@@ -10545,7 +10554,7 @@ void Document::updateRemoteIntersectionObservers()
     if (!page)
         return;
 
-    ASSERT(page->hasRemoteFrames());
+    ASSERT(page->mainFrame().tree().containsRemoteFrame());
 
     RefPtr mainFrame = this->page()->mainFrame();
     if (!mainFrame)

@@ -658,7 +658,7 @@ static void populateSandboxInitializationParameters(SandboxInitializationParamet
     if (isRelocatedFramework)
         bundlePath = webKit2BundleSingleton().bundlePath.stringByDeletingLastPathComponent;
 
-    sandboxParameters.addPathParameter("WEBKIT2_FRAMEWORK_DIR"_s, bundlePath.utf8().data());
+    sandboxParameters.addPathParameter("WEBKIT2_FRAMEWORK_DIR"_s, bundlePath.utf8().legacyCStringPointer());
     sandboxParameters.addParameter("WK_FRAMEWORKS_ARE_RELOCATED"_s, isRelocatedFramework ? "YES"_span : "NO"_span);
     sandboxParameters.addConfDirectoryParameter("DARWIN_USER_TEMP_DIR"_s, _CS_DARWIN_USER_TEMP_DIR);
     sandboxParameters.addConfDirectoryParameter("DARWIN_USER_CACHE_DIR"_s, _CS_DARWIN_USER_CACHE_DIR);
@@ -666,7 +666,7 @@ static void populateSandboxInitializationParameters(SandboxInitializationParamet
     std::optional<String> homeDirectory = FileSystem::homeDirectory();
     RELEASE_ASSERT(homeDirectory);
     
-    sandboxParameters.addPathParameter("HOME_DIR"_s, homeDirectory->utf8().data());
+    sandboxParameters.addPathParameter("HOME_DIR"_s, homeDirectory->utf8().legacyCStringPointer());
     String path = FileSystem::pathByAppendingComponents(*homeDirectory, std::initializer_list<StringView>({ "Library"_s, "Preferences"_s }));
     sandboxParameters.addPathParameter("HOME_LIBRARY_PREFERENCES_DIR"_s, FileSystem::fileSystemRepresentation(path).data());
 

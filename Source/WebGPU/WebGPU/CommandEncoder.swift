@@ -1378,7 +1378,11 @@ extension WebGPU.CommandEncoder {
 
             if zeroColorTargets {
                 if isDestroyed {
-                    return WebGPU.RenderPassEncoder.createInvalid(self, m_device.ptr(), "no color targets and depth-stencil texture is destroyed")
+                    return WebGPU.RenderPassEncoder.createInvalid(
+                        self,
+                        m_device.ptr(),
+                        "no color targets and depth-stencil texture is destroyed"
+                    )
                 }
                 // FIXME: (rdar://170907318) This should be changed to `guard let` when possible.
                 guard var metalDepthStencilTexture, metalDepthStencilTexture.sampleCount > 0 else {
@@ -1631,7 +1635,11 @@ extension WebGPU.CommandEncoder {
         }
 
         destinationBytesPerRow = roundUpToMultipleOfNonPowerOfTwoCheckedUInt32UnsignedLong(blockSize, destinationBytesPerRow)
-        if textureDimension == WGPUTextureDimension_3D && copySize.depthOrArrayLayers <= 1 && copySize.height <= 1 {
+        let blockHeight = WebGPU.Texture.texelBlockHeight(aspectSpecificFormat)
+        guard blockHeight != 0 else {
+            return
+        }
+        if textureDimension == WGPUTextureDimension_3D && copySize.depthOrArrayLayers <= 1 && copySize.height <= blockHeight {
             destinationBytesPerRow = 0
         }
 
@@ -1663,17 +1671,17 @@ extension WebGPU.CommandEncoder {
                 guard !didOverflow else {
                     return
                 }
-                for y in 0..<copySize.height {
+                for y in stride(from: 0, to: copySize.height, by: Int(blockHeight)) {
                     var yPlusOriginY = source.origin.y
                     (yPlusOriginY, didOverflow) = yPlusOriginY.addingReportingOverflow(y)
                     guard !didOverflow else {
                         return
                     }
-                    var yTimesDestinationBytesPerRow = y
+                    var blockRowTimesDestinationBytesPerRow = y / blockHeight
                     guard destinationBytesPerRow <= UInt32.max else {
                         return
                     }
-                    (yTimesDestinationBytesPerRow, didOverflow) = yTimesDestinationBytesPerRow.multipliedReportingOverflow(
+                    (blockRowTimesDestinationBytesPerRow, didOverflow) = blockRowTimesDestinationBytesPerRow.multipliedReportingOverflow(
                         by: UInt32(destinationBytesPerRow)
                     )
                     guard !didOverflow else {
@@ -1690,7 +1698,7 @@ extension WebGPU.CommandEncoder {
                     guard !didOverflow else {
                         return
                     }
-                    (tripleSum, didOverflow) = tripleSum.addingReportingOverflow(UInt64(yTimesDestinationBytesPerRow))
+                    (tripleSum, didOverflow) = tripleSum.addingReportingOverflow(UInt64(blockRowTimesDestinationBytesPerRow))
                     guard !didOverflow else {
                         return
                     }
@@ -1707,7 +1715,7 @@ extension WebGPU.CommandEncoder {
                         destination: newDestination,
                         copySize: WGPUExtent3D(
                             width: copySize.width,
-                            height: 1,
+                            height: blockHeight,
                             depthOrArrayLayers: 1
                         )
                     )
@@ -1984,7 +1992,11 @@ extension WebGPU.CommandEncoder {
         }
         let maxSourceBytesPerRow =
             textureDimension == WGPUTextureDimension_3D ? (2048 * blockSize.value()) : sourceBytesPerRow
-        if textureDimension == WGPUTextureDimension_3D && copySize.depthOrArrayLayers <= 1 && copySize.height <= 1 {
+        let blockHeight = WebGPU.Texture.texelBlockHeight(aspectSpecificFormat)
+        guard blockHeight != 0 else {
+            return
+        }
+        if textureDimension == WGPUTextureDimension_3D && copySize.depthOrArrayLayers <= 1 && copySize.height <= blockHeight {
             sourceBytesPerRow = 0
         }
         if sourceBytesPerRow > maxSourceBytesPerRow {
@@ -2005,14 +2017,16 @@ extension WebGPU.CommandEncoder {
                 guard let sourceBytesPerRowU32 = UInt32(exactly: sourceBytesPerRow) else {
                     return
                 }
-                for y in 0..<copySize.height {
-                    var yTimesSourceBytesPerRow = y
-                    (yTimesSourceBytesPerRow, didOverflow) = yTimesSourceBytesPerRow.multipliedReportingOverflow(by: sourceBytesPerRowU32)
+                for y in stride(from: 0, to: copySize.height, by: Int(blockHeight)) {
+                    var blockRowTimesSourceBytesPerRow = y / blockHeight
+                    (blockRowTimesSourceBytesPerRow, didOverflow) = blockRowTimesSourceBytesPerRow.multipliedReportingOverflow(
+                        by: sourceBytesPerRowU32
+                    )
                     guard !didOverflow else {
                         return
                     }
                     var tripleSum = UInt64(zTimesSourceBytesPerImage)
-                    (tripleSum, didOverflow) = tripleSum.addingReportingOverflow(UInt64(yTimesSourceBytesPerRow))
+                    (tripleSum, didOverflow) = tripleSum.addingReportingOverflow(UInt64(blockRowTimesSourceBytesPerRow))
                     guard !didOverflow else {
                         return
                     }
@@ -2046,7 +2060,7 @@ extension WebGPU.CommandEncoder {
                     copyBufferToTexture(
                         source: newSource,
                         destination: newDestination,
-                        copySize: WGPUExtent3D(width: copySize.width, height: 1, depthOrArrayLayers: 1),
+                        copySize: WGPUExtent3D(width: copySize.width, height: blockHeight, depthOrArrayLayers: 1),
                     )
                 }
             }

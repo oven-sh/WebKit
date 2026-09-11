@@ -29,8 +29,8 @@
 
 namespace TestWebKitAPI {
 
-#define EXPECT_ENCODE(expected, input) EXPECT_STREQ(expected, base64EncodeToString(input, options).utf8().data())
-#define EXPECT_DECODE(expected, input) EXPECT_STREQ(expected, base64DecodeToString(input, options).utf8().data())
+#define EXPECT_ENCODE(expected, input) EXPECT_STREQ(expected, base64EncodeToString(input, options).utf8().legacyCStringPointer())
+#define EXPECT_DECODE(expected, input) EXPECT_STREQ(expected, base64DecodeToString(input, options).utf8().legacyCStringPointer())
 
 TEST(Base64, Encode)
 {

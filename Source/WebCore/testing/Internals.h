@@ -307,6 +307,8 @@ public:
 
     float usedOutlineOffset(Element&);
 
+    String computedAppleColorFilter(Element&);
+
     Node& ensureUserAgentShadowRoot(Element& host);
     Node* shadowRoot(Element& host);
     ExceptionOr<String> shadowRootType(const Node&) const;

@@ -213,7 +213,7 @@ void WebSocketServer::sendMessage(const String& sessionId, const String& message
 {
     auto connection = this->connection(sessionId);
     if (!connection) {
-        RELEASE_LOG_ERROR(WebDriverBiDi, "No connection found for session %s when trying to send message: %s", sessionId.utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(WebDriverBiDi, "No connection found for session %s when trying to send message: %s", sessionId.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
         return;
     }
     sendMessage(*connection, message);
@@ -223,7 +223,7 @@ void WebSocketServer::sendErrorResponse(const String& sessionId, std::optional<u
 {
     auto connection = this->connection(sessionId);
     if (!connection) {
-        RELEASE_LOG_ERROR(WebDriverBiDi, "No connection found for session %s when trying to send error response", sessionId.utf8().data());
+        RELEASE_LOG_ERROR(WebDriverBiDi, "No connection found for session %s when trying to send error response", sessionId.utf8().legacyCStringPointer());
         return;
     }
     sendErrorResponse(*connection, commandId, errorCode, errorMessage, stacktrace);

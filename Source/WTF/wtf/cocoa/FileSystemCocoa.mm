@@ -280,7 +280,7 @@ bool makeSafeToUseMemoryMapForPath(const String& path)
     NSError *error = nil;
     BOOL success = [[NSFileManager defaultManager] setAttributes:@{ NSFileProtectionKey: NSFileProtectionCompleteUnlessOpen } ofItemAtPath:path.createNSString().get() error:&error];
     if (error || !success) {
-        WTFLogAlways("makeSafeToUseMemoryMapForPath(%s) failed with error %@", path.utf8().data(), error);
+        WTFLogAlways("makeSafeToUseMemoryMapForPath(%s) failed with error %@", path.utf8().legacyCStringPointer(), error);
         return false;
     }
     return true;
@@ -294,7 +294,7 @@ bool setExcludedFromBackup(const String& path, bool excluded)
 
     NSError *error;
     if (![[NSURL fileURLWithPath:path.createNSString().get() isDirectory:YES] setResourceValue:[NSNumber numberWithBool:excluded] forKey:NSURLIsExcludedFromBackupKey error:&error]) {
-        LOG_ERROR("Cannot exclude path '%s' from backup with error '%@'", path.utf8().data(), error.localizedDescription);
+        LOG_ERROR("Cannot exclude path '%s' from backup with error '%@'", path.utf8().legacyCStringPointer(), error.localizedDescription);
         return false;
     }
 

@@ -91,7 +91,7 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
     auto& scanner = GStreamerRegistryScanner::singleton();
     auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName);
     if (!lookupResult) {
-        GST_WARNING("No decoder found for codec %s", codecName.utf8().data());
+        GST_WARNING("No decoder found for codec %s", codecName.utf8().legacyCStringPointer());
         callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
         return;
     }
@@ -100,7 +100,7 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
     Ref decoder = adoptRef(*new GStreamerAudioDecoder(codecName, config, WTF::move(outputCallback), WTF::move(element)));
     Ref internalDecoder = decoder->m_internalDecoder;
     if (!internalDecoder->isConfigured()) {
-        GST_WARNING("Internal audio decoder failed to configure for codec %s", codecName.utf8().data());
+        GST_WARNING("Internal audio decoder failed to configure for codec %s", codecName.utf8().legacyCStringPointer());
         callback(makeUnexpected(makeString("Internal audio decoder failed to configure for codec "_s, codecName)));
         return;
     }

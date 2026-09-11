@@ -298,7 +298,7 @@ void IDBRequest::enqueueEvent(Ref<Event>&& event)
 
 void IDBRequest::dispatchEvent(Event& event)
 {
-    LOG(IndexedDB, "IDBRequest::dispatchEvent - %s (%p)", event.type().string().utf8().data(), this);
+    LOG(IndexedDB, "IDBRequest::dispatchEvent - %s (%p)", event.type().string().utf8().legacyCStringPointer(), this);
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(!isContextStopped());

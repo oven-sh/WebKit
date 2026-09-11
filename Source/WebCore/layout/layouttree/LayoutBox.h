@@ -52,6 +52,7 @@ public:
     enum class NodeType : uint8_t {
         Text,
         GenericElement,
+        InlineBox,
         ReplacedElement,
         DocumentElement,
         Body,

@@ -131,6 +131,16 @@ TEST(WTF, CStringZeroTerminated)
     ASSERT_EQ(stringWithLength.data()[3], 0);
 }
 
+TEST(WTF, CStringLegacyCStringPointer)
+{
+    CString nullString;
+    EXPECT_EQ(nullString.legacyCStringPointer(), static_cast<const char*>(nullptr));
+
+    CString string("WebKit");
+    EXPECT_EQ(string.legacyCStringPointer(), string.data());
+    EXPECT_STREQ(string.legacyCStringPointer(), "WebKit");
+}
+
 TEST(WTF, CStringCopyOnWrite)
 {
     const char* initialString = "Webkit";
@@ -300,12 +310,22 @@ static_assert(std::same_as<decltype(std::declval<const Latin1CString&>().span())
 static_assert(std::same_as<decltype(std::declval<UTF8CString&>().mutableSpan())::element_type, char8_t>);
 static_assert(std::same_as<decltype(std::declval<const UTF8CString&>().data()), const char8_t*>);
 static_assert(std::same_as<decltype(std::declval<const Latin1CString&>().data()), const Latin1Character*>);
-static_assert(std::same_as<decltype(std::declval<const UTF8CString&>().characters()), const char*>);
+static_assert(std::same_as<decltype(std::declval<const UTF8CString&>().legacyCStringPointer()), const char*>);
 // ASCII is spelled with char, as in ASCIILiteral, so its accessors match the untyped ones.
 static_assert(std::same_as<decltype(std::declval<const ASCIICString&>().data()), const char*>);
 static_assert(std::same_as<decltype(std::declval<const ASCIICString&>().span())::element_type, const char>);
 // Erasing the encoding gives back the untyped CString span.
 static_assert(std::same_as<decltype(std::declval<const CString&>().span())::element_type, const char>);
+static_assert(std::same_as<decltype(std::declval<const CString&>().legacyCStringPointer()), const char*>);
+// Latin-1 bytes are not a C string, so the constrained override has to keep hiding CString::legacyCStringPointer().
+template<typename StringType> concept HasLegacyCStringPointer = requires(const StringType& string)
+{
+    string.legacyCStringPointer();
+};
+static_assert(HasLegacyCStringPointer<CString>);
+static_assert(HasLegacyCStringPointer<UTF8CString>);
+static_assert(HasLegacyCStringPointer<ASCIICString>);
+static_assert(!HasLegacyCStringPointer<Latin1CString>);
 // Slicing to CString is allowed, but nothing implicitly converts the other way or between encodings.
 static_assert(std::is_convertible_v<UTF8CString, CString>);
 static_assert(!std::is_convertible_v<CString, UTF8CString>);
@@ -348,14 +368,14 @@ TEST(WTF, CStringWithEncodingConstruction)
     EXPECT_TRUE(nullString.isNull());
     EXPECT_TRUE(nullString.isEmpty());
     EXPECT_EQ(nullString.data(), static_cast<const char8_t*>(nullptr));
-    EXPECT_EQ(nullString.characters(), static_cast<const char*>(nullptr));
+    EXPECT_EQ(nullString.legacyCStringPointer(), static_cast<const char*>(nullptr));
     EXPECT_EQ(nullString.length(), 0UZ);
 
     UTF8CString fromSpan { u8"Water🍉Melon"_span };
     EXPECT_FALSE(fromSpan.isNull());
     EXPECT_EQ(fromSpan.length(), 14UZ);
     EXPECT_TRUE(equalSpans(fromSpan.span(), u8"Water🍉Melon"_span));
-    EXPECT_STREQ(fromSpan.characters(), "Water🍉Melon");
+    EXPECT_STREQ(fromSpan.legacyCStringPointer(), "Water🍉Melon");
 
     UTF8CString fromLiteral { "test"_s };
     EXPECT_EQ(fromLiteral, UTF8CString { u8"test"_span });

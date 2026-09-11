@@ -121,7 +121,7 @@ static inline void NODELETE logOpenDatabaseError(Document&, const String&)
 
 static void logOpenDatabaseError(Document& document, const String& name)
 {
-    LOG(StorageAPI, "Database %s for origin %s not allowed to be established", name.utf8().data(), document.securityOrigin().toString().utf8().data());
+    LOG(StorageAPI, "Database %s for origin %s not allowed to be established", name.utf8().legacyCStringPointer(), document.securityOrigin().toString().utf8().legacyCStringPointer());
 }
 
 #endif

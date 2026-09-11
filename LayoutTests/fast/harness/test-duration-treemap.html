@@ -292,7 +292,7 @@ class WebTreeMap {
 
         let caption = document.createElement('div');
         caption.className = 'webtreemap-caption';
-        caption.innerHTML = tree.name;
+        caption.textContent = tree.name;
         dom.appendChild(caption);
 
         tree.dom = dom;
@@ -659,7 +659,7 @@ function setupInterface()
         query_parameters[pair[0]] = decodeURIComponent(pair[1]);
     }
 
-    if ('filename' in query_parameters)
+    if ('filename' in query_parameters && /^[\w.-]+\.json$/.test(query_parameters['filename']))
         filename = query_parameters['filename'];
 
     // This is used for local files, so we can't use fetch().

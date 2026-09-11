@@ -12,10 +12,12 @@ var testDiv = document.querySelector('#test');
 
 function testColorFilterParsing(value, expected, name)
 {
+    if (!window.internals)
+        return;
     test(() => {
         testDiv.style.setProperty("-apple-color-filter", "");
         testDiv.style.setProperty("-apple-color-filter", value);
-        var computedStyle = getComputedStyle(testDiv).getPropertyValue("-apple-color-filter");
+        var computedStyle = internals.computedAppleColorFilter(testDiv);
         assert_equals(computedStyle, expected);
     }, name);
 }

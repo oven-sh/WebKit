@@ -56,7 +56,7 @@ using namespace icu;
 
 std::unique_ptr<Locale> Locale::create(const AtomString& locale)
 {
-    return makeUnique<LocaleICU>(locale.string().utf8().data());
+    return makeUnique<LocaleICU>(locale.string().utf8().legacyCStringPointer());
 }
 
 LocaleICU::LocaleICU(const char* locale)
@@ -77,7 +77,7 @@ LocaleICU::~LocaleICU()
 Locale::WritingDirection LocaleICU::defaultWritingDirection() const
 {
 #if USE(HARFBUZZ)
-    UScriptCode icuScript = localeToScriptCode(m_locale.span());
+    UScriptCode icuScript = localeToScriptCode(String::fromLatin1(m_locale.span()));
     hb_script_t script = hb_icu_script_to_script(icuScript);
 
     switch (hb_script_get_horizontal_direction(script)) {

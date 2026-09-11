@@ -49,7 +49,7 @@ DragSource::DragSource(GtkWidget* webView)
 
         switch (info) {
         case DragTargetType::Text:
-            gtk_selection_data_set_text(data, drag.m_selectionData->text().utf8().data(), -1);
+            gtk_selection_data_set_text(data, drag.m_selectionData->text().utf8().legacyCStringPointer(), -1);
             break;
         case DragTargetType::Markup: {
             CString markup = drag.m_selectionData->markup().utf8();

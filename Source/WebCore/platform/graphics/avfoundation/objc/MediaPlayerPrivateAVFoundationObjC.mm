@@ -165,13 +165,6 @@ static void setPlayerScreenReserved(AVPlayer *, bool) { }
 @property (assign, nonatomic) BOOL preventsAutomaticBackgroundingDuringVideoPlayback;
 @end
 
-#if HAVE(AVPLAYER_PARTICIPATESINAUDIOSESSION)
-@interface AVPlayer (Staging_168303606)
-- (void)setParticipatesInAudioSession:(BOOL)participates completionHandler:(nullable void (^)(void))completionHandler;
-- (void)setDisconnectedFromSystemAudio:(BOOL)disconnected completionHandler:(nullable void (^)(void))completionHandler;
-@end
-#endif
-
 #import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
@@ -1129,8 +1122,8 @@ void MediaPlayerPrivateAVFoundationObjC::createAVPlayer()
     if (m_isVideoPlayer)
         [m_avPlayer _setSuppressesAudioRendering:!m_isAudible];
 
-#if HAVE(AVPLAYER_PARTICIPATESINAUDIOSESSION)
-    setParticipatesInAudioSession(m_isAudible);
+#if HAVE(AVPLAYER_DISCONNECTEDFROMSYSTEMAUDIO)
+    [m_avPlayer setDisconnectedFromSystemAudio:!m_isAudible completionHandler:nil];
 #endif
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
@@ -2321,7 +2314,7 @@ void MediaPlayerPrivateAVFoundationObjC::updateIsAudible()
         return;
 
     // Only change the state of suppressesAudioRendering and
-    // participatesInAudioSession when playback is paused, to
+    // disconnectedFromSystemAudio when playback is paused, to
     // avoid the reconfiguring of video playback that AVFoundation
     // performs when these properties are changed. However,
     // ignore this check if becoming audible to ensure audio
@@ -2339,8 +2332,8 @@ void MediaPlayerPrivateAVFoundationObjC::updateIsAudible()
     if (m_isVideoPlayer)
         [m_avPlayer _setSuppressesAudioRendering:!m_isAudible];
 
-#if HAVE(AVPLAYER_PARTICIPATESINAUDIOSESSION)
-    setParticipatesInAudioSession(m_isAudible);
+#if HAVE(AVPLAYER_DISCONNECTEDFROMSYSTEMAUDIO)
+    [m_avPlayer setDisconnectedFromSystemAudio:!m_isAudible completionHandler:nil];
 #endif
 }
 
@@ -4295,16 +4288,6 @@ RefPtr<WebCoreAVFResourceLoader> MediaPlayerPrivateAVFoundationObjC::takeResourc
     Locker locker { m_resourceLoaderMapLock };
     return m_resourceLoaderMap.take(key);
 }
-
-#if HAVE(AVPLAYER_PARTICIPATESINAUDIOSESSION)
-void MediaPlayerPrivateAVFoundationObjC::setParticipatesInAudioSession(bool participatesInAudioSession)
-{
-    if ([m_avPlayer respondsToSelector:@selector(setDisconnectedFromSystemAudio:completionHandler:)])
-        [m_avPlayer setDisconnectedFromSystemAudio:!participatesInAudioSession completionHandler:nil];
-    else
-        [m_avPlayer setParticipatesInAudioSession:participatesInAudioSession completionHandler:nil];
-}
-#endif
 
 void MediaPlayerPrivateAVFoundationObjC::updateLayerAttachment()
 {

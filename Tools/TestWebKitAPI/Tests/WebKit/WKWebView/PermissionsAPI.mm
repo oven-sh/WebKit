@@ -281,7 +281,7 @@ static void testPermissionsAPIForGeolocation(GeolocationPermissionState geolocat
         [webView synchronouslyLoadHTMLString:scriptWithoutGeolocationRequestedSincePageLoad baseURL:[NSURL URLWithString:@"https://example.com/"]];
 
     TestWebKitAPI::Util::run(&permissionsDidReceiveMessage);
-    EXPECT_STREQ(((NSString *)[scriptMessage body]).UTF8String, expectedResult.utf8().data());
+    EXPECT_STREQ(((NSString *)[scriptMessage body]).UTF8String, expectedResult.utf8().legacyCStringPointer());
 }
 
 TEST(PermissionsAPI, GeolocationPermissionGrantedFromPromptAndGeolocationRequestedSinceLoad)

@@ -4502,7 +4502,7 @@ static void runContextGenerationTest(const ASCIILiteral& html, const DecomposedA
 
     TextStream stream;
     stream << "expected " << actual << " to equal " << expected;
-    EXPECT_EQ(actual, expected) << stream.release().utf8().data();
+    EXPECT_EQ(actual, expected) << stream.release().utf8().legacyCStringPointer();
 }
 
 TEST(WritingToolsContextGeneration, ContextWithBasicOrderedList)

@@ -1054,7 +1054,7 @@ void CachedResourceStreamingClient::responseReceived(PlatformMediaResource&, con
     // Pack request headers in the http-headers structure.
     GUniquePtr<GstStructure> headers(gst_structure_new_empty("request-headers"));
     for (const auto& header : m_request.httpHeaderFields())
-        gst_structure_set(headers.get(), header.key.utf8().data(), G_TYPE_STRING, header.value.utf8().data(), nullptr);
+        gst_structure_set(headers.get(), header.key.utf8().legacyCStringPointer(), G_TYPE_STRING, header.value.utf8().legacyCStringPointer(), nullptr);
     GST_DEBUG_OBJECT(src.get(), "R%u: Request headers going downstream: %" GST_PTR_FORMAT, m_requestNumber, headers.get());
     gst_structure_set(httpHeaders.get(), "request-headers", GST_TYPE_STRUCTURE, headers.get(), nullptr);
 
@@ -1062,9 +1062,9 @@ void CachedResourceStreamingClient::responseReceived(PlatformMediaResource&, con
     headers.reset(gst_structure_new_empty("response-headers"));
     for (const auto& header : response.httpHeaderFields()) {
         if (auto convertedValue = parseIntegerAllowingTrailingJunk<uint64_t>(header.value))
-            gst_structure_set(headers.get(), header.key.utf8().data(), G_TYPE_UINT64, *convertedValue, nullptr);
+            gst_structure_set(headers.get(), header.key.utf8().legacyCStringPointer(), G_TYPE_UINT64, *convertedValue, nullptr);
         else
-            gst_structure_set(headers.get(), header.key.utf8().data(), G_TYPE_STRING, header.value.utf8().data(), nullptr);
+            gst_structure_set(headers.get(), header.key.utf8().legacyCStringPointer(), G_TYPE_STRING, header.value.utf8().legacyCStringPointer(), nullptr);
     }
     GST_DEBUG_OBJECT(src.get(), "R%u: Response headers going downstream: %" GST_PTR_FORMAT, m_requestNumber, headers.get());
     gst_structure_set(httpHeaders.get(), "response-headers", GST_TYPE_STRUCTURE, headers.get(), nullptr);
@@ -1093,7 +1093,7 @@ void CachedResourceStreamingClient::responseReceived(PlatformMediaResource&, con
         GST_DEBUG_OBJECT(src.get(), "R%u: Range request succeeded", m_requestNumber);
     }
 
-    members->isSeekable = length > 0 && g_ascii_strcasecmp("none", response.httpHeaderField(HTTPHeaderName::AcceptRanges).utf8().data());
+    members->isSeekable = length > 0 && g_ascii_strcasecmp("none", response.httpHeaderField(HTTPHeaderName::AcceptRanges).utf8().legacyCStringPointer());
 
     GST_DEBUG_OBJECT(src.get(), "R%u: Size: %" G_GUINT64_FORMAT ", isSeekable: %s", m_requestNumber, length, boolForPrinting(members->isSeekable));
     if (length > 0)
@@ -1107,8 +1107,8 @@ void CachedResourceStreamingClient::responseReceived(PlatformMediaResource&, con
         caps = adoptGRef(gst_caps_new_simple("application/x-icy", "metadata-interval", G_TYPE_INT, *metadataInterval, nullptr));
 
         String contentType = response.httpHeaderField(HTTPHeaderName::ContentType);
-        GST_DEBUG_OBJECT(src.get(), "R%u: Response ContentType: %s", m_requestNumber, contentType.utf8().data());
-        gst_caps_set_simple(caps.get(), "content-type", G_TYPE_STRING, contentType.utf8().data(), nullptr);
+        GST_DEBUG_OBJECT(src.get(), "R%u: Response ContentType: %s", m_requestNumber, contentType.utf8().legacyCStringPointer());
+        gst_caps_set_simple(caps.get(), "content-type", G_TYPE_STRING, contentType.utf8().legacyCStringPointer(), nullptr);
     }
     if (caps) {
         GST_DEBUG_OBJECT(src.get(), "R%u: Set caps to %" GST_PTR_FORMAT, m_requestNumber, caps.get());
@@ -1220,7 +1220,7 @@ void CachedResourceStreamingClient::accessControlCheckFailed(PlatformMediaResour
     if (members->requestNumber != m_requestNumber)
         return;
 
-    GST_ELEMENT_ERROR(src.get(), RESOURCE, READ, ("R%u: %s", m_requestNumber, error.localizedDescription().utf8().data()), (nullptr));
+    GST_ELEMENT_ERROR(src.get(), RESOURCE, READ, ("R%u: %s", m_requestNumber, error.localizedDescription().utf8().legacyCStringPointer()), (nullptr));
     members->doesHaveEOS = true;
     members->responseCondition.notifyOne();
 }
@@ -1237,10 +1237,10 @@ void CachedResourceStreamingClient::loadFailed(PlatformMediaResource&, const Res
         return;
 
     if (!error.isCancellation()) {
-        GST_ERROR_OBJECT(src.get(), "R%u: Have failure: %s", m_requestNumber, error.localizedDescription().utf8().data());
-        GST_ELEMENT_ERROR(src.get(), RESOURCE, FAILED, ("R%u: %s", m_requestNumber, error.localizedDescription().utf8().data()), (nullptr));
+        GST_ERROR_OBJECT(src.get(), "R%u: Have failure: %s", m_requestNumber, error.localizedDescription().utf8().legacyCStringPointer());
+        GST_ELEMENT_ERROR(src.get(), RESOURCE, FAILED, ("R%u: %s", m_requestNumber, error.localizedDescription().utf8().legacyCStringPointer()), (nullptr));
     } else
-        GST_LOG_OBJECT(src.get(), "R%u: Request cancelled: %s", m_requestNumber, error.localizedDescription().utf8().data());
+        GST_LOG_OBJECT(src.get(), "R%u: Request cancelled: %s", m_requestNumber, error.localizedDescription().utf8().legacyCStringPointer());
 
     members->doesHaveEOS = true;
     members->responseCondition.notifyOne();

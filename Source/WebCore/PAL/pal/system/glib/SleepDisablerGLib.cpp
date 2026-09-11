@@ -90,13 +90,13 @@ void SleepDisablerGLib::acquireInhibitor()
     if (shouldUsePortal()) {
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE_VARDICT);
-        g_variant_builder_add(&builder, "{sv}", "reason", g_variant_new_string(m_reason.utf8().data()));
+        g_variant_builder_add(&builder, "{sv}", "reason", g_variant_new_string(m_reason.utf8().legacyCStringPointer()));
         parameters = g_variant_new("(su@a{sv})", "" /* no window */, 8 /* idle */, g_variant_builder_end(&builder));
     } else if (const gchar* prgname = g_get_prgname()) {
-        parameters = g_variant_new("(ss)", prgname, m_reason.utf8().data());
+        parameters = g_variant_new("(ss)", prgname, m_reason.utf8().legacyCStringPointer());
     } else if (const auto executablePath = FileSystem::currentExecutablePath(); !executablePath.isNull()) {
         GUniquePtr<char> executableName(g_path_get_basename(executablePath.data()));
-        parameters = g_variant_new("(ss)", executableName.get(), m_reason.utf8().data());
+        parameters = g_variant_new("(ss)", executableName.get(), m_reason.utf8().legacyCStringPointer());
     } else
         return;
 

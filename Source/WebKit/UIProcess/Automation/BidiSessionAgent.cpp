@@ -118,8 +118,8 @@ void BidiSessionAgent::subscribe(Ref<JSON::Array>&& events, RefPtr<JSON::Array>&
     }
 
     LOG(Automation, "BidiSessionAgent::subscribe: adding subscriptionID=%s, events=%s",
-        subscriptionID.utf8().data(),
-        events->toJSONString().utf8().data());
+        subscriptionID.utf8().legacyCStringPointer(),
+        events->toJSONString().utf8().legacyCStringPointer());
     m_eventSubscriptions.add(subscriptionID, BidiEventSubscription { subscriptionID, WTF::move(atomEventNames), WTF::move(browsingContextIDs), { } });
 
     if (shouldReplayRealmCreatedEvents(m_eventSubscriptions.get(subscriptionID).events)) {
@@ -135,7 +135,7 @@ void BidiSessionAgent::unsubscribeByEventName(RefPtr<JSON::Array>&& events, Insp
 {
 IGNORE_GCC_WARNINGS_BEGIN("format-overflow")
     LOG(Automation, "BidiSessionAgent::unsubscribeByEventName: events=%s",
-        events ? events->toJSONString().utf8().data() : "null");
+        events ? events->toJSONString().utf8().legacyCStringPointer() : "null");
 IGNORE_GCC_WARNINGS_END
 
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!events || !events->length(), InvalidParameter, "At least one event name must be provided."_s);
@@ -190,8 +190,8 @@ void BidiSessionAgent::unsubscribe(RefPtr<JSON::Array>&& subscriptions, RefPtr<J
 {
 IGNORE_GCC_WARNINGS_BEGIN("format-overflow")
     LOG(Automation, "BidiSessionAgent::unsubscribe: subscriptions=%s, events=%s",
-        subscriptions ? subscriptions->toJSONString().utf8().data() : "null",
-        events ? events->toJSONString().utf8().data() : "null");
+        subscriptions ? subscriptions->toJSONString().utf8().legacyCStringPointer() : "null",
+        events ? events->toJSONString().utf8().legacyCStringPointer() : "null");
 IGNORE_GCC_WARNINGS_END
 
     if (!subscriptions) {

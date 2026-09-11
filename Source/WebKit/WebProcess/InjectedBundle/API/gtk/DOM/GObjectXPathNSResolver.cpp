@@ -30,7 +30,7 @@ GObjectXPathNSResolver::~GObjectXPathNSResolver() = default;
 
 AtomString GObjectXPathNSResolver::lookupNamespaceURI(const AtomString& prefix)
 {
-    return AtomString::fromUTF8(webkit_dom_xpath_ns_resolver_lookup_namespace_uri(m_resolver.get(), prefix.string().utf8().data()));
+    return AtomString::fromUTF8(webkit_dom_xpath_ns_resolver_lookup_namespace_uri(m_resolver.get(), prefix.string().utf8().legacyCStringPointer()));
 }
 
 } // namespace WebKit

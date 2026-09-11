@@ -437,6 +437,11 @@ if (COMPILER_IS_GCC_OR_CLANG)
                 add_compile_options("${_cc_sanitize}=address")
                 add_link_options("${_ld_sanitize}=address")
                 list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=address")
+                # C++ compilers already predefine __SANITIZE_ADDRESS__ under
+                # -fsanitize=address; define it explicitly so it also reaches
+                # Swift's clang importer.
+                # FIXME: Consider passing -sanitize=address to swift.
+                webkit_add_compile_definitions(__SANITIZE_ADDRESS__)
             elseif (${SANITIZER} MATCHES "undefined")
                 # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")
@@ -451,6 +456,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
                 add_compile_options("${_cc_sanitize}=thread")
                 add_link_options("${_ld_sanitize}=thread")
                 list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=thread")
+                webkit_add_compile_definitions(__SANITIZE_THREAD__)
 
             elseif (${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC)
                 add_compile_options("${_cc_sanitize}=memory")
