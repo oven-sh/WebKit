@@ -1162,6 +1162,10 @@ bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
             m_codeCache->clearCodeDecodedFromPersistentPayloads();
         if (!keepCodeInUse)
             deleteAllRegExpCode();
+        else if (Options::releaseIdleRegExpCodeWhenShrinkingFootprint() && !numberOfActiveJITPlans()) {
+            // (A compiler thread may be inlining a RegExp's code, see DFG::SpeculativeJIT::compileRegExpTestInline.)
+            m_regExpCache->deleteCodeNotUsedInCurrentFullCollectionCycle(*this);
+        }
         heap.reportAbandonedObjectGraph();
     } else {
         // This mode does not wait for a collection: if one is under way the code stays and the caller is told so.
