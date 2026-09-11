@@ -695,6 +695,103 @@ jobs:
         env: *upload_env
         run: *upload_run
 
+  jsc-tests:
+    name: JSC Tests (${{ matrix.artifact }})
+    needs: [linux]
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: bun-webkit-linux-amd64
+            runs-on: linux-x64-gh
+          # macOS / Windows entries to follow once linux is green.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.build_ref }}
+          # The build jobs sparse-exclude JSTests/LayoutTests; the test runner
+          # needs them. Exclude only the parts of LayoutTests/ the jsc driver
+          # doesn't touch.
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/Websites/
+            !/LayoutTests/
+            /LayoutTests/jsc-layout-tests.yaml
+            /LayoutTests/resources/
+            /LayoutTests/js/
+            /LayoutTests/fast/regex/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/artifact
+
+      - name: Extract jsc
+        run: |
+          set -euxo pipefail
+          mkdir -p WebKitBuild/Release
+          tar -xzf "${{ runner.temp }}/artifact/bun-webkit.tar.gz" -C "${{ runner.temp }}"
+          # webkitdirs.pm's executableProductDir() appends /bin to --root on
+          # non-Apple platforms, so the layout it expects is <root>/bin/jsc.
+          cp -r "${{ runner.temp }}/bun-webkit/bin" WebKitBuild/Release/bin
+          file WebKitBuild/Release/bin/jsc
+          WebKitBuild/Release/bin/jsc -e 'print("jsc OK", version())'
+
+      - name: Install runner deps
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ruby perl make
+
+      - name: Run JavaScriptCore tests
+        run: |
+          set -euxo pipefail
+          Tools/Scripts/run-javascriptcore-tests \
+            --jsc-only --release --no-build --no-fail-fast \
+            --root="$PWD/WebKitBuild/Release" \
+            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi \
+            --no-testwasmdebugger \
+            --json-output="$PWD/jsc_results.json" \
+            2>&1 | tee jsc_test_output.log
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jsc-test-results-${{ matrix.artifact }}
+          path: |
+            jsc_results.json
+            jsc_test_output.log
+          retention-days: 14
+
+      - name: Summarize
+        if: always()
+        run: |
+          if [ -f jsc_results.json ]; then
+            python3 - <<'EOF'
+          import json
+          with open("jsc_results.json") as f:
+              r = json.load(f)
+          stress = r.get("stressTestFailures", [])
+          print(f"stress failures: {len(stress)}")
+          for t in stress[:50]:
+              print(f"  FAIL {t}")
+          if len(stress) > 50:
+              print(f"  ... and {len(stress)-50} more")
+          with open("summary.md", "w") as out:
+              out.write(f"### JSC tests — ${{ matrix.artifact }}\n\n")
+              out.write(f"- stress failures: **{len(stress)}**\n")
+              if stress:
+                  out.write("\n<details><summary>failures</summary>\n\n```\n")
+                  out.write("\n".join(stress[:200]))
+                  out.write("\n```\n</details>\n")
+          EOF
+            cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   release:
     name: release
     # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
