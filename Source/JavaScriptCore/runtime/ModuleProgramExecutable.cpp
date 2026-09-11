@@ -65,10 +65,10 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
         RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 
     ParserError error;
-    OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
-    // Pinned when the body is about to run (ScriptExecutable::newCodeBlockFor); until then an executable that was made
-    // when the module was linked still gets code for a debugger that attached since.
-    codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
+    // Once there is a symbol table for the module environment, code fetched again has to lay the environment out as the
+    // code the table came from did: same source, same mode (BytecodeGenerator captures every variable for the debugger).
+    // The same goes for the registers of a module that is suspended at a top-level await, which are in a generator frame.
+    OptionSet<CodeGenerationMode> codeGenerationMode = m_moduleEnvironmentSymbolTable ? m_codeGenerationMode : globalObject->defaultCodeGenerationMode();
     unlinkedModuleProgramCode = vm.codeCache()->getUnlinkedModuleProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
 
     if (globalObject->hasDebugger())
@@ -80,31 +80,29 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
+    // The symbol table and the function declarations' executables are made once and stay for as long as the executable
+    // does, whatever happens to its code (ScriptExecutable::clearCode). The declarations' code is shared by every record
+    // of the executable and the optimizing tiers treat the scope of a symbol table that has only seen one environment as
+    // a constant (SymbolTable::singleton()), so every environment this code can run in has to come from the one table:
+    // the second one made from it invalidates that inference.
     VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
     SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
-    // The module's one environment was made from the clone this had before its code was cleared: as for the other scopes
-    // of a body that can be suspended (CodeBlock::setConstantRegisters), the code goes on with that clone.
-    SymbolTable* clone = m_moduleEnvironmentSymbolTable.get();
-    bool scopeHasOlderEnvironments = false;
-    if (clone && clone->clonedFrom() != symbolTable) {
-        if (clone->isCloneOfScopePartOf(*symbolTable))
-            clone->adoptOriginal(vm, *symbolTable);
-        else {
-            clone->invalidateInferencesOfAbandonedClone(vm);
-            scopeHasOlderEnvironments = true;
-            clone = nullptr;
+    if (SymbolTable* clone = m_moduleEnvironmentSymbolTable.get()) {
+        // It is the clone of the constant of the code that was fetched again from now on (as for the other scopes of a
+        // body that can be suspended, CodeBlock::setConstantRegisters). The environment is laid out by it either way.
+        if (clone->clonedFrom() != symbolTable) {
+            if (clone->isCloneOfScopePartOf(*symbolTable))
+                clone->adoptOriginal(vm, *symbolTable);
+            else
+                clone->invalidateInferencesOfAbandonedClone(vm);
         }
-    }
-    if (!clone) {
-        clone = symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes);
-        if (scopeHasOlderEnvironments)
-            clone->singleton().invalidate(vm, StringFireDetail("The scope has environments that were made from another SymbolTable"));
-        m_moduleEnvironmentSymbolTable.set(vm, this, clone);
-    }
-    {
+    } else {
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
     }
+    ASSERT(m_functionDeclarations.size() == unlinkedModuleProgramCode->numberOfFunctionDecls());
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
 
