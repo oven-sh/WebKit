@@ -100,9 +100,11 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
     }
     case ModuleProgramExecutableType: {
         ModuleProgramExecutable* executable = static_cast<ModuleProgramExecutable*>(this);
+        // The environment's symbol table and the function declarations' executables stay
+        // (ModuleProgramExecutable::getUnlinkedCodeBlock). What goes is the offer to later records:
+        // JSModuleRecord::getOrMakeExecutable does not adopt an executable whose code was deleted.
         executable->m_codeBlock.clear();
         executable->m_unlinkedCodeBlock.clear();
-        executable->m_moduleEnvironmentSymbolTable.clear();
         break;
     }
     default:
@@ -241,9 +243,7 @@ bool ScriptExecutable::hasClearableCode() const
 
     } else if (structure()->classInfoForCells() == ModuleProgramExecutable::info()) {
         auto* executable = static_cast<const ModuleProgramExecutable*>(this);
-        if (executable->m_codeBlock
-            || executable->m_unlinkedCodeBlock
-            || executable->m_moduleEnvironmentSymbolTable)
+        if (executable->m_codeBlock || executable->m_unlinkedCodeBlock)
             return true;
     }
     return false;

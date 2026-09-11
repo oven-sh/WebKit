@@ -65,7 +65,9 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
         RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 
     ParserError error;
-    OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+    // Once there is a symbol table for the module environment, code fetched again has to lay the environment out as the
+    // code the table came from did: same source, same mode (BytecodeGenerator captures every variable for the debugger).
+    OptionSet<CodeGenerationMode> codeGenerationMode = m_moduleEnvironmentSymbolTable ? m_codeGenerationMode : globalObject->defaultCodeGenerationMode();
     unlinkedModuleProgramCode = vm.codeCache()->getUnlinkedModuleProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
 
     if (globalObject->hasDebugger())
@@ -77,13 +79,20 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
-    VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
-    SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
-    m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
-    {
+    // The symbol table and the function declarations' executables are made once and stay for as long as the executable
+    // does, whatever happens to its code (ScriptExecutable::clearCode). The declarations' code is shared by every record
+    // of the executable and the optimizing tiers treat the scope of a symbol table that has only seen one environment as
+    // a constant (SymbolTable::singleton()), so every environment this code can run in has to come from the one table:
+    // the second one made from it invalidates that inference.
+    if (!m_moduleEnvironmentSymbolTable) {
+        VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
+        SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
     }
+    ASSERT(m_functionDeclarations.size() == unlinkedModuleProgramCode->numberOfFunctionDecls());
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
 

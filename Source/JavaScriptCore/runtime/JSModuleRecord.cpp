@@ -302,9 +302,10 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     JSGlobalObject::ModuleProgramExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
     if (bindings) {
         ModuleProgramExecutable* shared = executables.get(key);
-        // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
-        // share and no symbol table to instantiate an environment from.)
-        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+        // (An executable whose code was deleted, ScriptExecutable::clearCode, is left to the
+        // records that have it. The executable's code is in the mode of its first code, see
+        // getUnlinkedCodeBlock, which has to be the one this record would ask for.)
+        if (shared && shared->unlinkedCodeBlock() && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
