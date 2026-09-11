@@ -52,6 +52,7 @@ class FunctionMetadataNode;
 class ParserError;
 class ScriptExecutable;
 class SourceProvider;
+class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
 
 enum UnlinkedFunctionKind {
@@ -179,11 +180,18 @@ public:
 
     void clearCode(VM& vm)
     {
+        ASSERT(!m_isCached);
         m_unlinkedCodeBlockForCall.clear();
         m_unlinkedCodeBlockForConstruct.clear();
         // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
         vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
     }
+
+    // If every code block this holds was decoded from a persistent bytecode cache payload, lets go of them and goes
+    // back to naming their records in that payload, as before the first call; the next unlinkedCodeBlockFor() decodes
+    // them again. Only with no collection and no compiler thread running (Heap::deleteAllUnlinkedCodeBlocks).
+    // (Not if one of them is in `linkedAgainst`.)
+    bool returnCodeToCache(VM&, const UncheckedKeyHashSet<UnlinkedCodeBlock*>& linkedAgainst);
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
@@ -203,7 +211,7 @@ public:
 
     ImplementationVisibility implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
-    // The code blocks are still in the bytecode cache this was decoded from.
+    // The code blocks are still (or again) in the bytecode cache this was decoded from.
     bool isCached() const { return m_isCached; }
     ConstructAbility constructAbility() const { return static_cast<ConstructAbility>(m_constructAbility); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
@@ -409,6 +417,8 @@ private:
         RefPtr<Decoder> m_decoder;
     };
 
+    // While m_isCached, where each code block is in m_decoder's payload: > 0 is the offset of this executable's slot
+    // for it in its own record (as decoded), < 0 the negated offset of the code block's record (returnCodeToCache()).
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForConstruct;
         struct {

@@ -2246,6 +2246,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
@@ -3934,6 +3936,37 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     vm->whenIdle([=] () {
         DollarVMAssertScope assertScope;
         vm->deleteAllCode(PreventCollectionAndDeleteAllCode);
+    });
+    return JSValue::encode(jsUndefined());
+}
+
+// shrinkFootprintWhenIdle(keepCodeThatNeedsParsing = true, keepCodeInUse = false): the embedder's deep-idle step, without
+// the collection, once this call has returned to the event loop.
+JSC_DEFINE_HOST_FUNCTION(functionShrinkFootprintWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<VM::ShrinkFootprint> mode { VM::ShrinkFootprint::LeaveCollectionToCaller };
+    if (!callFrame->argumentCount() || callFrame->argument(0).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeThatNeedsParsing);
+    if (callFrame->argument(1).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeInUse);
+    vm->shrinkFootprintWhenIdle(mode);
+    return JSValue::encode(jsUndefined());
+}
+
+// returnCodeToBytecodeCacheWhenIdle(onlyWithoutLinkedCode = false): Heap::deleteAllUnlinkedCodeBlocks for the code that can
+// be decoded again from a persistent bytecode cache and nothing else, the way an embedder can call it directly: linked
+// code stays, and so do the compiler threads' plans until the call itself finishes them.
+JSC_DEFINE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<UnlinkedCodeToDelete> which { UnlinkedCodeToDelete::RecoverableFromCache };
+    if (callFrame->argument(0).toBoolean(globalObject))
+        which.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+    vm->whenIdle([=] () {
+        vm->heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, which);
     });
     return JSValue::encode(jsUndefined());
 }
@@ -5741,6 +5774,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);

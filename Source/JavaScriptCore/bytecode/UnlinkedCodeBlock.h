@@ -460,6 +460,7 @@ public:
 private:
     SourceParseMode m_parseMode;
     OptionSet<CodeGenerationMode> m_codeGenerationMode;
+    uint16_t m_cachedPayloadIndex { 0 }; // in VM::persistentBytecodePayloads() when decoded from one of those, else 0
     BaselineExecutionCounter m_llintExecuteCounter;
 
     const Ref<UnlinkedMetadataTable> m_metadata;
@@ -522,11 +523,16 @@ public:
 
     BaselineExecutionCounter& llintExecuteCounter() LIFETIME_BOUND { return m_llintExecuteCounter; }
 
+    // Non-zero for a block that can be decoded again from where it came (see PersistentBytecodePayloads).
+    uint16_t cachedPayloadIndex() const { return m_cachedPayloadIndex; }
+    uint32_t cachedRecordOffset() const { return m_cachedRecordOffset; }
+
 private:
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
     uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
+    uint32_t m_cachedRecordOffset { 0 }; // of this block's own record in that payload, while m_cachedPayloadIndex is set
     ValueAndArrayProfiles* m_valueAndArrayProfiles { nullptr };
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;
     FixedVector<UnaryArithProfile> m_unaryArithProfiles;

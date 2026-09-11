@@ -72,12 +72,19 @@ void ScriptExecutable::destroy(JSCell* cell)
     static_cast<ScriptExecutable*>(cell)->ScriptExecutable::~ScriptExecutable();
 }
 
-void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
+void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
 {
     m_jitCodeForCall = nullptr;
     m_jitCodeForConstruct = nullptr;
     m_jitCodeForCallWithArityCheck = CodePtr<JSEntryPtrTag>();
     m_jitCodeForConstructWithArityCheck = CodePtr<JSEntryPtrTag>();
+
+    auto clearGlobalCode = [&](GlobalExecutable* executable, bool canDecodeAgain) {
+        executable->m_codeBlock.clear();
+        UnlinkedCodeBlock* unlinkedCodeBlock = executable->m_unlinkedCodeBlock.get();
+        if (mode == ClearCode::All || (canDecodeAgain && unlinkedCodeBlock && unlinkedCodeBlock->cachedPayloadIndex() && Options::useCodeRecoveryFromBytecodeCache()))
+            executable->m_unlinkedCodeBlock.clear();
+    };
 
     switch (type()) {
     case FunctionExecutableType: {
@@ -86,25 +93,22 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
         executable->m_codeBlockForConstruct.clear();
         break;
     }
-    case EvalExecutableType: {
-        EvalExecutable* executable = static_cast<EvalExecutable*>(this);
-        executable->m_codeBlock.clear();
-        executable->m_unlinkedCodeBlock.clear();
+    case EvalExecutableType:
+        // newCodeBlockFor() does not fetch an eval's unlinked code again.
+        clearGlobalCode(static_cast<EvalExecutable*>(this), false);
         break;
-    }
-    case ProgramExecutableType: {
-        ProgramExecutable* executable = static_cast<ProgramExecutable*>(this);
-        executable->m_codeBlock.clear();
-        executable->m_unlinkedCodeBlock.clear();
+    case ProgramExecutableType:
+        clearGlobalCode(static_cast<ProgramExecutable*>(this), true);
         break;
-    }
     case ModuleProgramExecutableType: {
         ModuleProgramExecutable* executable = static_cast<ModuleProgramExecutable*>(this);
-        // The environment's symbol table and the function declarations' executables stay
-        // (ModuleProgramExecutable::getUnlinkedCodeBlock). What goes is the offer to later records:
-        // JSModuleRecord::getOrMakeExecutable does not adopt an executable whose code was deleted.
-        executable->m_codeBlock.clear();
-        executable->m_unlinkedCodeBlock.clear();
+        if (mode == ClearCode::All) {
+            // The environment's symbol table and the function declarations' executables stay
+            // (ModuleProgramExecutable::getUnlinkedCodeBlock). What goes is the offer to later records:
+            // JSModuleRecord::getOrMakeExecutable does not adopt an executable whose code was deleted.
+            clearGlobalCode(executable, true);
+        } else
+            executable->m_codeBlock.clear(); // a module's environment is tied to its unlinked code (UnlinkedModuleProgramCodeBlock.h)
         break;
     }
     default:
@@ -113,7 +117,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
     }
 
     ASSERT(&Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()) == &clearableCodeSet);
-    clearableCodeSet.remove(this);
+    if (!hasClearableCode())
+        clearableCodeSet.remove(this);
 }
 
 void ScriptExecutable::installCode(CodeBlock* codeBlock)
