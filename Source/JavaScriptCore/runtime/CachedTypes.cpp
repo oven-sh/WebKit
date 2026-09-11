@@ -5048,8 +5048,8 @@ protected:
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
     // @importModule. 6: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number
-    // of value profiles; LazyClosureVar resolve types, module function slot table.
-    static constexpr uint32_t cachedTypesFormatRevision = 6;
+    // of value profiles; LazyClosureVar resolve types, module function slot table. 7: op_iterator_close_check (opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 7;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

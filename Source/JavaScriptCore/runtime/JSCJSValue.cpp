@@ -193,6 +193,8 @@ JSObject* JSValue::synthesizePrototype(JSGlobalObject* globalObject) const
             return globalObject->stringPrototype();
         if (isHeapBigInt())
             return globalObject->bigIntPrototype();
+        // The marker cells that op_iterator_open leaves in registers are not values: nothing generic may ever get to see one.
+        RELEASE_ASSERT(asCell()->type() != SentinelType);
         ASSERT(isSymbol());
         return globalObject->symbolPrototype();
     }

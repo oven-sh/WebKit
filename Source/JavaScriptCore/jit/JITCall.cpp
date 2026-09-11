@@ -466,18 +466,71 @@ void JIT::emit_op_iterator_next(const JSInstruction* instruction)
     using BaselineJITRegisters::GetById::resultGPR;
     using BaselineJITRegisters::GetById::propertyCacheGPR;
 
-    constexpr GPRReg nextGPR = baseGPR; // Used as temporary register
-    emitGetVirtualRegister(bytecode.m_next, nextGPR);
+    // op_iterator_open leaves a sentinel cell in m_next when it recognized the iterable and m_iterator is one of our iterator
+    // objects. When it made no iterator object for an Array, the sentinel is in m_iterator and m_next is the index, not a cell.
+    constexpr GPRReg nextGPR = regT0;
+    constexpr GPRReg arrayGPR = regT1;
+    constexpr GPRReg scratchGPR = regT2;
+    constexpr GPRReg valueGPR = regT3;
     JumpList genericCases;
-    genericCases.append(branchIfNotCell(nextGPR));
+    JumpList doneCases;
+    emitGetVirtualRegister(bytecode.m_next, nextGPR);
+    Jump nextIsNotCell = branchIfNotCell(nextGPR);
     genericCases.append(branchIfNotType(nextGPR, SentinelType));
 
-    JumpList doneCases;
     loadGlobalObject(argumentGPR0);
     emitGetVirtualRegister(bytecode.m_iterator, argumentGPR1);
     emitGetVirtualRegister(bytecode.m_iterable, argumentGPR2);
     materializePointerIntoMetadata(bytecode, 0, argumentGPR3);
     callOperation(operationIteratorNextTryFast, argumentGPR0, argumentGPR1, argumentGPR2, argumentGPR3);
+    Jump haveFastResult = jump();
+
+    nextIsNotCell.link(this);
+    emitGetVirtualRegister(bytecode.m_iterator, scratchGPR);
+    genericCases.append(branchIfNotCell(scratchGPR));
+    genericCases.append(branchIfNotType(scratchGPR, SentinelType));
+
+    // The Array is in m_iterable and nextGPR holds the index of the next element. An element that is there, in Int32 or Contiguous
+    // storage, is handled here; everything else (the end, holes, other kinds of storage, an index that is not an Int32) in C++.
+    JumpList callOut;
+    callOut.append(branchIfNotInt32(nextGPR));
+    emitGetVirtualRegister(bytecode.m_iterable, arrayGPR);
+    callOut.append(branchIfNotCell(arrayGPR));
+    callOut.append(branchIfNotType(arrayGPR, ArrayType));
+    load8(Address(arrayGPR, JSCell::indexingTypeAndMiscOffset()), scratchGPR);
+    and32(TrustedImm32(IndexingShapeMask), scratchGPR);
+    Jump isInt32Shape = branch32(Equal, scratchGPR, TrustedImm32(Int32Shape));
+    callOut.append(branch32(NotEqual, scratchGPR, TrustedImm32(ContiguousShape)));
+    isInt32Shape.link(this);
+    loadPtr(Address(arrayGPR, JSObject::butterflyOffset()), scratchGPR);
+    // As unsigned: the index of a finished iteration, -1, is above any length.
+    zeroExtend32ToWord(nextGPR, nextGPR);
+    callOut.append(branch32(AboveOrEqual, nextGPR, Address(scratchGPR, Butterfly::offsetOfPublicLength())));
+    callOut.append(branch32(Equal, nextGPR, TrustedImm32(std::numeric_limits<int32_t>::max())));
+    load64(BaseIndex(scratchGPR, nextGPR, TimesEight), valueGPR);
+    callOut.append(branchIfEmpty(valueGPR));
+
+    emitArrayProfilingSiteWithCell(bytecode, OpIteratorNext::Metadata::offsetOfIterableProfile() + ArrayProfile::offsetOfLastSeenStructureID(), arrayGPR, scratchGPR);
+    load16FromMetadata(bytecode, OpIteratorNext::Metadata::offsetOfIterationMetadata() + IterationModeMetadata::offsetOfSeenModes(), scratchGPR);
+    or32(TrustedImm32(static_cast<uint16_t>(IterationMode::FastArray)), scratchGPR);
+    store16ToMetadata(scratchGPR, bytecode, OpIteratorNext::Metadata::offsetOfIterationMetadata() + IterationModeMetadata::offsetOfSeenModes());
+    emitPutVirtualRegister(bytecode.m_value, valueGPR);
+    emitValueProfilingSite(bytecode, m_bytecodeIndex.withCheckpoint(OpIteratorNext::getValue), valueGPR);
+    moveTrustedValue(jsBoolean(false), scratchGPR);
+    emitPutVirtualRegister(bytecode.m_done, scratchGPR);
+    add32(TrustedImm32(1), nextGPR);
+    boxInt32(nextGPR, nextGPR);
+    emitPutVirtualRegister(bytecode.m_next, nextGPR);
+    doneCases.append(jump());
+
+    callOut.link(this);
+    loadGlobalObject(argumentGPR0);
+    emitGetVirtualRegister(bytecode.m_iterable, argumentGPR1);
+    addPtr(TrustedImm32(bytecode.m_next.offset() * static_cast<int>(sizeof(Register))), callFrameRegister, argumentGPR2);
+    materializePointerIntoMetadata(bytecode, 0, argumentGPR3);
+    callOperation(operationIteratorNextWithIndexInFrame, argumentGPR0, argumentGPR1, argumentGPR2, argumentGPR3);
+
+    haveFastResult.link(this);
     emitPutVirtualRegister(bytecode.m_done, returnValueGPR);
     emitPutVirtualRegister(bytecode.m_value, returnValueGPR2);
     doneCases.append(branchIfEmpty(returnValueGPR2));
@@ -546,6 +599,38 @@ void JIT::emit_op_iterator_next(const JSInstruction* instruction)
     }
 
     doneCases.link(this);
+}
+
+void JIT::emit_op_iterator_close_check(const JSInstruction* instruction)
+{
+    auto bytecode = instruction->as<OpIteratorCloseCheck>();
+    emitGetVirtualRegister(bytecode.m_iterator, regT0);
+    Jump notCell = branchIfNotCell(regT0);
+    Jump isSentinel = branchIfType(regT0, SentinelType);
+    notCell.link(this);
+    moveTrustedValue(jsBoolean(false), regT0);
+    emitPutVirtualRegister(bytecode.m_dst, regT0);
+    Jump done = jump();
+
+    isSentinel.link(this);
+    // No iterator object. There is nothing to close while this realm's Array Iterator protocol watchpoint set is intact.
+    loadGlobalObject(regT1);
+    loadPtr(Address(regT1, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet() + InlineWatchpointSet::offsetOfData()), regT1);
+    Jump thinAndInvalidated = branchPtr(Equal, regT1, TrustedImmPtr(std::bit_cast<void*>(InlineWatchpointSet::encodeState(IsInvalidated))));
+    Jump thin = branchTestPtr(NonZero, regT1, TrustedImm32(InlineWatchpointSet::IsThinFlag));
+    Jump fatAndInvalidated = branch8(Equal, Address(regT1, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated));
+    thin.link(this);
+    moveTrustedValue(jsBoolean(true), regT0);
+    emitPutVirtualRegister(bytecode.m_dst, regT0);
+    Jump nothingToClose = jump();
+
+    thinAndInvalidated.link(this);
+    fatAndInvalidated.link(this);
+    JITSlowPathCall slowPathCall(this, slow_path_iterator_close_check);
+    slowPathCall.call();
+
+    done.link(this);
+    nothingToClose.link(this);
 }
 
 void JIT::emitSlow_op_iterator_next(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)
