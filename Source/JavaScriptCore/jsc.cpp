@@ -3913,6 +3913,17 @@ static BinarySemaphore waitToExit;
 
 int jscmain(int argc, char** argv);
 
+#if ASAN_ENABLED
+// detect_stack_use_after_return moves locals to a heap-backed fake stack the conservative root scan does not visit,
+// so a cell only a C++ local refers to dies at the next collection (e.g. the promise fetch() returned in
+// JSModuleLoader::hostLoadImportedModule, under --slowPathAllocsBetweenGCs or --collectContinuously).
+extern "C" const char* __asan_default_options();
+extern "C" const char* __asan_default_options()
+{
+    return "detect_stack_use_after_return=0";
+}
+#endif
+
 #if OS(DARWIN) || OS(LINUX)
 static size_t memoryLimit;
 
