@@ -293,19 +293,15 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     std::optional<ModuleProgramExecutable::ImportedBindings> bindings = importedBindings(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     Vector<SymbolTable*> moduleScopeSymbolTables;
-    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next()) {
-        auto* lexicalEnvironment = moduleScope ? dynamicDowncast<JSLexicalEnvironment>(moduleScope) : nullptr;
-        if (!lexicalEnvironment) {
-            bindings = std::nullopt;
-            break;
-        }
-        moduleScopeSymbolTables.append(lexicalEnvironment->symbolTable());
-    }
-    // Keyed by the module key's impl: a live entry whose key died and was reused for
-    // another module fails the URL / source comparison and is replaced.
+    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next())
+        moduleScopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(moduleScope)->symbolTable());
+    // Keyed by the module key's impl and the module scope's symbol table, so loaders with
+    // different module scopes each keep their entry: a live entry whose key died and was
+    // reused for another module fails the URL / source comparison and is replaced.
     auto& executables = globalObject->moduleProgramExecutables();
+    JSGlobalObject::ModuleProgramExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
     if (bindings) {
-        ModuleProgramExecutable* shared = executables.get(moduleKey().impl());
+        ModuleProgramExecutable* shared = executables.get(key);
         // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
         // share and no symbol table to instantiate an environment from.)
         if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
@@ -319,7 +315,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
     if (executable->importedBindings())
-        executables.set(moduleKey().impl(), Weak<ModuleProgramExecutable>(executable));
+        executables.set(key, Weak<ModuleProgramExecutable>(executable));
     return executable;
 }
 

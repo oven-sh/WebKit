@@ -259,10 +259,13 @@ void JSModuleLoader::destroy(JSCell* cell)
     thisObject->JSModuleLoader::~JSModuleLoader();
 }
 
-void JSModuleLoader::finishCreation(JSGlobalObject*, VM& vm)
+void JSModuleLoader::finishCreation(JSGlobalObject* globalObject, VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    // JSModuleRecord::getOrMakeExecutable and CodeCache rely on this shape.
+    for (JSScope* scope = moduleScope(); scope != globalObject->globalLexicalEnvironment(); scope = scope->next())
+        RELEASE_ASSERT(scope && scope->type() == LexicalEnvironmentType);
 }
 
 template<typename Visitor>
