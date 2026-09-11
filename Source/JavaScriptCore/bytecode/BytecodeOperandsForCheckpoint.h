@@ -162,13 +162,6 @@ ptrdiff_t stackOffsetInRegistersForCall(const Bytecode& bytecode, unsigned check
         return bytecode.m_argv;
 }
 
-template<typename BytecodeMetadata>
-CallLinkInfo& callLinkInfoFor(BytecodeMetadata& metadata, unsigned checkpointIndex)
-{
-    UNUSED_PARAM(checkpointIndex);
-    return metadata.m_callLinkInfo;
-}
-
 // op_async_iterator_next has no stored VirtualRegister for its optional resume value: like op_call's
 // argc/argv model, it's call argument index 1, addressed via m_stackOffset. Only valid when m_hasValue.
 inline VirtualRegister resumeValueOperandFor(const OpAsyncIteratorNext& bytecode)

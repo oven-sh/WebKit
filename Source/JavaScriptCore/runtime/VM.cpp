@@ -38,6 +38,7 @@
 #include "CallMode.h"
 #include "CheckpointOSRExitSideState.h"
 #include "CodeBlock.h"
+#include "CallLinkInfo.h"
 #include "CodeCache.h"
 #include "CommonIdentifiers.h"
 #include "ControlFlowProfiler.h"
@@ -285,6 +286,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 {
     if (vmCreationShouldCrash || g_jscConfig.vmCreationDisallowed) [[unlikely]]
         CRASH_WITH_EXTRA_SECURITY_IMPLICATION_AND_INFO(VMCreationDisallowed, "VM creation disallowed"_s, 0x4242424220202020, 0xbadbeef0badbeef, 0x1234123412341234, 0x1337133713371337);
+
+    m_neverExecutedCallSiteData = CallSiteData::createShared(false);
+    m_executedOnceCallSiteData = CallSiteData::createShared(true);
 
     // Set up lazy initializers.
     {
@@ -676,6 +680,8 @@ VM::~VM()
 
     JSRunLoopTimer::Manager::singleton().unregisterVM(*this);
 
+    delete m_neverExecutedCallSiteData;
+    delete m_executedOnceCallSiteData;
     delete emptyList;
 
     if (m_cachedBytecodeTwoCharacterAtoms) {
