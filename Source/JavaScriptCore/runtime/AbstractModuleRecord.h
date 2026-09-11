@@ -120,6 +120,7 @@ public:
         Identifier moduleRequest;
         Identifier importName;
         Identifier localName;
+        unsigned slotIndex { 0 }; // position among the record's import entries; set by addImportEntry
     };
 
     using StarExportEntry = std::pair<RefPtr<UniquedStringImpl>, ScriptFetchParameters::Type>;
@@ -314,6 +315,7 @@ public:
     // import bindings come from the graph's resolutions. The by-name maps above are built from the graph the first time
     // something needs them.
     bool isPrelinked() const { return !!m_prelinked; }
+    bool importEntriesArePrelinked() const { return m_prelinked && !m_prelinkedEntriesMaterialized; }
     PrelinkedModuleGraph* prelinkedGraph() const { return m_prelinked.get(); }
     uint32_t prelinkedIndex() const { return m_prelinkedIndex; }
     const PrelinkedModuleGraph::Module& prelinkedModule() const { return m_prelinked->module(m_prelinkedIndex); }

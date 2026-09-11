@@ -233,6 +233,7 @@ struct ResolveOp {
     InlineWatchpointSet* watchpointSet;
     uintptr_t operand;
     RefPtr<UniquedStringImpl> importedName;
+    unsigned moduleImportSlot { 0 };
 };
 
 class GetPutInfo {

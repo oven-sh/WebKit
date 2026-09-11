@@ -959,6 +959,7 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_linkTimeConstants(numberOfLinkTimeConstants)
     , m_structureCache(vm)
     , m_symbolTableCache(vm)
+    , m_moduleProgramExecutables(vm)
     , m_masqueradesAsUndefinedWatchpointSet(WatchpointSet::create(IsWatched))
     , m_havingABadTimeWatchpointSet(WatchpointSet::create(IsWatched))
     , m_varInjectionWatchpointSet(WatchpointSet::create(IsWatched))

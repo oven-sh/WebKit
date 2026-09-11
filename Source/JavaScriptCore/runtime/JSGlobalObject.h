@@ -110,6 +110,7 @@ class MapIteratorPrototype;
 class MapPrototype;
 class Microtask;
 class MicrotaskQueue;
+class ModuleProgramExecutable;
 class NullGetterFunction;
 class NullSetterFunction;
 class ObjectAdaptiveStructureWatchpoint;
@@ -513,6 +514,7 @@ public:
 
     StructureCache m_structureCache;
     WeakGCMap<SymbolTable*, SymbolTable> m_symbolTableCache;
+    WeakGCMap<String, ModuleProgramExecutable> m_moduleProgramExecutables;
 
     String m_name;
 
@@ -1175,6 +1177,7 @@ public:
 
     StructureCache& structureCache() LIFETIME_BOUND { return m_structureCache; }
     WeakGCMap<SymbolTable*, SymbolTable>& symbolTableCache() { return m_symbolTableCache; }
+    WeakGCMap<String, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
 
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }

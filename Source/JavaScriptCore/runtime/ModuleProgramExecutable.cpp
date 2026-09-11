@@ -28,6 +28,9 @@
 
 #include "CodeCache.h"
 #include "Debugger.h"
+#include "FunctionExecutable.h"
+#include "UnlinkedFunctionExecutable.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
 
 namespace JSC {
 
@@ -73,7 +76,21 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
     SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
     m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+    {
+        Locker locker { cellLock() };
+        m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
+    }
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
+}
+
+FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigned index)
+{
+    if (FunctionExecutable* executable = m_functionDeclarations[index].get())
+        return executable;
+    FunctionExecutable* executable = unlinkedCodeBlock()->functionDecl(index)->link(vm, this, source());
+    Locker locker { cellLock() };
+    m_functionDeclarations[index].set(vm, this, executable);
+    return executable;
 }
 
 ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source)
@@ -106,6 +123,11 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleEnvironmentSymbolTable);
+    {
+        Locker locker { thisObject->cellLock() };
+        for (auto& functionDeclaration : thisObject->m_functionDeclarations)
+            visitor.append(functionDeclaration);
+    }
     if (TemplateObjectMap* map = thisObject->m_templateObjectMap.get()) {
         Locker locker { thisObject->cellLock() };
         for (auto& entry : *map)

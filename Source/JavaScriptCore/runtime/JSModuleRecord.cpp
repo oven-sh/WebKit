@@ -40,6 +40,7 @@
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -186,6 +187,104 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     // 11. Return unused.
 }
 
+unsigned JSModuleRecord::importSlotCount() const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (importEntriesArePrelinked())
+        return prelinkedGraph()->imports(prelinkedModule()).size();
+#endif
+    return importEntries().size();
+}
+
+unsigned JSModuleRecord::importSlotIndex(UniquedStringImpl* localName)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (importEntriesArePrelinked()) {
+        const auto& module = prelinkedModule();
+        const PrelinkedModuleGraph::Import* import = prelinkedGraph()->findImport(module, localName);
+        RELEASE_ASSERT(import);
+        return import - prelinkedGraph()->imports(module).data();
+    }
+#endif
+    auto iterator = importEntries().find(localName);
+    RELEASE_ASSERT(iterator != importEntries().end());
+    return iterator->value.slotIndex;
+}
+
+template<typename Functor>
+static void forEachSingleImport(JSModuleRecord& record, const Functor& functor)
+{
+    // functor(slotIndex, localName) for every non-namespace import entry.
+#if USE(BUN_JSC_ADDITIONS)
+    if (record.importEntriesArePrelinked()) {
+        PrelinkedModuleGraph* graph = record.prelinkedGraph();
+        auto imports = graph->imports(record.prelinkedModule());
+        for (unsigned i = 0; i < imports.size(); ++i) {
+            if (!imports[i].isNamespace())
+                functor(i, graph->identifier(imports[i].localSid));
+        }
+        return;
+    }
+#endif
+    for (const auto& entry : record.importEntries().values()) {
+        if (entry.type != AbstractModuleRecord::ImportEntryType::Namespace)
+            functor(entry.slotIndex, entry.localName);
+    }
+}
+
+std::optional<Vector<unsigned>> JSModuleRecord::importSlotLayout(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<unsigned> layout(importSlotCount(), [](size_t) { return UINT_MAX; });
+    bool known = true;
+    forEachSingleImport(*this, [&](unsigned slotIndex, const Identifier& localName) {
+        if (!known || scope.exception())
+            return;
+        Resolution resolution = resolveImport(globalObject, localName);
+        if (scope.exception() || resolution.type != Resolution::Type::Resolved)
+            return;
+        SymbolTable* symbolTable = nullptr;
+        if (JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull())
+            symbolTable = environment->symbolTable();
+        else if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
+            ModuleProgramExecutable* executable = sourceTextModule->getOrMakeExecutable(globalObject);
+            if (scope.exception())
+                return;
+            symbolTable = executable->moduleEnvironmentSymbolTable();
+        }
+        if (!symbolTable) {
+            known = false;
+            return;
+        }
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        auto iterator = symbolTable->find(locker, resolution.localName.impl());
+        if (iterator != symbolTable->end(locker))
+            layout[slotIndex] = iterator->value.scopeOffset().offset();
+    });
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!known)
+        return std::nullopt;
+    return layout;
+}
+
+void JSModuleRecord::fillImportSlots(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSModuleEnvironment* environment = moduleEnvironment();
+    forEachSingleImport(*this, [&](unsigned slotIndex, const Identifier& localName) {
+        if (scope.exception())
+            return;
+        Resolution resolution = resolveImport(globalObject, localName);
+        if (scope.exception() || resolution.type != Resolution::Type::Resolved)
+            return;
+        environment->importSlot(slotIndex).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
+    });
+}
+
 ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* globalObject)
 {
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
@@ -199,7 +298,24 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
 
-    RELEASE_AND_RETURN(scope, executable);
+    // Share the executable (CodeBlocks, JIT code, function declaration executables)
+    // of an earlier record for the same URL and source when this record's imports
+    // resolve to environments laid out the same way, so linked ModuleVar accesses hold.
+    const String& url = sourceCode().provider()->sourceURL();
+    if (url.isEmpty())
+        return executable;
+    std::optional<Vector<unsigned>> layout = importSlotLayout(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!layout)
+        return executable;
+    auto& executables = globalObject->moduleProgramExecutables();
+    if (ModuleProgramExecutable* shared = executables.get(url); shared && shared->unlinkedCodeBlock() == executable->unlinkedCodeBlock() && shared->importSlotLayout() == *layout) {
+        m_moduleProgramExecutable.set(vm, this, shared);
+        return shared;
+    }
+    executable->setImportSlotLayout(WTF::move(*layout));
+    executables.set(url, Weak<ModuleProgramExecutable>(executable));
+    return executable;
 }
 
 } // namespace JSC

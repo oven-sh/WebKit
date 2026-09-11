@@ -173,7 +173,9 @@ void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName, Scri
 
 void AbstractModuleRecord::addImportEntry(const ImportEntry& entry)
 {
-    bool isNewEntry = m_importEntries.add(entry.localName.impl(), entry).isNewEntry;
+    ImportEntry added = entry;
+    added.slotIndex = m_importEntries.size();
+    bool isNewEntry = m_importEntries.add(entry.localName.impl(), WTF::move(added)).isNewEntry;
     UNUSED_PARAM(isNewEntry);
     // This is guaranteed by the parser.
     ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate import entry name '%s'", entry.localName.impl()->utf8().data());
@@ -1994,6 +1996,10 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule);
             // 13.b.iv. Set requiredModule.[[Status]] to LINKED.
             cyclic->setStatus(Status::Linked);
+            if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(cyclic)) {
+                sourceTextModule->fillImportSlots(globalObject);
+                RETURN_IF_EXCEPTION(scope, invalid);
+            }
             // 13.b.v. If requiredModule and module are the same Module Record, set done to true.
             done = requiredModule == module;
         } while (!done);

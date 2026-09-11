@@ -487,8 +487,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             }
             // 24.a.iii. If d is either a FunctionDeclaration, a GeneratorDeclaration, an AsyncFunctionDeclaration, or an AsyncGeneratorDeclaration, then
             // 24.a.iii.1. Let fo be InstantiateFunctionObject of d with arguments env and privateEnv.
-            auto* executable = unlinkedFunctionExecutable->link(vm, moduleProgramExecutable, moduleProgramExecutable->source());
-            RETURN_IF_EXCEPTION(scope, void());
+            FunctionExecutable* executable = moduleProgramExecutable->functionDeclaration(vm, i);
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
             if (isAsyncGeneratorWrapperParseMode(parseMode))

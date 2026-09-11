@@ -29,6 +29,7 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class SymbolTable;
 class UnlinkedModuleProgramCodeBlock;
 
@@ -75,6 +76,14 @@ public:
 
     SymbolTable* moduleEnvironmentSymbolTable() LIFETIME_BOUND { return m_moduleEnvironmentSymbolTable.get(); }
 
+    // Records for the same URL and source in one global object share this
+    // executable (and so its CodeBlocks and its function declarations' executables)
+    // when their imports resolve to environments of the same layout; see
+    // JSModuleRecord::getOrMakeExecutable.
+    const Vector<unsigned>& importSlotLayout() const { return m_importSlotLayout; }
+    void setImportSlotLayout(Vector<unsigned>&& layout) { m_importSlotLayout = WTF::move(layout); }
+    FunctionExecutable* functionDeclaration(VM&, unsigned index);
+
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
 private:
@@ -84,6 +93,8 @@ private:
     ModuleProgramExecutable(JSGlobalObject*, const SourceCode&);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
+    FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
+    Vector<unsigned> m_importSlotLayout;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
 

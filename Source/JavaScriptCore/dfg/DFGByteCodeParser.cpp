@@ -10420,7 +10420,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             ResolveType resolveType;
             unsigned depth;
             JSScope* constantScope = nullptr;
-            JSCell* lexicalEnvironment = nullptr;
+            unsigned moduleImportSlot = 0;
             SymbolTable* symbolTable = nullptr;
             {
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
@@ -10436,7 +10436,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     constantScope = metadata.m_constantScope.get();
                     break;
                 case ModuleVar:
-                    lexicalEnvironment = metadata.m_lexicalEnvironment.get();
+                    moduleImportSlot = metadata.m_moduleImportSlot;
                     break;
                 case ResolvedClosureVar:
                 case ClosureVar:
@@ -10479,11 +10479,25 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 break;
             }
             case ModuleVar: {
-                // Module environment is already strongly referenced by the CodeBlock.
-                set(bytecode.m_dst, weakJSConstant(lexicalEnvironment));
-                // BytecodeUseDef reports m_scope as a use regardless of resolve type,
-                // so we need to keep it OSR-available even though LLInt won't read it.
-                addToGraph(Phantom, get(bytecode.m_scope));
+                // The exporting environment is the importing module environment's
+                // import slot: a closure-variable-like load `depth` scopes up. It
+                // folds to a constant when the scope register is a constant here
+                // (import slots never change once filled).
+                Node* localBase = get(bytecode.m_scope);
+                addToGraph(Phantom, localBase);
+                if (JSScope* scope = localBase->dynamicCastConstant<JSScope*>()) {
+                    for (unsigned n = depth; n--;)
+                        scope = scope->next();
+                    if (JSValue exporter = uncheckedDowncast<JSModuleEnvironment>(scope)->variables()[moduleImportSlot].get()) {
+                        set(bytecode.m_dst, weakJSConstant(exporter.asCell()));
+                        break;
+                    }
+                }
+                for (unsigned n = depth; n--;)
+                    localBase = addToGraph(SkipScope, localBase);
+                Node* exporter = addToGraph(GetClosureVar, OpInfo(moduleImportSlot), OpInfo(SpecObjectOther), localBase);
+                addToGraph(Check, Edge(exporter, KnownCellUse));
+                set(bytecode.m_dst, exporter);
                 break;
             }
             case ResolvedClosureVar:

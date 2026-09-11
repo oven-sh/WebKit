@@ -3589,9 +3589,16 @@ void LOLJIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar)
-        loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), destGPR);
-    else if (profiledResolveType == ClosureVar) {
+    if (profiledResolveType == ModuleVar) {
+        // See JIT::emit_op_resolve_scope.
+        move(scopeGPR, destGPR);
+        unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
+        for (unsigned index = 0; index < localScopeDepth; ++index)
+            loadPtr(Address(destGPR, JSScope::offsetOfNext()), destGPR);
+        load32FromMetadata(bytecode, Metadata::offsetOfModuleImportSlot(), s_scratch);
+        static_assert(sizeof(WriteBarrier<Unknown>) == 8);
+        loadPtr(BaseIndex(destGPR, s_scratch, TimesEight, JSLexicalEnvironment::offsetOfVariables()), destGPR);
+    } else if (profiledResolveType == ClosureVar) {
         move(scopeGPR, destGPR);
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
         if (localScopeDepth < 8) {

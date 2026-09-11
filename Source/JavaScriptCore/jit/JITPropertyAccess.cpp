@@ -896,9 +896,18 @@ void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar)
-        loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), returnValueGPR);
-    else if (profiledResolveType == ClosureVar) {
+    if (profiledResolveType == ModuleVar) {
+        // Walk to the importing module environment and load its import slot; the
+        // slot index is per CodeBlock, so it comes from metadata like the depth.
+        emitGetVirtualRegister(scope, scopeGPR);
+        static_assert(scopeGPR == returnValueGPR);
+        unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
+        for (unsigned index = 0; index < localScopeDepth; ++index)
+            loadPtr(Address(returnValueGPR, JSScope::offsetOfNext()), returnValueGPR);
+        load32FromMetadata(bytecode, Metadata::offsetOfModuleImportSlot(), scratch1GPR);
+        static_assert(sizeof(WriteBarrier<Unknown>) == 8);
+        loadPtr(BaseIndex(returnValueGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
+    } else if (profiledResolveType == ClosureVar) {
         emitGetVirtualRegister(scope, scopeGPR);
         static_assert(scopeGPR == returnValueGPR);
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
