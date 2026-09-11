@@ -470,12 +470,15 @@ private:
     FunctionExpressionVector m_functionExprs;
 
 public:
+    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
+
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RareData, UnlinkedCodeBlock_RareData);
 
         size_t NODELETE sizeInBytes(const AbstractLocker&) const;
 
         FixedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+        OutOfLineJumpTargets m_outOfLineJumpTargets;
 
         // Jump Tables
         FixedVector<UnlinkedSimpleJumpTable> m_unlinkedSwitchJumpTables;
@@ -511,9 +514,6 @@ public:
     BaselineExecutionCounter& llintExecuteCounter() LIFETIME_BOUND { return m_llintExecuteCounter; }
 
 private:
-    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
-
-    OutOfLineJumpTargets m_outOfLineJumpTargets;
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
@@ -535,5 +535,9 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 };
+
+#if !ASSERT_ENABLED && CPU(ADDRESS64) && !OS(WINDOWS)
+static_assert(sizeof(UnlinkedCodeBlock) <= 192, "UnlinkedCodeBlock and UnlinkedFunctionCodeBlock should not move up a size class");
+#endif
 
 }

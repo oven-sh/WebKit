@@ -74,10 +74,9 @@ bool UnlinkedCodeBlockGenerator::finalize(std::unique_ptr<JSInstructionStream> i
         m_codeBlock->m_functionExprs = WTF::move(m_functionExprs);
         m_codeBlock->m_expressionInfo = m_expressionInfoEncoder.createExpressionInfo();
 
-        m_codeBlock->m_outOfLineJumpTargets = WTF::move(m_outOfLineJumpTargets);
-
         if (!m_codeBlock->m_rareData) {
             if (!m_exceptionHandlers.isEmpty()
+                || !m_outOfLineJumpTargets.isEmpty()
                 || !m_unlinkedSwitchJumpTables.isEmpty()
                 || !m_unlinkedStringSwitchJumpTables.isEmpty()
                 || !m_typeProfilerInfoMap.isEmpty()
@@ -88,6 +87,7 @@ bool UnlinkedCodeBlockGenerator::finalize(std::unique_ptr<JSInstructionStream> i
         }
         if (m_codeBlock->m_rareData) {
             m_codeBlock->m_rareData->m_exceptionHandlers = WTF::move(m_exceptionHandlers);
+            m_codeBlock->m_rareData->m_outOfLineJumpTargets = WTF::move(m_outOfLineJumpTargets);
             m_codeBlock->m_rareData->m_unlinkedSwitchJumpTables = WTF::move(m_unlinkedSwitchJumpTables);
             m_codeBlock->m_rareData->m_unlinkedStringSwitchJumpTables = WTF::move(m_unlinkedStringSwitchJumpTables);
             m_codeBlock->m_rareData->m_typeProfilerInfoMap = WTF::move(m_typeProfilerInfoMap);
