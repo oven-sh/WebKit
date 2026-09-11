@@ -253,11 +253,6 @@ JSModuleLoader* JSModuleLoader::create(JSGlobalObject* globalObject, VM& vm, JSS
     return create(globalObject, vm, vm.moduleLoaderStructure.get(), moduleScope);
 }
 
-JSModuleLoader* JSModuleLoader::create(JSGlobalObject* globalObject, VM& vm)
-{
-    return create(globalObject, vm, globalObject->globalLexicalEnvironment());
-}
-
 void JSModuleLoader::destroy(JSCell* cell)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* thisObject = static_cast<JSModuleLoader*>(cell);

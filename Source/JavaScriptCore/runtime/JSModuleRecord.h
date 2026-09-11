@@ -33,7 +33,6 @@
 
 namespace JSC {
 
-
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
 class JSModuleRecord final : public CyclicModuleRecord {

@@ -84,7 +84,6 @@ public:
     }
 
     JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
-    JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&);
 
     JSScope* moduleScope() const { return m_moduleScope.get(); }
 

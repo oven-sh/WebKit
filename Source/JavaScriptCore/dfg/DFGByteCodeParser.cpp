@@ -10502,6 +10502,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 for (unsigned n = depth; n--;)
                     localBase = addToGraph(SkipScope, localBase);
                 Node* exporter = addToGraph(GetClosureVar, OpInfo(moduleImportSlot), OpInfo(SpecObjectOther), localBase);
+                // Empty (not filled yet: exit and let the baseline slow path fill it) or the exporting
+                // JSModuleEnvironment; get_from_scope's KnownCellUse of this scope relies on nothing else being stored there.
                 addToGraph(CheckNotEmpty, exporter);
                 set(bytecode.m_dst, exporter);
                 break;

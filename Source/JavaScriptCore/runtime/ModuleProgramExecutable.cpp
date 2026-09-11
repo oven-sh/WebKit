@@ -130,11 +130,6 @@ ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* glob
     return executable;
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source)
-{
-    return tryCreate(globalObject, source, std::nullopt, { });
-}
-
 void ModuleProgramExecutable::destroy(JSCell* cell)
 {
     static_cast<ModuleProgramExecutable*>(cell)->ModuleProgramExecutable::~ModuleProgramExecutable();

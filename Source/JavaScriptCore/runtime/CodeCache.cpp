@@ -187,22 +187,15 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         source, String(), CacheTypes<UnlinkedCodeBlockType>::codeType, executable->lexicallyScopedFeatures(), scriptMode,
         derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode,
         std::nullopt);
-    if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>) {
-        // Code of a module whose loader has a module scope of its own resolves that
-        // scope's variables as closure variables where other records of the same source
-        // resolve globals, so it cannot use the unlinked code those share (the baseline
-        // code cached on it assumes one resolution: JIT::emit_op_resolve_scope); it gets
-        // its own, which the records that share its executable then use.
-        if (!executable->resolvesInGlobalScope()) {
-            UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
-            if (unlinkedCodeBlock) {
-                recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
-                return unlinkedCodeBlock;
-            }
-            return generateUnlinkedCodeBlock<UnlinkedCodeBlockType, ExecutableType>(vm, executable, source, scriptMode, codeGenerationMode, error, evalContextType);
-        }
-    }
-    UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
+    // Code of a module whose loader has a module scope of its own resolves that scope's
+    // variables as closure variables where other records of the same source resolve
+    // globals, so it cannot use the unlinked code those share (the baseline code cached
+    // on it assumes one resolution: JIT::emit_op_resolve_scope); it gets its own, which
+    // the records that share its executable then use.
+    bool privateToExecutable = false;
+    if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
+        privateToExecutable = !executable->resolvesInGlobalScope();
+    UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
     if (unlinkedCodeBlock && Options::useCodeCache()) {
         recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
         return unlinkedCodeBlock;
@@ -210,7 +203,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
 
     unlinkedCodeBlock = generateUnlinkedCodeBlock<UnlinkedCodeBlockType, ExecutableType>(vm, executable, source, scriptMode, codeGenerationMode, error, evalContextType);
 
-    if (unlinkedCodeBlock && Options::useCodeCache()) {
+    if (unlinkedCodeBlock && Options::useCodeCache() && !privateToExecutable) {
         m_sourceCode.addCache(key, SourceCodeValue(vm, unlinkedCodeBlock, m_sourceCode.age()));
 
         key.source().provider().cacheBytecode([&] {

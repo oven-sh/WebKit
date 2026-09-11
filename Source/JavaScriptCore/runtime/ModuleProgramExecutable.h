@@ -61,9 +61,7 @@ public:
     // moduleScopeSymbolTables: the symbol tables of the lexical environments between
     // the module environment and the global lexical environment (JSModuleLoader::moduleScope);
     // linked code embeds their variables' offsets too.
-    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&, const Vector<SymbolTable*>& moduleScopeSymbolTables);
-    // An executable no record shares (JSModuleRecord::getOrMakeExecutable makes the ones records use).
-    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&);
+    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&& = std::nullopt, const Vector<SymbolTable*>& moduleScopeSymbolTables = { });
 
     static void destroy(JSCell*);
 
