@@ -60,6 +60,7 @@
 #include "JSGeneratorFunction.h"
 #include "JSGlobalObjectFunctions.h"
 #include "JSLexicalEnvironment.h"
+#include "JSModuleEnvironment.h"
 #include "JSRemoteFunction.h"
 #include "JSWithScope.h"
 #include "LLIntEntrypoint.h"
@@ -146,6 +147,10 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScopeForLOL, EncodedJSValue, (CallFrame
 
     // ModuleVar is always converted to ClosureVar for get_from_scope.
     ASSERT(getPutInfo.resolveType() != ModuleVar);
+
+    // The shared code for LazyClosureVar also runs in CodeBlocks that linked this as ClosureVar.
+    if (getPutInfo.resolveType() == LazyClosureVar || getPutInfo.resolveType() == ClosureVar)
+        OPERATION_RETURN(scope, JSValue::encode(JSModuleEnvironment::readLazyClosureVar(vm, environment, ScopeOffset(bytecode.metadata(codeBlock).m_operand))));
 
     OPERATION_RETURN(scope, JSValue::encode(environment->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {

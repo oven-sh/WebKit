@@ -54,6 +54,8 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxyInlines.h"
+#include "JSModuleNamespaceObject.h"
+#include "JSModuleRecord.h"
 #include "JSONObject.h"
 #include "JSModuleLoader.h"
 #include "JSLexicalEnvironmentInlines.h"
@@ -2279,6 +2281,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionIsMemoryLimited);
+static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
@@ -4496,6 +4499,20 @@ JSC_DEFINE_HOST_FUNCTION(functionIsMemoryLimited, (JSGlobalObject*, CallFrame*))
 #endif
 }
 
+// Returns how many function declarations of a module have not been instantiated yet (Options::useLazyModuleFunctionDeclarations()).
+// Usage: $vm.uninstantiatedFunctionDeclarations(moduleNamespaceObject)
+JSC_DEFINE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* namespaceObject = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    if (!namespaceObject)
+        return JSValue::encode(jsUndefined());
+    auto* moduleRecord = dynamicDowncast<JSModuleRecord>(namespaceObject->moduleRecord());
+    if (!moduleRecord)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(moduleRecord->numberOfUninstantiatedFunctionDeclarations()));
+}
+
 // Returns true if JIT is enabled.
 // Usage: $vm.useJIT()
 JSC_DEFINE_HOST_FUNCTION(functionUseJIT, (JSGlobalObject*, CallFrame*))
@@ -5763,6 +5780,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asanEnabled"_s, functionAsanEnabled, 0);
 
     addFunction(vm, alwaysAllow, "isMemoryLimited"_s, functionIsMemoryLimited, 0);
+    addFunction(vm, alwaysAllow, "uninstantiatedFunctionDeclarations"_s, functionUninstantiatedFunctionDeclarations, 1);
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);

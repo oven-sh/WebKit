@@ -1086,6 +1086,7 @@ private:
         case GetGlobalVar:
         case GetGlobalLexicalVariable:
         case GetClosureVar:
+        case GetLazyClosureVar:
         case GetInternalField:
         case GetFromArguments:
         case LoadMapValue:

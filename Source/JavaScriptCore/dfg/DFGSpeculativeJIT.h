@@ -1610,6 +1610,7 @@ public:
     void compileGetDynamicVar(Node*);
     void compilePutDynamicVar(Node*);
     void compileGetClosureVar(Node*);
+    void compileGetLazyClosureVar(Node*);
     void compilePutClosureVar(Node*);
     void compileGetInternalField(Node*);
     void compilePutInternalField(Node*);

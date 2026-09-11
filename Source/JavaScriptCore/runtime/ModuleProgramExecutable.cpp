@@ -83,7 +83,8 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     // does, whatever happens to its code (ScriptExecutable::clearCode). The declarations' code is shared by every record
     // of the executable and the optimizing tiers treat the scope of a symbol table that has only seen one environment as
     // a constant (SymbolTable::singleton()), so every environment this code can run in has to come from the one table:
-    // the second one made from it invalidates that inference.
+    // the second one made from it invalidates that inference. A record that leaves its declarations uninstantiated reads
+    // m_functionDeclarations long after it made its environment.
     if (!m_moduleEnvironmentSymbolTable) {
         VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
         SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
@@ -120,9 +121,17 @@ FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigne
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
         return executable;
-    FunctionExecutable* executable = unlinkedCodeBlock()->functionDecl(index)->link(vm, this, source());
-    Locker locker { cellLock() };
-    m_functionDeclarations[index].set(vm, this, executable);
+    return linkFunctionDeclaration(vm, index, unlinkedCodeBlock()->functionDecl(index));
+}
+
+FunctionExecutable* ModuleProgramExecutable::linkFunctionDeclaration(VM& vm, unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    ASSERT(!linkedFunctionDeclaration(index));
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, this, source());
+    if (index < m_functionDeclarations.size()) {
+        Locker locker { cellLock() };
+        m_functionDeclarations[index].set(vm, this, executable);
+    }
     return executable;
 }
 
