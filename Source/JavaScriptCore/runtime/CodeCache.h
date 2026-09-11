@@ -152,6 +152,7 @@ public:
         m_map.remove(it);
     }
 
+    void removeIfHolds(const SourceCodeKey&, JSCell*);
     void removeCodeDecodedFromPersistentPayloads();
 
     void clear()
@@ -244,6 +245,10 @@ public:
     UnlinkedFunctionExecutable* getUnlinkedGlobalFunctionExecutable(VM&, const Identifier&, const SourceCode&, LexicallyScopedFeatures, OptionSet<CodeGenerationMode>, std::optional<int> functionConstructorParametersEndPosition, ParserError&);
 
     void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*);
+
+    // The module's evaluation finished, so nothing links against this block again unless the same source is loaded
+    // into another global object of this VM, which then decodes or generates its own.
+    void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
 
     void clear()
     {
