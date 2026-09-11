@@ -496,7 +496,13 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     };
 
     auto link_callLinkInfo = [&](const auto& instruction, auto bytecode, auto& metadata) {
-        metadata.m_callLinkInfo.initialize(vm, this, CallLinkInfo::callTypeFor(decltype(bytecode)::opcodeID), CodeOrigin { instruction.index() });
+        auto callType = CallLinkInfo::callTypeFor(decltype(bytecode)::opcodeID);
+        if constexpr (std::is_same_v<decltype(metadata.m_callLinkInfo), DataOnlyCallLinkInfo>)
+            metadata.m_callLinkInfo.initialize(vm, this, callType, CodeOrigin { instruction.index() });
+        else if (Options::useLazyLLIntCallLinkInfos()) [[likely]]
+            metadata.m_callLinkInfo.setNeverExecuted(vm);
+        else
+            metadata.m_callLinkInfo.ensure(vm, this, callType, CodeOrigin { instruction.index() });
     };
 
 #define LINK_FIELD(__field) \
@@ -900,6 +906,28 @@ void CodeBlock::ensureFunctionExecutablesMaterialized()
 
 // ---- end lazy FunctionExecutables -----------------------------------------------------------------------------------
 
+void CodeBlock::ensureCallLinkInfos()
+{
+    if (!m_metadata)
+        return;
+
+    VM& vm = this->vm();
+    for (const auto& instruction : instructions()) {
+        switch (instruction->opcodeID()) {
+#define CASE(__op) \
+        case __op::opcodeID: \
+            instruction->as<__op>().metadata(this).m_callLinkInfo.ensure(vm, this, CallLinkInfo::callTypeFor(__op::opcodeID), CodeOrigin { instruction.index() }); \
+            break;
+
+        FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+        default:
+            break;
+        }
+    }
+}
+
 #if ENABLE(JIT)
 void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
 {
@@ -914,6 +942,7 @@ void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
 void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 {
     prepareLazyStateForConcurrentCompilation(); // shared baseline code can be installed on a block that only ever ran in the LLInt
+    ensureCallLinkInfos();
     setJITCode(jitCode.copyRef());
 
     {
@@ -3297,6 +3326,16 @@ void CodeBlock::didFailFTLCompilation()
 
 #endif
 
+// The ArrayProfile of op_call, op_call_ignore_result and op_tail_call lives next to the site's CallLinkInfo, once the site has one.
+template<typename Metadata>
+static ALWAYS_INLINE ArrayProfile* arrayProfileFor(Metadata& metadata)
+{
+    if constexpr (requires { metadata.m_arrayProfile; })
+        return &metadata.m_arrayProfile;
+    else
+        return metadata.m_callLinkInfo.arrayProfile();
+}
+
 ArrayProfile* CodeBlock::getArrayProfile(BytecodeIndex bytecodeIndex)
 {
     auto instruction = instructions().at(bytecodeIndex);
@@ -3307,7 +3346,7 @@ ArrayProfile* CodeBlock::getArrayProfile(BytecodeIndex bytecodeIndex)
     switch (instruction->opcodeID()) {
 #define CASE(Op) \
     case Op::opcodeID: \
-        return &instruction->as<Op>().metadata(this).m_arrayProfile;
+        return arrayProfileFor(instruction->as<Op>().metadata(this));
 
     FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(CASE)
 
@@ -3461,24 +3500,26 @@ void CodeBlock::updateAllArrayProfilePredictions()
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
     auto* unlinkedProfiles = isBuiltinFunction ? nullptr : unlinkedCodeBlock->valueAndArrayProfiles();
     auto unlinkedArrayProfiles = unlinkedProfiles ? unlinkedProfiles->arrayProfiles() : std::span<UnlinkedArrayProfile> { };
-    auto process = [&] (ArrayProfile& profile) {
-        profile.computeUpdatedPrediction(this);
-        if (unlinkedProfiles) {
-            ASSERT(index < unlinkedArrayProfiles.size());
-            unlinkedArrayProfiles[index].update(profile);
+    auto process = [&] (ArrayProfile* profile) {
+        if (profile) {
+            profile->computeUpdatedPrediction(this);
+            if (unlinkedProfiles) {
+                ASSERT(index < unlinkedArrayProfiles.size());
+                unlinkedArrayProfiles[index].update(*profile);
+            }
         }
         ++index;
     };
 
 #define VISIT(__op) \
-    m_metadata->forEach<__op>([&] (auto& metadata) { process(metadata.m_arrayProfile); });
+    m_metadata->forEach<__op>([&] (auto& metadata) { process(arrayProfileFor(metadata)); });
 
     FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(VISIT)
 
 #undef VISIT
 
     m_metadata->forEach<OpIteratorNext>([&] (auto& metadata) {
-        process(metadata.m_iterableProfile);
+        process(&metadata.m_iterableProfile);
     });
 }
 

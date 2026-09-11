@@ -26,6 +26,7 @@
 #include "config.h"
 #include "LLIntData.h"
 
+#include "CallLinkInfo.h"
 #include "InPlaceInterpreter.h"
 #include "JSCConfig.h"
 #include "LLIntCLoop.h"
@@ -445,6 +446,7 @@ void initialize()
 #endif // CPU(ARM64E)
 #endif // ENABLE(C_LOOP)
     g_jscConfig.defaultCallThunk = defaultCall().code().taggedPtr();
+    LazyCallLinkInfo::initialize(LLInt::getCodeRef<JSEntryPtrTag>(llint_unlinked_call_trampoline).code());
 #if ENABLE(JIT)
     if (Options::useJIT())
         g_jscConfig.arityFixupThunk = arityFixupThunk().code().taggedPtr();

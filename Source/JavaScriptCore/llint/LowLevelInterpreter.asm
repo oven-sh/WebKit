@@ -2514,14 +2514,13 @@ end)
 
 
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
-commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, macro (getu, metadata)
-    arrayProfileForCall(OpCall, getu)
+commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCall)
 
-commonCallOp(op_construct, OpConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, macro (getu, metadata)
+commonCallOp(op_construct, OpConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
 end, dispatchAfterRegularCall)
 
-commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, macro (getu, metadata)
+commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
     getu(m_argv, t1)
     lshifti 3, t1
     negp t1
@@ -2537,15 +2536,13 @@ commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invoke
 .done:
 end, dispatchAfterRegularCall)
 
-commonCallOp(op_tail_call, OpTailCall, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, macro (getu, metadata)
-    arrayProfileForCall(OpTailCall, getu)
+commonCallOp(op_tail_call, OpTailCall, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, prepareCallSiteForTailCall, macro (getu, metadata)
     checkSwitchToJITForEpilogue()
     # reload metadata since checkSwitchToJITForEpilogue() might have trashed t5
     metadata(t5, t0)
 end, dispatchAfterTailCall)
 
-commonCallOp(op_call_ignore_result, OpCallIgnoreResult, prepareForRegularCall, invokeForRegularCallIgnoreResult, prepareForSlowRegularCall, macro (getu, metadata)
-    arrayProfileForCall(OpCallIgnoreResult, getu)
+commonCallOp(op_call_ignore_result, OpCallIgnoreResult, prepareForRegularCall, invokeForRegularCallIgnoreResult, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCallIgnoreResult)
 
 macro branchIfException(exceptionTarget)
@@ -2738,6 +2735,12 @@ end
 # t2 is CallLinkInfo*
 op(llint_default_call_trampoline, macro ()
     linkFor(_llint_default_call)
+end)
+
+# t0 is callee
+# t2 is CallLinkInfo*
+op(llint_unlinked_call_trampoline, macro ()
+    linkFor(_llint_unlinked_call)
 end)
 
 # t0 is callee
