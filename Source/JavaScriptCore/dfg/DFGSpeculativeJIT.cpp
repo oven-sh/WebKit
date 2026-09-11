@@ -13245,6 +13245,19 @@ void SpeculativeJIT::compilePutDynamicVar(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compileGetLazyClosureVar(Node* node)
+{
+    SpeculateCellOperand base(this, node->child1());
+    GPRTemporary result(this);
+
+    GPRReg baseGPR = base.gpr();
+    GPRReg resultGPR = result.gpr();
+
+    loadValue(Address(baseGPR, JSLexicalEnvironment::offsetOfVariable(node->scopeOffset())), resultGPR);
+    addSlowPathGenerator(slowPathCall(branchIfEmpty(resultGPR), this, operationGetLazyClosureVar, resultGPR, TrustedImmPtr(&vm()), baseGPR, TrustedImm32(node->scopeOffset().offset())));
+    jsValueResult(resultGPR, node);
+}
+
 void SpeculativeJIT::compileGetClosureVar(Node* node)
 {
     if (node->hasDoubleResult()) {

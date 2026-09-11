@@ -468,6 +468,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
     // create, so do not look those up by name (the name may still be in the bytecode cache).
     size_t numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
+    // The profilers want every function's range up front.
+    bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
+    jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
+    if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
+        numberOfFunctions = 0;
     for (size_t i = 0; i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then

@@ -91,6 +91,14 @@ public:
         return moduleRecordSlot().get();
     }
 
+    // Options::useLazyModuleFunctionDeclarations(): see JSModuleRecord::isFunctionDeclarationSlot / readFunctionDeclarationSlot.
+    // Anything that reads a slot of a module environment other than through get_from_scope goes through readVariable().
+    bool isFunctionDeclarationSlot(ScopeOffset);
+    JS_EXPORT_PRIVATE JSValue readVariable(VM&, ScopeOffset);
+    // The slow path of get_from_scope<LazyClosureVar>. The scope is whatever environment record the paired
+    // resolve_scope produced, not necessarily a module's.
+    JS_EXPORT_PRIVATE static JSValue readLazyClosureVar(VM&, JSObject* scope, ScopeOffset);
+
     // One slot per import entry of the record: the environment that entry's
     // binding lives in, as resolved for this record (op_resolve_scope ModuleVar
     // reads it instead of a linked constant, so linked code can be shared).

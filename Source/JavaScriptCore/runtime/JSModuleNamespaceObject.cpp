@@ -195,6 +195,8 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         JSModuleEnvironment* environment = exportEntry.moduleRecord->moduleEnvironment();
         ScopeOffset scopeOffset;
         JSValue value = getValue(environment, exportEntry.localName, scopeOffset);
+        if (!value) [[unlikely]]
+            value = environment->readVariable(vm, scopeOffset);
 #if USE(BUN_JSC_ADDITIONS)
         if (!value) [[unlikely]] {
             // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on
