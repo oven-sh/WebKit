@@ -65,6 +65,7 @@ public:
     JS_EXPORT_PRIVATE static void dumpCellMemory(JSCell*);
     JS_EXPORT_PRIVATE static void dumpCellMemoryToStream(JSCell*, PrintStream&);
     JS_EXPORT_PRIVATE static void dumpSubspaceHashes(VM*);
+    JS_EXPORT_PRIVATE static JSObject* codeBlockCensus(JSGlobalObject*);
 
     static bool verifyCell(VM&, JSCell*);
 };
