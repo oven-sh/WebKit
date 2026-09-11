@@ -57,6 +57,8 @@ typename Adaptor::Type toNativeFromValue(JSGlobalObject* globalObject, JSValue v
     }
 }
 
+// The element value that is strictly equal (and SameValueZero) to |value|, or nullopt when the
+// element type cannot represent |value| exactly. Never wraps, clamps or rounds.
 template<typename Adaptor>
 std::optional<typename Adaptor::Type> toNativeFromValueWithoutCoercion(JSValue value)
 {
@@ -64,9 +66,9 @@ std::optional<typename Adaptor::Type> toNativeFromValueWithoutCoercion(JSValue v
         if (!value.isBigInt())
             return std::nullopt;
         if constexpr (std::is_same_v<Adaptor, BigInt64Adaptor>)
-            return JSBigInt::toBigInt64(value);
+            return JSBigInt::tryExtractInt64(value);
         else
-            return JSBigInt::toBigUInt64(value);
+            return JSBigInt::tryExtractUInt64(value);
     } else {
         if (!value.isNumber())
             return std::nullopt;
