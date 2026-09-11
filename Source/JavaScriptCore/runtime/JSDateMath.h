@@ -121,11 +121,9 @@ private:
     class DSTCache {
     public:
         static constexpr unsigned cacheSize = 32;
-        // The implementation relies on the fact that no time zones have
-        // more than one daylight savings offset change per 19 days.
-        // In Egypt in 2010 they decided to suspend DST during Ramadan. This
-        // led to a short interval where DST is in effect from September 10 to
-        // September 30.
+        // A lookup more than this far past a cached interval starts an interval of its own. Closer than this, the
+        // zone's transition table decides whether the lookup is in the interval's run of one offset, which costs
+        // more than computing one offset but settles the run up to its next change.
         static constexpr int64_t defaultDSTDeltaInMilliseconds = 19 * WTF::Int64Milliseconds::secondsPerDay * 1000;
 
         DSTCache()
@@ -153,7 +151,7 @@ private:
     private:
         LocalTimeOffsetCache* NODELETE leastRecentlyUsed(LocalTimeOffsetCache* exclude);
         std::tuple<LocalTimeOffsetCache*, LocalTimeOffsetCache*> probe(int64_t millisecondsFromEpoch);
-        void extendTheAfterCache(int64_t millisecondsFromEpoch, LocalTimeOffset);
+        void extendTheAfterCache(DateCache&, int64_t millisecondsFromEpoch, LocalTimeOffset, TimeType);
 
         uint64_t m_epoch { 0 };
         std::array<LocalTimeOffsetCache, cacheSize> m_entries { };
@@ -207,6 +205,10 @@ private:
     LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);
+    enum class Direction : bool { Forward, Backward };
+    static constexpr int64_t noOffsetChangeAfter = std::numeric_limits<int64_t>::max();
+    static constexpr int64_t noOffsetChangeBefore = std::numeric_limits<int64_t>::min();
+    int64_t offsetChange(Direction, int64_t millisecondsFromEpoch, TimeType inputTimeType);
     PlainGregorianDateTime computeGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType);
     std::tuple<int32_t, int32_t, int32_t> yearMonthDayFromDaysWithCache(int32_t days);
 
