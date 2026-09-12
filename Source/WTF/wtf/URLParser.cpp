@@ -32,8 +32,16 @@
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/CodePointIterator.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WTF {
+
+std::atomic<unsigned> URLParser::s_maximumLength { String::MaxLength };
+
+void URLParser::setMaximumLengthForTesting(unsigned maximumLength)
+{
+    s_maximumLength.store(std::min<unsigned>(maximumLength, String::MaxLength), std::memory_order_relaxed);
+}
 
 #define URL_PARSER_DEBUGGING 0
 
@@ -889,20 +897,35 @@ bool URLParser::shouldCopyFileURL(CodePointIterator<CharacterType> iterator)
     return !isSlashQuestionOrHash(*iterator);
 }
 
-static void percentEncodeByte(uint8_t byte, Vector<Latin1Character>& buffer)
-{
-    buffer.append('%');
-    buffer.append(upperNibbleToASCIIHexDigit(byte));
-    buffer.append(lowerNibbleToASCIIHexDigit(byte));
-}
-
 ALWAYS_INLINE void URLParser::percentEncodeByte(uint8_t byte)
 {
     ASSERT(m_didSeeSyntaxViolation);
     m_asciiBuffer.appendList<Latin1Character>({ '%', static_cast<Latin1Character>(upperNibbleToASCIIHexDigit(byte)), static_cast<Latin1Character>(lowerNibbleToASCIIHexDigit(byte)) });
 }
 
+// False when the characters do not fit. The caller then appends nothing for its code point. Everything else is still
+// appended, so each position in m_url stays a position in m_asciiBuffer until parse() sees m_resultIsTooLong and stops.
+ALWAYS_INLINE bool URLParser::takeFromPercentEncodingBudget(size_t addedLength)
+{
+    if (addedLength > m_percentEncodingBudget) [[unlikely]] {
+        m_resultIsTooLong = true;
+        return false;
+    }
+    m_percentEncodingBudget -= addedLength;
+    return true;
+}
+
 static constexpr auto replacementCharacterUTF8PercentEncoded = "%EF%BF%BD"_s;
+
+// What percent-encoding a code point as encodedLength characters adds on top of a copy of its code units.
+template<typename CharacterType>
+ALWAYS_INLINE static size_t lengthAddedByPercentEncoding(char32_t codePoint, size_t encodedLength)
+{
+    if constexpr (sizeof(CharacterType) == 1)
+        return encodedLength - 1;
+    else
+        return encodedLength - U16_LENGTH(codePoint);
+}
 
 template<bool(*isInCodeSet)(char32_t), typename CharacterType>
 ALWAYS_INLINE void URLParser::utf8PercentEncode(const CodePointIterator<CharacterType>& iterator)
@@ -912,7 +935,8 @@ ALWAYS_INLINE void URLParser::utf8PercentEncode(const CodePointIterator<Characte
     if (isASCII(codePoint)) [[likely]] {
         if (isInCodeSet(codePoint)) [[unlikely]] {
             syntaxViolation(iterator);
-            percentEncodeByte(codePoint);
+            if (takeFromPercentEncodingBudget(2))
+                percentEncodeByte(codePoint);
         } else
             appendToASCIIBuffer(codePoint);
         return;
@@ -924,6 +948,8 @@ ALWAYS_INLINE void URLParser::utf8PercentEncode(const CodePointIterator<Characte
     int32_t offset = 0;
     UBool isError = false;
     U8_APPEND(buffer, offset, U8_MAX_LENGTH, codePoint, isError);
+    if (!takeFromPercentEncodingBudget(lengthAddedByPercentEncoding<CharacterType>(codePoint, isError ? replacementCharacterUTF8PercentEncoded.length() : 3 * offset)))
+        return;
     if (isError) {
         appendToASCIIBuffer(replacementCharacterUTF8PercentEncoded.span8());
         return;
@@ -940,7 +966,8 @@ ALWAYS_INLINE void URLParser::utf8QueryEncode(const CodePointIterator<CharacterT
     if (isASCII(codePoint)) [[likely]] {
         if (shouldPercentEncodeQueryByte(codePoint, m_urlIsSpecial)) [[unlikely]] {
             syntaxViolation(iterator);
-            percentEncodeByte(codePoint);
+            if (takeFromPercentEncodingBudget(2))
+                percentEncodeByte(codePoint);
         } else
             appendToASCIIBuffer(codePoint);
         return;
@@ -952,6 +979,8 @@ ALWAYS_INLINE void URLParser::utf8QueryEncode(const CodePointIterator<CharacterT
     int32_t offset = 0;
     UBool isError = false;
     U8_APPEND(buffer, offset, U8_MAX_LENGTH, codePoint, isError);
+    if (!takeFromPercentEncodingBudget(lengthAddedByPercentEncoding<CharacterType>(codePoint, isError ? replacementCharacterUTF8PercentEncoded.length() : 3 * offset)))
+        return;
     if (isError) {
         appendToASCIIBuffer(replacementCharacterUTF8PercentEncoded.span8());
         return;
@@ -994,6 +1023,9 @@ void URLParser::encodeNonUTF8Query(const Vector<char16_t>& source, const URLText
     while (!iterator.atEnd() && isTabOrNewline(*iterator))
         ++iterator;
     ASSERT((i == length) == iterator.atEnd());
+    // The encoding decides how many bytes a code unit gives, so none of them counts as a copy.
+    if (i < length && !takeFromPercentEncodingBudget(3 * (length - i)))
+        return;
     for (; i < length; ++i) {
         ASSERT(m_didSeeSyntaxViolation);
         uint8_t byte = encoded[i];
@@ -1455,7 +1487,8 @@ NEVER_INLINE void URLParser::beginSyntaxViolation(const CodePointIterator<Charac
 void URLParser::failure()
 {
     m_url.invalidate();
-    m_url.m_string = WTF::move(m_inputString);
+    if (!m_resultIsTooLong)
+        m_url.m_string = WTF::move(m_inputString);
 }
 
 template<typename CharacterType>
@@ -1545,6 +1578,17 @@ URLParser::URLParser(URL& result, String&& input, const URL& base, const URLText
         }
         return;
     }
+
+    // See m_percentEncodingBudget. An input this long is refused even if it is its own serialization, because the parser does
+    // not know that until the end, and it cannot stop in the middle of the first syntax violation.
+    uint64_t maximumLength = s_maximumLength.load(std::memory_order_relaxed);
+    uint64_t lengthWithoutPercentEncoding = static_cast<uint64_t>(lengthReservedForBoundedAdditions) + (base.isValid() ? base.m_string.length() : 0) + m_inputString.length();
+    if (lengthWithoutPercentEncoding > maximumLength) [[unlikely]] {
+        m_resultIsTooLong = true;
+        failure();
+        return;
+    }
+    m_percentEncodingBudget = maximumLength - lengthWithoutPercentEncoding;
 
 #if ASSERT_ENABLED
     String inputString = m_inputString;
@@ -1798,6 +1842,10 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     } while (false);
 
     while (!c.atEnd()) {
+        if (m_resultIsTooLong) [[unlikely]] {
+            failure();
+            return;
+        }
         if (isTabOrNewline(*c)) [[unlikely]] {
             syntaxViolation(c);
             ++c;
@@ -2622,7 +2670,8 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 ASSERT(!nextC.atEnd());
                 if (*nextC == '?' || *nextC == '#') {
                     syntaxViolation(c);
-                    percentEncodeByte(' ');
+                    if (takeFromPercentEncodingBudget(2))
+                        percentEncodeByte(' ');
                 } else
                     appendToASCIIBuffer(' ');
                 ++c;
@@ -2899,8 +2948,19 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     if (!m_didSeeSyntaxViolation) [[likely]] {
         m_url.m_string = WTF::move(m_inputString);
         ASSERT(m_asciiBuffer.isEmpty());
-    } else
-        m_url.m_string = String::adopt(WTF::move(m_asciiBuffer));
+    } else {
+        ASSERT(m_asciiBuffer.size() <= s_maximumLength.load(std::memory_order_relaxed));
+        // String::adopt() copies a Vector that does not use StringImplMalloc, and crashes if it cannot allocate the copy.
+        std::span<Latin1Character> characters;
+        if (!m_resultIsTooLong)
+            m_url.m_string = String::tryCreateUninitialized(m_asciiBuffer.size(), characters);
+        if (m_url.m_string.isNull()) [[unlikely]] {
+            m_resultIsTooLong = true;
+            failure();
+            return;
+        }
+        memcpySpan(characters, m_asciiBuffer.span());
+    }
     m_url.m_isValid = true;
     URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8().data());
 }
@@ -3927,39 +3987,110 @@ std::optional<KeyValuePair<String, String>> URLParser::parseQueryNameAndValue(St
     return std::nullopt;
 }
 
-static void serializeURLEncodedForm(const String& input, Vector<Latin1Character>& output)
+// https://url.spec.whatwg.org/#concept-urlencoded-byte-serializer on the UTF-8 bytes of the characters. A sink takes each
+// byte, either as it is or percent-encoded. A lone surrogate is U+FFFD, which is what it is in a USVString.
+template<typename CharacterType, typename Sink>
+ALWAYS_INLINE static void serializeURLEncodedForm(std::span<const CharacterType> characters, Sink& sink)
 {
-    auto utf8 = input.utf8(StrictConversion);
-    for (char byte : utf8.span()) {
-        if (byte == 0x20)
-            output.append(0x2B);
-        else if (byte == 0x2A
-            || byte == 0x2D
-            || byte == 0x2E
-            || (byte >= 0x30 && byte <= 0x39)
-            || (byte >= 0x41 && byte <= 0x5A)
-            || byte == 0x5F
-            || (byte >= 0x61 && byte <= 0x7A)) // FIXME: Put these in the characterClassTable to avoid branches.
-            output.append(byte);
-        else
-            percentEncodeByte(byte, output);
+    for (size_t i = 0; i < characters.size(); ++i) {
+        char32_t codePoint = characters[i];
+        if constexpr (sizeof(CharacterType) == 2) {
+            if (U16_IS_SURROGATE(codePoint)) [[unlikely]] {
+                if (U16_IS_SURROGATE_LEAD(codePoint) && i + 1 < characters.size() && U16_IS_TRAIL(characters[i + 1]))
+                    codePoint = U16_GET_SUPPLEMENTARY(codePoint, characters[++i]);
+                else
+                    codePoint = replacementCharacter;
+            }
+        }
+        if (isASCII(codePoint)) [[likely]] {
+            uint8_t byte = codePoint;
+            if (byte == 0x20)
+                sink.literal(0x2B);
+            else if (byte == 0x2A
+                || byte == 0x2D
+                || byte == 0x2E
+                || (byte >= 0x30 && byte <= 0x39)
+                || (byte >= 0x41 && byte <= 0x5A)
+                || byte == 0x5F
+                || (byte >= 0x61 && byte <= 0x7A)) // FIXME: Put these in the characterClassTable to avoid branches.
+                sink.literal(byte);
+            else
+                sink.percentEncoded(byte);
+            continue;
+        }
+        std::array<uint8_t, U8_MAX_LENGTH> buffer;
+        int32_t offset = 0;
+        UBool isError = false;
+        U8_APPEND(buffer, offset, U8_MAX_LENGTH, codePoint, isError);
+        ASSERT_UNUSED(isError, !isError);
+        for (int32_t j = 0; j < offset; ++j)
+            sink.percentEncoded(buffer[j]);
     }
 }
-    
+
+template<typename Sink>
+ALWAYS_INLINE static void serializeURLEncodedForm(const String& input, Sink& sink)
+{
+    if (input.is8Bit())
+        serializeURLEncodedForm(input.span8(), sink);
+    else
+        serializeURLEncodedForm(input.span16(), sink);
+}
+
+struct URLEncodedFormLength {
+    void literal(uint8_t) { ++length; }
+    void percentEncoded(uint8_t) { length += 3; }
+    uint64_t length { 0 };
+};
+
+struct URLEncodedFormWriter {
+    void literal(uint8_t byte) { output[length++] = byte; }
+    void percentEncoded(uint8_t byte)
+    {
+        output[length++] = '%';
+        output[length++] = upperNibbleToASCIIHexDigit(byte);
+        output[length++] = lowerNibbleToASCIIHexDigit(byte);
+    }
+    std::span<Latin1Character> output;
+    size_t length { 0 };
+};
+
 String URLParser::serialize(const URLEncodedForm& tuples)
 {
-    if (tuples.isEmpty())
-        return { };
+    auto result = trySerialize(tuples);
+    RELEASE_ASSERT(result);
+    return WTF::move(*result);
+}
 
-    Vector<Latin1Character> output;
+// The first pass finds the length, so that the result is allocated once, and only if it fits in a String.
+std::optional<String> URLParser::trySerialize(const URLEncodedForm& tuples)
+{
+    if (tuples.isEmpty())
+        return String { };
+
+    uint64_t maximumLength = s_maximumLength.load(std::memory_order_relaxed);
+    // An '=' in each tuple and an '&' between tuples.
+    URLEncodedFormLength counter { 2 * static_cast<uint64_t>(tuples.size()) - 1 };
     for (auto& tuple : tuples) {
-        if (!output.isEmpty())
-            output.append('&');
-        serializeURLEncodedForm(tuple.key, output);
-        output.append('=');
-        serializeURLEncodedForm(tuple.value, output);
+        serializeURLEncodedForm(tuple.key, counter);
+        serializeURLEncodedForm(tuple.value, counter);
+        if (counter.length > maximumLength) [[unlikely]]
+            return std::nullopt;
     }
-    return String::adopt(WTF::move(output));
+
+    URLEncodedFormWriter writer;
+    auto result = String::tryCreateUninitialized(counter.length, writer.output);
+    if (result.isNull()) [[unlikely]]
+        return std::nullopt;
+    for (auto& tuple : tuples) {
+        if (writer.length)
+            writer.literal('&');
+        serializeURLEncodedForm(tuple.key, writer);
+        writer.literal('=');
+        serializeURLEncodedForm(tuple.value, writer);
+    }
+    ASSERT(writer.length == counter.length);
+    return result;
 }
 
 const UIDNA& URLParser::internationalDomainNameTranscoder()

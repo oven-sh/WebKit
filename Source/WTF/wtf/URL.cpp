@@ -473,7 +473,7 @@ bool URL::setProtocol(StringView newProtocol)
         return false;
 
     if (!m_isValid) {
-        parse(makeString(*newProtocolCanonicalized, ':', m_string));
+        parse(tryMakeString(*newProtocolCanonicalized, ':', m_string));
         return true;
     }
 
@@ -486,7 +486,7 @@ bool URL::setProtocol(StringView newProtocol)
     if (protocolIsFile() && host().isEmpty())
         return true;
 
-    parse(makeString(*newProtocolCanonicalized, StringView(m_string).substring(m_schemeEnd)));
+    parse(tryMakeString(*newProtocolCanonicalized, StringView(m_string).substring(m_schemeEnd)));
     return true;
 }
 
@@ -561,7 +561,7 @@ bool URL::setHost(StringView newHost)
         return false;
 
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
-    parse(makeString(
+    parse(tryMakeString(
         StringView(m_string).left(hostStart()),
         slashSlashNeeded ? "//"_s : ""_s,
         hasSpecialScheme() ? StringView(encodedHostName.span()) : newHost,
@@ -581,7 +581,7 @@ void URL::setPort(std::optional<uint16_t> port)
         return;
     }
 
-    parse(makeString(
+    parse(tryMakeString(
         StringView(m_string).left(m_hostEnd),
         ':',
         static_cast<unsigned>(*port),
@@ -639,7 +639,7 @@ void URL::setHostAndPort(StringView hostAndPort)
         return;
 
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
-    parse(makeString(
+    parse(tryMakeString(
         StringView(m_string).left(hostStart()),
         slashSlashNeeded ? "//"_s : ""_s,
         hasSpecialScheme() ? StringView(encodedHostName.span()) : hostName,
@@ -655,10 +655,12 @@ void URL::removeHostAndPort()
         remove(hostStart(), pathStart() - hostStart());
 }
 
+// The null string when the result does not fit in a String, or the UTF-8 form of the input does not fit in a Vector.
+// The input then is not empty, which is how a caller tells that from the null string an empty StringView gives.
 template<typename StringType>
 static String percentEncodeCharacters(const StringType& input, bool(*shouldEncode)(char16_t))
 {
-    auto encode = [shouldEncode] (const StringType& input) {
+    auto encode = [shouldEncode] (const StringType& input) -> String {
         auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
             StringBuilder builder(OverflowPolicy::RecordOverflow);
             for (char c : span) {
@@ -671,7 +673,8 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
             }
             return builder.toString();
         });
-        RELEASE_ASSERT(result);
+        if (!result)
+            return { };
         return result.value();
     };
 
@@ -685,6 +688,8 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
         return input;
 }
 
+// The setters pass tryMakeString() of the parts. It gives the null string for parts that are too long together, and the null
+// string parses to the null URL. URLParser gives the same for a URL that percent-encoding makes too long.
 void URL::parse(String&& string)
 {
     URL result;
@@ -719,10 +724,15 @@ void URL::setUser(StringView newUser)
     if (!newUser.isEmpty()) {
         bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
         bool needSeparator = end == m_hostEnd || (end == m_passwordEnd && m_string[end] != '@');
-        parse(makeString(
+        auto encodedUser = percentEncodeCharacters(newUser, URLParser::isInUserInfoEncodeSet);
+        if (encodedUser.isNull()) {
+            *this = { };
+            return;
+        }
+        parse(tryMakeString(
             StringView(m_string).left(m_userStart),
             slashSlashNeeded ? "//"_s : ""_s,
-            percentEncodeCharacters(newUser, URLParser::isInUserInfoEncodeSet),
+            encodedUser,
             needSeparator ? "@"_s : ""_s,
             StringView(m_string).substring(end)
         ));
@@ -741,10 +751,15 @@ void URL::setPassword(StringView newPassword)
 
     if (!newPassword.isEmpty()) {
         bool needLeadingSlashes = m_userEnd == m_schemeEnd + 1U;
-        parse(makeString(
+        auto encodedPassword = percentEncodeCharacters(newPassword, URLParser::isInUserInfoEncodeSet);
+        if (encodedPassword.isNull()) {
+            *this = { };
+            return;
+        }
+        parse(tryMakeString(
             StringView(m_string).left(m_userEnd),
             needLeadingSlashes ? "//:"_s : ":"_s,
-            percentEncodeCharacters(newPassword, URLParser::isInUserInfoEncodeSet),
+            encodedPassword,
             '@',
             StringView(m_string).substring(credentialsEnd())
         ));
@@ -767,7 +782,7 @@ void URL::setFragmentIdentifier(StringView identifier)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(StringView(m_string).left(m_queryEnd), '#', identifier));
+    parseAllowingC0AtEnd(tryMakeString(StringView(m_string).left(m_queryEnd), '#', identifier));
 }
 
 void URL::removeFragmentIdentifier()
@@ -795,7 +810,7 @@ void URL::setQuery(StringView newQuery)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(
+    parseAllowingC0AtEnd(tryMakeString(
         StringView(m_string).left(m_pathEnd),
         (!newQuery.startsWith('?') && !newQuery.isNull()) ? "?"_s : ""_s,
         newQuery,
@@ -842,11 +857,16 @@ void URL::setPath(StringView path)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(
+    auto escapedPath = escapePathWithoutCopying(path);
+    if (escapedPath.isNull() && !path.isEmpty()) {
+        *this = { };
+        return;
+    }
+    parseAllowingC0AtEnd(tryMakeString(
         StringView(m_string).left(pathStart()),
         path.startsWith('/') || (path.startsWith('\\') && hasSpecialScheme()) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
         !hasSpecialScheme() && host().isEmpty() && path.startsWith("//"_s) && path.length() > 2 ? "/."_s : ""_s,
-        escapePathWithoutCopying(path),
+        escapedPath,
         StringView(m_string).substring(m_pathEnd)
     ));
 }
@@ -1227,13 +1247,19 @@ URL URL::fileURLWithFileSystemPath(StringView path)
 #if OS(WINDOWS)
     // Handle UNC paths on Windows. should result in file://server/share
     if (isUNCLikePath(path)) {
-        return URL(makeString("file://"_s, escapeFilePathWithoutCopying(path.substring(2))));
+        auto escapedPath = escapeFilePathWithoutCopying(path.substring(2));
+        if (escapedPath.isNull())
+            return { };
+        return URL(tryMakeString("file://"_s, escapedPath));
     }
 #endif
-    return URL(makeString(
+    auto escapedPath = escapeFilePathWithoutCopying(path);
+    if (escapedPath.isNull() && !path.isEmpty())
+        return { };
+    return URL(tryMakeString(
         "file://"_s,
         path.startsWith('/') ? ""_s : "/"_s,
-        escapeFilePathWithoutCopying(path)
+        escapedPath
     ));
 }
 
