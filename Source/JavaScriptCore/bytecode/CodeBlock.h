@@ -446,6 +446,10 @@ public:
     template<typename Functor> void forEachObjectAllocationProfile(const Functor&);
     void ensureCallLinkInfos();
 
+    // What the call sites of the MetadataTable own, if this is the CodeBlock the table was linked for: optimized CodeBlocks share
+    // the table of the one they replace.
+    size_t sizeOfOwnCallSiteDatas() const { return JITCode::couldBeInterpreted(jitType()) ? m_metadata->sizeOfOwnCallSiteDatas() : 0; }
+
     template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(const Functor&);
 
     BinaryArithProfile* NODELETE binaryArithProfileForBytecodeIndex(BytecodeIndex);
