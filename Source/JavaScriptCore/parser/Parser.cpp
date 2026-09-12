@@ -53,7 +53,10 @@
 #define consumeOrFail(tokenType, ...) do { if (!consume(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define consumeOrFailWithFlags(tokenType, flags, ...) do { if (!consume(tokenType, flags)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define matchOrFail(tokenType, ...) do { if (!match(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
-#define failIfStackOverflow() do { if (!canRecurse()) [[unlikely]] failWithStackOverflow(); } while (0)
+// Once the recursion limit is hit, treat it as sticky: save-point backtracking can clear
+// m_errorMessage, and retrying an alternate production (e.g. object literal -> destructuring
+// pattern) at each nesting level would otherwise turn a linear failure into an exponential one.
+#define failIfStackOverflow() do { if (m_hasStackOverflow || !canRecurse()) [[unlikely]] failWithStackOverflow(); } while (0)
 #define semanticFail(...) do { internalFailWithMessage(false, __VA_ARGS__); } while (0)
 #define semanticFailIfTrue(cond, ...) do { if ((cond)) [[unlikely]] internalFailWithMessage(false, __VA_ARGS__); } while (0)
 #define semanticFailIfFalse(cond, ...) do { if (!(cond)) [[unlikely]] internalFailWithMessage(false, __VA_ARGS__); } while (0)

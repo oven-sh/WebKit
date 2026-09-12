@@ -79,6 +79,8 @@ jobs:
       contents: write
     runs-on: ${{matrix.os}}
     strategy:
+      # One variant's failure shouldn't cancel the others.
+      fail-fast: false
       matrix:
         include:
           - lto_flag: ""
@@ -378,6 +380,8 @@ jobs:
       contents: write
     runs-on: ${{matrix.os}}
     strategy:
+      # One variant's failure shouldn't cancel the others.
+      fail-fast: false
       matrix:
         include:
           - lto_flag: ""
@@ -464,6 +468,8 @@ jobs:
       contents: write
     runs-on: linux-x64-gh
     strategy:
+      # One variant's failure shouldn't cancel the others.
+      fail-fast: false
       matrix:
         include:
           - label: bun-webkit-macos-arm64
@@ -559,6 +565,8 @@ jobs:
       contents: write
     runs-on: linux-x64-gh
     strategy:
+      # One variant's failure shouldn't cancel the others.
+      fail-fast: false
       matrix:
         include:
           - label: bun-webkit-freebsd-amd64
@@ -631,6 +639,8 @@ jobs:
       contents: write
     runs-on: linux-x64-gh
     strategy:
+      # One variant's failure shouldn't cancel the others.
+      fail-fast: false
       matrix:
         include:
           - label: bun-webkit-linux-arm64-android
