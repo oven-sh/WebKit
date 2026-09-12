@@ -12,7 +12,7 @@ function shouldThrow(fn, label) {
     shouldBe(threw, true, label);
 }
 
-// gregory/japanese: ad -> ce, bc -> bce (case-insensitive).
+// gregory/japanese: ad -> ce, bc -> bce.
 {
     const ad = Temporal.PlainDate.from({ calendar: "gregory", era: "ad", eraYear: 2024, year: 2024, month: 1, day: 1 });
     shouldBe(ad.era, "ce", "gregory ad -> ce");
@@ -22,8 +22,15 @@ function shouldThrow(fn, label) {
     shouldBe(bc.eraYear, 44, "gregory bc eraYear");
     const jad = Temporal.PlainDate.from({ calendar: "japanese", era: "ad", eraYear: 1, month: 1, day: 1 });
     shouldBe(jad.era, "ce", "japanese ad -> ce");
-    const upper = Temporal.PlainDate.from({ calendar: "gregory", era: "AD", eraYear: 1, year: 1, month: 1, day: 1 });
-    shouldBe(upper.era, "ce", "AD (upper) -> ce");
+}
+
+// CanonicalizeEraInCalendar compares the input with the lowercase CLDR codes exactly, so other
+// spellings are unknown eras. https://tc39.es/proposal-intl-era-monthcode/#sec-temporal-canonicalizeeraincalendar
+for (const [calendar, era] of [["gregory", "AD"], ["gregory", "CE"], ["gregory", "Bce"], ["gregory", "bC"], ["japanese", "Reiwa"], ["japanese", "HEISEI"], ["hebrew", "AM"], ["roc", "ROC"], ["islamic-civil", "Ah"]]) {
+    shouldThrow(() => Temporal.PlainDate.from({ calendar, era, eraYear: 1, month: 1, day: 1 }), `${calendar} rejects ${era}`);
+    shouldThrow(() => Temporal.PlainDateTime.from({ calendar, era, eraYear: 1, month: 1, day: 1 }), `${calendar} rejects ${era} (PlainDateTime)`);
+    shouldThrow(() => Temporal.PlainYearMonth.from({ calendar, era, eraYear: 1, month: 1 }), `${calendar} rejects ${era} (PlainYearMonth)`);
+    shouldThrow(() => Temporal.PlainDate.from({ calendar, year: 1, month: 1, day: 1 }).with({ era, eraYear: 1 }), `${calendar} rejects ${era} (with)`);
 }
 
 // Non-alias calendars still reject "ad"/"bc".
