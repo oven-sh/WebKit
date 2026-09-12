@@ -273,6 +273,22 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
     return bindings;
 }
 
+// Whether linked code cannot tell the two sources apart. Besides the text, running code observes its
+// executable's source through error positions and stack traces (the URL and where the source starts) and
+// through import(), which hands the SourceOrigin to the embedder (CallFrame::callerSourceOrigin). The
+// SourceOrigin carries the embedder's ScriptFetcher, which is how an embedder knows which module asks.
+// A CodeBlock also caches whether its source could be tainted.
+static bool hasSameObservableSource(const SourceCode& a, const SourceCode& b)
+{
+    SourceProvider* providerA = a.provider();
+    SourceProvider* providerB = b.provider();
+    return providerA->sourceOrigin() == providerB->sourceOrigin()
+        && providerA->sourceTaintedOrigin() == providerB->sourceTaintedOrigin()
+        && providerA->sourceURL() == providerB->sourceURL()
+        && a.firstLine() == b.firstLine() && a.startColumn() == b.startColumn()
+        && providerA->hash() == providerB->hash() && a.view() == b.view();
+}
+
 ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* globalObject)
 {
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
@@ -286,7 +302,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     // exporting module's environment, which that module's source text determines, and
     // for variables of the loader's module scope, their offsets in its lexical
     // environments. So records in one global object for the same module key (URL) and
-    // source text whose imports resolve to the same sources and names, and whose
+    // source (hasSameObservableSource) whose imports resolve to the same sources and names, and whose
     // loaders' module scopes have the same symbol tables, share the executable:
     // CodeBlocks, JIT code and the function declarations' executables. A record for
     // which these differ links its own, which later records are then compared against.
@@ -305,7 +321,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
         // share and no symbol table to instantiate an environment from.)
         if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
-            && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+            && hasSameObservableSource(shared->source(), sourceCode())) {
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
         }
