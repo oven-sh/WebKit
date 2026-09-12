@@ -217,6 +217,7 @@ const IsWatched = constexpr IsWatched
 const IsInvalidated = constexpr IsInvalidated
 const InlineWatchpointSetThinFlag = constexpr InlineWatchpointSet::IsThinFlag
 const InlineWatchpointSetThinInvalidated = constexpr (InlineWatchpointSet::encodeState(IsInvalidated))
+const InlineWatchpointSetThinWatched = constexpr (InlineWatchpointSet::encodeState(IsWatched))
 
 # ShadowChicken data
 const ShadowChickenTailMarker = constexpr ShadowChicken::Packet::tailMarkerValue

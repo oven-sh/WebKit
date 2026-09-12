@@ -3482,10 +3482,56 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
     dispatch()
 end)
 
+llintOpWithMetadata(op_new_reg_exp_shared, OpNewRegExpShared, macro (size, get, dispatch, metadata, return)
+    # RegExpObject::literalAsReceiver(): the site's object, if it has one that is still in its initial state and the watchpoint
+    # sets of this realm that the sharing rests on are being watched. Everything else in C++.
+    macro branchIfNotWatched(set, scratch, slow)
+        loadp set + InlineWatchpointSet::m_data[t1], scratch
+        bpeq scratch, InlineWatchpointSetThinWatched, .isWatched
+        btpnz scratch, InlineWatchpointSetThinFlag, slow
+        bbneq WatchpointSet::m_state[scratch], IsWatched, slow
+    .isWatched:
+    end
+
+    metadata(t5, t0)
+    loadp OpNewRegExpShared::Metadata::m_cachedObject[t5], t0
+    btpz t0, .newRegExpSharedSlow
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_globalObject[t1], t1
+    branchIfNotWatched(JSGlobalObject::m_regExpPrimordialPropertiesWatchpointSet, t2, .newRegExpSharedSlow)
+    getu(size, OpNewRegExpShared, m_forTest, t2)
+    btiz t2, .newRegExpSharedCheckObject
+    branchIfNotWatched(JSGlobalObject::m_regExpPrototypeTestWatchpointSet, t2, .newRegExpSharedSlow)
+.newRegExpSharedCheckObject:
+    get(m_regexp, t2)
+    loadConstantOrVariable(size, t2, t3)
+    orp constexpr RegExpObject::sharedLiteralFlag, t3
+    bpneq RegExpObject::m_regExpAndFlags[t0], t3, .newRegExpSharedSlow
+    loadi JSCell::m_structureID[t0], t2
+    loadi JSGlobalObject::m_regExpStructure[t1], t3
+    bineq t2, t3, .newRegExpSharedSlow
+    bqneq RegExpObject::m_lastIndex[t0], numberTag, .newRegExpSharedSlow
+    return(t0)
+
+.newRegExpSharedSlow:
+    callSlowPath(_llint_slow_path_new_reg_exp_shared)
+    dispatch()
+end)
+
 llintOpWithReturn(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get, dispatch, return)
     loadVariable(get, m_iterator, t0)
     btqnz t0, notCellMask, .iteratorCloseCheckIsObject
-    bbeq JSCell::m_type[t0], constexpr SentinelType, .iteratorCloseCheckSlow
+    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorCloseCheckIsObject
+    # No iterator object. There is nothing to close while this realm's Array Iterator protocol watchpoint set is intact.
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_globalObject[t1], t1
+    loadp JSGlobalObject::m_arrayIteratorProtocolWatchpointSet + InlineWatchpointSet::m_data[t1], t1
+    bpeq t1, InlineWatchpointSetThinInvalidated, .iteratorCloseCheckSlow
+    btpnz t1, InlineWatchpointSetThinFlag, .iteratorCloseCheckNothingToClose
+    bbeq WatchpointSet::m_state[t1], IsInvalidated, .iteratorCloseCheckSlow
+.iteratorCloseCheckNothingToClose:
+    return(ValueTrue)
+
 .iteratorCloseCheckIsObject:
     return(ValueFalse)
 

@@ -162,20 +162,37 @@ RegisterID* NumberNode::emitBytecode(BytecodeGenerator& generator, RegisterID* d
 
 // ------------------------------ RegExpNode -----------------------------------
 
+RegisterID* RegExpNode::emitBytecodeAsReceiverOfCallTo(BytecodeGenerator& generator, RegisterID* dst, const Identifier& method)
+{
+    return emit(generator, dst, &method);
+}
+
 RegisterID* RegExpNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     if (dst == generator.ignoredResult())
         return nullptr;
+    return emit(generator, generator.finalDestination(dst), nullptr);
+}
 
+RegisterID* RegExpNode::emit(BytecodeGenerator& generator, RegisterID* dst, const Identifier* receiverOfCallTo)
+{
     auto flags = Yarr::parseFlags(m_flags.string());
     ASSERT(flags);
     RegExp* regExp = RegExp::create(generator.vm(), m_pattern.string(), flags.value());
-    if (regExp->isValid())
-        return generator.emitNewRegExp(generator.finalDestination(dst), regExp);
+    if (!regExp->isValid()) {
+        auto& message = generator.parserArena().identifierArena().makeIdentifier(generator.vm(), regExp->errorMessage().span8());
+        generator.emitThrowStaticError(ErrorTypeWithExtension::SyntaxError, message);
+        return generator.emitLoad(dst, jsUndefined());
+    }
 
-    auto& message = generator.parserArena().identifierArena().makeIdentifier(generator.vm(), regExp->errorMessage().span8());
-    generator.emitThrowStaticError(ErrorTypeWithExtension::SyntaxError, message);
-    return generator.emitLoad(generator.finalDestination(dst), jsUndefined());
+    // /x/.test(string) and /x/.exec(string): see op_new_reg_exp_shared. With g or y, exec and test read and write lastIndex, state that
+    // one evaluation would hand to the next.
+    if (receiverOfCallTo && Options::useSharedRegExpLiteralObjects() && !flags->contains(Yarr::Flags::Global) && !flags->contains(Yarr::Flags::Sticky)) {
+        bool forTest = *receiverOfCallTo == generator.vm().propertyNames->test;
+        if (forTest || *receiverOfCallTo == generator.vm().propertyNames->exec)
+            return generator.emitNewRegExpForReceiver(dst, regExp, forTest);
+    }
+    return generator.emitNewRegExp(dst, regExp);
 }
 
 // ------------------------------ ThisNode -------------------------------------
@@ -2250,6 +2267,8 @@ RegisterID* FunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, Regi
         generator.move(callArguments.thisRegister(), generator.ensureThis());
     else if (shouldGetArgumentsDotLengthFast)
         generator.emitLoad(callArguments.thisRegister(), jsUndefined());
+    else if (m_base->isRegExpNode())
+        static_cast<RegExpNode*>(m_base)->emitBytecodeAsReceiverOfCallTo(generator, callArguments.thisRegister(), m_ident);
     else {
         generator.emitNode(callArguments.thisRegister(), m_base);
         if (m_base->isOptionalChainBase())

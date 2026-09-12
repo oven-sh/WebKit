@@ -208,6 +208,7 @@ namespace JSC {
         virtual bool isThisNode() const { return false; }
         virtual bool isSpreadExpression() const { return false; }
         virtual bool isSuperNode() const { return false; }
+        virtual bool isRegExpNode() const { return false; }
         virtual bool isImportNode() const { return false; }
         virtual bool isMetaProperty() const { return false; }
         virtual bool isNewTarget() const { return false; }
@@ -607,8 +608,13 @@ namespace JSC {
     public:
         RegExpNode(const JSTokenLocation&, const Identifier& pattern, const Identifier& flags);
 
+        // For a literal that is the receiver of a call to the method with that name, as in /x/.test(string).
+        RegisterID* emitBytecodeAsReceiverOfCallTo(BytecodeGenerator&, RegisterID* dst, const Identifier& method);
+
     private:
+        bool isRegExpNode() const final { return true; }
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        RegisterID* emit(BytecodeGenerator&, RegisterID* dst, const Identifier* receiverOfCallTo);
 
         const Identifier& m_pattern;
         const Identifier& m_flags;

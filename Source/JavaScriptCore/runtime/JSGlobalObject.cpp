@@ -2331,6 +2331,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->valueOf), m_objectPrototypeValueOfWatchpointSet);
     installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_arrayPrototype.get(), vm.propertyNames->valueOf, objectPrototype()), m_arrayPrototypeValueOfWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->exec), m_regExpPrimordialPropertiesWatchpointSet);
+    installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->test), m_regExpPrototypeTestWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->flags), m_regExpPrimordialPropertiesWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->dotAll), m_regExpPrimordialPropertiesWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, m_regExpPrototype.get(), vm.propertyNames->global), m_regExpPrimordialPropertiesWatchpointSet);
