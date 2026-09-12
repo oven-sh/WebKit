@@ -1,0 +1,159 @@
+Chinese calendar: match the Hong Kong Observatory / Purple Mountain Observatory
+tables for 1901-2100. ICU's CalendarAstronomer puts nine new moons and three
+principal solar terms on the wrong side of local midnight (UTC+8), which moves
+a month start by a day (CNY 1954, CNY 2027, CNY 2030, 1955-02, 1999-01,
+2012-08, 2018-11, 2070-03, 2101-06) or moves a leap month one lunation late
+(1917, 1922, 1987). Apple's ICU and ICU4X (V8) already ship these dates.
+
+Based on the chnsecal.cpp part of https://github.com/unicode-org/icu/pull/4070
+(ICU-23274, ICU-22230, ICU-23286), with two changes: the corrections only apply
+to the Chinese calendar's astronomical zone (DangiCalendar shares this code and
+the Korean tables agree with the uncorrected days), and a corrected new moon
+keeps the before/after contract of the search, so a date on the computed day of
+an early conjunction belongs to the previous month instead of getting day 0.
+Verified per day for 1900-2101 (field consistency and round trips) and per
+lunation against ICU4X's precomputed tables: chinese agrees everywhere except
+2057-09-28/29 (left as computed, the conjunction is 40 s from midnight and the
+sources disagree), dangi is unchanged. Drop once ICU ships ICU-23274.
+
+--- a/source/i18n/chnsecal.cpp
++++ b/source/i18n/chnsecal.cpp
+@@ -636,6 +636,28 @@
+     return cacheValue;
+ }
+ 
++// ICU-23274: the nine new moons between 1901 and 2101 that CalendarAstronomer's approximation puts
++// on the wrong side of local midnight in the Chinese calendar's zone, as {computed day, actual day}
++// in days since 1970-01-01 (UTC+8). The actual days follow the Hong Kong Observatory and Purple
++// Mountain Observatory tables (and Y.T. Liu's DE-ephemeris computation). Only applied for the
++// Chinese calendar's astronomical zone: DangiCalendar shares this code with a different zone, and
++// the Korean tables (KASI) agree with the uncorrected computation on these dates.
++struct NewMoonCorrection {
++    int32_t computed;
++    int32_t actual;
++};
++const NewMoonCorrection CHINESE_NEW_MOON_CORRECTIONS[] = {
++    { -5810, -5811 }, // 1954-02-04 -> 1954-02-03, month 1 of 4651 (1954)
++    { -5426, -5427 }, // 1955-02-23 -> 1955-02-22, month 2 of 4652 (1955)
++    { 10609, 10608 }, // 1999-01-18 -> 1999-01-17, month 12 of 4695 (1998)
++    { 15570, 15569 }, // 2012-08-18 -> 2012-08-17, month 7 of 4709 (2012)
++    { 17842, 17843 }, // 2018-11-07 -> 2018-11-08, month 10 of 4715 (2018)
++    { 20856, 20855 }, // 2027-02-07 -> 2027-02-06, month 1 of 4724 (2027)
++    { 21947, 21948 }, // 2030-02-02 -> 2030-02-03, month 1 of 4727 (2030)
++    { 36596, 36595 }, // 2070-03-13 -> 2070-03-12, month 2 of 4767 (2070)
++    { 48023, 48024 }, // 2101-06-26 -> 2101-06-27, month 6 of 4798 (2101)
++};
++
+ /**
+  * Return the closest new moon to the given date, searching either
+  * forward or backward in time.
+@@ -655,11 +677,41 @@
+     if (U_FAILURE(status)) {
+         return 0;
+     }
+-    return static_cast<int32_t>(millisToDays(
++    int32_t newMoon = static_cast<int32_t>(millisToDays(
+         timeZone,
+         CalendarAstronomer(ms)
+               .getMoonTime(CalendarAstronomer::NEW_MOON(), after),
+               status));
++    if (U_FAILURE(status) || timeZone != getAstronomerTimeZone()) {
++        return newMoon;
++    }
++    // A backward search (after == false) returns the last new moon before the start of day
++    // `days`; a forward search returns the first new moon at or after it. Keep that contract for
++    // the corrected day, otherwise callers compute a day-of-month of 0 or skip a month.
++    int32_t bound = static_cast<int32_t>(uprv_floor(days));
++    for (const NewMoonCorrection& c : CHINESE_NEW_MOON_CORRECTIONS) {
++        if (newMoon == c.computed) {
++            if (!after && c.actual >= bound) {
++                // The conjunction is really on or after the bound day: the previous lunation is the answer.
++                return newMoonNear(timeZone, c.computed - 25, false, status);
++            }
++            if (after && c.actual < bound) {
++                // The conjunction is really before the bound day: the next lunation is the answer.
++                return newMoonNear(timeZone, c.computed + 25, true, status);
++            }
++            return c.actual;
++        }
++        // The search can also step over the actual day: backward from the computed day of a late
++        // conjunction, or forward from the actual day of an early one. Then the computed result is
++        // a whole lunation away and the corrected day lies between it and the bound.
++        if (!after && newMoon < c.actual && c.actual < bound && bound <= c.computed) {
++            return c.actual;
++        }
++        if (after && newMoon > c.actual && c.actual >= bound && bound > c.computed) {
++            return c.actual;
++        }
++    }
++    return newMoon;
+ }
+ 
+ /**
+@@ -687,6 +739,22 @@
+     }
+     // Compute (floor(solarLongitude / (pi/6)) + 2) % 12
+     double ms = daysToMillis(timeZone, days, status);
++    if (timeZone == getAstronomerTimeZone()) {
++        // ICU-22230: Special case for 1890-02-19 (days == -29170). On this day, Yushui (Major Solar Term 1)
++        // occurred at 00:53:47 AM Asia/Shanghai local time. Evaluating at standard 00:00:00 AM (0 ms) evaluates
++        // the Sun's longitude 53 minutes before Yushui occurred, causing a false negative that assigns Leap Month 12
++        // instead of Leap Month 2. We add a +1 hour offset for this specific date to align with official ephemeris tables
++        // while preserving standard 0 ms evaluation for all other historical years (avoiding regressions in 1938/1984/1985).
++        if (days == -29170) {
++            ms += 3600000; // 1890-02-19 Yushui (ICU-22230) special case
++        } else if (days == 6444 || days == -19248 || days == -17328) {
++            // ICU-23274: Special case for 1987-08-24 (days == 6444), 1917-04-21 Gu Yu (days == -19248),
++            // and 1922-07-24 Dashu (days == -17328). On these days, major solar terms occurred near midnight
++            // in ICU's Keplerian approximation. We subtract a 2-hour offset for these specific dates to align
++            // with official HKO / DE405 ephemerides and historical dynasty leap month assignments.
++            ms -= 2 * 3600000.0;
++        }
++    }
+     if (U_FAILURE(status)) {
+         return 0;
+     }
+@@ -802,6 +870,9 @@
+         }
+         solsticeAfter = winterSolstice(setting, gnext_year, status);
+     }
++    if (solsticeAfter <= solsticeBefore) {
++        solsticeAfter = solsticeBefore + 365; // Safeguard for far-future proleptic dates (ICU-23286) where Keplerian orbital approximations hit precision limits.
++    }
+     if (!(solsticeBefore <= days && days < solsticeAfter)) {
+         status = U_ILLEGAL_ARGUMENT_ERROR;
+     }
+@@ -813,7 +884,14 @@
+     // Find the start of the month after month 11.  This will be either
+     // the prior month 12 or leap month 11 (very rare).  Also find the
+     // start of the following month 11.
+-    int32_t firstMoon = newMoonNear(timeZone, solsticeBefore + 1, true, status);
++    //
++    // ICU-22230: Special case for 1889/1890. Before 1928, local mean time in Shanghai was UTC+8:05:43.
++    // On December 22, 1889, Winter Solstice occurred at 23:57:28 UTC+8 on Dec 21, which was 00:03:11 AM on Dec 22
++    // in local Shanghai time. Because integer day calculation divides (ms + 8h) by 24h assuming UTC+8.000,
++    // the Solstice was rounded down to Dec 21 (-29230), while the New Moon later that day (20:53 PM) fell on Dec 22 (-29229).
++    // Across 5,000 years, 1889 is the only year where this 5-minute-and-43-second rounding window splits Solstice and
++    // New Moon across midnight. We evaluate New Moon from solsticeBefore for 1889/1890 to capture the Dec 22 New Moon.
++    int32_t firstMoon = newMoonNear(timeZone, (timeZone == getAstronomerTimeZone() && (gyear == 1890 || gyear == 1889)) ? solsticeBefore : (solsticeBefore + 1), true, status);
+     int32_t lastMoon = newMoonNear(timeZone, solsticeAfter + 1, false, status);
+     if (U_FAILURE(status)) {
+         return output;
+@@ -1014,7 +1092,16 @@
+         }
+         int32_t solsticeBefore= winterSolstice(setting, gprevious_year, status);
+         int32_t solsticeAfter = winterSolstice(setting, gyear, status);
+-        int32_t newMoon1 = newMoonNear(timeZone, solsticeBefore + 1, true, status);
++        if (solsticeAfter <= solsticeBefore) {
++            solsticeAfter = solsticeBefore + 365; // Safeguard for far-future proleptic dates (ICU-23286) where Keplerian orbital approximations hit precision limits.
++        }
++        // ICU-22230: Special case for 1889/1890. Before 1928, local mean time in Shanghai was UTC+8:05:43.
++        // On December 22, 1889, Winter Solstice occurred at 23:57:28 UTC+8 on Dec 21, which was 00:03:11 AM on Dec 22
++        // in local Shanghai time. Because integer day calculation divides (ms + 8h) by 24h assuming UTC+8.000,
++        // the Solstice was rounded down to Dec 21 (-29230), while the New Moon later that day (20:53 PM) fell on Dec 22 (-29229).
++        // Across 5,000 years, 1889 is the only year where this 5-minute-and-43-second rounding window splits Solstice and
++        // New Moon across midnight. We evaluate New Moon from solsticeBefore for 1889/1890 to capture the Dec 22 New Moon.
++        int32_t newMoon1 = newMoonNear(timeZone, (timeZone == getAstronomerTimeZone() && (gyear == 1890 || gyear == 1889)) ? solsticeBefore : (solsticeBefore + 1), true, status);
+         int32_t newMoon2 = newMoonNear(timeZone, newMoon1 + SYNODIC_GAP, true, status);
+         int32_t newMoon11 = newMoonNear(timeZone, solsticeAfter + 1, false, status);
+         if (U_FAILURE(status)) {
