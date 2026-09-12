@@ -547,19 +547,29 @@ double XsumSmall::compute()
 
         intv = XSUM_SIGN_MASK;
         ivalue = -ivalue;
+        // ivalue is now the magnitude, with two extra bits below the mantissa. The bits below those
+        // (lower, and the chunks below j) are non-negative, so unlike the positive case above, where
+        // they add to the magnitude, here they subtract from it. With m the truncated mantissa:
+        //   extra bits 11:         more than half an ulp above m, round away from zero
+        //   extra bits 00 or 01:   within a quarter of an ulp of m, keep m
+        //   extra bits 10, m even: at most half an ulp above m, keep m (a tie rounds to the even m)
+        //   extra bits 10, m odd:  a tie if no lower bit is set, which rounds to the even m + 1;
+        //                          otherwise less than half an ulp above m, keep m
         if ((ivalue & 3) == 3)
             shouldRoundAwayFromZero = true;
-        if (!lower) {
-            while (j > 0) {
-                j -= 1;
-                if (m_smallAccumulator.chunk[j]) {
-                    lower = 1;
-                    break;
+        else if ((ivalue & 7) == 6) {
+            if (!lower) {
+                while (j > 0) {
+                    j -= 1;
+                    if (m_smallAccumulator.chunk[j]) {
+                        lower = 1;
+                        break;
+                    }
                 }
             }
+            if (!lower)
+                shouldRoundAwayFromZero = true;
         }
-        if (!lower)
-            shouldRoundAwayFromZero = true;
     }
 
     if (shouldRoundAwayFromZero) {
