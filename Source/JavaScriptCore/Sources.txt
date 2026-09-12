@@ -908,6 +908,7 @@ runtime/JSBoundFunction.cpp
 runtime/JSCBytecodeCacheVersion.cpp
 runtime/JSCConfig.cpp
 runtime/JSCJSValue.cpp
+runtime/JSCPrimordials.cpp
 runtime/JSCPtrTag.cpp
 runtime/JSCallee.cpp
 runtime/JSCell.cpp
