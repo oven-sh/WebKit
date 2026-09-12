@@ -1371,6 +1371,15 @@ void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
     }
 }
 
+void VM::forEachActiveScratchBuffer(NOESCAPE const Function<void(void*, size_t)>& func)
+{
+    Locker locker { m_scratchBufferLock };
+    for (auto* scratchBuffer : m_scratchBuffers) {
+        if (scratchBuffer->activeLength())
+            func(scratchBuffer->dataBuffer(), scratchBuffer->activeLength());
+    }
+}
+
 void VM::scanSideState(ConservativeRoots& roots) const
 {
     ASSERT(heap.worldIsStopped());

@@ -936,6 +936,7 @@ public:
     }
 
     void gatherScratchBufferRoots(ConservativeRoots&);
+    void forEachActiveScratchBuffer(NOESCAPE const Function<void(void*, size_t)>&);
 
     static constexpr unsigned expectedMaxActiveSideStateCount = 4;
     void pushCheckpointOSRSideState(std::unique_ptr<CheckpointOSRExitSideState>&&);

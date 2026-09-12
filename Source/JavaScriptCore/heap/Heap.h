@@ -518,6 +518,24 @@ public:
     void deleteAllCodeBlocks(DeleteAllCodeEffort);
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Moves the butterflies out of the sparse blocks of the Auxiliary subspace (those whose live bytes are at most
+    // maximumOccupancy of a block) into denser ones, so that the sparse blocks die with the next full collection. Only
+    // for a program at rest: see the definition for what that means and for what is not moved.
+    struct AuxiliaryEvacuationResult {
+        unsigned candidateBlocks { 0 };
+        unsigned evacuatedBlocks { 0 };
+        unsigned movedCells { 0 };
+        unsigned pinnedCells { 0 };
+        unsigned cellsWithoutSingleOwner { 0 };
+        size_t movedBytes { 0 };
+        Seconds duration;
+    };
+    const AuxiliaryEvacuationResult& lastAuxiliaryEvacuation() const { return m_lastAuxiliaryEvacuation; }
+    JS_EXPORT_PRIVATE AuxiliaryEvacuationResult evacuateSparseAuxiliaryBlocks(double maximumOccupancy);
+    void evacuateAuxiliaryBlocksIfDue();
+#endif
+
     JS_EXPORT_PRIVATE void didAllocate(size_t);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
@@ -885,6 +903,10 @@ private:
     ApproximateTime m_lastActiveCollectionTime;
     ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
+    bool m_isEvacuatingAuxiliaryBlocks { false };
+    bool m_isCollectionPrevented { false }; // Between preventCollection() and allowCollection(), which do not nest.
+    bool m_auxiliaryEvacuationIsDue { false };
+    AuxiliaryEvacuationResult m_lastAuxiliaryEvacuation;
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };

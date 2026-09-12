@@ -134,6 +134,13 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     heap.didAllocate(m_freeList.originalSize());
     
     didConsumeFreeList();
+
+    if (Options::evacuateAuxiliaryBlocksAfterEveryFullCollection() && !deferralContext) [[unlikely]] {
+        heap.evacuateAuxiliaryBlocksIfDue();
+        // The evacuation may have allocated from this allocator.
+        if (m_currentBlock)
+            return allocate(heap, cellSize, deferralContext, failureMode);
+    }
     
     AllocatingScope helpingHeap(heap);
 

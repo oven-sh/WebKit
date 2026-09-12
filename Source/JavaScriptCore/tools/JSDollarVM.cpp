@@ -2248,6 +2248,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
+static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
@@ -3986,6 +3987,23 @@ JSC_DEFINE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison, (JSGlobalObje
         }
     });
     return JSValue::encode(jsNontrivialString(vm, String(result)));
+}
+
+// evacuateAuxiliaryBlocks(maximumOccupancy = 1): Heap::evacuateSparseAuxiliaryBlocks, with JS on the stack.
+JSC_DEFINE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    double maximumOccupancy = callFrame->argumentCount() ? callFrame->argument(0).toNumber(globalObject) : 1;
+    auto evacuation = vm.heap.evacuateSparseAuxiliaryBlocks(maximumOccupancy);
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "candidateBlocks"_s), jsNumber(evacuation.candidateBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "evacuatedBlocks"_s), jsNumber(evacuation.evacuatedBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "movedCells"_s), jsNumber(evacuation.movedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "movedBytes"_s), jsNumber(evacuation.movedBytes));
+    result->putDirect(vm, Identifier::fromString(vm, "pinnedCells"_s), jsNumber(evacuation.pinnedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "cellsWithoutSingleOwner"_s), jsNumber(evacuation.cellsWithoutSingleOwner));
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
@@ -5773,6 +5791,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
     addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
     addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
+    addFunction(vm, alwaysAllow, "evacuateAuxiliaryBlocks"_s, functionEvacuateAuxiliaryBlocks, 1);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
