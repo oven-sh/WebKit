@@ -31,6 +31,7 @@
 #include "CodeBlockSetInlines.h"
 #include "JITStubRoutineSet.h"
 #include "JSCast.h"
+#include "JSCellButterfly.h"
 #include "JSString.h"
 #include "MarkedBlockInlines.h"
 #include "WasmCallee.h"
@@ -63,6 +64,17 @@ void ConservativeRoots::grow()
         OSAllocator::decommitAndRelease(m_roots, m_capacity * sizeof(HeapCell*));
     m_capacity = newCapacity;
     m_roots = newRoots;
+}
+
+// A Butterfly* can point up to sizeof(IndexingHeader) past the end of the allocation it refers to, so
+// such a pointer lands on whatever follows that allocation. An Auxiliary allocation is a butterfly, so
+// this is possible at any size. A JSCellWithIndexingHeader cell is a JSCellButterfly. Its Butterfly* is
+// the cell plus JSCellButterfly::offsetOfData(), which is inside the cell unless the cell has no elements.
+static ALWAYS_INLINE bool mayBeReferencedByButterflyEndPointer(HeapCell::Kind cellKind, size_t cellSize)
+{
+    if (cellKind == HeapCell::JSCellWithIndexingHeader)
+        return cellSize <= JSCellButterfly::offsetOfData();
+    return mayHaveIndexingHeader(cellKind);
 }
 
 // This function must be run after stopThePeriphery() is called and
@@ -118,9 +130,9 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
             if (result) {
                 auto attemptLarge = [&] (PreciseAllocation* allocation) {
                     // contains() accepts up to sizeof(IndexingHeader) past the end for butterfly end
-                    // pointers; for a cell that cannot carry an IndexingHeader accept at most one-past-the-end.
+                    // pointers; for a cell that no such pointer can refer to accept at most one-past-the-end.
                     HeapCell::Kind kind = allocation->attributes().cellKind;
-                    bool inBounds = mayHaveIndexingHeader(kind)
+                    bool inBounds = mayBeReferencedByButterflyEndPointer(kind, allocation->cellSize())
                         ? allocation->contains(pointer)
                         : (allocation->aboveLowerBound(pointer) && pointer <= std::bit_cast<char*>(allocation->cell()) + allocation->cellSize());
                     if (inBounds && allocation->hasValidCell())
@@ -144,7 +156,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         MarkedBlock* previousCandidate = MarkedBlock::blockFor(previousPointer);
         if (!jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(previousCandidate))
             && set.contains(previousCandidate)
-            && mayHaveIndexingHeader(previousCandidate->handle().cellKind())) {
+            && mayBeReferencedByButterflyEndPointer(previousCandidate->handle().cellKind(), previousCandidate->cellSize())) {
             previousPointer = static_cast<char*>(previousCandidate->handle().cellAlign(previousPointer));
             if (previousCandidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, isMarking, previousPointer))
                 markFoundGCPointer(previousPointer, previousCandidate->handle().cellKind());
@@ -193,8 +205,8 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
     // case, this is pointing to the object to the right of the one we should be marking. As with the
-    // previous-block case above, only blocks whose cells can carry an IndexingHeader have such pointers.
-    if (mayHaveIndexingHeader(cellKind) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
+    // previous-block case above, only blocks whose cells a butterfly end pointer can refer to have such pointers.
+    if (mayBeReferencedByButterflyEndPointer(cellKind, candidate->cellSize()) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
         tryPointer(alignedPointer - candidate->cellSize());
 }
 
