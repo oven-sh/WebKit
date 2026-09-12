@@ -73,9 +73,16 @@ public:
     struct LinkingData {
         Ref<UnlinkedMetadataTable> unlinkedMetadata;
         std::atomic<unsigned> refCount;
+        // How many of the table's call sites own a CallSiteData (LazyCallLinkInfo): what the table does not hold inline any
+        // more but still owns. Only the mutator writes it; collector threads read it (MetadataTable::sizeOfOwnCallSiteDatas()).
+        std::atomic<unsigned> numberOfOwnCallSiteDatas { 0 };
         // One SpeculatedType per value profile, allocated the first time one of them has something to predict.
         std::atomic<SpeculatedType*> valueProfilePredictions { nullptr };
     };
+
+#if CPU(ADDRESS64)
+    static_assert(sizeof(LinkingData) == 3 * sizeof(void*), "numberOfOwnCallSiteDatas fits where there was padding");
+#endif
 
     ~UnlinkedMetadataTable();
 
