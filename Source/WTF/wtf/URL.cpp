@@ -133,9 +133,13 @@ bool URL::protocolIsSecure() const
 unsigned URL::pathStart() const
 {
     unsigned start = m_hostEnd + m_portLength;
+    // URLParser::addNonSpecialDotSlash inserts "/." before a path that starts with "//" in a URL
+    // without a host, so that the path is not parsed back as an authority. It is not part of the
+    // path. "/." followed by anything else is the path's first segment (e.g. "foo:/.well-known"):
+    // the parser removes single-dot segments, so a real segment is never just ".".
     if (start == m_schemeEnd + 1U
-        && start + 1 < m_string.length()
-        && m_string[start] == '/' && m_string[start + 1] == '.')
+        && start + 2 < m_string.length()
+        && m_string[start] == '/' && m_string[start + 1] == '.' && m_string[start + 2] == '/')
         start += 2;
     return start;
 }
