@@ -36,7 +36,12 @@ namespace JSC {
 JSObject* createJSWebAssemblySuspendError(JSGlobalObject* globalObject, VM& vm, const String& message)
 {
     ASSERT(!message.isEmpty());
+#if USE(BUN_JSC_ADDITIONS)
+    // No source appender. A Suspending import is called from wasm, so the source text it would add is that of some JS caller.
+    return ErrorInstance::create(vm, globalObject->webAssemblySuspendErrorStructure(), message, JSValue(), nullptr, TypeNothing, ErrorType::Error, true);
+#else
     return ErrorInstance::create(vm, globalObject->webAssemblySuspendErrorStructure(), message, JSValue(), defaultSourceAppender, TypeNothing, ErrorType::Error, true);
+#endif
 }
 
 } // namespace JSC
