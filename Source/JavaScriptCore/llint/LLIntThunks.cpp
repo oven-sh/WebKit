@@ -240,6 +240,17 @@ MacroAssemblerCodeRef<JSEntryPtrTag> defaultCallThunk()
     return codeRef;
 }
 
+// For the CallLinkInfos that the call sites which have not run twice yet share (LazyCallLinkInfo).
+MacroAssemblerCodeRef<JSEntryPtrTag> unlinkedCallThunk()
+{
+    static LazyNeverDestroyed<MacroAssemblerCodeRef<JSEntryPtrTag>> codeRef;
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [&] {
+        codeRef.construct(generateCallSlowPathThunk(operationUnlinkedCall, "UnlinkedCall"_s));
+    });
+    return codeRef;
+}
+
 MacroAssemblerCodeRef<JSEntryPtrTag> getHostCallReturnValueThunk()
 {
     static LazyNeverDestroyed<MacroAssemblerCodeRef<JSEntryPtrTag>> codeRef;

@@ -59,6 +59,8 @@ class BaselineJITCode;
 class BaselineJITData;
 class BinaryArithProfile;
 class BytecodeLivenessAnalysis;
+class DataOnlyCallLinkInfo;
+class LazyCallLinkInfo;
 class CallLinkInfoBase;
 class CodeBlockSet;
 class JITCodeMap;
@@ -444,11 +446,15 @@ public:
     template<typename Functor> void forEachValueProfile(const Functor&);
     template<typename Functor> void forEachArrayAllocationProfile(const Functor&);
     template<typename Functor> void forEachObjectAllocationProfile(const Functor&);
-    void ensureCallLinkInfos();
-
+    // For the instructions of FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO; the first two crash for any other. The last one is
+    // safe to call from a compiler thread.
     // What the call sites of the MetadataTable own, if this is the CodeBlock the table was linked for: optimized CodeBlocks share
     // the table of the one they replace.
     size_t sizeOfOwnCallSiteDatas() const { return JITCode::couldBeInterpreted(jitType()) ? m_metadata->sizeOfOwnCallSiteDatas() : 0; }
+
+    LazyCallLinkInfo& lazyCallLinkInfoAt(const JSInstruction*);
+    DataOnlyCallLinkInfo& ensureCallLinkInfoAt(const JSInstruction*);
+    DataOnlyCallLinkInfo* callLinkInfoIfExistsAt(BytecodeIndex);
 
     template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(const Functor&);
 

@@ -324,6 +324,8 @@ JSC_DECLARE_JIT_OPERATION(operationCallDirectEvalStrictTaintedByWithScope, Encod
 JSC_DECLARE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame*, CallLinkInfo*));
 JSC_DECLARE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame*, CallLinkInfo*));
 JSC_DECLARE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame*, CallLinkInfo*));
+JSC_DECLARE_JIT_OPERATION(operationUnlinkedCall, UCPURegister, (CallFrame*, CallLinkInfo*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationEnsureCallLinkInfo, void, (CodeBlock*, uint32_t bytecodeIndexBits));
 
 JSC_DECLARE_JIT_OPERATION(operationCompareLess, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationCompareLessEq, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));

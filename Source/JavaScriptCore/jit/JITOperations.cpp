@@ -75,6 +75,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSWithScope.h"
 #include "JumpTable.h"
 #include "LLIntEntrypoint.h"
+#include "LLIntSlowPaths.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "ObjectConstructor.h"
@@ -2391,6 +2392,16 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValSetPrivateFieldGeneric, void, (JSGloba
     OPERATION_RETURN(scope);
 }
 
+// When this returns the empty value without having thrown, the callee is not eval, and what follows in Baseline code makes a virtual
+// call with the call site's CallLinkInfo: the site must own one by then.
+static ALWAYS_INLINE EncodedJSValue callDirectEvalFromBaseline(ThrowScope& scope, CallFrame* calleeFrame, JSValue thisValue, JSScope* callerScopeChain, CodeBlock* callerBaselineCodeBlock, BytecodeIndex bytecodeIndex, LexicallyScopedFeatures lexicallyScopedFeatures)
+{
+    JSValue result = eval(calleeFrame, thisValue, callerScopeChain, callerBaselineCodeBlock, bytecodeIndex, lexicallyScopedFeatures);
+    if (!result && !scope.exception())
+        callerBaselineCodeBlock->ensureCallLinkInfoAt(callerBaselineCodeBlock->instructionAt(bytecodeIndex));
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalSloppy, EncodedJSValue, (void* frame, JSScope* callerScopeChain, EncodedJSValue encodedThisValue, CodeBlock* callerBaselineCodeBlock, uint32_t bytecodeIndexBits))
 {
     CallFrame* calleeFrame = reinterpret_cast<CallFrame*>(frame);
@@ -2401,7 +2412,7 @@ JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalSloppy, EncodedJSValue, (void* f
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
 
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), NoLexicallyScopedFeatures)));
+    OPERATION_RETURN(scope, callDirectEvalFromBaseline(scope, calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), NoLexicallyScopedFeatures));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalStrict, EncodedJSValue, (void* frame, JSScope* callerScopeChain, EncodedJSValue encodedThisValue, CodeBlock* callerBaselineCodeBlock, uint32_t bytecodeIndexBits))
@@ -2414,7 +2425,7 @@ JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalStrict, EncodedJSValue, (void* f
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
 
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), StrictModeLexicallyScopedFeature)));
+    OPERATION_RETURN(scope, callDirectEvalFromBaseline(scope, calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), StrictModeLexicallyScopedFeature));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalSloppyTaintedByWithScope, EncodedJSValue, (void* frame, JSScope* callerScopeChain, EncodedJSValue encodedThisValue, CodeBlock* callerBaselineCodeBlock, uint32_t bytecodeIndexBits))
@@ -2427,7 +2438,7 @@ JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalSloppyTaintedByWithScope, Encode
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
 
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), TaintedByWithScopeLexicallyScopedFeature)));
+    OPERATION_RETURN(scope, callDirectEvalFromBaseline(scope, calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), TaintedByWithScopeLexicallyScopedFeature));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalStrictTaintedByWithScope, EncodedJSValue, (void* frame, JSScope* callerScopeChain, EncodedJSValue encodedThisValue, CodeBlock* callerBaselineCodeBlock, uint32_t bytecodeIndexBits))
@@ -2440,7 +2451,7 @@ JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalStrictTaintedByWithScope, Encode
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
 
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), StrictModeLexicallyScopedFeature | TaintedByWithScopeLexicallyScopedFeature)));
+    OPERATION_RETURN(scope, callDirectEvalFromBaseline(scope, calleeFrame, JSValue::decode(encodedThisValue), callerScopeChain, callerBaselineCodeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), StrictModeLexicallyScopedFeature | TaintedByWithScopeLexicallyScopedFeature));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
@@ -2496,6 +2507,29 @@ JSC_DEFINE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame* calleeF
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
     // Keep owner alive explicitly. Now this function can be called from tail-call. This means that CallFrame for that owner already goes away, so we should keep it alive if we would like to use it.
     ensureStillAliveHere(owner);
+    if (scope.exception()) [[unlikely]]
+        OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(vm.getCTIStub(CommonJITThunkID::ThrowExceptionFromCall).template retagged<JSEntryPtrTag>().code().taggedPtr()));
+    OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(std::bit_cast<uintptr_t>(callTarget)));
+}
+
+// For the call sites of Baseline code that cannot leave it to operationUnlinkedCall(): see JIT::compileOpCall().
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationEnsureCallLinkInfo, void, (CodeBlock* codeBlock, uint32_t bytecodeIndexBits))
+{
+    VM& vm = codeBlock->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    codeBlock->ensureCallLinkInfoAt(codeBlock->instructionAt(BytecodeIndex::fromBits(bytecodeIndexBits)));
+}
+
+// See LLInt::handleUnlinkedCall().
+JSC_DEFINE_JIT_OPERATION(operationUnlinkedCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo*))
+{
+    VM& vm = calleeFrame->callerFrame()->codeBlock()->vm();
+    NativeCallFrameTracer tracer(vm, calleeFrame);
+    sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    void* callTarget = LLInt::handleUnlinkedCall(vm, calleeFrame);
     if (scope.exception()) [[unlikely]]
         OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(vm.getCTIStub(CommonJITThunkID::ThrowExceptionFromCall).template retagged<JSEntryPtrTag>().code().taggedPtr()));
     OPERATION_RETURN(scope, std::bit_cast<UCPURegister>(std::bit_cast<uintptr_t>(callTarget)));

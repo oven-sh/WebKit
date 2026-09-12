@@ -238,6 +238,18 @@ void JIT::compileOpCall(const JSInstruction* instruction)
         m_callCompilationInfo.append(CallCompilationInfo());
         m_callCompilationInfo[callLinkInfoIndex].unlinkedCallLinkInfo = callLinkInfo;
     }
+
+    if constexpr (Op::opcodeID == op_tail_call) {
+        // A call site that owns no CallLinkInfo yet sends its calls to operationUnlinkedCall(), which finds the site through
+        // the caller's frame. This one will have given that frame up by then, so it gets its own now, before anything is set up
+        // for the call (the LLInt does the same: prepareCallSiteForTailCall).
+        loadPtrFromMetadata(bytecode, Op::Metadata::offsetOfCallLinkInfo() + LazyCallLinkInfo::offsetOfData(), regT0);
+        Jump hasCallLinkInfo = branchTestPtr(NonZero, Address(regT0, CallLinkInfo::offsetOfOwner()));
+        loadPtr(addressFor(CallFrameSlot::codeBlock), regT0);
+        callOperationNoExceptionCheck(operationEnsureCallLinkInfo, regT0, TrustedImm32(m_bytecodeIndex.asBits()));
+        hasCallLinkInfo.link(this);
+    }
+
     compileSetupFrame(bytecode);
 
     // SP holds newCallFrame + sizeof(CallerFrameAndPC), with ArgumentCount initialized.
