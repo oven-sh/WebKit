@@ -102,7 +102,13 @@ void MetadataTable::destroy(MetadataTable* table)
 
 size_t MetadataTable::sizeInBytesForGC()
 {
-    return unlinkedMetadata()->sizeInBytesForGC(*this);
+    // Collector threads get here for every CodeBlock that shares the table, in parallel: no need to ref it.
+    return linkingData().unlinkedMetadata->sizeInBytesForGC(*this);
+}
+
+size_t MetadataTable::sizeOfOwnCallSiteDatas() const
+{
+    return static_cast<size_t>(numberOfOwnCallSiteDatas()) * sizeof(CallSiteData);
 }
 
 void MetadataTable::validate() const
