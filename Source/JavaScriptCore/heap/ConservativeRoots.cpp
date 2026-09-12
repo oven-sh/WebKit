@@ -31,6 +31,7 @@
 #include "CodeBlockSetInlines.h"
 #include "JITStubRoutineSet.h"
 #include "JSCast.h"
+#include "JSCellButterfly.h"
 #include "JSString.h"
 #include "MarkedBlockInlines.h"
 #include "WasmCallee.h"
@@ -63,6 +64,31 @@ void ConservativeRoots::grow()
         OSAllocator::decommitAndRelease(m_roots, m_capacity * sizeof(HeapCell*));
     m_capacity = newCapacity;
     m_roots = newRoots;
+}
+
+// A Butterfly* can be the only reference to the allocation that holds the butterfly, and it can point
+// at or past the end of that allocation:
+// - Auxiliary: Butterfly::fromBase() adds sizeof(IndexingHeader) whether or not the butterfly has an
+//   IndexingHeader. So a butterfly with no indexed storage is referenced by its end, or by its end
+//   plus sizeof(IndexingHeader).
+// - JSCellWithIndexingHeader: JSCellButterfly::toButterfly() is the cell plus offsetOfData(). That is
+//   the end of a cell that has no elements. For every larger cell it is an interior pointer, and
+//   nothing refers to such a cell by its end.
+// The second case matters because the tables of JSMap and JSSet are JSCellButterflies, and an obsolete
+// table keeps every later table of its owner alive. Whatever follows a table in memory must not mark
+// it: neither the next table, nor a malloc allocation that happens to start where a MarkedBlock ends.
+static ALWAYS_INLINE bool cellMayBeReferencedPastTheEnd(HeapCell::Kind cellKind, size_t cellSize)
+{
+    switch (cellKind) {
+    case HeapCell::JSCell:
+        return false;
+    case HeapCell::JSCellWithIndexingHeader:
+        return cellSize <= JSCellButterfly::offsetOfData();
+    case HeapCell::Auxiliary:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return false;
 }
 
 // This function must be run after stopThePeriphery() is called and
@@ -118,9 +144,9 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
             if (result) {
                 auto attemptLarge = [&] (PreciseAllocation* allocation) {
                     // contains() accepts up to sizeof(IndexingHeader) past the end for butterfly end
-                    // pointers; for a cell that cannot carry an IndexingHeader accept at most one-past-the-end.
+                    // pointers; for a cell that no such pointer refers to accept at most one-past-the-end.
                     HeapCell::Kind kind = allocation->attributes().cellKind;
-                    bool inBounds = mayHaveIndexingHeader(kind)
+                    bool inBounds = cellMayBeReferencedPastTheEnd(kind, allocation->cellSize())
                         ? allocation->contains(pointer)
                         : (allocation->aboveLowerBound(pointer) && pointer <= std::bit_cast<char*>(allocation->cell()) + allocation->cellSize());
                     if (inBounds && allocation->hasValidCell())
@@ -144,7 +170,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         MarkedBlock* previousCandidate = MarkedBlock::blockFor(previousPointer);
         if (!jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(previousCandidate))
             && set.contains(previousCandidate)
-            && mayHaveIndexingHeader(previousCandidate->handle().cellKind())) {
+            && cellMayBeReferencedPastTheEnd(previousCandidate->handle().cellKind(), previousCandidate->cellSize())) {
             previousPointer = static_cast<char*>(previousCandidate->handle().cellAlign(previousPointer));
             if (previousCandidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, isMarking, previousPointer))
                 markFoundGCPointer(previousPointer, previousCandidate->handle().cellKind());
@@ -193,8 +219,8 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
     // case, this is pointing to the object to the right of the one we should be marking. As with the
-    // previous-block case above, only blocks whose cells can carry an IndexingHeader have such pointers.
-    if (mayHaveIndexingHeader(cellKind) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
+    // previous-block case above, only blocks whose cells such a pointer can refer to need this.
+    if (cellMayBeReferencedPastTheEnd(cellKind, candidate->cellSize()) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
         tryPointer(alignedPointer - candidate->cellSize());
 }
 
