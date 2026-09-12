@@ -48,6 +48,13 @@ public:
     // cryptographicallyRandomNumber or cryptographicallyRandomValues.
     void cryptographicallyRandomValues(std::span<uint8_t> buffer);
 
+    // Linux only, a no-op elsewhere. true (the default) reads getrandom(2) and
+    // opens /dev/urandom only if the syscall is unavailable; false always opens
+    // /dev/urandom. Also forwarded to bmalloc's generator. This device decides
+    // when it is constructed, on the first request for randomness, so call this
+    // before then. JSC::initialize() calls it with Options::useGetrandom().
+    WTF_EXPORT_PRIVATE static void setUseGetrandom(bool);
+
 private:
 #if OS(DARWIN) || OS(FUCHSIA) || OS(WINDOWS)
 #elif OS(UNIX)

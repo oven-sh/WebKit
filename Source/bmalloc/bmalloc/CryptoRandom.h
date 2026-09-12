@@ -35,6 +35,15 @@ namespace bmalloc {
 
 BEXPORT void cryptoRandom(void* buffer, size_t length);
 
+// Linux only, a no-op elsewhere. true (the default): stir from getrandom(2) and
+// open /dev/urandom only if the syscall is unavailable. false: always
+// /dev/urandom. Switches the source of every stir after the call, so it also
+// works once the generator is in use. WTF::RandomDevice::setUseGetrandom()
+// forwards here; JSC calls that with Options::useGetrandom() during
+// JSC::initialize(), which is after the stir Gigacage triggers in
+// WTF::initialize(), so that first stir always uses the default.
+BEXPORT void setCryptoRandomUsesGetrandom(bool);
+
 }
 
 #endif // __cplusplus
