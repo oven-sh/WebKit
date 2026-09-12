@@ -40,4 +40,4 @@ for (var i = 0; i < 1e4; ++i) {
 shouldBe(toString("HELLO"), "HELLO");
 shouldThrow(() => {
     toString(Symbol("Cocoa"));
-}, `TypeError: Cannot convert a symbol to a string`);
+}, `TypeError: Cannot convert a Symbol value to a string`);

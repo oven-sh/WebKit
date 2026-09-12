@@ -130,7 +130,7 @@ sameValue([1, undefined, 2, null, 3].values().join({ toString() { return ", "; }
         iterator.join(Symbol(42));
     } catch (e) {
         sameValue(e.name, "TypeError");
-        sameValue(e.message, "Cannot convert a symbol to a string");
+        sameValue(e.message, "Cannot convert a Symbol value to a string");
     }
     sameValue(iterator.isDone, false);
     sameValue(iterator.isClosed, true);
@@ -160,7 +160,7 @@ sameValue([1, undefined, 2, null, 3].values().join({ toString() { return ", "; }
         iterator.join();
     } catch (e) {
         sameValue(e.name, "TypeError");
-        sameValue(e.message, "Cannot convert a symbol to a string");
+        sameValue(e.message, "Cannot convert a Symbol value to a string");
     }
     sameValue(iterator.isDone, false);
     sameValue(iterator.isClosed, true);
