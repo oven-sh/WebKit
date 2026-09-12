@@ -1,0 +1,4 @@
+# The patches are applied to ICU's LF sources with patch -p1 / git apply; a
+# core.autocrlf=true checkout (the usual Git for Windows setup, see build-icu.ps1)
+# must not rewrite their line endings.
+*.patch -text
