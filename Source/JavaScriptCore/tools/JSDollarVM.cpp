@@ -2180,6 +2180,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
 static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
+static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2897,6 +2898,19 @@ static CodeBlock* codeBlockFromArg(JSGlobalObject* globalObject, CallFrame* call
     else
         dataLog("Invalid codeBlock: ", value, "\n");
     return nullptr;
+}
+
+// Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
+// How many call sites of the function's LLInt / Baseline code own a CallLinkInfo (LazyCallLinkInfo): the ones that ran twice,
+// and the tail calls that ran. Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
+    return JSValue::encode(jsNumber(metadataTable ? metadataTable->numberOfOwnCallSiteDatas() : 0));
 }
 
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
@@ -5688,6 +5702,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
+    addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "dumpBytecodeFor"_s, functionDumpBytecodeFor, 1);

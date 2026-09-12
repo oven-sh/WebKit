@@ -32,6 +32,7 @@
 #include "DFGJITCode.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 #include "FunctionCodeBlock.h"
+#include "JITOperations.h"
 #include "JITThunks.h"
 #include "JSCellInlines.h"
 #include "JSWebAssemblyModule.h"
@@ -265,6 +266,13 @@ void DataOnlyCallLinkInfo::initializeAsSharedByUnlinkedCallSites(CodePtr<JSEntry
     m_isSharedByUnlinkedCallSites = true;
 }
 
+void DataOnlyCallLinkInfo::initializeAsSharedByTailCallSites()
+{
+    ASSERT(!m_owner);
+    ASSERT(!m_callee);
+    m_isSharedByUnlinkedCallSites = true;
+}
+
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CallSiteData);
 
 static_assert(!OBJECT_OFFSETOF(CallSiteData, m_callLinkInfo));
@@ -273,6 +281,13 @@ CallSiteData* CallSiteData::createShared(bool executedOnce)
 {
     auto* data = new CallSiteData();
     data->m_callLinkInfo.initializeAsSharedByUnlinkedCallSites(LazyCallLinkInfo::unlinkedCallThunk(), executedOnce);
+    return data;
+}
+
+CallSiteData* CallSiteData::createSharedForTailCalls()
+{
+    auto* data = new CallSiteData();
+    data->m_callLinkInfo.initializeAsSharedByTailCallSites();
     return data;
 }
 
@@ -288,6 +303,12 @@ void LazyCallLinkInfo::setNeverExecuted(VM& vm)
 {
     ASSERT(!m_data);
     m_data = vm.neverExecutedCallSiteData();
+}
+
+void LazyCallLinkInfo::setTailCallNotExecuted(VM& vm)
+{
+    ASSERT(!m_data);
+    m_data = vm.notExecutedTailCallSiteData();
 }
 
 bool LazyCallLinkInfo::hasNeverExecuted(VM& vm) const
@@ -418,6 +439,19 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
         found.append(jit.branchTestPtr(CCallHelpers::NonZero, scratchGPR, CCallHelpers::TrustedImm32(polymorphicCalleeMask)));
     }
 
+    if (isTailCall && !callLinkInfo) {
+        // Baseline code: the tail call sites that have not run yet share a CallLinkInfo that looks unlinked
+        // (CallSiteData::createSharedForTailCalls()), so they get here, where the caller still has its frame and the call
+        // site it stored in it: the site gets a CallLinkInfo of its own before the frame is given up. Nothing but the callee
+        // and the CallLinkInfo is live here, and the stack pointer is where a call's slow path would find it.
+        auto hasOwnCallLinkInfo = jit.branchTestPtr(CCallHelpers::NonZero, CCallHelpers::Address(BaselineJITRegisters::Call::callLinkInfoGPR, offsetOfOwner()));
+        jit.setupArguments<decltype(operationEnsureCallLinkInfoForTailCall)>();
+        jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationEnsureCallLinkInfoForTailCall)), GPRInfo::nonArgGPR0);
+        jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+        jit.move(GPRInfo::returnValueGPR, BaselineJITRegisters::Call::callLinkInfoGPR);
+        jit.loadPtr(CCallHelpers::Address(CCallHelpers::stackPointerRegister, sizeof(Register) * CallFrameSlot::callee - sizeof(CallerFrameAndPC)), BaselineJITRegisters::Call::calleeGPR);
+        hasOwnCallLinkInfo.link(&jit);
+    }
     jit.move(CCallHelpers::TrustedImmPtr(LLInt::defaultCall().code().taggedPtr()), BaselineJITRegisters::Call::callTargetGPR);
 
     found.link(&jit);

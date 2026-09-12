@@ -177,6 +177,14 @@ void JIT::compileCallDirectEvalSlowCase(const JSInstruction* instruction, Vector
     auto bytecode = instruction->as<OpCallDirectEval>();
     int registerOffset = -bytecode.m_argv;
 
+    // The callee is not eval: what follows is a virtual call with the site's CallLinkInfo, which has to be its own by then
+    // (the one that the sites which have not run twice share has no call type).
+    loadPtrFromMetadata(bytecode, OpCallDirectEval::Metadata::offsetOfCallLinkInfo() + LazyCallLinkInfo::offsetOfData(), regT0);
+    Jump hasCallLinkInfo = branchTestPtr(NonZero, Address(regT0, CallLinkInfo::offsetOfOwner()));
+    loadPtr(addressFor(CallFrameSlot::codeBlock), regT0);
+    callOperationNoExceptionCheck(operationEnsureCallLinkInfo, regT0, TrustedImm32(m_bytecodeIndex.asBits()));
+    hasCallLinkInfo.link(this);
+
     addPtr(TrustedImm32(registerOffset * sizeof(Register) + sizeof(CallerFrameAndPC)), callFrameRegister, stackPointerRegister);
 
     static_assert(noOverlap(BaselineJITRegisters::Call::calleeGPR, BaselineJITRegisters::Call::callLinkInfoGPR, regT3));
@@ -238,6 +246,7 @@ void JIT::compileOpCall(const JSInstruction* instruction)
         m_callCompilationInfo.append(CallCompilationInfo());
         m_callCompilationInfo[callLinkInfoIndex].unlinkedCallLinkInfo = callLinkInfo;
     }
+
     compileSetupFrame(bytecode);
 
     // SP holds newCallFrame + sizeof(CallerFrameAndPC), with ArgumentCount initialized.

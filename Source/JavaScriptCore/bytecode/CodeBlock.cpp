@@ -499,8 +499,12 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         auto callType = CallLinkInfo::callTypeFor(decltype(bytecode)::opcodeID);
         if constexpr (std::is_same_v<decltype(metadata.m_callLinkInfo), DataOnlyCallLinkInfo>)
             metadata.m_callLinkInfo.initialize(vm, this, callType, CodeOrigin { instruction.index() });
-        else if (Options::useLazyLLIntCallLinkInfos()) [[likely]]
-            metadata.m_callLinkInfo.setNeverExecuted(vm);
+        else if (Options::useLazyLLIntCallLinkInfos()) [[likely]] {
+            if constexpr (decltype(bytecode)::opcodeID == op_tail_call)
+                metadata.m_callLinkInfo.setTailCallNotExecuted(vm);
+            else
+                metadata.m_callLinkInfo.setNeverExecuted(vm);
+        }
         else
             metadata.m_callLinkInfo.ensure(vm, this, callType, CodeOrigin { instruction.index() });
     };
@@ -918,25 +922,41 @@ void CodeBlock::ensureFunctionExecutablesMaterialized()
 
 // ---- end lazy FunctionExecutables -----------------------------------------------------------------------------------
 
-void CodeBlock::ensureCallLinkInfos()
+LazyCallLinkInfo& CodeBlock::lazyCallLinkInfoAt(const JSInstruction* instruction)
 {
-    if (!m_metadata)
-        return;
-
-    VM& vm = this->vm();
-    for (const auto& instruction : instructions()) {
-        switch (instruction->opcodeID()) {
+    switch (instruction->opcodeID()) {
 #define CASE(__op) \
-        case __op::opcodeID: \
-            instruction->as<__op>().metadata(this).m_callLinkInfo.ensure(vm, this, CallLinkInfo::callTypeFor(__op::opcodeID), CodeOrigin { instruction.index() }); \
-            break;
+    case __op::opcodeID: \
+        return instruction->as<__op>().metadata(this).m_callLinkInfo;
 
-        FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
 
 #undef CASE
-        default:
-            break;
-        }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+DataOnlyCallLinkInfo& CodeBlock::ensureCallLinkInfoAt(const JSInstruction* instruction)
+{
+    return lazyCallLinkInfoAt(instruction).ensure(vm(), this, CallLinkInfo::callTypeFor(instruction->opcodeID()), CodeOrigin { BytecodeIndex(bytecodeOffset(instruction)) });
+}
+
+DataOnlyCallLinkInfo* CodeBlock::callLinkInfoIfExistsAt(BytecodeIndex bytecodeIndex)
+{
+    if (!JITCode::couldBeInterpreted(jitType()) || !m_metadata)
+        return nullptr;
+    const JSInstruction* instruction = instructionAt(bytecodeIndex);
+    switch (instruction->opcodeID()) {
+#define CASE(__op) \
+    case __op::opcodeID: \
+        return instruction->as<__op>().metadata(this).m_callLinkInfo.get();
+
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+    default:
+        return nullptr;
     }
 }
 
@@ -954,7 +974,6 @@ void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
 void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 {
     prepareLazyStateForConcurrentCompilation(); // shared baseline code can be installed on a block that only ever ran in the LLInt
-    ensureCallLinkInfos();
     setJITCode(jitCode.copyRef());
 
     {
