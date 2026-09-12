@@ -31,6 +31,7 @@
 
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
+#include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
 #include "CharacterPropertyDataGenerator.h"
@@ -60,6 +61,7 @@
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
+#include "MarkedSpaceInlines.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2244,6 +2246,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
+static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
@@ -3932,6 +3936,56 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
         vm->deleteAllCode(PreventCollectionAndDeleteAllCode);
     });
     return JSValue::encode(jsUndefined());
+}
+
+// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock }
+JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    unsigned blocks = 0;
+    unsigned blocksWithDecommittedPages = 0;
+    unsigned decommittedPages = 0;
+    vm.heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        blocks++;
+        if (unsigned count = handle->numberOfDecommittedPages()) {
+            blocksWithDecommittedPages++;
+            decommittedPages += count;
+        }
+    });
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "blocks"_s), jsNumber(blocks));
+    result->putDirect(vm, Identifier::fromString(vm, "blocksWithDecommittedPages"_s), jsNumber(blocksWithDecommittedPages));
+    result->putDirect(vm, Identifier::fromString(vm, "decommittedPages"_s), jsNumber(decommittedPages));
+    result->putDirect(vm, Identifier::fromString(vm, "pagesPerBlock"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize / WTF::pageSize())));
+    return JSValue::encode(result);
+}
+
+// What poisonDecommittedMarkedBlockPages left in some decommitted page: "asan", "pattern" or "none". Does not read a poisoned byte.
+JSC_DEFINE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    ASCIILiteral result = "none"_s;
+    size_t pageSize = WTF::pageSize();
+    vm.heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        if (!handle->numberOfDecommittedPages())
+            return;
+        auto* base = std::bit_cast<uint8_t*>(&handle->block());
+        for (size_t offset = pageSize; offset < MarkedBlock::blockSize; offset += pageSize) {
+#if ASAN_ENABLED
+            if (__asan_address_is_poisoned(base + offset))
+                result = "asan"_s;
+#else
+            bool isPattern = true;
+            for (size_t i = 0; i < 64; ++i)
+                isPattern &= base[offset + i] == 0xbd;
+            if (isPattern)
+                result = "pattern"_s;
+#endif
+        }
+    });
+    return JSValue::encode(jsNontrivialString(vm, String(result)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
@@ -5717,6 +5771,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
+    addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
