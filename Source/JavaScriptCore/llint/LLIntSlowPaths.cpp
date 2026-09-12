@@ -64,6 +64,7 @@
 #include "LLIntEntrypoint.h"
 #include "LLIntExceptions.h"
 #include "LLIntPrototypeLoadAdaptiveStructureWatchpoint.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "LLIntThunks.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "ObjectConstructor.h"
@@ -617,6 +618,7 @@ extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame* calleeFrame, CallLink
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
@@ -673,6 +675,7 @@ extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLin
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     const JSInstruction* instruction = callerFrame->currentVPC();
     BytecodeIndex bytecodeIndex { owner->bytecodeOffset(instruction) };
@@ -705,6 +708,7 @@ extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame* calleeFrame, CallLink
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* calleeAsFunctionCellIgnored;
     calleeFrame->setCodeBlock(nullptr);
@@ -721,6 +725,7 @@ extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame* calleeFrame, Call
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* calleeAsFunctionCell;
     calleeFrame->setCodeBlock(nullptr);

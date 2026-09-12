@@ -1508,6 +1508,7 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
+JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 } // namespace JSC
 
