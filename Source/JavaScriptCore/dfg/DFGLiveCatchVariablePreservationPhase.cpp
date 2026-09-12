@@ -115,12 +115,21 @@ public:
 
     void handleBlockForTryCatch(BasicBlock* block, InsertionSet& insertionSet)
     {
-        HandlerInfo* currentExceptionHandler = nullptr;
+        // inlineCallFrame is the frame whose baseline CodeBlock owns info. With recursive inlining, several frames own the same one.
+        struct CatchHandler {
+            explicit operator bool() const { return !!info; }
+            bool operator==(const CatchHandler&) const = default;
+
+            HandlerInfo* info { nullptr };
+            InlineCallFrame* inlineCallFrame { nullptr };
+        };
+
+        CatchHandler currentExceptionHandler;
         Operands<bool> liveAtCatchHead(0, m_graph.block(0)->variablesAtTail.numberOfLocals(), m_graph.block(0)->variablesAtTail.numberOfTmps());
 
-        HandlerInfo* cachedHandlerResult;
+        CatchHandler cachedHandlerResult;
         CodeOrigin cachedCodeOrigin;
-        auto catchHandler = [&] (CodeOrigin origin) -> HandlerInfo* {
+        auto catchHandler = [&] (CodeOrigin origin) -> CatchHandler {
             ASSERT(origin);
             if (origin == cachedCodeOrigin)
                 return cachedHandlerResult;
@@ -133,19 +142,12 @@ public:
                 InlineCallFrame* inlineCallFrame = origin.inlineCallFrame();
                 CodeBlock* codeBlock = m_graph.baselineCodeBlockFor(inlineCallFrame);
                 if (HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(bytecodeIndexToCheck)) {
-                    liveAtCatchHead.fill(false);
-
-                    BytecodeIndex catchBytecodeIndex = BytecodeIndex(handler->target);
-                    m_graph.forAllLocalsAndTmpsLiveInBytecode(CodeOrigin(catchBytecodeIndex, inlineCallFrame), [&] (Operand operand) {
-                        liveAtCatchHead.operand(operand) = true;
-                    });
-
-                    cachedHandlerResult = handler;
+                    cachedHandlerResult = { handler, inlineCallFrame };
                     break;
                 }
 
                 if (!inlineCallFrame) {
-                    cachedHandlerResult = nullptr;
+                    cachedHandlerResult = { };
                     break;
                 }
 
@@ -154,6 +156,15 @@ public:
             }
 
             return cachedHandlerResult;
+        };
+
+        auto computeLiveAtCatchHead = [&] (CatchHandler handler) {
+            liveAtCatchHead.fill(false);
+
+            BytecodeIndex catchBytecodeIndex = BytecodeIndex(handler.info->target);
+            m_graph.forAllLocalsAndTmpsLiveInBytecode(CodeOrigin(catchBytecodeIndex, handler.inlineCallFrame), [&] (Operand operand) {
+                liveAtCatchHead.operand(operand) = true;
+            });
         };
 
         Operands<VariableAccessData*> currentBlockAccessData(OperandsLike, block->variablesAtTail, nullptr);
@@ -187,9 +198,12 @@ public:
             Node* node = block->at(nodeIndex);
 
             {
-                HandlerInfo* newHandler = catchHandler(node->origin.semantic);
-                if (newHandler != currentExceptionHandler && currentExceptionHandler)
+                CatchHandler newHandler = catchHandler(node->origin.semantic);
+                if (newHandler.info != currentExceptionHandler.info && currentExceptionHandler)
                     flushEverything(node->origin, nodeIndex);
+                // Only now: the flush above is for the handler we are leaving, and try ranges can be adjacent.
+                if (newHandler && newHandler != currentExceptionHandler)
+                    computeLiveAtCatchHead(newHandler);
                 currentExceptionHandler = newHandler;
             }
 
