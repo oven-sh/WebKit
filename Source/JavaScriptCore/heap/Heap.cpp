@@ -26,11 +26,14 @@
 
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
+#include "ButterflyInlines.h"
 #include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
+#include "CompleteSubspaceInlines.h"
 #include "ConservativeRoots.h"
+#include "DeferGCInlines.h"
 #include "EdenGCActivityCallback.h"
 #include "EvalExecutable.h"
 #include "Exception.h"
@@ -62,6 +65,7 @@
 #include "JSIterator.h"
 #include "JSMicrotaskDispatcher.h"
 #include "JSModuleLoader.h"
+#include "JSObjectInlines.h"
 #include "JSPromiseCombinatorsContext.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseReaction.h"
@@ -1361,6 +1365,418 @@ void Heap::sweepSynchronously()
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+
+// Reads stack memory across frames, like ConservativeRoots::genericAddSpan.
+template<typename Func>
+SUPPRESS_ASAN static void forEachWordInSpanConservatively(void* begin, void* end, const Func& func)
+{
+    if (begin > end)
+        std::swap(begin, end);
+    auto* word = std::bit_cast<uintptr_t*>(WTF::roundUpToMultipleOf<sizeof(uintptr_t)>(std::bit_cast<uintptr_t>(begin)));
+    for (; word + 1 <= std::bit_cast<uintptr_t*>(end); ++word) {
+        uintptr_t value = *word;
+        func(std::bit_cast<uintptr_t>(removeArrayPtrTag(std::bit_cast<void*>(value))));
+    }
+}
+
+// The live cells of a block that no allocator is in the middle of (no valid newlyAllocated bits): all of them if the block
+// was filled up since the last collection, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
+// marking, decided once per block instead of once per cell.
+template<typename Func>
+static void forEachLiveCellOfSettledBlock(MarkedBlock::Handle& handle, const Func& func)
+{
+    ASSERT(!handle.block().hasAnyNewlyAllocated());
+    if (handle.isAllocated()) {
+        char* cell = std::bit_cast<char*>(handle.start());
+        char* end = std::bit_cast<char*>(handle.end());
+        for (; cell + handle.cellSize() <= end; cell += handle.cellSize())
+            func(std::bit_cast<HeapCell*>(cell));
+        return;
+    }
+    handle.forEachMarkedCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
+        func(cell);
+        return IterationStatus::Continue;
+    });
+}
+
+static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
+{
+    ASSERT(!handle.block().hasAnyNewlyAllocated());
+    size_t result;
+    if (handle.isAllocated())
+        result = handle.cellsPerBlock();
+    else if (handle.block().areMarksStale())
+        result = 0;
+    else
+        result = handle.block().markCount();
+#if ASSERT_ENABLED
+    size_t slowCount = 0;
+    handle.forEachLiveCell([&](size_t, HeapCell*, HeapCell::Kind) {
+        slowCount++;
+        return IterationStatus::Continue;
+    });
+    ASSERT(slowCount == result);
+#endif
+    return result;
+}
+
+// Null if Heap::evacuateSparseAuxiliaryBlocks can run now. None of this is an error on the caller's part.
+ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
+{
+    VM& vm = this->vm();
+    if (!Options::useGC())
+        return "the collector is off"_s;
+#if ENABLE(C_LOOP)
+    return "the CLoop stack is not scanned"_s;
+#endif
+    if (!vm.currentThreadIsHoldingAPILock())
+        return "the caller does not hold the API lock"_s;
+    if (!hasHeapAccess())
+        return "the caller has released heap access"_s;
+    if (!m_isSafeToCollect || m_isShuttingDown)
+        return "the heap is not ready for collections"_s;
+    if (m_collectionScope || worldIsStopped() || m_mutatorState != MutatorState::Running)
+        return "a collection is in progress"_s;
+    if (m_objectSpace.isIterating())
+        return "the heap is being iterated"_s;
+    // Taking the PreventCollectionScope waits for the collector, which can mean collecting right here.
+    if (isDeferred())
+        return "collection is deferred"_s;
+    // preventCollection() does not nest. (This is also what stops the allocations made by an evacuation from starting another.)
+    if (m_isCollectionPrevented)
+        return "collection is prevented by the caller"_s;
+    {
+        // Only this thread's stack is looked at.
+        Locker locker { m_machineThreads->getLock() };
+        if (m_machineThreads->threads(locker).size() > 1)
+            return "more than one thread is registered with the VM"_s;
+    }
+    return { };
+}
+
+// A butterfly is the one kind of GC memory with exactly one pointer to it that the collector knows how to find: the
+// m_butterfly of its object. So a butterfly can be moved without a moving collector, provided nothing else holds a raw
+// pointer to it at that moment. Raw butterfly pointers exist in machine registers and on the machine stack of code that
+// runs on behalf of this VM (JIT code hoists the load, C++ keeps Butterfly* locals across calls that can collect), in
+// active DFG scratch buffers and OSR exit side state, and in the copies of machine stack that a suspended JSPI
+// computation keeps (PinballCompletion): everything the collector itself scans conservatively. Generated code, inline
+// caches and profiles hold offsets and cells, suspended generators hold JSValues, compiler threads are parked at a
+// safepoint while cells move, the collector is not running. A cell of a candidate block that any such word points into,
+// or up to sizeof(IndexingHeader) past (the butterfly pointer of an object without indexed storage is that far beyond the
+// end of its allocation), is left where it is, and so is its block. The arithmetic is ConservativeRoots::genericAddPointer's.
+// Pointers into the storage are what matters, but the storage of an object that such a word refers to stays as well
+// (objects in MarkedBlocks and in precise allocations alike): code that has the object at hand may hold a pointer derived
+// from its butterfly that no longer points into the allocation.
+//
+// Not moved: what is not the butterfly of exactly one JSObject (property name enumerator buffers, ScopedArguments
+// overflow storage, StructureChain vectors: they keep their whole block in place), copy-on-write storage (a cell in
+// another subspace), precise allocations, the blocks allocators are in the middle of, blocks that are not sparse, and
+// size classes where moving would not free a block.
+//
+// The copy is installed with JSObject::setButterfly, i.e. the ordinary barrier: the owner goes to the remembered set and
+// the next collection marks the new storage through it, as it does when an old array grows. The old copy stays marked
+// and untouched until the next full collection finds it unreferenced.
+Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maximumOccupancy)
+{
+    AuxiliaryEvacuationResult result;
+    VM& vm = this->vm();
+    bool isTesting = Options::evacuateAuxiliaryBlocksAfterEveryFullCollection();
+    MonotonicTime before = MonotonicTime::now();
+    auto finish = [&] {
+        result.duration = MonotonicTime::now() - before;
+        if (result.skipped)
+            dataLogLnIf(Options::logGC(), "[no evacuation of sparse Auxiliary blocks: ", result.skipped, "]");
+        else
+            dataLogLnIf(Options::logGC(), "[evacuated ", result.evacuatedBlocks, " of ", result.candidateBlocks, " sparse Auxiliary blocks: ", result.movedCells, " cells, ", result.movedBytes / KB, " KB; pinned ", result.pinnedCells, ", without a single owner ", result.cellsWithoutSingleOwner, "; ", result.duration.milliseconds(), " ms]");
+        return result;
+    };
+
+    result.skipped = reasonNotToEvacuateAuxiliaryBlocksNow();
+    if (result.skipped)
+        return finish();
+    // The old copies of what the last call moved are still marked: they would only get in the way.
+    if (m_lastAuxiliaryEvacuationVersion == m_objectSpace.markingVersion()) {
+        result.skipped = "no full collection since the last evacuation"_s;
+        return finish();
+    }
+    if (!(maximumOccupancy > 0))
+        maximumOccupancy = 0;
+    maximumOccupancy = std::min(maximumOccupancy, 1.0);
+
+    PreventCollectionScope preventCollection(*this);
+    DeferGCForAWhile deferGC(vm);
+
+    struct Candidate {
+        MarkedBlock::Handle* handle { nullptr };
+        size_t liveBytes { 0 };
+        bool couldAllocate { false };
+        bool isEvacuated { false };
+    };
+    struct Claim {
+        JSObject* owner { nullptr };
+        unsigned count { 0 };
+    };
+    Vector<Candidate> candidates;
+    UncheckedKeyHashSet<MarkedBlock*> candidateBlocks;
+    UncheckedKeyHashSet<HeapCell*> pinned;
+    UncheckedKeyHashSet<HeapCell*> cellsOnStack;
+    UncheckedKeyHashMap<HeapCell*, Claim> claims;
+
+    // A candidate that is not evacuated in the end hands out its free cells again.
+    auto restoreCandidates = makeScopeExit([&] {
+        for (Candidate& candidate : candidates) {
+            if (candidate.isEvacuated || !candidate.couldAllocate)
+                continue;
+            BlockDirectory* directory = candidate.handle->directory();
+            Locker locker { directory->bitvectorLock() };
+            directory->setIsCanAllocate(candidate.handle, true);
+        }
+    });
+
+    {
+        HeapIterationScope iterationScope(*this);
+
+        size_t maximumLiveBytes = static_cast<size_t>(maximumOccupancy * MarkedBlock::payloadSize);
+        auxiliarySpace.forEachDirectory([&](BlockDirectory& directory) {
+            size_t firstCandidate = candidates.size();
+            size_t liveBytes = 0;
+            directory.forEachBlock([&](MarkedBlock::Handle* handle) {
+                // A block an allocator was in the middle of goes back to that allocator when iteration ends.
+                if (handle->block().hasAnyNewlyAllocated())
+                    return;
+                size_t liveBytesInBlock = liveCellCountOfSettledBlock(*handle) * handle->cellSize();
+                if (!liveBytesInBlock || liveBytesInBlock > maximumLiveBytes)
+                    return;
+                candidates.append({ handle, liveBytesInBlock, false, false });
+                liveBytes += liveBytesInBlock;
+            });
+            size_t count = candidates.size() - firstCandidate;
+            if (!count || isTesting)
+                return;
+            // Moving has to free at least one block of this size class, or the next call finds the block that this one
+            // filled half sparse again, and so on for ever.
+            size_t bytesPerBlock = directory.cellSize() * (MarkedBlock::payloadSize / directory.cellSize());
+            size_t blocksNeeded = (liveBytes + bytesPerBlock - 1) / bytesPerBlock;
+            if (count < 2 || blocksNeeded >= count)
+                candidates.shrink(firstCandidate);
+        });
+        result.candidateBlocks = candidates.size();
+        if (candidates.isEmpty())
+            return finish();
+        for (Candidate& candidate : candidates)
+            candidateBlocks.add(&candidate.handle->block());
+
+        // Objects in precise allocations (large ones, and the first few cells of every IsoSubspace), by address.
+        Vector<std::pair<uintptr_t, PreciseAllocation*>> preciseObjects;
+        for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations()) {
+            if (isJSCellKind(allocation->attributes().cellKind))
+                preciseObjects.append({ std::bit_cast<uintptr_t>(allocation->cell()), allocation });
+        }
+        std::ranges::sort(preciseObjects, { }, &std::pair<uintptr_t, PreciseAllocation*>::first);
+
+        const auto& allBlocks = m_objectSpace.blocks().set();
+        auto pinIfInCandidate = [&](uintptr_t address) {
+            MarkedBlock* block = MarkedBlock::blockFor(std::bit_cast<void*>(address));
+            if (!candidateBlocks.contains(block))
+                return;
+            MarkedBlock::Handle& handle = block->handle();
+            if (!handle.contains(std::bit_cast<void*>(address)))
+                return;
+            pinned.add(static_cast<HeapCell*>(handle.cellAlign(std::bit_cast<void*>(address))));
+        };
+        auto noteCellOnStack = [&](uintptr_t address) {
+            if (!preciseObjects.isEmpty() && address >= preciseObjects.first().first) {
+                auto iterator = std::ranges::upper_bound(preciseObjects, address, { }, &std::pair<uintptr_t, PreciseAllocation*>::first);
+                PreciseAllocation* allocation = (iterator - 1)->second;
+                if (address - (iterator - 1)->first < allocation->cellSize()) {
+                    cellsOnStack.add(allocation->cell());
+                    return;
+                }
+            }
+            MarkedBlock* block = MarkedBlock::blockFor(std::bit_cast<void*>(address));
+            if (!allBlocks.contains(block))
+                return;
+            MarkedBlock::Handle& handle = block->handle();
+            if (isJSCellKind(handle.cellKind()) && handle.contains(std::bit_cast<void*>(address)))
+                cellsOnStack.add(static_cast<HeapCell*>(handle.cellAlign(std::bit_cast<void*>(address))));
+        };
+        auto scanSpan = [&](void* begin, void* end) {
+            forEachWordInSpanConservatively(begin, end, [&](uintptr_t value) {
+                if (value < 2 * MarkedBlock::blockSize)
+                    return;
+                // Into the allocation; or at its end or up to sizeof(IndexingHeader) past it.
+                pinIfInCandidate(value);
+                pinIfInCandidate(value - sizeof(IndexingHeader) - 1);
+                noteCellOnStack(value);
+            });
+        };
+        auto scanThreadState = [&](CurrentThreadState& state) {
+            scanSpan(state.registerState, state.registerState + 1);
+            scanSpan(state.stackTop, state.stackOrigin);
+        };
+        callWithCurrentThreadState(scanThreadState);
+#if ENABLE(DFG_JIT)
+        vm.forEachConservativelyScannedBuffer(scanSpan);
+#endif
+#if ENABLE(WEBASSEMBLY)
+        if (IsoSubspace* pinballCompletions = m_pinballCompletionSpace.get()) {
+            pinballCompletions->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+                auto* pinball = uncheckedDowncast<PinballCompletion>(static_cast<JSCell*>(cell));
+                for (auto& slice : pinball->slices()) {
+                    std::span<Register> slots = slice->slots();
+                    scanSpan(slots.data(), slots.data() + slots.size());
+                }
+                scanSpan(pinball->calleeSaves(), pinball->calleeSaves() + NUMBER_OF_CALLEE_SAVES_REGISTERS);
+            });
+        }
+#endif
+
+        // Who owns what in the candidate blocks.
+        auto noteObject = [&](JSCell* cell) {
+            if (!cell->isObject())
+                return;
+            JSObject* object = asObject(cell);
+            Butterfly* butterfly = object->butterfly();
+            if (!butterfly || isCopyOnWrite(object->indexingMode()))
+                return;
+            void* base = butterfly->base(object->structure());
+            if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(base)))
+                return;
+            MarkedBlock* block = MarkedBlock::blockFor(base);
+            if (!candidateBlocks.contains(block))
+                return;
+            HeapCell* storage = static_cast<HeapCell*>(block->handle().cellAlign(base));
+            Claim& claim = claims.add(storage, Claim { }).iterator->value;
+            claim.owner = object;
+            claim.count++;
+            if (cellsOnStack.contains(cell))
+                pinned.add(storage);
+        };
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+            if (!isJSCellKind(handle->cellKind()))
+                return;
+            if (handle->block().hasAnyNewlyAllocated()) {
+                handle->forEachLiveCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
+                    noteObject(static_cast<JSCell*>(cell));
+                    return IterationStatus::Continue;
+                });
+                return;
+            }
+            forEachLiveCellOfSettledBlock(*handle, [&](HeapCell* cell) {
+                noteObject(static_cast<JSCell*>(cell));
+            });
+        });
+        for (auto& [address, allocation] : preciseObjects) {
+            if (allocation->isLive())
+                noteObject(static_cast<JSCell*>(allocation->cell()));
+        }
+
+        result.pinnedCells = pinned.size();
+
+        // What is about to be emptied is not where the copies go.
+        for (Candidate& candidate : candidates) {
+            BlockDirectory* directory = candidate.handle->directory();
+            Locker locker { directory->bitvectorLock() };
+            candidate.couldAllocate = directory->isCanAllocate(candidate.handle);
+            directory->setIsCanAllocate(candidate.handle, false);
+        }
+    }
+
+    // Compiler threads read the butterflies of constant objects. At a safepoint, which is where this parks them, they hold cells only.
+    bool didSuspendCompilerThreads = suspendCompilerThreads();
+    auto resumeCompilerThreadsOnExit = makeScopeExit([&] {
+        if (didSuspendCompilerThreads)
+            resumeCompilerThreads();
+    });
+
+    Vector<HeapCell*> evacuatedCells;
+    for (Candidate& candidate : candidates) {
+        MarkedBlock::Handle& handle = *candidate.handle;
+        Vector<std::pair<HeapCell*, JSObject*>, 32> toMove;
+        bool canEvacuate = true;
+        forEachLiveCellOfSettledBlock(handle, [&](HeapCell* cell) {
+            auto iterator = claims.find(cell);
+            if (iterator == claims.end() || iterator->value.count != 1) {
+                result.cellsWithoutSingleOwner++;
+                canEvacuate = false;
+            } else if (pinned.contains(cell))
+                canEvacuate = false;
+            else
+                toMove.append({ cell, iterator->value.owner });
+        });
+        if (!canEvacuate || toMove.isEmpty())
+            continue;
+
+        size_t cellSize = handle.cellSize();
+        Allocator allocator = auxiliarySpace.allocatorFor(cellSize, AllocatorForMode::EnsureAllocator);
+        bool ranOutOfMemory = false;
+        for (auto [oldCell, owner] : toMove) {
+            void* newCell = allocator.allocate(*this, cellSize, nullptr, AllocationFailureMode::ReturnNull);
+            if (!newCell) {
+                ranOutOfMemory = true;
+                break;
+            }
+            RELEASE_ASSERT(!candidateBlocks.contains(MarkedBlock::blockFor(newCell)));
+            RELEASE_ASSERT(MarkedBlock::blockFor(newCell)->handle().cellSize() == cellSize);
+            Butterfly* oldButterfly = owner->butterfly();
+            memcpySpan(unsafeMakeSpan(static_cast<uint8_t*>(newCell), cellSize), unsafeMakeSpan(std::bit_cast<const uint8_t*>(oldCell), cellSize));
+            owner->setButterfly(vm, std::bit_cast<Butterfly*>(std::bit_cast<char*>(oldButterfly) + (std::bit_cast<char*>(newCell) - std::bit_cast<char*>(oldCell))));
+            if (isTesting) [[unlikely]] {
+                // As a JSValue this is a cell at an address that is never mapped; as a length it is out of bounds.
+                for (uint64_t* word = std::bit_cast<uint64_t*>(oldCell); word < std::bit_cast<uint64_t*>(std::bit_cast<char*>(oldCell) + cellSize); ++word)
+                    *word = 0xbadbeef0;
+                evacuatedCells.append(oldCell);
+            }
+            result.movedCells++;
+            result.movedBytes += cellSize;
+        }
+        if (ranOutOfMemory)
+            break;
+        candidate.isEvacuated = true;
+        result.evacuatedBlocks++;
+    }
+    if (result.movedCells)
+        m_lastAuxiliaryEvacuationVersion = m_objectSpace.markingVersion();
+
+    if (isTesting) [[unlikely]] {
+        UncheckedKeyHashSet<HeapCell*> evacuated;
+        for (HeapCell* cell : evacuatedCells)
+            evacuated.add(cell);
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind) || !static_cast<JSCell*>(heapCell)->isObject())
+                return IterationStatus::Continue;
+            JSObject* object = asObject(static_cast<JSCell*>(heapCell));
+            Butterfly* butterfly = object->butterfly();
+            if (!butterfly || isCopyOnWrite(object->indexingMode()))
+                return IterationStatus::Continue;
+            void* base = butterfly->base(object->structure());
+            if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(base)))
+                return IterationStatus::Continue;
+            MarkedBlock::Handle& handle = MarkedBlock::blockFor(base)->handle();
+            HeapCell* storage = static_cast<HeapCell*>(handle.cellAlign(base));
+            RELEASE_ASSERT(!evacuated.contains(storage));
+            RELEASE_ASSERT(handle.isLive(storage));
+            return IterationStatus::Continue;
+        });
+    }
+
+    return finish();
+}
+
+// Testing (evacuateAuxiliaryBlocksAfterEveryFullCollection): called by the allocation slow path once a full collection has
+// finished, i.e. under whatever frames the mutator has on its stack at its next allocation that takes that path.
+void Heap::evacuateAuxiliaryBlocksIfDue()
+{
+    if (!m_auxiliaryEvacuationIsDue || reasonNotToEvacuateAuxiliaryBlocksNow())
+        return;
+    m_auxiliaryEvacuationIsDue = false;
+    evacuateSparseAuxiliaryBlocks(1);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
+
 void Heap::collect(Synchronousness synchronousness, GCRequest request)
 {
     if (!Options::useGC()) [[unlikely]]
@@ -2444,6 +2860,11 @@ void Heap::runCollectionEpilogue()
     
     for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
         callback.run(vm());
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::evacuateAuxiliaryBlocksAfterEveryFullCollection() && m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) [[unlikely]]
+        m_auxiliaryEvacuationIsDue = true;
+#endif
     
     if (shouldSweepSynchronously())
         sweepSynchronously();
@@ -3463,6 +3884,9 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     
     // Now a collection can only start if this thread starts it.
     RELEASE_ASSERT(!m_collectionScope);
+#if USE(BUN_JSC_ADDITIONS)
+    m_isCollectionPrevented = true;
+#endif
 }
 
 // Use WTF_IGNORES_THREAD_SAFETY_ANALYSIS because this function conditionally unlocks m_collectContinuouslyLock,
@@ -3472,6 +3896,9 @@ void Heap::allowCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     if (!m_isSafeToCollect)
         return;
     
+#if USE(BUN_JSC_ADDITIONS)
+    m_isCollectionPrevented = false;
+#endif
     m_collectContinuouslyLock.unlock();
 }
 
