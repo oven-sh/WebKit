@@ -29,7 +29,7 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "BuiltinNames.h"
-#include "ErrorInstance.h"
+#include "ErrorInstanceInlines.h"
 #include "Interpreter.h"
 #include "IteratorOperations.h"
 #include "JITOpaqueByproducts.h"

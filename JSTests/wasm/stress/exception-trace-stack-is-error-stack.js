@@ -13,3 +13,9 @@ const [exception, error] = makeBoth();
 assert.eq(typeof exception.stack, "string");
 assert.eq(withoutFirstColumn(exception.stack), withoutFirstColumn(error.stack));
 assert.eq(Object.hasOwn(exception, "stack"), false);
+
+// With no frames an Error has no stack. Interpreter::stackTraceAsString gave "" here.
+Error.stackTraceLimit = 0;
+const [exceptionWithoutFrames, errorWithoutFrames] = makeBoth();
+assert.eq(errorWithoutFrames.stack, undefined);
+assert.eq(exceptionWithoutFrames.stack, undefined);
