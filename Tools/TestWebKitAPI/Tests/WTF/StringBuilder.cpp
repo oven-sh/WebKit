@@ -552,6 +552,8 @@ TEST(StringBuilderTest, Grow16BitCapacityAboveHalfOfMaxLength)
     EXPECT_EQ(nonLatin1, builder[0]);
     EXPECT_EQ(nonLatin1, builder[writtenLength - 1]);
     EXPECT_EQ(writtenLength, sharesBuffer.length());
+    EXPECT_EQ(nonLatin1, sharesBuffer[0]);
+    EXPECT_EQ(nonLatin1, sharesBuffer[writtenLength - 1]);
 }
 
 TEST(StringBuilderTest, LengthAboveMaxLength16BitOverflows)
