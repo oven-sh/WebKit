@@ -47,6 +47,13 @@ String constructErrorMessage(JSGlobalObject*, JSValue, const String&);
 JS_EXPORT_PRIVATE JSObject* createError(JSGlobalObject*, JSValue, const String&, ErrorInstance::SourceAppender);
 JS_EXPORT_PRIVATE JSObject* createStackOverflowError(JSGlobalObject*);
 JSObject* createUndefinedVariableError(JSGlobalObject*, const Identifier&);
+#if USE(BUN_JSC_ADDITIONS)
+class JSScope;
+class CodeBlock;
+// As above, but if a module environment reachable from `start` declares or imports `ident` (so the error should have been
+// impossible) the message says which resolution invariant is broken. `resolveType` is the op's linked ResolveType.
+JSObject* createUndefinedVariableError(JSGlobalObject*, const Identifier&, JSScope* start, unsigned resolveType, CodeBlock*);
+#endif
 JSObject* createTDZError(JSGlobalObject*, StringView);
 JSObject* createTDZError(JSGlobalObject*);
 JSObject* createTDZError(JSGlobalObject*, const Identifier&);
