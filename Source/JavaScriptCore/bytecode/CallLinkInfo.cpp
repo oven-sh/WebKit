@@ -311,6 +311,8 @@ DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, Cal
     // Compiler threads walk the metadata for CallLinkInfos and ArrayProfiles. They get to see this one when it is ready.
     WTF::storeStoreFence();
     m_data = data;
+    if (!(owner->metadataTable()->didAllocateCallSiteData() % MetadataTable::callSiteDatasPerReport))
+        vm.heap.reportExtraMemoryAllocated(owner, MetadataTable::callSiteDatasPerReport * sizeof(CallSiteData));
     return data->m_callLinkInfo;
 }
 

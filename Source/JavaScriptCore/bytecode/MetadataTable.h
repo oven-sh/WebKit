@@ -137,6 +137,19 @@ public:
     SpeculatedType* ensureValueProfilePredictions();
 
     size_t sizeInBytesForGC();
+    // The CallSiteDatas that the table's call sites own are reported to the collector by the CodeBlock the table was linked
+    // for, not by the optimized CodeBlocks that share the table with it: see CodeBlock::visitChildren(). One is too small for
+    // Heap::reportExtraMemoryAllocated() to take note of, so the mutator reports them this many at a time.
+    static constexpr unsigned callSiteDatasPerReport = 32;
+    unsigned didAllocateCallSiteData()
+    {
+        auto& count = linkingData().numberOfOwnCallSiteDatas;
+        unsigned newCount = count.load(std::memory_order_relaxed) + 1;
+        count.store(newCount, std::memory_order_relaxed);
+        return newCount;
+    }
+    unsigned numberOfOwnCallSiteDatas() const { return linkingData().numberOfOwnCallSiteDatas.load(std::memory_order_relaxed); }
+    size_t sizeOfOwnCallSiteDatas() const;
 
     void ref()
     {

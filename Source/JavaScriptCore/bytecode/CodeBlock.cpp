@@ -1335,7 +1335,7 @@ size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)
     CodeBlock* thisObject = uncheckedDowncast<CodeBlock>(cell);
     size_t extraMemoryAllocated = 0;
     if (thisObject->m_metadata)
-        extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC();
+        extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC() + thisObject->sizeOfOwnCallSiteDatas();
     RefPtr<JSC::JITCode> jitCode = thisObject->m_jitCode;
     if (jitCode && !jitCode->isShared())
         extraMemoryAllocated += jitCode->size();
@@ -1401,7 +1401,7 @@ void CodeBlock::visitChildren(Visitor& visitor)
 
         size_t extraMemory = 0;
         if (m_metadata)
-            extraMemory += m_metadata->sizeInBytesForGC();
+            extraMemory += m_metadata->sizeInBytesForGC() + sizeOfOwnCallSiteDatas();
         if (m_jitCode && !m_jitCode->isShared())
             extraMemory += m_jitCode->size();
         visitor.reportExtraMemoryVisited(extraMemory);
