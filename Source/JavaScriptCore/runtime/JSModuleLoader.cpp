@@ -1236,20 +1236,23 @@ void JSModuleLoader::pinPrelinkedEdges(uint32_t moduleIndex)
     AbstractModuleRecord* leaving = m_prelinkedRecords[moduleIndex].get();
     if (!leaving)
         return;
-    auto pin = [&](AbstractModuleRecord* importer, uint32_t onlyTarget) {
-        auto requests = m_prelinkedGraph->requests(importer->prelinkedModule());
-        for (unsigned i = 0; i < requests.size(); ++i) {
-            uint32_t target = requests[i].moduleIndex;
-            if (target == PrelinkedModuleGraph::noModule || (onlyTarget != PrelinkedModuleGraph::noModule && target != onlyTarget))
-                continue;
-            if (AbstractModuleRecord* record = prelinkedRecordForResolution(target))
-                importer->setImportedModule(importer->globalObject(), importer->requestedModules()[i], record);
-        }
-    };
-    pin(leaving, PrelinkedModuleGraph::noModule);
+    pinPrelinkedEdgesOf(leaving, PrelinkedModuleGraph::noModule);
     for (auto& slot : m_prelinkedRecords) {
         if (slot && slot.get() != leaving)
-            pin(slot.get(), moduleIndex);
+            pinPrelinkedEdgesOf(slot.get(), moduleIndex);
+    }
+}
+
+// importer's edges to onlyTarget (noModule: to every module) whose target is still in the table.
+void JSModuleLoader::pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget)
+{
+    auto requests = m_prelinkedGraph->requests(importer->prelinkedModule());
+    for (unsigned i = 0; i < requests.size(); ++i) {
+        uint32_t target = requests[i].moduleIndex;
+        if (target == PrelinkedModuleGraph::noModule || (onlyTarget != PrelinkedModuleGraph::noModule && target != onlyTarget))
+            continue;
+        if (AbstractModuleRecord* record = prelinkedRecordForResolution(target))
+            importer->setImportedModule(importer->globalObject(), importer->requestedModules()[i], record);
     }
 }
 
@@ -1264,10 +1267,18 @@ void JSModuleLoader::forgetPrelinkedRecord(uint32_t moduleIndex)
 
 void JSModuleLoader::forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll)
 {
+    if (!keyOrNullForAll) {
+        // Every slot leaves: pin each edge once, from its importer, while all the targets are still in the table.
+        for (auto& slot : m_prelinkedRecords) {
+            if (slot)
+                pinPrelinkedEdgesOf(slot.get(), PrelinkedModuleGraph::noModule);
+        }
+    }
     for (unsigned i = 0; i < m_prelinkedRecords.size(); ++i) {
         auto& slot = m_prelinkedRecords[i];
         if (slot && (!keyOrNullForAll || slot->moduleKey().impl() == keyOrNullForAll)) {
-            pinPrelinkedEdges(i);
+            if (keyOrNullForAll)
+                pinPrelinkedEdges(i);
             slot.clear();
             m_prelinkedRecordRemoved.ensureSize(m_prelinkedRecords.size());
             m_prelinkedRecordRemoved.quickSet(i);
