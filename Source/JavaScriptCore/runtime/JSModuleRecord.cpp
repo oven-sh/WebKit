@@ -277,11 +277,13 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
 // executable's source through error positions and stack traces (the URL and where the source starts) and
 // through import(), which hands the SourceOrigin to the embedder (CallFrame::callerSourceOrigin). The
 // SourceOrigin carries the embedder's ScriptFetcher, which is how an embedder knows which module asks.
+// A CodeBlock also caches whether its source could be tainted.
 static bool hasSameObservableSource(const SourceCode& a, const SourceCode& b)
 {
     SourceProvider* providerA = a.provider();
     SourceProvider* providerB = b.provider();
     return providerA->sourceOrigin() == providerB->sourceOrigin()
+        && providerA->sourceTaintedOrigin() == providerB->sourceTaintedOrigin()
         && providerA->sourceURL() == providerB->sourceURL()
         && a.firstLine() == b.firstLine() && a.startColumn() == b.startColumn()
         && providerA->hash() == providerB->hash() && a.view() == b.view();
