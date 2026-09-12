@@ -290,6 +290,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 
     m_neverExecutedCallSiteData = CallSiteData::createShared(false);
     m_executedOnceCallSiteData = CallSiteData::createShared(true);
+    m_notExecutedTailCallSiteData = CallSiteData::createSharedForTailCalls();
 
     // Set up lazy initializers.
     {
@@ -685,6 +686,7 @@ VM::~VM()
 
     delete m_neverExecutedCallSiteData;
     delete m_executedOnceCallSiteData;
+    delete m_notExecutedTailCallSiteData;
     delete emptyList;
 
     if (m_cachedBytecodeTwoCharacterAtoms) {
