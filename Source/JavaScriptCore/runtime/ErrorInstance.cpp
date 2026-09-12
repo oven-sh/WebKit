@@ -83,6 +83,15 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     if (!codeBlock->hasExpressionInfo() || message.isNull())
         return message;
 
+    // Builtin source text contains @-prefixed private identifiers that should not appear in
+    // user-visible error messages. BytecodeGenerator::emitExpressionInfo skips private builtins in
+    // !ASSERT_ENABLED builds so those bail at the hasExpressionInfo() check above, but builtins can
+    // still carry expression info (ASSERT_ENABLED builds, and non-private builtins under
+    // USE(BUN_JSC_ADDITIONS)). Matches the isBuiltinFunction() check in
+    // FindFirstCallerFrameWithCodeblockFunctor so the two callers behave the same.
+    if (codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+        return message;
+
     auto info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
     int expressionStart = info.divot - info.startOffset;
     int expressionStop = info.divot + info.endOffset;
