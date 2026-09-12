@@ -40,10 +40,8 @@ namespace JSC {
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ctiMasmProbeTrampoline, void, ());
 JSC_ANNOTATE_JIT_OPERATION_PROBE(ctiMasmProbeTrampoline);
-#if !OS(DARWIN)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ctiMasmProbeTrampolineAVX, void, ());
 JSC_ANNOTATE_JIT_OPERATION_PROBE(ctiMasmProbeTrampolineAVX);
-#endif
 
 // The following are offsets for Probe::State fields accessed by the ctiMasmProbeTrampoline stub.
 
@@ -193,7 +191,6 @@ static_assert(sizeof(Probe::State) == PROBE_SIZE, "Probe::State::size's matches 
     "vmovaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM14_VECTOR_OFFSET) "(%rbp), %xmm14" "\n" \
     "vmovaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM15_VECTOR_OFFSET) "(%rbp), %xmm15" "\n"
 
-#if !OS(DARWIN)
 #define PROBE_XMM_SAVE_MOVAPS \
     "movaps %xmm0,  " STRINGIZE_VALUE_OF(PROBE_CPU_XMM0_VECTOR_OFFSET) "(%rsp)" "\n" \
     "movaps %xmm1,  " STRINGIZE_VALUE_OF(PROBE_CPU_XMM1_VECTOR_OFFSET) "(%rsp)" "\n" \
@@ -229,7 +226,6 @@ static_assert(sizeof(Probe::State) == PROBE_SIZE, "Probe::State::size's matches 
     "movaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM13_VECTOR_OFFSET) "(%rbp), %xmm13" "\n" \
     "movaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM14_VECTOR_OFFSET) "(%rbp), %xmm14" "\n" \
     "movaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM15_VECTOR_OFFSET) "(%rbp), %xmm15" "\n"
-#endif // !OS(DARWIN)
 
 #if COMPILER(MSVC)
 #define ASM_PREVIOUS_SECTION
@@ -404,19 +400,13 @@ __asm__( \
     ASM_PREVIOUS_SECTION \
 );
 
-#if OS(DARWIN)
-// On macOS, all x86_64 CPUs support AVX. Use vmovaps unconditionally.
-DEFINE_PROBE_TRAMPOLINE(ctiMasmProbeTrampoline, PROBE_XMM_SAVE_VMOVAPS, PROBE_XMM_RESTORE_VMOVAPS,
-    ctiMasmProbeTrampolineCopyLoop, ctiMasmProbeTrampolineProbeStateIsSafe, ctiMasmProbeTrampolineRestoreRegisters)
-#else
-// On Linux/Windows, AVX may not be available. Provide two trampolines:
+// AVX may not be available. Provide two trampolines:
 // - ctiMasmProbeTrampoline: uses movaps (SSE, always available on x86_64)
 // - ctiMasmProbeTrampolineAVX: uses vmovaps (requires AVX)
 DEFINE_PROBE_TRAMPOLINE(ctiMasmProbeTrampoline, PROBE_XMM_SAVE_MOVAPS, PROBE_XMM_RESTORE_MOVAPS,
     ctiMasmProbeTrampolineCopyLoop, ctiMasmProbeTrampolineProbeStateIsSafe, ctiMasmProbeTrampolineRestoreRegisters)
 DEFINE_PROBE_TRAMPOLINE(ctiMasmProbeTrampolineAVX, PROBE_XMM_SAVE_VMOVAPS, PROBE_XMM_RESTORE_VMOVAPS,
     ctiMasmProbeTrampolineAVXCopyLoop, ctiMasmProbeTrampolineAVXProbeStateIsSafe, ctiMasmProbeTrampolineAVXRestoreRegisters)
-#endif
 
 // What code is emitted for the probe?
 // ==================================
@@ -464,14 +454,10 @@ void MacroAssembler::probe(Probe::Function function, void* arg)
     push(RegisterID::eax);
     push(RegisterID::eax);
 
-#if OS(DARWIN)
-    move(TrustedImmPtr(reinterpret_cast<void*>(ctiMasmProbeTrampoline)), RegisterID::eax);
-#else
     if (supportsAVX())
         move(TrustedImmPtr(reinterpret_cast<void*>(ctiMasmProbeTrampolineAVX)), RegisterID::eax);
     else
         move(TrustedImmPtr(reinterpret_cast<void*>(ctiMasmProbeTrampoline)), RegisterID::eax);
-#endif
 
     push(RegisterID::edx);
     move(TrustedImmPtr(reinterpret_cast<void*>(function)), RegisterID::edx);
@@ -496,14 +482,12 @@ MacroAssemblerX86_64::CPUID MacroAssemblerX86_64::getCPUIDEx(unsigned level, uns
     return result;
 }
 
-#if !OS(DARWIN)
 static inline uint64_t readXCR0()
 {
     uint32_t lo, hi;
     __asm__("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
     return static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
 }
-#endif
 
 void MacroAssemblerX86_64::collectCPUFeatures()
 {
@@ -516,9 +500,6 @@ void MacroAssemblerX86_64::collectCPUFeatures()
             s_sse4_1CheckState = (cpuid[2] & (1 << 19)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
             s_sse4_2CheckState = (cpuid[2] & (1 << 20)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
             s_popcntCheckState = (cpuid[2] & (1 << 23)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-#if OS(DARWIN)
-            s_avxCheckState = CPUIDCheckState::Set;
-#else
             // Per the Intel SDM, AVX is usable only when:
             //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
             //   2. CPUID.1:ECX.OSXSAVE[bit 27] = 1  (OS has enabled XGETBV)
@@ -527,13 +508,20 @@ void MacroAssemblerX86_64::collectCPUFeatures()
             // (Xen, KVM, Hyper-V, etc.) the AVX feature bit can be passed
             // through from the host CPU while XSAVE/YMM state is not enabled
             // in the guest, causing every VEX-encoded instruction to #UD.
+            //
+            // Darwin needs the same runtime check. Every Mac Apple shipped with
+            // a supported macOS has AVX (Sandy Bridge, 2011, and later), so
+            // assuming it held for a long time. It does not hold on an older Mac
+            // running a current macOS via OpenCore, nor under Rosetta 2, which
+            // reports no AVX. Assuming AVX there makes the JIT emit VEX-encoded
+            // instructions the CPU cannot decode, and the process dies with
+            // SIGILL once any code tiers up.
             s_avxCheckState = CPUIDCheckState::Clear;
             if ((cpuid[2] & (1 << 28)) && (cpuid[2] & (1 << 27))) {
                 constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
                 if ((readXCR0() & ymmStateMask) == ymmStateMask)
                     s_avxCheckState = CPUIDCheckState::Set;
             }
-#endif
         }
 #if OS(DARWIN)
         {
@@ -542,8 +530,14 @@ void MacroAssemblerX86_64::collectCPUFeatures()
             int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
             s_bmi1CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
 
+            // AVX2 is VEX-encoded and therefore also requires the OS to have
+            // enabled YMM state; gate it on the AVX result computed above, the
+            // same way the non-Darwin path does. The sysctl and the CPUID/XCR0
+            // check agree on real hardware, but if they ever disagree, emitting
+            // AVX2 while AVX is unavailable would #UD.
             rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
-            s_avx2CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+            bool hasAVX2Feature = rc >= 0 && val;
+            s_avx2CheckState = (hasAVX2Feature && s_avxCheckState == CPUIDCheckState::Set) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
         }
 #else
         {
