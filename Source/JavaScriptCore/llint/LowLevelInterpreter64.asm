@@ -2525,8 +2525,8 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
 end
 
 # t0 is the callee, t3 the callee frame and t5 the CallLinkInfo*, at the start of the call site's CallSiteData.
-# A call site that has not run twice yet shares its CallSiteData with all such sites, and its calls go to llint_unlinked_call,
-# which finds the site through the caller's frame.
+# A call site that has not run twice yet shares its CallSiteData with all such sites, and its calls go to the unlinked call
+# thunk (LLInt::unlinkedCall()), whose slow path finds the site through the caller's frame.
 macro prepareCallSiteForConstruct()
 end
 

@@ -1028,6 +1028,7 @@ public:
     // See LazyCallLinkInfo.
     CallSiteData* neverExecutedCallSiteData() { return m_neverExecutedCallSiteData; }
     CallSiteData* executedOnceCallSiteData() { return m_executedOnceCallSiteData; }
+    CallSiteData* notExecutedTailCallSiteData() { return m_notExecutedTailCallSiteData; }
     IntlCache& intlCache() { return *m_intlCache; }
 #if USE(BUN_JSC_ADDITIONS)
     // Clears both dateCache and intlCache; callable without including IntlCache.h
@@ -1371,6 +1372,7 @@ private:
     std::unique_ptr<PersistentBytecodePayloads> m_persistentBytecodePayloads;
     CallSiteData* m_neverExecutedCallSiteData { nullptr };
     CallSiteData* m_executedOnceCallSiteData { nullptr };
+    CallSiteData* m_notExecutedTailCallSiteData { nullptr };
     unsigned m_entryCountFromOutside { 0 };
     std::unique_ptr<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>> m_cachedBytecodeTwoCharacterAtoms;
     std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
