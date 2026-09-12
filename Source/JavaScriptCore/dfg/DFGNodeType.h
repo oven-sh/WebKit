@@ -378,9 +378,12 @@ namespace JSC { namespace DFG {
     macro(StringSearch, NodeResultJS | NodeMustGenerate) \
     \
     /* Optimizations for string access */ \
-    macro(StringAt, NodeResultJS) \
-    macro(StringCharCodeAt, NodeResultInt32) \
-    macro(StringCodePointAt, NodeResultInt32) \
+    /* StringAt (InBounds), StringCharCodeAt and StringCodePointAt speculate that the index is in bounds, and the */ \
+    /* abstract interpreter relies on that speculation for their result type. They must survive DCE so the exit */ \
+    /* survives too. Fixup clears the flag for StringAt with an OutOfBounds array mode, which does not exit. */ \
+    macro(StringAt, NodeResultJS | NodeMustGenerate) \
+    macro(StringCharCodeAt, NodeResultInt32 | NodeMustGenerate) \
+    macro(StringCodePointAt, NodeResultInt32 | NodeMustGenerate) \
     macro(StringCharAt, NodeResultJS) \
     macro(StringIteratorNext, 0) \
     macro(StringIteratorNextWithUndefined, 0) \
