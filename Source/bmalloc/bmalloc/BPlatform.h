@@ -387,6 +387,13 @@
 #define BUSE_MIMALLOC 0
 #endif
 
+/* The consumer links its own mimalloc (oven-sh/mimalloc), which has APIs the vendored copy does not. */
+#if BUSE(MIMALLOC) && defined(USE_EXTERNAL_MIMALLOC) && USE_EXTERNAL_MIMALLOC
+#define BUSE_EXTERNAL_MIMALLOC 1
+#else
+#define BUSE_EXTERNAL_MIMALLOC 0
+#endif
+
 #if defined(USE_SYSTEM_MALLOC) && USE_SYSTEM_MALLOC
 #define BUSE_SYSTEM_MALLOC 1
 #elif BTSAN_ENABLED
