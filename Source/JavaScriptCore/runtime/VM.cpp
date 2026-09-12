@@ -1714,6 +1714,21 @@ void sanitizeStackForVM(VM& vm)
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa20, vm.lastStackTop(), stack.origin(), stack.end());
 }
 
+// For the slow paths of calls: they run in the middle of JS, on the thread that holds the API lock, so that thread's stack
+// bounds come from the lock rather than from the two thread-local lookups sanitizeStackForVM() makes. Same checks.
+void sanitizeStackForVMInCallSlowPath(VM& vm)
+{
+    logSanitizeStack(vm);
+#if ENABLE(C_LOOP)
+    vm.cloopStack().sanitizeStack();
+#else
+    auto& stack = vm.apiLock().ownerThreadWhileHoldingLock().stack();
+    RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa30, vm.lastStackTop(), stack.origin(), stack.end());
+    sanitizeStackForVMImpl(&vm);
+    RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa40, vm.lastStackTop(), stack.origin(), stack.end());
+#endif
+}
+
 size_t VM::committedStackByteCount()
 {
 #if !ENABLE(C_LOOP)

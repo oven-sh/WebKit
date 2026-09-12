@@ -75,6 +75,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSWithScope.h"
 #include "JumpTable.h"
 #include "LLIntEntrypoint.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "ObjectConstructor.h"
 #include "PropertyInlineCache.h"
@@ -2448,6 +2449,7 @@ JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* cal
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     JSCell* calleeAsFunctionCell;
@@ -2470,6 +2472,7 @@ JSC_DEFINE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame* calleeF
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     JSCell* calleeAsFunctionCell;
@@ -2487,6 +2490,7 @@ JSC_DEFINE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame* calleeF
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVM(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
