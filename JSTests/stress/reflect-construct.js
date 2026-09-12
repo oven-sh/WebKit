@@ -76,6 +76,34 @@ var array = {
 };
 shouldBe(Reflect.construct(function () { this.length = arguments.length; }, array).length, 0);
 
+// A length past the argument limit is rejected before any element is read. The call
+// can only end in this error, and reading the elements first appends one value per
+// element to the argument list.
+var lengthGets = 0;
+shouldThrow(() => {
+    var array = {
+        get length() {
+            lengthGets++;
+            return 0x100001;
+        },
+        get 0() {
+            throw new Error("ng");
+        }
+    };
+    Reflect.construct(function () { }, array);
+}, `RangeError: Maximum call stack size exceeded.`);
+shouldBe(lengthGets, 1);
+
+shouldThrow(() => {
+    var array = {
+        length: 4294967296,
+        get 0() {
+            throw new Error("ng");
+        }
+    };
+    Reflect.construct(function () { }, array);
+}, `RangeError: Maximum call stack size exceeded.`);
+
 var globalObject = this;
 shouldBe(Reflect.construct(function Hello() {
     "use strict";
