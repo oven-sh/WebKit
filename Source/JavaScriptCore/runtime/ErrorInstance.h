@@ -116,6 +116,12 @@ public:
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
 
+    // Whether line()/sourceURL() were recorded by addErrorInfo() for a source the parser rejected, as
+    // opposed to copied from another error (structured clone) or derived from the stack frames. Unlike
+    // isParseError(), this is not set for parse errors that record no location (eval code), and it is
+    // set before the stack is materialized, so the host's stack formatter can rely on it.
+    bool hasParseLocation() const { return m_hasParseLocation; }
+    void setHasParseLocation() { m_hasParseLocation = true; }
 #endif
 
     JS_EXPORT_PRIVATE String sanitizedToString(JSGlobalObject*);
@@ -182,6 +188,9 @@ protected:
     bool m_parseError : 1;
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_hasParseLocation : 1;
 #endif
 };
 
