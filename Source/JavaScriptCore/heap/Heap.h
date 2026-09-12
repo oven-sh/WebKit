@@ -518,6 +518,34 @@ public:
     void deleteAllCodeBlocks(DeleteAllCodeEffort);
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Moves the butterflies out of the sparse blocks of the Auxiliary subspace (those whose live bytes are at most
+    // maximumOccupancy of a block) into denser ones, so that the sparse blocks die with the next full collection, which
+    // the caller should request. For a program at rest; see the definition for the mechanism and for what is not moved.
+    // Never asserts on the caller's state: if this is not a moment at which it can run, nothing happens and
+    // AuxiliaryEvacuationResult::skipped says why.
+    //
+    // What this asks of an embedder: a raw pointer into an object's out-of-line storage (Butterfly*, the data() of
+    // contiguous() / contiguousDouble() / contiguousInt32(), a WriteBarrier<Unknown>* to an out-of-line property or an
+    // element) may be kept across a call that can reach this function only in a local variable or register of the VM's
+    // own thread, where the conservative scan finds it and leaves the storage in place. Anything kept elsewhere (the C++
+    // heap, another thread's stack) must be revalidated against JSObject::butterfly() afterwards, the way
+    // JSArrayIterator revalidates. No thread may read a butterfly without holding the JSLock. Typed array vectors and
+    // everything else in the Gigacage's primitive subspace are never moved: compiled code embeds their addresses.
+    struct AuxiliaryEvacuationResult {
+        ASCIILiteral skipped; // Null if the evacuation ran, otherwise the reason it did not.
+        unsigned candidateBlocks { 0 };
+        unsigned evacuatedBlocks { 0 };
+        unsigned movedCells { 0 };
+        unsigned pinnedCells { 0 };
+        unsigned cellsWithoutSingleOwner { 0 };
+        size_t movedBytes { 0 };
+        Seconds duration;
+    };
+    JS_EXPORT_PRIVATE AuxiliaryEvacuationResult evacuateSparseAuxiliaryBlocks(double maximumOccupancy);
+    void evacuateAuxiliaryBlocksIfDue();
+#endif
+
     JS_EXPORT_PRIVATE void didAllocate(size_t);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
@@ -823,6 +851,9 @@ private:
     void updateAllocationLimits();
     void didFinishCollection();
     void resumeCompilerThreads();
+#if USE(BUN_JSC_ADDITIONS)
+    ASCIILiteral reasonNotToEvacuateAuxiliaryBlocksNow();
+#endif
     void gatherExtraHeapData(HeapProfiler&);
     void removeDeadHeapSnapshotNodes(HeapProfiler&);
     void runCollectionEpilogue();
@@ -885,6 +916,9 @@ private:
     ApproximateTime m_lastActiveCollectionTime;
     ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
+    bool m_isCollectionPrevented { false }; // Between preventCollection() and allowCollection(), which do not nest.
+    bool m_auxiliaryEvacuationIsDue { false };
+    HeapVersion m_lastAuxiliaryEvacuationVersion { 0 }; // The marking version (one per full collection) when cells were last moved.
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };
