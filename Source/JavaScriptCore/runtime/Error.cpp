@@ -253,7 +253,6 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
     // enough that if we're wrong in such corner cases, it's not the end of the world.
     if (ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error)) {
 #if USE(BUN_JSC_ADDITIONS)
-
         if (line != -1) {
             errorInstance->setLine(line);
             errorInstance->setColumn(0);
@@ -262,12 +261,19 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         if (!sourceURL.isEmpty()) {
             errorInstance->setSourceURL(sourceURL);
         }
-#endif
 
+        // Materializing runs VM::onComputeErrorInfoJSValue, which in Bun calls a user
+        // Error.prepareStackTrace and so can throw. ParserError::toErrorObject() is
+        // non-throwing for its callers (FunctionConstructor, ModuleProgramExecutable,
+        // ScriptExecutable, ...): a hook exception ends here and the parse error is what
+        // gets thrown. A termination stays pending.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         errorInstance->materializeErrorInfoIfNeeded(vm);
-
-#if USE(BUN_JSC_ADDITIONS)
+        if (scope.exception()) [[unlikely]]
+            scope.clearExceptionExceptTermination();
         return errorInstance;
+#else
+        errorInstance->materializeErrorInfoIfNeeded(vm);
 #endif
     }
 
