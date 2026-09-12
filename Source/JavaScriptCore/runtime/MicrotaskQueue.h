@@ -35,6 +35,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/VectorTraits.h>
 
 namespace JSC {
@@ -190,6 +191,22 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // Defined in MicrotaskQueueInlines.h (requires globalObject() from QueuedTask).
     inline void clearForGlobalObject(JSGlobalObject* targetGlobalObject);
+
+    // Re-insert at the front. Everything already in the deque shifts by one, so the
+    // "already marked" prefix can no longer be trusted; rescan from the start.
+    void prepend(QueuedTask&& task)
+    {
+        m_queue.prepend(WTF::move(task));
+        m_markedBefore = 0;
+    }
+
+    QueuedTask takeLast()
+    {
+        QueuedTask task = m_queue.takeLast();
+        if (m_markedBefore > m_queue.size())
+            m_markedBefore = m_queue.size();
+        return task;
+    }
 #endif
 
     void beginMarking()
@@ -233,17 +250,49 @@ public:
     {
         m_queue.clear();
         m_toKeep.clear();
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& scope : m_drainScopes)
+            scope->deferred.clear();
+#endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
     // Defined in MicrotaskQueueInlines.h (requires MarkedMicrotaskDeque::clearForGlobalObject).
     inline void clearForGlobalObject(JSGlobalObject* targetGlobalObject);
+
+    // Drain scopes.
+    //
+    // The embedder can turn its event loop from inside a synchronous frame while
+    // admitting only work that frame causes. beginDrainScope() sets aside every task
+    // already queued — they belong to the code the frame interrupted — so that until
+    // endDrainScope() a checkpoint runs only what has been queued since (by the scope's
+    // own code, transitively). endDrainScope() puts the set-aside tasks back at the
+    // front of the queue in their original order. Scopes nest: an inner scope sets
+    // aside the outer scope's pending tasks the same way. While any scope is open,
+    // VM::drainMicrotasks() is not the end of the outer frame's job, so it skips
+    // unhandled-rejection notification and WeakRef finalization.
+    //
+    // `admitLoaderJobs`: module-loader pipeline jobs already queued are keyed by loader
+    // state the scope shares with the outer program (a scope awaiting an `import()` of
+    // a module whose fetch has already settled depends on them), so a scope that may
+    // import keeps them in the queue. See isDrainScopeLoaderJob.
+    struct DrainScope {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DrainScope);
+        MarkedMicrotaskDeque deferred;
+    };
+    bool hasOpenDrainScope() const { return !m_drainScopes.isEmpty(); }
+    JS_EXPORT_PRIVATE void beginDrainScope(bool admitLoaderJobs);
+    JS_EXPORT_PRIVATE void endDrainScope();
 #endif
 
     void beginMarking()
     {
         m_queue.beginMarking();
         m_toKeep.beginMarking();
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& scope : m_drainScopes)
+            scope->deferred.beginMarking();
+#endif
     }
 
     DECLARE_VISIT_AGGREGATE;
@@ -288,6 +337,9 @@ private:
 
     MarkedMicrotaskDeque m_queue;
     MarkedMicrotaskDeque m_toKeep;
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<std::unique_ptr<DrainScope>, 2> m_drainScopes; // innermost last
+#endif
 };
 
 JS_EXPORT_PRIVATE void runMicrotaskWithDebugger(JSGlobalObject*, VM&, QueuedTask&);

@@ -95,6 +95,8 @@ inline void MicrotaskQueue::clearForGlobalObject(JSGlobalObject* targetGlobalObj
         return;
     m_queue.clearForGlobalObject(targetGlobalObject);
     m_toKeep.clearForGlobalObject(targetGlobalObject);
+    for (auto& scope : m_drainScopes)
+        scope->deferred.clearForGlobalObject(targetGlobalObject);
 }
 #endif
 
