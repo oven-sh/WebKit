@@ -31,21 +31,25 @@
 
 namespace JSC {
 
-ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::nextWithAdvance()
+ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::advance(JSArray* array, int64_t& index)
 {
-    auto* array = downcast<JSArray>(iteratedObject());
     ASSERT(isJSArray(array));
-
-    int64_t index = this->index();
     ASSERT(index == doneIndex || (0 <= index && index <= maxSafeInteger()));
     if (index == doneIndex || index >= array->length()) {
-        setIndex(doneIndex);
+        index = doneIndex;
         return std::nullopt;
     }
 
-    setIndex(index + 1);
     ASSERT(index == static_cast<uint32_t>(index));
-    return static_cast<uint32_t>(index);
+    return static_cast<uint32_t>(index++);
+}
+
+ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::nextWithAdvance()
+{
+    int64_t index = this->index();
+    auto result = advance(downcast<JSArray>(iteratedObject()), index);
+    setIndex(index);
+    return result;
 }
 
 ALWAYS_INLINE bool JSArrayIterator::next(JSGlobalObject* globalObject, JSValue& value)
@@ -73,6 +77,27 @@ ALWAYS_INLINE bool JSArrayIterator::next(JSGlobalObject* globalObject, JSValue& 
 
     value = constructArrayPair(globalObject, jsNumber(*index), element);
     RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+ALWAYS_INLINE int64_t JSArrayIterator::validatedIndexInFrame(JSValue indexValue)
+{
+    RELEASE_ASSERT(indexValue.isAnyInt());
+    int64_t index = indexValue.asAnyInt();
+    RELEASE_ASSERT(index >= doneIndex && index <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()));
+    return index;
+}
+
+ALWAYS_INLINE bool JSArrayIterator::nextValueWithIndexInFrame(JSGlobalObject* globalObject, JSValue iterable, JSValue& indexValue, JSValue& value)
+{
+    RELEASE_ASSERT(isJSArray(iterable));
+    auto* array = asArray(iterable);
+    int64_t index = validatedIndexInFrame(indexValue);
+    auto indexToLoad = advance(array, index);
+    indexValue = jsNumber(index);
+    if (!indexToLoad)
+        return false;
+    value = array->getIndex(globalObject, *indexToLoad);
     return true;
 }
 

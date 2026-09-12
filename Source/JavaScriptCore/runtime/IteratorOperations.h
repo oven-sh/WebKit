@@ -99,6 +99,20 @@ JS_EXPORT_PRIVATE ASCIILiteral getIteratorErrorMessage(IterableValidationResult,
 JS_EXPORT_PRIVATE IterationMode getIterationMode(JSValue iterable);
 JS_EXPORT_PRIVATE IterationMode getIterationMode(VM&, JSGlobalObject*, JSValue iterable, JSValue symbolIterator);
 
+// op_iterator_next for an Array that op_iterator_open made no iterator object for: the Array comes out of the instruction's iterable
+// operand and the index lives in its next operand. Both are checked (see JSArrayIterator::nextValueWithIndexInFrame).
+template<typename Metadata>
+ALWAYS_INLINE bool iteratorNextWithIndexInFrame(JSGlobalObject* globalObject, Metadata& metadata, JSValue iterable, JSValue& indexInFrame, JSValue& value)
+{
+    bool hasNext = JSArrayIterator::nextValueWithIndexInFrame(globalObject, iterable, indexInFrame, value);
+    metadata.m_iterableProfile.observeStructureID(iterable.asCell()->structureID());
+    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
+    return hasNext;
+}
+
+// The Array Iterator object that the (iterable, index) pair kept in a frame by op_iterator_open / op_iterator_next stands for.
+JS_EXPORT_PRIVATE JSArrayIterator* materializeUnboxedFastArrayIterator(JSGlobalObject*, JSValue iterable, JSValue index);
+
 
 static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
 {
