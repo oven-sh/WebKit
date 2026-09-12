@@ -276,8 +276,11 @@ WTF_EXPORT_PRIVATE bool WTFIsDebuggerAttached(void);
 
 #elif CPU(ARM64)
 
+// Bun reports crashes from a SIGTRAP handler. macOS 26 kills a process that executes
+// `brk #0xbb08` with SIGKILL before any signal handler runs, so Bun uses `brk #0`, the
+// instruction the ASAN configuration already uses, which is delivered as a normal SIGTRAP.
 #if !defined(WTF_FATAL_CRASH_CODE)
-#if ASAN_ENABLED
+#if ASAN_ENABLED || USE(BUN_JSC_ADDITIONS)
 #define WTF_FATAL_CRASH_CODE 0x0
 #else
 #define WTF_FATAL_CRASH_CODE 0xbb08
@@ -285,7 +288,7 @@ WTF_EXPORT_PRIVATE bool WTFIsDebuggerAttached(void);
 #endif
 
 #if !defined(WTF_FATAL_CRASH_INST)
-#if ASAN_ENABLED
+#if ASAN_ENABLED || USE(BUN_JSC_ADDITIONS)
 #define WTF_FATAL_CRASH_INST "brk #0x0"
 #else
 #define WTF_FATAL_CRASH_INST "brk #0xbb08"
