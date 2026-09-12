@@ -342,6 +342,10 @@ void IntlDateTimeFormat::setFormatsFromPattern(IntlDateTimeFormatImpl& impl, Str
                 impl.m_day = Day::TwoDigit;
             break;
         case 'a':
+            // AM/PM marker. Governed by hourCycle/hour12, not the dayPeriod
+            // option (ECMA-402 Table: Components of date and time formats),
+            // so it does not populate [[DayPeriod]] for resolvedOptions().
+            break;
         case 'b':
         case 'B':
             if (count <= 3)
