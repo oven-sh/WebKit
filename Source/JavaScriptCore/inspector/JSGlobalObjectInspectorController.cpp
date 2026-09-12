@@ -166,6 +166,11 @@ void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& fron
         m_augmentingClient->inspectorDisconnected();
 #endif
 
+    // Drop the injected scripts and every remote object they hold for the
+    // frontends, as the WebCore controllers do. Otherwise each RemoteObject a
+    // frontend materialized stays reachable until the global object is destroyed.
+    m_injectedScriptManager->discardInjectedScripts();
+
     // Remove our JSGlobalObject and VM references, we are done debugging it.
     m_strongGlobalObject.clear();
     m_strongVM = nullptr;
