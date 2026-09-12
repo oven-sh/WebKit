@@ -27,6 +27,7 @@
 
 #include "JSCJSValue.h"
 #include "Lexer.h"
+#include <wtf/MathExtras.h>
 #include <wtf/dtoa.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -51,48 +52,48 @@ ALWAYS_INLINE static int parseDigit(unsigned short c, int radix)
     return digit;
 }
 
-static double parseIntOverflow(std::span<const Latin1Character> s, int radix)
+// Converts a run of digits in a power-of-two radix to the nearest double, ties to even.
+// https://tc39.es/ecma262/#sec-roundmvresult
+template<typename CharacterType>
+static double parseIntOverflow(std::span<const CharacterType> digits, int radix)
 {
-    double number = 0.0;
-    double radixMultiplier = 1.0;
+    ASSERT(radix == 2 || radix == 4 || radix == 8 || radix == 16 || radix == 32);
+    constexpr unsigned significandWidth = 64;
+    constexpr unsigned doublePrecision = 53;
+    unsigned bitsPerDigit = ctz(static_cast<unsigned>(radix));
 
-    for (const Latin1Character* p = s.data() + s.size() - 1; p >= s.data(); p--) {
-        if (radixMultiplier == std::numeric_limits<double>::infinity()) {
-            if (*p != '0') {
-                number = std::numeric_limits<double>::infinity();
-                break;
-            }
-        } else {
-            int digit = parseDigit(*p, radix);
-            number += digit * radixMultiplier;
+    // The value read so far is significand * 2^exponent, plus less than 2^exponent more if droppedNonZeroDigit.
+    uint64_t significand = 0;
+    int exponent = 0;
+    bool droppedNonZeroDigit = false;
+    for (auto c : digits) {
+        int digit = parseDigit(c, radix);
+        ASSERT(digit >= 0);
+        if (!(significand >> (significandWidth - bitsPerDigit))) {
+            significand = (significand << bitsPerDigit) | digit;
+            continue;
         }
-
-        radixMultiplier *= radix;
+        // The significand has at least 60 bits here, so this digit is below the 53 bits that are kept and the rounding bit.
+        droppedNonZeroDigit |= !!digit;
+        exponent += bitsPerDigit;
+        if (exponent >= std::numeric_limits<double>::max_exponent)
+            return std::numeric_limits<double>::infinity();
     }
 
-    return number;
-}
-
-static double parseIntOverflow(std::span<const char16_t> s, int radix)
-{
-    double number = 0.0;
-    double radixMultiplier = 1.0;
-
-    for (const char16_t* p = s.data() + s.size() - 1; p >= s.data(); p--) {
-        if (radixMultiplier == std::numeric_limits<double>::infinity()) {
-            if (*p != '0') {
-                number = std::numeric_limits<double>::infinity();
-                break;
-            }
-        } else {
-            int digit = parseDigit(*p, radix);
-            number += digit * radixMultiplier;
-        }
-
-        radixMultiplier *= radix;
+    unsigned width = significandWidth - clz(significand);
+    if (width <= doublePrecision) {
+        ASSERT(!exponent);
+        return static_cast<double>(significand);
     }
 
-    return number;
+    unsigned shift = width - doublePrecision;
+    uint64_t half = 1ull << (shift - 1);
+    uint64_t droppedBits = significand & ((half << 1) - 1);
+    significand >>= shift;
+    exponent += shift;
+    if (droppedBits > half || (droppedBits == half && (droppedNonZeroDigit || (significand & 1))))
+        ++significand; // At most 2^53, which a double still holds exactly.
+    return std::ldexp(static_cast<double>(significand), exponent);
 }
 
 template<typename CharacterType>
