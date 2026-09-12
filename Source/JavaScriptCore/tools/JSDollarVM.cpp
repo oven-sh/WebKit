@@ -2248,6 +2248,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
@@ -3987,6 +3990,45 @@ JSC_DEFINE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison, (JSGlobalObje
     });
     return JSValue::encode(jsNontrivialString(vm, String(result)));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The storage of holder.target. Does not leave a pointer to the target itself in its caller's frame.
+static NEVER_INLINE Butterfly* storageOfTargetOf(VM& vm, JSObject* holder)
+{
+    JSValue target = holder->getDirect(vm, Identifier::fromString(vm, "target"_s));
+    return target.isObject() ? asObject(target)->butterfly() : nullptr;
+}
+
+// evacuateAuxiliaryBlocks(maximumOccupancy = 1, holder = undefined): Heap::evacuateSparseAuxiliaryBlocks, with JS on the stack.
+// With a holder, this frame keeps a pointer to the storage of holder.target (and nothing else of the target) across the
+// evacuation; heldStorageStayed says whether that is still the target's storage afterwards.
+JSC_DEFINE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double maximumOccupancy = callFrame->argument(0).isUndefined() ? 1 : callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* holder = callFrame->argument(1).getObject();
+    Butterfly* heldStorage = holder ? storageOfTargetOf(vm, holder) : nullptr;
+
+    auto evacuation = vm.heap.evacuateSparseAuxiliaryBlocks(maximumOccupancy);
+
+    JSObject* result = constructEmptyObject(globalObject);
+    if (evacuation.skipped)
+        result->putDirect(vm, Identifier::fromString(vm, "skipped"_s), jsNontrivialString(vm, String(evacuation.skipped)));
+    result->putDirect(vm, Identifier::fromString(vm, "candidateBlocks"_s), jsNumber(evacuation.candidateBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "evacuatedBlocks"_s), jsNumber(evacuation.evacuatedBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "movedCells"_s), jsNumber(evacuation.movedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "movedBytes"_s), jsNumber(evacuation.movedBytes));
+    result->putDirect(vm, Identifier::fromString(vm, "pinnedCells"_s), jsNumber(evacuation.pinnedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "cellsWithoutSingleOwner"_s), jsNumber(evacuation.cellsWithoutSingleOwner));
+    result->putDirect(vm, Identifier::fromString(vm, "milliseconds"_s), jsNumber(evacuation.duration.milliseconds()));
+    if (heldStorage)
+        result->putDirect(vm, Identifier::fromString(vm, "heldStorageStayed"_s), jsBoolean(storageOfTargetOf(vm, holder) == heldStorage));
+    return JSValue::encode(result);
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -5773,6 +5815,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
     addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
     addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "evacuateAuxiliaryBlocks"_s, functionEvacuateAuxiliaryBlocks, 2);
+#endif
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
