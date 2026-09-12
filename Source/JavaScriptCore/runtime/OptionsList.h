@@ -448,6 +448,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, osrExitCountForReoptimizationFromLoop, 5, Normal, nullptr) \
     \
     v(Unsigned, reoptimizationRetryCounterMax, 0, Normal, nullptr)  \
+    v(Unsigned, weakReferenceJettisonReoptimizationLimit, 4, Normal, "Optimized code jettisoned because a cell it references weakly died counts toward the reoptimization back-off of its function, like code jettisoned for exiting too often, while the function's reoptimization retry counter is below this value. 0: it never counts."_s) \
     \
     v(Unsigned, minimumOptimizationDelay, 1, Normal, nullptr) \
     v(Unsigned, maximumOptimizationDelay, 5, Normal, nullptr) \

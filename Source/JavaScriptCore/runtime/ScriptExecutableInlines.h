@@ -47,9 +47,11 @@ inline void ScriptExecutable::jettisonCodeBlockEdgeIfDead(VM& vm, WriteBarrier<C
             codeBlock->jettison(Profiler::JettisonDueToOldAge);
         else
 #endif
-        if (codeBlock->shouldJettisonDueToWeakReference(vm))
-            codeBlock->jettison(Profiler::JettisonDueToWeakReference);
-        else
+        if (codeBlock->shouldJettisonDueToWeakReference(vm)) {
+            // The executable is alive and will tier up again; without the back-off every such recompile is as eager as the first.
+            bool countsTowardBackoff = codeBlock->baselineAlternative()->reoptimizationRetryCounter() < Options::weakReferenceJettisonReoptimizationLimit();
+            codeBlock->jettison(Profiler::JettisonDueToWeakReference, countsTowardBackoff ? CountReoptimization : DontCountReoptimization);
+        } else
             codeBlock->jettison(Profiler::JettisonDueToOldAge);
 
         if (codeBlock == codeBlockEdge.get()) {
