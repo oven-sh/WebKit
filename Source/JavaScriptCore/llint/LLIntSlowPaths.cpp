@@ -64,7 +64,6 @@
 #include "LLIntEntrypoint.h"
 #include "LLIntExceptions.h"
 #include "LLIntPrototypeLoadAdaptiveStructureWatchpoint.h"
-#include "MaxFrameExtentForSlowPathCall.h"
 #include "LLIntThunks.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "ObjectConstructor.h"
@@ -617,7 +616,7 @@ extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame* calleeFrame, CallLink
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
     ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
@@ -626,21 +625,6 @@ extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame* calleeFrame, CallLink
     if (scope.exception()) [[unlikely]]
         return encodeResult(callTarget, std::bit_cast<void*>(&vm));
     return encodeResult(callTarget, nullptr);
-}
-
-static LazyCallLinkInfo& lazyCallLinkInfoFor(CodeBlock* codeBlock, const JSInstruction* instruction)
-{
-    switch (instruction->opcodeID()) {
-#define CASE(__op) \
-    case __op::opcodeID: \
-        return instruction->as<__op>().metadata(codeBlock).m_callLinkInfo;
-
-    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
-
-#undef CASE
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
 }
 
 // The first call of a call site does not touch a CallLinkInfo when the callee is a JS function. Returns null when that is not
@@ -666,21 +650,42 @@ static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame,
     return functionExecutable->entrypointFor(kind, arity).taggedPtr();
 }
 
-// Where the CallLinkInfos shared by the call sites that have not run twice yet send their calls. The first call of a site does
-// not need a CallLinkInfo of its own; the second one gets it and links it, as llint_default_call would have.
-extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLinkInfo*)
+// Where the CallLinkInfos shared by the call sites that have not run twice yet send their calls: llint_unlinked_call() without
+// the JIT, operationUnlinkedCall() with it, from the LLInt and from Baseline code. The first call of a site does not need a
+// CallLinkInfo of its own; the second one gets it and links it, as the default call slow path would have.
+//
+// All the callee gets is the shared CallLinkInfo, so the site is what the caller left in its frame. That holds under this
+// contract, all of which is checked: the caller runs in the LLInt or in Baseline code, which store the call site before every
+// call; it still has its frame (a tail call has not: tail call sites get their own CallLinkInfo before they run, see
+// prepareCallSiteForTailCall in the LLInt and JIT::compileOpCall); and the site does point at a shared CallLinkInfo.
+void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     CallFrame* callerFrame = calleeFrame->callerFrame();
     CodeBlock* owner = callerFrame->codeBlock();
-    VM& vm = owner->vm();
-    NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
-    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    const JSInstruction* instruction = callerFrame->currentVPC();
-    BytecodeIndex bytecodeIndex { owner->bytecodeOffset(instruction) };
-    auto callType = CallLinkInfo::callTypeFor(instruction->opcodeID());
-    LazyCallLinkInfo& lazyCallLinkInfo = lazyCallLinkInfoFor(owner, instruction);
+    RELEASE_ASSERT(JITCode::couldBeInterpreted(owner->jitType()));
+    // Both of those tiers store the bytecode offset there (CallSiteIndex::bytecodeIndex()). No checkpoint, like the CodeOrigins
+    // CodeBlock::finishCreation() makes.
+    BytecodeIndex bytecodeIndex { callerFrame->callSiteAsRawBits() };
+    const JSInstruction* instruction = owner->instructionAt(bytecodeIndex);
+    LazyCallLinkInfo* site;
+    CallLinkInfo::CallType callType;
+    switch (instruction->opcodeID()) {
+#define CASE(__op) \
+    case __op::opcodeID: \
+        site = &instruction->as<__op>().metadata(owner).m_callLinkInfo; \
+        callType = CallLinkInfo::callTypeFor(__op::opcodeID); \
+        break;
+
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    LazyCallLinkInfo& lazyCallLinkInfo = *site;
+    RELEASE_ASSERT(callType != CallLinkInfo::TailCall);
+    RELEASE_ASSERT(!lazyCallLinkInfo.get());
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget;
     if (lazyCallLinkInfo.hasNeverExecuted(vm)) {
@@ -689,14 +694,31 @@ extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLin
         if (!callTarget && !scope.exception()) {
             DataOnlyCallLinkInfo callLinkInfo;
             callLinkInfo.initialize(vm, owner, callType, CodeOrigin { bytecodeIndex });
-            ASSERT(!callLinkInfo.isTailCall());
             JSCell* calleeAsFunctionCellIgnored;
             calleeFrame->setCodeBlock(nullptr);
             callTarget = virtualForWithFunction(vm, owner, calleeFrame, &callLinkInfo, calleeAsFunctionCellIgnored);
         }
-    } else
-        callTarget = linkFor(vm, owner, calleeFrame, &lazyCallLinkInfo.ensure(vm, owner, callType, CodeOrigin { bytecodeIndex }));
+    } else {
+        auto& callLinkInfo = lazyCallLinkInfo.ensure(vm, owner, callType, CodeOrigin { bytecodeIndex });
+        // Both tiers have noted the structure of |this| in the ArrayProfile of the CallSiteData the site had until now, which
+        // nobody reads (compiler threads only ever look at a site's own: LazyCallLinkInfo::arrayProfile()).
+        if (JSValue thisValue = calleeFrame->thisValue(); thisValue.isCell())
+            lazyCallLinkInfo.arrayProfile()->observeStructureID(thisValue.asCell()->structureID());
+        callTarget = linkFor(vm, owner, calleeFrame, &callLinkInfo);
+    }
     ensureStillAliveHere(owner);
+    scope.release(); // The caller checks.
+    return callTarget;
+}
+
+extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLinkInfo*)
+{
+    VM& vm = calleeFrame->callerFrame()->codeBlock()->vm();
+    NativeCallFrameTracer tracer(vm, calleeFrame);
+    sanitizeStackForVMInCallSlowPath(vm);
+    ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    void* callTarget = handleUnlinkedCall(vm, calleeFrame);
     if (scope.exception()) [[unlikely]]
         return encodeResult(callTarget, std::bit_cast<void*>(&vm));
     return encodeResult(callTarget, nullptr);
@@ -707,7 +729,7 @@ extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame* calleeFrame, CallLink
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
     ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* calleeAsFunctionCellIgnored;
@@ -724,7 +746,7 @@ extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame* calleeFrame, Call
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
-    sanitizeStackForVM(vm);
+    sanitizeStackForVMInCallSlowPath(vm);
     ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* calleeAsFunctionCell;
@@ -2233,8 +2255,7 @@ LLINT_SLOW_PATH_DECL(slow_path_ensure_call_link_info)
     LLINT_BEGIN_NO_SET_PC();
     UNUSED_VARIABLE(globalObject);
     UNUSED_VARIABLE(throwScope);
-    auto& callLinkInfo = lazyCallLinkInfoFor(codeBlock, pc).ensure(vm, codeBlock, CallLinkInfo::callTypeFor(pc->opcodeID()), CodeOrigin { BytecodeIndex(codeBlock->bytecodeOffset(pc)) });
-    LLINT_RETURN_TWO(pc, &callLinkInfo);
+    LLINT_RETURN_TWO(pc, &codeBlock->ensureCallLinkInfoAt(pc));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
