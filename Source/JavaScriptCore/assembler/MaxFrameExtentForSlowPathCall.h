@@ -28,6 +28,7 @@
 #include "Register.h"
 #include "StackAlignment.h"
 #include <wtf/Assertions.h>
+#include <wtf/StackPointer.h>
 
 namespace JSC {
 
@@ -59,5 +60,27 @@ static_assert((maxFrameExtentForSlowPathCall % 16) == 16 - sizeof(CallerFrameAnd
 #endif
 
 static constexpr size_t maxFrameExtentForSlowPathCallInRegisters = maxFrameExtentForSlowPathCall / sizeof(Register);
+
+// The slow paths for calls (llint_default_call() and the like, operationDefaultCall() and the like) run with the stack pointer at
+// the callee's frame: their own frame lies over whatever the last callee at that depth left there, and sanitizeStackForVM(),
+// which they call, clears only what is below that frame. What such a frame does not write stays where the conservative scan of
+// a later, shallower callee's native frames finds it. So the thunks that call those slow paths clear this much of the stack
+// first, before any C++ frame exists: room for the frame of the function they call (152 bytes at most in a release build for
+// x86_64, a few times that without optimization or with ASan); everything that function calls is below what it clears itself.
+#if ASSERT_ENABLED || ASAN_ENABLED
+static constexpr size_t stackBytesClearedForCallSlowPath = 2048;
+#else
+static constexpr size_t stackBytesClearedForCallSlowPath = 256;
+#endif
+static_assert(!(stackBytesClearedForCallSlowPath % (2 * sizeof(Register))));
+
+// For the first thing such a slow path does after sanitizeStackForVM(): its frame must not reach below what its thunk cleared.
+// (The thunk's frame ends at the callee's frame, less maxFrameExtentForSlowPathCall.)
+#if ASSERT_ENABLED
+#define ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame) \
+    ASSERT(std::bit_cast<uintptr_t>(currentStackPointer()) + maxFrameExtentForSlowPathCall + stackBytesClearedForCallSlowPath >= std::bit_cast<uintptr_t>(calleeFrame))
+#else
+#define ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame) ((void)0)
+#endif
 
 } // namespace JSC

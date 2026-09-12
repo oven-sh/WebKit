@@ -199,6 +199,7 @@ if LARGE_TYPED_ARRAYS
 end
 
 const maxFrameExtentForSlowPathCall = constexpr maxFrameExtentForSlowPathCall
+const StackBytesClearedForCallSlowPath = constexpr stackBytesClearedForCallSlowPath
 
 if X86_64 or ARM64 or ARM64E or RISCV64
     const CalleeSaveSpaceAsVirtualRegisters = 4
@@ -2694,8 +2695,22 @@ end)
 
 # t0 is callee
 # t2 is CallLinkInfo*
+# The C++ function's frame goes where the last callee at this depth had its own, and clears only what is below itself: see
+# stackBytesClearedForCallSlowPath.
 macro linkFor(function)
     functionPrologue()
+    if not C_LOOP
+        # Nothing is written below the stack pointer: it moves down over the window first (a multiple of 16 bytes).
+        move sp, t5
+        subp StackBytesClearedForCallSlowPath, sp
+        move sp, t3
+        move 0, t4
+    .clearStackForCallSlowPath:
+        storep t4, [t3]
+        addp PtrSize, t3
+        bpb t3, t5, .clearStackForCallSlowPath
+        move t5, sp
+    end
     move t2, a1
     move cfr, a0
     cCall2(function)
