@@ -1360,16 +1360,34 @@ void VM::updateStackLimits()
 #if ENABLE(DFG_JIT)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
+void VM::forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* end)>& func)
 {
     Locker locker { m_scratchBufferLock };
     for (auto* scratchBuffer : m_scratchBuffers) {
         if (scratchBuffer->activeLength()) {
             void* bufferStart = scratchBuffer->dataBuffer();
-            conservativeRoots.add(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
+            func(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
         }
     }
 }
+
+void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
+{
+    auto add = [&](void* begin, void* end) {
+        conservativeRoots.add(begin, end);
+    };
+    forEachActiveScratchBuffer(add);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+// What Heap::gatherVMRoots scans conservatively.
+void VM::forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin, void* end)>& func)
+{
+    forEachActiveScratchBuffer(func);
+    for (const auto& sideState : m_checkpointSideState)
+        func(sideState->tmps, sideState->tmps + maxNumCheckpointTmps);
+}
+#endif
 
 void VM::scanSideState(ConservativeRoots& roots) const
 {
