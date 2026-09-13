@@ -109,6 +109,16 @@ public:
 
     int functionConstructorParametersEndPosition() const { return m_functionConstructorParametersEndPosition; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // SourceProvider::contentHash(), asked for when a lookup first needs it: a key that only ever meets itself does not.
+    uint64_t contentHash() const
+    {
+        if (!m_contentHash)
+            m_contentHash = m_sourceCode.contentHash();
+        return m_contentHash;
+    }
+#endif
+
     bool operator==(const SourceCodeKey& other) const
     {
         return m_hash == other.m_hash
@@ -118,7 +128,11 @@ public:
             && m_name == other.m_name
             && host() == other.host()
 #if USE(BUN_JSC_ADDITIONS)
-            ;
+            // Bun: never the text, which for a large source costs more than anything else on a cache hit. Two keys over
+            // the same characters in memory are the same source; otherwise the providers' 64-bit hashes of their whole
+            // text stand for it, with the range within that text. (m_hash only picks the bucket.)
+            && m_sourceCode.startOffset() == other.m_sourceCode.startOffset()
+            && (string().rawCharacters() == other.string().rawCharacters() || contentHash() == other.contentHash());
 #else
             && (m_sourceCode == other.m_sourceCode || string() == other.string());
 #endif
@@ -134,6 +148,9 @@ private:
     String m_name;
     SourceCodeFlags m_flags;
     int m_functionConstructorParametersEndPosition;
+#if USE(BUN_JSC_ADDITIONS)
+    mutable uint64_t m_contentHash { 0 }; // 0: not asked for yet.
+#endif
     unsigned m_hash;
 };
 

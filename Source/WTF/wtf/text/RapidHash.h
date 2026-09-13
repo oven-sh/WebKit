@@ -71,6 +71,19 @@ public:
         return StringHasher::avoidZero(static_cast<unsigned>(rapidhash<T, Converter>(data)) & StringHasher::maskHash);
     }
 
+    // Bun: all 64 bits of the hash computeHashAndMaskTop8Bits() keeps the low 24 of, from the same single pass, and
+    // what computeHashAndMaskTop8Bits() returns for a text whose 64 bits are already known.
+    template<typename T, typename Converter = DefaultConverter>
+    ALWAYS_INLINE static constexpr uint64_t computeHash64(std::span<const T> data)
+    {
+        return rapidhash<T, Converter>(data);
+    }
+
+    ALWAYS_INLINE static constexpr unsigned maskTop8Bits(uint64_t hash64)
+    {
+        return StringHasher::avoidZero(static_cast<unsigned>(hash64) & StringHasher::maskHash);
+    }
+
 private:
     friend class StringHasher;
 
