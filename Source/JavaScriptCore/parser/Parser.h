@@ -327,6 +327,10 @@ public:
         m_isClassScope = true;
     }
 
+    // True for a class scope while parseClass() parses one of its field initializers in place.
+    void setIsParsingFieldInitializerInPlace(bool isParsingFieldInitializerInPlace) { m_isParsingFieldInitializerInPlace = isParsingFieldInitializerInPlace; }
+    bool isParsingFieldInitializerInPlace() const { return m_isParsingFieldInitializerInPlace; }
+
     bool isLexicalScope() const { return m_isLexicalScope; }
     bool usesEval() const { return m_usesEval; }
     bool usesImportMeta() const { return m_usesImportMeta; }
@@ -1043,6 +1047,7 @@ private:
     bool m_isEvalContext : 1 { false };
     bool m_hasNonSimpleParameterList : 1 { false };
     bool m_isClassScope : 1 { false };
+    bool m_isParsingFieldInitializerInPlace : 1 { false };
     bool m_asyncFunctionBodyDoesNotUseAwait : 1 { false };
     bool m_usesAwait : 1 { false };
     int m_loopDepth { 0 };
@@ -1336,6 +1341,24 @@ private:
         while (scope->containingScope() && !scope->isClassScope())
             scope = scope->containingScope();
         return scope;
+    }
+
+    // A class field initializer and a class static block are functions of their own at run time.
+    // parseClass() parses the source of each in place, with the scopes and the tree builder of the
+    // code around the class. That parse checks the syntax and finds the end. The function is parsed
+    // again, on its own, when it is compiled. This returns true when the current position is in
+    // such a class element and not in an arrow function inside it. The code there uses the
+    // new.target of the class element, and not the new.target of the code around the class.
+    bool isDirectlyInClassElementParsedInPlace()
+    {
+        for (Scope* scope = currentScope(); scope; scope = scope->containingScope()) {
+            // The static block that this parser compiles is the outermost scope.
+            if (scope->isFunctionBoundary())
+                return scope->isStaticBlockBoundary() && scope->containingScope();
+            if (scope->isParsingFieldInitializerInPlace())
+                return true;
+        }
+        return false;
     }
 
     Scope* pushScope()

@@ -3370,7 +3370,9 @@ parseMethod:
                 SetForScope overrideParsingClassFieldInitializer(m_parserState.isParsingClassFieldInitializer, true);
                 SetForScope maskAsync(m_parserState.classFieldInitMasksAsync, true);
                 classScope->setExpectedSuperBinding(SuperBinding::Needed);
+                classScope->setIsParsingFieldInitializerInPlace(true);
                 initializer = parseAssignmentExpression(context);
+                classScope->setIsParsingFieldInitializerInPlace(false);
                 classScope->setExpectedSuperBinding(SuperBinding::NotNeeded);
                 failIfFalse(initializer, "Cannot parse initializer for class field");
                 classScope->markLastUsedVariablesSetAsCaptured(usedVariablesSize);
@@ -5483,11 +5485,16 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             bool isClassFieldInitializer = m_parserState.isParsingClassFieldInitializer;
             bool isFunctionEvalContextType = m_isInsideOrdinaryFunction && (closestOrdinaryFunctionScope->evalContextType() == EvalContextType::FunctionEvalContext || closestOrdinaryFunctionScope->evalContextType() == EvalContextType::InstanceFieldEvalContext);
             semanticFailIfFalse(currentScope()->isFunction() || currentScope()->isStaticBlock() || isFunctionEvalContextType || isClassFieldInitializer, "new.target is only valid inside functions or static blocks");
-            if (currentScope()->isArrowFunction()) {
+            // The code around a class must not become a user of new.target because of a class element
+            // that parseClass() parses in place. An arrow function, or eval code, that uses new.target
+            // loads it from the scope of a function that saved it there. No function saves it for
+            // a new.target that it does not contain.
+            bool usesNewTargetOfClassElementParsedInPlace = isDirectlyInClassElementParsedInPlace();
+            if (currentScope()->isArrowFunction() && !usesNewTargetOfClassElementParsedInPlace) {
                 semanticFailIfFalse(!closestOrdinaryFunctionScope->isGlobalCode() || isFunctionEvalContextType || isClassFieldInitializer, "new.target is not valid inside arrow functions in global code");
                 currentScope()->setInnerArrowFunctionUsesNewTarget();
             }
-            base = context.createNewTargetExpr(location);
+            base = context.createNewTargetExpr(location, !usesNewTargetOfClassElementParsedInPlace);
             newCount--;
             next();
         } else {
