@@ -1,7 +1,10 @@
 name: Build WebKit (Reusable)
 
-env:
-  LLVM_VERSION: 21
+# plan ──> build, build-tested ──> release
+#                     └────────> test
+#
+# The lanes (one <label>.tar.gz each: which runner, which release script, which settings, tested or not) are defined
+# in .github/scripts/plan.mjs and nowhere else. `plan` turns them into the matrices of the jobs below.
 
 on:
   workflow_call:
@@ -18,16 +21,35 @@ on:
         description: 'Mark release as prerelease'
         type: boolean
         default: false
-      llvm_version:
-        description: 'LLVM version to use'
-        type: string
-        default: '19'
     outputs:
       release_tag:
         description: 'The release tag that was created'
         value: ${{ jobs.release.outputs.tag }}
 
 jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      # Matrices ({"include": [lane, ...]}) of the lanes that are only built, of the lanes that are also tested, and
+      # of the test job; and the labels of all lanes.
+      build: ${{ steps.plan.outputs.build }}
+      build_tested: ${{ steps.plan.outputs.build_tested }}
+      test: ${{ steps.plan.outputs.test }}
+      labels: ${{ steps.plan.outputs.labels }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.build_ref }}
+          sparse-checkout: .github/scripts
+      - name: Plan
+        id: plan
+        run: |
+          set -euo pipefail
+          node .github/scripts/plan.mjs
+          node .github/scripts/plan.mjs --outputs >> "$GITHUB_OUTPUT"
+
   # The release exists, as a draft, before any build finishes: each build job uploads its tarball straight onto it
   # and the `release` job publishes it once every asset is there (or deletes it if anything failed). A draft has no
   # tag and is invisible to anyone without push access, so a half-built release is never downloadable.
@@ -73,263 +95,29 @@ jobs:
           echo "created draft $created"
           echo "release_id=${created%% *}" >> "$GITHUB_OUTPUT"
 
-  linux:
-    name: Linux
-    permissions:
-      contents: write
-    runs-on: ${{matrix.os}}
-    strategy:
-      matrix:
-        include:
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64-debug
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64-debug
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64-debug-asan
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            ENABLE_SANITIZERS: "address,undefined"
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64-debug-asan
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            ENABLE_SANITIZERS: "address,undefined"
-          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-arm64-lto
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-amd64-lto
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64-asan
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            ENABLE_SANITIZERS: "address,undefined"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64-asan
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            RELEASE_FLAGS: "-O3 -DNDEBUG=1"
-            ENABLE_SANITIZERS: "address,undefined"
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
-        with:
-          install: true
-      - name: Run
-        env:
-          RELEASE_FLAGS: ${{matrix.RELEASE_FLAGS}}
-          ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
-        run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          # Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own
-          # objects and its Rust code are <arch>-unknown-linux-gnu; with LTO, lld warns about
-          # the vendor mismatch once per JavaScriptCore object.
-          if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
-            export MARCH_FLAG="--target=aarch64-unknown-linux-gnu -march=armv8-a+crc -mtune=ampere1"
-          else
-            export MARCH_FLAG="--target=x86_64-unknown-linux-gnu ${{ matrix.MARCH_FLAG || '-march=nehalem' }}"
-          fi
-          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" bash release.sh
-          cd ${{runner.temp}}
-          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
-          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
-          rm -rf bun-webkit/lib/*.so
-          rm -rf bun-webkit/lib/*.so.*
-          tar -czf bun-webkit.tar.gz bun-webkit
-          rm -rf bun-webkit
-      # The one copy of the upload step. The other build jobs alias it (YAML anchors, supported by Actions since 2025-08).
-      - name: Upload release asset
-        env: &upload_env
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.release_tag }}
-          LABEL: ${{ matrix.label }}
-          DIR: ${{ runner.temp }}
-        run: &upload_run |
-          set -euo pipefail
-          mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
-          # create-release runs alongside this job and is normally long done; wait for it rather than fail.
-          for i in $(seq 1 60); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 10; done
-          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that create-release runs again."; exit 1; }
-          for attempt in 1 2 3 4 5; do
-            gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
-            echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
-          done
-          exit 1
 
-  windows-cross:
-    name: Windows (cross-compiled from Linux)
-    # Cross-compiled from a Linux host: clang-cl --target + an xwin-downloaded
-    # MSVC CRT/Windows SDK + lld-link (see Dockerfile.windows). Replaces the
-    # native Windows runner job (except arm64-debug — see the `windows` job
-    # below) and adds the -lto variants it never built. windows-release.ps1
-    # remains for building on a real Windows machine.
-    permissions:
-      contents: write
-    runs-on: linux-x64-gh
-    strategy:
-      # One variant's failure shouldn't cancel the others.
-      fail-fast: false
-      matrix:
-        include:
-          - label: bun-webkit-windows-amd64
-            win_arch: x64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: ""
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-windows-amd64-lto
-            win_arch: x64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            # ThinLTO like the macOS -lto variants: the bitcode carries ThinLTO
-            # summaries so the consumer's link gets parallel backends + cross
-            # -language importing instead of one giant serial full-LTO module.
-            # -fno-split-lto-unit keeps every module a pure summary module
-            # (consistent with rustc's bitcode, which never splits).
-            # Unlike linux/macos there is no -fwhole-program-vtables
-            # -fforce-emit-vtables here: WPD drops vtable symbols that COFF
-            # associative COMDAT sections still name as their parent and the
-            # LTO codegen aborts ("Associative COMDAT symbol '??_7...' does
-            # not exist").
-            lto_flag: "/clang:-flto=thin /clang:-fno-split-lto-unit"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-windows-amd64-debug
-            win_arch: x64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-            lto_flag: ""
-          # ASAN is x64-only: LLVM ships no Windows ARM64 ASAN runtime. The
-          # sanitizer runtime (import lib, /MT runtime thunk, DLL) comes from
-          # the compiler-rt-windows-* release tag (see Dockerfile.windows).
-          - label: bun-webkit-windows-amd64-asan
-            win_arch: x64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: ""
-            ENABLE_SANITIZERS: "address,undefined"
-          - label: bun-webkit-windows-arm64
-            win_arch: arm64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: ""
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          # No arm64-lto variant: LLVM 21's CodeView emitter has no register
-          # mapping for ARM64 NEON quad-register tuples ("LLVM ERROR: unknown
-          # codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates
-          # values into them. Re-add once that's fixed upstream.
-          # arm64-debug stays on the native Windows runner: /MTd needs the
-          # ARM64 *debug* CRT (libcmtd.lib), which xwin's splat doesn't
-          # produce (no CRT.arm64.Debug package in the VS manifest mapping).
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
-        with:
-          install: true
-      - name: Run
-        run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          WIN_ARCH="${{matrix.win_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash windows-cross-release.sh
-          cd ${{runner.temp}}
-          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
-          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["windows"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
-          tar -czf bun-webkit.tar.gz bun-webkit
-          rm -rf bun-webkit
-      - name: Upload release asset
-        env: *upload_env
-        run: *upload_run
-
-  windows:
-    name: Windows
-    # Only arm64-debug still builds on a native Windows runner: the /MTd
-    # debug CRT for ARM64 (libcmtd.lib) isn't available via xwin, so it
-    # can't be cross-compiled from Linux yet. Everything else moved to the
-    # `windows-cross` job above.
-    strategy:
-      matrix:
-        include:
-          - runner: windows-11-arm
-            build-type: Debug
-            package_json_arch: "arm64"
-            label: bun-webkit-windows-arm64-debug
-            platform: ARM64
-    permissions:
+  # `build` and `build-tested` are one job in two halves: the same steps, over the lanes `test` does not wait for and
+  # the lanes it does. `needs:` names a job, never one leg of its matrix, so the lanes that are tested have to be a job
+  # of their own for `test` to start when they are done rather than when all 42 are.
+  build:
+    name: ${{ matrix.label }}
+    needs: plan
+    permissions: &build_permissions
       contents: write
     runs-on: ${{ matrix.runner }}
+    strategy:
+      # One lane's failure shouldn't cancel the others.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build) }}
     timeout-minutes: 90
-    steps:
-      # No scoop: `irm get.scoop.sh | iex` installs nothing since
-      # ScoopInstaller/Install@a6210927 (the installer skips Install-Scoop
-      # when $MyInvocation.InvocationName is '.', and the runner's pwsh
-      # shell dot-sources every `run:` script). Nothing needed it anyway:
-      # cmake and ninja come from the Visual Studio install, see the PATH
-      # reorder in windows-release.ps1.
+    steps: &build_steps
+      # windows-native only. No scoop: `irm get.scoop.sh | iex` installs nothing since ScoopInstaller/Install@a6210927
+      # (the installer skips Install-Scoop when $MyInvocation.InvocationName is '.', and the runner's pwsh shell
+      # dot-sources every `run:` script). Nothing needed it anyway: cmake and ninja come from the Visual Studio
+      # install, see the PATH reorder in windows-release.ps1.
       - name: Install LLVM (ARM64)
-        if: matrix.platform == 'ARM64'
+        if: matrix.platform == 'windows-native' && matrix.package_cpu == 'arm64'
+        shell: pwsh
         run: |
           # Install LLVM ARM64 from official LLVM releases
           # Use LLVM 21 for ARM64 - has better Windows ARM64 support and fixes SEH unwind bugs
@@ -347,21 +135,56 @@ jobs:
             /*
             !LayoutTests/
             !JSTests/
-      - name: Build WebKit
+      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
+        if: matrix.platform != 'windows-native'
+        id: buildx
+        with:
+          install: true
+      # Every lane but windows-native: the lane's release script builds into $temp/bun-webkit inside Docker, and that
+      # is packaged as bun-webkit.tar.gz.
+      - name: Build
+        if: matrix.platform != 'windows-native'
+        shell: bash
+        env:
+          LABEL: ${{ matrix.label }}
+          SCRIPT: ${{ matrix.script }}
+          # What the release script takes (WEBKIT_RELEASE_TYPE, LTO_FLAG, MARCH_FLAG, MACOS_ARCH, ...), as a JSON object.
+          SCRIPT_ENV: ${{ toJSON(matrix.env) }}
+          PACKAGE_OS: ${{ matrix.package_os }}
+          PACKAGE_CPU: ${{ matrix.package_cpu }}
+          BUILD_REF: ${{ inputs.build_ref }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          if ("${{matrix.platform}}" -eq "ARM64") {
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
+          exports=$(jq -r 'to_entries[] | "export \(.key)=\(.value | @sh)"' <<< "$SCRIPT_ENV")
+          eval "$exports"
+          temp="$RUNNER_TEMP" bash "$SCRIPT"
+          cd "$RUNNER_TEMP"
+          echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
+          echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
+          rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          tar -czf bun-webkit.tar.gz bun-webkit
+          rm -rf bun-webkit
+      # windows-native: windows-release.ps1 builds and packages ./bun-webkit.tar.gz itself.
+      - name: Build (on Windows)
+        if: matrix.platform == 'windows-native'
+        shell: pwsh
+        run: |
+          $platform = if ("${{ matrix.package_cpu }}" -eq "arm64") { "ARM64" } else { "x64" }
+          if ($platform -eq "ARM64") {
             $env:Path = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\arm64\;" + $env:Path
           } else {
             $env:Path = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\;" + $env:Path
           }
           $env:WEBKIT_OUTPUT_DIR = "bun-webkit"
           $env:BUN_WEBKIT_VERSION = "${{ inputs.build_ref }}"
-          $env:CMAKE_BUILD_TYPE = "${{matrix.build-type}}"
-          $env:PACKAGE_JSON_LABEL = "${{matrix.label}}"
+          $env:CMAKE_BUILD_TYPE = "${{ matrix.build_type }}"
+          $env:PACKAGE_JSON_LABEL = "${{ matrix.label }}"
           $env:GITHUB_SHA = "${{ inputs.build_ref }}"
-          $env:PACKAGE_JSON_ARCH = "${{matrix.package_json_arch}}"
+          $env:PACKAGE_JSON_ARCH = "${{ matrix.package_cpu }}"
           $env:GITHUB_REPOSITORY = "${{ github.repository }}"
-          ./windows-release.ps1 -Platform ${{matrix.platform}}
+          ./windows-release.ps1 -Platform $platform
       - name: Upload release asset
         shell: bash
         env:
@@ -369,358 +192,49 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.release_tag }}
           LABEL: ${{ matrix.label }}
-          DIR: .
-        run: *upload_run
-
-  linux-musl:
-    name: Linux musl
-    permissions:
-      contents: write
-    runs-on: ${{matrix.os}}
-    strategy:
-      matrix:
-        include:
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64-musl-debug
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64-musl-debug
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-arm64-musl-lto
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "MinSizeRel"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: ""
-            label: bun-webkit-linux-arm64-musl
-            os: linux-arm64-gh
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "MinSizeRel"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-amd64-musl-lto
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "MinSizeRel"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - lto_flag: ""
-            label: bun-webkit-linux-amd64-musl
-            os: linux-x64-gh
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "MinSizeRel"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
-        with:
-          install: true
-      - name: Run
+          DIR: ${{ matrix.platform == 'windows-native' && '.' || runner.temp }}
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
-            export MARCH_FLAG="-march=armv8-a+crc -mtune=ampere1"
-          else
-            export MARCH_FLAG="${{ matrix.MARCH_FLAG || '-march=nehalem' }}"
-          fi
-          WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash musl-release.sh
-          cd ${{runner.temp}}
-          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
-          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
-          rm -rf bun-webkit/lib/*.so
-          rm -rf bun-webkit/lib/*.so.*
-          tar -czf bun-webkit.tar.gz bun-webkit
-          rm -rf bun-webkit
-      - name: Upload release asset
-        env: *upload_env
-        run: *upload_run
+          set -euo pipefail
+          mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
+          # create-release runs alongside this job and is normally long done; wait for it rather than fail.
+          for i in $(seq 1 60); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 10; done
+          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that create-release runs again."; exit 1; }
+          for attempt in 1 2 3 4 5; do
+            gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
+            echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
+          done
+          exit 1
 
-  macos-cross:
-    name: macOS (cross-compiled from Linux)
-    # Cross-compiled from a Linux host via clang --target + a pinned macOS SDK,
-    # linked with ld64.lld (see Dockerfile.macos). Replaces the native macOS
-    # runner job entirely and adds the -lto variants it never built. The ASAN
-    # variants link against the darwin sanitizer runtime mirrored at the
-    # compiler-rt-darwin-* release tag (a Linux LLVM install doesn't ship it).
-    # mac-release.bash remains for building on a real Mac locally.
-    permissions:
-      contents: write
-    runs-on: linux-x64-gh
+  build-tested:
+    name: ${{ matrix.label }}
+    needs: plan
+    permissions: *build_permissions
+    runs-on: ${{ matrix.runner }}
     strategy:
-      matrix:
-        include:
-          - label: bun-webkit-macos-arm64
-            macos_arch: arm64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: ""
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-macos-arm64-lto
-            macos_arch: arm64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-macos-arm64-debug
-            macos_arch: arm64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-            lto_flag: ""
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-          - label: bun-webkit-macos-amd64
-            macos_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: ""
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-macos-amd64-lto
-            macos_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-macos-amd64-debug
-            macos_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-            lto_flag: ""
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-          # ASAN: arm64 only — the mirrored darwin sanitizer runtime
-          # (compiler-rt-darwin release tag) is extracted from the official
-          # LLVM macOS release, which is published for arm64 only.
-          - label: bun-webkit-macos-arm64-asan
-            macos_arch: arm64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            lto_flag: ""
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-            ENABLE_SANITIZERS: "address,undefined"
-          - label: bun-webkit-macos-arm64-debug-asan
-            macos_arch: arm64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-            lto_flag: ""
-            cpp_flags: "-D_LIBCXX_ENABLE_ASSERTIONS=1"
-            ENABLE_SANITIZERS: "address,undefined"
-            ENABLE_MALLOC_HEAP_BREAKDOWN: "OFF"
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build_tested) }}
     timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
-        with:
-          install: true
-      - name: Run
-        run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash macos-cross-release.sh
-          cd ${{runner.temp}}
-          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
-          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["darwin"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
-          tar -czf bun-webkit.tar.gz bun-webkit
-          rm -rf bun-webkit
-      - name: Upload release asset
-        env: *upload_env
-        run: *upload_run
+    steps: *build_steps
 
-  freebsd:
-    name: FreeBSD
-    # Cross-compiled from a Linux host via clang --target + base.txz sysroot,
-    # so all FreeBSD targets build on x64 regardless of target arch.
-    permissions:
-      contents: write
-    runs-on: linux-x64-gh
-    strategy:
-      matrix:
-        include:
-          - label: bun-webkit-freebsd-amd64
-            freebsd_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-freebsd-amd64-lto
-            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            freebsd_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-freebsd-amd64-debug
-            freebsd_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-          - label: bun-webkit-freebsd-arm64
-            freebsd_arch: aarch64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-freebsd-arm64-lto
-            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            freebsd_arch: aarch64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-freebsd-arm64-debug
-            freebsd_arch: aarch64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
-        with:
-          install: true
-      - name: Run
-        run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          FREEBSD_ARCH="${{matrix.freebsd_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash freebsd-release.sh
-          cd ${{runner.temp}}
-          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
-          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["freebsd"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
-          rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
-          tar -czf bun-webkit.tar.gz bun-webkit
-          rm -rf bun-webkit
-      - name: Upload release asset
-        env: *upload_env
-        run: *upload_run
-
-  linux-android:
-    name: Linux Android
-    # NDK only ships linux-x86_64 prebuilts, so all Android targets
-    # cross-compile from x64 regardless of target arch.
-    permissions:
-      contents: write
-    runs-on: linux-x64-gh
-    strategy:
-      matrix:
-        include:
-          - label: bun-webkit-linux-arm64-android
-            android_arch: aarch64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-linux-arm64-android-lto
-            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            android_arch: aarch64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-linux-arm64-android-debug
-            android_arch: aarch64
-            package_json_arch: "arm64"
-            CMAKE_BUILD_TYPE: "Debug"
-          - label: bun-webkit-linux-amd64-android
-            android_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-linux-amd64-android-lto
-            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
-            android_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Release"
-            USE_MIMALLOC: "ON"
-            USE_EXTERNAL_MIMALLOC: "ON"
-          - label: bun-webkit-linux-amd64-android-debug
-            android_arch: x86_64
-            package_json_arch: "x64"
-            CMAKE_BUILD_TYPE: "Debug"
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.build_ref }}
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !LayoutTests/
-            !JSTests/
-      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
-        with:
-          install: true
-      - name: Run
-        run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash android-release.sh
-          cd ${{runner.temp}}
-          echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
-          echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["android"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
-          rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
-          tar -czf bun-webkit.tar.gz bun-webkit
-          rm -rf bun-webkit
-      - name: Upload release asset
-        env: *upload_env
-        run: *upload_run
-
+  # JavaScriptCore's own test suites (JSTests/, LayoutTests/js, the PerformanceTests collections), run by
+  # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on the
+  # runner that built it. Which lanes are tested, and why those, is in plan.mjs.
+  #
+  # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
+  # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
+  # the job fails.
   test:
-    name: Test
-    # JavaScriptCore's own test suites (JSTests/, LayoutTests/js, the PerformanceTests collections), run by
-    # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a build lane ships in its tarball's bin/.
-    #
-    # The asan lanes are the ones tested: they are Release + ENABLE_ASSERTS=ON + ASAN/UBSAN, and a plain Release build
-    # compiles out $vm and the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to
-    # ASSERT_ENABLED), which many tests need.
-    #
-    # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
-    # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
-    # the job fails.
+    name: Test ${{ matrix.label }}
     needs:
-      - linux
+      - plan
+      - build-tested
     # Reading the assets of a draft release takes push access.
     permissions:
       contents: write
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - label: bun-webkit-linux-amd64-asan
-            os: linux-x64-gh
-          - label: bun-webkit-linux-arm64-asan
-            os: linux-arm64-gh
+      matrix: ${{ fromJSON(needs.plan.outputs.test) }}
     timeout-minutes: 90
     steps:
       # The tests live in JSTests/, LayoutTests/js + fast/regex (LayoutTests/jsc-layout-tests.yaml) and PerformanceTests/.
@@ -754,7 +268,7 @@ jobs:
           DIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          # The tarball was uploaded to the (still draft) release by the `linux` job. If another build job failed,
+          # The tarball was uploaded to the (still draft) release by `build-tested`. If another build job failed,
           # `release` may already have deleted the draft; there is nothing to test then.
           for attempt in 1 2 3 4 5; do
             gh release download "$TAG" --pattern "$LABEL.tar.gz" --dir "$DIR" --clobber && break
@@ -833,18 +347,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs:
+      - plan
       - create-release
-      - linux
-      - macos-cross
-      - windows
-      - windows-cross
-      - linux-musl
-      - linux-android
-      - freebsd
+      - build
+      - build-tested
     outputs:
       tag: ${{ steps.publish.outputs.tag }}
     steps:
-      # Every build job uploads <label>.tar.gz. This list is the release: a label missing from it fails the job.
+      # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
       - name: Publish or delete the draft
         id: publish
         env:
@@ -853,55 +363,7 @@ jobs:
           TAG: ${{ inputs.release_tag }}
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
           NEEDS: ${{ toJSON(needs) }}
-          ARTIFACTS: |
-            # linux
-            bun-webkit-linux-amd64
-            bun-webkit-linux-amd64-lto
-            bun-webkit-linux-amd64-debug
-            bun-webkit-linux-amd64-asan
-            bun-webkit-linux-amd64-debug-asan
-            bun-webkit-linux-arm64
-            bun-webkit-linux-arm64-lto
-            bun-webkit-linux-arm64-debug
-            bun-webkit-linux-arm64-asan
-            bun-webkit-linux-arm64-debug-asan
-            # linux-musl
-            bun-webkit-linux-amd64-musl
-            bun-webkit-linux-amd64-musl-lto
-            bun-webkit-linux-amd64-musl-debug
-            bun-webkit-linux-arm64-musl
-            bun-webkit-linux-arm64-musl-lto
-            bun-webkit-linux-arm64-musl-debug
-            # macos-cross
-            bun-webkit-macos-arm64
-            bun-webkit-macos-arm64-lto
-            bun-webkit-macos-arm64-debug
-            bun-webkit-macos-arm64-asan
-            bun-webkit-macos-arm64-debug-asan
-            bun-webkit-macos-amd64
-            bun-webkit-macos-amd64-lto
-            bun-webkit-macos-amd64-debug
-            # windows / windows-cross
-            bun-webkit-windows-amd64
-            bun-webkit-windows-amd64-lto
-            bun-webkit-windows-amd64-debug
-            bun-webkit-windows-amd64-asan
-            bun-webkit-windows-arm64
-            bun-webkit-windows-arm64-debug
-            # freebsd
-            bun-webkit-freebsd-amd64
-            bun-webkit-freebsd-amd64-lto
-            bun-webkit-freebsd-amd64-debug
-            bun-webkit-freebsd-arm64
-            bun-webkit-freebsd-arm64-lto
-            bun-webkit-freebsd-arm64-debug
-            # linux-android
-            bun-webkit-linux-arm64-android
-            bun-webkit-linux-arm64-android-lto
-            bun-webkit-linux-arm64-android-debug
-            bun-webkit-linux-amd64-android
-            bun-webkit-linux-amd64-android-lto
-            bun-webkit-linux-amd64-android-debug
+          LABELS: ${{ needs.plan.outputs.labels }}
         run: |
           set -euo pipefail
           ok=true
@@ -909,7 +371,7 @@ jobs:
           if [ -n "$failed" ]; then
             echo "jobs that did not succeed:"; echo "$failed"; ok=false
           else
-            grep -v '^ *#' <<< "$ARTIFACTS" | grep . | sort > expected.txt
+            jq -r '.[]' <<< "$LABELS" | sort > expected.txt
             gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
             missing=$(comm -23 expected.txt uploaded.txt)
             if [ -n "$missing" ]; then

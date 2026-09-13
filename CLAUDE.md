@@ -199,14 +199,13 @@ Custom event loop implementation for Bun's runtime requirements
 
 ## CI/CD
 
-GitHub Actions workflows (`.github/workflows/build.yml`) build for:
-- **macOS**: x64/arm64, debug/release/ASAN builds
-- **Linux**: x64/arm64, glibc/musl, debug/release/LTO/ASAN
-- **Windows**: x64, debug/release
+`.github/workflows/build.yml` (pushes to `main`, release `autobuild-{sha}`) and `.github/workflows/build-preview.yml` (pull requests, prerelease `autobuild-preview-pr-{n}-{sha}`) both call `.github/workflows/build-reusable.yml`, which builds every lane and publishes them as one GitHub release. A lane is one `<label>.tar.gz`, e.g. `bun-webkit-linux-amd64-lto`: Linux glibc/musl, macOS, Windows, FreeBSD and Android, x64/arm64, release/LTO/debug/ASAN. Everything except Linux and the Windows arm64 debug lane is cross-compiled from a Linux x64 runner.
 
-Artifacts are automatically published to GitHub releases as `autobuild-{sha}`. The release starts as a draft, each build job uploads its tarball onto it, and the `release` job publishes it once every build succeeded (or deletes the draft when one failed).
+The lanes are defined in `.github/scripts/plan.mjs` and nowhere else: label, runner, release script, the settings passed to that script, and whether the lane is tested. `node .github/scripts/plan.mjs` lists them (`--json` for the full settings). To add, remove or change a lane, edit `platforms` there. The workflow's `plan` job turns that table into the matrices of `build` (lanes that are only built), `build-tested` (lanes that are also tested; same steps) and `test`, and into the list of assets the `release` job requires.
 
-The `test` job then runs `Tools/Scripts/run-javascriptcore-tests` (JSTests, LayoutTests/js, the PerformanceTests collections) and `testFFI` against the `bin/jsc` shipped by the `bun-webkit-linux-{amd64,arm64}-asan` lanes. It runs every test before failing (`--no-fail-fast`) and turns the run red when any fail, but does not gate the release, which is still published; the failing tests are listed in the job summary and the full log and results JSON are uploaded as a workflow artifact. To reproduce locally: extract `bun-webkit/bin` from the asan tarball and run `ASAN_OPTIONS=detect_leaks=0:allocator_may_return_null=1 JSCTEST_memoryLimit=4294967296 Tools/Scripts/run-javascriptcore-tests --no-build --root=<path>/bun-webkit --release --jsc-only --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-fail-fast --memory-limited` (add `--filter <regex>` for a subset).
+The release starts as a draft, each lane uploads its tarball onto it, and the `release` job publishes it once every lane succeeded (or deletes the draft when one failed).
+
+The `test` job runs `Tools/Scripts/run-javascriptcore-tests` (JSTests, LayoutTests/js, the PerformanceTests collections) and `testFFI` against the `bin/jsc` shipped by the lanes marked `tested` in `plan.mjs` (the `bun-webkit-linux-{amd64,arm64}-asan` lanes), as soon as those lanes are built. It runs every test before failing (`--no-fail-fast`) and turns the run red when any fail, but does not gate the release, which is still published; the failing tests are listed in the job summary and the full log and results JSON are uploaded as a workflow artifact. To reproduce locally: extract `bun-webkit/bin` from the asan tarball and run `ASAN_OPTIONS=detect_leaks=0:allocator_may_return_null=1 JSCTEST_memoryLimit=4294967296 Tools/Scripts/run-javascriptcore-tests --no-build --root=<path>/bun-webkit --release --jsc-only --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-fail-fast --memory-limited` (add `--filter <regex>` for a subset).
 
 ## Architecture Notes
 
