@@ -416,6 +416,10 @@ jobs:
               # As upstream's Windows bots run it: Windows' own perl (not Git for Windows' msys one), test scripts
               # written as ruby rather than sh, run by the ruby runner rather than make.
               export PATH="/c/Strawberry/perl/bin:$PATH"
+              # run-jsc-stress-tests runs a copy of jsc.exe alone in its own directory (it cannot make a symlink here),
+              # and the asan jsc.exe needs clang_rt.asan_dynamic-x86_64.dll, which is in bin/: Windows looks for a
+              # DLL on PATH too.
+              export PATH="$(cygpath -u "$root/bin"):$PATH"
               root=$(cygpath -m "$root")
               results=$(cygpath -m "$results")
               platform=(--test-writer=ruby --ruby-runner)
