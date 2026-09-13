@@ -3349,7 +3349,8 @@ end)
 llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, return)
 
     loadVariable(get, m_next, t0)
-    btqnz t0, notCellMask, .iteratorNextGeneric
+    # When m_next is not a cell it may be the index that op_iterator_open left there for an Array it made no iterator object for.
+    btqnz t0, notCellMask, .iteratorNextIsNotCell
     bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorNextGeneric
     macro fastNarrow()
         callSlowPath(_iterator_next_try_fast_narrow)
@@ -3364,6 +3365,62 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
 
     # FIXME: We should do this with inline assembly since it's the "fast" case.
     bpeq r1, constexpr IterationMode::Generic, .iteratorNextGeneric
+    dispatch()
+
+.iteratorNextIsNotCell:
+    # Then, and only then, m_iterator is a sentinel cell instead of an object.
+    move t0, t1
+    loadVariable(get, m_iterator, t0)
+    btqnz t0, notCellMask, .iteratorNextGeneric
+    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorNextGeneric
+
+    # The Array is in m_iterable and the index of the next element, an Int32, in m_next. An element that is there, in Int32 or
+    # Contiguous storage, is handled here; everything else (the end, holes, other kinds of storage) in C++.
+    bqb t1, numberTag, .iteratorNextIndexInFrameSlow
+    loadVariable(get, m_iterable, t3)
+    btqnz t3, notCellMask, .iteratorNextIndexInFrameSlow
+    bbneq JSCell::m_type[t3], constexpr ArrayType, .iteratorNextIndexInFrameSlow
+    loadb JSCell::m_indexingTypeAndMisc[t3], t2
+    andi IndexingShapeMask, t2
+    bieq t2, Int32Shape, .iteratorNextIsContiguous
+    bineq t2, ContiguousShape, .iteratorNextIndexInFrameSlow
+.iteratorNextIsContiguous:
+    loadp JSObjectWithButterfly::m_butterfly[t3], t0
+    # As unsigned: the index of a finished iteration, -1, is above any length.
+    zxi2q t1, t1
+    biaeq t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .iteratorNextIndexInFrameSlow
+    bieq t1, 0x7fffffff, .iteratorNextIndexInFrameSlow
+    loadq [t0, t1, 8], t2
+    btqz t2, .iteratorNextIndexInFrameSlow
+
+    metadata(t5, t0)
+    loadi JSCell::m_structureID[t3], t0
+    storei t0, OpIteratorNext::Metadata::m_iterableProfile.m_lastSeenStructureID[t5]
+    loadh OpIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5], t0
+    btinz t0, constexpr IterationMode::FastArray, .iteratorNextModeIsRecorded
+    ori constexpr IterationMode::FastArray, t0
+    storeh t0, OpIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5]
+.iteratorNextModeIsRecorded:
+    storeVariable(get, m_value, t2, t0)
+    valueProfile(size, OpIteratorNext, m_valueValueProfile, t2, t0)
+    move ValueFalse, t2
+    storeVariable(get, m_done, t2, t0)
+    addi 1, t1
+    orq numberTag, t1
+    storeVariable(get, m_next, t1, t0)
+    dispatch()
+
+.iteratorNextIndexInFrameSlow:
+    macro indexInFrameNarrow()
+        callSlowPath(_iterator_next_index_in_frame_narrow)
+    end
+    macro indexInFrameWide16()
+        callSlowPath(_iterator_next_index_in_frame_wide16)
+    end
+    macro indexInFrameWide32()
+        callSlowPath(_iterator_next_index_in_frame_wide32)
+    end
+    size(indexInFrameNarrow, indexInFrameWide16, indexInFrameWide32, macro (callOp) callOp() end)
     dispatch()
 
 .iteratorNextGeneric:
@@ -3433,6 +3490,18 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
 
 .getValueSlow:
     callSlowPath(_llint_slow_path_iterator_next_get_value)
+    dispatch()
+end)
+
+llintOpWithReturn(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get, dispatch, return)
+    loadVariable(get, m_iterator, t0)
+    btqnz t0, notCellMask, .iteratorCloseCheckIsObject
+    bbeq JSCell::m_type[t0], constexpr SentinelType, .iteratorCloseCheckSlow
+.iteratorCloseCheckIsObject:
+    return(ValueFalse)
+
+.iteratorCloseCheckSlow:
+    callSlowPath(_slow_path_iterator_close_check)
     dispatch()
 end)
 
