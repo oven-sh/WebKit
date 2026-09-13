@@ -253,7 +253,7 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
     // enough that if we're wrong in such corner cases, it's not the end of the world.
     if (ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error)) {
 #if USE(BUN_JSC_ADDITIONS)
-
+        // What a host that formats the stack itself (VM::onComputeErrorInfo) is handed to start from.
         if (line != -1) {
             errorInstance->setLine(line);
             errorInstance->setColumn(0);
@@ -265,19 +265,24 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
 #endif
 
         errorInstance->materializeErrorInfoIfNeeded(vm);
-
-#if USE(BUN_JSC_ADDITIONS)
-        return errorInstance;
-#endif
     }
+
+    // Materializing takes line and sourceURL from the top frame of the stack (the caller of eval or load, not the code
+    // that failed to parse), and sets neither when the stack has no frame, so the parser's go on afterwards. The
+    // properties stay DontEnum, as ErrorInstance makes them.
+#if USE(BUN_JSC_ADDITIONS)
+    constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+#else
+    constexpr unsigned attributes = 0;
+#endif
 
     // FIXME: This does not modify the column property, which confusingly continues to reflect
     // the column at which the exception was thrown.
     // https://bugs.webkit.org/show_bug.cgi?id=176673
     if (line != -1)
-        error->putDirect(vm, vm.propertyNames->line, jsNumber(line));
+        error->putDirect(vm, vm.propertyNames->line, jsNumber(line), attributes);
     if (!sourceURL.isNull())
-        error->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, sourceURL));
+        error->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, sourceURL), attributes);
     return error;
 }
 
