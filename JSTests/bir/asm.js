@@ -16,7 +16,7 @@ class W {
 }
 
 // module = { sigs: [{ret, params, variadic}], externs: [{name, sig}], data: {size, align, init: [], relocs: []},
-//            funcs: [{name, sig, exported, locals: [], slots: [], blocks: [[inst...]]}], exports: [{name, func, ret, args}] }
+//            funcs: [{name, sig, exported, noinline, locals: [], slots: [], blocks: [[inst...]]}], exports: [{name, func, ret, args}] }
 // inst = [opName, ...operands] where operands are already in wire order; numbers tagged via helper objects:
 //   {s: n} signed varint, {f64: x} raw f64, {u8: n} byte, plain number => varuint
 function assemble(m) {
@@ -47,7 +47,8 @@ function assemble(m) {
     w.uv((tls.relocs || []).length);
     for (const r of tls.relocs || []) w.uv(r.offset).u8(r.kind).uv(r.index).sv(r.addend || 0);
     w.uv(m.funcs.length);
-    for (const f of m.funcs) w.str(f.name).uv(f.sig).u8(f.exported ? 1 : 0);
+    // flags: bit 0 exported, bit 3 never inlined
+    for (const f of m.funcs) w.str(f.name).uv(f.sig).u8((f.exported ? 1 : 0) | (f.noinline ? 8 : 0));
     for (const f of m.funcs) {
         w.uv((f.locals || []).length); (f.locals || []).forEach(t => w.u8(t));
         w.uv((f.slots || []).length); (f.slots || []).forEach(s => w.uv(s.size).uv(s.align));
