@@ -14129,16 +14129,13 @@ IGNORE_CLANG_WARNINGS_END
                     shuffleData.numParameters = jit.codeBlock()->numParameters();
                     shuffleData.setupCalleeSaveRegisters(state->jitCode->calleeSaveRegisters());
 
-                    if (nativeFunction && !vm->isDebuggerHookInjected()) {
-                        jit.store32(
-                            CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                            CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-                        CallFrameShuffler(jit, shuffleData).prepareForTailCall();
-                        emitCallTarget();
-                        jit.ret();
-                        return;
-                    }
-
+                    // A tail call must not run the thunk from this CodeBlock's own code. The tail
+                    // call destroys this frame, so the conservative stack scan no longer finds
+                    // this CodeBlock and cannot keep it alive
+                    // (CodeBlockSet::m_currentlyExecuting). A jettison plus a collection inside
+                    // the host function then frees the code the host call returns into. A linked
+                    // direct tail call jumps to the executable's host call thunk, which lives as
+                    // long as the VM, and that thunk returns to our caller.
                     auto* callLinkInfo = state->jitCode->common.m_directCallLinkInfos.add(semanticNodeOrigin, CallLinkInfo::UseDataIC::No, state->graph.m_codeBlock, executable);
                     callLinkInfo->setCallType(CallLinkInfo::DirectTailCall);
                     if (numAllocatedArgs > numPassedArgs)
