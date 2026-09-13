@@ -26,6 +26,7 @@
 #include "config.h"
 #include <wtf/OSAllocator.h>
 
+#include <algorithm>
 #include <windows.h>
 #include <wtf/Assertions.h>
 #include <wtf/DataLog.h>
@@ -127,8 +128,41 @@ void OSAllocator::releaseDecommitted(void* address, size_t bytes, unsigned)
         CRASH();
 }
 
-void OSAllocator::hintMemoryNotNeededSoon(void*, size_t)
+void OSAllocator::hintMemoryNotNeededSoon(void* address, size_t bytes)
 {
+    // Windows equivalent of madvise(MADV_DONTNEED). The pages must remain
+    // accessible (the POSIX version leaves the mapping in place and just
+    // drops the physical backing), so we can't MEM_DECOMMIT here.
+    //
+    // Previously this was an empty stub, which meant scavenger hints were
+    // silently dropped on Windows — long-running processes accumulated
+    // hundreds of MB of committed-but-zero pages that the OS never
+    // reclaimed (bun#30562).
+    //
+    // DiscardVirtualMemory releases the physical frames immediately and
+    // removes the pages from the working set while keeping the virtual
+    // mapping committed. On older Windows 10 builds and on ranges spanning
+    // multiple reservations it can fail, so we fall back to a
+    // per-reservation MEM_RESET loop + VirtualUnlock, which has the same
+    // effect with lazy reclaim. This mirrors the pattern already used in
+    // libpas (pas_page_malloc.c).
+    if (!bytes)
+        return;
+    if (DiscardVirtualMemory(address, bytes)) {
+        size_t totalSeen = 0;
+        void* currentPtr = address;
+        while (totalSeen < bytes) {
+            MEMORY_BASIC_INFORMATION memInfo;
+            SIZE_T queried = VirtualQuery(currentPtr, &memInfo, sizeof(memInfo));
+            if (!queried || !memInfo.RegionSize)
+                return;
+            size_t chunkSize = std::min<size_t>(memInfo.RegionSize, bytes - totalSeen);
+            VirtualAlloc(currentPtr, chunkSize, MEM_RESET, PAGE_READWRITE);
+            currentPtr = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(currentPtr) + memInfo.RegionSize);
+            totalSeen += memInfo.RegionSize;
+        }
+        VirtualUnlock(address, bytes);
+    }
 }
 
 bool OSAllocator::tryProtect(void* address, size_t bytes, bool readable, bool writable)
