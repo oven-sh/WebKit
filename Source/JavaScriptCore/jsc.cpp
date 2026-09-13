@@ -1500,10 +1500,9 @@ static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
     // directory separators as it disables all string parsing on names.
     fileName = makeStringByReplacingAll(fileName, '/', '\\');
     auto pathName = makeString("\\\\?\\"_s, fileName).wideCharacters();
-    struct _stat status { };
-    if (_wstat(pathName.span().data(), &status))
-        return false;
-    if ((status.st_mode & S_IFMT) != S_IFREG)
+    // Bun: not _wstat(). The CRT's stat rejects a path with a '?' in it as a wildcard, which every \\?\ path has.
+    DWORD attributes = GetFileAttributesW(pathName.span().data());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
         return false;
 
     FILE* f = _wfopen(pathName.span().data(), L"rb");
