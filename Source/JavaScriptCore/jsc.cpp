@@ -1262,8 +1262,14 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     auto resolvePath = [&] (const URL& directoryURL) -> Identifier {
         String specifier = key.impl();
         auto filePrefix = "file://"_s;
+#if OS(WINDOWS)
+        // Bun: file:///D:/x is D:\x. With "file://" cut off it is "/D:/x", which isAbsolutePath() does not take for one.
+        if (specifier.startsWith(filePrefix))
+            specifier = URL({ }, specifier).fileSystemPath();
+#else
         if (specifier.startsWith(filePrefix))
             specifier = specifier.substringSharingImpl(filePrefix.length());
+#endif
 
         bool specifierIsAbsolute = isAbsolutePath(specifier);
         if (!specifierIsAbsolute && !isDottedRelativePath(specifier)) {

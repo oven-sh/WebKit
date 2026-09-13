@@ -603,7 +603,8 @@ sub determineArchitecture
 
     $architecture = 'x86_64' if $architecture =~ /amd64/i;
     $architecture = 'x86' if $architecture =~ /BePC/i && isHaiku();
-    $architecture = 'arm64' if $architecture =~ /aarch64/i;
+    # Bun: and "ARM64", which is how cmake on Windows spells CMAKE_SYSTEM_PROCESSOR.
+    $architecture = 'arm64' if $architecture =~ /aarch64|^arm64$/i;
 }
 
 sub xcodeBuildRequestsInRecencyOrder
