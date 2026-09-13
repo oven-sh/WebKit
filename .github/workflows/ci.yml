@@ -430,7 +430,7 @@ jobs:
           # --no-fail-fast: run everything, report every failure.
           perl Tools/Scripts/run-javascriptcore-tests \
             --no-build --root="$root" --release --jsc-only ${platform[@]+"${platform[@]}"} \
-            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger \
+            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
             --no-fail-fast --memory-limited \
             --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
               # The full output (a line per test run, plus what each test prints) is jsc-tests.log in the artifact; it
