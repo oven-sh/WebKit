@@ -2182,6 +2182,20 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_ifAbruptCloseIterator(Bytecode
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS)
 #undef JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS
 
+// The parentheses in `(a?.b)()` end the optional chain, so a nullish `a` short-circuits to here and not past the call.
+// The callee is then the value undefined, with no base to use as |this|: the arguments are still evaluated, and the
+// call throws (https://tc39.es/ecma262/#sec-evaluatecall). |thisRegister| has to be written as well, since a chain
+// that short-circuits before its last link, as in `(a?.b.c)()`, has not written it yet.
+static void emitOptionalChainCalleeEnd(BytecodeGenerator& generator, RegisterID* function, RegisterID* thisRegister)
+{
+    Ref<Label> haveCallee = generator.newLabel();
+    generator.emitJump(haveCallee.get());
+    generator.popOptionalChainTarget();
+    generator.emitLoad(function, jsUndefined());
+    generator.emitLoad(thisRegister, jsUndefined());
+    generator.emitLabel(haveCallee.get());
+}
+
 // ------------------------------ FunctionCallBracketNode ----------------------------------
 
 RegisterID* FunctionCallBracketNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
@@ -2190,6 +2204,9 @@ RegisterID* FunctionCallBracketNode::emitBytecode(BytecodeGenerator& generator, 
     RefPtr<RegisterID> returnValue = generator.finalDestination(dst, function.get());
     bool baseIsSuper = m_base->isSuperNode();
     bool subscriptIsNonIndexString = isNonIndexStringElement(*m_subscript);
+
+    if (m_calleeIsOptionalChain)
+        generator.pushOptionalChainTarget();
 
     RefPtr<RegisterID> base;
     if (baseIsSuper)
@@ -2232,6 +2249,10 @@ RegisterID* FunctionCallBracketNode::emitBytecode(BytecodeGenerator& generator, 
         generator.move(callArguments.thisRegister(), thisRegister.get());
     } else
         generator.move(callArguments.thisRegister(), base.get());
+    if (m_calleeIsOptionalChain) {
+        ASSERT(!isOptionalCall());
+        emitOptionalChainCalleeEnd(generator, function.get(), callArguments.thisRegister());
+    }
     RegisterID* ret = generator.emitCallInTailPosition(returnValue.get(), function.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
     generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
     return ret;
@@ -2246,6 +2267,8 @@ RegisterID* FunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, Regi
     CallArguments callArguments(generator, m_args);
     bool baseIsSuper = m_base->isSuperNode();
     bool shouldGetArgumentsDotLengthFast = generator.shouldGetArgumentsDotLengthFast(this);
+    if (m_calleeIsOptionalChain)
+        generator.pushOptionalChainTarget();
     if (baseIsSuper)
         generator.move(callArguments.thisRegister(), generator.ensureThis());
     else if (shouldGetArgumentsDotLengthFast)
@@ -2266,6 +2289,11 @@ RegisterID* FunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, Regi
 
     if (isOptionalCall())
         generator.emitOptionalCheck(function.get());
+
+    if (m_calleeIsOptionalChain) {
+        ASSERT(!isOptionalCall());
+        emitOptionalChainCalleeEnd(generator, function.get(), callArguments.thisRegister());
+    }
 
     RegisterID* ret = generator.emitCallInTailPosition(returnValue.get(), function.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
     generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
