@@ -124,7 +124,13 @@ void JIT::compileSetupFrame(const Op& bytecode)
                 emitGetVirtualRegister(VirtualRegister(registerOffset + CallFrame::argumentOffsetIncludingThis(0)), tmpGPR);
                 Jump done = branchIfNotCell(tmpGPR);
                 load32(Address(tmpGPR, JSCell::structureIDOffset()), tmpGPR);
-                store32ToMetadata(tmpGPR, bytecode, Op::Metadata::offsetOfArrayProfile() + ArrayProfile::offsetOfLastSeenStructureID());
+                if constexpr (opcodeID == op_iterator_open)
+                    store32ToMetadata(tmpGPR, bytecode, Op::Metadata::offsetOfArrayProfile() + ArrayProfile::offsetOfLastSeenStructureID());
+                else {
+                    constexpr GPRReg dataGPR = regT1;
+                    loadPtrFromMetadata(bytecode, Op::Metadata::offsetOfCallLinkInfo() + LazyCallLinkInfo::offsetOfData(), dataGPR);
+                    store32(tmpGPR, Address(dataGPR, CallSiteData::offsetOfArrayProfile() + ArrayProfile::offsetOfLastSeenStructureID()));
+                }
                 done.link(this);
             }
         }
@@ -171,11 +177,19 @@ void JIT::compileCallDirectEvalSlowCase(const JSInstruction* instruction, Vector
     auto bytecode = instruction->as<OpCallDirectEval>();
     int registerOffset = -bytecode.m_argv;
 
+    // The callee is not eval: what follows is a virtual call with the site's CallLinkInfo, which has to be its own by then
+    // (the one that the sites which have not run twice share has no call type).
+    loadPtrFromMetadata(bytecode, OpCallDirectEval::Metadata::offsetOfCallLinkInfo() + LazyCallLinkInfo::offsetOfData(), regT0);
+    Jump hasCallLinkInfo = branchTestPtr(NonZero, Address(regT0, CallLinkInfo::offsetOfOwner()));
+    loadPtr(addressFor(CallFrameSlot::codeBlock), regT0);
+    callOperationNoExceptionCheck(operationEnsureCallLinkInfo, regT0, TrustedImm32(m_bytecodeIndex.asBits()));
+    hasCallLinkInfo.link(this);
+
     addPtr(TrustedImm32(registerOffset * sizeof(Register) + sizeof(CallerFrameAndPC)), callFrameRegister, stackPointerRegister);
 
     static_assert(noOverlap(BaselineJITRegisters::Call::calleeGPR, BaselineJITRegisters::Call::callLinkInfoGPR, regT3));
     loadValue(Address(stackPointerRegister, sizeof(Register) * CallFrameSlot::callee - sizeof(CallerFrameAndPC)), BaselineJITRegisters::Call::calleeGPR);
-    materializePointerIntoMetadata(bytecode, OpCallDirectEval::Metadata::offsetOfCallLinkInfo(), BaselineJITRegisters::Call::callLinkInfoGPR);
+    loadPtrFromMetadata(bytecode, OpCallDirectEval::Metadata::offsetOfCallLinkInfo() + LazyCallLinkInfo::offsetOfData(), BaselineJITRegisters::Call::callLinkInfoGPR);
     emitVirtualCallWithoutMovingGlobalObject(*m_vm, BaselineJITRegisters::Call::callLinkInfoGPR, CallMode::Regular);
     resetSP();
 }
@@ -232,6 +246,7 @@ void JIT::compileOpCall(const JSInstruction* instruction)
         m_callCompilationInfo.append(CallCompilationInfo());
         m_callCompilationInfo[callLinkInfoIndex].unlinkedCallLinkInfo = callLinkInfo;
     }
+
     compileSetupFrame(bytecode);
 
     // SP holds newCallFrame + sizeof(CallerFrameAndPC), with ArgumentCount initialized.
@@ -255,7 +270,10 @@ void JIT::compileOpCall(const JSInstruction* instruction)
         done.link(this);
     }
 
-    materializePointerIntoMetadata(bytecode, Op::Metadata::offsetOfCallLinkInfo(), BaselineJITRegisters::Call::callLinkInfoGPR);
+    if constexpr (std::is_same_v<decltype(Op::Metadata::m_callLinkInfo), DataOnlyCallLinkInfo>)
+        materializePointerIntoMetadata(bytecode, Op::Metadata::offsetOfCallLinkInfo(), BaselineJITRegisters::Call::callLinkInfoGPR);
+    else
+        loadPtrFromMetadata(bytecode, Op::Metadata::offsetOfCallLinkInfo() + LazyCallLinkInfo::offsetOfData(), BaselineJITRegisters::Call::callLinkInfoGPR);
 
     if constexpr (Op::opcodeID == op_tail_call)
         compileTailCall(bytecode, callLinkInfo, callLinkInfoIndex);

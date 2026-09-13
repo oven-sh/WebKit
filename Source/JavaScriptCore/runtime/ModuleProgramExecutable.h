@@ -31,6 +31,7 @@ namespace JSC {
 
 class FunctionExecutable;
 class SymbolTable;
+class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
 
 class ModuleProgramExecutable final : public GlobalExecutable {
@@ -90,18 +91,43 @@ public:
 
     bool isAsync() const { return features() & AwaitFeature; }
 
+    // One per executable, from its first unlinked code on: every environment of every record that shares the executable
+    // is made from it (see getUnlinkedCodeBlock).
     SymbolTable* moduleEnvironmentSymbolTable() LIFETIME_BOUND { return m_moduleEnvironmentSymbolTable.get(); }
+    // The mode of the code that table came from, and of any code fetched for this executable later.
+    OptionSet<CodeGenerationMode> codeGenerationMode() const { return m_codeGenerationMode; }
 
     // Records for one URL and source text whose imports resolve alike share this
     // executable (JSModuleRecord::getOrMakeExecutable), so the function declarations'
     // executables live here rather than per record.
     FunctionExecutable* functionDeclaration(VM&, unsigned index);
+    // The same for a caller that has the declaration's unlinked executable from elsewhere (a module record that instantiates
+    // a declaration when its binding is first read may do so after this executable let go of its unlinked code):
+    // linkedFunctionDeclaration() first, and linkFunctionDeclaration() with the module's own functionDecl(index) if that is null.
+    FunctionExecutable* linkedFunctionDeclaration(unsigned index) const { return index < m_functionDeclarations.size() ? m_functionDeclarations[index].get() : nullptr; }
+    FunctionExecutable* linkFunctionDeclaration(VM&, unsigned index, UnlinkedFunctionExecutable*);
     const std::optional<ImportedBindings>& importedBindings() const { return m_importedBindings; }
     bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
     bool resolvesInGlobalScope() const { return m_moduleScopeSymbolTables.isEmpty(); }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
+
+    // Options::useSharedModuleFunctionExpressionExecutables(): the executable of function expression `index` of the
+    // module's top-level code, linked from `unlinkedExecutable` the first time.
+    FunctionExecutable* functionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable*);
+
+    // Every record that is going to evaluate the module with this executable says so (JSModuleRecord::getOrMakeExecutable),
+    // and says when its body ran to completion. Once none is left, and until another record adopts the executable, nothing
+    // needs the linked code; the unlinked code is dropped too if it can be had back for the asking.
+    void willBeEvaluatedByAnotherRecord() { ++m_recordsYetToFinishEvaluation; }
+    void didFinishEvaluation(VM&);
+    bool hasFinishedEvaluation() const { return m_hasBeenEvaluated && !m_recordsYetToFinishEvaluation; }
+    // releaseUnlinkedCodeIfRecoverable() took the unlinked code; getUnlinkedCodeBlock() decodes the same code again.
+    bool hasReleasedUnlinkedCode() const { return m_hasReleasedUnlinkedCode; }
+    // Only once the body has finished (an environment made for code that has yet to run is tied to that very code, see
+    // UnlinkedModuleProgramCodeBlock.h), and only if getUnlinkedCodeBlock() can decode the same code again.
+    void releaseUnlinkedCodeIfRecoverable(VM&);
 
 private:
     friend class ExecutableBase;
@@ -113,6 +139,11 @@ private:
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
     std::optional<ImportedBindings> m_importedBindings;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
+    FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
+    unsigned m_recordsYetToFinishEvaluation { 0 };
+    bool m_hasBeenEvaluated { false };
+    bool m_hasReleasedUnlinkedCode { false };
+    OptionSet<CodeGenerationMode> m_codeGenerationMode;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
 

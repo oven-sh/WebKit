@@ -152,6 +152,9 @@ public:
         m_map.remove(it);
     }
 
+    void removeIfHolds(const SourceCodeKey&, JSCell*);
+    void removeCodeDecodedFromPersistentPayloads();
+
     void clear()
     {
         m_size = 0;
@@ -162,10 +165,10 @@ public:
     int64_t age() { return m_age; }
 
     template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* fetchFromDisk(VM& vm, const SourceCodeKey& key)
+    UnlinkedCodeBlockType* fetchFromDisk(VM& vm, const SourceCodeKey& key, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)
     {
         if constexpr (std::is_base_of_v<UnlinkedCodeBlock, UnlinkedCodeBlockType> && !std::is_same_v<UnlinkedCodeBlockType, UnlinkedEvalCodeBlock>) {
-            UnlinkedCodeBlockType* codeBlock = fetchFromDiskImpl<UnlinkedCodeBlockType>(vm, key);
+            UnlinkedCodeBlockType* codeBlock = fetchFromDiskImpl<UnlinkedCodeBlockType>(vm, key, recoverableCode);
             if (Options::forceDiskCache()) [[unlikely]] {
                 if (isMainThread())
                     RELEASE_ASSERT(codeBlock);
@@ -176,18 +179,19 @@ public:
         } else {
             UNUSED_PARAM(vm);
             UNUSED_PARAM(key);
+            UNUSED_PARAM(recoverableCode);
             return nullptr;
         }
     }
 
 private:
     template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* fetchFromDiskImpl(VM& vm, const SourceCodeKey& key)
+    UnlinkedCodeBlockType* fetchFromDiskImpl(VM& vm, const SourceCodeKey& key, Decoder::RecoverableCode recoverableCode)
     {
         RefPtr<CachedBytecode> cachedBytecode = key.source().provider().cachedBytecode();
         if (!cachedBytecode || !cachedBytecode->size())
             return nullptr;
-        return decodeCodeBlock<UnlinkedCodeBlockType>(vm, key, *cachedBytecode);
+        return decodeCodeBlock<UnlinkedCodeBlockType>(vm, key, *cachedBytecode, recoverableCode);
     }
 
     // This constant factor biases cache capacity toward allowing a minimum
@@ -242,12 +246,18 @@ public:
 
     void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*);
 
+    // The module's evaluation finished, so nothing links against this block again unless the same source is loaded
+    // into another global object of this VM, which then decodes or generates its own.
+    void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
+
     void clear()
     {
         write();
         m_sourceCode.clear();
     }
     JS_EXPORT_PRIVATE void write();
+    // Entries a lookup can decode again instead of parsing.
+    void clearCodeDecodedFromPersistentPayloads() { m_sourceCode.removeCodeDecodedFromPersistentPayloads(); }
 
 private:
     template <class UnlinkedCodeBlockType, class ExecutableType> 

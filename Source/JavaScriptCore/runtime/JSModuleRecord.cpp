@@ -46,6 +46,8 @@
 
 namespace JSC {
 
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(JSModuleRecord::UninstantiatedFunctionDeclarations);
+
 const ClassInfo JSModuleRecord::s_info = { "ModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleRecord) };
 
 JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
@@ -108,6 +110,13 @@ void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleProgramExecutable);
+    {
+        Locker locker { thisObject->cellLock() };
+        if (auto* uninstantiated = thisObject->m_uninstantiatedFunctionDeclarations.get()) {
+            visitor.append(uninstantiated->executable);
+            visitor.append(uninstantiated->unlinkedCodeBlock);
+        }
+    }
 
 #if USE(BUN_JSC_ADDITIONS)
     visitor.reportExtraMemoryVisited(thisObject->sourceCode().memoryCost());
@@ -115,6 +124,99 @@ void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleRecord);
+
+void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable* executable, UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock, bool leftUninstantiated)
+{
+    RefPtr slots = unlinkedCodeBlock->heapAllocatedFunctionDeclSlots();
+    std::unique_ptr<UninstantiatedFunctionDeclarations> uninstantiated;
+    if (leftUninstantiated && slots && slots->size()) {
+        RELEASE_ASSERT(slots->size() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
+        uninstantiated = makeUnique<UninstantiatedFunctionDeclarations>();
+        uninstantiated->executable.set(vm, this, executable);
+        // Code that ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable() lets go of once the module has run is not
+        // kept alive from here: its declarations are still in the payload the slots decode from.
+        bool declarationsOutliveTheCodeBlock = slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex() && Options::useCodeRecoveryFromBytecodeCache();
+        if (!declarationsOutliveTheCodeBlock)
+            uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
+        uninstantiated->remaining = slots->size();
+    }
+    Locker locker { cellLock() };
+    m_functionDeclarationSlots = WTF::move(slots);
+    m_uninstantiatedFunctionDeclarations = WTF::move(uninstantiated);
+}
+
+bool JSModuleRecord::isFunctionDeclarationSlot(ScopeOffset offset) const
+{
+    return Options::useLazyModuleFunctionDeclarations() && m_functionDeclarationSlots && m_functionDeclarationSlots->find(offset);
+}
+
+JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment* environment, ScopeOffset offset)
+{
+    ASSERT(environment->moduleRecord() == this);
+    ASSERT(environment->isValidScopeOffset(offset));
+    JSValue value = environment->variableAt(offset).get();
+    if (value) [[likely]]
+        return value;
+    auto* uninstantiated = m_uninstantiatedFunctionDeclarations.get();
+    if (!uninstantiated)
+        return { };
+    std::optional<unsigned> index = m_functionDeclarationSlots->find(offset);
+    if (!index)
+        return { };
+    // Records that share the executable share the declarations' executables (and so their code): the first one to read a
+    // declaration links it. What it links from is this record's copy of the module's unlinked code if it has to keep one,
+    // else the executable's while it has one (not released yet, or fetched again), else the bytecode cache payload.
+    ModuleProgramExecutable* executable = uninstantiated->executable.get();
+    // The declaration's code is every record's, and what it is specialized on is the executable's symbol table.
+    RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
+    FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
+    if (!functionExecutable) {
+        UnlinkedFunctionExecutable* unlinkedExecutable = nullptr;
+        if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get())
+            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
+        else if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->unlinkedCodeBlock())
+            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
+        else
+            unlinkedExecutable = m_functionDeclarationSlots->decode(vm, *index);
+        RELEASE_ASSERT(unlinkedExecutable);
+        functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
+    }
+    UnlinkedFunctionExecutable* unlinkedExecutable = functionExecutable->unlinkedExecutable();
+
+    // InitializeEnvironment step 24.a.iii, for this one declaration.
+    JSGlobalObject* globalObject = environment->globalObject();
+    JSFunction* function = nullptr;
+    SourceParseMode parseMode = functionExecutable->parseMode();
+    if (isAsyncGeneratorWrapperParseMode(parseMode))
+        function = JSAsyncGeneratorFunction::create(vm, globalObject, functionExecutable, environment);
+    else if (isGeneratorWrapperParseMode(parseMode))
+        function = JSGeneratorFunction::create(vm, globalObject, functionExecutable, environment);
+    else if (isAsyncFunctionWrapperParseMode(parseMode))
+        function = JSAsyncFunction::create(vm, globalObject, functionExecutable, environment);
+    else
+        function = JSFunction::create(vm, globalObject, functionExecutable, environment);
+
+    InlineWatchpointSet* watchpointSet = nullptr;
+    {
+        SymbolTable* symbolTable = environment->symbolTable();
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        auto iter = symbolTable->find(locker, unlinkedExecutable->name().impl());
+        if (iter != symbolTable->end(locker)) {
+            ASSERT(iter->value.scopeOffset() == offset);
+            watchpointSet = iter->value.watchpointSet();
+        }
+    }
+    symbolTablePutTouchWatchpointSet(vm, environment, unlinkedExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
+
+    // An empty slot is one that was never stored to, so each declaration gets here at most once.
+    ASSERT(uninstantiated->remaining);
+    if (!--uninstantiated->remaining) {
+        std::unique_ptr<UninstantiatedFunctionDeclarations> done;
+        Locker locker { cellLock() };
+        done = WTF::move(m_uninstantiatedFunctionDeclarations);
+    }
+    return function;
+}
 
 bool JSModuleRecord::isTopLevelExecutionFinished() const
 {
@@ -154,8 +256,10 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (isTopLevelExecutionFinished())
+    if (isTopLevelExecutionFinished()) {
         m_moduleProgramExecutable.clear();
+        executable->didFinishEvaluation(vm);
+    }
 
     RELEASE_AND_RETURN(scope, resultOrAwaitedValue);
 }
@@ -302,10 +406,19 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     JSGlobalObject::ModuleProgramExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
     if (bindings) {
         ModuleProgramExecutable* shared = executables.get(key);
-        // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
-        // share and no symbol table to instantiate an environment from.)
-        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+        // (An executable whose code was deleted, ScriptExecutable::clearCode, is left to the
+        // records that have it. One that only let go of unlinked code it can decode again,
+        // releaseUnlinkedCodeIfRecoverable, is adopted and decodes it again. Either way the
+        // executable's code is in the mode of its first code, see getUnlinkedCodeBlock, which
+        // has to be the one this record would ask for.)
+        if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
+            && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+            if (!shared->unlinkedCodeBlock()) {
+                shared->getUnlinkedCodeBlock(globalObject);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+            shared->willBeEvaluatedByAnotherRecord();
             m_moduleProgramExecutable.set(vm, this, shared);
             return shared;
         }
@@ -313,6 +426,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
 
     executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings), moduleScopeSymbolTables);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);
     if (executable->importedBindings())
         executables.set(key, Weak<ModuleProgramExecutable>(executable));

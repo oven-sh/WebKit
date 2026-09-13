@@ -71,6 +71,7 @@
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
+#include "JSModuleEnvironment.h"
 #include "JSMicrotask.h"
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
@@ -4793,6 +4794,16 @@ JSC_DEFINE_JIT_OPERATION(operationSingleCharacterString, JSString*, (VM* vmPoint
     auto scope = DECLARE_THROW_SCOPE(vm);
     
     OPERATION_RETURN(scope, jsSingleCharacterString(vm, static_cast<char16_t>(character)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationGetLazyClosureVar, EncodedJSValue, (VM* vmPointer, JSCell* environment, uint32_t scopeOffset))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(JSModuleEnvironment::readLazyClosureVar(vm, asObject(environment), ScopeOffset(scopeOffset))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewSymbol, Symbol*, (VM* vmPointer))

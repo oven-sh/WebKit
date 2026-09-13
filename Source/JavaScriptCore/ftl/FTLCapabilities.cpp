@@ -152,6 +152,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case NewAsyncGeneratorFunction:
     case NewBoundFunction:
     case GetClosureVar:
+    case GetLazyClosureVar:
     case PutClosureVar:
     case GetInternalField:
     case PutInternalField:

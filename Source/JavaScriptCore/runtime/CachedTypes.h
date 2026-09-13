@@ -226,7 +226,10 @@ class Decoder : public RefCounted<Decoder> {
     WTF_MAKE_NONCOPYABLE(Decoder);
 
 public:
-    static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
+    // RecoverableCode::No: what is decoded is not registered with VM::persistentBytecodePayloads() (its code blocks cannot be
+    // dropped and decoded again): for code that is private to one executable.
+    enum class RecoverableCode : bool { No, Yes };
+    static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
@@ -263,6 +266,16 @@ public:
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
     RefPtr<SourceProvider> NODELETE provider() const;
+    // This decoder's payload in VM::persistentBytecodePayloads(), or 0: what a code block decoded from it needs to remember
+    // (with its record's offset) to be decoded again later.
+    uint16_t persistentPayloadIndex() const { return m_persistentPayloadIndex; }
+    void clearPersistentPayloadIndex() { m_persistentPayloadIndex = 0; }
+    void addRetainedTableSizes(size_t& mappedPointers, size_t& atomsByOrdinal, size_t& finalizers) const
+    {
+        mappedPointers += m_offsetToPtrMap.size();
+        atomsByOrdinal += m_atomsByOrdinal.size();
+        finalizers += m_finalizers.size();
+    }
 
     template<typename Functor>
     void addFinalizer(const Functor&);
@@ -283,12 +296,13 @@ private:
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
     bool m_canDeferIntoPayload { false };
+    uint16_t m_persistentPayloadIndex { 0 };
 };
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 
-UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>);
+UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);
 
 // An embedder's JS builtin (a root UnlinkedFunctionExecutable from BuiltinExecutables::createExecutable), with its code
 // blocks generated recursively beforehand (see recursivelyGenerateUnlinkedCodeBlocksForFunction). `embedderStamp`
@@ -297,9 +311,9 @@ JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const Unlink
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp);
 
 template<typename UnlinkedCodeBlockType>
-UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)
+UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)
 {
-    return uncheckedDowncast<UnlinkedCodeBlockType>(decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode)));
+    return uncheckedDowncast<UnlinkedCodeBlockType>(decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), recoverableCode));
 }
 
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode);
@@ -307,6 +321,8 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
+// The same, given the offset of the code block's own record (UnlinkedCodeBlock::cachedRecordOffset()) instead of its owner's slot.
+void decodeFunctionCodeBlockFromRecord(Decoder&, uint32_t recordOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
 // Options::useLazySymbolTableConstants(): fill in the entries of a SymbolTable whose CachedSymbolTable record was left
 // undecoded (SymbolTable::materializeCachedEntries). Mutator only; allocates no GC cells.

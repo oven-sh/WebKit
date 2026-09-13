@@ -26,6 +26,7 @@
 #include "config.h"
 #include "VMInspector.h"
 
+#include "CachedBytecode.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
 #include "HeapInlines.h"
@@ -33,7 +34,12 @@
 #include "JSCInlines.h"
 #include "JSWebAssemblyModule.h"
 #include "MarkedSpaceInlines.h"
+#include "ModuleProgramExecutable.h"
+#include "ObjectConstructor.h"
+#include "RegExp.h"
 #include "StackVisitor.h"
+#include "UnlinkedFunctionExecutable.h"
+#include "UnlinkedMetadataTableInlines.h"
 #include "VMEntryRecord.h"
 #include "VMManager.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -621,6 +627,111 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
         INDENT dumpSlot(slots, slotIndex);
 
 #undef INDENT
+}
+
+// Counts of live linked and unlinked code, and the bytes of the out-of-line parts that dominate them:
+// { llint, baseline, dfg, ftl, function, module, program, eval, metadataBytes, jitBytes,
+//   unlinkedFunction, unlinkedModule, unlinkedProgram, unlinkedEval, unlinkedBytes, cachedExecutables, regExpsWithCode,
+//   moduleExecutablesWithLinkedCode, moduleExecutablesWithUnlinkedCode, and what PersistentBytecodePayloads holds on to }
+JSObject* VMInspector::codeBlockCensus(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    Heap& heap = vm.heap;
+    unsigned tiers[4] = { 0, 0, 0, 0 };
+    unsigned types[4] = { 0, 0, 0, 0 };
+    double metadataBytes = 0;
+    double jitBytes = 0;
+    heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
+        switch (codeBlock->jitType()) {
+        case JITType::InterpreterThunk:
+            tiers[0]++;
+            break;
+        case JITType::BaselineJIT:
+            tiers[1]++;
+            break;
+        case JITType::DFGJIT:
+            tiers[2]++;
+            break;
+        case JITType::FTLJIT:
+            tiers[3]++;
+            break;
+        default:
+            break;
+        }
+        types[static_cast<unsigned>(codeBlock->codeType())]++;
+        if (auto* table = codeBlock->metadataTable())
+            metadataBytes += table->sizeInBytesForGC();
+        if (JITCode::isJIT(codeBlock->jitType())) {
+            if (auto jitCode = codeBlock->jitCode(); jitCode && !jitCode->isShared())
+                jitBytes += jitCode->size();
+        }
+    });
+
+    unsigned unlinked[4] = { 0, 0, 0, 0 };
+    unsigned cachedExecutables = 0;
+    unsigned regExpsWithCode = 0;
+    unsigned moduleExecutablesWithLinkedCode = 0;
+    unsigned moduleExecutablesWithUnlinkedCode = 0;
+    double unlinkedBytes = 0;
+    {
+        HeapIterationScope iterationScope(heap);
+        heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            JSCell* cell = static_cast<JSCell*>(heapCell);
+            if (auto* unlinkedCodeBlock = dynamicDowncast<UnlinkedCodeBlock>(cell)) {
+                unlinked[static_cast<unsigned>(unlinkedCodeBlock->codeType())]++;
+                unlinkedBytes += unlinkedCodeBlock->metadataSizeInBytes() + unlinkedCodeBlock->instructions().sizeInBytes();
+            } else if (auto* executable = dynamicDowncast<UnlinkedFunctionExecutable>(cell)) {
+                if (executable->isCached())
+                    cachedExecutables++;
+            } else if (auto* moduleExecutable = dynamicDowncast<ModuleProgramExecutable>(cell)) {
+                if (moduleExecutable->codeBlock())
+                    moduleExecutablesWithLinkedCode++;
+                if (moduleExecutable->unlinkedCodeBlock())
+                    moduleExecutablesWithUnlinkedCode++;
+            } else if (auto* regExp = dynamicDowncast<RegExp>(cell)) {
+                if (regExp->hasCode())
+                    regExpsWithCode++;
+            }
+            return IterationStatus::Continue;
+        });
+    }
+
+    JSObject* result = constructEmptyObject(globalObject);
+    auto put = [&](ASCIILiteral name, double value) {
+        result->putDirect(vm, Identifier::fromString(vm, name), jsNumber(value));
+    };
+    put("llint"_s, tiers[0]);
+    put("baseline"_s, tiers[1]);
+    put("dfg"_s, tiers[2]);
+    put("ftl"_s, tiers[3]);
+    put("program"_s, types[static_cast<unsigned>(GlobalCode)]);
+    put("eval"_s, types[static_cast<unsigned>(EvalCode)]);
+    put("function"_s, types[static_cast<unsigned>(FunctionCode)]);
+    put("module"_s, types[static_cast<unsigned>(ModuleCode)]);
+    put("metadataBytes"_s, metadataBytes);
+    put("jitBytes"_s, jitBytes);
+    put("unlinkedProgram"_s, unlinked[static_cast<unsigned>(GlobalCode)]);
+    put("unlinkedEval"_s, unlinked[static_cast<unsigned>(EvalCode)]);
+    put("unlinkedFunction"_s, unlinked[static_cast<unsigned>(FunctionCode)]);
+    put("unlinkedModule"_s, unlinked[static_cast<unsigned>(ModuleCode)]);
+    put("unlinkedBytes"_s, unlinkedBytes);
+    put("cachedExecutables"_s, cachedExecutables);
+    put("regExpsWithCode"_s, regExpsWithCode);
+    put("moduleExecutablesWithLinkedCode"_s, moduleExecutablesWithLinkedCode);
+    put("moduleExecutablesWithUnlinkedCode"_s, moduleExecutablesWithUnlinkedCode);
+    // What stays behind for code that can be decoded again from a bytecode cache payload.
+    PersistentBytecodePayloads::Statistics payloads;
+    if (auto* existing = vm.persistentBytecodePayloadsIfExists())
+        payloads = existing->statistics();
+    put("persistentPayloads"_s, payloads.payloads);
+    put("persistentPayloadDecoders"_s, payloads.liveDecoders);
+    put("decoderMappedPointers"_s, payloads.decoderMappedPointers);
+    put("decoderAtomsByOrdinal"_s, payloads.decoderAtomsByOrdinal);
+    put("decoderFinalizers"_s, payloads.decoderFinalizers);
+    put("parentsWithRememberedChildren"_s, payloads.parentsWithRememberedChildren);
+    return result;
 }
 
 void VMInspector::dumpSubspaceHashes(VM* vm)

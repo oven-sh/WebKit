@@ -1983,8 +1983,7 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
                         return { };
 
                     CodeBlock* callerBlock = baselineCodeBlockFor(*codeOrigin);
-                    auto* valueProfile = callerBlock->tryGetValueProfileForBytecodeIndex(codeOrigin->bytecodeIndex());
-                    if (!valueProfile)
+                    if (!callerBlock->tryGetValueProfileForBytecodeIndex(codeOrigin->bytecodeIndex()))
                         return { };
 
                     return MethodOfGettingAValueProfile::bytecodeValueProfile(*codeOrigin);
@@ -1992,8 +1991,7 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
                 case op_call_ignore_result:
                     return { };
                 default: {
-                    auto* valueProfile = profiledBlock->tryGetValueProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex());
-                    if (!valueProfile)
+                    if (!profiledBlock->tryGetValueProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex()))
                         return { };
 
                     return MethodOfGettingAValueProfile::bytecodeValueProfile(node->origin.semantic);

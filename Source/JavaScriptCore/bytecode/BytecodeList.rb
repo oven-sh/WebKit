@@ -46,6 +46,7 @@ types [
     :JSScope,
     :JSType,
     :JSValue,
+    :LazyCallLinkInfo,
     :ResultType,
     :OperandTypes,
     :PrivateFieldPutKind,
@@ -142,7 +143,7 @@ op :iterator_next,
         valueValueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         doneModeMetadata: GetByIdModeMetadata,
         valueModeMetadata: GetByIdModeMetadata,
         iterableProfile: ArrayProfile,
@@ -216,7 +217,7 @@ op :iterator_open,
         nextValueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         modeMetadata: GetByIdModeMetadata,
         arrayProfile: ArrayProfile,
         iterationMetadata: IterationModeMetadata,
@@ -240,7 +241,7 @@ op :async_iterator_open,
         nextValueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         modeMetadata: GetByIdModeMetadata,
         iterationMetadata: IterationModeMetadata,
     },
@@ -314,7 +315,7 @@ op :construct,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op :super_construct,
@@ -326,7 +327,7 @@ op :super_construct,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         cachedCallee: WriteBarrier[JSCell],
     }
 
@@ -338,8 +339,7 @@ op :tail_call,
         argv: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
-        arrayProfile: ArrayProfile,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op :call_direct_eval,
@@ -354,7 +354,7 @@ op :call_direct_eval,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op_group :CreateInternalFieldObjectOp,
@@ -472,8 +472,7 @@ op :call,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
-        arrayProfile: ArrayProfile,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op :call_ignore_result,
@@ -483,8 +482,7 @@ op :call_ignore_result,
         argv: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
-        arrayProfile: ArrayProfile,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 # dst = next.call(iterator [, value]), or -- if next is the fast async generator driver sentinel --
@@ -507,7 +505,7 @@ op :async_iterator_next,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         iterationMetadata: IterationModeMetadata,
     }
 
@@ -552,10 +550,7 @@ op :get_from_scope,
     },
     metadata: {
         getPutInfo: GetPutInfo,
-        _: {
-            watchpointSet: InlineWatchpointSet.*,
-            structureID: WriteBarrierStructureID,
-        },
+        structureID: WriteBarrierStructureID,
         operand: uintptr_t,
     },
     metadata_initializers: {
@@ -1462,6 +1457,7 @@ op :llint_native_construct_trampoline
 op :llint_internal_function_call_trampoline
 op :llint_internal_function_construct_trampoline
 op :llint_default_call_trampoline
+op :llint_unlinked_call_trampoline
 op :llint_virtual_call_trampoline
 op :llint_virtual_construct_trampoline
 op :llint_virtual_tail_call_trampoline

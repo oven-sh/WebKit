@@ -161,6 +161,8 @@ ALWAYS_INLINE size_t UnlinkedMetadataTable::sizeInBytesForGC(MetadataTable& meta
     // Be careful not to touch m_rawBuffer if this metadataTable is not owning it.
     // It is possible that, m_rawBuffer is realloced in the other thread while we are accessing here.
     size_t result = metadataTable.totalSize();
+    if (metadataTable.valueProfilePredictions())
+        result += m_numValueProfiles * sizeof(SpeculatedType);
     if (metadataTable.buffer() == buffer()) {
         ASSERT(m_isLinked);
         if (m_is32Bit)
@@ -177,7 +179,7 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     if (!m_hasMetadata)
         return nullptr;
 
-    unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
+    unsigned valueProfileSize = m_numValueProfiles * sizeof(EncodedJSValue);
     unsigned totalSize;
     std::array<Offset32, s_offsetTableEntries> expanded;
     bool expandsSteps = m_isBackedBySteps && !m_isLinked;
@@ -238,7 +240,7 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
         m_isLinked = false;
         return;
     }
-    MetadataTableMalloc::free(metadataTable.valueProfilesEnd() + -static_cast<ptrdiff_t>(numValueProfiles()));
+    MetadataTableMalloc::free(metadataTable.valueProfileBucketsEnd() + -static_cast<ptrdiff_t>(numValueProfiles()));
 }
 
 } // namespace JSC

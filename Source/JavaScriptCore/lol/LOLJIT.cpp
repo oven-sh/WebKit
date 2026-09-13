@@ -3086,9 +3086,15 @@ void LOLJIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
     if (profiledResolveType == ClosureVar) {
         loadPtrFromMetadata(bytecode, Metadata::offsetOfOperand(), s_scratch);
         loadValue(BaseIndex(scopeGPR, s_scratch, TimesEight, JSLexicalEnvironment::offsetOfVariables()), destGPR);
+    } else if (profiledResolveType == LazyClosureVar) {
+        // No resolve type check, as for ClosureVar: see JIT::emit_op_get_from_scope.
+        loadPtrFromMetadata(bytecode, Metadata::offsetOfOperand(), s_scratch);
+        loadValue(BaseIndex(scopeGPR, s_scratch, TimesEight, JSLexicalEnvironment::offsetOfVariables()), s_scratch);
+        addSlowCase(branchIfEmpty(s_scratch));
+        move(s_scratch, destGPR);
     } else {
         // Inlined fast path for common types.
-        constexpr size_t metadataMinAlignment = alignof(Metadata);
+        constexpr size_t metadataMinAlignment = 4;
         constexpr size_t metadataPointerAlignment = alignof(void*);
         static_assert(!(metadataPointerAlignment % metadataMinAlignment));
         static_assert(!(Metadata::offsetOfGetPutInfo() % metadataMinAlignment));
@@ -3298,9 +3304,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> LOLJIT::generateOpGetFromScopeThunk(VM& vm
             jit.loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
             break;
         case Dynamic:
+        case LazyClosureVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
+        case ResolvedLazyClosureVar:
         case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
@@ -3485,6 +3493,8 @@ void LOLJIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
         case Dynamic:
             addSlowCase(jump());
             break;
+        case LazyClosureVar:
+        case ResolvedLazyClosureVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();
@@ -3824,6 +3834,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> LOLJIT::generateOpResolveScopeThunk(VM& vm
             break;
         case ResolvedClosureVar:
         case ModuleVar:
+        case LazyClosureVar:
+        case ResolvedLazyClosureVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

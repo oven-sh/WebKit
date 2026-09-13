@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ArrayProfile.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
 #include "CallFrameShuffleData.h"
@@ -166,13 +167,18 @@ public:
         return m_hasSeenShouldRepatch;
     }
 
+    // See LazyCallLinkInfo. Nothing may ever change such a CallLinkInfo.
+    bool isSharedByUnlinkedCallSites() const { return m_isSharedByUnlinkedCallSites; }
+
     void clearSeen()
     {
+        RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
         m_hasSeenShouldRepatch = false;
     }
 
     void setSeen()
     {
+        RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
         m_hasSeenShouldRepatch = true;
     }
 
@@ -247,6 +253,11 @@ public:
         return OBJECT_OFFSETOF(CallLinkInfo, m_stub);
     }
 
+    static constexpr ptrdiff_t offsetOfOwner()
+    {
+        return OBJECT_OFFSETOF(CallLinkInfo, m_owner);
+    }
+
     CodeOrigin codeOrigin() const { return m_codeOrigin; }
 
     template<typename Functor>
@@ -292,6 +303,7 @@ protected:
     bool m_hasSeenClosure : 1 { false };
     bool m_clearedByGC : 1 { false };
     bool m_clearedByVirtual : 1 { false };
+    bool m_isSharedByUnlinkedCallSites : 1 { false };
     unsigned m_callType : 4 { CallType::None }; // CallType
     unsigned m_type : 1; // Type
     unsigned m_mode : 3 { static_cast<unsigned>(Mode::Init) }; // Mode
@@ -314,6 +326,101 @@ public:
     }
 
     void initialize(VM&, CodeBlock*, CallType, CodeOrigin);
+    void initializeAsSharedByUnlinkedCallSites(CodePtr<JSEntryPtrTag> unlinkedCallThunk, bool executedOnce);
+    void initializeAsSharedByTailCallSites();
+};
+
+// What a call site in LLInt / Baseline metadata profiles: its call IC and, for op_call / op_call_ignore_result / op_tail_call, the
+// ArrayProfile of |this|.
+struct CallSiteData {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CallSiteData);
+
+    // The VM's two CallSiteDatas for the call sites that have not run twice yet.
+    static CallSiteData* createShared(bool executedOnce);
+    // The one for the tail call sites that have not run yet. Its CallLinkInfo looks unlinked, not polymorphic: see
+    // LazyCallLinkInfo.
+    static CallSiteData* createSharedForTailCalls();
+
+    static constexpr ptrdiff_t offsetOfArrayProfile() { return OBJECT_OFFSETOF(CallSiteData, m_arrayProfile); }
+
+    DataOnlyCallLinkInfo m_callLinkInfo;
+    ArrayProfile m_arrayProfile;
+};
+
+// A call site of LLInt / Baseline code gets its own CallSiteData when it runs for the second time, in either tier, and keeps it
+// for as long as the metadata lives. Until then it points at one of two CallSiteDatas that all such sites of the VM share:
+// their CallLinkInfo looks like a polymorphic call to the unlinked call thunk (LLInt::unlinkedCall(), which ends up in
+// LLInt::handleUnlinkedCall()), has no owner and never changes, and their ArrayProfile is only ever written, never read.
+// The exceptions get theirs when they run for the first time. A tail call, because that slow path finds the site through the
+// caller's frame, which a tail call has given up by then: tail call sites start out with a third shared CallSiteData, whose
+// CallLinkInfo looks unlinked, so that both tiers notice before they give the frame up (prepareCallSiteForTailCall in the
+// LLInt; in Baseline code the path of CallLinkInfo::emitFastPathImpl() that an unlinked call takes anyway). And in Baseline
+// code a direct eval whose callee is not eval, because its slow case makes a virtual call with the site's CallLinkInfo
+// (JIT::compileCallDirectEvalSlowCase()).
+class LazyCallLinkInfo {
+    WTF_MAKE_NONCOPYABLE(LazyCallLinkInfo);
+    friend class LLIntOffsetsExtractor;
+public:
+    LazyCallLinkInfo() = default;
+    ~LazyCallLinkInfo();
+
+    static void initialize(CodePtr<JSEntryPtrTag> unlinkedCallThunk) { s_unlinkedCallThunk = unlinkedCallThunk; }
+    static CodePtr<JSEntryPtrTag> unlinkedCallThunk() { return s_unlinkedCallThunk; }
+
+    void setNeverExecuted(VM&);
+    void setTailCallNotExecuted(VM&);
+    bool hasNeverExecuted(VM&) const;
+    void setExecutedOnce(VM&);
+    bool hasExecutedOnce() const
+    {
+        CallSiteData* data = m_data;
+        return data && data->m_callLinkInfo.isSharedByUnlinkedCallSites() && data->m_callLinkInfo.seenOnce();
+    }
+
+    DataOnlyCallLinkInfo* get() const
+    {
+        if (CallSiteData* data = ownData())
+            return &data->m_callLinkInfo;
+        return nullptr;
+    }
+
+    ArrayProfile* arrayProfile() const
+    {
+        if (CallSiteData* data = ownData())
+            return &data->m_arrayProfile;
+        return nullptr;
+    }
+
+    DataOnlyCallLinkInfo& ensure(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)
+    {
+        if (auto* callLinkInfo = get()) [[likely]]
+            return *callLinkInfo;
+        return ensureSlow(vm, owner, callType, codeOrigin);
+    }
+
+    static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(LazyCallLinkInfo, m_data); }
+
+private:
+    CallSiteData* ownData() const
+    {
+        // The CallLinkInfo of a call site of a CodeBlock has an owner, the ones that such sites share do not.
+        // Compiler threads get here while the mutator gives sites their own (ensureSlow() publishes a finished one after a
+        // storeStoreFence): what is read through the pointer has to be ordered after the pointer.
+        CallSiteData* data;
+        Dependency dependency = Dependency::loadAndFence(&m_data, data);
+        if (!data)
+            return nullptr;
+        data = dependency.consume(data);
+        if (!data->m_callLinkInfo.owner())
+            return nullptr;
+        return data;
+    }
+
+    DataOnlyCallLinkInfo& ensureSlow(VM&, CodeBlock*, CallLinkInfo::CallType, CodeOrigin);
+
+    static CodePtr<JSEntryPtrTag> s_unlinkedCallThunk;
+
+    CallSiteData* m_data { nullptr };
 };
 
 struct UnlinkedCallLinkInfo { };

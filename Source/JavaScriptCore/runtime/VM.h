@@ -109,6 +109,7 @@ struct CheckpointOSRExitSideState;
 class CodeBlock;
 class CodeCache;
 class DecoderStringTable;
+class PersistentBytecodePayloads;
 enum class CodeSpecializationKind : uint8_t;
 class CommonIdentifiers;
 class CompactTDZEnvironmentMap;
@@ -126,6 +127,7 @@ enum Intrinsic : uint8_t;
 class JSDestructibleObjectHeapCellType;
 class JSGlobalObject;
 class JSSentinel;
+struct CallSiteData;
 class JSLock;
 class JSObject;
 struct JSPIContext;
@@ -649,9 +651,10 @@ public:
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
     KeyAtomStringCache keyAtomStringCache;
-    // Bytecode-cache decode: one lazy 65536-entry [c0|c1<<8] -> atom table for the bulk of minified identifiers, shared by every Decoder.
+    // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
+    static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;
     AtomStringImpl** ensureCachedBytecodeTwoCharacterAtoms();
-    // And a direct-mapped cache for 3-character ones (Decoder::atomForInlineString); entries hold a ref, hits verify the characters.
+    // And a direct-mapped cache for 3-character ones and the other 2-character ones (Decoder::atomForInlineString); entries hold a ref, hits verify the characters.
     static constexpr unsigned cachedBytecodeThreeCharacterAtomsLog2Size = 12;
     AtomStringImpl** ensureCachedBytecodeThreeCharacterAtoms();
     Vector<unsigned> stringSplitIndice;
@@ -1012,6 +1015,13 @@ public:
 
     JS_EXPORT_PRIVATE JSLock& apiLock();
     CodeCache* codeCache() LIFETIME_BOUND { return m_codeCache.get(); }
+    PersistentBytecodePayloads& persistentBytecodePayloads();
+    PersistentBytecodePayloads* persistentBytecodePayloadsIfExists() { return m_persistentBytecodePayloads.get(); }
+
+    // See LazyCallLinkInfo.
+    CallSiteData* neverExecutedCallSiteData() { return m_neverExecutedCallSiteData; }
+    CallSiteData* executedOnceCallSiteData() { return m_executedOnceCallSiteData; }
+    CallSiteData* notExecutedTailCallSiteData() { return m_notExecutedTailCallSiteData; }
     IntlCache& intlCache() { return *m_intlCache; }
 #if USE(BUN_JSC_ADDITIONS)
     // Clears both dateCache and intlCache; callable without including IntlCache.h
@@ -1028,8 +1038,33 @@ public:
 
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
+    void deleteAllRegExpCode();
 
-    void shrinkFootprintWhenIdle();
+    enum class ShrinkFootprint : uint8_t {
+        // Only let go of what is cheap to get back: linked code, code that a persistent bytecode cache can hand back,
+        // RegExp code and caches. Code that would have to be parsed again (including the builtins') stays.
+        KeepCodeThatNeedsParsing = 1 << 0,
+        // The caller schedules the full collection that frees what this let go of.
+        LeaveCollectionToCaller = 1 << 1,
+        // KeepCodeThatNeedsParsing, and more: linked code (which ages out on its own once it stops running) and RegExp
+        // code stay, and so does the unlinked code of every function that still has linked code. Only functions that
+        // have not run for a while lose anything, and only what a cache hands back. For an embedder that cannot be sure
+        // the program is at rest.
+        KeepCodeInUse = 1 << 2,
+    };
+    // Right now, or not at all (false: nothing was done) if JS is on the stack or the caller is inside the collector.
+    // With KeepCodeThatNeedsParsing or KeepCodeInUse this blocks until a collection that is under way has finished;
+    // without flags (all code goes, as in deleteAllCode, and is parsed or decoded again when next needed) it does not
+    // wait and returns false instead. A code cache entry for code decoded from a persistent payload goes in every mode:
+    // a later lookup by a SourceProvider that has the payload decodes it again, one that only has equal source text parses.
+    // lastException() is cleared in every mode.
+    JS_EXPORT_PRIVATE bool shrinkFootprintNow(OptionSet<ShrinkFootprint> = { });
+    // As soon as no JS is on the stack.
+    JS_EXPORT_PRIVATE void shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> = { });
+
+    // How often JS was entered from outside (not from JS): unchanged between two looks means none ran in between.
+    unsigned entryCountFromOutside() const { return m_entryCountFromOutside; }
+    void didEnterFromOutside() { ++m_entryCountFromOutside; }
 
     WatchpointSet* ensureWatchpointSetForImpureProperty(UniquedStringImpl*);
     
@@ -1327,7 +1362,12 @@ private:
     DeletePropertyMode m_deletePropertyMode { DeletePropertyMode::Default };
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
-    std::unique_ptr<std::array<AtomStringImpl*, 65536>> m_cachedBytecodeTwoCharacterAtoms;
+    std::unique_ptr<PersistentBytecodePayloads> m_persistentBytecodePayloads;
+    CallSiteData* m_neverExecutedCallSiteData { nullptr };
+    CallSiteData* m_executedOnceCallSiteData { nullptr };
+    CallSiteData* m_notExecutedTailCallSiteData { nullptr };
+    unsigned m_entryCountFromOutside { 0 };
+    std::unique_ptr<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>> m_cachedBytecodeTwoCharacterAtoms;
     std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
@@ -1470,6 +1510,7 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
+JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 } // namespace JSC
 

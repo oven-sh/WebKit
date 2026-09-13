@@ -201,6 +201,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case NewAsyncFunction:
     case NewAsyncGeneratorFunction:
     case NewBoundFunction:
+    case GetLazyClosureVar:
     case NewStringObject:
     case NewInternalFieldObject:
     case NewPromise:

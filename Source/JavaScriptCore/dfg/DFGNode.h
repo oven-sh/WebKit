@@ -1622,7 +1622,7 @@ public:
     
     bool hasScopeOffset()
     {
-        return op() == GetClosureVar || op() == PutClosureVar;
+        return op() == GetClosureVar || op() == GetLazyClosureVar || op() == PutClosureVar;
     }
 
     ScopeOffset scopeOffset()
@@ -2166,6 +2166,7 @@ public:
         case GetByOffset:
         case MultiGetByOffset:
         case GetClosureVar:
+        case GetLazyClosureVar:
         case GetInternalField:
         case GetFromArguments:
         case GetArgument:

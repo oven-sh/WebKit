@@ -199,6 +199,7 @@ if LARGE_TYPED_ARRAYS
 end
 
 const maxFrameExtentForSlowPathCall = constexpr maxFrameExtentForSlowPathCall
+const StackBytesClearedForCallSlowPath = constexpr stackBytesClearedForCallSlowPath
 
 if X86_64 or ARM64 or ARM64E or RISCV64
     const CalleeSaveSpaceAsVirtualRegisters = 4
@@ -680,6 +681,7 @@ const GlobalProperty = constexpr GlobalProperty
 const GlobalVar = constexpr GlobalVar
 const GlobalLexicalVar = constexpr GlobalLexicalVar
 const ClosureVar = constexpr ClosureVar
+const LazyClosureVar = constexpr LazyClosureVar
 const ResolvedClosureVar = constexpr ResolvedClosureVar
 const ModuleVar = constexpr ModuleVar
 const GlobalPropertyWithVarInjectionChecks = constexpr GlobalPropertyWithVarInjectionChecks
@@ -2513,14 +2515,13 @@ end)
 
 
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
-commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, macro (getu, metadata)
-    arrayProfileForCall(OpCall, getu)
+commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCall)
 
-commonCallOp(op_construct, OpConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, macro (getu, metadata)
+commonCallOp(op_construct, OpConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
 end, dispatchAfterRegularCall)
 
-commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, macro (getu, metadata)
+commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
     getu(m_argv, t1)
     lshifti 3, t1
     negp t1
@@ -2536,15 +2537,13 @@ commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invoke
 .done:
 end, dispatchAfterRegularCall)
 
-commonCallOp(op_tail_call, OpTailCall, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, macro (getu, metadata)
-    arrayProfileForCall(OpTailCall, getu)
+commonCallOp(op_tail_call, OpTailCall, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, prepareCallSiteForTailCall, macro (getu, metadata)
     checkSwitchToJITForEpilogue()
     # reload metadata since checkSwitchToJITForEpilogue() might have trashed t5
     metadata(t5, t0)
 end, dispatchAfterTailCall)
 
-commonCallOp(op_call_ignore_result, OpCallIgnoreResult, prepareForRegularCall, invokeForRegularCallIgnoreResult, prepareForSlowRegularCall, macro (getu, metadata)
-    arrayProfileForCall(OpCallIgnoreResult, getu)
+commonCallOp(op_call_ignore_result, OpCallIgnoreResult, prepareForRegularCall, invokeForRegularCallIgnoreResult, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCallIgnoreResult)
 
 macro branchIfException(exceptionTarget)
@@ -2696,8 +2695,37 @@ end)
 
 # t0 is callee
 # t2 is CallLinkInfo*
+# The C++ function's frame goes where the last callee at this depth had its own, and clears only what is below itself: see
+# stackBytesClearedForCallSlowPath.
 macro linkFor(function)
     functionPrologue()
+    if not C_LOOP
+        # Nothing is written below the stack pointer: it moves down over the window first (a multiple of 16 bytes).
+        move sp, t5
+        subp StackBytesClearedForCallSlowPath, sp
+        move sp, t3
+        move 0, t4
+    .clearStackForCallSlowPath:
+        # 64 bytes at a time: the window is a multiple of that.
+        if ARM64 or ARM64E
+            storepairq t4, t4, 0[t3]
+            storepairq t4, t4, 16[t3]
+            storepairq t4, t4, 32[t3]
+            storepairq t4, t4, 48[t3]
+        else
+            storeq t4, 0[t3]
+            storeq t4, 8[t3]
+            storeq t4, 16[t3]
+            storeq t4, 24[t3]
+            storeq t4, 32[t3]
+            storeq t4, 40[t3]
+            storeq t4, 48[t3]
+            storeq t4, 56[t3]
+        end
+        addp 64, t3
+        bpb t3, t5, .clearStackForCallSlowPath
+        move t5, sp
+    end
     move t2, a1
     move cfr, a0
     cCall2(function)
@@ -2737,6 +2765,12 @@ end
 # t2 is CallLinkInfo*
 op(llint_default_call_trampoline, macro ()
     linkFor(_llint_default_call)
+end)
+
+# t0 is callee
+# t2 is CallLinkInfo*
+op(llint_unlinked_call_trampoline, macro ()
+    linkFor(_llint_unlinked_call)
 end)
 
 # t0 is callee

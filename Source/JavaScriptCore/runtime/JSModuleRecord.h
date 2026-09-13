@@ -29,9 +29,15 @@
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ModuleProgramExecutable.h>
 #include <JavaScriptCore/ParserModes.h>
+#include <JavaScriptCore/ScopeOffset.h>
 #include <JavaScriptCore/SourceCode.h>
 
 namespace JSC {
+
+class JSModuleEnvironment;
+class ModuleFunctionDeclarationSlots;
+class UnlinkedFunctionExecutable;
+class UnlinkedModuleProgramCodeBlock;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
@@ -76,6 +82,18 @@ public:
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
 
+    // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
+    // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.
+    void setFunctionDeclarationSlots(VM&, ModuleProgramExecutable*, UnlinkedModuleProgramCodeBlock*, bool leftUninstantiated);
+    // Whether readers of this module environment slot have to expect an uninstantiated function declaration. This only
+    // depends on the module's code (and the option), never on what has been instantiated so far: code that is shared
+    // between the CodeBlocks of one UnlinkedCodeBlock is specialized on the answer.
+    bool isFunctionDeclarationSlot(ScopeOffset) const;
+    // The slot's value, after instantiating its function declaration if that is what the empty slot stands for. Still
+    // empty if it is not (a binding in its TDZ).
+    JSValue readFunctionDeclarationSlot(VM&, JSModuleEnvironment*, ScopeOffset);
+    unsigned numberOfUninstantiatedFunctionDeclarations() const { return m_uninstantiatedFunctionDeclarations ? m_uninstantiatedFunctionDeclarations->remaining : 0; }
+
     // Local names of the import entries that bind a single export (namespace imports
     // are variables of this module's environment), sorted: the environment has one
     // import slot per name in this order (JSModuleEnvironment::importSlot), so the order
@@ -95,6 +113,15 @@ private:
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
     std::optional<Vector<Identifier>> m_importSlotNames;
     CodeFeatures m_features;
+
+    struct UninstantiatedFunctionDeclarations {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);
+        WriteBarrier<ModuleProgramExecutable> executable;
+        WriteBarrier<UnlinkedModuleProgramCodeBlock> unlinkedCodeBlock; // functionDecl(i) belongs to slot i of m_functionDeclarationSlots; null when the slots can decode the declarations without it
+        unsigned remaining { 0 }; // released when it reaches zero; a slot that was assigned to before it was read keeps it above
+    };
+    RefPtr<ModuleFunctionDeclarationSlots> m_functionDeclarationSlots;
+    std::unique_ptr<UninstantiatedFunctionDeclarations> m_uninstantiatedFunctionDeclarations; // released under cellLock()
 };
 
 } // namespace JSC

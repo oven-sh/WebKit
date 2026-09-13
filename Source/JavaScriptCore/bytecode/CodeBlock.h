@@ -59,6 +59,8 @@ class BaselineJITCode;
 class BaselineJITData;
 class BinaryArithProfile;
 class BytecodeLivenessAnalysis;
+class DataOnlyCallLinkInfo;
+class LazyCallLinkInfo;
 class CallLinkInfoBase;
 class CodeBlockSet;
 class JITCodeMap;
@@ -435,15 +437,25 @@ public:
 
     FixedVector<ArgumentValueProfile>& argumentValueProfiles() LIFETIME_BOUND { return m_argumentValueProfiles; }
 
-    ValueProfile& valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
+    ValueProfileRef valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
 
-    ValueProfile* NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
-    ValueProfile& NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
     SpeculatedType valueProfilePredictionForBytecodeIndex(BytecodeIndex, JSValue* specFailValue = nullptr);
 
     template<typename Functor> void forEachValueProfile(const Functor&);
     template<typename Functor> void forEachArrayAllocationProfile(const Functor&);
     template<typename Functor> void forEachObjectAllocationProfile(const Functor&);
+    // For the instructions of FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO; the first two crash for any other. The last one is
+    // safe to call from a compiler thread.
+    // What the call sites of the MetadataTable own, if this is the CodeBlock the table was linked for: optimized CodeBlocks share
+    // the table of the one they replace.
+    size_t sizeOfOwnCallSiteDatas() const { return JITCode::couldBeInterpreted(jitType()) ? m_metadata->sizeOfOwnCallSiteDatas() : 0; }
+
+    LazyCallLinkInfo& lazyCallLinkInfoAt(const JSInstruction*);
+    DataOnlyCallLinkInfo& ensureCallLinkInfoAt(const JSInstruction*);
+    DataOnlyCallLinkInfo* callLinkInfoIfExistsAt(BytecodeIndex);
+
     template<typename Functor> void forEachLLIntOrBaselineCallLinkInfo(const Functor&);
 
     BinaryArithProfile* NODELETE binaryArithProfileForBytecodeIndex(BytecodeIndex);
@@ -772,11 +784,15 @@ public:
 #endif
 
     bool shouldOptimizeNowFromBaseline();
-    void updateAllNonLazyValueProfilePredictions();
+    // What to do with the samples in the buckets of the metadata table's value profiles: fold them into the predictions, or, for
+    // code that keepsValueProfileSamplesInBuckets(), leave them alone (Keep), except for the ones that just died (KeepIfLive).
+    enum class ValueProfileSamples : uint8_t { Record, Keep, KeepIfLive };
+    bool keepsValueProfileSamplesInBuckets();
+    void updateAllNonLazyValueProfilePredictions(ValueProfileSamples = ValueProfileSamples::Record);
     void updateAllLazyValueProfilePredictions();
     void updateAllArrayProfilePredictions();
     void updateAllArrayAllocationProfilePredictions();
-    void updateAllPredictions();
+    void updateAllPredictions(ValueProfileSamples = ValueProfileSamples::Record);
 
     unsigned frameRegisterCount();
     int stackPointerOffset();
@@ -966,7 +982,7 @@ private:
     
     void noticeIncomingCall(JSCell* caller);
 
-    void updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles);
+    void updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles, ValueProfileSamples = ValueProfileSamples::Record);
 
     Vector<unsigned> setConstantRegisters(const FixedVector<WriteBarrier<Unknown>>& constants, const FixedVector<SourceCodeRepresentation>& constantsSourceCodeRepresentation);
     void initializeTemplateObjects(ScriptExecutable* topLevelExecutable, const Vector<unsigned>& templateObjectIndices);
@@ -1086,6 +1102,7 @@ private:
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);
     FunctionExecutable* materializeFunctionExecutable(WriteBarrier<FunctionExecutable>&, UnlinkedFunctionExecutable*);
+    FunctionExecutable* linkFunctionExpr(unsigned index, UnlinkedFunctionExecutable*);
 
     WriteBarrier<CodeBlock> m_alternative;
 

@@ -54,6 +54,8 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxyInlines.h"
+#include "JSModuleNamespaceObject.h"
+#include "JSModuleRecord.h"
 #include "JSONObject.h"
 #include "JSModuleLoader.h"
 #include "JSLexicalEnvironmentInlines.h"
@@ -2178,6 +2180,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
 static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
+static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2244,6 +2247,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
@@ -2279,6 +2284,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionIsMemoryLimited);
+static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
@@ -2294,6 +2300,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
+static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
 #if ENABLE(JIT)
 static JSC_DECLARE_HOST_FUNCTION(functionJITSizeStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpJITSizeStatistics);
@@ -2891,6 +2898,19 @@ static CodeBlock* codeBlockFromArg(JSGlobalObject* globalObject, CallFrame* call
     else
         dataLog("Invalid codeBlock: ", value, "\n");
     return nullptr;
+}
+
+// Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
+// How many call sites of the function's LLInt / Baseline code own a CallLinkInfo (LazyCallLinkInfo): the ones that ran twice,
+// and the tail calls that ran. Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
+    return JSValue::encode(jsNumber(metadataTable ? metadataTable->numberOfOwnCallSiteDatas() : 0));
 }
 
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
@@ -3934,6 +3954,37 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
+// shrinkFootprintWhenIdle(keepCodeThatNeedsParsing = true, keepCodeInUse = false): the embedder's deep-idle step, without
+// the collection, once this call has returned to the event loop.
+JSC_DEFINE_HOST_FUNCTION(functionShrinkFootprintWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<VM::ShrinkFootprint> mode { VM::ShrinkFootprint::LeaveCollectionToCaller };
+    if (!callFrame->argumentCount() || callFrame->argument(0).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeThatNeedsParsing);
+    if (callFrame->argument(1).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeInUse);
+    vm->shrinkFootprintWhenIdle(mode);
+    return JSValue::encode(jsUndefined());
+}
+
+// returnCodeToBytecodeCacheWhenIdle(onlyWithoutLinkedCode = false): Heap::deleteAllUnlinkedCodeBlocks for the code that can
+// be decoded again from a persistent bytecode cache and nothing else, the way an embedder can call it directly: linked
+// code stays, and so do the compiler threads' plans until the call itself finishes them.
+JSC_DEFINE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<UnlinkedCodeToDelete> which { UnlinkedCodeToDelete::RecoverableFromCache };
+    if (callFrame->argument(0).toBoolean(globalObject))
+        which.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+    vm->whenIdle([=] () {
+        vm->heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, which);
+    });
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -4496,6 +4547,20 @@ JSC_DEFINE_HOST_FUNCTION(functionIsMemoryLimited, (JSGlobalObject*, CallFrame*))
 #endif
 }
 
+// Returns how many function declarations of a module have not been instantiated yet (Options::useLazyModuleFunctionDeclarations()).
+// Usage: $vm.uninstantiatedFunctionDeclarations(moduleNamespaceObject)
+JSC_DEFINE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* namespaceObject = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    if (!namespaceObject)
+        return JSValue::encode(jsUndefined());
+    auto* moduleRecord = dynamicDowncast<JSModuleRecord>(namespaceObject->moduleRecord());
+    if (!moduleRecord)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(moduleRecord->numberOfUninstantiatedFunctionDeclarations()));
+}
+
 // Returns true if JIT is enabled.
 // Usage: $vm.useJIT()
 JSC_DEFINE_HOST_FUNCTION(functionUseJIT, (JSGlobalObject*, CallFrame*))
@@ -4640,6 +4705,12 @@ JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithScopeExtension, (JSGlobalObject* gl
         return throwVMException(globalObject, scope, exception);
 
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCodeBlockCensus, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(VMInspector::codeBlockCensus(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionHeapExtraMemorySize, (JSGlobalObject* globalObject, CallFrame*))
@@ -5631,6 +5702,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
+    addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "dumpBytecodeFor"_s, functionDumpBytecodeFor, 1);
@@ -5717,6 +5789,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
@@ -5763,6 +5837,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asanEnabled"_s, functionAsanEnabled, 0);
 
     addFunction(vm, alwaysAllow, "isMemoryLimited"_s, functionIsMemoryLimited, 0);
+    addFunction(vm, alwaysAllow, "uninstantiatedFunctionDeclarations"_s, functionUninstantiatedFunctionDeclarations, 1);
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
@@ -5783,6 +5858,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "evaluateWithScopeExtension"_s, functionEvaluateWithScopeExtension, 1);
 
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
+    addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 
 #if ENABLE(JIT)
     addFunction(vm, allowIfNotFuzz, "jitSizeStatistics"_s, functionJITSizeStatistics, 0);

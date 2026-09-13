@@ -105,6 +105,14 @@ public:
 
     bool currentThreadIsHoldingLock() { return m_hasOwnerThread.load(std::memory_order_acquire) && m_ownerThread.get() == &Thread::currentSingleton(); }
 
+    // For code that knows it runs on the thread that holds the lock (it is in the middle of running JS) and wants that
+    // thread without looking it up.
+    Thread& ownerThreadWhileHoldingLock()
+    {
+        ASSERT(currentThreadIsHoldingLock());
+        return *m_ownerThread;
+    }
+
     void NODELETE willDestroyVM(VM*);
 
     class DropAllLocks {

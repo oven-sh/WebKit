@@ -168,13 +168,30 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
     m_atomsByOrdinal[ordinal] = &atom;
 }
 
-// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters) a small direct-mapped cache in front of the atom table.
+// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 64x64 table on the VM, indexed by identifier character class (shared by every Decoder, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters), and length 2 with a character outside those classes, a small direct-mapped cache in front of the atom table.
 static std::span<const Latin1Character> inlineStringCharacters(std::span<const uint8_t, 4> slot)
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
     unsigned length = (slot[0] >> 2) & 3;
     return slot.subspan(1).first(length);
 }
+
+// $ 0-9 A-Z _ a-z, in that order; 0xff for every other character.
+static constexpr std::array<uint8_t, 256> identifierCharacterClasses = [] {
+    std::array<uint8_t, 256> classes;
+    classes.fill(0xff);
+    uint8_t next = 0;
+    classes['$'] = next++;
+    for (unsigned character = '0'; character <= '9'; ++character)
+        classes[character] = next++;
+    for (unsigned character = 'A'; character <= 'Z'; ++character)
+        classes[character] = next++;
+    classes['_'] = next++;
+    for (unsigned character = 'a'; character <= 'z'; ++character)
+        classes[character] = next++;
+    return classes;
+}();
+static_assert(identifierCharacterClasses['z'] == 63 && VM::cachedBytecodeTwoCharacterAtomsSize == 64 * 64);
 
 Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)
 {
@@ -183,21 +200,25 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
     if (length == 1)
         return vm.smallStrings.singleCharacterStringRep(characters[0]);
     if (length == 2) {
-        AtomStringImpl*& entry = vm.ensureCachedBytecodeTwoCharacterAtoms()[characters[0] | characters[1] << 8];
-        if (entry) [[likely]]
-            return *entry;
-        Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
-        atom->ref();
-        entry = atom.ptr();
-        return atom;
+        unsigned first = identifierCharacterClasses[characters[0]];
+        unsigned second = identifierCharacterClasses[characters[1]];
+        if ((first | second) < 64) [[likely]] {
+            AtomStringImpl*& entry = vm.ensureCachedBytecodeTwoCharacterAtoms()[first << 6 | second];
+            if (entry) [[likely]]
+                return *entry;
+            Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
+            atom->ref();
+            entry = atom.ptr();
+            return atom;
+        }
     }
 #if USE(BUN_JSC_ADDITIONS)
     if (Options::useFastCachedAtoms()) {
-        uint32_t packed = characters[0] | characters[1] << 8 | characters[2] << 16;
+        uint32_t packed = characters[0] | characters[1] << 8 | (length == 3 ? characters[2] << 16 : 0xff0000);
         AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
-        if (entry && entry->length() == 3 && entry->is8Bit()) [[likely]] {
+        if (entry && entry->length() == length && entry->is8Bit()) [[likely]] {
             auto cached = entry->span8();
-            if (cached[0] == characters[0] && cached[1] == characters[1] && cached[2] == characters[2]) [[likely]]
+            if (cached[0] == characters[0] && cached[1] == characters[1] && (length == 2 || cached[2] == characters[2])) [[likely]]
                 return *entry;
         }
         Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
@@ -1067,6 +1088,10 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
 
 Decoder::~Decoder()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_persistentPayloadIndex)
+        m_vm.persistentBytecodePayloads().willDestroyDecoder(m_persistentPayloadIndex, *this);
+#endif
     for (AtomStringImpl* atom : m_atomsByOrdinal) {
         if (atom)
             atom->deref();
@@ -1075,9 +1100,21 @@ Decoder::~Decoder()
         finalizer();
 }
 
-Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
+Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider, RecoverableCode recoverableCode)
 {
-    return adoptRef(*new Decoder(vm, WTF::move(cachedBytecode), WTF::move(provider)));
+    Ref decoder = adoptRef(*new Decoder(vm, WTF::move(cachedBytecode), WTF::move(provider)));
+#if USE(BUN_JSC_ADDITIONS)
+    // Not without the lean decoder: the other one remembers the cells it decoded by their record's offset and would hand
+    // out a dropped code block again.
+    if (recoverableCode == RecoverableCode::Yes && Options::useCodeRecoveryFromBytecodeCache() && Options::useLeanBytecodeCacheDecoder() && decoder->m_provider && decoder->canBorrowPayload()) {
+        auto& payloads = vm.persistentBytecodePayloads();
+        if (uint16_t index = payloads.indexFor(decoder->m_cachedBytecode.get(), *decoder->m_provider)) {
+            decoder->m_persistentPayloadIndex = index;
+            payloads.didCreateDecoder(index, decoder.get());
+        }
+    }
+#endif
+    return decoder;
 }
 
 size_t Decoder::size() const
@@ -2277,6 +2314,7 @@ public:
     void encode(Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
     {
         m_exceptionHandlers.encode(encoder, rareData.m_exceptionHandlers);
+        m_outOfLineJumpTargets.encode(encoder, rareData.m_outOfLineJumpTargets);
         m_unlinkedSwitchJumpTables.encode(encoder, rareData.m_unlinkedSwitchJumpTables);
         m_unlinkedStringSwitchJumpTables.encode(encoder, rareData.m_unlinkedStringSwitchJumpTables);
         m_typeProfilerInfoMap.encode(encoder, rareData.m_typeProfilerInfoMap);
@@ -2291,6 +2329,7 @@ public:
     {
         UnlinkedCodeBlock::RareData* rareData = new UnlinkedCodeBlock::RareData { };
         m_exceptionHandlers.decode(decoder, rareData->m_exceptionHandlers);
+        m_outOfLineJumpTargets.decode(decoder, rareData->m_outOfLineJumpTargets);
         m_unlinkedSwitchJumpTables.decode(decoder, rareData->m_unlinkedSwitchJumpTables);
         m_unlinkedStringSwitchJumpTables.decode(decoder, rareData->m_unlinkedStringSwitchJumpTables);
         m_typeProfilerInfoMap.decode(decoder, rareData->m_typeProfilerInfoMap);
@@ -2304,6 +2343,7 @@ public:
 
 private:
     CachedVector<CachedHandlerInfo> m_exceptionHandlers;
+    CachedHashMap<JSInstructionStream::Offset, int> m_outOfLineJumpTargets;
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
@@ -3719,15 +3759,13 @@ struct CachedCodeBlockExtras {
     void encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
     {
         rareData.encode(encoder, codeBlock.m_rareData.get());
-        outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
     }
     static bool isNeeded(const UnlinkedCodeBlock& codeBlock)
     {
-        return codeBlock.m_rareData || !codeBlock.m_outOfLineJumpTargets.isEmpty();
+        return !!codeBlock.m_rareData;
     }
 
     CachedPtr<CachedCodeBlockRareData> rareData;
-    CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
 };
 
 // A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, child slots,
@@ -3763,7 +3801,6 @@ public:
         int numVars;
         int numCalleeLocals;
         int numParameters;
-        unsigned numValueProfiles;
         unsigned numArrayProfiles;
         unsigned numBinaryArithProfiles;
         unsigned numUnaryArithProfiles;
@@ -4011,6 +4048,7 @@ class CachedModuleCodeBlock : public CachedGlobalCodeBlock<UnlinkedModuleProgram
 
 public:
     UnlinkedModuleProgramCodeBlock* decode(Decoder&) const;
+    unsigned numberOfFunctionDeclsToLeaveInPayload(Decoder&, const Tail&) const;
 
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedModuleProgramCodeBlock& codeBlock)
@@ -4019,6 +4057,7 @@ private:
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
         m_numberOfHeapAllocatedFunctionDecls = codeBlock.m_numberOfHeapAllocatedFunctionDecls;
+        m_heapAllocatedFunctionDeclScopeOffsets.encode(encoder, codeBlock.m_heapAllocatedFunctionDeclSlots ? codeBlock.m_heapAllocatedFunctionDeclSlots->offsets() : FixedVector<uint32_t>());
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
     {
@@ -4026,11 +4065,15 @@ private:
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = m_moduleEnvironmentSymbolTableConstantRegisterOffset;
         codeBlock.m_numberOfHeapAllocatedFunctionDecls = m_numberOfHeapAllocatedFunctionDecls;
+        FixedVector<uint32_t> heapAllocatedFunctionDeclScopeOffsets;
+        m_heapAllocatedFunctionDeclScopeOffsets.decode(decoder, heapAllocatedFunctionDeclScopeOffsets);
+        codeBlock.m_heapAllocatedFunctionDeclSlots = ModuleFunctionDeclarationSlots::create(WTF::move(heapAllocatedFunctionDeclScopeOffsets));
     }
 
     CachedVariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
     unsigned m_numberOfHeapAllocatedFunctionDecls; // cachedTypesFormatRevision 2
+    CachedVector<uint32_t> m_heapAllocatedFunctionDeclScopeOffsets;
 };
 
 class CachedEvalCodeBlock : public CachedGlobalCodeBlock<UnlinkedEvalCodeBlock> {
@@ -4148,11 +4191,12 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_hasCheckpoints = scalars.hasCheckpoints;
     m_parseMode = scalars.parseMode;
     m_codeGenerationMode = scalars.codeGenerationMode;
-    m_valueProfiles = FixedVector<UnlinkedValueProfile>(scalars.numValueProfiles);
-    m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(scalars.numArrayProfiles);
+    m_numberOfArrayProfiles = scalars.numArrayProfiles;
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(scalars.numBinaryArithProfiles);
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(scalars.numUnaryArithProfiles);
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
+    if (!Options::useLazyUnlinkedValueAndArrayProfiles())
+        ensureValueAndArrayProfiles();
 }
 
 template<typename CodeBlockType>
@@ -4195,11 +4239,56 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     } else
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    if (auto* e = extras(layout))
-        e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
     decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+    unsigned firstFunctionDeclToDecode = 0;
+    if constexpr (std::is_same_v<CodeBlockType, UnlinkedModuleProgramCodeBlock>) {
+        // The first ones stay in the payload until UnlinkedCodeBlock::functionDecl() asks: see CachedModuleCodeBlock::decode().
+        firstFunctionDeclToDecode = static_cast<const CachedModuleCodeBlock*>(this)->numberOfFunctionDeclsToLeaveInPayload(decoder, tail);
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    // A block decoded from this record before, and dropped since, left its children behind: the ones still alive are used
+    // again (see PersistentBytecodePayloads::rememberChildExecutables).
+    FixedVector<Weak<UnlinkedFunctionExecutable>> remembered;
+    uint16_t payloadIndex = decoder.persistentPayloadIndex();
+    uint32_t recordOffset = payloadIndex ? static_cast<uint32_t>(decoder.offsetOf(this)) : 0;
+    PersistentBytecodePayloads* payloads = payloadIndex ? &decoder.vm().persistentBytecodePayloads() : nullptr;
+    if (payloads)
+        remembered = payloads->takeChildExecutables(payloadIndex, recordOffset);
+    if (remembered.size() && remembered.size() == layout.functionDecls.count + layout.functionExprs.count) {
+        auto decodeChildren = [&](const Array& array, auto& out, unsigned firstPosition, unsigned firstToDecode) {
+            if (!array.count)
+                return;
+            out = std::remove_reference_t<decltype(out)>(array.count);
+            auto* slots = at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, array);
+            for (unsigned i = 0; i < array.count; ++i) {
+                if (UnlinkedFunctionExecutable* existing = remembered[firstPosition + i].get())
+                    out[i].set(decoder.vm(), &codeBlock, existing);
+                else if (i >= firstToDecode)
+                    ::JSC::decode(decoder, slots[i], out[i], &codeBlock);
+            }
+        };
+        decodeChildren(layout.functionDecls, codeBlock.m_functionDecls, 0, firstFunctionDeclToDecode);
+        decodeChildren(layout.functionExprs, codeBlock.m_functionExprs, layout.functionDecls.count, 0);
+    } else
+#endif
+    {
+        if (firstFunctionDeclToDecode) {
+            unsigned count = layout.functionDecls.count;
+            codeBlock.m_functionDecls = UnlinkedCodeBlock::FunctionExpressionVector(count);
+            auto* buffer = at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls);
+            for (unsigned i = firstFunctionDeclToDecode; i < count; ++i)
+                ::JSC::decode(decoder, buffer[i], codeBlock.m_functionDecls[i], &codeBlock);
+        } else
+            decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
+        decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    if (payloads) {
+        codeBlock.m_cachedPayloadIndex = payloadIndex;
+        codeBlock.m_cachedRecordOffset = recordOffset;
+        payloads->retain(payloadIndex); // ~UnlinkedCodeBlock releases
+    }
+#endif
 }
 
 UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
@@ -4227,7 +4316,31 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
     decodeOwnMembers(decoder, *codeBlock);
+    if (numberOfFunctionDeclsToLeaveInPayload(decoder, tail))
+        codeBlock->m_heapAllocatedFunctionDeclSlots->setDecodeSource(Ref { decoder }, at<CachedWriteBarrier<CachedFunctionExecutable>>(tail.layout, tail.layout.functionDecls));
     return codeBlock;
+}
+
+// The function declarations InitializeEnvironment instantiates: with Options::useLazyModuleFunctionDeclarations() most
+// are never instantiated, so their UnlinkedFunctionExecutables need not be made either.
+unsigned CachedModuleCodeBlock::numberOfFunctionDeclsToLeaveInPayload(Decoder& decoder, const Tail& tail) const
+{
+    if (!Options::useLazyModuleFunctionDeclarations() || !decoder.canDeferIntoPayload())
+        return 0;
+    unsigned count = m_numberOfHeapAllocatedFunctionDecls;
+    if (count > tail.layout.functionDecls.count || count != m_heapAllocatedFunctionDeclScopeOffsets.size())
+        return 0;
+    auto* records = at<CachedWriteBarrier<CachedFunctionExecutable>>(tail.layout, tail.layout.functionDecls);
+    if (!decoder.payloadContains(records, sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count))
+        return 0;
+    return count;
+}
+
+UnlinkedFunctionExecutable* ModuleFunctionDeclarationSlots::decode(VM&, unsigned index) const
+{
+    RELEASE_ASSERT(m_cachedFunctionDecls && index < size());
+    auto* records = static_cast<const CachedWriteBarrier<CachedFunctionExecutable>*>(m_cachedFunctionDecls);
+    return records[index].ptr().decode(*m_decoder);
 }
 
 UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
@@ -4361,9 +4474,10 @@ uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& e
         header |= HasTDZ;
     if (executable.m_members.live().rareData)
         header |= HasRareData;
-    if (executable.m_unlinkedCodeBlockForCall)
+    // While m_isCached those two slots hold a Decoder and record offsets, not code blocks.
+    if (!executable.m_isCached && executable.m_unlinkedCodeBlockForCall)
         header |= HasCallSlot;
-    if (executable.m_unlinkedCodeBlockForConstruct)
+    if (!executable.m_isCached && executable.m_unlinkedCodeBlockForConstruct)
         header |= HasConstructSlot;
     if (encoder->updatable())
         header |= Updatable | HasCallSlot | HasConstructSlot;
@@ -4567,10 +4681,13 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     if (tdz)
         tdz->encode(encoder, executable.m_members.live().parentScopeTDZVariables);
 
-    if (metadata && (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct))
+    WriteBarrier<UnlinkedFunctionCodeBlock> noCodeBlock;
+    const auto& forCall = executable.m_isCached ? noCodeBlock : executable.m_unlinkedCodeBlockForCall;
+    const auto& forConstruct = executable.m_isCached ? noCodeBlock : executable.m_unlinkedCodeBlockForConstruct;
+    if (metadata && (!forCall || !forConstruct))
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this)); // CachedBytecode::addFunctionUpdate patches the Updatable layout's slots
 
-    encoder.deferBody([call, construct, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
+    encoder.deferBody([call, construct, &encoder, forCall, forConstruct] {
         if (call)
             call->encode(encoder, forCall);
         if (construct)
@@ -4719,8 +4836,7 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
     writer.i32(codeBlock.m_numVars);
     writer.i32(codeBlock.m_numCalleeLocals);
     writer.i32(codeBlock.m_numParameters);
-    writer.u32(codeBlock.m_valueProfiles.size());
-    writer.u32(codeBlock.m_arrayProfiles.size());
+    writer.u32(codeBlock.m_numberOfArrayProfiles);
     writer.u32(codeBlock.m_binaryArithProfiles.size());
     writer.u32(codeBlock.m_unaryArithProfiles.size());
 }
@@ -4796,7 +4912,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.numVars = reader.i32();
     s.numCalleeLocals = reader.i32();
     s.numParameters = reader.i32();
-    s.numValueProfiles = reader.u32();
     s.numArrayProfiles = reader.u32();
     s.numBinaryArithProfiles = reader.u32();
     s.numUnaryArithProfiles = reader.u32();
@@ -4886,6 +5001,8 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         for (unsigned i = 0; i < slots.count; ++i)
             slot[i].encode(encoder, executables[i]);
     };
+    for (unsigned i = 0; i < codeBlock.m_functionDecls.size(); ++i)
+        const_cast<UnlinkedCodeBlock&>(static_cast<const UnlinkedCodeBlock&>(codeBlock)).functionDecl(i); // a module's may still be in the payload it was decoded from
     encodeChildren(layout.functionDecls, codeBlock.m_functionDecls);
     encodeChildren(layout.functionExprs, codeBlock.m_functionExprs);
     return record;
@@ -4930,8 +5047,9 @@ protected:
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
-    // @importModule.
-    static constexpr uint32_t cachedTypesFormatRevision = 5;
+    // @importModule. 6: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number
+    // of value profiles; LazyClosureVar resolve types, module function slot table.
+    static constexpr uint32_t cachedTypesFormatRevision = 6;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5173,7 +5291,7 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
-UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)
+UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode)
 {
     MonotonicTime before;
     size_t cachedBytecodeSize = cachedBytecode->size();
@@ -5183,7 +5301,9 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (cachedBytecodeSize < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
         return nullptr;
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
-    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider());
+    // (A payload that turns out not to be for this key leaves nothing behind: its slot in VM::persistentBytecodePayloads()
+    // goes with this Decoder and the code blocks it made.)
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider(), recoverableCode);
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     {
         DeferGC deferGC(vm);
@@ -5231,8 +5351,8 @@ static_assert(sizeof(CachedPrivateNameEnvironment) == 8);
 static_assert(sizeof(CachedBigInt) == 12);
 static_assert(sizeof(CachedBitVector) == 8);
 static_assert(sizeof(CachedClassElementDefinition) == 24);
-static_assert(sizeof(CachedCodeBlockExtras) == 12);
-static_assert(sizeof(CachedCodeBlockRareData) == 60);
+static_assert(sizeof(CachedCodeBlockExtras) == 4);
+static_assert(sizeof(CachedCodeBlockRareData) == 68);
 static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
 static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
 static_assert(sizeof(CachedEvalCodeBlock) == 40);
@@ -5246,7 +5366,7 @@ static_assert(sizeof(CachedImmutableButterfly) == 12);
 static_assert(sizeof(CachedJSTextPosition) == 12);
 static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
-static_assert(sizeof(CachedModuleCodeBlock) == 48);
+static_assert(sizeof(CachedModuleCodeBlock) == 56);
 static_assert(sizeof(CachedProgramCodeBlock) == 56);
 static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);
@@ -5276,6 +5396,14 @@ void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOf
     ASSERT(decoder.vm().heap.isDeferred());
     auto* cachedCodeBlock = static_cast<const CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock>*>(decoder.ptrForOffsetFromBase(cachedFunctionCodeBlockOffset));
     cachedCodeBlock->decode(decoder, codeBlock, owner);
+}
+
+void decodeFunctionCodeBlockFromRecord(Decoder& decoder, uint32_t recordOffset, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
+{
+    ASSERT(decoder.vm().heap.isDeferred());
+    auto* record = static_cast<const CachedFunctionCodeBlock*>(decoder.ptrForOffsetFromBase(recordOffset));
+    if (UnlinkedFunctionCodeBlock* decoded = record->decode(decoder))
+        codeBlock.set(decoder.vm(), owner, decoded);
 }
 
 void decodeSymbolTableEntries(Decoder& decoder, const CachedSymbolTable& cachedSymbolTable, SymbolTable& symbolTable, bool scopePartOnly)

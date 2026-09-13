@@ -39,6 +39,9 @@ namespace LLInt {
 extern "C" UGPRPair SYSV_ABI llint_trace_operand(CallFrame*, const JSInstruction*, int fromWhere, int operand) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_trace_value(CallFrame*, const JSInstruction*, int fromWhere, VirtualRegister operand) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
+// What llint_unlinked_call() and operationUnlinkedCall() do: returns where the call goes, unless it threw.
+void* handleUnlinkedCall(VM&, CallFrame* calleeFrame);
 extern "C" UGPRPair SYSV_ABI llint_virtual_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_polymorphic_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" void SYSV_ABI llint_write_barrier_slow(CallFrame*, JSCell*) REFERENCED_FROM_ASM WTF_INTERNAL;
@@ -134,6 +137,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_new_async_func_exp);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_set_function_name);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_async_iterator_open_get_next);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_async_iterator_next_with_driver);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_ensure_call_link_info);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_size_frame_for_varargs);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_call_varargs);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_tail_call_varargs);

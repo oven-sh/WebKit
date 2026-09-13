@@ -26,9 +26,18 @@
 #include "config.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 
+#include "CachedTypes.h"
 #include "JSCellInlines.h"
 
 namespace JSC {
+
+ModuleFunctionDeclarationSlots::~ModuleFunctionDeclarationSlots() = default;
+
+void ModuleFunctionDeclarationSlots::setDecodeSource(Ref<Decoder>&& decoder, const void* cachedFunctionDecls)
+{
+    m_decoder = WTF::move(decoder);
+    m_cachedFunctionDecls = cachedFunctionDecls;
+}
 
 const ClassInfo UnlinkedModuleProgramCodeBlock::s_info = { "UnlinkedModuleProgramCodeBlock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(UnlinkedModuleProgramCodeBlock) };
 

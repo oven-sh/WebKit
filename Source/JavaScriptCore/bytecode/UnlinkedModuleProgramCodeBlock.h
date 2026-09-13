@@ -25,12 +25,56 @@
 
 #pragma once
 
+#include "ScopeOffset.h"
 #include "UnlinkedGlobalCodeBlock.h"
+#include <wtf/FixedVector.h>
+#include <wtf/ThreadSafeRefCounted.h>
 
 namespace JSC {
 
 class Decoder;
 class CachedModuleCodeBlock;
+class UnlinkedFunctionExecutable;
+
+// The module environment slot of each heap allocated function declaration of a module, ascending: entry i belongs to
+// functionDecl(i) (BytecodeGenerator adds those declarations in slot order). Shared with the module records made from
+// the code, which use it to tell whether an empty slot is a function declaration nobody has read yet.
+class ModuleFunctionDeclarationSlots final : public ThreadSafeRefCounted<ModuleFunctionDeclarationSlots> {
+public:
+    static Ref<ModuleFunctionDeclarationSlots> create(FixedVector<uint32_t>&& offsets) { return adoptRef(*new ModuleFunctionDeclarationSlots(WTF::move(offsets))); }
+
+    unsigned size() const { return m_offsets.size(); }
+    ScopeOffset at(unsigned index) const { return ScopeOffset(m_offsets[index]); }
+    const FixedVector<uint32_t>& offsets() const LIFETIME_BOUND { return m_offsets; }
+
+    // Set when the code was decoded from a bytecode cache payload that stays around (Decoder::canDeferIntoPayload())
+    // with Options::useLazyModuleFunctionDeclarations(): functionDecl(i) of these declarations was left in the payload.
+    // UnlinkedCodeBlock::functionDecl() decodes one when it is first asked for.
+    bool hasDecodeSource() const { return !!m_cachedFunctionDecls; }
+    void setDecodeSource(Ref<Decoder>&&, const void* cachedFunctionDecls);
+    UnlinkedFunctionExecutable* decode(VM&, unsigned index) const;
+
+    JS_EXPORT_PRIVATE ~ModuleFunctionDeclarationSlots();
+
+    std::optional<unsigned> find(ScopeOffset offset) const
+    {
+        auto offsets = m_offsets.span();
+        auto it = std::ranges::lower_bound(offsets, offset.offset());
+        if (it == offsets.end() || *it != offset.offset())
+            return std::nullopt;
+        return static_cast<unsigned>(it - offsets.begin());
+    }
+
+private:
+    explicit ModuleFunctionDeclarationSlots(FixedVector<uint32_t>&& offsets)
+        : m_offsets(WTF::move(offsets))
+    {
+    }
+
+    FixedVector<uint32_t> m_offsets;
+    RefPtr<Decoder> m_decoder;
+    const void* m_cachedFunctionDecls { nullptr }; // CachedWriteBarrier<CachedFunctionExecutable>[size()] in m_decoder's payload
+};
 
 class UnlinkedModuleProgramCodeBlock final : public UnlinkedGlobalCodeBlock {
 public:
@@ -87,6 +131,10 @@ public:
     unsigned numberOfHeapAllocatedFunctionDecls() const { return m_numberOfHeapAllocatedFunctionDecls; }
     void setNumberOfHeapAllocatedFunctionDecls(unsigned count) { m_numberOfHeapAllocatedFunctionDecls = count; }
 
+    // See Options::useLazyModuleFunctionDeclarations(). Never null once generated or decoded.
+    ModuleFunctionDeclarationSlots* heapAllocatedFunctionDeclSlots() const { return m_heapAllocatedFunctionDeclSlots.get(); }
+    void setHeapAllocatedFunctionDeclSlots(Ref<ModuleFunctionDeclarationSlots>&& slots) { m_heapAllocatedFunctionDeclSlots = WTF::move(slots); }
+
     bool isAsync() const { return codeFeatures() & AwaitFeature; }
 
     void setVariableDeclarations(const VariableEnvironment& environment) { m_varDeclarations = environment; }
@@ -105,6 +153,7 @@ private:
     VariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset { 0 };
     unsigned m_numberOfHeapAllocatedFunctionDecls { 0 };
+    RefPtr<ModuleFunctionDeclarationSlots> m_heapAllocatedFunctionDeclSlots;
 
 public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);

@@ -32,5 +32,14 @@ enum DeleteAllCodeEffort {
     DeleteAllCodeIfNotCollecting
 };
 
+enum class UnlinkedCodeToDelete : uint8_t {
+    // Generated from source: generated again, by parsing, when next needed.
+    Generated = 1 << 0,
+    // Decoded from a persistent bytecode cache payload (Options::useCodeRecoveryFromBytecodeCache): decoded again when next needed.
+    RecoverableFromCache = 1 << 1,
+    // Restricts RecoverableFromCache to code no CodeBlock links against (any more).
+    OnlyWithoutLinkedCode = 1 << 2,
+};
+
 } // namespace JSC
 

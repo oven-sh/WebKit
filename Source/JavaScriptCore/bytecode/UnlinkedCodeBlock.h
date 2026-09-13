@@ -45,6 +45,7 @@
 #include "VirtualRegister.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
+#include <wtf/ButterflyArray.h>
 #include <wtf/FixedVector.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/TriState.h>
@@ -259,7 +260,15 @@ public:
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
-    UnlinkedFunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
+    UnlinkedFunctionExecutable* functionDecl(int index)
+    {
+        if (auto* executable = m_functionDecls[index].get()) [[likely]]
+            return executable;
+        return functionDeclSlow(index);
+    }
+    // Any thread. Null for a module's function declaration that is still only in its bytecode cache payload
+    // (UnlinkedModuleProgramCodeBlock::functionDeclSlots()); only the mutator's functionDecl() decodes it.
+    UnlinkedFunctionExecutable* functionDeclIfDecoded(int index) const { return m_functionDecls[index].get(); }
     size_t numberOfFunctionDecls() { return m_functionDecls.size(); }
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const { return m_functionDecls.span(); }
     UnlinkedFunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
@@ -358,10 +367,28 @@ public:
         return !isBuiltinFunction();
     }
     void allocateSharedProfiles(unsigned numBinaryArithProfiles, unsigned numUnaryArithProfiles);
-    FixedVector<UnlinkedValueProfile>& unlinkedValueProfiles() LIFETIME_BOUND { return m_valueProfiles; }
-    FixedVector<UnlinkedArrayProfile>& unlinkedArrayProfiles() LIFETIME_BOUND { return m_arrayProfiles; }
-    unsigned numberOfValueProfiles() const { return m_valueProfiles.size(); }
-    unsigned numberOfArrayProfiles() const { return m_arrayProfiles.size(); }
+
+    // What the CodeBlocks of this code fold their value and array profiles into and seed them from. Null until the
+    // mutator calls ensureValueAndArrayProfiles(), which it does when a CodeBlock is first handed to the Baseline JIT;
+    // collector and compiler threads read the pointer, once per use, while they fold.
+    class ValueAndArrayProfiles final : public ButterflyArray<ValueAndArrayProfiles, UnlinkedArrayProfile, UnlinkedValueProfile> {
+        using Base = ButterflyArray<ValueAndArrayProfiles, UnlinkedArrayProfile, UnlinkedValueProfile>;
+        friend Base;
+    public:
+        static std::unique_ptr<ValueAndArrayProfiles> create(unsigned numberOfValueProfiles, unsigned numberOfArrayProfiles) { return std::unique_ptr<ValueAndArrayProfiles> { createImpl(numberOfArrayProfiles, numberOfValueProfiles) }; }
+        std::span<UnlinkedValueProfile> valueProfiles() LIFETIME_BOUND { return trailingSpan(); }
+        std::span<UnlinkedArrayProfile> arrayProfiles() LIFETIME_BOUND { return leadingSpan(); }
+
+    private:
+        ValueAndArrayProfiles(unsigned numberOfArrayProfiles, unsigned numberOfValueProfiles)
+            : Base(numberOfArrayProfiles, numberOfValueProfiles)
+        {
+        }
+    };
+    ValueAndArrayProfiles* valueAndArrayProfiles() { return WTF::atomicLoad(&m_valueAndArrayProfiles, std::memory_order_acquire); }
+    void ensureValueAndArrayProfiles();
+    unsigned numberOfValueProfiles() const { return numParameters() + (m_metadata->hasMetadata() ? m_metadata->numValueProfiles() : 0); }
+    unsigned numberOfArrayProfiles() const { return m_numberOfArrayProfiles; }
 
 #if ASSERT_ENABLED
     bool hasIdentifier(UniquedStringImpl*);
@@ -397,6 +424,7 @@ private:
 
     BytecodeLivenessAnalysis& livenessAnalysisSlow(CodeBlock*);
     ExpressionInfo& expressionInfoSlow();
+    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* functionDeclSlow(unsigned index);
 
     VirtualRegister m_thisRegister;
     VirtualRegister m_scopeRegister;
@@ -422,6 +450,7 @@ private:
     bool m_hasCheckpoints : 1;
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
+    unsigned m_numberOfArrayProfiles { 0 };
 
 public:
     ConcurrentJSLock m_lock;
@@ -431,6 +460,7 @@ public:
 private:
     SourceParseMode m_parseMode;
     OptionSet<CodeGenerationMode> m_codeGenerationMode;
+    uint16_t m_cachedPayloadIndex { 0 }; // in VM::persistentBytecodePayloads() when decoded from one of those, else 0
     BaselineExecutionCounter m_llintExecuteCounter;
 
     const Ref<UnlinkedMetadataTable> m_metadata;
@@ -450,12 +480,15 @@ private:
     FunctionExpressionVector m_functionExprs;
 
 public:
+    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
+
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RareData, UnlinkedCodeBlock_RareData);
 
         size_t NODELETE sizeInBytes(const AbstractLocker&) const;
 
         FixedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+        OutOfLineJumpTargets m_outOfLineJumpTargets;
 
         // Jump Tables
         FixedVector<UnlinkedSimpleJumpTable> m_unlinkedSwitchJumpTables;
@@ -490,16 +523,17 @@ public:
 
     BaselineExecutionCounter& llintExecuteCounter() LIFETIME_BOUND { return m_llintExecuteCounter; }
 
-private:
-    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
+    // Non-zero for a block that can be decoded again from where it came (see PersistentBytecodePayloads).
+    uint16_t cachedPayloadIndex() const { return m_cachedPayloadIndex; }
+    uint32_t cachedRecordOffset() const { return m_cachedRecordOffset; }
 
-    OutOfLineJumpTargets m_outOfLineJumpTargets;
+private:
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
     uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
-    FixedVector<UnlinkedValueProfile> m_valueProfiles;
-    FixedVector<UnlinkedArrayProfile> m_arrayProfiles;
+    uint32_t m_cachedRecordOffset { 0 }; // of this block's own record in that payload, while m_cachedPayloadIndex is set
+    ValueAndArrayProfiles* m_valueAndArrayProfiles { nullptr };
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;
     FixedVector<UnaryArithProfile> m_unaryArithProfiles;
 
@@ -516,5 +550,9 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 };
+
+#if !ASSERT_ENABLED && CPU(ADDRESS64) && !OS(WINDOWS)
+static_assert(sizeof(UnlinkedCodeBlock) <= 192, "UnlinkedCodeBlock and UnlinkedFunctionCodeBlock should not move up a size class");
+#endif
 
 }
