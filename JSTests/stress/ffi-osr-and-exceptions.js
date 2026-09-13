@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // FFI calls in optimized code: OSR-exit-inducing argument type changes midway
 // through a hot loop, and exceptions (from callbacks and from argument

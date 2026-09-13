@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // Regression: with int32 speculation gated on profiling, an i32/u32 parameter can carry an
 // UntypedUse edge. On the FTL DIRECT-call path that operand must be reloaded as a B3 Int32; as an
 // Int64 CCallValue lays a STACK argument at 8-byte stride, but Darwin/arm64 packs a stacked

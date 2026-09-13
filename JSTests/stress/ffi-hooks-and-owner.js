@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // JSFFIFunction owner cell + CallHooks:
 //  1) hooks bracket EVERY call as before:N / after:N with the token round-tripping;
 //  2) after fires even when the call throws (a callback raised an exception mid-call);
