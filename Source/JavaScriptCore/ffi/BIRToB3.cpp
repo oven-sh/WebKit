@@ -67,10 +67,23 @@ using BIR::Op;
 
 namespace {
 
-uint64_t convertDoubleToUInt64(double value) { return static_cast<uint64_t>(value); }
-double convertUInt64ToDouble(uint64_t value) { return static_cast<double>(value); }
-float convertUInt64ToFloat(uint64_t value) { return static_cast<float>(value); }
-uint64_t countPopulation(uint64_t value) { return std::popcount(value); }
+// What B3's CCall calls. It passes arguments the way JIT operations take them, which on Windows is
+// not the way C functions do (SYSV_ABI there), so nothing else may be its target: calls into the
+// program and into C libraries go through emitPatchpointCall.
+uint64_t SYSV_ABI convertDoubleToUInt64(double value) { return static_cast<uint64_t>(value); }
+double SYSV_ABI convertUInt64ToDouble(uint64_t value) { return static_cast<double>(value); }
+float SYSV_ABI convertUInt64ToFloat(uint64_t value) { return static_cast<float>(value); }
+uint64_t SYSV_ABI countPopulation(uint64_t value) { return std::popcount(value); }
+void* SYSV_ABI copyMemory(void* destination, const void* source, size_t size) { return memcpy(destination, source, size); }
+void* SYSV_ABI moveMemory(void* destination, const void* source, size_t size) { return memmove(destination, source, size); }
+void* SYSV_ABI fillMemory(void* destination, int byte, size_t size) { return memset(destination, byte, size); }
+
+// Whether B3's CCall and a C function agree on where arguments go.
+#if OS(WINDOWS) && CPU(X86_64)
+constexpr bool b3CallsAreNativeCalls = false;
+#else
+constexpr bool b3CallsAreNativeCalls = true;
+#endif
 
 template<typename Function>
 void* cFunctionPointer(Function* function)
@@ -388,7 +401,7 @@ BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block,
         }
         m_block = block;
         Value* copy = block->appendNew<SlotBaseValue>(m_proc, m_origin, m_proc.addStackSlot(parameter.size));
-        block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(memcpy)), copy, arguments[i], constant(Int64, static_cast<int64_t>(parameter.size)));
+        block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(copyMemory)), copy, arguments[i], constant(Int64, static_cast<int64_t>(parameter.size)));
         privateArguments.append(copy);
     }
 
@@ -1067,8 +1080,17 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
         patchpoint->resultConstraints = WTF::move(outputConstraints);
     patchpoint->clobberLate(clobbered);
     patchpoint->setGenerator([code = WTF::move(code)](CCallHelpers& jit, const StackmapGenerationParams&) {
+#if CPU(ARM64)
+        // Whole instructions: the decoder refused anything else.
+        for (size_t i = 0; i + 4 <= code.size(); i += 4) {
+            uint32_t instruction;
+            memcpy(&instruction, code.span().data() + i, 4);
+            jit.m_assembler.buffer().putInt(static_cast<int32_t>(instruction));
+        }
+#else
         for (uint8_t byte : code)
             jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+#endif
     });
     if (outputTypes.size() == 1)
         m_body.values[inst.result] = patchpoint;
@@ -1171,6 +1193,9 @@ Value* BIRToB3::emitStackOperation(const BIR::Inst& inst)
         int64_t alignment = std::max<int64_t>(inst.imm, 16);
         Value* bytes = m_block->appendNew<Value>(m_proc, BitAnd, m_origin,
             m_block->appendNew<Value>(m_proc, B3::Add, m_origin, m_body.values[inst.a], constant(Int64, 15)), constant(Int64, -16));
+        // Rounding the pointer up (below) moves the block by less than the alignment: reserve that too.
+        if (alignment > 16)
+            bytes = m_block->appendNew<Value>(m_proc, B3::Add, m_origin, bytes, constant(Int64, alignment));
         PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, Int64, m_origin);
         patchpoint->effects = Effects::forCall();
         patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
@@ -1413,7 +1438,7 @@ Vector<Value*, 1> BIRToB3::emitCall(const BIR::Function& function, const BIR::In
     Vector<Value*> arguments;
     for (unsigned i = 0; i < inst.extraCount; ++i)
         arguments.append(m_body.values[static_cast<uint32_t>(function.extra[inst.extraOffset + i])]);
-    if (!signature.isScalar())
+    if (!signature.isScalar() || !b3CallsAreNativeCalls)
         return emitPatchpointCall(signature, target, arguments);
     CCallValue* call = m_block->appendNew<CCallValue>(m_proc, toB3(signature.soleResultOrVoid()), m_origin, target);
     call->appendArgs(arguments);
@@ -1772,11 +1797,11 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
         return;
     case Op::MemCopy:
         if (!emitSmallMemoryCopy(value(inst.a), value(inst.b), value(inst.c)))
-            m_block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(memmove)), value(inst.a), value(inst.b), value(inst.c));
+            m_block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(moveMemory)), value(inst.a), value(inst.b), value(inst.c));
         return;
     case Op::MemSet:
         if (!emitSmallMemoryFill(value(inst.a), value(inst.b), value(inst.c)))
-            m_block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(memset)), value(inst.a), value(inst.b), value(inst.c));
+            m_block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(fillMemory)), value(inst.a), value(inst.b), value(inst.c));
         return;
     case Op::StackAlloc:
     case Op::StackSave:

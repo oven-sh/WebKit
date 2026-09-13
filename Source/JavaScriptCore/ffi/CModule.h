@@ -70,7 +70,9 @@ public:
     void* const* functionTable() const { return m_functionTable.span().data(); }
     std::span<void* const> externAddresses() const { return m_externAddresses.span(); }
     // This thread's copy of the module's `_Thread_local` objects, created on first use.
-    JS_EXPORT_PRIVATE static void* threadLocalBase(void* module);
+    JS_EXPORT_PRIVATE static void* SYSV_ABI threadLocalBase(void* module);
+    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process.
+    JS_EXPORT_PRIVATE static std::pair<uint8_t, uint8_t> hostTarget();
     BIRLinkEnvironment linkEnvironment() const;
     uint64_t relocatedAddress(const BIR::Reloc&, uint8_t* threadLocalBlock) const;
 

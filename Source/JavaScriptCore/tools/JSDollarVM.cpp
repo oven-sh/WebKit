@@ -2321,6 +2321,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionCModule);
+static JSC_DECLARE_HOST_FUNCTION(functionCModuleHost);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
 static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
@@ -5058,6 +5059,22 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
 }
 
+// $vm.cModuleHost() -> [arch, os]: the target bytes a BIR module needs in its header to load here.
+JSC_DEFINE_HOST_FUNCTION(functionCModuleHost, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto [arch, os] = FFI::CModule::hostTarget();
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    result->putDirectIndex(globalObject, 0, jsNumber(arch));
+    RETURN_IF_EXCEPTION(scope, { });
+    result->putDirectIndex(globalObject, 1, jsNumber(os));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(result);
+}
+
 // $vm.cModule(cirBytes) -> { exportName: function }. Externs resolve through dlsym.
 JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -5843,6 +5860,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "cModule"_s, functionCModule, 1);
+    addFunction(vm, allowIfNotFuzz, "cModuleHost"_s, functionCModuleHost, 0);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);

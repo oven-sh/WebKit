@@ -58,7 +58,7 @@ struct BIRLinkEnvironment {
     std::span<void* const> externAddresses;
     // Passed to threadLocalBase to find (or create) the calling thread's copy of the module's tls.
     void* threadLocalContext { nullptr };
-    void* (*threadLocalBase)(void* context) { nullptr };
+    void* (SYSV_ABI *threadLocalBase)(void* context) { nullptr };
 };
 
 class BIRToB3 {

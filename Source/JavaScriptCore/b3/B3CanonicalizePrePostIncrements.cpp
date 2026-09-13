@@ -75,6 +75,10 @@ bool canonicalizePrePostIncrements(Procedure& proc)
                 break;
 
             Value* base = memory->lastChild();
+            // A store of the base itself cannot write the base back: with the same register for both,
+            // what such an instruction does is UNPREDICTABLE, and Apple's cores trap on it.
+            if (value->opcode() == Store && memory->child(0) == base)
+                break;
             MemoryValue::OffsetType offset = memory->offset();
             if (memory->offset()) {
                 // PreIndex Load/Store Pattern:

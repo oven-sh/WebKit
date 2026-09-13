@@ -4877,6 +4877,10 @@ private:
                 Value* base2 = memory->child(1);
                 if (base1 != base2 || !address->child(1)->hasIntPtr())
                     return false;
+                // The written-back register would be a copy of the stored one, and the two coalesce: a store
+                // that writes back its own source register is UNPREDICTABLE, and Apple's cores trap on it.
+                if (value == base1 || value == address)
+                    return false;
                 intptr_t offset = address->child(1)->asIntPtr();
                 Value::OffsetType smallOffset = static_cast<Value::OffsetType>(offset);
                 if (smallOffset != offset || !Arg::isValidIncrementIndexForm(smallOffset))

@@ -956,6 +956,10 @@ private:
                 return false;
             if (flags > 1 || byteCount > 4096)
                 return fail("bad InlineAsm"_s);
+#if CPU(ARM64)
+            if (byteCount % 4)
+                return fail("InlineAsm code is not whole instructions"_s);
+#endif
             extra.append(flags);
             extra.append(byteCount);
             for (uint8_t byte : code)

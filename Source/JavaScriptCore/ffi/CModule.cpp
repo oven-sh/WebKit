@@ -78,7 +78,26 @@ CModule::CModule(std::unique_ptr<BIR::Module>&& bir)
 {
 }
 
-void* CModule::threadLocalBase(void* context)
+std::pair<uint8_t, uint8_t> CModule::hostTarget()
+{
+#if CPU(X86_64)
+    constexpr BIR::Arch arch = BIR::Arch::X86_64;
+#else
+    constexpr BIR::Arch arch = BIR::Arch::ARM64;
+#endif
+#if OS(DARWIN)
+    constexpr BIR::OS os = BIR::OS::Darwin;
+#elif OS(WINDOWS)
+    constexpr BIR::OS os = BIR::OS::Windows;
+#elif OS(FREEBSD)
+    constexpr BIR::OS os = BIR::OS::FreeBSD;
+#else
+    constexpr BIR::OS os = BIR::OS::Linux;
+#endif
+    return { static_cast<uint8_t>(arch), static_cast<uint8_t>(os) };
+}
+
+void* SYSV_ABI CModule::threadLocalBase(void* context)
 {
     static thread_local ThreadLocalBlocks threadBlocks;
     CModule& module = *static_cast<CModule*>(context);
@@ -162,21 +181,8 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     Ref<CModule> module = adoptRef(*new CModule(WTF::move(decoded.value())));
     const BIR::Module& bir = module->bir();
 
-#if CPU(X86_64)
-    constexpr BIR::Arch hostArch = BIR::Arch::X86_64;
-#else
-    constexpr BIR::Arch hostArch = BIR::Arch::ARM64;
-#endif
-#if OS(DARWIN)
-    constexpr BIR::OS hostOS = BIR::OS::Darwin;
-#elif OS(WINDOWS)
-    constexpr BIR::OS hostOS = BIR::OS::Windows;
-#elif OS(FREEBSD)
-    constexpr BIR::OS hostOS = BIR::OS::FreeBSD;
-#else
-    constexpr BIR::OS hostOS = BIR::OS::Linux;
-#endif
-    if (bir.arch != hostArch || bir.os != hostOS)
+    auto [hostArch, hostOS] = hostTarget();
+    if (static_cast<uint8_t>(bir.arch) != hostArch || static_cast<uint8_t>(bir.os) != hostOS)
         return std::unexpected<String>("BIR module was compiled for a different target"_s);
 
     if (bir.usesVectors && !Options::useWasmSIMD())

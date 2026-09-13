@@ -21,7 +21,9 @@ class W {
 //   {s: n} signed varint, {f64: x} raw f64, {u8: n} byte, plain number => varuint
 function assemble(m) {
     const w = new W();
-    w.raw([0x42, 0x49, 0x52, 0x36]).u8(0 /* x86_64 */).u8(0 /* linux */).u8(8).u8(0);
+    // These modules use nothing that differs between targets, so they say they are for whichever this is.
+    const [arch, os] = $vm.cModuleHost();
+    w.raw([0x42, 0x49, 0x52, 0x36]).u8(arch).u8(os).u8(8).u8(0);
     w.uv(m.sigs.length);
     // sig = { ret: type | [types], variadic, params: [type | {byval: size, align, exhausts} | {sret: true}] }
     for (const s of m.sigs) {
