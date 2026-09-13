@@ -86,7 +86,9 @@ jobs:
     name: Update PR Comment
     needs: [trigger, build]
     runs-on: ubuntu-latest
-    if: needs.build.result == 'success'
+    # The release is published when every build job succeeded, whatever the tests did: post the comment whenever it
+    # was published, not only when the whole build workflow (tests included) is green.
+    if: always() && needs.build.outputs.release_tag != ''
     permissions:
       pull-requests: write
     steps:

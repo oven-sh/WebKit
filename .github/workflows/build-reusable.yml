@@ -704,13 +704,11 @@ jobs:
     # compiles out $vm and the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to
     # ASSERT_ENABLED), which many tests need.
     #
-    # `release` does not wait for this job, so a test failure never holds back or deletes a release. The suites have
-    # known failures on this fork (mostly tests that expect upstream's error messages), so for now the job is
-    # continue-on-error: it shows up red, the run and the preview-build comment are unaffected. Drop that once the
-    # failures are worked through, and add this job to the required checks.
+    # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
+    # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
+    # the job fails.
     needs:
       - linux
-    continue-on-error: true
     # Reading the assets of a draft release takes push access.
     permissions:
       contents: write
