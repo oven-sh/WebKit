@@ -146,6 +146,7 @@ void GenericLabel<JSGeneratorTraits>::setLocation(BytecodeGenerator& generator, 
         CASE(OpJngreatereq)
         CASE(OpJbelow)
         CASE(OpJbeloweq)
+        CASE(OpIteratorCloseCheck)
         default:
             ASSERT_NOT_REACHED();
         }
@@ -5616,9 +5617,7 @@ void BytecodeGenerator::emitIteratorCloseAfterIteratorOpen(RegisterID* iterator,
     // These are read back by op_iterator_next and op_iterator_close_check as the state of the iteration: nothing else may write them.
     ASSERT(iterator->isTemporary() && nextOrIndex->isTemporary() && (iterable->isTemporary() || iterable->virtualRegister().isArgument()));
     Ref<Label> done = newLabel();
-    RefPtr<RegisterID> nothingToClose = newTemporary();
-    OpIteratorCloseCheck::emit(this, nothingToClose.get(), iterator, nextOrIndex, iterable);
-    emitJumpIfTrue(nothingToClose.get(), done.get());
+    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
     emitIteratorGenericClose(iterator, node);
     emitLabel(done.get());
 }

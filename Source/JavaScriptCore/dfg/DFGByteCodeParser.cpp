@@ -592,7 +592,7 @@ private:
 
     void handleIteratorOpen(const JSInstruction* pc, BytecodeIndex osrExitIndex);
     void handleIteratorNext(const JSInstruction* pc, BytecodeIndex osrExitIndex);
-    void handleIteratorCloseCheck(const JSInstruction* pc, BytecodeIndex osrExitIndex);
+    Terminality handleIteratorCloseCheck(const JSInstruction* pc, int relativeTargetOffset);
     Node* newValuesArrayIterator(JSGlobalObject*, Node* array, Node* index);
     void handleAsyncIteratorOpen(const JSInstruction* pc, BytecodeIndex osrExitIndex);
     void handleAsyncIteratorNext(const JSInstruction* pc, BytecodeIndex osrExitIndex);
@@ -10404,7 +10404,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
         }
 
         case op_iterator_close_check: {
-            handleIteratorCloseCheck(currentInstruction, nextOpcodeIndex());
+            if (handleIteratorCloseCheck(currentInstruction, jumpTarget(currentInstruction->as<OpIteratorCloseCheck>().m_targetLabel)) == Terminal)
+                LAST_OPCODE(op_iterator_close_check);
             NEXT_OPCODE(op_iterator_close_check);
         }
 
@@ -13334,21 +13335,21 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
     clearCaches();
 }
 
-void ByteCodeParser::handleIteratorCloseCheck(const JSInstruction* currentInstruction, BytecodeIndex osrExitIndex)
+auto ByteCodeParser::handleIteratorCloseCheck(const JSInstruction* currentInstruction, int relativeTargetOffset) -> Terminality
 {
     auto bytecode = currentInstruction->as<OpIteratorCloseCheck>();
     JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObjectFor(currentCodeOrigin());
+    unsigned fallThroughOffset = m_currentIndex.offset() + currentInstruction->size();
+
     if (!Options::useUnboxedFastArrayIteration()) {
-        // Nothing in this process leaves an iterator register without an object.
+        // Nothing in this process leaves an iterator register without an object: falls through.
         addToGraph(Phantom, get(bytecode.m_iterator));
         addToGraph(Phantom, get(bytecode.m_next));
         addToGraph(Phantom, get(bytecode.m_iterable));
-        set(bytecode.m_dst, jsConstant(jsBoolean(false)));
-        return;
+        return NonTerminal;
     }
 
     FrozenValue* frozenSentinel = m_graph.freeze(m_vm->fastArrayUnboxedSentinel());
-
     Node* hasNoIteratorObject = addToGraph(CompareEqPtr, OpInfo(frozenSentinel), get(bytecode.m_iterator));
     if (globalObject->arrayIteratorProtocolWatchpointSet().isStillValid()) {
         // No "return" property on the prototype chain of this realm's Array Iterator objects: nothing to close when there is no object.
@@ -13356,21 +13357,20 @@ void ByteCodeParser::handleIteratorCloseCheck(const JSInstruction* currentInstru
         // Nothing here reads these two, but the bytecode does and the lower tiers will after an exit.
         addToGraph(Phantom, get(bytecode.m_next));
         addToGraph(Phantom, get(bytecode.m_iterable));
-        set(bytecode.m_dst, hasNoIteratorObject);
-        return;
+        addToGraph(Branch, OpInfo(branchData(m_currentIndex.offset() + relativeTargetOffset, fallThroughOffset)), hasNoIteratorObject);
+        return Terminal;
     }
 
-    // IteratorClose is observable now. A frame that opened its iterator before the watchpoint fired can still get here without an iterator
-    // object: make the one that the Array in m_iterable and the index in m_next stand for.
+    // IteratorClose is observable now, so this never jumps. A frame that opened its iterator before the watchpoint fired can still get here
+    // without an iterator object: make the one that the Array in m_iterable and the index in m_next stand for.
     BasicBlock* materializeBlock = allocateUntargetableBlock();
-    BasicBlock* haveObjectBlock = allocateUntargetableBlock();
     BasicBlock* continuation = allocateUntargetableBlock();
     BytecodeIndex startIndex = m_currentIndex;
 
     emitExitOK();
     BranchData* branchData = m_graph.m_branchData.add();
     branchData->taken = BranchTarget(materializeBlock);
-    branchData->notTaken = BranchTarget(haveObjectBlock);
+    branchData->notTaken = BranchTarget(continuation);
     addToGraph(Branch, OpInfo(branchData), hasNoIteratorObject);
     flushForTerminal();
 
@@ -13383,34 +13383,20 @@ void ByteCodeParser::handleIteratorCloseCheck(const JSInstruction* currentInstru
         addToGraph(Check, Edge(array, ArrayUse));
         Node* index = get(bytecode.m_next);
         addToGraph(Check, Edge(index, Int32Use));
-
         set(bytecode.m_iterator, newValuesArrayIterator(globalObject, array, index));
-        set(bytecode.m_dst, jsConstant(jsBoolean(false)));
 
-        m_currentIndex = osrExitIndex;
+        // The object is in place before anything can exit to the instruction that follows.
+        m_currentIndex = BytecodeIndex(fallThroughOffset);
         m_exitOK = true;
         processSetLocalQueue();
 
-        addToGraph(Jump, OpInfo(continuation));
-        m_currentIndex = startIndex;
-    }
-
-    {
-        m_currentBlock = haveObjectBlock;
-        clearCaches();
-        keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
-        set(bytecode.m_dst, jsConstant(jsBoolean(false)));
-
-        m_currentIndex = osrExitIndex;
-        m_exitOK = true;
-        processSetLocalQueue();
-
-        addToGraph(Jump, OpInfo(continuation));
+        addJumpTo(continuation);
         m_currentIndex = startIndex;
     }
 
     m_currentBlock = continuation;
     clearCaches();
+    return NonTerminal;
 }
 
 void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruction, BytecodeIndex osrExitIndex)

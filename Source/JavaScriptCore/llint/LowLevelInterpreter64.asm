@@ -3529,26 +3529,20 @@ llintOpWithMetadata(op_new_reg_exp_shared, OpNewRegExpShared, macro (size, get, 
     dispatch()
 end)
 
-llintOpWithReturn(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get, dispatch, return)
+llintOpWithJump(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get, jump, dispatch)
     loadVariable(get, m_iterator, t0)
-    btqnz t0, notCellMask, .iteratorCloseCheckIsObject
-    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorCloseCheckIsObject
+    btqnz t0, notCellMask, .iteratorCloseCheckFallThrough
+    bbneq JSCell::m_type[t0], constexpr SentinelType, .iteratorCloseCheckFallThrough
     # No iterator object. There is nothing to close while this realm's Array Iterator protocol watchpoint set is intact.
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_globalObject[t1], t1
-    loadp JSGlobalObject::m_arrayIteratorProtocolWatchpointSet + InlineWatchpointSet::m_data[t1], t1
-    bpeq t1, InlineWatchpointSetThinInvalidated, .iteratorCloseCheckSlow
-    btpnz t1, InlineWatchpointSetThinFlag, .iteratorCloseCheckNothingToClose
-    bbeq WatchpointSet::m_state[t1], IsInvalidated, .iteratorCloseCheckSlow
-.iteratorCloseCheckNothingToClose:
-    return(ValueTrue)
-
-.iteratorCloseCheckIsObject:
-    return(ValueFalse)
-
-.iteratorCloseCheckSlow:
+    branchIfInlineWatchpointSetIsStillValid(JSGlobalObject::m_arrayIteratorProtocolWatchpointSet + InlineWatchpointSet::m_data[t1], t1, .iteratorCloseCheckNothingToClose)
     callSlowPath(_slow_path_iterator_close_check)
+.iteratorCloseCheckFallThrough:
     dispatch()
+
+.iteratorCloseCheckNothingToClose:
+    jump(m_targetLabel)
 end)
 
 llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, get, dispatch, metadata, return)
