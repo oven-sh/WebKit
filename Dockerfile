@@ -378,9 +378,10 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     if [ -n "$ENABLE_SANITIZERS" ]; then \
         export ENABLE_ASSERTS="ON"; \
     fi && \
+    # Programs (perl, ruby, python) are the container's, never the sysroot's: those are aarch64 and cannot run here.
     CROSS_CMAKE="" && \
     if [ "$LINUX_ARCH" = aarch64 ]; then \
-        CROSS_CMAKE="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_SYSROOT=$SYSROOT_AARCH64 -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH"; \
+        CROSS_CMAKE="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_SYSROOT=$SYSROOT_AARCH64 -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH"; \
     fi && \
     cd /webkitbuild && \
     cmake $CROSS_CMAKE \
