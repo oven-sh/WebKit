@@ -419,7 +419,7 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
     if (linkBuffer.didFailToAllocate()) [[unlikely]]
         return nullptr;
     linkBuffer.setIsThunk();
-    auto codeRef = FINALIZE_CODE_IF(Options::dumpDisassembly() || Options::dumpFFIDisassembly(), linkBuffer, JSEntryPtrTag, "FFI ic"_s, "FFI ic %s", signature.toString().utf8().data());
+    auto codeRef = FINALIZE_CODE_IF(Options::dumpDisassembly() || Options::dumpFFIDisassembly(), linkBuffer, JSEntryPtrTag, "FFI ic"_s, "FFI ic %s", signature.toString().utf8().legacyCStringPointer());
 
     g_ffiCompileCounts.icStub++;
     dataLogLnIf(Options::verboseFFI(), "FFI: generated IC stub ", signature.toString(), " target ", RawPointer(target), " code ", RawPointer(codeRef.code().taggedPtr()));
