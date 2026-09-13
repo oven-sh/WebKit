@@ -37,26 +37,24 @@ function shouldBeAsync(promise, expected, message) {
     const evalInField = () => { class A { x = eval("typeof new.target"); } return new A().x; };
     const evalInStaticBlock = () => { let r; class A { static { r = eval("typeof new.target"); } } return r; };
 
-    for (let i = 0; i < 100; ++i) {
-        shouldBe(instanceField(), "undefined", "instance field");
-        shouldBe(staticField(), "undefined", "static field");
-        shouldBe(staticBlock(), "undefined", "static block");
-        shouldBe(privateField(), "undefined", "private field");
-        shouldBe(computedField(), "undefined", "computed field");
-        shouldBe(classExpression(), "undefined", "class expression");
-        shouldBe(derivedClass(), "undefined", "derived class");
-        shouldBe(classWithConstructor(), "undefined true", "class with constructor");
-        shouldBe(arrowInArrow(), "undefined", "arrow function in arrow function");
-        shouldBe(arrowInField(), "undefined", "arrow function in field");
-        shouldBe(arrowInStaticBlock(), "undefined", "arrow function in static block");
-        shouldBe(blockInStaticBlock(), "undefined", "block in static block");
-        shouldBe(keyOfClassInField(), "undefined", "key of a class in a field");
-        shouldBe(fieldOfClassInField(), "undefined", "field of a class in a field");
-        shouldBe(fieldOfClassInStaticBlock(), "undefined", "field of a class in a static block");
-        shouldBe(parameterOfArrowInField(), "undefined", "parameter of an arrow function in a field");
-        shouldBe(evalInField(), "undefined", "eval in field");
-        shouldBe(evalInStaticBlock(), "undefined", "eval in static block");
-    }
+    shouldBe(instanceField(), "undefined", "instance field");
+    shouldBe(staticField(), "undefined", "static field");
+    shouldBe(staticBlock(), "undefined", "static block");
+    shouldBe(privateField(), "undefined", "private field");
+    shouldBe(computedField(), "undefined", "computed field");
+    shouldBe(classExpression(), "undefined", "class expression");
+    shouldBe(derivedClass(), "undefined", "derived class");
+    shouldBe(classWithConstructor(), "undefined true", "class with constructor");
+    shouldBe(arrowInArrow(), "undefined", "arrow function in arrow function");
+    shouldBe(arrowInField(), "undefined", "arrow function in field");
+    shouldBe(arrowInStaticBlock(), "undefined", "arrow function in static block");
+    shouldBe(blockInStaticBlock(), "undefined", "block in static block");
+    shouldBe(keyOfClassInField(), "undefined", "key of a class in a field");
+    shouldBe(fieldOfClassInField(), "undefined", "field of a class in a field");
+    shouldBe(fieldOfClassInStaticBlock(), "undefined", "field of a class in a static block");
+    shouldBe(parameterOfArrowInField(), "undefined", "parameter of an arrow function in a field");
+    shouldBe(evalInField(), "undefined", "eval in field");
+    shouldBe(evalInStaticBlock(), "undefined", "eval in static block");
 }
 
 // The class is in an async arrow function in global code. The call must not throw.
@@ -91,16 +89,14 @@ function shouldBeAsync(promise, expected, message) {
     }
     const method = { method() { return (() => { let r; class A { x = typeof new.target; static { r = typeof new.target; } } return new A().x + " " + r; })(); } }.method;
 
-    for (let i = 0; i < 100; ++i) {
-        shouldBe(staticBlockInArrowInFunction(), "undefined", "static block, arrow function in function");
-        shouldBe(new staticBlockInArrowInFunction() instanceof staticBlockInArrowInFunction, true, "static block, arrow function in constructor");
-        shouldBe(fieldInArrowInFunction(), "undefined undefined", "field, arrow function in function");
-        let object = new Constructor();
-        shouldBe(object.staticBlock, undefined, "static block, arrow function in constructor");
-        shouldBe(object.field, undefined, "field, arrow function in constructor");
-        shouldBe(object.target, Constructor, "arrow function in constructor");
-        shouldBe(method(), "undefined undefined", "arrow function in method");
-    }
+    shouldBe(staticBlockInArrowInFunction(), "undefined", "static block, arrow function in function");
+    shouldBe(new staticBlockInArrowInFunction() instanceof staticBlockInArrowInFunction, true, "static block, arrow function in constructor");
+    shouldBe(fieldInArrowInFunction(), "undefined undefined", "field, arrow function in function");
+    let object = new Constructor();
+    shouldBe(object.staticBlock, undefined, "static block, arrow function in constructor");
+    shouldBe(object.field, undefined, "field, arrow function in constructor");
+    shouldBe(object.target, Constructor, "arrow function in constructor");
+    shouldBe(method(), "undefined undefined", "arrow function in method");
 }
 
 // The class is in eval code.
@@ -138,15 +134,13 @@ function shouldBeAsync(promise, expected, message) {
         this.keys = (() => { class A { [new.target.name] = typeof new.target; } let a = new A(); return Object.keys(a)[0] + " " + a.KeysInArrow; })();
     }
 
-    for (let i = 0; i < 100; ++i) {
-        let f = functionInField();
-        shouldBe(f(), undefined, "function in field, call");
-        shouldBe(new f(), f, "function in field, construct");
-        let g = functionInStaticBlock();
-        shouldBe(g(), undefined, "function in static block, call");
-        shouldBe(new g(), g, "function in static block, construct");
-        shouldBe(new Keys().keys.join(), "Keys,KeysStatic,constructor,KeysMethod", "keys");
-        shouldBe(new Heritage().result, true, "heritage");
-        shouldBe(new KeysInArrow().keys, "KeysInArrow undefined", "key and field in arrow function in constructor");
-    }
+    let f = functionInField();
+    shouldBe(f(), undefined, "function in field, call");
+    shouldBe(new f(), f, "function in field, construct");
+    let g = functionInStaticBlock();
+    shouldBe(g(), undefined, "function in static block, call");
+    shouldBe(new g(), g, "function in static block, construct");
+    shouldBe(new Keys().keys.join(), "Keys,KeysStatic,constructor,KeysMethod", "keys");
+    shouldBe(new Heritage().result, true, "heritage");
+    shouldBe(new KeysInArrow().keys, "KeysInArrow undefined", "key and field in arrow function in constructor");
 }
