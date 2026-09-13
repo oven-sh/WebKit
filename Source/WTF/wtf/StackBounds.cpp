@@ -37,6 +37,8 @@
 #endif
 
 #if OS(LINUX)
+#include <string.h>
+#include <sys/auxv.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -146,9 +148,27 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // OS(OPENBSD)
 
+#if OS(LINUX)
+// The end of the main thread's stack mapping. The kernel copies the executable's path to the top of the
+// stack, below one null pointer (fs/exec.c), and AT_EXECFN points to that copy. Returns nullptr if the
+// path is not there, for example in a 32-bit process on a 64-bit kernel.
+static void* mainThreadStackTop(size_t pageSize, size_t maxSize)
+{
+    auto* path = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    if (!path)
+        return nullptr;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    uintptr_t top = reinterpret_cast<uintptr_t>(path) + strlen(path) + 1 + sizeof(void*);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    uintptr_t here = reinterpret_cast<uintptr_t>(currentStackPointer());
+    if (top % pageSize || top <= here || top - here > maxSize)
+        return nullptr;
+    return reinterpret_cast<void*>(top);
+}
+#endif
+
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
-    auto ret = newThreadStackBounds(pthread_self());
 #if OS(LINUX)
     // on glibc, pthread_attr_getstack will generally return the limit size (minus a guard page)
     // for the main thread; this is however not necessarily always true on every libc - for example
@@ -156,14 +176,20 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
     // be constant (and they are for every thread except main, which is allowed to grow), check
     // resource limits and use that as the boundary instead (and prevent stack overflows in JSC)
     if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
-        void* origin = ret.origin();
         rlimit limit;
         getrlimit(RLIMIT_STACK, &limit);
         rlim_t size = limit.rlim_cur;
         if (size == RLIM_INFINITY)
             size = 8 * MB;
+        size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+        // The kernel counts the whole mapping against RLIMIT_STACK, so measure from its end. The origin that
+        // pthread_getattr_np gives is lower: glibc reads /proc/self/maps and returns the page above
+        // __libc_stack_end, which is below the argument and environment strings.
+        void* origin = mainThreadStackTop(pageSize, static_cast<size_t>(size));
+        if (!origin)
+            origin = newThreadStackBounds(pthread_self()).origin();
         // account for a guard page
-        size -= static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
+        size -= static_cast<rlim_t>(pageSize);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -181,7 +207,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             stackBounds = { oldestEnviron, bound };
         return stackBounds;
     }
-#elif OS(FREEBSD)
+#endif
+    auto ret = newThreadStackBounds(pthread_self());
+#if OS(FREEBSD)
     // libthr reports the main thread's stack as RLIMIT_STACK below its top, but when the executable
     // carries a sized PT_GNU_STACK (ld -z stack-size) exec maps only trunc_page(p_memsz) for it,
     // raising rlim_cur to that if it was smaller and leaving it alone if it was larger. The usable
