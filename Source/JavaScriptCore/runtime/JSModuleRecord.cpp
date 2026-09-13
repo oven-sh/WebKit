@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSModuleRecord.h"
 
+#include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
@@ -167,6 +168,15 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The first await of a module with top-level await captures the current async context
+    // after the body returns (asyncModuleResolveEvaluation below), so the loader's context
+    // spans that too; AsyncModuleExecutionResume then restores what each await captured.
+    std::optional<AsyncContextSwapScope> loaderAsyncContext;
+    if (JSValue asyncContext = moduleLoader()->asyncContext())
+        loaderAsyncContext.emplace(vm, globalObject, asyncContext);
+#endif
 
     // 1. Let moduleContext be a new ECMAScript code execution context.
     // 2. Set the Function of moduleContext to null.
