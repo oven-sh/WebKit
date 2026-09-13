@@ -166,6 +166,7 @@ public:
         // before the block is handed to an allocator or freed. No-op when an OS page is not smaller than a block.
         void decommitUnusedPages();
         void recommitPages();
+        unsigned numberOfDecommittedPages() const { return std::popcount(m_decommittedPages); }
             
         // While allocating from a free list, MarkedBlock temporarily has bogus
         // cell liveness data. To restore accurate cell liveness data, call one
@@ -240,6 +241,9 @@ public:
         NewlyAllocatedMode newlyAllocatedMode();
         MarksMode marksMode();
         
+        static void poisonDecommittedPages(void*, size_t);
+        void unpoisonDecommittedPages();
+
         template<bool, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, typename DestroyFunc>
         void specializedSweep(FreeList*, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, const DestroyFunc&);
         
@@ -249,6 +253,7 @@ public:
         CellAttributes m_attributes;
         bool m_isFreeListed { false };
         uint16_t m_decommittedPages { 0 }; // bit i set: OS page i of the block is decommitted
+        uint16_t m_zeroPagesDuringSweep { 0 }; // The pages that were decommitted, and so all zero, when the sweep in progress began.
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
