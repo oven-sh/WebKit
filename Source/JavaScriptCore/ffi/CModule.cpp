@@ -176,18 +176,21 @@ static void* openLibrary(const CString& name)
 static void* symbolIn(void* library, const char* name) { return dlsym(library, name); }
 static String lastLibraryError() { return String::fromUTF8(dlerror()); }
 #else
+static bool isImportLibraryName(const CString& name)
+{
+    auto span = name.span();
+    if (span.size() <= 4)
+        return false;
+    auto suffix = span.last(4);
+    return suffix[0] == '.' && (suffix[1] | 0x20) == 'l' && (suffix[2] | 0x20) == 'i' && (suffix[3] | 0x20) == 'b';
+}
+
 // `#pragma comment(lib, "user32.lib")` names an import library; what it imports from is the DLL of that name.
 static void* openLibrary(const CString& name)
 {
     auto span = name.span();
     CString fileName = name;
-    auto isImportLibrary = [&] {
-        if (span.size() <= 4)
-            return false;
-        auto suffix = span.last(4);
-        return suffix[0] == '.' && (suffix[1] | 0x20) == 'l' && (suffix[2] | 0x20) == 'i' && (suffix[3] | 0x20) == 'b';
-    };
-    if (isImportLibrary())
+    if (isImportLibraryName(name))
         fileName = makeString(span.first(span.size() - 4), ".dll"_s).utf8();
     else if (!memchr(name.data(), '.', name.length()) && !memchr(name.data(), '\\', name.length()) && !memchr(name.data(), '/', name.length()))
         fileName = makeString(span, ".dll"_s).utf8();
@@ -219,8 +222,15 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
 
     for (const CString& name : bir.libraries) {
         void* handle = openLibrary(name);
-        if (!handle)
+        if (!handle) {
+#if OS(WINDOWS)
+            // An import library need not have a DLL: uuid.lib, which <windows.h> names, is only constants.
+            // What a missing one leaves undefined is reported by name below.
+            if (isImportLibraryName(name))
+                continue;
+#endif
             return std::unexpected<String>(makeString("cannot load library '"_s, name.span(), "': "_s, lastLibraryError()));
+        }
         module->m_libraries.append(handle);
     }
 
