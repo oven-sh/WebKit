@@ -8,8 +8,9 @@ name: CI
 #        ──> image ──> build, build-tested ──> release
 #                                  └────────> test
 #
-# A lane is one <label>.tar.gz on the release. The lanes (which runner, which release script, which settings, tested or
-# not) are defined in .github/scripts/plan.mjs and nowhere else; `plan` turns them into the matrices of the jobs below.
+# A lane is one <label>.tar.gz on the release. The lanes (which runner, which Dockerfile, which settings, tested or not)
+# are defined in .github/scripts/lanes.mjs and nowhere else. `plan` turns them into the matrices of the jobs below, and
+# `lanes.mjs build <label>` is how a lane is built, here and by hand.
 #
 # A lane is built by a Dockerfile: a `base` stage that is the toolchain (compilers, SDKs, sysroots; the same for every
 # lane of a platform and architecture) and stages on top that build ICU and WebKit with the lane's settings. The
@@ -69,8 +70,8 @@ jobs:
           if [ -n "$PR" ]; then tag=autobuild-preview-pr-$PR-${REF:0:8}; else tag=autobuild-$REF; fi
           echo "building $REF as $tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          node .github/scripts/plan.mjs
-          node .github/scripts/plan.mjs --outputs >> "$GITHUB_OUTPUT"
+          node .github/scripts/lanes.mjs
+          node .github/scripts/lanes.mjs plan >> "$GITHUB_OUTPUT"
 
   # The release exists, as a draft, before any build finishes: each build job uploads its tarball straight onto it
   # and the `release` job publishes it once every asset is there (or deletes it if anything failed). A draft has no
@@ -143,7 +144,7 @@ jobs:
         with:
           ref: ${{ env.REF }}
           sparse-checkout: |
-            scripts
+            .github/scripts
             macos-cross
       - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
         if: steps.look.outputs.missing
@@ -151,16 +152,7 @@ jobs:
           install: true
       - name: Build and push
         if: steps.look.outputs.missing
-        env:
-          IMAGE: ${{ matrix.image }}
-          SCRIPT: ${{ matrix.script }}
-          SCRIPT_ENV: ${{ toJSON(matrix.env) }}
-        run: |
-          set -euo pipefail
-          exports=$(jq -r 'to_entries[] | "export \(.key)=\(.value | @sh)"' <<< "$SCRIPT_ENV")
-          eval "$exports"
-          # The release script, building only the `base` stage and pushing it (scripts/docker-build-mode.sh).
-          temp="$RUNNER_TEMP" PUSH_BASE_IMAGE="$IMAGE" bash "$SCRIPT"
+        run: node .github/scripts/lanes.mjs image "${{ matrix.name }}" --push
       # Only builds of main tidy up: a pull request that changes a Dockerfile has its own images, next to main's.
       - name: Delete the images this one supersedes
         if: steps.look.outputs.missing && github.ref == 'refs/heads/main'
@@ -205,13 +197,10 @@ jobs:
         id: buildx
         with:
           install: true
-      # The lane's release script builds into $temp/bun-webkit inside Docker, and that is packaged as bun-webkit.tar.gz.
+      # The lane is built into bun-webkit/ inside Docker, and that is packaged as bun-webkit.tar.gz.
       - name: Build
         env:
           LABEL: ${{ matrix.label }}
-          SCRIPT: ${{ matrix.script }}
-          # What the release script takes (WEBKIT_RELEASE_TYPE, LTO_FLAG, MARCH_FLAG, MACOS_ARCH, ...), as a JSON object.
-          SCRIPT_ENV: ${{ toJSON(matrix.env) }}
           PACKAGE_OS: ${{ matrix.package_os }}
           PACKAGE_CPU: ${{ matrix.package_cpu }}
           BUILD_REF: ${{ env.REF }}
@@ -220,12 +209,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
-          # Start from the lane's toolchain image, which `image` made sure is there (scripts/docker-build-mode.sh).
+          # Starting from the lane's toolchain image, which `image` made sure is there.
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          export BASE_IMAGE="$IMAGE"
-          exports=$(jq -r 'to_entries[] | "export \(.key)=\(.value | @sh)"' <<< "$SCRIPT_ENV")
-          eval "$exports"
-          temp="$RUNNER_TEMP" bash "$SCRIPT"
+          node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE"
           cd "$RUNNER_TEMP"
           echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
@@ -263,7 +249,7 @@ jobs:
 
   # JavaScriptCore's own test suites (JSTests/, LayoutTests/js, the PerformanceTests collections), run by
   # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on the
-  # runner that built it. Which lanes are tested, and why those, is in plan.mjs.
+  # runner that built it. Which lanes are tested, and why those, is in lanes.mjs.
   #
   # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
   # the release is still published. --no-fail-fast below means every test runs and every failure is reported before

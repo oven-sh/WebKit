@@ -23,19 +23,17 @@ bun build.ts release
 bun build.ts lto
 ```
 
-### Platform-Specific Build Scripts
+### Building a CI lane
 ```bash
-# macOS
-bash mac-release.bash
+# Every lane CI builds, and the toolchain images they start from
+node .github/scripts/lanes.mjs
 
-# Linux (Docker-based)
-bash release.sh
+# Build one exactly as CI does (Docker; cross-compiles everything but Linux)
+node .github/scripts/lanes.mjs build bun-webkit-macos-arm64-lto --output /tmp/bun-webkit
 
-# Linux musl (Docker-based)
-bash musl-release.sh
-
-# Windows
-./windows-release.ps1
+# Natively, outside Docker
+bash mac-release.bash      # on a Mac
+./windows-release.ps1      # on Windows
 ```
 
 ### CMake Build (Advanced)
@@ -201,13 +199,13 @@ Custom event loop implementation for Bun's runtime requirements
 
 `.github/workflows/ci.yml` is the one build workflow, and a push to `main` and a pull request run exactly the same jobs. They differ only in what the result is called: `main` publishes the release `autobuild-{sha}`, a pull request publishes the prerelease `autobuild-preview-pr-{n}-{sha8}` (built from the pull request's head) and links it from a comment on the pull request. Running the workflow by hand on a branch builds that branch's head as a prerelease `autobuild-{sha}`. Either way it builds every lane and publishes them as one GitHub release. A lane is one `<label>.tar.gz`, e.g. `bun-webkit-linux-amd64-lto`: Linux glibc/musl, macOS, Windows, FreeBSD and Android, x64/arm64, release/LTO/debug/ASAN. Every lane builds on a Linux runner, in Docker: Linux glibc/musl natively on x64 and arm64 runners, everything else cross-compiled from Linux x64. `windows-release.ps1` and `mac-release.bash` remain for building on a real Windows machine or Mac.
 
-The lanes are defined in `.github/scripts/plan.mjs` and nowhere else: label, runner, release script, the settings passed to that script, and whether the lane is tested. `node .github/scripts/plan.mjs` lists them (`--json` for the full settings). To add, remove or change a lane, edit `platforms` there. The workflow's `plan` job names the release and turns that table into the matrices of `build` (lanes that are only built), `build-tested` (lanes that are also tested; same steps) and `test`, and into the list of assets the `release` job requires.
+The lanes are defined in `.github/scripts/lanes.mjs` and nowhere else: label, runner, Dockerfile, every build argument passed to it, and whether the lane is tested. `node .github/scripts/lanes.mjs` lists them (`--json` for the full settings), and `lanes.mjs build <label> --output <dir>` builds one; that command is also what CI runs, so a lane can be reproduced exactly. To add, remove or change a lane, edit `platforms` there. The workflow's `plan` job names the release and turns that table into the matrices of `image`, `build` (lanes that are only built), `build-tested` (lanes that are also tested; same steps) and `test`, and into the list of assets the `release` job requires.
 
-Each lane is built by a Dockerfile (`Dockerfile`, `Dockerfile.musl`, `Dockerfile.macos`, `Dockerfile.windows`, `Dockerfile.freebsd`, `Dockerfile.android`) through its `*-release.sh` script. In every one of them the `base` stage is the toolchain and nothing else (compilers, SDKs, sysroots): it must not take any lane setting, so that it is identical for every lane of a platform and architecture; lane settings go in the stages on top (`lane`, `build_icu`, `build_webkit`). CI keeps those `base` stages as images in `ghcr.io/oven-sh/bun-webkit-build-env`, tagged `<platform>[-<arch>]-<hash of the Dockerfile up to the end of base>`. The `image` job builds and pushes the ones whose tag is missing (so only after a change to a `base` stage), failing if it cannot, and each lane starts from its image (`--build-context base=docker-image://...`, see `scripts/docker-build-mode.sh`). Running a release script by hand, with no image given, builds the toolchain as part of the build.
+Each lane is built by a Dockerfile (`Dockerfile`, `Dockerfile.musl`, `Dockerfile.macos`, `Dockerfile.windows`, `Dockerfile.freebsd`, `Dockerfile.android`). In every one of them the `base` stage is the toolchain and nothing else (compilers, SDKs, sysroots): it must not take any lane setting, so that it is identical for every lane of a platform and architecture; lane settings go in the stages on top (`lane`, `build_icu`, `build_webkit`). CI keeps those `base` stages as images in `ghcr.io/oven-sh/bun-webkit-build-env`, tagged `<platform>[-<arch>]-<hash of the Dockerfile up to the end of base>`. The `image` job builds and pushes the ones whose tag is missing (so only after a change to a `base` stage), failing if it cannot, and each lane starts from its image (`lanes.mjs build --base-image`, which is `--build-context base=docker-image://...`). Without `--base-image` the toolchain is built as part of the build.
 
 The release starts as a draft, each lane uploads its tarball onto it, and the `release` job publishes it once every lane succeeded (or deletes the draft when one failed).
 
-The `test` job runs `Tools/Scripts/run-javascriptcore-tests` (JSTests, LayoutTests/js, the PerformanceTests collections) and `testFFI` against the `bin/jsc` shipped by the lanes marked `tested` in `plan.mjs` (the `bun-webkit-linux-{amd64,arm64}-asan` lanes), as soon as those lanes are built. It runs every test before failing (`--no-fail-fast`) and turns the run red when any fail, but does not gate the release, which is still published; the failing tests are listed in the job summary and the full log and results JSON are uploaded as a workflow artifact. To reproduce locally: extract `bun-webkit/bin` from the asan tarball and run `ASAN_OPTIONS=detect_leaks=0:allocator_may_return_null=1 JSCTEST_memoryLimit=4294967296 Tools/Scripts/run-javascriptcore-tests --no-build --root=<path>/bun-webkit --release --jsc-only --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-fail-fast --memory-limited` (add `--filter <regex>` for a subset).
+The `test` job runs `Tools/Scripts/run-javascriptcore-tests` (JSTests, LayoutTests/js, the PerformanceTests collections) and `testFFI` against the `bin/jsc` shipped by the lanes marked `tested` in `lanes.mjs` (the `bun-webkit-linux-{amd64,arm64}-asan` lanes), as soon as those lanes are built. It runs every test before failing (`--no-fail-fast`) and turns the run red when any fail, but does not gate the release, which is still published; the failing tests are listed in the job summary and the full log and results JSON are uploaded as a workflow artifact. To reproduce locally: extract `bun-webkit/bin` from the asan tarball and run `ASAN_OPTIONS=detect_leaks=0:allocator_may_return_null=1 JSCTEST_memoryLimit=4294967296 Tools/Scripts/run-javascriptcore-tests --no-build --root=<path>/bun-webkit --release --jsc-only --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-fail-fast --memory-limited` (add `--filter <regex>` for a subset).
 
 ## Architecture Notes
 

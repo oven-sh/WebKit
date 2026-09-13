@@ -45,7 +45,7 @@ $env:CXX = "clang-cl"
 if ($Platform -eq "ARM64") {
     $MarchFlag = "/clang:-march=armv8-a+crc /clang:-mtune=ampere1"
 } else {
-    # One x64 floor. See windows-cross-release.sh for why the haswell variant went away.
+    # One x64 floor. See .github/scripts/lanes.mjs for why the haswell variant went away.
     $MarchFlag = "/clang:-march=nehalem"
 }
 Write-Host ":: WebKit codegen floor: $MarchFlag"
