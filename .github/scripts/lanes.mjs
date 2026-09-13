@@ -8,7 +8,8 @@
 //   node .github/scripts/lanes.mjs build <label> --output <dir> build a lane into <dir>, like CI does
 //                                  [--base-image <ref>]         ... starting from a prebuilt toolchain image
 //   node .github/scripts/lanes.mjs image <name> --push          build a toolchain image and push it to its ref
-//   node .github/scripts/lanes.mjs plan                         the outputs of the workflow's `plan` job
+//   node .github/scripts/lanes.mjs plan                         the outputs of the workflow's `plan` job. Asks the
+//                                                               registry which images are already there.
 //
 // `build` and `image` take --dry-run, which prints the docker command instead of running it.
 //
@@ -29,6 +30,9 @@ const REGISTRY = `ghcr.io/${(process.env.GITHUB_REPOSITORY_OWNER ?? "oven-sh").t
 
 // Every lane builds on this, in a linux/amd64 container: whatever it is for is a --target and a sysroot to clang.
 const BUILDER = "linux-x64-gh";
+// A toolchain image is built on a standard runner: it is mostly downloading and unpacking, and those are never
+// waited for.
+const IMAGE_BUILDER = "ubuntu-latest";
 // Where a tested lane is tested: a machine that can run it.
 const TESTERS = { amd64: "linux-x64-gh", arm64: "linux-arm64-gh" };
 
@@ -236,7 +240,7 @@ if (duplicate) throw new Error(`two lanes are called ${duplicate}`);
 const images = [...new Map(lanes.toReversed().map(lane => [lane.image, lane])).values()].toReversed().map(lane => ({
   name: lane.image.slice(REGISTRY.length + 1, lane.image.lastIndexOf("-")),
   image: lane.image,
-  runner: lane.runner,
+  runner: IMAGE_BUILDER,
   lane,
 }));
 
@@ -289,7 +293,14 @@ if (command === "build") {
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner })))}`);
   console.log(`labels=${JSON.stringify(labels)}`);
-  console.log(`images=${matrix(images.map(({ name, image, runner }) => ({ name, image, runner })))}`);
+  // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
+  const missing = images.filter(({ image }) => {
+    const there = spawnSync("docker", ["manifest", "inspect", image], { stdio: "ignore" }).status === 0;
+    console.error(`${image} ${there ? "is there" : "is missing, to be built"}`);
+    return !there;
+  });
+  console.log(`images=${matrix(missing.map(({ name, image, runner }) => ({ name, image, runner })))}`);
+  console.log(`build_images=${missing.length > 0}`);
 } else if (command === "--json") {
   console.log(JSON.stringify(lanes, null, 2));
 } else if (command === undefined) {
