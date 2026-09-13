@@ -7,6 +7,7 @@ name: CI
 #   plan ──> create-release
 #        ──> image ──> build, build-tested ──> release
 #                                  └────────> test
+#        ──> prune (main only)
 #
 # A lane is one <label>.tar.gz on the release. The lanes (which runner, which Dockerfile, which settings, tested or not)
 # are defined in .github/scripts/lanes.mjs and nowhere else. `plan` turns them into the matrices of the jobs below, and
@@ -58,6 +59,8 @@ jobs:
       # any. Normally there are none: an image is only missing after a change to a Dockerfile's `base` stage.
       images: ${{ steps.plan.outputs.images }}
       build_images: ${{ steps.plan.outputs.build_images }}
+      # The tags of all of them.
+      image_tags: ${{ steps.plan.outputs.image_tags }}
     steps:
       # The files at the root (the Dockerfiles among them) come with any sparse checkout.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -161,22 +164,40 @@ jobs:
           set -euo pipefail
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           node .github/scripts/lanes.mjs image "$NAME" --push
-      # Only builds of main tidy up: a pull request that changes a Dockerfile has its own images, next to main's.
-      - name: Delete the images this one supersedes
-        if: github.ref == 'refs/heads/main'
+
+  # Old toolchain images go away, but not at once. A build of main deletes the images main's lanes do not use that are
+  # more than KEEP_DAYS old: superseded ones, and ones a pull request built that never landed. One a pull request built
+  # recently stays, so a change to a toolchain can be iterated on before it is merged. If an image a branch still wants
+  # has been deleted, `plan` finds it missing on that branch's next run and `image` builds it again.
+  prune:
+    name: Prune toolchain images
+    needs: plan
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete what main does not use and is old
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: /orgs/${{ github.repository_owner }}/packages/container/bun-webkit-build-env
-          NAME: ${{ matrix.name }}
-          IMAGE: ${{ matrix.image }}
+          KEEP: ${{ needs.plan.outputs.image_tags }}
+          KEEP_DAYS: 14
         run: |
-          keep=${IMAGE##*:}
-          gh api --paginate "$PACKAGE/versions" \
-            --jq ".[] | select([.metadata.container.tags[] | test(\"^$NAME-[0-9a-f]{16}\$\")] | any) | select(.metadata.container.tags | index(\"$keep\") | not) | .id" |
-          while read -r id; do
-            echo "deleting package version $id"
-            gh api -X DELETE "$PACKAGE/versions/$id" || true
-          done
+          set -euo pipefail
+          gh api --paginate "$PACKAGE/versions?per_page=100" |
+            jq -r --argjson keep "$KEEP" --argjson days "$KEEP_DAYS" '
+              .[]
+              | .metadata.container.tags as $tags
+              | select(any($tags[]; . as $tag | $keep | index($tag)) | not)
+              | select(now - (.updated_at | fromdateiso8601) > $days * 86400)
+              | "\(.id)\t\(.updated_at)\t\($tags | join(","))"' > delete.tsv
+          echo "keeping: $(jq -r 'join(" ")' <<< "$KEEP"), and anything less than $KEEP_DAYS days old"
+          while IFS=$'\t' read -r id updated tags; do
+            echo "deleting $id (${tags:-untagged}, pushed $updated)"
+            gh api -X DELETE "$PACKAGE/versions/$id" || echo "::warning::could not delete package version $id"
+          done < delete.tsv
 
   # `build` and `build-tested` are one job in two halves: the same steps, over the lanes `test` does not wait for and
   # the lanes it does. `needs:` names a job, never one leg of its matrix, so the lanes that are tested have to be a job

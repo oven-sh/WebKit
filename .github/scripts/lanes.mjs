@@ -305,6 +305,8 @@ if (command === "build") {
   });
   console.log(`images=${matrix(missing.map(({ name, image, runner }) => ({ name, image, runner })))}`);
   console.log(`build_images=${missing.length > 0}`);
+  // All of them, by tag: what the `prune` job keeps.
+  console.log(`image_tags=${JSON.stringify(images.map(({ image }) => image.slice(REGISTRY.length + 1)))}`);
 } else if (command === "--json") {
   console.log(JSON.stringify(lanes, null, 2));
 } else if (command === undefined) {
