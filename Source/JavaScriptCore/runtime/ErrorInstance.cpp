@@ -441,6 +441,10 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         m_errorInfoMaterialized = true;
         DeferGCForAWhile deferGC(vm);
 
+        // The lazy properties count as present from creation: an error that is already
+        // non-extensible here still gets them.
+        bool wasExtensible = isStructureExtensible();
+
         JSValue stack;
         if (!m_stackPropertyAlreadyMaterialized)
             stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this, this->bunErrorData());
@@ -452,15 +456,32 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             m_stackString = String();
         }
 
-        auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+        // fn can run user code (Error.prepareStackTrace), which can freeze this error or make one
+        // of these properties non-configurable. putDirect() checks nothing. So a property that is
+        // absent is not added to an error that became non-extensible, and a non-configurable
+        // property keeps its attributes. It takes the value only if an assignment could store it.
+        bool becameNonExtensible = wasExtensible && !isStructureExtensible();
+        auto putUnlessLocked = [&](PropertyName propertyName, JSValue value) {
+            unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+            unsigned currentAttributes;
+            if (isValidOffset(structure()->get(vm, propertyName, currentAttributes))) {
+                if (currentAttributes & PropertyAttribute::DontDelete) {
+                    if (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+                        return;
+                    attributes = currentAttributes;
+                }
+            } else if (becameNonExtensible)
+                return;
+            putDirect(vm, propertyName, value, attributes);
+        };
 
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+        putUnlessLocked(vm.propertyNames->line, jsNumber(m_lineColumn.line));
+        putUnlessLocked(vm.propertyNames->column, jsNumber(m_lineColumn.column));
         if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+            putUnlessLocked(vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)));
 
         if (!m_stackPropertyAlreadyMaterialized)
-            putDirect(vm, vm.propertyNames->stack, stack, attributes);
+            putUnlessLocked(vm.propertyNames->stack, stack);
         return true;
     }
 
