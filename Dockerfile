@@ -278,10 +278,11 @@ RUN set -eu; \
 
 # ICU's sources (/icu.tgz, which the lanes build from) and its tools for this container. ICU runs those while it
 # builds (pkgdata, genrb, ...), and the lanes filter and repack its data with icupkg: a lane that builds ICU for
-# aarch64 cannot run the ones it builds.
+# aarch64 cannot run the ones it builds. LDFLAGS without this stage's -L/usr/lib/x86_64-linux-gnu, as in the lanes' own
+# ICU step: that is where the distribution's ICU is, and the tools would be linked against it instead of this one.
 ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu.tgz
 RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 && cd source && \
-    CFLAGS="-Os" CXXFLAGS="-Os" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
+    CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
     make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
 
 # What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
