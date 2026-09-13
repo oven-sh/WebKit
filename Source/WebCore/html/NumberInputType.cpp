@@ -148,7 +148,7 @@ ValueOrReference<String> NumberInputType::stripInvalidNumberCharacters(const Str
 {
     auto allowedChars = StringView::fromLatin1("0123456789.Ee-+");
     auto length = input.length();
-    LOG(Editing, "stripInvalidNumberCharacters: input=[%s], length=%u", input.utf8().data(), length);
+    LOG(Editing, "stripInvalidNumberCharacters: input=[%s], length=%u", input.utf8().legacyCStringPointer(), length);
 
     auto needsFiltering = false;
     for (unsigned i = 0; i < length; ++i) {
@@ -177,7 +177,7 @@ ValueOrReference<String> NumberInputType::stripInvalidNumberCharacters(const Str
         } else
             LOG(Editing, "Skipping disallowed char: [%c]", character);
     }
-    LOG(Editing, "Filtering complete, result=[%s]", builder.toString().utf8().data());
+    LOG(Editing, "Filtering complete, result=[%s]", builder.toString().utf8().legacyCStringPointer());
     return String { builder.toString() };
 }
 
@@ -388,7 +388,7 @@ void NumberInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& eve
 {
     // Normalize full-width digits and minus sign to ASCII
     auto normalizedText = normalizeFullWidthNumberChars(event.text()).get();
-    LOG(Editing, "normalizeFullWidthNumberChars() -> [%s]", normalizedText.utf8().data());
+    LOG(Editing, "normalizeFullWidthNumberChars() -> [%s]", normalizedText.utf8().legacyCStringPointer());
 
     ASSERT(element());
     Ref element = *this->element();
@@ -422,7 +422,7 @@ void NumberInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& eve
     // If the cleaned up text doesn't match input text, don't insert partial input
     // since it could be an incorrect paste.
     updatedEventText = stripInvalidNumberCharacters(updatedEventText).get();
-    LOG(Editing, "stripInvalidNumberCharacters() -> [%s]", updatedEventText.utf8().data());
+    LOG(Editing, "stripInvalidNumberCharacters() -> [%s]", updatedEventText.utf8().legacyCStringPointer());
 
     // Get left and right of cursor
     auto originalValue = element->innerTextValue();
@@ -551,7 +551,7 @@ void NumberInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& eve
         leftHalf = leftHalfBuilder.toString();
         finalEventText.append(character);
     }
-    LOG(Editing, "finalEventText: [%s]", finalEventText.toString().utf8().data());
+    LOG(Editing, "finalEventText: [%s]", finalEventText.toString().utf8().legacyCStringPointer());
     const auto displayedText = displayedTextUsesNonPeriodDecimalSeparator ? locale->localizeNumberCharacters(finalEventText.toString()) : finalEventText.toString();
     event.setText(displayedText);
 }

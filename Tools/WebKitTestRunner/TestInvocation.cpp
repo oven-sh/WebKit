@@ -343,7 +343,7 @@ void TestInvocation::dumpResults()
     if (m_textOutput.hasOverflowed())
         dump("text output overflowed");
     else if (m_textOutput.length() || !m_audioResult)
-        dump(m_textOutput.toString().utf8().data());
+        dump(m_textOutput.toString().utf8().legacyCStringPointer());
     else
         dumpAudio(m_audioResult.get());
 
@@ -1311,8 +1311,8 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetPrivateClickMeasurementAttributionReportURLsForTesting")) {
         auto testDictionary = dictionaryValue(messageBody);
-        auto sourceURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "SourceURLString")).utf8().data()));
-        auto destinationURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "AttributeOnURLString")).utf8().data()));
+        auto sourceURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "SourceURLString")).utf8().legacyCStringPointer()));
+        auto destinationURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "AttributeOnURLString")).utf8().legacyCStringPointer()));
         TestController::singleton().setPrivateClickMeasurementAttributionReportURLsForTesting(sourceURL.get(), destinationURL.get());
         return nullptr;
     }

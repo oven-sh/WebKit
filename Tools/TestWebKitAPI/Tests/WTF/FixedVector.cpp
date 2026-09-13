@@ -450,7 +450,7 @@ TEST(WTF_FixedVector, SizeAndValueConstructorNonPOD)
     FixedVector<String> vec(FillWith { }, 3, value);
     EXPECT_EQ(3U, vec.size());
     for (unsigned i = 0; i < vec.size(); ++i)
-        EXPECT_STREQ("hello", vec[i].utf8().data());
+        EXPECT_STREQ("hello", vec[i].utf8().legacyCStringPointer());
 }
 
 TEST(WTF_FixedVector, SizeAndValueConstructorZeroSize)

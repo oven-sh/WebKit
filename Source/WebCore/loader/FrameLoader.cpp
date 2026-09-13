@@ -2493,8 +2493,8 @@ void FrameLoader::commitProvisionalLoad()
     }
 
     LOG(BackForwardCache, "WebCoreLoading frame %" PRIu64 ": About to commit provisional load from previous URL '%s' to new URL '%s' with cached page %p", m_frame->frameID().toUInt64(),
-        frame->document() ? frame->document()->url().stringCenterEllipsizedToLength().utf8().data() : "",
-        pdl ? pdl->url().stringCenterEllipsizedToLength().utf8().data() : "<no provisional DocumentLoader>", cachedPage.get());
+        frame->document() ? frame->document()->url().stringCenterEllipsizedToLength().utf8().legacyCStringPointer() : "",
+        pdl ? pdl->url().stringCenterEllipsizedToLength().utf8().legacyCStringPointer() : "<no provisional DocumentLoader>", cachedPage.get());
 
     if (RefPtr document = m_frame->document()) {
         auto canTriggerCrossDocumentViewTransition = CanTriggerCrossDocumentViewTransition::No;
@@ -2627,7 +2627,7 @@ void FrameLoader::commitProvisionalLoad()
 
 IGNORE_GCC_WARNINGS_BEGIN("format-overflow")
     LOG(Loading, "WebCoreLoading frame %" PRIu64 ": Finished committing provisional load to URL %s", frame->frameID().toUInt64(),
-        frame->document() ? frame->document()->url().stringCenterEllipsizedToLength().utf8().data() : "");
+        frame->document() ? frame->document()->url().stringCenterEllipsizedToLength().utf8().legacyCStringPointer() : "");
 IGNORE_GCC_WARNINGS_END
 
     if (m_loadType == FrameLoadType::Standard && m_documentLoader && m_documentLoader->isClientRedirect())
@@ -4525,7 +4525,7 @@ bool FrameLoader::shouldInterruptLoadForXFrameOptions(const String& content, con
 void FrameLoader::loadProvisionalItemFromCachedPage()
 {
     RefPtr provisionalLoader = provisionalDocumentLoader();
-    LOG(BackForwardCache, "FrameLoader::loadProvisionalItemFromCachedPage Loading provisional DocumentLoader %p with URL '%s' from CachedPage", provisionalDocumentLoader(), provisionalDocumentLoader()->url().stringCenterEllipsizedToLength().utf8().data());
+    LOG(BackForwardCache, "FrameLoader::loadProvisionalItemFromCachedPage Loading provisional DocumentLoader %p with URL '%s' from CachedPage", provisionalDocumentLoader(), provisionalDocumentLoader()->url().stringCenterEllipsizedToLength().utf8().legacyCStringPointer());
 
     prepareForLoadStart();
 
@@ -5094,7 +5094,8 @@ std::pair<RefPtr<Frame>, CreatedNewPage> createWindow(LocalFrame& openerFrame, F
     if (!request.frameName().isEmpty() && !isBlankTargetFrameName(request.frameName())) {
         if (RefPtr frame = openerFrame.loader().findFrameForNavigation(request.frameName(), protect(openerFrame.document()).get())) {
             if (!isSelfTargetFrameName(request.frameName())) {
-                if (RefPtr page = frame->page(); page && isInVisibleAndActivePage(openerFrame))
+                RefPtr openerWindow = openerFrame.window();
+                if (RefPtr page = frame->page(); page && isInVisibleAndActivePage(openerFrame) && openerWindow && openerWindow->hasTransientActivation())
                     page->chrome().focus();
             }
             if (!features.wantsNoOpener())

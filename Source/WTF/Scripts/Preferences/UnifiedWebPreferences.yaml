@@ -7147,7 +7147,15 @@ WebRTCAudioLatencyAdaptationEnabled:
   excludeFrom: [ WebCore ]
   defaultValue: true
 
-# FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
+WebRTCDNSResolutionBySocketEnabled:
+  type: bool
+  status: testable
+  category: media
+  condition: ENABLE(WEB_RTC)
+  humanReadableName: "WebRTC DNS Resolution By Socket"
+  humanReadableDescription: "Enable WebRTC DNS Resolution By Socket"
+  defaultValue: false
+
 WebRTCDTMFEnabled:
   type: bool
   status: internal

@@ -1208,7 +1208,7 @@ void RenderObject::showRenderTreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     root->outputRenderSubTreeAndMark(stream, this, 1);
-    WTFLogAlways("%s", stream.release().utf8().data());
+    WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer());
 }
 
 void RenderObject::showSubtreeForThis() const
@@ -1216,7 +1216,7 @@ void RenderObject::showSubtreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     outputRenderSubTreeAndMark(stream, this, 1);
-    WTFLogAlways("%s", stream.release().utf8().data());
+    WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer());
 }
 
 void RenderObject::showLineTreeForThis() const
@@ -1228,7 +1228,7 @@ void RenderObject::showLineTreeForThis() const
     outputRenderTreeLegend(stream);
     outputRenderObject(stream, false, 1);
     blockFlow->outputLineTreeAndMark(stream, nullptr, 2);
-    WTFLogAlways("%s", stream.release().utf8().data());
+    WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer());
 }
 
 static const RenderFragmentedFlow* enclosingFragmentedFlowFromRenderer(const RenderObject* renderer)
@@ -1358,7 +1358,7 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
         stream << " ";
 
     if (node())
-        stream << node()->nodeName().utf8().data() << " ";
+        stream << node()->nodeName().utf8().legacyCStringPointer() << " ";
 
     ASCIILiteral name = renderName();
     StringView nameView { name };
@@ -1401,9 +1401,9 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
         const int maxPrintedLength = 80;
         if (value.length() > maxPrintedLength) {
             auto substring = StringView(value).left(maxPrintedLength);
-            stream << " \"" << substring.utf8().data() << "\"...";
+            stream << " \"" << substring.utf8().legacyCStringPointer() << "\"...";
         } else
-            stream << " \"" << value.utf8().data() << "\"";
+            stream << " \"" << value.utf8().legacyCStringPointer() << "\"";
     }
 
     if (auto* box = dynamicDowncast<RenderBox>(*this)) {
@@ -3164,7 +3164,7 @@ void printPaintOrderTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        WTFLogAlways("%s", document->url().string().utf8().data());
+        WTFLogAlways("%s", document->url().string().utf8().legacyCStringPointer());
         showPaintOrderTree(document->renderView());
     }
 }
@@ -3176,7 +3176,7 @@ void printRenderTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        WTFLogAlways("%s", document->url().string().utf8().data());
+        WTFLogAlways("%s", document->url().string().utf8().legacyCStringPointer());
         showRenderTree(document->renderView());
     }
 }
@@ -3188,7 +3188,7 @@ void printLayerTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        WTFLogAlways("%s", document->url().string().utf8().data());
+        WTFLogAlways("%s", document->url().string().utf8().legacyCStringPointer());
         showLayerTree(document->renderView());
     }
 }
@@ -3211,9 +3211,9 @@ void printAccessibilityTreeForLiveDocuments()
             continue;
         if (document->frame()) {
             if (document->frame()->isRootFrame())
-                WTFLogAlways("\nPID %d: Accessibility tree for root document %p %s", getpid(), document.ptr(), document->url().string().utf8().data());
+                WTFLogAlways("\nPID %d: Accessibility tree for root document %p %s", getpid(), document.ptr(), document->url().string().utf8().legacyCStringPointer());
             else
-                WTFLogAlways("\nPID %d: Accessibility tree for non-root document %p %s", getpid(), document.ptr(), document->url().string().utf8().data());
+                WTFLogAlways("\nPID %d: Accessibility tree for non-root document %p %s", getpid(), document.ptr(), document->url().string().utf8().legacyCStringPointer());
             dumpAccessibilityTreeToStderr(document.get());
         }
     }
@@ -3225,7 +3225,7 @@ void printGraphicsLayerTreeForLiveDocuments()
         if (!document->renderView())
             continue;
         if (document->frame() && document->frame()->isRootFrame()) {
-            WTFLogAlways("Graphics layer tree for root document %p %s", document.ptr(), document->url().string().utf8().data());
+            WTFLogAlways("Graphics layer tree for root document %p %s", document.ptr(), document->url().string().utf8().legacyCStringPointer());
             showGraphicsLayerTreeForCompositor(protect(document->renderView())->compositor());
         }
     }

@@ -829,7 +829,7 @@ void WebKitProtocolHandler::handleGPU(WebKitURISchemeRequest* request, RenderPro
     webkit_uri_scheme_request_finish(request, stream.get(), streamLength, "text/html");
 
     if (requestURL.path() == "/stdout"_s)
-        WTFLogAlways("GPU information\n%s", prettyPrintJSON(infoAsString).utf8().data());
+        WTFLogAlways("GPU information\n%s", prettyPrintJSON(infoAsString).utf8().legacyCStringPointer());
 }
 
 } // namespace WebKit

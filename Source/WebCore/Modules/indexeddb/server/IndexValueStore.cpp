@@ -165,7 +165,7 @@ Vector<IDBKeyData> IndexValueStore::findKeysWithValueKey(const IDBKeyData& value
 
 IDBKeyData IndexValueStore::lowestKeyWithRecordInRange(const IDBKeyRangeData& range) const
 {
-    LOG(IndexedDB, "IndexValueStore::lowestKeyWithRecordInRange - %s", range.loggingString().utf8().data());
+    LOG(IndexedDB, "IndexValueStore::lowestKeyWithRecordInRange - %s", range.loggingString().utf8().legacyCStringPointer());
 
     if (range.isExactlyOneKey())
         return m_records.contains(range.lowerKey) ? range.lowerKey : IDBKeyData();

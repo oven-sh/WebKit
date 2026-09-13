@@ -70,7 +70,7 @@ WebSocketTask::WebSocketTask(NetworkSocketChannel& channel, const WebCore::Resou
         auto protocolsSpan = unsafeMakeSpan(protocols.get(), protocolList.size());
         unsigned i = 0;
         for (auto& subprotocol : protocolList)
-            protocolsSpan[i++] = g_strdup(subprotocol.trim(isASCIIWhitespaceWithoutFF<char16_t>).utf8().data());
+            protocolsSpan[i++] = g_strdup(subprotocol.trim(isASCIIWhitespaceWithoutFF<char16_t>).utf8().legacyCStringPointer());
     }
 
     {
@@ -258,7 +258,7 @@ void WebSocketTask::close(int32_t code, const String& reason)
         code = SOUP_WEBSOCKET_CLOSE_NO_STATUS;
 
     if (soup_websocket_connection_get_state(m_connection.get()) == SOUP_WEBSOCKET_STATE_OPEN)
-        soup_websocket_connection_close(m_connection.get(), code, reason.utf8().data());
+        soup_websocket_connection_close(m_connection.get(), code, reason.utf8().legacyCStringPointer());
 }
 
 void WebSocketTask::cancel()

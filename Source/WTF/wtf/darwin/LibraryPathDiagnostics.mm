@@ -173,7 +173,7 @@ static bool NODELETE isAddressInSharedRegion(const void* addr)
 
 void LibraryPathDiagnosticsLogger::logDynamicLibraryInfo(const String& installName)
 {
-    void *handle = dlopen(installName.utf8().data(), RTLD_NOLOAD);
+    void *handle = dlopen(installName.utf8().legacyCStringPointer(), RTLD_NOLOAD);
     if (!handle)
         return;
 

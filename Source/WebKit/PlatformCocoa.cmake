@@ -493,9 +493,9 @@ set(WebKit_SWIFTUI_SOURCES
 # Swift flags shared by both _WebKit_SwiftUI targets. The -Xcc -D/-f flags come
 # from _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS so the overlay lands in the same
 # SwiftModuleCache hash dir as WebKit, PAL and WebGPU; only -I and -F, which are
-# not hashed, are listed here.
-# @Entry and other SwiftUI macros run swift-plugin-server under sandbox-exec;
-# -disable-sandbox avoids a nested sandbox_apply failure in a sandboxed build.
+# not hashed, are listed here. Flags Xcode sets for every Swift target
+# (-swift-version, InternalImportsByDefault, -disable-sandbox) come from
+# WebKitSwiftFlags.cmake.
 _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS(_swiftui_shared_cc_flags)
 set(WebKit_SWIFTUI_SWIFT_FLAGS "")
 foreach (_flag IN LISTS _swiftui_shared_cc_flags)
@@ -506,7 +506,6 @@ list(APPEND WebKit_SWIFTUI_SWIFT_FLAGS
     "$<$<COMPILE_LANGUAGE:Swift>:-F${CMAKE_LIBRARY_OUTPUT_DIRECTORY}>"
     "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/Cocoa>"
     "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-disable-sandbox>"
     "$<$<COMPILE_LANGUAGE:Swift>:-enable-library-evolution>"
     "$<$<COMPILE_LANGUAGE:Swift>:-parse-as-library>"
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${CMAKE_BINARY_DIR}>"
@@ -515,9 +514,7 @@ list(APPEND WebKit_SWIFTUI_SWIFT_FLAGS
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}>"
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -iquote${CMAKE_BINARY_DIR}>"
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -experimental-spi-only-imports>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-upcoming-feature InternalImportsByDefault>"
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-library-level api>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-swift-version 6>"
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp>"
     ${WEBKIT_PRIVATE_FRAMEWORKS_COMPILE_FLAG}
 )
@@ -1182,30 +1179,18 @@ unset(_swift_tba_resp_stdout)
 unset(_swift_tba_resp_stderr)
 unset(_swift_tba_resp_result)
 
-target_compile_options(WebKit PRIVATE
+webkit_target_add_swift_options(WebKit
     # Match Xcode iOS WebKit Swift compile flags from
     # WebKit.framework/Modules/WebKit.swiftmodule/*.swiftinterface.
-    "$<$<COMPILE_LANGUAGE:Swift>:-cxx-interoperability-mode=default>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature Lifetimes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature LifetimeDependence>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature ImportNonPublicCxxMembers>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature ImportCxxMembersLazily>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature RequiresObjC=Foundation>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-experimental-feature DebugDescriptionMacro>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-upcoming-feature ExistentialAny>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-upcoming-feature InternalImportsByDefault>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-enable-upcoming-feature MemberImportVisibility>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-no-verify-emitted-module-interface>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-library-level api>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-strict-memory-safety>"
+    -no-verify-emitted-module-interface
     # -Xcc -D/-f flags shared with PAL/WebGPU come from
     # _WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS in WebKitMacros.cmake (which also
     # omits WK_SUPPORTS_SWIFT_OBJCXX_INTEROP on iOS — see bug 312083). Only
     # -I/-isystem/-ivfsoverlay/-fmodule-map-file (not in the module-cache hash)
     # remain per-target here.
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -DHAVE_CONFIG_H=1>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${CMAKE_BINARY_DIR}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -disable-cross-import-overlays>"
+    "-Xcc -DHAVE_CONFIG_H=1"
+    "-Xcc -I${CMAKE_BINARY_DIR}"
+    "-Xfrontend -disable-cross-import-overlays"
     # Auto-import the WebKit framework's clang module (matched by -module-name
     # WebKit) so iOS Swift sources see public WebKit Obj-C API (WKWebView,
     # WKError, WKFrameInfo, WKURLSchemeHandler, ...) without needing an
@@ -1214,35 +1199,30 @@ target_compile_options(WebKit PRIVATE
     # textual #imports; the stripped modulemap above doesn't, so the
     # underlying-module-import is now required to keep WebPage.swift and
     # friends compiling. Bug 312083.
-    "$<$<COMPILE_LANGUAGE:Swift>:-import-underlying-module>"
+    -import-underlying-module
     # Use WebKit_Private modulemap as an external client; do not pin
     # -fmodule-name=WebKit (that contradicts the loaded modulemap and feeds
     # clang module-loader cycles in the Swift dep scan).
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fmodule-map-file=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Modules/module.private.modulemap>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -ivfsoverlay -Xcc ${CMAKE_BINARY_DIR}/swift-vfs-overlay.yaml>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${_swift_tba_resp}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/Cocoa>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/ios>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${PAL_FRAMEWORK_HEADERS_DIR}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -isystem${CMAKE_OSX_SYSROOT}/usr/local/include>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fmodule-map-file=${CMAKE_OSX_SYSROOT}/usr/local/include/unicode_private.modulemap>"
+    "-Xcc -fmodule-map-file=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Modules/module.private.modulemap"
+    "-Xcc -ivfsoverlay"
+    "-Xcc ${CMAKE_BINARY_DIR}/swift-vfs-overlay.yaml"
+    "@${_swift_tba_resp}"
+    -I${WEBKIT_DIR}/Platform/spi/Cocoa
+    -I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules
+    -I${WEBKIT_DIR}/Platform/spi/ios
+    "-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}"
+    "-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}"
+    "-Xcc -I${PAL_FRAMEWORK_HEADERS_DIR}"
+    "-Xcc -isystem${CMAKE_OSX_SYSROOT}/usr/local/include"
+    "-Xcc -fmodule-map-file=${CMAKE_OSX_SYSROOT}/usr/local/include/unicode_private.modulemap"
 )
 
-target_compile_options(WebKit PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:-enable-library-evolution>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-emit-module-interface>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-private-module-interface-path ${CMAKE_BINARY_DIR}/Source/WebKit/WebKit.private.swiftinterface>"
+webkit_target_add_swift_options(WebKit
+    -enable-library-evolution
+    -emit-module-interface
+    "-emit-private-module-interface-path ${CMAKE_BINARY_DIR}/Source/WebKit/WebKit.private.swiftinterface"
 )
 
-# iOS WebKit's Swift compile transitively imports UIKit→UIKitCore→WebKit_Private.
-# Explicit-module-build pre-builds those PCMs with our project -Xcc -I/-D set
-# (via libSwiftScan), so WebKit_Private compiles cleanly. With implicit modules,
-# swiftc spawns sibling clang -emit-module jobs that miss the project flags and
-# fail with cyclic-dep / WEBCORE_EXPORT errors. https://bugs.webkit.org/show_bug.cgi?id=312083
-set(WebKit_SWIFT_EXPLICIT_MODULE_BUILD TRUE)
 
 if (WEBKIT_ADDITIONS_SWIFT_SOURCES)
     # WebViewRepresentable+Extras.swift belongs to the _WebKit_SwiftUI overlay
@@ -2074,11 +2054,10 @@ with open(sys.argv[2], 'wb') as f:
             MACOSX_BUNDLE FALSE
         )
 
-        target_compile_options(${_name} PRIVATE
-            "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-import-objc-header ${WEBKIT_DIR}/Shared/AuxiliaryProcessExtensions/CMakeExtensionBridge.h>"
-            "$<$<COMPILE_LANGUAGE:Swift>:-parse-as-library>"
-            "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-swift-version 6>"
-            "$<$<COMPILE_LANGUAGE:Swift>:-application-extension>"
+        webkit_target_add_swift_options(${_name}
+            "-import-objc-header ${WEBKIT_DIR}/Shared/AuxiliaryProcessExtensions/CMakeExtensionBridge.h"
+            -parse-as-library
+            -application-extension
         )
 
         target_link_libraries(${_name} PRIVATE
@@ -2255,31 +2234,25 @@ target_include_directories(WebKitSwift PRIVATE
     ${bmalloc_FRAMEWORK_HEADERS_DIR}
 )
 
-target_compile_options(WebKitSwift PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:-parse-as-library>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-swift-version 6>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -disable-cross-import-overlays>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${_swift_tba_resp}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/Cocoa>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/ios>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -DHAVE_CONFIG_H=1>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${CMAKE_BINARY_DIR}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}>"
+webkit_target_add_swift_options(WebKitSwift
+    -parse-as-library
+    "-library-level other"
+    "-Xfrontend -disable-cross-import-overlays"
+    "@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp"
+    "@${_swift_tba_resp}"
+    -I${WEBKIT_DIR}/Platform/spi/Cocoa
+    -I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules
+    -I${WEBKIT_DIR}/Platform/spi/ios
+    "-Xcc -DHAVE_CONFIG_H=1"
+    "-Xcc -I${CMAKE_BINARY_DIR}"
+    "-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}"
+    "-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}"
 )
 
 target_compile_options(WebKitSwift PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-std=c++2b>"
     "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-DHAVE_CONFIG_H=1>"
     "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-DBUILDING_WITH_CMAKE=1>"
-)
-
-target_compile_options(WebKitSwift PRIVATE
-    # Swift macro expansion runs swift-plugin-server under sandbox-exec;
-    # -disable-sandbox avoids a nested sandbox_apply failure in a sandboxed build.
-    "$<$<COMPILE_LANGUAGE:Swift>:-disable-sandbox>"
 )
 
 target_compile_options(WebKitSwift PRIVATE
@@ -2308,14 +2281,15 @@ if (WebKit_SwiftUI_ADDITIONS_SOURCES)
     target_sources(_WebKit_SwiftUI PRIVATE ${WebKit_SwiftUI_ADDITIONS_SOURCES})
 endif ()
 
-target_compile_options(_WebKit_SwiftUI PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:@${_swift_tba_resp}>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-F${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fmodule-map-file=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Modules/module.private.modulemap>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fmodule-map-file=${CMAKE_OSX_SYSROOT}/usr/local/include/unicode_private.modulemap>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -ivfsoverlay -Xcc ${CMAKE_BINARY_DIR}/swift-vfs-overlay.yaml>"
-    "$<$<COMPILE_LANGUAGE:Swift>:-I${WEBKIT_DIR}/Platform/spi/ios>"
+webkit_target_add_swift_options(_WebKit_SwiftUI
+    "@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp"
+    "@${_swift_tba_resp}"
+    -F${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks
+    "-Xcc -fmodule-map-file=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Modules/module.private.modulemap"
+    "-Xcc -fmodule-map-file=${CMAKE_OSX_SYSROOT}/usr/local/include/unicode_private.modulemap"
+    "-Xcc -ivfsoverlay"
+    "-Xcc ${CMAKE_BINARY_DIR}/swift-vfs-overlay.yaml"
+    -I${WEBKIT_DIR}/Platform/spi/ios
 )
 
 # SDK webrtc forwarding headers do quoted #include "api/..." lookups; expose libwebrtc src.
@@ -2325,8 +2299,7 @@ if (USE_LIBWEBRTC)
         "${CMAKE_SOURCE_DIR}/Source/ThirdParty/libwebrtc/Source/webrtc"
         "${CMAKE_SOURCE_DIR}/Source/ThirdParty/libwebrtc/Source/third_party/abseil-cpp")
         if (EXISTS "${_dir}")
-            target_compile_options(_WebKit_SwiftUI PRIVATE
-                "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -isystem${_dir}>")
+            webkit_target_add_swift_options(_WebKit_SwiftUI "-Xcc -isystem${_dir}")
         endif ()
     endforeach ()
 endif ()
@@ -2379,17 +2352,6 @@ set(NetworkProcess_INCLUDE_DIRECTORIES ${CMAKE_BINARY_DIR})
 # once ENABLE_BACK_FORWARD_LIST_SWIFT pulls in C++ interop.
 set(WebKit_SWIFT_INTEROP_MODULE_PATH "${WEBKIT_DIR}/Modules/Internal")
 
-# Mac Swift compilation uses explicit module builds so libSwiftScan pre-builds
-# all PCMs (including WebKit_Internal C++ interop) with the project -Xcc flags,
-# avoiding duplicated per-process module compilation. Same rationale as iOS.
-set(WebKit_SWIFT_EXPLICIT_MODULE_BUILD TRUE)
-
-# Xcode does not set SWIFT_TREAT_WARNINGS_AS_ERRORS; override CMake's -warnings-as-errors.
-# Must go in WebKit_COMPILE_OPTIONS (applied after -warnings-as-errors in _WEBKIT_TARGET_SETUP).
-# Re-assert SWIFT_FATAL_DIAGNOSTIC_FLAGS afterwards so the intentional -Werror groups
-# (e.g. StrictMemorySafety) stay fatal. These flags are handled left-to-right
-list(APPEND WebKit_COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-no-warnings-as-errors ${SWIFT_FATAL_DIAGNOSTIC_FLAGS}>")
-
 # The full WebKit_Internal C++ module pulls in WebPageProxy.h and friends, which
 # quote-include across the entire WebKit/WebCore/JSC private header set. Mirror
 # the C++ target's include directories to swiftc's Clang importer so those
@@ -2425,6 +2387,11 @@ endforeach ()
 foreach (_dir IN LISTS WebKit_SWIFT_INCLUDE_DIRECTORIES)
     target_compile_options(WebKit PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:-I${_dir}>")
 endforeach ()
+
+webkit_target_add_swift_options(WebKit
+    "-library-level api"
+    "-enable-experimental-feature RequiresObjC=Foundation"
+)
 
 # Turn on library evolution and emit the swift interface files.
 target_compile_options(WebKit PRIVATE

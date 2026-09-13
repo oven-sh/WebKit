@@ -36,7 +36,7 @@ bool PublicSuffixStore::platformIsPublicSuffix(StringView domain) const
     if (domain.isEmpty())
         return false;
 
-    return soup_tld_domain_is_public_suffix(domain.convertToASCIILowercase().utf8().data());
+    return soup_tld_domain_is_public_suffix(domain.convertToASCIILowercase().utf8().legacyCStringPointer());
 }
 
 static String permissiveTopPrivateDomain(StringView domain)

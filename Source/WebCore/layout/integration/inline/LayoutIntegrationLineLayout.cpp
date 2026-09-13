@@ -702,7 +702,7 @@ void LineLayout::updateRenderTreePositions(const Vector<LineAdjustment>& lineAdj
 
     if (m_inlineContent) {
         for (auto& box : m_inlineContent->displayContent().boxes) {
-            if (box.isInlineBox() || box.isTextOrSoftLineBreak())
+            if (box.isInlineBox() || box.isText() || box.isLineBreak())
                 continue;
 
             if (box.isBlockLevelBox()) {

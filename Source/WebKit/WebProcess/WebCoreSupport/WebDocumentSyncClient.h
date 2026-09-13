@@ -42,7 +42,7 @@ public:
 private:
     bool siteIsolationEnabled();
 
-    void broadcastDocumentSyncDataToOtherProcesses(const WebCore::DocumentSyncSerializationData&) final;
+    void broadcastDocumentSyncDataToOtherProcesses(WebCore::DocumentSyncSerializationData&&) final;
     void broadcastAllDocumentSyncDataToOtherProcesses(WebCore::DocumentSyncData&) final;
 
     const WeakRef<WebPage> m_page;

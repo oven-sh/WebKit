@@ -41,7 +41,7 @@
     ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
 } while (0)
 #define TEXT_MARKER_ASSERT_DOUBLE(assertion, marker1, marker2) do { \
-    std::string debugString = "Text marker origins: " + originToString(marker1.origin()).utf8().toStdString() + ", " + originToString(marker2.origin()).utf8().data(); \
+    std::string debugString = "Text marker origins: " + originToString(marker1.origin()).utf8().toStdString() + ", " + originToString(marker2.origin()).utf8().legacyCStringPointer(); \
     ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
 } while (0)
 

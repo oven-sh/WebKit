@@ -298,7 +298,7 @@ void FontCache::purgeInactiveFontData(unsigned purgeCount)
     while (purgeCount) {
         Vector<Ref<Font>, 20> fontsToDelete;
         for (auto& font : m_fontDataCaches->data.values()) {
-            LOG(Fonts, " trying to purge font %s (has one ref %d)", font->platformData().description().utf8().data(), font->hasOneRef());
+            LOG(Fonts, " trying to purge font %s (has one ref %d)", font->platformData().description().utf8().legacyCStringPointer(), font->hasOneRef());
             if (!font->hasOneRef())
                 continue;
             fontsToDelete.append(font.copyRef());

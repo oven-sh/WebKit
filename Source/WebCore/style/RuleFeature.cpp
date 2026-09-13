@@ -347,7 +347,7 @@ void RuleFeatureSet::recursivelyCollectFeaturesFromSelector(SelectorFeatures& se
                 idsMatchingAncestorsInRules.add(selector->value());
             else if (matchElement.hasRelation || matchElement.relation != MatchElement::Relation::Subject)
                 selectorFeatures.ids.append({ selector, matchElement, context.isNegation, scopeSourcesForFeature() });
-        } else if (selector->match() == CSSSelector::Match::Class)
+        } else if (selector->match() == CSSSelector::Match::Class || selector->isEquivalentToClassSelector())
             selectorFeatures.classes.append({ selector, matchElement, context.isNegation, scopeSourcesForFeature() });
         else if (selector->isAttributeSelector()) {
             attributeLowercaseLocalNamesInRules.add(selector->attribute().localNameLowercase());
@@ -441,13 +441,13 @@ static PseudoClassInvalidationKey makePseudoClassInvalidationKey(CSSSelector::Ps
         if (simpleSelector->match() == CSSSelector::Match::Id)
             return makePseudoClassInvalidationKey(pseudoClass, InvalidationKeyType::Id, simpleSelector->value());
 
-        if (simpleSelector->match() == CSSSelector::Match::Class && className.isNull())
+        if ((simpleSelector->match() == CSSSelector::Match::Class || simpleSelector->isEquivalentToClassSelector()) && className.isNull())
             className = simpleSelector->value();
 
         if (simpleSelector->match() == CSSSelector::Match::Tag)
             tagName = simpleSelector->tagLowercaseLocalName();
 
-        if (simpleSelector->isAttributeSelector() && !unlikelyToHaveSelectorForAttribute(simpleSelector->attribute().localNameLowercase()))
+        if (simpleSelector->isAttributeSelector() && !simpleSelector->isEquivalentToClassSelector() && !unlikelyToHaveSelectorForAttribute(simpleSelector->attribute().localNameLowercase()))
             attributeName = simpleSelector->attribute().localNameLowercase();
     }
     if (!attributeName.isEmpty())

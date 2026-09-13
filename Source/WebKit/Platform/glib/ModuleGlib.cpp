@@ -35,9 +35,9 @@ namespace WebKit {
 
 bool Module::load()
 {
-    m_handle = g_module_open(m_path.utf8().data(), G_MODULE_BIND_LAZY);
+    m_handle = g_module_open(m_path.utf8().legacyCStringPointer(), G_MODULE_BIND_LAZY);
     if (!m_handle)
-        WTFLogAlways("Error loading module '%s': %s", m_path.utf8().data(), g_module_error());
+        WTFLogAlways("Error loading module '%s': %s", m_path.utf8().legacyCStringPointer(), g_module_error());
     return m_handle;
 }
 

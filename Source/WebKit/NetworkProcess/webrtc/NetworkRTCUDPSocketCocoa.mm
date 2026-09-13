@@ -402,8 +402,8 @@ auto NetworkRTCUDPSocketCocoaConnections::createNWConnection(const webrtc::Socke
     auto remoteHostAddress = remoteAddress.ipaddr().ToString();
     if (remoteAddress.ipaddr().IsNil())
         remoteHostAddress = remoteAddress.hostname();
-    auto host = adoptNS(nw_endpoint_create_host(remoteHostAddress.c_str(), String::number(remoteAddress.port()).utf8().data()));
-    auto nwConnection = adoptNS(nw_connection_create(host.get(), parameters.get()));
+    RetainPtr host = adoptNS(nw_endpoint_create_host(remoteHostAddress.c_str(), String::number(remoteAddress.port()).utf8().legacyCStringPointer()));
+    RetainPtr nwConnection = adoptNS(nw_connection_create(host.get(), parameters.get()));
 
     auto connectionStateTracker = ConnectionStateTracker::create();
 

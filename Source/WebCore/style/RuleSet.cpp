@@ -216,6 +216,13 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
             case CSSSelector::Match::Id:
                 idSelector = current;
                 break;
+            case CSSSelector::Match::List:
+                if (!current->isEquivalentToClassSelector()) {
+                    if (shouldHaveBucketForAttributeName(*current))
+                        attributeSelector = current;
+                    break;
+                }
+                [[fallthrough]];
             case CSSSelector::Match::Class: {
                 auto& className = current->value();
                 if (!classSelector) {
@@ -232,7 +239,6 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
             }
             case CSSSelector::Match::Exact:
             case CSSSelector::Match::Set:
-            case CSSSelector::Match::List:
             case CSSSelector::Match::Hyphen:
             case CSSSelector::Match::Contain:
             case CSSSelector::Match::Begin:

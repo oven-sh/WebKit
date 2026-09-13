@@ -2772,7 +2772,7 @@ void webkitWebViewWillStartLoad(WebKitWebView* webView)
 
     GUniquePtr<GError> error(g_error_new_literal(WEBKIT_NETWORK_ERROR, WEBKIT_NETWORK_ERROR_CANCELLED, _("Load request cancelled")));
     webkitWebViewLoadFailed(webView, pageLoadState.isProvisional() ? WEBKIT_LOAD_STARTED : WEBKIT_LOAD_COMMITTED,
-        pageLoadState.isProvisional() ? pageLoadState.provisionalURL().string().utf8().data() : pageLoadState.url().string().utf8().data(),
+        pageLoadState.isProvisional() ? pageLoadState.provisionalURL().string().utf8().legacyCStringPointer() : pageLoadState.url().string().utf8().legacyCStringPointer(),
         error.get());
 }
 
@@ -2891,7 +2891,7 @@ void webkitWebViewUpdatePageIcons(WebKitWebView *webView)
         return;
 
     auto cancellable = adoptGRef(g_cancellable_new());
-    webkit_favicon_database_get_page_icons(database, getPage(webView).pageLoadState().activeURL().string().utf8().data(), cancellable.get(), [](GObject* database, GAsyncResult* result, gpointer userData) {
+    webkit_favicon_database_get_page_icons(database, getPage(webView).pageLoadState().activeURL().string().utf8().legacyCStringPointer(), cancellable.get(), [](GObject* database, GAsyncResult* result, gpointer userData) {
         auto webView = adoptGRef(WEBKIT_WEB_VIEW(userData));
 
         GUniqueOutPtr<GError> error;
@@ -4518,7 +4518,7 @@ static void webkitWebViewRunJavaScriptWithParams(WebKitWebView* webView, WebKit:
             }
             builder.append(exceptionDetails.message);
             g_task_return_new_error(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED,
-                "%s", builder.toString().utf8().data());
+                "%s", builder.toString().utf8().legacyCStringPointer());
         }
     });
 }

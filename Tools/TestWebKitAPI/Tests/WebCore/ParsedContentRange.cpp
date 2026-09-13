@@ -90,9 +90,9 @@ TEST(WebCore, ParsedContentRangeFromValues)
 
 TEST(WebCore, ParsedContentRangeToString)
 {
-    ASSERT_STREQ("bytes 0-1/2", ParsedContentRange(0, 1, 2).headerValue().utf8().data());
-    ASSERT_STREQ("bytes 0-1/*", ParsedContentRange(0, 1, ParsedContentRange::unknownLength).headerValue().utf8().data());
-    ASSERT_STREQ("", ParsedContentRange().headerValue().utf8().data());
+    ASSERT_STREQ("bytes 0-1/2", ParsedContentRange(0, 1, 2).headerValue().utf8().legacyCStringPointer());
+    ASSERT_STREQ("bytes 0-1/*", ParsedContentRange(0, 1, ParsedContentRange::unknownLength).headerValue().utf8().legacyCStringPointer());
+    ASSERT_STREQ("", ParsedContentRange().headerValue().utf8().legacyCStringPointer());
 }
 
 } // namespace TestWebKitAPI

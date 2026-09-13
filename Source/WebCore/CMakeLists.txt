@@ -1207,6 +1207,8 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/ProcessingInstruction.idl
     dom/ProgressEvent.idl
     dom/PromiseRejectionEvent.idl
+    dom/QuotaExceededError.idl
+    dom/QuotaExceededErrorOptions.idl
     dom/Range.idl
     dom/ReducerCallback.idl
     dom/RequestAnimationFrameCallback.idl

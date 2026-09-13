@@ -397,7 +397,7 @@ void Editor::didDispatchInputMethodKeydown(KeyboardEvent& event)
 
 bool Editor::handleTextEvent(TextEvent& event)
 {
-    LOG(Editing, "Editor %p handleTextEvent (data %s)", this, event.data().utf8().data());
+    LOG(Editing, "Editor %p handleTextEvent (data %s)", this, event.data().utf8().legacyCStringPointer());
 
     // Default event handling for Drag and Drop will be handled by DragController
     // so we leave the event for it.

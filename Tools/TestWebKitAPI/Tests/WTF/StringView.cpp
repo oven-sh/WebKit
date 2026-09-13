@@ -269,32 +269,32 @@ TEST(WTF, StringViewSplitBasic)
     Vector<String> expected({ "his is a sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('.'));
     expected = { "This is a sentence"_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('a'));
     expected = { "This is "_s, " sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split(' '));
     expected = { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 
     // Non-existent separator
     actual = vectorFromSplitResult(a.split('z'));
     expected = { "This is a sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringViewSplitWithConsecutiveSeparators)
@@ -306,13 +306,13 @@ TEST(WTF, StringViewSplitWithConsecutiveSeparators)
     Vector<String> expected({ "This"_s, "is"_s, "a"_s, "sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.splitAllowingEmptyEntries(' '));
     expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_STREQ(expected[i].utf8().legacyCStringPointer(), actual[i].utf8().legacyCStringPointer()) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringViewEqualBasic)

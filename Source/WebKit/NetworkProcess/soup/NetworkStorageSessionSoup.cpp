@@ -32,10 +32,11 @@
 #if USE(SOUP)
 
 #include <WebCore/Cookie.h>
-#include <WebCore/CookieRequestHeaderFieldProxy.h>
+#include <WebCore/CookieJar.h>
 #include <WebCore/CookieStoreGetOptions.h>
 #include <WebCore/GUniquePtrSoup.h>
 #include <WebCore/HTTPCookieAcceptPolicy.h>
+#include <WebCore/SameSiteInfo.h>
 #include <WebCore/SoupNetworkSession.h>
 #include <WebCore/URLSoup.h>
 #include <libsoup/soup.h>
@@ -92,7 +93,7 @@ void NetworkStorageSession::notifyCookie(SoupCookie* cookie, bool added)
         return;
 
     for (const auto& host : m_cookieChangeObservers.keys()) {
-        if (!soup_cookie_domain_matches(cookie, host.utf8().data()))
+        if (!soup_cookie_domain_matches(cookie, host.utf8().legacyCStringPointer()))
             continue;
 
         auto observers = m_cookieChangeObservers.getOptional(host);
@@ -256,8 +257,8 @@ void NetworkStorageSession::getCredentialFromPersistentStorage(const ProtectionS
     }
 
     GRefPtr<GHashTable> attributes = adoptGRef(secret_attributes_build(SECRET_SCHEMA_COMPAT_NETWORK,
-        "domain", realm.utf8().data(),
-        "server", protectionSpace.host().utf8().data(),
+        "domain", realm.utf8().legacyCStringPointer(),
+        "server", protectionSpace.host().utf8().legacyCStringPointer(),
         "port", protectionSpace.port(),
         "protocol", schemeFromProtectionSpaceServerType(protectionSpace.serverType()).characters(),
         "authtype", authTypeFromProtectionSpaceAuthenticationScheme(protectionSpace.authenticationScheme()).characters(),
@@ -316,8 +317,8 @@ void NetworkStorageSession::saveCredentialToPersistentStorage(const ProtectionSp
         return;
 
     GRefPtr<GHashTable> attributes = adoptGRef(secret_attributes_build(SECRET_SCHEMA_COMPAT_NETWORK,
-        "domain", realm.utf8().data(),
-        "server", protectionSpace.host().utf8().data(),
+        "domain", realm.utf8().legacyCStringPointer(),
+        "server", protectionSpace.host().utf8().legacyCStringPointer(),
         "port", protectionSpace.port(),
         "protocol", schemeFromProtectionSpaceServerType(protectionSpace.serverType()).characters(),
         "authtype", authTypeFromProtectionSpaceAuthenticationScheme(protectionSpace.authenticationScheme()).characters(),
@@ -325,7 +326,7 @@ void NetworkStorageSession::saveCredentialToPersistentStorage(const ProtectionSp
     if (!attributes)
         return;
 
-    g_hash_table_insert(attributes.get(), g_strdup("user"), g_strdup(credential.user().utf8().data()));
+    g_hash_table_insert(attributes.get(), g_strdup("user"), g_strdup(credential.user().utf8().legacyCStringPointer()));
     CString utf8Password = credential.password().utf8();
     GRefPtr<SecretValue> newSecretValue = adoptGRef(secret_value_new(utf8Password.data(), utf8Password.length(), "text/plain"));
     secret_service_store(nullptr, SECRET_SCHEMA_COMPAT_NETWORK, attributes.get(), SECRET_COLLECTION_DEFAULT, _("WebKitGTK password"),
@@ -407,9 +408,9 @@ static inline bool httpOnlyCookieExists(const GSList* cookies, const gchar* name
 }
 IGNORE_CLANG_WARNINGS_END
 
-void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention applyTrackingPrevention, RequiresScriptTrackingPrivacy requiresScriptTrackingPrivacy, const String& value, ShouldRelaxThirdPartyCookieBlocking relaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameSiteInfo&, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ApplyTrackingPrevention applyTrackingPrevention, RequiresScriptTrackingPrivacy requiresScriptTrackingPrivacy, const String& value, ShouldRelaxThirdPartyCookieBlocking relaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
-    if (applyTrackingPrevention == ApplyTrackingPrevention::Yes && shouldBlockCookies(firstParty, url, frameID, pageID, relaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
+    if (applyTrackingPrevention == ApplyTrackingPrevention::Yes && shouldBlockCookies(firstParty, url, frameID, webPageProxyID, relaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
         return;
 
     auto origin = urlToSoupURI(url);
@@ -420,7 +421,7 @@ void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameS
     if (!firstPartyURI)
         return;
 
-    auto cappedLifetime = clientSideCookieCap(RegistrableDomain { firstParty }, requiresScriptTrackingPrivacy, pageID);
+    auto cappedLifetime = clientSideCookieCap(RegistrableDomain { firstParty }, requiresScriptTrackingPrivacy, webPageProxyID);
 
     // Get existing cookies for this origin.
     SoupCookieJar* jar = cookieStorage();
@@ -459,9 +460,9 @@ void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameS
     soup_cookies_free(existingCookies);
 }
 
-bool NetworkStorageSession::setCookieFromDOM(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention applyTrackingPrevention, RequiresScriptTrackingPrivacy, const Cookie& cookie, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+bool NetworkStorageSession::setCookieFromDOM(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ApplyTrackingPrevention applyTrackingPrevention, RequiresScriptTrackingPrivacy, const Cookie& cookie, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
-    if (applyTrackingPrevention == ApplyTrackingPrevention::Yes && shouldBlockCookies(firstParty, url, frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
+    if (applyTrackingPrevention == ApplyTrackingPrevention::Yes && shouldBlockCookies(firstParty, url, frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
         return false;
 
     GUniquePtr<SoupCookie> soupCookie(cookie.toSoupCookie());
@@ -664,9 +665,9 @@ void NetworkStorageSession::hasCookies(const RegistrableDomain& domain, Completi
     completionHandler(false);
 }
 
-static std::optional<CookieList> lookupCookies(const NetworkStorageSession& session, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, ForHTTPHeader forHTTPHeader, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, IncludeSecureCookies includeSecureCookies, bool* didAccessSecureCookies = nullptr)
+static std::optional<CookieList> lookupCookies(const NetworkStorageSession& session, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, ForHTTPHeader forHTTPHeader, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, IncludeSecureCookies includeSecureCookies, bool* didAccessSecureCookies = nullptr)
 {
-    if (applyTrackingPrevention == ApplyTrackingPrevention::Yes && session.shouldBlockCookies(firstParty, url, frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
+    if (applyTrackingPrevention == ApplyTrackingPrevention::Yes && session.shouldBlockCookies(firstParty, url, frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
         return nullptr;
 
     auto uri = urlToSoupURI(url);
@@ -709,10 +710,10 @@ static std::optional<CookieList> lookupCookies(const NetworkStorageSession& sess
     if (didAccessSecureCookies)
         *didAccessSecureCookies = accessedSecureCookies;
 
-    return cookies;
+    return WTF::move(cookies);
 }
 
-static std::pair<String, bool> lookupCookiesHeaders(const NetworkStorageSession& session, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, ForHTTPHeader forHTTPHeader, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, IncludeSecureCookies includeSecureCookies)
+static std::pair<String, bool> lookupCookiesHeaders(const NetworkStorageSession& session, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, ForHTTPHeader forHTTPHeader, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, IncludeSecureCookies includeSecureCookies)
 {
     bool didAccessSecureCookies = false;
     auto cookies = lookupCookies(
@@ -722,7 +723,7 @@ static std::pair<String, bool> lookupCookiesHeaders(const NetworkStorageSession&
         url,
         forHTTPHeader,
         frameID,
-        pageID,
+        webPageProxyID,
         applyTrackingPrevention,
         shouldRelaxThirdPartyCookieBlocking,
         isKnownCrossSiteTracker,
@@ -737,7 +738,7 @@ static std::pair<String, bool> lookupCookiesHeaders(const NetworkStorageSession&
     return { String::fromUTF8(cookieHeader.get()), didAccessSecureCookies };
 }
 
-bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, Vector<Cookie>& rawCookies) const
+bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, Vector<Cookie>& rawCookies) const
 {
     rawCookies.clear();
 
@@ -748,7 +749,7 @@ bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteI
         url,
         ForHTTPHeader::Yes,
         frameID,
-        pageID,
+        webPageProxyID,
         applyTrackingPrevention,
         shouldRelaxThirdPartyCookieBlocking,
         IsKnownCrossSiteTracker::No,
@@ -785,7 +786,7 @@ Vector<Cookie> NetworkStorageSession::domCookiesForHost(const URL& url)
     return cookies;
 }
 
-std::pair<String, bool> NetworkStorageSession::cookiesForDOM(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking relaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+std::pair<String, bool> NetworkStorageSession::cookiesForDOM(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking relaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
     return lookupCookiesHeaders(
         *this,
@@ -794,7 +795,7 @@ std::pair<String, bool> NetworkStorageSession::cookiesForDOM(const URL& firstPar
         url,
         ForHTTPHeader::No,
         frameID,
-        pageID,
+        webPageProxyID,
         applyTrackingPrevention,
         relaxThirdPartyCookieBlocking,
         isKnownCrossSiteTracker,
@@ -802,7 +803,7 @@ std::pair<String, bool> NetworkStorageSession::cookiesForDOM(const URL& firstPar
     );
 }
 
-std::optional<Vector<Cookie>> NetworkStorageSession::cookiesForDOMAsVector(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, CookieStoreGetOptions&& options) const
+std::optional<Vector<Cookie>> NetworkStorageSession::cookiesForDOMAsVector(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, CookieStoreGetOptions&& options) const
 {
     auto soupCookies = lookupCookies(
         *this,
@@ -811,7 +812,7 @@ std::optional<Vector<Cookie>> NetworkStorageSession::cookiesForDOMAsVector(const
         url,
         ForHTTPHeader::No,
         frameID,
-        pageID,
+        webPageProxyID,
         applyTrackingPrevention,
         shouldRelaxThirdPartyCookieBlocking,
         isKnownCrossSiteTracker,
@@ -832,7 +833,7 @@ std::optional<Vector<Cookie>> NetworkStorageSession::cookiesForDOMAsVector(const
     return cookies;
 }
 
-std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking relaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
+std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, IncludeSecureCookies includeSecureCookies, ApplyTrackingPrevention applyTrackingPrevention, ShouldRelaxThirdPartyCookieBlocking relaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
 {
     return lookupCookiesHeaders(
         *this,
@@ -841,33 +842,17 @@ std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(con
         url,
         ForHTTPHeader::Yes,
         frameID,
-        pageID,
+        webPageProxyID,
         applyTrackingPrevention,
         relaxThirdPartyCookieBlocking,
         isKnownCrossSiteTracker,
         includeSecureCookies);
 }
 
-std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(const CookieRequestHeaderFieldProxy& headerFieldProxy) const
-{
-    return lookupCookiesHeaders(
-        *this,
-        headerFieldProxy.firstParty,
-        headerFieldProxy.sameSiteInfo,
-        headerFieldProxy.url,
-        ForHTTPHeader::Yes,
-        headerFieldProxy.frameID,
-        headerFieldProxy.pageID,
-        ApplyTrackingPrevention::Yes,
-        ShouldRelaxThirdPartyCookieBlocking::No,
-        IsKnownCrossSiteTracker::No,
-        headerFieldProxy.includeSecureCookies);
-}
-
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
-bool NetworkStorageSession::startListeningForCookieChangeNotifications(CookieChangeObserver& observer, const URL& url, const URL& firstParty, FrameIdentifier frameID, PageIdentifier pageID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker)
+bool NetworkStorageSession::startListeningForCookieChangeNotifications(CookieChangeObserver& observer, const URL& url, const URL& firstParty, FrameIdentifier frameID, WebPageProxyIdentifier webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker)
 {
-    if (shouldBlockCookies(firstParty, url, frameID, pageID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
+    if (shouldBlockCookies(firstParty, url, frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker))
         return false;
 
     auto host = url.host().toString();

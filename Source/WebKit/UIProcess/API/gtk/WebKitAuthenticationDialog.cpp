@@ -158,7 +158,7 @@ static void webkitAuthenticationDialogInitialize(WebKitAuthenticationDialog* aut
     const WebCore::AuthenticationChallenge& challenge = webkitAuthenticationRequestGetAuthenticationChallenge(priv->request.get())->core();
     // Prompt on the HTTP authentication dialog.
     GUniquePtr<char> prompt(g_strdup_printf(_("Authentication required by %s:%i"),
-        challenge.protectionSpace().host().utf8().data(), challenge.protectionSpace().port()));
+        challenge.protectionSpace().host().utf8().legacyCStringPointer(), challenge.protectionSpace().port()));
     GtkWidget* label = createLabelWithLineWrap(prompt.get());
 #if USE(GTK4)
     gtk_box_append(GTK_BOX(authBox), label);
@@ -170,7 +170,7 @@ static void webkitAuthenticationDialogInitialize(WebKitAuthenticationDialog* aut
     String realm = challenge.protectionSpace().realm();
     if (!realm.isEmpty()) {
         // Label on the HTTP authentication dialog. %s is a (probably English) message from the website.
-        GUniquePtr<char> message(g_strdup_printf(_("The site says: “%s”"), realm.utf8().data()));
+        GUniquePtr<char> message(g_strdup_printf(_("The site says: “%s”"), realm.utf8().legacyCStringPointer()));
         label = createLabelWithLineWrap(message.get());
 #if USE(GTK4)
         gtk_box_append(GTK_BOX(authBox), label);
@@ -231,8 +231,8 @@ static void webkitAuthenticationDialogInitialize(WebKitAuthenticationDialog* aut
 
     const auto& credentialFromPersistentStorage = webkitAuthenticationRequestGetProposedCredential(priv->request.get());
     if (!credentialFromPersistentStorage.isEmpty()) {
-        gtk_entry_set_text(GTK_ENTRY(priv->loginEntry), credentialFromPersistentStorage.user().utf8().data());
-        gtk_entry_set_text(GTK_ENTRY(priv->passwordEntry), credentialFromPersistentStorage.password().utf8().data());
+        gtk_entry_set_text(GTK_ENTRY(priv->loginEntry), credentialFromPersistentStorage.user().utf8().legacyCStringPointer());
+        gtk_entry_set_text(GTK_ENTRY(priv->passwordEntry), credentialFromPersistentStorage.password().utf8().legacyCStringPointer());
 
 #if USE(GTK4)
         gtk_check_button_set_active(GTK_CHECK_BUTTON(priv->rememberCheckButton), TRUE);

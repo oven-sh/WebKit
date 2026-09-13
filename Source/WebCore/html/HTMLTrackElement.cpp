@@ -224,7 +224,7 @@ bool HTMLTrackElement::canLoadURL(const URL& url)
     ASSERT(document->contentSecurityPolicy());
     // Elements in user agent show tree should load whatever the embedding document policy is.
     if (!isInUserAgentShadowTree() && !protect(document->contentSecurityPolicy())->allowMediaFromSource(url, document->currentParserSourcePosition())) {
-        LOG(Media, "HTMLTrackElement::canLoadURL(%s) -> rejected by Content Security Policy", urlForLoggingTrack(url).utf8().data());
+        LOG(Media, "HTMLTrackElement::canLoadURL(%s) -> rejected by Content Security Policy", urlForLoggingTrack(url).utf8().legacyCStringPointer());
         return false;
     }
 

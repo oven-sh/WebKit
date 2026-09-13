@@ -31,6 +31,7 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#import "Helpers/cocoa/TestCocoaImageUtilities.h"
 #import "Helpers/cocoa/TestWebExtensionsDelegate.h"
 #import "Helpers/cocoa/WebExtensionUtilities.h"
 #import <WebKit/WKPreferencesPrivate.h>
@@ -1041,44 +1042,15 @@ void loadAndRunExtension(NSDictionary *manifest, NSDictionary *resources, WKWebE
 NSData *makePNGData(CGSize size, SEL colorSelector)
 {
 #if USE(APPKIT)
-    RetainPtr image = adoptNS([[NSImage alloc] initWithSize:size]);
-
-    [image lockFocus];
-
-    [[NSColor performSelector:colorSelector] setFill];
-    NSRectFill(NSMakeRect(0, 0, size.width, size.height));
-
-    [image unlockFocus];
-
-    auto cgImageRef = [image CGImageForProposedRect:NULL context:nil hints:nil];
-    RetainPtr newImageRep = adoptNS([[NSBitmapImageRep alloc] initWithCGImage:cgImageRef]);
-    newImageRep.get().size = size;
-
-    return [newImageRep representationUsingType:NSBitmapImageFileTypePNG properties:@{ }];
+    return [TestCocoaImageUtilities pngDataWithSize:size color:[NSColor performSelector:colorSelector]];
 #else
-    UIGraphicsBeginImageContextWithOptions(size, NO, 1.0);
-
-    [[UIColor performSelector:colorSelector] setFill];
-    UIRectFill(CGRectMake(0, 0, size.width, size.height));
-
-    auto *image = UIGraphicsGetImageFromCurrentImageContext();
-
-    UIGraphicsEndImageContext();
-
-    return UIImagePNGRepresentation(image);
+    return [TestCocoaImageUtilities pngDataWithSize:size color:[UIColor performSelector:colorSelector]];
 #endif
 }
 
 void performWithAppearance(Appearance appearance, void (^block)(void))
 {
-#if USE(APPKIT)
-    auto *appearanceName = appearance == Appearance::Dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
-    [[NSAppearance appearanceNamed:appearanceName] performAsCurrentDrawingAppearance:block];
-#else
-    auto *traitCollection = appearance == Appearance::Dark ? [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleDark]
-        : [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleLight];
-    [traitCollection performAsCurrentTraitCollection:block];
-#endif
+    [TestCocoaImageUtilities performWithDarkAppearance:appearance == Appearance::Dark block:block];
 }
 
 } // namespace Util

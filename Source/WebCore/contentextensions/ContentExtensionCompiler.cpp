@@ -331,7 +331,7 @@ std::error_code compileRuleList(ContentExtensionCompilationClient& client, Strin
         }
         if (status != URLFilterParser::Ok) {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            dataLogF("Error while parsing %s: %s\n", trigger.urlFilter.utf8().data(), URLFilterParser::statusString(status).characters());
+            dataLogF("Error while parsing %s: %s\n", trigger.urlFilter.utf8().legacyCStringPointer(), URLFilterParser::statusString(status).characters());
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             return ContentExtensionError::JSONInvalidRegex;
         }
@@ -350,7 +350,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 }
                 if (status != URLFilterParser::Ok) {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                    dataLogF("Error while parsing %s: %s\n", condition.utf8().data(), URLFilterParser::statusString(status).characters());
+                    dataLogF("Error while parsing %s: %s\n", condition.utf8().legacyCStringPointer(), URLFilterParser::statusString(status).characters());
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                     return ContentExtensionError::JSONInvalidRegex;
                 }
@@ -364,7 +364,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 }
                 if (status != URLFilterParser::Ok) {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                    dataLogF("Error while parsing %s: %s\n", condition.utf8().data(), URLFilterParser::statusString(status).characters());
+                    dataLogF("Error while parsing %s: %s\n", condition.utf8().legacyCStringPointer(), URLFilterParser::statusString(status).characters());
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                     return ContentExtensionError::JSONInvalidRegex;
                 }

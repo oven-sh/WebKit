@@ -96,7 +96,7 @@ void ServiceWorkerClients::matchAll(ScriptExecutionContext& context, const Clien
 
 void ServiceWorkerClients::openWindow(ScriptExecutionContext& context, const String& urlString, Ref<DeferredPromise>&& promise)
 {
-    LOG(ServiceWorker, "WebProcess %i service worker calling openWindow to URL %s", getpid(), urlString.utf8().data());
+    LOG(ServiceWorker, "WebProcess %i service worker calling openWindow to URL %s", getpid(), urlString.utf8().legacyCStringPointer());
 
     if (context.settingsValues().serviceWorkersUserGestureEnabled && !downcast<ServiceWorkerGlobalScope>(context).isProcessingUserGesture()) {
         promise->reject(Exception { ExceptionCode::InvalidAccessError, "ServiceWorkerClients.openWindow() requires a user gesture"_s });

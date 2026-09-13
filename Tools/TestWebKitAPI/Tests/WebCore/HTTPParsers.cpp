@@ -96,7 +96,7 @@ TEST(RFC8941, ParseItemStructuredFieldValue)
     EXPECT_TRUE(!!result);
     auto* itemString = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!itemString);
-    EXPECT_STREQ("unsafe-none", itemString->string().utf8().data());
+    EXPECT_STREQ("unsafe-none", itemString->string().utf8().legacyCStringPointer());
 
     // Invalid Token BareItem.
     result = RFC8941::parseItemStructuredFieldValue("same-site unsafe-allow-outgoing"_s);
@@ -107,29 +107,29 @@ TEST(RFC8941, ParseItemStructuredFieldValue)
     EXPECT_TRUE(!!result);
     itemString = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!itemString);
-    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().data());
+    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 1U);
     auto* parameterValueString = result->second.getIf<String>("report-to"_s);
     EXPECT_TRUE(!!parameterValueString);
-    EXPECT_STREQ("http://example.com", parameterValueString->utf8().data());
+    EXPECT_STREQ("http://example.com", parameterValueString->utf8().legacyCStringPointer());
 
     // Token parameter value.
     result = RFC8941::parseItemStructuredFieldValue("same-origin-allow-popups; report-to=*"_s);
     EXPECT_TRUE(!!result);
     itemString = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!itemString);
-    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().data());
+    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 1U);
     auto* parameterValueToken = result->second.getIf<RFC8941::Token>("report-to"_s);
     EXPECT_TRUE(!!parameterValueToken);
-    EXPECT_STREQ("*", parameterValueToken->string().utf8().data());
+    EXPECT_STREQ("*", parameterValueToken->string().utf8().legacyCStringPointer());
 
     // True boolean parameter value.
     result = RFC8941::parseItemStructuredFieldValue("same-origin-allow-popups; should-report=?1"_s);
     EXPECT_TRUE(!!result);
     itemString = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!itemString);
-    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().data());
+    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 1U);
     auto* parameterValueBoolean = result->second.getIf<bool>("should-report"_s);
     EXPECT_TRUE(!!parameterValueToken);
@@ -140,7 +140,7 @@ TEST(RFC8941, ParseItemStructuredFieldValue)
     EXPECT_TRUE(!!result);
     itemString = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!itemString);
-    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().data());
+    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 1U);
     parameterValueBoolean = result->second.getIf<bool>("should-report"_s);
     EXPECT_TRUE(!!parameterValueToken);
@@ -155,14 +155,14 @@ TEST(RFC8941, ParseItemStructuredFieldValue)
     EXPECT_TRUE(!!result);
     itemString = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!itemString);
-    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().data());
+    EXPECT_STREQ("same-origin-allow-popups", itemString->string().utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 2U);
     parameterValueBoolean = result->second.getIf<bool>("should-report"_s);
     EXPECT_TRUE(!!parameterValueToken);
     EXPECT_TRUE(*parameterValueBoolean);
     parameterValueString = result->second.getIf<String>("report-to"_s);
     EXPECT_TRUE(!!parameterValueString);
-    EXPECT_STREQ("http://example.com", parameterValueString->utf8().data());
+    EXPECT_STREQ("http://example.com", parameterValueString->utf8().legacyCStringPointer());
 
     // Integer BareItem tests.
     result = RFC8941::parseItemStructuredFieldValue("42"_s);
@@ -405,7 +405,7 @@ TEST(RFC8941, ParseItemStructuredFieldValue)
     EXPECT_TRUE(!!result);
     auto* token = std::get_if<RFC8941::Token>(&result->first);
     EXPECT_TRUE(!!token);
-    EXPECT_STREQ("token", token->string().utf8().data());
+    EXPECT_STREQ("token", token->string().utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 1U);
     auto* paramIntValue = result->second.getIf<int64_t>("count"_s);
     EXPECT_TRUE(!!paramIntValue);
@@ -434,11 +434,11 @@ TEST(RFC8941, ParseItemStructuredFieldValue)
     EXPECT_TRUE(!!result);
     auto* stringValue = std::get_if<String>(&result->first);
     EXPECT_TRUE(!!stringValue);
-    EXPECT_STREQ("b", stringValue->utf8().data());
+    EXPECT_STREQ("b", stringValue->utf8().legacyCStringPointer());
     EXPECT_EQ(result->second.map().size(), 2U);
     auto* paramTokenValue = result->second.getIf<RFC8941::Token>("a"_s);
     EXPECT_TRUE(!!paramTokenValue);
-    EXPECT_STREQ("c", paramTokenValue->string().utf8().data());
+    EXPECT_STREQ("c", paramTokenValue->string().utf8().legacyCStringPointer());
     auto* paramIntValue2 = result->second.getIf<int64_t>("c"_s);
     EXPECT_TRUE(!!paramIntValue2);
     EXPECT_EQ(*paramIntValue2, 2);
@@ -466,7 +466,7 @@ TEST(RFC8941, ParseDictionaryStructuredFieldValue)
     EXPECT_TRUE(!!bareItem);
     auto* endpointURLString = std::get_if<String>(bareItem);
     EXPECT_TRUE(!!endpointURLString);
-    EXPECT_STREQ("https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054716", endpointURLString->utf8().data());
+    EXPECT_STREQ("https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054716", endpointURLString->utf8().legacyCStringPointer());
 
     result = RFC8941::parseDictionaryStructuredFieldValue("default=\"https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054716\", report-only=\"https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054717\""_s);
     EXPECT_TRUE(!!result);
@@ -477,13 +477,13 @@ TEST(RFC8941, ParseDictionaryStructuredFieldValue)
     EXPECT_TRUE(!!bareItem);
     endpointURLString = std::get_if<String>(bareItem);
     EXPECT_TRUE(!!endpointURLString);
-    EXPECT_STREQ("https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054716", endpointURLString->utf8().data());
+    EXPECT_STREQ("https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054716", endpointURLString->utf8().legacyCStringPointer());
     valueAndParameters = result->get("report-only"_s);
     bareItem = std::get_if<RFC8941::BareItem>(&valueAndParameters.first);
     EXPECT_TRUE(!!bareItem);
     endpointURLString = std::get_if<String>(bareItem);
     EXPECT_TRUE(!!endpointURLString);
-    EXPECT_STREQ("https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054717", endpointURLString->utf8().data());
+    EXPECT_STREQ("https://www.example.com/reporting/report.py?reportID=46ecac28-6d27-4763-a692-bcc588054717", endpointURLString->utf8().legacyCStringPointer());
 
     result = RFC8941::parseDictionaryStructuredFieldValue("geolocation=(self \"https://example.com\"), camera=()"_s);
     EXPECT_TRUE(!!result);
@@ -496,11 +496,11 @@ TEST(RFC8941, ParseDictionaryStructuredFieldValue)
     EXPECT_TRUE(valueList->at(0).second.map().isEmpty());
     auto* token = std::get_if<RFC8941::Token>(&valueList->at(0).first);
     EXPECT_TRUE(!!token);
-    EXPECT_STREQ("self", token->string().utf8().data());
+    EXPECT_STREQ("self", token->string().utf8().legacyCStringPointer());
     EXPECT_TRUE(valueList->at(1).second.map().isEmpty());
     auto* urlString = std::get_if<String>(&valueList->at(1).first);
     EXPECT_TRUE(!!urlString);
-    EXPECT_STREQ("https://example.com", urlString->utf8().data());
+    EXPECT_STREQ("https://example.com", urlString->utf8().legacyCStringPointer());
     EXPECT_TRUE(result->contains("camera"_s));
     valueAndParameters = result->get("camera"_s);
     valueList = std::get_if<RFC8941::InnerList>(&valueAndParameters.first);

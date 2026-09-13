@@ -2150,7 +2150,7 @@ bool WebViewImpl::canChangeFrameLayout(WebFrameProxy& frame)
 
 RetainPtr<NSPrintOperation> WebViewImpl::printOperationWithPrintInfo(NSPrintInfo *printInfo, WebFrameProxy& frame)
 {
-    LOG(Printing, "Creating an NSPrintOperation for frame '%s'", frame.url().string().utf8().data());
+    LOG(Printing, "Creating an NSPrintOperation for frame '%s'", frame.url().string().utf8().legacyCStringPointer());
 
     // FIXME: If the frame cannot be printed (e.g. if it contains an encrypted PDF that disallows
     // printing), this function should return nil.
@@ -3132,7 +3132,7 @@ static String commandNameForSelector(SEL selector)
     auto selectorName = unsafeSpan(sel_getName(selector));
     if (selectorName.size() < 2 || selectorName[selectorName.size() - 1] != ':')
         return String();
-    return String(selectorName.first(selectorName.size() - 1));
+    return String::fromLatin1(selectorName.first(selectorName.size() - 1));
 }
 
 bool WebViewImpl::executeSavedCommandBySelector(SEL selector)

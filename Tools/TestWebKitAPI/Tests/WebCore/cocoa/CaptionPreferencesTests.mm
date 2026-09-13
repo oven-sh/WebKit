@@ -342,13 +342,13 @@ TEST_F(CaptionPreferenceTests, FontFace)
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR(".AppleSystemUIFontMonospaced-Romulan"), 10)));
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"ui-monospace\";");
+    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().legacyCStringPointer(), "font-family: \"ui-monospace\";");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR(".AppleSystemUIFont-Klingon"), 10)));
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"system-ui\";");
+    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().legacyCStringPointer(), "font-family: \"system-ui\";");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyFontDescriptorForStyle, adoptCF(CTFontDescriptorCreateWithNameAndSize(CFSTR("WingDings"), 10)));
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"WingDings\";");
+    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().legacyCStringPointer(), "font-family: \"WingDings\";");
 }
 
 TEST_F(CaptionPreferenceTests, FontSize)
@@ -366,7 +366,7 @@ TEST_F(CaptionPreferenceTests, FontSize)
     float fontScale = preferences->captionFontSizeScaleAndImportance(important);
     EXPECT_EQ(fontScale, 0.10f);
 
-    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().data(), "font-size: 10cqmin;");
+    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().legacyCStringPointer(), "font-size: 10cqmin;");
 }
 
 TEST_F(CaptionPreferenceTests, Colors)
@@ -380,17 +380,17 @@ TEST_F(CaptionPreferenceTests, Colors)
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyBackgroundColor, cachedCGColor(Color::blue));
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyWindowColor, cachedCGColor(Color::green));
 
-    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().data(), "color:#ff0000;");
-    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().data(), "background-color:#0000ff;");
-    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().data(), "background-color:#00ff00;");
+    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().legacyCStringPointer(), "color:#ff0000;");
+    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().legacyCStringPointer(), "background-color:#0000ff;");
+    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().legacyCStringPointer(), "background-color:#00ff00;");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetForegroundOpacity, 0.75);
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetBackgroundOpacity, 0.5);
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetWindowOpacity, 0.25);
 
-    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().data(), "color:rgba(255, 0, 0, 0.75);");
-    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().data(), "background-color:rgba(0, 0, 255, 0.5);");
-    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().data(), "background-color:rgba(0, 255, 0, 0.25);");
+    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().legacyCStringPointer(), "color:rgba(255, 0, 0, 0.75);");
+    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().legacyCStringPointer(), "background-color:rgba(0, 0, 255, 0.5);");
+    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().legacyCStringPointer(), "background-color:rgba(0, 255, 0, 0.25);");
 }
 
 TEST_F(CaptionPreferenceTests, BorderRadius)
@@ -401,7 +401,7 @@ TEST_F(CaptionPreferenceTests, BorderRadius)
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetWindowRoundedCornerRadius, 8.f);
-    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().data(), "border-radius:8px;padding:2px;");
+    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().legacyCStringPointer(), "border-radius:8px;padding:2px;");
 }
 
 TEST_F(CaptionPreferenceTests, TextEdge)
@@ -411,19 +411,19 @@ TEST_F(CaptionPreferenceTests, TextEdge)
     UniqueRef group = PageGroup::create("CaptionPreferenceTests"_s);
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleRaised);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:-.1em -.1em .16em black;");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "text-shadow:-.1em -.1em .16em black;");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleDepressed);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:.1em .1em .16em black;");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "text-shadow:.1em .1em .16em black;");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleDropShadow);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceGetTextEdgeStyle, kMACaptionAppearanceTextEdgeStyleUniform);
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
 }
 
 TEST_F(CaptionPreferenceTests, PreviewStyles)
@@ -455,23 +455,23 @@ TEST_F(CaptionPreferenceTests, PreviewStyles)
     UniqueRef group = PageGroup::create("CaptionPreferenceTests"_s);
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
-    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().data(), "color:#ffffff;");
-    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().data(), "background-color:#000000;");
-    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().data(), "background-color:#000000;");
-    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().data(), "");
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"system-ui\";");
-    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().data(), "font-size: 5cqmin;");
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "");
+    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().legacyCStringPointer(), "color:#ffffff;");
+    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().legacyCStringPointer(), "background-color:#000000;");
+    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().legacyCStringPointer(), "background-color:#000000;");
+    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().legacyCStringPointer(), "");
+    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().legacyCStringPointer(), "font-family: \"system-ui\";");
+    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().legacyCStringPointer(), "font-size: 5cqmin;");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "");
 
     preferences->setCaptionPreviewProfileID("Profile 2"_s);
 
-    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().data(), "color:rgba(255, 0, 255, 0.75);");
-    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().data(), "background-color:rgba(255, 255, 0, 0.5);");
-    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().data(), "background-color:rgba(0, 255, 255, 0.25);");
-    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().data(), "border-radius:5px;padding:1.25px;");
-    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().data(), "font-family: \"ui-monospace\";");
-    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().data(), "font-size: 10cqmin;");
-    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().data(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
+    EXPECT_STREQ(preferences->captionsTextColorCSS().utf8().legacyCStringPointer(), "color:rgba(255, 0, 255, 0.75);");
+    EXPECT_STREQ(preferences->captionsBackgroundCSS().utf8().legacyCStringPointer(), "background-color:rgba(255, 255, 0, 0.5);");
+    EXPECT_STREQ(preferences->captionsWindowCSS().utf8().legacyCStringPointer(), "background-color:rgba(0, 255, 255, 0.25);");
+    EXPECT_STREQ(preferences->windowRoundedCornerRadiusCSS().utf8().legacyCStringPointer(), "border-radius:5px;padding:1.25px;");
+    EXPECT_STREQ(preferences->captionsDefaultFontCSS().utf8().legacyCStringPointer(), "font-family: \"ui-monospace\";");
+    EXPECT_STREQ(preferences->captionsFontSizeCSS().utf8().legacyCStringPointer(), "font-size: 10cqmin;");
+    EXPECT_STREQ(preferences->captionsTextEdgeCSS().utf8().legacyCStringPointer(), "text-shadow:0 .1em .16em black;stroke-color:black;paint-order:stroke;stroke-linejoin:round;stroke-linecap:round;");
 }
 
 #if !HAVE(AVLEGIBLEMEDIAOPTIONSMENUCONTROLLER)
@@ -752,7 +752,7 @@ TEST_F(CaptionPreferenceTests, NullProfileNameShouldYieldEmptyStyleSheet)
     auto preferences = CaptionUserPreferencesMediaAF::create(group);
 
     SOFT_LINK_SHIM_SET_RESULT(MACaptionAppearanceCopyActiveProfileID, CFSTR(""));
-    EXPECT_STREQ(preferences->captionsStyleSheetOverride().utf8().data(), "");
+    EXPECT_STREQ(preferences->captionsStyleSheetOverride().utf8().legacyCStringPointer(), "");
 }
 
 }

@@ -326,8 +326,8 @@ bool isProtocolAllowed(const WTF::URL& url)
     auto protocol = url.protocol().toString().convertToLowercaseWithoutLocale();
     bool isAllowed = allowedProtocols.contains(protocol);
 
-    GST_DEBUG("URL: %s", url.string().utf8().data());
-    GST_DEBUG("Requested protocol: %s (allowed: %s)", protocol.utf8().data(), isAllowed ? "yes" : "no");
+    GST_DEBUG("URL: %s", url.string().utf8().legacyCStringPointer());
+    GST_DEBUG("Requested protocol: %s (allowed: %s)", protocol.utf8().legacyCStringPointer(), isAllowed ? "yes" : "no");
 
     return isAllowed;
 }
@@ -494,7 +494,7 @@ bool ensureGStreamerInitialized()
         auto argvSpan = unsafeMakeSpan(argv, argc);
         argvSpan[0] = g_strdup(FileSystem::currentExecutableName().data());
         for (auto [arg, parameter] : zippedRange(argvSpan.subspan(1), parameters))
-            arg = g_strdup(parameter.utf8().data());
+            arg = g_strdup(parameter.utf8().legacyCStringPointer());
 
         GUniqueOutPtr<GError> error;
         isGStreamerInitialized = gst_init_check(&argc, &argv, &error.outPtr());
@@ -705,7 +705,7 @@ void WebCoreLogObserver::didLogMessage(const WTFLogChannel& channel, WTFLogLevel
     const char* file = location ? location->file : __FILE__;
     const char* function = location ? location->function : __FUNCTION__;
     int line = location ? location->line : __LINE__;
-    gst_debug_log(debugCategory(), gstDebugLevel, file, function, line, nullptr, "%s", logString.utf8().data());
+    gst_debug_log(debugCategory(), gstDebugLevel, file, function, line, nullptr, "%s", logString.utf8().legacyCStringPointer());
 #else
     UNUSED_PARAM(channel);
     UNUSED_PARAM(level);
@@ -1191,10 +1191,10 @@ GstElement* /* (transfer floating) */ createAutoAudioSink(const String& role)
         auto* role = reinterpret_cast<StringImpl*>(userData);
         auto* objectClass = G_OBJECT_GET_CLASS(object);
         if (role && g_object_class_find_property(objectClass, "stream-properties")) {
-            GUniquePtr<GstStructure> properties(gst_structure_new("stream-properties", "media.role", G_TYPE_STRING, role->utf8().data(), nullptr));
+            GUniquePtr<GstStructure> properties(gst_structure_new("stream-properties", "media.role", G_TYPE_STRING, role->utf8().legacyCStringPointer(), nullptr));
             g_object_set(object, "stream-properties", properties.get(), nullptr);
 IGNORE_WARNINGS_BEGIN("cast-align")
-            GST_DEBUG("Set media.role as %s on %" GST_PTR_FORMAT, role->utf8().data(), GST_ELEMENT_CAST(object));
+            GST_DEBUG("Set media.role as %s on %" GST_PTR_FORMAT, role->utf8().legacyCStringPointer(), GST_ELEMENT_CAST(object));
 IGNORE_WARNINGS_END
         }
         if (g_object_class_find_property(objectClass, "client-name")) {
@@ -2046,7 +2046,7 @@ GRefPtr<GstCaps> buildDMABufCaps()
         for (auto token : String(formats.span()).split(',')) {
             GValue value = G_VALUE_INIT;
             g_value_init(&value, G_TYPE_STRING);
-            g_value_set_string(&value, token.utf8().data());
+            g_value_set_string(&value, token.utf8().legacyCStringPointer());
             gst_value_list_append_and_take_value(&drmSupportedFormats, &value);
         }
         gst_caps_set_value(caps.get(), "drm-format", &drmSupportedFormats);
@@ -2172,7 +2172,7 @@ GRefPtr<GstElement> createVideoConvertScaleElement(const String& name)
     // Enable multi-threading in the converter.
     g_object_set(videoConvert, "n-threads", 0U, nullptr);
 
-    GRefPtr bin = gst_bin_new(name.utf8().data());
+    GRefPtr bin = gst_bin_new(name.utf8().legacyCStringPointer());
     gst_bin_add_many(GST_BIN_CAST(bin.get()), videoScale, videoConvert, nullptr);
     gst_element_link(videoScale, videoConvert);
 
@@ -2192,7 +2192,7 @@ void dumpBinToDotFile(GstBin* bin, const String& filename, GstDebugGraphDetails 
         return;
 
     auto sanitizedFilename = makeStringByReplacingAll(filename, '/', '-');
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(bin, details, sanitizedFilename.utf8().data());
+    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS(bin, details, sanitizedFilename.utf8().legacyCStringPointer());
 }
 
 void dumpBinToDotFile(const GRefPtr<GstElement>& element, const String& filename, GstDebugGraphDetails details)

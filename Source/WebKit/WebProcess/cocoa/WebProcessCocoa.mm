@@ -678,7 +678,7 @@ void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParame
 
     if (!parameters.javaScriptConfigurationDirectory.isEmpty()) {
         auto javaScriptConfigFile = makeString(parameters.javaScriptConfigurationDirectory, "/JSC.config"_s);
-        JSC::processConfigFile(javaScriptConfigFile.utf8().data(), "com.apple.WebKit.WebContent", m_uiProcessBundleIdentifier.utf8().data());
+        JSC::processConfigFile(javaScriptConfigFile.utf8().legacyCStringPointer(), "com.apple.WebKit.WebContent", m_uiProcessBundleIdentifier.utf8().legacyCStringPointer());
     }
 }
 

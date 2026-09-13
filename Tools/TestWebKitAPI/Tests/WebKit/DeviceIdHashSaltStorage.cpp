@@ -39,7 +39,7 @@ TEST(DeviceIdHashSaltStorage, SaltStringHasFixedWidth)
     // digits and produced shorter salts that then failed the length check on reload.
     auto salt = WebKit::createDeviceIdHashSaltString(WTF::toArray<uint64_t>({ 0x1, 0x2, 0x3 }));
     EXPECT_EQ(salt.length(), 48u);
-    EXPECT_STREQ(salt.utf8().data(), "000000000000000100000000000000020000000000000003");
+    EXPECT_STREQ(salt.utf8().legacyCStringPointer(), "000000000000000100000000000000020000000000000003");
 }
 
 } // namespace TestWebKitAPI

@@ -288,15 +288,11 @@ JSC_DEFINE_HOST_FUNCTION(arrayBufferProtoFuncResize, (JSGlobalObject* globalObje
     if (!thisObject->impl()->isResizableOrGrowableShared()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "ArrayBuffer is not resizable"_s);
 
-    double newLength = callFrame->argument(0).toIntegerOrInfinity(globalObject);
+    uint64_t newByteLength = callFrame->argument(0).toIndex(globalObject, "newLength"_s);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (thisObject->impl()->isDetached()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Receiver is detached"_s);
-
-    if (!std::isfinite(newLength) || newLength < 0)
-        return throwVMRangeError(globalObject, scope, "new length is out of range"_s);
-    size_t newByteLength = static_cast<size_t>(newLength);
 
 #if ENABLE(WEBASSEMBLY)
     // Wasm JS API redefines the abstract operation HostResizeArrayBuffer as follows:
@@ -503,12 +499,9 @@ JSC_DEFINE_HOST_FUNCTION(sharedArrayBufferProtoFuncGrow, (JSGlobalObject* global
     if (!thisObject->impl()->isResizableOrGrowableShared())
         return throwVMTypeError(globalObject, scope, "SharedArrayBuffer is not growable"_s);
 
-    double newLength = callFrame->argument(0).toIntegerOrInfinity(globalObject);
+    uint64_t newByteLength = callFrame->argument(0).toIndex(globalObject, "newLength"_s);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (!std::isfinite(newLength) || newLength < 0)
-        return throwVMRangeError(globalObject, scope, "new length is out of range"_s);
-    size_t newByteLength = static_cast<size_t>(newLength);
     if (!thisObject->impl()->grow(vm, newByteLength))
         return throwVMRangeError(globalObject, scope, makeString("grow failed with new byte length "_s, newByteLength));
 

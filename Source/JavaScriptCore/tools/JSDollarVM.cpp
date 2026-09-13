@@ -4721,7 +4721,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetCrashLogMessage, (JSGlobalObject* globalObje
     String message = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    WTF::setCrashLogMessage(message.utf8().data());
+    WTF::setCrashLogMessage(message.utf8().legacyCStringPointer());
 
     return JSValue::encode(jsUndefined());
 }

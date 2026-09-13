@@ -194,7 +194,7 @@ auto ContentExtensionsBackend::actionsForResourceLoad(const ResourceLoadInfo& re
 
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     MonotonicTime addedTimeEnd = MonotonicTime::now();
-    dataLogF("Time added: %f microseconds %s \n", (addedTimeEnd - addedTimeStart).microseconds(), resourceLoadInfo.resourceURL.string().utf8().data());
+    dataLogF("Time added: %f microseconds %s \n", (addedTimeEnd - addedTimeStart).microseconds(), resourceLoadInfo.resourceURL.string().utf8().legacyCStringPointer());
 #endif
     return actionsVector;
 }

@@ -356,7 +356,7 @@ std::optional<CSSSelector::PseudoElement> CSSSelector::parsePseudoElementName(St
 
     auto type = findPseudoElementName(name);
     if (!type) {
-        ASSERT_WITH_MESSAGE(!isUASheetBehavior(context.mode), "Unknown pseudo-element %s in user-agent stylesheet", name.toString().utf8().data());
+        ASSERT_WITH_MESSAGE(!isUASheetBehavior(context.mode), "Unknown pseudo-element %s in user-agent stylesheet", name.toString().utf8().legacyCStringPointer());
         if (name.startsWithIgnoringASCIICase("-webkit-"_s))
             return PseudoElement::WebKitUnknown;
         return type;
@@ -874,6 +874,7 @@ CSSSelector::CSSSelector(const CSSSelector& other)
     , m_tagIsForNamespaceRule(other.m_tagIsForNamespaceRule)
     , m_attributeMatchType(other.m_attributeMatchType)
     , m_isImplicit(other.m_isImplicit)
+    , m_isEquivalentToClassSelector(other.m_isEquivalentToClassSelector)
 {
     // Manually ref count the m_data union because they are stored as raw ptr, not as Ref.
     if (other.m_hasRareData)

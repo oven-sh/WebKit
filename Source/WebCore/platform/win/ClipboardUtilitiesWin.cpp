@@ -696,7 +696,11 @@ template<typename T> void getStringData(IDataObject* data, FORMATETC* format, Ve
     STGMEDIUM store;
     if (FAILED(data->GetData(format, &store)))
         return;
-    dataStrings.append(String({ static_cast<T*>(GlobalLock(store.hGlobal)), ::GlobalSize(store.hGlobal) / sizeof(T) }));
+    auto characters = unsafeMakeSpan(static_cast<const T*>(GlobalLock(store.hGlobal)), ::GlobalSize(store.hGlobal) / sizeof(T));
+    if constexpr (std::is_same_v<T, char>)
+        dataStrings.append(String::fromLatin1(characters));
+    else
+        dataStrings.append(String(characters));
     GlobalUnlock(store.hGlobal);
     ReleaseStgMedium(&store);
 }

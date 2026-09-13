@@ -317,7 +317,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
 {
     WTF::switchOn(requestData,
         [](const auto& requestData) {
-            LOG(DigitalCredentials, "WKDigitalCredentialsPicker: Digital Credentials - Presenting with request data: %s.", requestData.topOrigin.toString().utf8().data());
+            LOG(DigitalCredentials, "WKDigitalCredentialsPicker: Digital Credentials - Presenting with request data: %s.", requestData.topOrigin.toString().utf8().legacyCStringPointer());
     });
     _completionHandler = WTF::move(completionHandler);
 
@@ -414,7 +414,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
             return;
         }
 
-        LOG(DigitalCredentials, "The document provider returned response data: %s.", responseData.utf8().data());
+        LOG(DigitalCredentials, "The document provider returned response data: %s.", responseData.utf8().legacyCStringPointer());
         RetainPtr<NSString> protocol = response.protocolString;
 
         if ([protocol isEqualToString:@"org.iso.mdoc"]) {

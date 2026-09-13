@@ -80,7 +80,7 @@ void TextureImpl::undestroy()
 
 void TextureImpl::setLabelInternal(const String& label)
 {
-    wgpuTextureSetLabel(m_backing.get(), label.utf8().data());
+    wgpuTextureSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

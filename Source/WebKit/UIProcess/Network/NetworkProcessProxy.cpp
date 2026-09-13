@@ -1253,12 +1253,20 @@ void NetworkProcessProxy::logTestingEvent(PAL::SessionID sessionID, const String
         websiteDataStore->logTestingEvent(event);
 }
 
-void NetworkProcessProxy::didCommitCrossSiteLoadWithDataTransfer(PAL::SessionID sessionID, const RegistrableDomain& fromDomain, const RegistrableDomain& toDomain, OptionSet<WebCore::CrossSiteNavigationDataTransfer::Flag> navigationDataTransfer, WebPageProxyIdentifier webPageProxyID, PageIdentifier webPageID, DidFilterKnownLinkDecoration didFilterKnownLinkDecoration)
+void NetworkProcessProxy::didCommitCrossSiteLoadWithDataTransfer(PAL::SessionID sessionID, const RegistrableDomain& fromDomain, const RegistrableDomain& toDomain, OptionSet<WebCore::CrossSiteNavigationDataTransfer::Flag> navigationDataTransfer, WebPageProxyIdentifier webPageProxyID, DidFilterKnownLinkDecoration didFilterKnownLinkDecoration)
 {
     if (!canSendMessage())
         return;
 
-    send(Messages::NetworkProcess::DidCommitCrossSiteLoadWithDataTransfer(sessionID, fromDomain, toDomain, navigationDataTransfer, webPageProxyID, webPageID, didFilterKnownLinkDecoration), 0);
+    send(Messages::NetworkProcess::DidCommitCrossSiteLoadWithDataTransfer(sessionID, fromDomain, toDomain, navigationDataTransfer, webPageProxyID, didFilterKnownLinkDecoration), 0);
+}
+
+void NetworkProcessProxy::didCommitMainFrameNavigation(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, const RegistrableDomain& committedDomain, const RegistrableDomain& previouslyCommittedDomain, WebCore::RestoredFromBackForwardCache restoredFromBackForwardCache)
+{
+    if (!canSendMessage())
+        return;
+
+    send(Messages::NetworkProcess::DidCommitMainFrameNavigation(sessionID, webPageProxyID, committedDomain, previouslyCommittedDomain, restoredFromBackForwardCache), 0);
 }
 
 void NetworkProcessProxy::didCommitCrossSiteLoadWithDataTransferFromPrevalentResource(WebPageProxyIdentifier pageID)

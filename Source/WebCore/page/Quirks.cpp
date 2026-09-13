@@ -2652,7 +2652,7 @@ Vector<String> Quirks::activeQuirks() const
     Vector<String> result;
 
     for (auto quirk : m_quirksData.activeQuirks)
-        result.append(String { WTF::enumName(static_cast<QuirkBehaviorID>(quirk)) });
+        result.append(WTF::enumName(static_cast<QuirkBehaviorID>(quirk)));
 
     std::ranges::sort(result, codePointCompareLessThan);
     return result;

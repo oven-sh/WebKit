@@ -81,8 +81,8 @@ TEST(PrivateClickMeasurement, ValidBlindedSecret)
     
     auto sourceUnlinkableToken = pcm.tokenSignatureJSON();
     EXPECT_EQ(sourceUnlinkableToken->asObject()->size(), 4ul);
-    EXPECT_STREQ(sourceUnlinkableToken->getString("source_engagement_type"_s).utf8().data(), "click");
-    EXPECT_STREQ(sourceUnlinkableToken->getString("source_nonce"_s).utf8().data(), "ABCDEFabcdef0123456789");
+    EXPECT_STREQ(sourceUnlinkableToken->getString("source_engagement_type"_s).utf8().legacyCStringPointer(), "click");
+    EXPECT_STREQ(sourceUnlinkableToken->getString("source_nonce"_s).utf8().legacyCStringPointer(), "ABCDEFabcdef0123456789");
     EXPECT_FALSE(sourceUnlinkableToken->getString("source_unlinkable_token"_s).isEmpty());
     EXPECT_EQ(sourceUnlinkableToken->getInteger("version"_s), 3);
 

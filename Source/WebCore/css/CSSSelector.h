@@ -176,6 +176,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     bool matchesPseudoElement() const;
     bool isSiblingSelector() const;
     bool isAttributeSelector() const;
+
+    // True for [class~="foo"] selectors that match exactly like .foo, so matching can test
+    // the tokenized ElementData::classNames() instead of searching the attribute value.
+    // Set by the parser, which knows the document mode: in quirks mode the class list is
+    // ASCII-lowercased while [class~=] stays case-sensitive.
+    bool isEquivalentToClassSelector() const { return m_isEquivalentToClassSelector; }
     bool NODELETE isHostPseudoClass() const;
     bool NODELETE isScopePseudoClass() const;
 
@@ -217,6 +223,7 @@ private:
 
     void setForPage() { m_isForPage = true; }
     void setImplicit() { m_isImplicit = true; }
+    void setIsEquivalentToClassSelector() { m_isEquivalentToClassSelector = true; }
 
     unsigned m_relation : 4 { std::to_underlying(Relation::DescendantSpace) };
     mutable unsigned m_match : 5 { std::to_underlying(Match::Unknown) };
@@ -232,7 +239,8 @@ private:
     unsigned m_tagIsForNamespaceRule : 1 { false };
     unsigned m_attributeMatchType : 2 { std::to_underlying(AttributeMatchType::Default) };
     unsigned m_isImplicit : 1 { false };
-    // 26 bits
+    unsigned m_isEquivalentToClassSelector : 1 { false };
+    // 27 bits
 #if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
     unsigned m_destructorHasBeenCalled : 1 { false };
 #endif
@@ -384,6 +392,7 @@ inline CSSSelector::CSSSelector(CSSSelector&& other)
     , m_tagIsForNamespaceRule(other.m_tagIsForNamespaceRule)
     , m_attributeMatchType(other.m_attributeMatchType)
     , m_isImplicit(other.m_isImplicit)
+    , m_isEquivalentToClassSelector(other.m_isEquivalentToClassSelector)
     , m_data(WTF::move(other.m_data))
 {
     other.m_data.value = nullptr;

@@ -1636,7 +1636,6 @@
 		5CE4B60029CE548D0038F565 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DC2EF5B0486A6940098B216 /* WebKit.framework */; };
 		5CE4B60D29CF87680038F565 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DC2EF5B0486A6940098B216 /* WebKit.framework */; };
 		5CE4B61A29CF877F0038F565 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DC2EF5B0486A6940098B216 /* WebKit.framework */; };
-		5CE85B201C88E64B0070BFCE /* PingLoad.h in Headers */ = {isa = PBXBuildFile; fileRef = 5CE85B1F1C88E6430070BFCE /* PingLoad.h */; };
 		5CE9120D2293C219005BEC78 /* WKMain.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5CE9120C2293C1E0005BEC78 /* WKMain.mm */; };
 		5CE912102293C277005BEC78 /* AuxiliaryProcessMain.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5CE9120F2293C25F005BEC78 /* AuxiliaryProcessMain.cpp */; };
 		5CE912112293C278005BEC78 /* AuxiliaryProcessMain.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5CE9120F2293C25F005BEC78 /* AuxiliaryProcessMain.cpp */; };
@@ -5886,7 +5885,6 @@
 		461E1BEC279A010E006AF53B /* WebSharedWorkerContextManagerConnection.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WebSharedWorkerContextManagerConnection.cpp; sourceTree = "<group>"; };
 		461E1BEF279A010F006AF53B /* WebSharedWorkerContextManagerConnection.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WebSharedWorkerContextManagerConnection.h; sourceTree = "<group>"; };
 		461E1BF0279A010F006AF53B /* WebSharedWorkerContextManagerConnection.messages.in */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = WebSharedWorkerContextManagerConnection.messages.in; sourceTree = "<group>"; };
-		462107D71F38DBD300DD7810 /* PingLoad.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PingLoad.cpp; sourceTree = "<group>"; };
 		462CD80B28204DF100F0EA04 /* MarkSurfacesAsVolatileRequestIdentifier.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MarkSurfacesAsVolatileRequestIdentifier.h; sourceTree = "<group>"; };
 		462FFFE32B20F2FC0016A855 /* SharedCARingBuffer.serialization.in */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = SharedCARingBuffer.serialization.in; sourceTree = "<group>"; };
 		463010002984778C00715DB1 /* WKWebGeolocationPolicyDeciderIOS.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = WKWebGeolocationPolicyDeciderIOS.mm; sourceTree = "<group>"; };
@@ -6954,7 +6952,6 @@
 		5CE4B61329CF87680038F565 /* NetworkingExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = NetworkingExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5CE4B62029CF877F0038F565 /* GPUExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = GPUExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5CE77801297BA396000BA9CF /* RemoteLayerTree.serialization.in */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = RemoteLayerTree.serialization.in; sourceTree = "<group>"; };
-		5CE85B1F1C88E6430070BFCE /* PingLoad.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PingLoad.h; sourceTree = "<group>"; };
 		5CE9120B2293C1E0005BEC78 /* WKMain.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WKMain.h; sourceTree = "<group>"; };
 		5CE9120C2293C1E0005BEC78 /* WKMain.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = WKMain.mm; sourceTree = "<group>"; };
 		5CE9120F2293C25F005BEC78 /* AuxiliaryProcessMain.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = AuxiliaryProcessMain.cpp; path = Cocoa/AuxiliaryProcessMain.cpp; sourceTree = "<group>"; };
@@ -14393,8 +14390,6 @@
 				417915B72257046E00D6F97E /* NetworkSocketChannel.cpp */,
 				417915B62257046E00D6F97E /* NetworkSocketChannel.h */,
 				417915B82257046E00D6F97E /* NetworkSocketChannel.messages.in */,
-				462107D71F38DBD300DD7810 /* PingLoad.cpp */,
-				5CE85B1F1C88E6430070BFCE /* PingLoad.h */,
 				1D3F2E8A99B47C6E5F7A2D12 /* PreconnectRequest.h */,
 				1D3F2E8A99B47C6E5F7A2D13 /* PreconnectRequest.serialization.in */,
 				83A0ED331F747CC7003299EB /* PreconnectTask.cpp */,
@@ -18844,7 +18839,6 @@
 				7AFBD36F21E546F8005DBACB /* PersistencyUtils.h in Headers */,
 				E5DEFA6826F8F42600AB68DB /* PhotosUISPI.h in Headers */,
 				E5AF80FD2BB4F05F00726F63 /* PickerDismissalReason.h in Headers */,
-				5CE85B201C88E64B0070BFCE /* PingLoad.h in Headers */,
 				0F5E200418E77051003EC3E5 /* PlatformCAAnimationRemote.h in Headers */,
 				46D246262AFE956500F24C94 /* PlatformCAAnimationRemoteProperties.h in Headers */,
 				2DA049B4180CCCD300AAFA9E /* PlatformCALayerRemote.h in Headers */,

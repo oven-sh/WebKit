@@ -109,7 +109,6 @@ private:
     bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
     bool dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-    void didFinishPingLoad(WebCore::ResourceLoaderIdentifier pingLoadIdentifier, WebCore::ResourceError&&, WebCore::ResourceResponse&&);
     void didFinishPreconnection(WebCore::ResourceLoaderIdentifier preconnectionIdentifier, WebCore::ResourceError&&);
     void setOnLineState(bool isOnLine);
     void cookieAcceptPolicyChanged(WebCore::HTTPCookieAcceptPolicy);

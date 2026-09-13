@@ -345,7 +345,7 @@ void LibWebRTCCodecsProxy::createEncoder(VideoEncoderIdentifier identifier, WebC
 
     std::map<std::string, std::string> rtcParameters;
     for (auto& parameter : parameters)
-        rtcParameters.emplace(parameter.first.utf8().data(), parameter.second.utf8().data());
+        rtcParameters.emplace(parameter.first.utf8().legacyCStringPointer(), parameter.second.utf8().legacyCStringPointer());
 
     if (codecType != WebCore::VideoCodecType::H264 && codecType != WebCore::VideoCodecType::H265) {
         callback(false);

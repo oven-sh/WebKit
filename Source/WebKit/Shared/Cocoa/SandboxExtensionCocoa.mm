@@ -152,7 +152,7 @@ RefPtr<SandboxExtension> SandboxExtension::create(Handle&& handle)
 String stringByResolvingSymlinksInPath(StringView path)
 {
     char resolvedPath[PATH_MAX] = { 0 };
-    realpath(path.utf8().data(), resolvedPath);
+    realpath(path.utf8().legacyCStringPointer(), resolvedPath);
     return String::fromUTF8(resolvedPath);
 }
 
@@ -173,7 +173,7 @@ String resolvePathForSandboxExtension(StringView path)
 {
     String resolvedPath = stringByResolvingSymlinksInPath(path);
     if (resolvedPath.isNull()) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a valid file system representation for the string '%s' of length %u", resolvedPath.utf8().data(), resolvedPath.length());
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a valid file system representation for the string '%s' of length %u", resolvedPath.utf8().legacyCStringPointer(), resolvedPath.length());
         return { };
     }
 
@@ -185,13 +185,13 @@ auto SandboxExtension::createHandleWithoutResolvingPath(StringView path, Type ty
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
 
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8().data(), type, std::nullopt, Flags::DoNotCanonicalize);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8().legacyCStringPointer(), type, std::nullopt, Flags::DoNotCanonicalize);
     if (!handle.m_sandboxExtension) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8().data());
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8().legacyCStringPointer());
         return std::nullopt;
     }
 
-    RELEASE_LOG(Sandbox, "Successfully created a sandbox extension for '%{private}s'", path.utf8().data());
+    RELEASE_LOG(Sandbox, "Successfully created a sandbox extension for '%{private}s'", path.utf8().legacyCStringPointer());
     return WTF::move(handle);
 }
 
@@ -216,7 +216,7 @@ auto SandboxExtension::createReadOnlyHandlesForFiles(ASCIILiteral logLabel, cons
         if (!handle) {
             // This can legitimately fail if a directory containing the file is deleted after the file was chosen.
             // We also have reports of cases where this likely fails for some unknown reason, <rdar://problem/10156710>.
-            WTFLogAlways("%s: could not create a sandbox extension for '%s'\n", logLabel.characters(), path.utf8().data());
+            WTFLogAlways("%s: could not create a sandbox extension for '%s'\n", logLabel.characters(), path.utf8().legacyCStringPointer());
             ASSERT_NOT_REACHED();
         }
         return handle;
@@ -255,7 +255,7 @@ auto SandboxExtension::createHandleForTemporaryFile(StringView prefix, Type type
     handle.m_sandboxExtension = SandboxExtensionImpl::create(FileSystem::fileSystemRepresentation(pathString).data(), type);
 
     if (!handle.m_sandboxExtension) {
-        WTFLogAlways("Could not create a sandbox extension for temporary file '%s'", pathString.utf8().data());
+        WTFLogAlways("Could not create a sandbox extension for temporary file '%s'", pathString.utf8().legacyCStringPointer());
         return std::nullopt;
     }
     return { { WTF::move(handle), WTF::move(pathString) } };
@@ -322,13 +322,13 @@ auto SandboxExtension::createHandleForReadByAuditToken(StringView path, audit_to
     Handle handle;
     ASSERT(!handle.m_sandboxExtension);
 
-    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8().data(), Type::ReadByProcess, auditToken);
+    handle.m_sandboxExtension = SandboxExtensionImpl::create(path.utf8().legacyCStringPointer(), Type::ReadByProcess, auditToken);
     if (!handle.m_sandboxExtension) {
-        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8().data());
+        RELEASE_LOG_ERROR(Sandbox, "Could not create a sandbox extension for '%{private}s'", path.utf8().legacyCStringPointer());
         return std::nullopt;
     }
     
-    RELEASE_LOG(Sandbox, "Successfully created sandbox extension for '%{private}s'", path.utf8().data());
+    RELEASE_LOG(Sandbox, "Successfully created sandbox extension for '%{private}s'", path.utf8().legacyCStringPointer());
     return WTF::move(handle);
 }
 

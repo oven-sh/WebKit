@@ -155,7 +155,7 @@ void IDBServer::openDatabase(const IDBOpenRequestData& requestData)
 
 void IDBServer::deleteDatabase(const IDBOpenRequestData& requestData)
 {
-    LOG(IndexedDB, "IDBServer::deleteDatabase - %s", requestData.databaseIdentifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBServer::deleteDatabase - %s", requestData.databaseIdentifier().loggingString().utf8().legacyCStringPointer());
     ASSERT(!isMainThread());
 
     auto connectionIdentifier = requestData.requestIdentifier().connectionIdentifier();
@@ -414,7 +414,7 @@ void IDBServer::commitTransaction(const IDBResourceIdentifier& transactionIdenti
 
 void IDBServer::didFinishHandlingVersionChangeTransaction(IDBDatabaseConnectionIdentifier databaseConnectionIdentifier, const IDBResourceIdentifier& transactionIdentifier)
 {
-    LOG(IndexedDB, "IDBServer::didFinishHandlingVersionChangeTransaction - %s", transactionIdentifier.loggingString().utf8().data());
+    LOG(IndexedDB, "IDBServer::didFinishHandlingVersionChangeTransaction - %s", transactionIdentifier.loggingString().utf8().legacyCStringPointer());
     ASSERT(!isMainThread());
 
     if (RefPtr connection = m_databaseConnections.get(databaseConnectionIdentifier))
@@ -633,7 +633,7 @@ void IDBServer::closeAndDeleteDatabasesForOrigins(const Vector<SecurityOriginDat
 
 static void removeAllDatabasesForFullOriginPath(const String& originPath, WallTime modifiedSince)
 {
-    LOG(IndexedDB, "removeAllDatabasesForOriginPath with originPath %s", originPath.utf8().data());
+    LOG(IndexedDB, "removeAllDatabasesForOriginPath with originPath %s", originPath.utf8().legacyCStringPointer());
     Vector<String> databaseNames = FileSystem::listDirectory(originPath);
 
     for (auto& databaseName : databaseNames) {

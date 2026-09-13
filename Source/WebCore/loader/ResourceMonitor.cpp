@@ -76,7 +76,7 @@ void ResourceMonitor::setEligibility(Eligibility eligibility)
     m_eligibility = eligibility;
 
     if (isEligible()) {
-        RESOURCEMONITOR_RELEASE_LOG("Frame (%" SENSITIVE_LOG_STRING ") was set as eligible.", m_frameURL.string().utf8().data());
+        RESOURCEMONITOR_RELEASE_LOG("Frame (%" SENSITIVE_LOG_STRING ") was set as eligible.", m_frameURL.string().utf8().legacyCStringPointer());
 
         if (RefPtr resourceMonitor = parentResourceMonitorIfExists(); !resourceMonitor || !resourceMonitor->isEligible())
             checkNetworkUsageExcessIfNecessary();
@@ -139,9 +139,9 @@ void ResourceMonitor::continueAfterDidReceiveEligibility(Eligibility eligibility
         return;
 
     RESOURCEMONITOR_RELEASE_LOG("resourceURL %" SENSITIVE_LOG_STRING " mainDocumentURL %" SENSITIVE_LOG_STRING " frameURL %" SENSITIVE_LOG_STRING " (%" PUBLIC_LOG_STRING ") is set as %" PUBLIC_LOG_STRING ".",
-        url.string().utf8().data(),
-        page->mainFrameURL().string().utf8().data(),
-        m_frameURL.string().utf8().data(),
+        url.string().utf8().legacyCStringPointer(),
+        page->mainFrameURL().string().utf8().legacyCStringPointer(),
+        m_frameURL.string().utf8().legacyCStringPointer(),
         ContentExtensions::resourceTypeToString(resourceType).characters(),
         eligibilityToString(eligibility).characters()
     );

@@ -208,7 +208,7 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::create(AXObjectCache& axObjectCache)
         return nullptr;
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8().data(), document->isTopDocument());
+        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8().legacyCStringPointer(), document->isTopDocument());
 
     if (!Accessibility::inRenderTreeOrStyleUpdate(*document))
         document->updateLayoutIgnorePendingStylesheets();
@@ -419,8 +419,8 @@ void AXIsolatedTree::queueChange(NodeChange&& nodeChange)
         pending.childrenUpdates.append({ *parentID, WTF::move(siblingsIDs) });
     }
 
-    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8().data());
-    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8().data());
+    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8().legacyCStringPointer());
+    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8().legacyCStringPointer());
     auto childrenIDs = m_nodeMap.get(objectID).childrenIDs;
     pending.childrenUpdates.append({ objectID, WTF::move(childrenIDs) });
 }
@@ -530,7 +530,7 @@ void AXIsolatedTree::queueAppendsAndRemovals(Vector<NodeChange>&& appends, Vecto
         queueChange(WTF::move(append));
 
     for (const auto& axID : parentUpdateIDs) {
-        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8().data());
+        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8().legacyCStringPointer());
         markDirtyAndGetWorkingChanges().parentUpdates.set(axID, *m_nodeMap.get(axID).parentID);
     }
 
@@ -1862,7 +1862,7 @@ void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
     AX_ASSERT(!isMainThread());
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
+        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().legacyCStringPointer());
 
     // Any structural change can affect some ancestor's stitchedUnignoredChildren result.
     // Property changes that could affect the unignored-children result (IsIgnored, StitchGroups, etc.)
@@ -2013,7 +2013,7 @@ void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
     }
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
+        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().legacyCStringPointer());
 }
 
 void AXIsolatedTree::sortedLiveRegionsDidChange(Vector<AXID> liveRegionIDs)
@@ -2132,7 +2132,7 @@ void AXIsolatedTree::processQueuedNodeUpdates()
     SetForScope processingScope(m_isProcessingQueuedNodeUpdates, true);
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache }->debugDescription().utf8().data() : "null");
+        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache }->debugDescription().utf8().legacyCStringPointer() : "null");
 
     for (const auto& nodeIDs : m_needsNodeRemoval)
         removeNode(nodeIDs.key, nodeIDs.value);
@@ -2539,9 +2539,12 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         std::optional frame = geometryManager ? geometryManager->cachedRectForID(object.objectID()) : std::nullopt;
         if (frame)
             setProperty(AXProperty::RelativeFrame, WTF::move(*frame));
-        else if (isScrollArea || isWebArea || object.isScrollbar()) {
+        else if (isScrollArea || isWebArea || object.isScrollbar() || object.role() == AccessibilityRole::FrameHost) {
             // The GeometryManager does not have a relative frame for ScrollViews, WebAreas, or scrollbars yet. We need to get it from the
             // live object so that we don't need to hit the main thread in the case a request comes in while the whole isolated tree is being built.
+            //
+            // FrameHosts (the AccessibilityScrollView standing in for a cross-process iframe) are included
+            // because the remote frame is never painted in this process, so GeometryManager will never receive a rect for one.
             setProperty(AXProperty::RelativeFrame, enclosingIntRect(object.relativeFrame()));
         } else if (!object.renderer() && object.node() && is<AccessibilityNodeObject>(object) && !object.isImageMapLink()) {
             // The frame of node-only AX objects is made up of their children.

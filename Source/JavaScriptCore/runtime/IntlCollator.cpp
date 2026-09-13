@@ -83,13 +83,13 @@ Vector<String> IntlCollator::sortLocaleData(const String& locale, RelevantExtens
         keyLocaleData.append({ });
 
         UErrorCode status = U_ZERO_ERROR;
-        auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", locale.utf8().data(), false, &status));
+        auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", locale.utf8().legacyCStringPointer(), false, &status));
         if (U_SUCCESS(status)) {
             const char* pointer;
             int32_t length = 0;
             while ((pointer = uenum_next(enumeration.get(), &length, &status)) && U_SUCCESS(status)) {
                 // 10.2.3 "The values "standard" and "search" must not be used as elements in any [[sortLocaleData]][locale].co and [[searchLocaleData]][locale].co array."
-                String collation(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+                String collation = String::fromLatin1(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
                 if (collation == "standard"_s || collation == "search"_s)
                     continue;
                 if (auto mapped = mapICUCollationKeywordToBCP47(collation))

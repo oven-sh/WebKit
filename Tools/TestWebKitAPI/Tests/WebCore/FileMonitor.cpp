@@ -138,10 +138,10 @@ TEST_F(FileMonitorTest, DetectChange)
 
     testQueue->dispatch([this] () mutable {
         String fileContents = readContentsOfFile(tempFilePath());
-        EXPECT_STREQ(FileMonitorTestData.utf8().data(), fileContents.utf8().data());
+        EXPECT_STREQ(FileMonitorTestData.utf8().legacyCStringPointer(), fileContents.utf8().legacyCStringPointer());
 
         auto command = createCommand(tempFilePath(), FileMonitorRevisedData);
-        auto rc = system(command.utf8().data());
+        auto rc = system(command.utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -153,7 +153,7 @@ TEST_F(FileMonitorTest, DetectChange)
     EXPECT_FALSE(observedFileDeletion);
 
     String revisedFileContents = readContentsOfFile(tempFilePath());
-    EXPECT_STREQ(FileMonitorRevisedData.utf8().data(), revisedFileContents.utf8().data());
+    EXPECT_STREQ(FileMonitorRevisedData.utf8().legacyCStringPointer(), revisedFileContents.utf8().legacyCStringPointer());
 
     resetTestState();
 }
@@ -180,10 +180,10 @@ TEST_F(FileMonitorTest, DetectMultipleChanges)
     
     testQueue->dispatch([this] () mutable {
         String fileContents = readContentsOfFile(tempFilePath());
-        EXPECT_STREQ(FileMonitorTestData.utf8().data(), fileContents.utf8().data());
+        EXPECT_STREQ(FileMonitorTestData.utf8().legacyCStringPointer(), fileContents.utf8().legacyCStringPointer());
 
         auto firstCommand = createCommand(tempFilePath(), FileMonitorRevisedData);
-        auto rc = system(firstCommand.utf8().data());
+        auto rc = system(firstCommand.utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -195,13 +195,13 @@ TEST_F(FileMonitorTest, DetectMultipleChanges)
     EXPECT_FALSE(observedFileDeletion);
 
     String revisedFileContents = readContentsOfFile(tempFilePath());
-    EXPECT_STREQ(FileMonitorRevisedData.utf8().data(), revisedFileContents.utf8().data());
+    EXPECT_STREQ(FileMonitorRevisedData.utf8().legacyCStringPointer(), revisedFileContents.utf8().legacyCStringPointer());
 
     resetTestState();
 
     testQueue->dispatch([this] () mutable {
         auto secondCommand = createCommand(tempFilePath(), FileMonitorSecondRevisedData);
-        auto rc = system(secondCommand.utf8().data());
+        auto rc = system(secondCommand.utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -213,7 +213,7 @@ TEST_F(FileMonitorTest, DetectMultipleChanges)
     EXPECT_FALSE(observedFileDeletion);
 
     String secondRevisedfileContents = readContentsOfFile(tempFilePath());
-    EXPECT_STREQ(FileMonitorSecondRevisedData.utf8().data(), secondRevisedfileContents.utf8().data());
+    EXPECT_STREQ(FileMonitorSecondRevisedData.utf8().legacyCStringPointer(), secondRevisedfileContents.utf8().legacyCStringPointer());
 
     resetTestState();
 }
@@ -239,7 +239,7 @@ TEST_F(FileMonitorTest, DetectDeletion)
     });
 
     testQueue->dispatch([this] () mutable {
-        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().data());
+        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -275,10 +275,10 @@ TEST_F(FileMonitorTest, DetectChangeAndThenDelete)
 
     testQueue->dispatch([this] () mutable {
         String fileContents = readContentsOfFile(tempFilePath());
-        EXPECT_STREQ(FileMonitorTestData.utf8().data(), fileContents.utf8().data());
+        EXPECT_STREQ(FileMonitorTestData.utf8().legacyCStringPointer(), fileContents.utf8().legacyCStringPointer());
 
         auto firstCommand = createCommand(tempFilePath(), FileMonitorRevisedData);
-        auto rc = system(firstCommand.utf8().data());
+        auto rc = system(firstCommand.utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -292,7 +292,7 @@ TEST_F(FileMonitorTest, DetectChangeAndThenDelete)
     resetTestState();
 
     testQueue->dispatch([this] () mutable {
-        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().data());
+        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -327,7 +327,7 @@ TEST_F(FileMonitorTest, DetectDeleteButNotSubsequentChange)
     });
 
     testQueue->dispatch([this] () mutable {
-        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().data());
+        auto rc = system(makeString("rm -f "_s, tempFilePath()).utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;
@@ -350,7 +350,7 @@ TEST_F(FileMonitorTest, DetectDeleteButNotSubsequentChange)
         ASSERT_TRUE(!!rc);
 
         auto firstCommand = createCommand(tempFilePath(), FileMonitorRevisedData);
-        rc = system(firstCommand.utf8().data());
+        rc = system(firstCommand.utf8().legacyCStringPointer());
         ASSERT_NE(rc, -1);
         if (rc == -1)
             didFinish = true;

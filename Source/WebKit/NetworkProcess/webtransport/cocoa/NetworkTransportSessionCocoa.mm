@@ -209,13 +209,13 @@ static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess
     ](nw_protocol_options_t options) {
         MAYBE_SOFT_LINK(nw_webtransport_options_set_is_unidirectional)(options, false);
         MAYBE_SOFT_LINK(nw_webtransport_options_set_is_datagram)(options, true);
-        MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, "origin", clientOrigin.utf8().data());
+        MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, "origin", clientOrigin.utf8().legacyCStringPointer());
         MAYBE_SOFT_LINK(nw_webtransport_options_set_allow_joining_before_ready)(options, true);
         MAYBE_SOFT_LINK(nw_webtransport_options_set_initial_max_streams_uni)(options, maxStreamsUni);
         MAYBE_SOFT_LINK(nw_webtransport_options_set_initial_max_streams_bidi)(options, maxStreamsBidi);
         for (auto& header : additionalHeaders)
-            MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, header.key.utf8().data(), header.value.utf8().data());
-        MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, "wt-available-protocols", protocols.utf8().data());
+            MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, header.key.utf8().legacyCStringPointer(), header.value.utf8().legacyCStringPointer());
+        MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, "wt-available-protocols", protocols.utf8().legacyCStringPointer());
     };
 
     auto configureTLS = [
@@ -259,7 +259,7 @@ static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess
 
 RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess& connectionToWebProcess, WebTransportSessionIdentifier identifier, URL&& url, WebCore::WebTransportOptions&& options, Vector<KeyValuePair<String, String>>&& additionalHeaders, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)
 {
-    RetainPtr endpoint = adoptNS(nw_endpoint_create_url(url.string().utf8().data()));
+    RetainPtr endpoint = adoptNS(nw_endpoint_create_url(url.string().utf8().legacyCStringPointer()));
     if (!endpoint) {
         ASSERT_NOT_REACHED();
         return nullptr;
@@ -328,11 +328,11 @@ void NetworkTransportSession::initialize(CompletionHandler<void(std::optional<We
                         }
                     });
                     nw_http_fields_enumerate(response.get(), ^bool(const char *name, size_t nameLength, const char *value, size_t valueLength) {
-                        auto headerName = String(unsafeMakeSpan(name, nameLength)).convertToASCIILowercase();
+                        auto headerName = String::fromLatin1(unsafeMakeSpan(name, nameLength)).convertToASCIILowercase();
                         // Forbidden response header names must never reach WebContent.
                         // https://fetch.spec.whatwg.org/#forbidden-response-header-name
                         if (headerName != "wt-protocol"_s && !WebCore::isForbiddenResponseHeaderName(headerName)) {
-                            KeyValuePair<String, String> pair(WTF::move(headerName), String(unsafeMakeSpan(value, valueLength)));
+                            KeyValuePair<String, String> pair(WTF::move(headerName), String::fromLatin1(unsafeMakeSpan(value, valueLength)));
                             responseHeaders.append(WTF::move(pair));
                         }
                         return true;

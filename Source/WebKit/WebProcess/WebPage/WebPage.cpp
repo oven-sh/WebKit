@@ -2806,7 +2806,7 @@ void WebPage::reload(WebCore::NavigationIdentifier navigationID, OptionSet<WebCo
 
 void WebPage::goToBackForwardItem(GoToBackForwardItemParameters&& parameters)
 {
-    WEBPAGE_RELEASE_LOG(Loading, "goToBackForwardItem: navigationID=%" PRIu64 ", backForwardItemID=%s, shouldTreatAsContinuingLoad=%u, lastNavigationWasAppInitiated=%d, existingNetworkResourceLoadIdentifierToResume=%" PRIu64, parameters.navigationID.toUInt64(), parameters.frameState->itemID->toString().utf8().data(), static_cast<unsigned>(parameters.shouldTreatAsContinuingLoad), parameters.lastNavigationWasAppInitiated, parameters.existingNetworkResourceLoadIdentifierToResume ? parameters.existingNetworkResourceLoadIdentifierToResume->toUInt64() : 0);
+    WEBPAGE_RELEASE_LOG(Loading, "goToBackForwardItem: navigationID=%" PRIu64 ", backForwardItemID=%s, shouldTreatAsContinuingLoad=%u, lastNavigationWasAppInitiated=%d, existingNetworkResourceLoadIdentifierToResume=%" PRIu64, parameters.navigationID.toUInt64(), parameters.frameState->itemID->toString().utf8().legacyCStringPointer(), static_cast<unsigned>(parameters.shouldTreatAsContinuingLoad), parameters.lastNavigationWasAppInitiated, parameters.existingNetworkResourceLoadIdentifierToResume ? parameters.existingNetworkResourceLoadIdentifierToResume->toUInt64() : 0);
     SendStopResponsivenessTimer stopper;
 
     m_sandboxExtensionTracker.beginLoad(WTF::move(parameters.sandboxExtensionHandle));
@@ -2833,7 +2833,7 @@ void WebPage::goToBackForwardItem(GoToBackForwardItemParameters&& parameters)
             localMainFrame->loader().setNavigationUpgradeToHTTPSBehavior(item->url().protocolIs("http"_s) ? NavigationUpgradeToHTTPSBehavior::Disabled : NavigationUpgradeToHTTPSBehavior::BasedOnPolicy);
     }
 
-    LOG(Loading, "In WebProcess pid %i, WebPage %" PRIu64 " is navigating to back/forward URL %s", getCurrentProcessID(), m_identifier.toUInt64(), item->url().string().utf8().data());
+    LOG(Loading, "In WebProcess pid %i, WebPage %" PRIu64 " is navigating to back/forward URL %s", getCurrentProcessID(), m_identifier.toUInt64(), item->url().string().utf8().legacyCStringPointer());
 
 #if PLATFORM(COCOA)
     WebCore::PublicSuffixStore::singleton().addPublicSuffix(parameters.publicSuffix);
@@ -2854,7 +2854,7 @@ void WebPage::goToBackForwardItem(GoToBackForwardItemParameters&& parameters)
         }
         protect(corePage())->goToItem(*targetLocalFrame, *item, parameters.backForwardType, parameters.shouldTreatAsContinuingLoad, parameters.shouldRestoreFromBackForwardCache);
     } else
-        WEBPAGE_RELEASE_LOG_ERROR(ProcessSwapping, "goToBackForwardItem: No target local frame found for navigationID=%" PRIu64 ", backForwardItemID=%s — navigation silently dropped", parameters.navigationID.toUInt64(), parameters.frameState->itemID->toString().utf8().data());
+        WEBPAGE_RELEASE_LOG_ERROR(ProcessSwapping, "goToBackForwardItem: No target local frame found for navigationID=%" PRIu64 ", backForwardItemID=%s — navigation silently dropped", parameters.navigationID.toUInt64(), parameters.frameState->itemID->toString().utf8().legacyCStringPointer());
 }
 
 // GoToBackForwardItemWaitingForProcessLaunch should never be sent to the WebProcess. It must always be converted to a GoToBackForwardItem message.
@@ -3601,9 +3601,9 @@ void WebPage::takeRemoteSnapshot(IntRect snapshotRect, IntSize bitmapSize, Snaps
 
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
     m_remoteSnapshotState = {
-        snapshotIdentifier,
-        remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier),
-        MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), bitmapSize] (bool success) mutable {
+        .identifier = snapshotIdentifier,
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(snapshotRect, snapshotIdentifier),
+        .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), bitmapSize] (bool success) mutable {
             completionHandler(success ? std::optional<IntSize>(bitmapSize) : std::nullopt);
         })
     };
@@ -5142,7 +5142,7 @@ void WebPage::runJavaScriptInFrameInScriptWorld(RunJavaScriptParameters&& parame
         UNUSED_PARAM(this);
 #endif
         if (!result && result.error())
-            WEBPAGE_RELEASE_LOG_ERROR(Process, "runJavaScriptInFrameInScriptWorld: Request to run JavaScript failed with error %" PRIVATE_LOG_STRING, result.error()->message.utf8().data());
+            WEBPAGE_RELEASE_LOG_ERROR(Process, "runJavaScriptInFrameInScriptWorld: Request to run JavaScript failed with error %" PRIVATE_LOG_STRING, result.error()->message.utf8().legacyCStringPointer());
         else
             WEBPAGE_RELEASE_LOG(Process, "runJavaScriptInFrameInScriptWorld: Request to run JavaScript succeeded");
 #if PLATFORM(IOS_FAMILY)
@@ -5155,7 +5155,7 @@ void WebPage::runJavaScriptInFrameInScriptWorld(RunJavaScriptParameters&& parame
 void WebPage::clearContentWorld(ContentWorldIdentifier worldIdentifier, CompletionHandler<void()>&& completionHandler)
 {
     if (RefPtr world = m_userContentController->worldForIdentifier(worldIdentifier); world && world->coreWorld().allowNodeSnapshotCreation()) {
-        WEBPAGE_RELEASE_LOG(Loading, "clearContentWorld: id=%" PUBLIC_LOG_STRING " name=%" PUBLIC_LOG_STRING, worldIdentifier.loggingString().ascii().data(), world->name().utf8().data());
+        WEBPAGE_RELEASE_LOG(Loading, "clearContentWorld: id=%" PUBLIC_LOG_STRING " name=%" PUBLIC_LOG_STRING, worldIdentifier.loggingString().ascii().data(), world->name().utf8().legacyCStringPointer());
         world->clearWrappers();
     }
     completionHandler();
@@ -7250,9 +7250,9 @@ void WebPage::drawToSnapshot(const std::optional<FloatRect>& rect, bool allowTra
 
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
     m_remoteSnapshotState = {
-        snapshotIdentifier,
-        remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier),
-        MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize] (bool success) mutable {
+        .identifier = snapshotIdentifier,
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(snapshotRect, snapshotIdentifier),
+        .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize] (bool success) mutable {
             completionHandler(success ? std::optional<IntSize>(snapshotSize) : std::nullopt);
         })
     };
@@ -7297,7 +7297,11 @@ void WebPage::drawFrameToSnapshot(FrameIdentifier frameID, const IntRect& rect, 
     }
 
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
-    m_remoteSnapshotState = { snapshotIdentifier, remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier), MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)) };
+    m_remoteSnapshotState = {
+        .identifier = snapshotIdentifier,
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(rect, snapshotIdentifier),
+        .callback = MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler))
+    };
 
     LocalFrameView::SelectionInSnapshot shouldPaintSelection = LocalFrameView::IncludeSelection;
     LocalFrameView::CoordinateSpaceForSnapshot coordinateSpace = LocalFrameView::DocumentCoordinates;
@@ -9037,7 +9041,7 @@ void WebPage::stopAllURLSchemeTasks()
 
 void WebPage::registerURLSchemeHandler(WebURLSchemeHandlerIdentifier handlerIdentifier, const String& scheme)
 {
-    WEBPAGE_RELEASE_LOG(Process, "registerURLSchemeHandler: Registered handler %" PRIu64 " for the '%s' scheme", handlerIdentifier.toUInt64(), scheme.utf8().data());
+    WEBPAGE_RELEASE_LOG(Process, "registerURLSchemeHandler: Registered handler %" PRIu64 " for the '%s' scheme", handlerIdentifier.toUInt64(), scheme.utf8().legacyCStringPointer());
 
     WebCore::LegacySchemeRegistry::registerURLSchemeAsHandledBySchemeHandler(scheme);
     WebProcess::singleton().registerURLSchemeAsCORSEnabled(scheme);
@@ -9217,17 +9221,17 @@ void WebPage::hasStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDo
         return;
     }
 
-    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::HasStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frame.frameID(), m_identifier), WTF::move(completionHandler));
+    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::HasStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frame.frameID(), m_webPageProxyIdentifier), WTF::move(completionHandler));
 }
 
 void WebPage::requestStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, WebFrame& frame, StorageAccessScope scope, HasUserGestureOrNoUserGestureRequired hasUserGestureOrNoUserGestureRequired, CompletionHandler<void(WebCore::RequestStorageAccessResult)>&& completionHandler)
 {
-    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::RequestStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frame.frameID(), m_identifier, m_webPageProxyIdentifier, scope, hasUserGestureOrNoUserGestureRequired), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), frame = Ref { frame }, pageID = m_identifier, frameID = frame.frameID()](RequestStorageAccessResult result) mutable {
+    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::RequestStorageAccess(WTF::move(subFrameDomain), WTF::move(topFrameDomain), frame.frameID(), m_webPageProxyIdentifier, scope, hasUserGestureOrNoUserGestureRequired), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), frame = Ref { frame }, webPageProxyID = m_webPageProxyIdentifier, frameID = frame.frameID()](RequestStorageAccessResult result) mutable {
         if (result.wasGranted == StorageAccessWasGranted::Yes) {
             switch (result.scope) {
             case StorageAccessScope::PerFrame:
                 if (RefPtr localFrameLoaderClient = frame->localFrameLoaderClient())
-                    localFrameLoaderClient->setHasFrameSpecificStorageAccess({ frameID, pageID });
+                    localFrameLoaderClient->setHasFrameSpecificStorageAccess({ frameID, webPageProxyID });
                 break;
             case StorageAccessScope::PerPage:
                 addDomainWithPageLevelStorageAccess(result.topFrameDomain, result.subFrameDomain);

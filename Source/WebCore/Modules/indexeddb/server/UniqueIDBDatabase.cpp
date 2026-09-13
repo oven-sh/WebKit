@@ -149,12 +149,12 @@ UniqueIDBDatabase::UniqueIDBDatabase(UniqueIDBDatabaseManager& manager, const ID
 {
     ASSERT(!isMainThread());
 
-    LOG(IndexedDB, "UniqueIDBDatabase::UniqueIDBDatabase() (%p) %s", this, m_identifier.loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::UniqueIDBDatabase() (%p) %s", this, m_identifier.loggingString().utf8().legacyCStringPointer());
 }
 
 UniqueIDBDatabase::~UniqueIDBDatabase()
 {
-    LOG(IndexedDB, "UniqueIDBDatabase::~UniqueIDBDatabase() (%p) %s", this, m_identifier.loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::~UniqueIDBDatabase() (%p) %s", this, m_identifier.loggingString().utf8().legacyCStringPointer());
     ASSERT(!isMainThread());
     ASSERT(m_pendingOpenDBRequests.isEmpty());
     ASSERT(!m_currentOpenDBRequest);
@@ -242,7 +242,7 @@ void UniqueIDBDatabase::performCurrentOpenOperationAfterSpaceCheck(bool isGrante
             if (!backingStoreOpenError)
                 m_databaseInfo = makeUnique<IDBDatabaseInfo>(databaseInfo);
             else {
-                LOG_ERROR("Failed to get database info '%s'", backingStoreOpenError.message().utf8().data());
+                LOG_ERROR("Failed to get database info '%s'", backingStoreOpenError.message().utf8().legacyCStringPointer());
                 m_backingStore = nullptr;
             }
         }
@@ -308,7 +308,7 @@ void UniqueIDBDatabase::performCurrentOpenOperationAfterSpaceCheck(bool isGrante
 
 void UniqueIDBDatabase::performCurrentDeleteOperation()
 {
-    LOG(IndexedDB, "UniqueIDBDatabase::performCurrentDeleteOperation - %s", m_identifier.loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::performCurrentDeleteOperation - %s", m_identifier.loggingString().utf8().legacyCStringPointer());
 
     ASSERT(m_currentOpenDBRequest);
     ASSERT(m_currentOpenDBRequest->isDeleteRequest());
@@ -567,7 +567,7 @@ void UniqueIDBDatabase::didFireVersionChangeEvent(UniqueIDBDatabaseConnection& c
 
 void UniqueIDBDatabase::openDBRequestCancelled(const IDBResourceIdentifier& requestIdentifier)
 {
-    LOG(IndexedDB, "UniqueIDBDatabase::openDBRequestCancelled - %s", requestIdentifier.loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::openDBRequestCancelled - %s", requestIdentifier.loggingString().utf8().legacyCStringPointer());
 
     if (m_currentOpenDBRequest && m_currentOpenDBRequest->requestData().requestIdentifier() == requestIdentifier)
         m_currentOpenDBRequest = nullptr;
@@ -1209,7 +1209,7 @@ void UniqueIDBDatabase::iterateCursor(const IDBRequestData& requestData, const I
 void UniqueIDBDatabase::commitTransaction(UniqueIDBDatabaseTransaction& transaction, uint64_t handledRequestResultsCount, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
     ASSERT(!isMainThread());
-    LOG(IndexedDB, "UniqueIDBDatabase::commitTransaction - %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::commitTransaction - %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
         CheckedPtr manager = m_manager.get();
@@ -1265,7 +1265,7 @@ void UniqueIDBDatabase::commitTransaction(UniqueIDBDatabaseTransaction& transact
 void UniqueIDBDatabase::abortTransaction(UniqueIDBDatabaseTransaction& transaction, ErrorCallback&& callback, SpaceCheckResult spaceCheckResult)
 {
     ASSERT(!isMainThread());
-    LOG(IndexedDB, "UniqueIDBDatabase::abortTransaction - %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::abortTransaction - %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     if (spaceCheckResult == SpaceCheckResult::Unknown) {
         CheckedPtr manager = m_manager.get();
@@ -1343,7 +1343,7 @@ void UniqueIDBDatabase::didFinishHandlingVersionChange(UniqueIDBDatabaseConnecti
 void UniqueIDBDatabase::connectionClosedFromClient(UniqueIDBDatabaseConnection& connection)
 {
     ASSERT(!isMainThread());
-    LOG(IndexedDB, "UniqueIDBDatabase::connectionClosedFromClient - %s (%" PRIu64 ")", connection.openRequestIdentifier().loggingString().utf8().data(), connection.identifier().toUInt64());
+    LOG(IndexedDB, "UniqueIDBDatabase::connectionClosedFromClient - %s (%" PRIu64 ")", connection.openRequestIdentifier().loggingString().utf8().legacyCStringPointer(), connection.identifier().toUInt64());
 
     Ref<UniqueIDBDatabaseConnection> protectedConnection(connection);
     m_openDatabaseConnections.remove(&connection);
@@ -1383,7 +1383,7 @@ bool UniqueIDBDatabase::isVersionChangeTransactionActive(const UniqueIDBDatabase
 void UniqueIDBDatabase::connectionClosedFromServer(UniqueIDBDatabaseConnection& connection)
 {
     ASSERT(!isMainThread());
-    LOG(IndexedDB, "UniqueIDBDatabase::connectionClosedFromServer - %s (%" PRIu64 ")", connection.openRequestIdentifier().loggingString().utf8().data(), connection.identifier().toUInt64());
+    LOG(IndexedDB, "UniqueIDBDatabase::connectionClosedFromServer - %s (%" PRIu64 ")", connection.openRequestIdentifier().loggingString().utf8().legacyCStringPointer(), connection.identifier().toUInt64());
 
     protect(connection.connectionToClient())->didCloseFromServer(connection, IDBError::userDeleteError());
 
@@ -1392,7 +1392,7 @@ void UniqueIDBDatabase::connectionClosedFromServer(UniqueIDBDatabaseConnection& 
 
 void UniqueIDBDatabase::enqueueTransaction(Ref<UniqueIDBDatabaseTransaction>&& transaction)
 {
-    LOG(IndexedDB, "UniqueIDBDatabase::enqueueTransaction - %s", transaction->info().loggingString().utf8().data());
+    LOG(IndexedDB, "UniqueIDBDatabase::enqueueTransaction - %s", transaction->info().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(transaction->info().mode() != IDBTransactionMode::Versionchange);
 
@@ -1683,7 +1683,7 @@ UniqueIDBDatabase::DidAbortAnyTransaction UniqueIDBDatabase::abortInProgressTran
         if (!takenTransaction)
             continue;
 
-        LOG(IndexedDB, "UniqueIDBDatabase::abortInProgressTransactionsOfSuspendedClientsIfNeeded - Aborting transaction %s of suspended client", transactionIdentifier.loggingString().utf8().data());
+        LOG(IndexedDB, "UniqueIDBDatabase::abortInProgressTransactionsOfSuspendedClientsIfNeeded - Aborting transaction %s of suspended client", transactionIdentifier.loggingString().utf8().legacyCStringPointer());
 
         // Aborting a versionchange transaction must roll back the in-memory schema and clear the
         // version-change connection, matching the standard abort path, so an interrupted upgrade

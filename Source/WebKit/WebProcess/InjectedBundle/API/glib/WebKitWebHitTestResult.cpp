@@ -165,11 +165,11 @@ WebKitWebHitTestResult* webkitWebHitTestResultCreate(const HitTestResult& hitTes
     auto* result = WEBKIT_WEB_HIT_TEST_RESULT(g_object_new(WEBKIT_TYPE_WEB_HIT_TEST_RESULT,
 #endif
         "context", context,
-        "link-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_LINK ? absoluteLinkURL.utf8().data() : nullptr,
-        "image-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_IMAGE ? absoluteImageURL.utf8().data() : nullptr,
-        "media-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_MEDIA ? absoluteMediaURL.utf8().data() : nullptr,
-        "link-title", !linkTitle.isEmpty() ? linkTitle.utf8().data() : nullptr,
-        "link-label", !linkLabel.isEmpty() ? linkLabel.utf8().data() : nullptr,
+        "link-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_LINK ? absoluteLinkURL.utf8().legacyCStringPointer() : nullptr,
+        "image-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_IMAGE ? absoluteImageURL.utf8().legacyCStringPointer() : nullptr,
+        "media-uri", context & WEBKIT_HIT_TEST_RESULT_CONTEXT_MEDIA ? absoluteMediaURL.utf8().legacyCStringPointer() : nullptr,
+        "link-title", !linkTitle.isEmpty() ? linkTitle.utf8().legacyCStringPointer() : nullptr,
+        "link-label", !linkLabel.isEmpty() ? linkLabel.utf8().legacyCStringPointer() : nullptr,
 #if ENABLE(2022_GLIB_API)
         nullptr)));
 #else

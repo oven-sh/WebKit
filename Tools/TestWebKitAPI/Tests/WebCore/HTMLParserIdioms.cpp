@@ -359,12 +359,12 @@ TEST(WebCoreHTMLParser, FastPathComplexHTMLEntityParsing)
         return textChild ? textChild->data() : String();
     };
 
-    EXPECT_STREQ(testFastParser("Price: 12&cent; only"_s).utf8().data(), String::fromUTF8("Price: 12¢ only").utf8().data());
-    EXPECT_STREQ(testFastParser("Genius Nicer Dicer Plus | 18&nbsp&hellip;"_s).utf8().data(), String::fromUTF8("Genius Nicer Dicer Plus | 18 …").utf8().data());
-    EXPECT_STREQ(testFastParser("&nbsp&a"_s).utf8().data(), String::fromUTF8(" &a").utf8().data());
-    EXPECT_STREQ(testFastParser("&nbsp&"_s).utf8().data(), String::fromUTF8(" &").utf8().data());
-    EXPECT_STREQ(testFastParser("&nbsp-"_s).utf8().data(), String::fromUTF8(" -").utf8().data());
-    EXPECT_STREQ(testFastParser("food & water"_s).utf8().data(), String("food & water"_s).utf8().data());
+    EXPECT_STREQ(testFastParser("Price: 12&cent; only"_s).utf8().legacyCStringPointer(), String::fromUTF8("Price: 12¢ only").utf8().legacyCStringPointer());
+    EXPECT_STREQ(testFastParser("Genius Nicer Dicer Plus | 18&nbsp&hellip;"_s).utf8().legacyCStringPointer(), String::fromUTF8("Genius Nicer Dicer Plus | 18 …").utf8().legacyCStringPointer());
+    EXPECT_STREQ(testFastParser("&nbsp&a"_s).utf8().legacyCStringPointer(), String::fromUTF8(" &a").utf8().legacyCStringPointer());
+    EXPECT_STREQ(testFastParser("&nbsp&"_s).utf8().legacyCStringPointer(), String::fromUTF8(" &").utf8().legacyCStringPointer());
+    EXPECT_STREQ(testFastParser("&nbsp-"_s).utf8().legacyCStringPointer(), String::fromUTF8(" -").utf8().legacyCStringPointer());
+    EXPECT_STREQ(testFastParser("food & water"_s).utf8().legacyCStringPointer(), String("food & water"_s).utf8().legacyCStringPointer());
 }
 
 TEST(WebCoreHTMLParser, FastPathHandlesLi)
@@ -384,8 +384,8 @@ TEST(WebCoreHTMLParser, FastPathHandlesLi)
     auto fragment = DocumentFragment::create(document);
     bool result = tryFastParsingHTMLFragment("<div><li></li></div>"_s, document, fragment, div, { ParserContentPolicy::AllowScriptingContent });
     EXPECT_TRUE(result);
-    EXPECT_STREQ("DIV", fragment->firstChild()->nodeName().utf8().data());
-    EXPECT_STREQ("LI", fragment->firstChild()->firstChild()->nodeName().utf8().data());
+    EXPECT_STREQ("DIV", fragment->firstChild()->nodeName().utf8().legacyCStringPointer());
+    EXPECT_STREQ("LI", fragment->firstChild()->firstChild()->nodeName().utf8().legacyCStringPointer());
 }
 
 TEST(WebCoreHTMLParser, FastPathFailsWithNestedLi)
@@ -454,19 +454,19 @@ TEST(WebCoreHTMLParser, FastPathEscapedAttributeValues)
     };
 
     // Single entity (this works today).
-    EXPECT_STREQ("&", testFastParserAttribute("<span title=\"&amp;\"></span>"_s).utf8().data());
+    EXPECT_STREQ("&", testFastParserAttribute("<span title=\"&amp;\"></span>"_s).utf8().legacyCStringPointer());
 
     // Entity followed by more text — exercises the missing while loop in scanEscapedAttributeValue().
-    EXPECT_STREQ("&b", testFastParserAttribute("<span title=\"&amp;b\"></span>"_s).utf8().data());
+    EXPECT_STREQ("&b", testFastParserAttribute("<span title=\"&amp;b\"></span>"_s).utf8().legacyCStringPointer());
 
     // Text before and after an entity.
-    EXPECT_STREQ("a&b", testFastParserAttribute("<span title=\"a&amp;b\"></span>"_s).utf8().data());
+    EXPECT_STREQ("a&b", testFastParserAttribute("<span title=\"a&amp;b\"></span>"_s).utf8().legacyCStringPointer());
 
     // Multiple entities in a single attribute value.
-    EXPECT_STREQ("<&>", testFastParserAttribute("<span title=\"&lt;&amp;&gt;\"></span>"_s).utf8().data());
+    EXPECT_STREQ("<&>", testFastParserAttribute("<span title=\"&lt;&amp;&gt;\"></span>"_s).utf8().legacyCStringPointer());
 
     // Entity with trailing text and single-quote delimiter.
-    EXPECT_STREQ("a&b", testFastParserAttribute("<span title='a&amp;b'></span>"_s).utf8().data());
+    EXPECT_STREQ("a&b", testFastParserAttribute("<span title='a&amp;b'></span>"_s).utf8().legacyCStringPointer());
 }
 
 TEST(WebCoreHTMLParser, FastPathRejectsNullInEscapedAttributeValue)
@@ -519,23 +519,23 @@ TEST(WebCoreHTMLParser, FastPathEntityWithoutSemicolonInAttributeValue)
     // Per the HTML spec, named entities without a trailing semicolon followed by
     // an alphanumeric character must NOT be consumed in attribute values.
     // e.g. &ampX in an attribute should remain as literal "&ampX", not become "&X".
-    EXPECT_STREQ("&ampX", testFastParserAttribute("<span title=\"&ampX\"></span>"_s).utf8().data());
-    EXPECT_STREQ("&ampX", testFastParserAttribute("<span title='&ampX'></span>"_s).utf8().data());
+    EXPECT_STREQ("&ampX", testFastParserAttribute("<span title=\"&ampX\"></span>"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("&ampX", testFastParserAttribute("<span title='&ampX'></span>"_s).utf8().legacyCStringPointer());
 
     // Entity without semicolon followed by '=' should also not be consumed.
-    EXPECT_STREQ("&amp=1", testFastParserAttribute("<span title=\"&amp=1\"></span>"_s).utf8().data());
+    EXPECT_STREQ("&amp=1", testFastParserAttribute("<span title=\"&amp=1\"></span>"_s).utf8().legacyCStringPointer());
 
     // Entity WITH semicolon followed by alphanumeric should still be consumed.
-    EXPECT_STREQ("&X", testFastParserAttribute("<span title=\"&amp;X\"></span>"_s).utf8().data());
+    EXPECT_STREQ("&X", testFastParserAttribute("<span title=\"&amp;X\"></span>"_s).utf8().legacyCStringPointer());
 
     // Entity without semicolon NOT followed by alphanumeric should be consumed.
-    EXPECT_STREQ("& ", testFastParserAttribute("<span title=\"&amp \"></span>"_s).utf8().data());
+    EXPECT_STREQ("& ", testFastParserAttribute("<span title=\"&amp \"></span>"_s).utf8().legacyCStringPointer());
 
     // Named entity without semicolon (e.g. &AElig followed by alphanumeric).
-    EXPECT_STREQ("&AEligX", testFastParserAttribute("<span title=\"&AEligX\"></span>"_s).utf8().data());
+    EXPECT_STREQ("&AEligX", testFastParserAttribute("<span title=\"&AEligX\"></span>"_s).utf8().legacyCStringPointer());
 
     // Named entity with semicolon (e.g. &AElig; followed by text).
-    EXPECT_STREQ("\xC3\x86X", testFastParserAttribute("<span title=\"&AElig;X\"></span>"_s).utf8().data());
+    EXPECT_STREQ("\xC3\x86X", testFastParserAttribute("<span title=\"&AElig;X\"></span>"_s).utf8().legacyCStringPointer());
 }
 
 } // namespace TestWebKitAPI

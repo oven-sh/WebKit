@@ -104,7 +104,7 @@ static float heightOfCharacter(cairo_scaled_font_t* scaledFont, const char* char
     return narrowPrecisionToFloat(orientation == FontOrientation::Horizontal ? textExtents.height : textExtents.width);
 }
 
-void Font::platformInit()
+void FontBase::platformInit()
 {
     if (!m_platformData.size())
         return;

@@ -320,7 +320,7 @@ WebCore::ThirdPartyCookieBlockingDecision NetworkTaskCocoa::requestThirdPartyCoo
     auto thirdPartyCookieBlockingDecision = storedCredentialsPolicy() == WebCore::StoredCredentialsPolicy::EphemeralStateless ? WebCore::ThirdPartyCookieBlockingDecision::All : WebCore::ThirdPartyCookieBlockingDecision::None;
     if (CheckedPtr networkStorageSession = protect(m_networkSession)->networkStorageSession()) {
         if (!NetworkStorageSession::shouldBlockCookies(thirdPartyCookieBlockingDecision))
-            thirdPartyCookieBlockingDecision = networkStorageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID(), pageID(), shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request), isInitiatedByDedicatedWorker(), navigationLosesFrameSpecificStorageAccess());
+            thirdPartyCookieBlockingDecision = networkStorageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID(), webPageProxyID(), shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request), isInitiatedByDedicatedWorker(), navigationLosesFrameSpecificStorageAccess());
     }
 
     return thirdPartyCookieBlockingDecision;
@@ -387,9 +387,9 @@ void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& re
         unblockCookies();
 #if !RELEASE_LOG_DISABLED
     if (protect(m_networkSession)->shouldLogCookieInformation())
-        RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8().data());
+        RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8().legacyCStringPointer());
 #else
-    LOG(NetworkSession, "%lu %s cookies for redirect URL %s", (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8().data());
+    LOG(NetworkSession, "%lu %s cookies for redirect URL %s", (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8().legacyCStringPointer());
 #endif
 
     updateTaskWithFirstPartyForSameSiteCookies(protect(task()).get(), request);

@@ -1061,7 +1061,7 @@ static bool handleControlCommand(std::span<const char> command)
         unsigned resultLength = result.length();
         printf("Content-Type: text/plain\n");
         printf("Content-Length: %u\n", resultLength);
-        fwrite(result.utf8().data(), 1, resultLength, stdout);
+        fwrite(result.utf8().legacyCStringPointer(), 1, resultLength, stdout);
         printf("#EOF\n");
         fprintf(stderr, "#EOF\n");
         fflush(stdout);
@@ -1938,7 +1938,7 @@ static void runTest(const std::string& inputLine)
         testPath = [url.get() absoluteString];
 
     auto message = makeString("CRASHING TEST: "_s, testPath);
-    WTF::setCrashLogMessage(message.utf8().data());
+    WTF::setCrashLogMessage(message.utf8().legacyCStringPointer());
 
     auto options = testOptionsForTest(command);
 

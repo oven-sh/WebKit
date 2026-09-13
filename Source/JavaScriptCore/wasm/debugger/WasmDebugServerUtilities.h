@@ -97,7 +97,9 @@ private:
     BitField m_event { NoEvent };
 };
 
-struct Breakpoint {
+class Breakpoint final : public ThreadSafeRefCounted<Breakpoint> {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(Breakpoint, JS_EXPORT_PRIVATE);
+public:
     enum class Type : uint8_t {
         // User-set breakpoint (persistent, tracked by virtual address)
         Regular = 0,
@@ -106,12 +108,19 @@ struct Breakpoint {
         Step = 1,
     };
 
-    Breakpoint() = default;
-    Breakpoint(uint8_t* pc, Type type)
-        : type(type)
-        , pc(pc)
-        , originalBytecode(*pc)
+    static Ref<Breakpoint> create()
     {
+        return adoptRef(*new Breakpoint);
+    }
+
+    static Ref<Breakpoint> create(uint8_t* pc, Type type)
+    {
+        return adoptRef(*new Breakpoint(pc, type));
+    }
+
+    static Ref<Breakpoint> create(const Breakpoint& copy)
+    {
+        return adoptRef(*new Breakpoint(copy));
     }
 
     void patchBreakpoint() { *pc = 0x00; }
@@ -130,6 +139,22 @@ struct Breakpoint {
     Type type { Type::Regular };
     uint8_t* pc { nullptr };
     uint8_t originalBytecode { 0 };
+
+private:
+    Breakpoint() = default;
+    Breakpoint(const Breakpoint& other)
+        : type(other.type)
+        , pc(other.pc)
+        , originalBytecode(other.originalBytecode)
+    {
+    }
+
+    Breakpoint(uint8_t* pc, Type type)
+        : type(type)
+        , pc(pc)
+        , originalBytecode(*pc)
+    {
+    }
 };
 
 // WASM execution context snapshot captured when stopped at a debugging event.
