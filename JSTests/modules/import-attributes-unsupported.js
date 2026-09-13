@@ -16,7 +16,9 @@ import { shouldBe } from "./resources/assert.js";
     } catch (e) {
         error = e;
     }
-    shouldBe(String(error), `SyntaxError: Import attribute "unsupported" is not supported`);
+    // Bun: every attribute is kept for the host's loaders (ScriptFetchParameters::attributes()), so a key JSC does not
+    // know is not an error; upstream throws `SyntaxError: Import attribute "unsupported" is not supported`.
+    shouldBe(error, null);
 }
 {
     let error = null;
