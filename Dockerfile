@@ -53,10 +53,13 @@ RUN ( apt-get update || \
 
 # Install zstd (for icu/compress-data.ts). Pinned: focal's apt has 1.4.4 which
 # compresses meaningfully worse than 1.5.x; this matches Bun's vendored decoder.
+# Its lib/ sources stay, at /zstd/lib: the jsc shell builds the decoder from them to read that data
+# (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
 RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
+    && mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h \
     && rm -rf /tmp/zstd-${ZSTD_VERSION} \
     && zstd --version
 
@@ -357,7 +360,12 @@ RUN --mount=type=tmpfs,target=/icu \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
     node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt${ICU_VERSION%%.*}l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg $ICUPKG "$@"
 
-# Copy WebKit source and build
+# Copy WebKit source and build.
+#
+# ICU_ROOT is /output, where the ICU stage put the libraries Bun gets: jsc links the same ones, the repacked
+# libicudata.a included, and reads it with the hook in jsc.cpp (BUN_ICU_ZSTD_SOURCE_DIR). That hook names the zstd
+# dictionary in the repacked data, so the link fails if CMake finds another ICU (`make install` also left one in
+# /usr/local).
 COPY . /webkit
 WORKDIR /webkit
 
@@ -405,7 +413,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -DCMAKE_C_FLAGS_RELEASE="$RELEASE_FLAGS" \
     -DCMAKE_CXX_FLAGS_RELEASE="$RELEASE_FLAGS" \
-    -DICU_ROOT=/icu \
+    -DICU_ROOT=/output \
+    -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \

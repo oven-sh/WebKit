@@ -33,10 +33,13 @@ ENV LD lld
 
 # Install zstd (for icu/compress-data.ts). Pinned to match Bun's vendored
 # decoder so glibc/musl prebuilts compress identically.
+# Its lib/ sources stay, at /zstd/lib: the jsc shell builds the decoder from them to read that data
+# (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
 RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
+    && mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h \
     && rm -rf /tmp/zstd-${ZSTD_VERSION} \
     && zstd --version
 
@@ -212,6 +215,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_C_FLAGS="$CFLAGS" \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -DICU_ROOT=/icu \
+    -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \

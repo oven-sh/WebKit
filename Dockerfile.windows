@@ -200,13 +200,15 @@ RUN for pair in "x86_64 x64" "aarch64 arm64"; do \
 # described below).
 #
 # The tools: the zstd CLI (built from source: noble's apt has 1.5.5, 1.5.7 matches Bun's vendored decoder), node
-# (>= 23.6 for type stripping), and patch for the udata.cpp hook.
+# (>= 23.6 for type stripping), and patch for the udata.cpp hook. zstd's lib/ sources stay, at /zstd/lib: jsc.exe builds
+# the decoder from them to read the repacked data (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
 ARG NODE_VERSION=24.16.0
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
     curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
     make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
     cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
+    mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h && \
     rm -rf /tmp/zstd-${ZSTD_VERSION} && \
     zstd --version && \
     curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
@@ -237,8 +239,8 @@ RUN mkdir -p /icu-host && cd /icu-host && \
 #   2. icu/compress-data.ts per-item zstd repack (same script as Dockerfile /
 #      Dockerfile.musl, in COFF mode): ~24 MB → ~11 MB. udata.cpp is patched
 #      with the weak bun_icu_maybe_decompress hook so bun decompresses items
-#      lazily on first use; ICU's own tools and the standalone jsc.exe leave
-#      the hook null and only read the kept-raw items.
+#      lazily on first use, and so does jsc.exe (jsc.cpp defines the hook too);
+#      ICU's own tools leave the hook null and only read the kept-raw items.
 # ───────────────────────────────────────────────────────────────────────────
 FROM base AS build_icu
 
@@ -428,6 +430,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DICU_DATA_LIBRARY_RELEASE=/icu-out/lib/sicudt.lib \
     -DICU_I18N_LIBRARY_RELEASE=/icu-out/lib/sicuin.lib \
     -DICU_UC_LIBRARY_RELEASE=/icu-out/lib/sicuuc.lib \
+    -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     "-DCMAKE_EXE_LINKER_FLAGS=${EXE_LD_FLAGS}" \
     "-DCMAKE_C_FLAGS=--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc /Zi /DU_STATIC_IMPLEMENTATION ${MARCH_FLAG} ${SAN_FLAGS}" \
     "-DCMAKE_CXX_FLAGS=--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc /Zi /DU_STATIC_IMPLEMENTATION ${MARCH_FLAG} ${SAN_FLAGS} /clang:-fno-c++-static-destructors" \
