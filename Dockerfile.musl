@@ -61,7 +61,8 @@ RUN set -eu; \
     container=$(apk list --installed musl | cut -d' ' -f1); \
     sysroot=$(apk --root "$SYSROOT_AARCH64" list --installed musl | cut -d' ' -f1); \
     echo "musl: container $container, aarch64 sysroot $sysroot"; \
-    [ -n "$container" ] && [ "$container" = "$sysroot" ]; \
+    [ -n "$container" ] || { echo "error: could not tell which musl this container has" >&2; exit 1; }; \
+    [ "$container" = "$sysroot" ] || { echo "error: the aarch64 sysroot's musl is not the container's" >&2; exit 1; }; \
     test -f "$SYSROOT_AARCH64/usr/lib/libc.so"; \
     test -f "$SYSROOT_AARCH64/usr/lib/libstdc++.a"; \
     ls -d "$SYSROOT_AARCH64"/usr/lib/gcc/aarch64-alpine-linux-musl/*/crtbegin.o

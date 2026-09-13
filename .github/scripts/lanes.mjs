@@ -80,7 +80,6 @@ const NO_ASAN = ["release", "lto", "debug"];
 //                   the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED).
 const platforms = [
   {
-    name: "linux",
     label: arch => `bun-webkit-linux-${arch}`,
     // The container is ubuntu 20.04 x86_64, for its glibc (2.31); arm64 is cross-compiled against an ubuntu 20.04
     // arm64 sysroot in the same container.
@@ -102,7 +101,6 @@ const platforms = [
     }),
   },
   {
-    name: "linux-musl",
     label: arch => `bun-webkit-linux-${arch}-musl`,
     // The container is alpine x86_64; arm64 is cross-compiled against an alpine aarch64 sysroot in the same container.
     dockerfile: "Dockerfile.musl",
@@ -117,7 +115,6 @@ const platforms = [
   },
   {
     // clang --target + a pinned macOS SDK, linked with ld64.lld. mac-release.bash remains for building on a real Mac.
-    name: "macos",
     label: arch => `bun-webkit-macos-${arch}`,
     dockerfile: "Dockerfile.macos",
     packageOS: "darwin",
@@ -139,7 +136,6 @@ const platforms = [
   {
     // clang-cl --target + an xwin-downloaded MSVC CRT and Windows SDK + lld-link. windows-release.ps1 remains for
     // building on a real Windows machine.
-    name: "windows",
     label: arch => `bun-webkit-windows-${arch}`,
     dockerfile: "Dockerfile.windows",
     packageOS: "windows",
@@ -164,7 +160,6 @@ const platforms = [
   },
   {
     // clang --target + a base.txz sysroot.
-    name: "freebsd",
     label: arch => `bun-webkit-freebsd-${arch}`,
     dockerfile: "Dockerfile.freebsd",
     packageOS: "freebsd",
@@ -178,7 +173,6 @@ const platforms = [
   },
   {
     // The NDK, which only ships linux-x86_64 prebuilts.
-    name: "android",
     label: arch => `bun-webkit-linux-${arch}-android`,
     dockerfile: "Dockerfile.android",
     packageOS: "android",
@@ -192,24 +186,26 @@ const platforms = [
   },
 ];
 
-// A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage, the
-// files that stage copies in, and the build arguments it takes (the ARGs it declares that a lane sets: FREEBSD_VERSION,
-// MACOS_DEPLOYMENT_TARGET, ANDROID_API, ...). Changing any of those makes a new tag, which `plan` finds missing and
-// `image` builds; changing anything else (the ICU or WebKit stages, the sources, other settings) leaves it alone.
+// A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage (less
+// comments, and less the global ARGs that `base` does not take, which are lane settings), the files that stage copies
+// in, and the build arguments it takes (the ARGs it declares that a lane sets: FREEBSD_VERSION, MACOS_DEPLOYMENT_TARGET,
+// ANDROID_API, ...). Changing any of those makes a new tag, which `plan` finds missing and `image` builds; changing
+// anything else (the ICU or WebKit stages, the sources, other settings, a comment) leaves it alone.
 function imageRef(platform, arch, buildArgs) {
   const dockerfile = readFileSync(join(root, platform.dockerfile), "utf8");
   const from = /^FROM\s.*\sAS\s+base\s*$/im.exec(dockerfile);
   if (!from) throw new Error(`${platform.dockerfile} has no \`base\` stage`);
-  const start = from.index + from[0].length;
-  const next = /^FROM\s/m.exec(dockerfile.slice(start));
-  const end = next ? start + next.index : dockerfile.length;
-  const hash = createHash("sha256").update(dockerfile.slice(0, end));
-  for (const [, name] of dockerfile.slice(start, end).matchAll(/^ARG\s+(\w+)/gm)) {
-    if (name in buildArgs) hash.update(`${name}=${buildArgs[name]}\n`);
-  }
+  const next = /^FROM\s/m.exec(dockerfile.slice(from.index + from[0].length));
+  const end = next ? from.index + from[0].length + next.index : dockerfile.length;
+  const code = text => text.split("\n").filter(line => line.trim() !== "" && !/^\s*#/.test(line));
+  const base = code(dockerfile.slice(from.index, end));
+  const taken = new Set(base.map(line => /^ARG\s+(\w+)/.exec(line)?.[1]).filter(Boolean));
+  const above = code(dockerfile.slice(0, from.index)).filter(line => taken.has(/^ARG\s+(\w+)/.exec(line)?.[1]) || !/^ARG\s/.test(line));
+  const hash = createHash("sha256").update([...above, ...base].join("\n"));
+  for (const name of taken) if (name in buildArgs) hash.update(`\n${name}=${buildArgs[name]}`);
   const add = path => {
-    if (!statSync(join(root, path)).isDirectory()) return hash.update(path).update(readFileSync(join(root, path)));
-    for (const entry of readdirSync(join(root, path)).sort()) add(join(path, entry));
+    if (statSync(join(root, path)).isDirectory()) return readdirSync(join(root, path)).sort().forEach(entry => add(join(path, entry)));
+    if (!path.endsWith(".md")) hash.update(path).update(readFileSync(join(root, path)));
   };
   for (const input of platform.imageInputs ?? []) add(input);
   return `${REGISTRY}:${platform.image(arch)}-${hash.digest("hex").slice(0, 16)}`;
@@ -255,6 +251,11 @@ const images = [...new Map(lanes.toReversed().map(lane => [lane.image, lane])).v
   lane,
 }));
 
+const twice = images.find((image, i) => images.findIndex(other => other.name === image.name) !== i);
+if (twice) throw new Error(`two different toolchain images are called ${twice.name}: a \`base\` stage takes a build argument that differs between lanes that share that name`);
+// `test` waits for the tested lanes and `release` for both halves, and a job cannot have an empty matrix.
+if (!lanes.some(lane => lane.test) || lanes.every(lane => lane.test)) throw new Error("at least one lane has to be tested, and at least one not");
+
 function docker(lane, rest, dryRun) {
   const argv = ["buildx", "build", "-f", lane.dockerfile, "--platform", "linux/amd64", "--progress=plain"];
   for (const [key, value] of Object.entries(lane.build_args)) argv.push("--build-arg", `${key}=${value}`);
@@ -299,18 +300,21 @@ if (command === "build") {
   docker(image.lane, ["--target=base", "--tag", image.image, "--provenance=false", "--push"], args.includes("--dry-run"));
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
-  const build = ({ label, runner, image, package_os, package_cpu }) => ({ label, runner, image, package_os, package_cpu });
+  const build = ({ label, runner, image, package_os, package_cpu, test }) => ({ label, runner, image, package_os, package_cpu, test });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner })))}`);
   console.log(`labels=${JSON.stringify(labels)}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {
-    const there = spawnSync("docker", ["manifest", "inspect", image], { stdio: "ignore" }).status === 0;
+    const { status, stderr } = spawnSync("docker", ["manifest", "inspect", image], { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
+    const there = status === 0;
+    // Anything but "there is no such thing" is the registry failing, and must not set off a rebuild of everything.
+    if (!there && !/manifest unknown|name unknown|not found|no such manifest/i.test(stderr)) fail(`cannot tell whether ${image} exists:\n${stderr}`);
     console.error(`${image} ${there ? "is there" : "is missing, to be built"}`);
     return !there;
   });
-  console.log(`images=${matrix(missing.map(({ name, image, runner }) => ({ name, image, runner })))}`);
+  console.log(`images=${matrix(missing.map(({ name, runner }) => ({ name, runner })))}`);
   console.log(`build_images=${missing.length > 0}`);
   // All of them, by tag: what the `prune` job keeps.
   console.log(`image_tags=${JSON.stringify(images.map(({ image }) => image.slice(REGISTRY.length + 1)))}`);

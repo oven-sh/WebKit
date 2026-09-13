@@ -80,6 +80,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A pull request is built from its head, with its head's lanes.mjs and Dockerfiles, by this workflow file,
+          # which comes from the merge with main.
+          [ -f .github/scripts/lanes.mjs ] || { echo "::error::This branch predates .github/scripts/lanes.mjs, which builds the lanes. Merge main into it (or rebase it onto main)."; exit 1; }
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           if [ -n "$PR" ]; then tag=autobuild-preview-pr-$PR-${REF:0:8}; else tag=autobuild-$REF; fi
           echo "building $REF as $tag"
@@ -113,11 +116,9 @@ jobs:
             echo "replacing stale draft of $TAG (id $id)"
             gh api -X DELETE "repos/$GH_REPO/releases/$id"
           fi
-          # The tag is created when the draft is published, so it is pinned to the built commit here. The API takes a
-          # full SHA or a branch, so build_ref (which may be a short SHA or a tag) is resolved first.
-          target=$(gh api "repos/$GH_REPO/commits/$TARGET" --jq .sha)
+          # The tag is created when the draft is published, so it is pinned to the built commit here.
           created=$(gh api -X POST "repos/$GH_REPO/releases" \
-            -f tag_name="$TAG" -f name="$TAG" -f target_commitish="$target" \
+            -f tag_name="$TAG" -f name="$TAG" -f target_commitish="$TARGET" \
             -F draft=true -F prerelease="$PRERELEASE" -F generate_release_notes=true \
             --jq '"\(.id) \(.html_url)"')
           echo "created draft $created"
@@ -162,14 +163,16 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           node .github/scripts/lanes.mjs image "$NAME" --push
 
-  # Old toolchain images go away, but not at once. A build of main deletes the images main's lanes do not use that are
-  # more than KEEP_DAYS old: superseded ones, and ones a pull request built that never landed. One a pull request built
-  # recently stays, so a change to a toolchain can be iterated on before it is merged. If an image a branch still wants
-  # has been deleted, `plan` finds it missing on that branch's next run and `image` builds it again.
+  # Old toolchain images go away, but not at once. A push to main deletes the versions that main's lanes do not use,
+  # that are more than KEEP_DAYS old, and that are not one of the two newest of a toolchain main has: so not the images a
+  # pull request built recently (a change to a toolchain can be iterated on before it is merged), and not the image
+  # main used until this push, which earlier runs still in flight and branches not yet rebased are pulling. If an image
+  # a branch still wants has been deleted, `plan` finds it missing on that branch's next run and `image` builds it
+  # again. Not on a re-run: an old run knows an old set of images.
   prune:
     name: Prune toolchain images
     needs: plan
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1
     permissions:
       packages: write
     runs-on: ubuntu-latest
@@ -184,13 +187,18 @@ jobs:
         run: |
           set -euo pipefail
           gh api --paginate "$PACKAGE/versions?per_page=100" |
-            jq -r --argjson keep "$KEEP" --argjson days "$KEEP_DAYS" '
-              .[]
-              | .metadata.container.tags as $tags
-              | select(any($tags[]; . as $tag | $keep | index($tag)) | not)
+            jq -rs --argjson keep "$KEEP" --argjson days "$KEEP_DAYS" '
+              add
+              | map(.metadata.container.tags as $tags | {id, updated_at, $tags, toolchain: (($tags[0] // "") | sub("-[0-9a-f]{16}$"; ""))})
+              | ($keep | map(sub("-[0-9a-f]{16}$"; ""))) as $toolchains
+              | group_by(.toolchain)
+              | map(sort_by(.updated_at) | reverse | if (.[0].toolchain as $name | $toolchains | index($name)) then .[2:] else . end)
+              | add // []
+              | .[]
+              | select(any(.tags[]; . as $tag | $keep | index($tag)) | not)
               | select(now - (.updated_at | fromdateiso8601) > $days * 86400)
-              | "\(.id)\t\(.updated_at)\t\($tags | join(","))"' > delete.tsv
-          echo "keeping: $(jq -r 'join(" ")' <<< "$KEEP"), and anything less than $KEEP_DAYS days old"
+              | "\(.id)\t\(.updated_at)\t\(.tags | join(","))"' > delete.tsv
+          echo "keeping: $(jq -r 'join(" ")' <<< "$KEEP"), the two newest of each of those toolchains, and anything less than $KEEP_DAYS days old"
           while IFS=$'\t' read -r id updated tags; do
             echo "deleting $id (${tags:-untagged}, pushed $updated)"
             gh api -X DELETE "$PACKAGE/versions/$id" || echo "::warning::could not delete package version $id"
@@ -221,8 +229,11 @@ jobs:
             /*
             !LayoutTests/
             !JSTests/
+            !PerformanceTests/
+            !Websites/
+            !ManualTests/
+            !WebDriverTests/
       - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
-        id: buildx
         with:
           install: true
       # The lane is built into bun-webkit/ inside Docker, and that is packaged as bun-webkit.tar.gz.
@@ -234,9 +245,15 @@ jobs:
           BUILD_REF: ${{ env.REF }}
           REPOSITORY: ${{ github.repository }}
           IMAGE: ${{ matrix.image }}
+          TEST: ${{ matrix.test }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
           set -euo pipefail
+          # `plan` made the draft this lane uploads to. It is gone if this is a re-run of only the jobs that failed,
+          # after `release` deleted it: better to find out now than after the build.
+          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that plan creates it again."; exit 1; }
           rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
           # Starting from the lane's toolchain image, which is in the registry: `plan` found it there or `image` put it.
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -246,7 +263,17 @@ jobs:
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
           tar -czf bun-webkit.tar.gz bun-webkit
+          # What `test` runs.
+          if [ "$TEST" = true ]; then tar -cf jsc-shell.tar bun-webkit/bin; fi
           rm -rf bun-webkit
+      - name: Upload the jsc shell for the tests
+        if: matrix.test
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jsc-shell-${{ matrix.label }}
+          path: ${{ runner.temp }}/jsc-shell.tar
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,7 +284,6 @@ jobs:
         run: |
           set -euo pipefail
           mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
-          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that plan creates it again."; exit 1; }
           for attempt in 1 2 3 4 5; do
             gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
             echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
@@ -306,6 +332,10 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
+            !/Websites/
+            !/ManualTests/
+            !/WebDriverTests/
+            !/Source/ThirdParty/
             !/LayoutTests/*
             /LayoutTests/jsc-layout-tests.yaml
             /LayoutTests/resources/
@@ -322,27 +352,18 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y "${missing[@]}"
           fi
-      - name: Download the jsc shell
+      # The jsc shell the lane was built with, as `build-tested` kept it: not from the draft release, which `release`
+      # deletes as soon as any lane fails.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         id: download
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.plan.outputs.tag }}
-          LABEL: ${{ matrix.label }}
-          DIR: ${{ runner.temp }}
+        with:
+          name: jsc-shell-${{ matrix.label }}
+          path: ${{ runner.temp }}
+      - name: Unpack the jsc shell
         run: |
           set -euo pipefail
-          # The tarball was uploaded to the (still draft) release by `build-tested`. If another build job failed,
-          # `release` may already have deleted the draft; there is nothing to test then.
-          for attempt in 1 2 3 4 5; do
-            gh release download "$TAG" --pattern "$LABEL.tar.gz" --dir "$DIR" --clobber && break
-            [ "$attempt" = 5 ] && { echo "::error::could not download $LABEL.tar.gz from $TAG"; exit 1; }
-            echo "download of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
-          done
-          # Only bin/ is needed; the static libraries are most of the tarball.
-          tar -xzf "$DIR/$LABEL.tar.gz" -C "$DIR" bun-webkit/bin
-          rm "$DIR/$LABEL.tar.gz"
-          ls -la "$DIR/bun-webkit/bin"
+          tar -xf "$RUNNER_TEMP/jsc-shell.tar" -C "$RUNNER_TEMP"
+          ls -la "$RUNNER_TEMP/bun-webkit/bin"
       # testFFI and the JavaScriptCore tests each run whatever the other did, and either failing fails the job.
       - name: testFFI
         if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
@@ -415,12 +436,9 @@ jobs:
       - plan
       - build
       - build-tested
-    outputs:
-      tag: ${{ steps.publish.outputs.tag }}
     steps:
       # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
       - name: Publish or delete the draft
-        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -445,7 +463,6 @@ jobs:
           if [ "$ok" = true ]; then
             url=$(gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false --jq .html_url)
             echo "published $TAG with $(wc -l < uploaded.txt) assets: $url"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
             # A pull request gets a comment linking its release, edited in place by the next build.
             [ -z "$PR" ] || gh pr comment "$PR" --edit-last --create-if-none --body "Preview build of ${REF:0:8}: [\`$TAG\`]($url)" || echo "::warning::could not comment on #$PR"
             exit 0

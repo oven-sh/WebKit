@@ -208,7 +208,9 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # The sysroot is what an arm64 ubuntu:20.04 with the packages above installed has where clang looks, from the same
 # places: glibc 2.31 from focal, and libstdc++ and libgcc from the arm64 half of the gcc-13-focal-debs mirror. Nothing
 # here can run arm64 code, so packages are unpacked over the arm64 ubuntu:20.04 image (which brings the merged-/usr
-# layout: --keep-directory-symlink keeps /lib -> usr/lib a symlink) rather than installed.
+# layout: --keep-directory-symlink keeps /lib -> usr/lib a symlink) rather than installed. The packages' absolute
+# symlinks (libc6-dev's libm.so -> /lib/aarch64-linux-gnu/libm.so.6 and the like) are re-pointed into the sysroot:
+# left alone they dangle here, and the linker quietly takes libm.a, libpthread.a and libdl.a instead.
 #
 # The glibc an artifact is built against decides where it runs. It must be the container's own, 2.31: checked here, and
 # again on every jsc that is linked (the WebKit step below).
@@ -231,12 +233,17 @@ RUN set -eu; \
     for deb in *.deb; do \
       dpkg-deb --fsys-tarfile "$deb" | tar -xf - -C "$SYSROOT_AARCH64" --keep-directory-symlink; \
     done; \
+    find "$SYSROOT_AARCH64" -type l -lname '/*' | while read -r link; do \
+      ln -snf "$SYSROOT_AARCH64$(readlink "$link")" "$link"; \
+    done; \
     container=$(dpkg-query -W -f='${Version}' libc6:amd64); \
     sysroot=$(dpkg-deb -f libc6_*_arm64.deb Version); \
     echo "glibc: container $container, aarch64 sysroot $sysroot"; \
-    [ "${container%%-*}" = 2.31 ] && [ "${sysroot%%-*}" = 2.31 ]; \
+    [ "${container%%-*}" = 2.31 ] || { echo "error: the container's glibc is not 2.31" >&2; exit 1; }; \
+    [ "${sysroot%%-*}" = 2.31 ] || { echo "error: the aarch64 sysroot's glibc is not 2.31" >&2; exit 1; }; \
     test -L "$SYSROOT_AARCH64/lib"; \
     test -f "$SYSROOT_AARCH64/usr/lib/aarch64-linux-gnu/libc.so"; \
+    for lib in m pthread dl rt resolv util; do test -e "$SYSROOT_AARCH64/usr/lib/aarch64-linux-gnu/lib$lib.so"; done; \
     test -f "$SYSROOT_AARCH64/usr/lib/gcc/aarch64-linux-gnu/13/libstdc++.a"; \
     test -d "$SYSROOT_AARCH64/usr/include/aarch64-linux-gnu/c++/13"; \
     cd / && rm -rf /tmp/arm64 /var/lib/apt/lists/*
@@ -249,7 +256,11 @@ RUN set -eu; \
         "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-arm64.tar.gz" -o llvm.tar.gz; \
     echo "${LLVM_DEBS_SHA256_arm64}  llvm.tar.gz" | sha256sum -c -; \
     tar xzf llvm.tar.gz --wildcards --no-anchored 'libclang-rt-*-dev_*_arm64.deb' && rm llvm.tar.gz; \
-    for deb in $(find . -name 'libclang-rt-*-dev_*_arm64.deb'); do dpkg-deb -x "$deb" unpacked; done; \
+    for deb in $(find . -name 'libclang-rt-*-dev_*_arm64.deb'); do \
+      installed=$(dpkg-query -W -f='${Version}' "$(dpkg-deb -f "$deb" Package):amd64"); \
+      [ "$(dpkg-deb -f "$deb" Version)" = "$installed" ] || { echo "error: $deb is not version $installed, the one installed here" >&2; exit 1; }; \
+      dpkg-deb -x "$deb" unpacked; \
+    done; \
     cp -rn unpacked/usr/lib/llvm-${LLVM_VERSION}/lib/clang/. /usr/lib/llvm-${LLVM_VERSION}/lib/clang/; \
     find "$(clang -print-resource-dir)/" -name 'libclang_rt.asan*aarch64*' | grep -q .; \
     cd / && rm -rf /tmp/llvm-arm64
@@ -261,6 +272,7 @@ RUN set -eu; \
       env -u LIBRARY_PATH -u CPLUS_INCLUDE_PATH -u C_INCLUDE_PATH -u LDFLAGS \
         ${CXX} --target=aarch64-unknown-linux-gnu --sysroot=${SYSROOT_AARCH64} -std=c++20 -fuse-ld=lld $san /tmp/t.cpp -o /tmp/t; \
       llvm-readelf -h /tmp/t | grep -q AArch64; \
+      llvm-readelf -d /tmp/t | grep -q 'NEEDED.*libm\.so\.6'; \
     done; \
     rm /tmp/t.cpp /tmp/t
 
@@ -434,6 +446,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
+    llvm-readelf -d $WEBKIT_OUT_DIR/bin/jsc | grep NEEDED && \
+    llvm-readelf -d $WEBKIT_OUT_DIR/bin/jsc | grep -q 'NEEDED.*libm\.so\.6' && \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
     echo "jsc needs glibc symbols up to $glibc" && \
     { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
