@@ -113,26 +113,13 @@ const platforms = [
       amd64: ["release", "lto", "debug", "asan"],
       // No arm64 lto: LLVM 21's CodeView emitter has no register mapping for ARM64 NEON quad-register tuples
       // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
-      // No arm64 debug here either, see windows-native below.
-      arm64: ["release"],
+      arm64: ["release", "debug"],
     },
     lto: LTO_WINDOWS,
     env: (arch, v) => ({
       WIN_ARCH: arch === "arm64" ? "arm64" : "x64",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
     }),
-  },
-  {
-    // The one lane that builds on Windows, with windows-release.ps1 instead of a release script and Docker: /MTd needs
-    // the ARM64 *debug* CRT (libcmtd.lib), which xwin's splat doesn't produce (no CRT.arm64.Debug package in the VS
-    // manifest mapping), so it can't be cross-compiled yet.
-    name: "windows-native",
-    label: arch => `bun-webkit-windows-${arch}`,
-    script: "windows-release.ps1",
-    packageOS: "windows",
-    runner: () => "windows-11-arm",
-    lanes: { arm64: ["debug"] },
-    env: () => ({}),
   },
   {
     // clang --target + a base.txz sysroot.

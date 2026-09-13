@@ -43,6 +43,11 @@ ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4c
 # eventually retired.
 ARG MSVC_CRT_VERSION="14.44.17.14"
 ARG WIN_SDK_VERSION="10.0.26100"
+# The static debug CRT for ARM64 (see where it is unpacked below). This is the payload of the package
+# Microsoft.VC.<MSVC_CRT_VERSION>.CRT.ARM64.Desktop.debug.base in the Visual Studio manifest (url and sha256 are in the
+# manifest xwin caches as pkg_manifest_*.vsman): bump it together with MSVC_CRT_VERSION.
+ARG MSVC_CRT_ARM64_DEBUG_URL="https://download.visualstudio.microsoft.com/download/pr/67cf767c-5e71-47c2-a54a-cd5631e28942/317e00c77dc51611fd7bec279b1ef67790bc73df8fe5bbc19432213b84d5e7ee/Microsoft.VC.14.44.17.14.CRT.ARM64.Desktop.debug.base.vsix"
+ARG MSVC_CRT_ARM64_DEBUG_SHA256="317e00c77dc51611fd7bec279b1ef67790bc73df8fe5bbc19432213b84d5e7ee"
 ARG ICU_VERSION="78.3"
 ARG ICU_MAJOR="78"
 ARG ICU_SHA256="3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
@@ -59,6 +64,8 @@ ARG XWIN_VERSION
 ARG XWIN_SHA256
 ARG MSVC_CRT_VERSION
 ARG WIN_SDK_VERSION
+ARG MSVC_CRT_ARM64_DEBUG_URL
+ARG MSVC_CRT_ARM64_DEBUG_SHA256
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget unzip xz-utils ca-certificates curl \
@@ -111,6 +118,18 @@ RUN xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-r
     test -f /winsdk/sdk/include/um/windows.h && \
     test -f /winsdk/crt/lib/x64/libcmt.lib && \
     test -f /winsdk/crt/lib/arm64/libcmt.lib
+
+# /MTd links libcmtd.lib, libcpmtd.lib and libvcruntimed.lib. For x64 those are in the same package as the release
+# CRT, so --include-debug-libs above is enough. For ARM64 Microsoft ships them in a package of their own
+# (CRT.ARM64.Desktop.debug.base) that xwin does not know about, so an ARM64 splat has the dynamic debug CRT
+# (msvcrtd.lib) and no static one. Fetch that package and put its libs next to the others. A .vsix is a zip.
+ADD --checksum=sha256:${MSVC_CRT_ARM64_DEBUG_SHA256} ${MSVC_CRT_ARM64_DEBUG_URL} /crt-arm64-debug.vsix
+RUN unzip -q -j -o /crt-arm64-debug.vsix 'Contents/VC/Tools/MSVC/*/lib/arm64/*.lib' -d /winsdk/crt/lib/arm64 && \
+    rm /crt-arm64-debug.vsix && \
+    test -f /winsdk/crt/lib/x64/libcmtd.lib && \
+    test -f /winsdk/crt/lib/arm64/libcmtd.lib && \
+    test -f /winsdk/crt/lib/arm64/libcpmtd.lib && \
+    test -f /winsdk/crt/lib/arm64/libvcruntimed.lib
 
 # Library and header references are case-insensitive on Windows; the build
 # references e.g. `Winmm.lib`, `DbgHelp.lib`, and `Winver.h` while xwin
