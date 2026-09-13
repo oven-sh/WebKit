@@ -13,19 +13,14 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 # Use different base images for ARM64 vs x86_64
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-amd64
+# `base` is the toolchain and nothing else: it takes no lane setting (LTO_FLAG, MARCH_FLAG, WEBKIT_RELEASE_TYPE, ...), so
+# it is the same for every lane of an architecture. CI builds it once per change, keeps it in ghcr.io, and hands it to
+# the lanes as `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the
+# `image` job). Without that, it is built here like any other stage. Lane settings belong in `lane` below.
 FROM base-$TARGETARCH as base
 
-ARG MARCH_FLAG
-ARG WEBKIT_RELEASE_TYPE
-ARG CPU
-ARG LTO_FLAG
-ARG RELEASE_FLAGS
 ARG LLVM_VERSION
-ARG DEFAULT_CFLAGS
 ARG TARGETARCH
-ARG ENABLE_SANITIZERS
-ARG USE_MIMALLOC
-ARG USE_EXTERNAL_MIMALLOC
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -190,14 +185,11 @@ ENV CXX="clang++-${LLVM_VERSION}"
 ENV AR="llvm-ar-${LLVM_VERSION}"
 ENV RANLIB="llvm-ranlib-${LLVM_VERSION}"
 ENV LD="lld-${LLVM_VERSION}"
-ENV LTO_FLAG="${LTO_FLAG}"
 ENV LD_LIBRARY_PATH="/usr/lib/gcc/x86_64-linux-gnu/13:/usr/lib/x86_64-linux-gnu"
 ENV LIBRARY_PATH="/usr/lib/gcc/x86_64-linux-gnu/13:/usr/lib/x86_64-linux-gnu"
 ENV CPLUS_INCLUDE_PATH="/usr/include/c++/13:/usr/include/x86_64-linux-gnu/c++/13"
 ENV C_INCLUDE_PATH="/usr/lib/gcc/x86_64-linux-gnu/13/include"
 
-ENV CFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
-ENV CXXFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
 ENV LDFLAGS="-fuse-ld=lld -L/usr/lib/gcc/x86_64-linux-gnu/13 -L/usr/lib/x86_64-linux-gnu"
 
 # Verify toolchain setup
@@ -205,6 +197,25 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
     ${CXX} -std=c++20 test.cpp -o test && \
     ./test && \
     rm test.cpp test
+
+# The lane: its settings, then ICU and WebKit built with them.
+FROM base as lane
+
+ARG MARCH_FLAG
+ARG WEBKIT_RELEASE_TYPE
+ARG CPU
+ARG LTO_FLAG
+ARG RELEASE_FLAGS
+ARG LLVM_VERSION
+ARG DEFAULT_CFLAGS
+ARG TARGETARCH
+ARG ENABLE_SANITIZERS
+ARG USE_MIMALLOC
+ARG USE_EXTERNAL_MIMALLOC
+
+ENV LTO_FLAG="${LTO_FLAG}"
+ENV CFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
+ENV CXXFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
 
 # Download and build ICU.
 #
@@ -325,4 +336,4 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
 FROM scratch as artifact
 ARG TARGETARCH
 
-COPY --from=base /output /
+COPY --from=lane /output /

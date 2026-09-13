@@ -30,7 +30,9 @@ temp="${temp:-${TMPDIR:-/tmp}}"
 mkdir -p "$temp"
 rm -rf "$temp/bun-webkit"
 
-docker buildx build -f Dockerfile.android -t "$CONTAINER_NAME" \
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/docker-build-mode.sh"
+
+docker buildx build -f Dockerfile.android \
     --build-arg ANDROID_ARCH="$ANDROID_ARCH" \
     --build-arg ANDROID_API="$ANDROID_API" \
     --build-arg LTO_FLAG="$LTO_FLAG" \
@@ -40,5 +42,4 @@ docker buildx build -f Dockerfile.android -t "$CONTAINER_NAME" \
     --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     --progress=plain \
     --platform=linux/amd64 \
-    --target=artifact \
-    --output type=local,dest="$temp/bun-webkit" .
+    "${BASE[@]}" "${OUTPUT[@]}" .

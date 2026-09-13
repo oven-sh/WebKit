@@ -62,9 +62,10 @@ rm -rf $temp/bun-webkit
 
 echo "Building $CONTAINER_NAME to $temp/bun-webkit"
 
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/docker-build-mode.sh"
+
 docker buildx build \
   -f Dockerfile \
-  -t $CONTAINER_NAME \
   --build-arg ENABLE_SANITIZERS=$ENABLE_SANITIZERS \
   --build-arg LTO_FLAG="$LTO_FLAG" \
   --build-arg MARCH_FLAG="$MARCH_FLAG" \
@@ -75,8 +76,7 @@ docker buildx build \
   --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
   --progress=plain \
   --platform=linux/$BUILDKIT_ARCH \
-  --target=artifact \
-  --output type=local,dest=$temp/bun-webkit \
+  "${BASE[@]}" "${OUTPUT[@]}" \
   .
 
 echo "Successfully built $CONTAINER_NAME to $temp/bun-webkit"

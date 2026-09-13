@@ -9,6 +9,15 @@
 // The build matrix, the test matrix and the list of assets the `release` job insists on are all derived from
 // `platforms` below. To add, drop or test a lane, change it there and nowhere else.
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+// Where the toolchain images are kept.
+const REGISTRY = `ghcr.io/${(process.env.GITHUB_REPOSITORY_OWNER ?? "oven-sh").toLowerCase()}/bun-webkit-build-env`;
+
 const X64 = "linux-x64-gh";
 const ARM64 = "linux-arm64-gh";
 
@@ -42,6 +51,10 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   runner(arch)    where it builds. Everything but linux and linux-musl is cross-compiled from a linux x64 host.
 //   lanes           arch -> variants built for it
 //   env(arch, v)    what the release script takes, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG and USE_*_MIMALLOC
+//   dockerfile      what the release script builds. Its `base` stage is the toolchain, and takes no lane setting.
+//   image(arch)     the name of that toolchain, one per distinct `base` stage: per architecture where the Dockerfile
+//                   runs natively or carries a per-architecture sysroot. See `images` below.
+//   imageInputs     files the `base` stage copies in, besides the Dockerfile
 //   tested          variants whose jsc shell the `test` job runs the JavaScriptCore tests with. Those have to be able to
 //                   run on the runner that built them, and want assertions: a plain Release build compiles out $vm and
 //                   the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED).
@@ -50,6 +63,8 @@ const platforms = [
     name: "linux",
     label: arch => `bun-webkit-linux-${arch}`,
     script: "release.sh",
+    dockerfile: "Dockerfile",
+    image: arch => `linux-${arch}`,
     packageOS: "linux",
     runner: arch => (arch === "arm64" ? ARM64 : X64),
     lanes: { amd64: ALL, arm64: ALL },
@@ -71,6 +86,8 @@ const platforms = [
     name: "linux-musl",
     label: arch => `bun-webkit-linux-${arch}-musl`,
     script: "musl-release.sh",
+    dockerfile: "Dockerfile.musl",
+    image: arch => `linux-musl-${arch}`,
     packageOS: "linux",
     runner: arch => (arch === "arm64" ? ARM64 : X64),
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
@@ -87,6 +104,9 @@ const platforms = [
     name: "macos",
     label: arch => `bun-webkit-macos-${arch}`,
     script: "macos-cross-release.sh",
+    dockerfile: "Dockerfile.macos",
+    image: arch => `macos-${arch}`,
+    imageInputs: ["macos-cross/xmac.mjs"],
     packageOS: "darwin",
     runner: () => X64,
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
@@ -105,6 +125,8 @@ const platforms = [
     name: "windows",
     label: arch => `bun-webkit-windows-${arch}`,
     script: "windows-cross-release.sh",
+    dockerfile: "Dockerfile.windows",
+    image: () => "windows",
     packageOS: "windows",
     runner: () => X64,
     lanes: {
@@ -126,6 +148,8 @@ const platforms = [
     name: "freebsd",
     label: arch => `bun-webkit-freebsd-${arch}`,
     script: "freebsd-release.sh",
+    dockerfile: "Dockerfile.freebsd",
+    image: arch => `freebsd-${arch}`,
     packageOS: "freebsd",
     runner: () => X64,
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
@@ -136,12 +160,27 @@ const platforms = [
     name: "android",
     label: arch => `bun-webkit-linux-${arch}-android`,
     script: "android-release.sh",
+    dockerfile: "Dockerfile.android",
+    image: () => "android",
     packageOS: "android",
     runner: () => X64,
     lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
     env: arch => ({ ANDROID_ARCH: arch === "arm64" ? "aarch64" : "x86_64" }),
   },
 ];
+
+// A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage and
+// the files that stage copies in. Changing either makes a new tag, which the `image` job finds missing and builds;
+// changing anything else (the ICU or WebKit stages, the sources) leaves it alone.
+function imageRef(platform, arch) {
+  const dockerfile = readFileSync(join(root, platform.dockerfile), "utf8");
+  const base = /^FROM\s.*\sAS\s+base\s*$/im.exec(dockerfile);
+  if (!base) throw new Error(`${platform.dockerfile} has no \`base\` stage`);
+  const next = /^FROM\s/m.exec(dockerfile.slice(base.index + base[0].length));
+  const hash = createHash("sha256").update(next ? dockerfile.slice(0, base.index + base[0].length + next.index) : dockerfile);
+  for (const input of platform.imageInputs ?? []) hash.update(readFileSync(join(root, input)));
+  return `${REGISTRY}:${platform.image(arch)}-${hash.digest("hex").slice(0, 16)}`;
+}
 
 const lanes = platforms.flatMap(platform =>
   Object.entries(platform.lanes).flatMap(([arch, names]) =>
@@ -157,6 +196,7 @@ const lanes = platforms.flatMap(platform =>
         package_os: platform.packageOS,
         package_cpu: arch === "arm64" ? "arm64" : "x64",
         test: platform.tested?.includes(variant) ?? false,
+        image: imageRef(platform, arch),
         env: {
           WEBKIT_RELEASE_TYPE: buildType,
           LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
@@ -173,6 +213,16 @@ const labels = lanes.map(lane => lane.label);
 const duplicate = labels.find((label, i) => labels.indexOf(label) !== i);
 if (duplicate) throw new Error(`two lanes are called ${duplicate}`);
 
+// The toolchain images the lanes use, each built (when its tag is missing) by the release script and settings of the
+// first lane that uses it: the `base` stage ignores the lane settings, the scripts insist on having them.
+const images = [...new Map(lanes.toReversed().map(lane => [lane.image, lane])).values()].toReversed().map(({ image, runner, script, env }) => ({
+  name: image.slice(REGISTRY.length + 1, image.lastIndexOf("-")),
+  image,
+  runner,
+  script,
+  env,
+}));
+
 const mode = process.argv[2];
 if (mode === "--outputs") {
   const matrix = include => JSON.stringify({ include });
@@ -180,6 +230,7 @@ if (mode === "--outputs") {
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(({ label, runner }) => ({ label, runner })))}`);
   console.log(`labels=${JSON.stringify(labels)}`);
+  console.log(`images=${matrix(images)}`);
 } else if (mode === "--json") {
   console.log(JSON.stringify(lanes, null, 2));
 } else {
@@ -187,4 +238,6 @@ if (mode === "--outputs") {
     console.log(`${lane.label.padEnd(42)} ${lane.runner.padEnd(15)} ${lane.script.padEnd(25)} ${lane.build_type}${lane.test ? "  (tested)" : ""}`);
   }
   console.log(`${lanes.length} lanes`);
+  for (const { image, runner } of images) console.log(`${image}  ${runner}`);
+  console.log(`${images.length} toolchain images`);
 }

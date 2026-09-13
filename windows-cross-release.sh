@@ -52,7 +52,9 @@ temp="${temp:-${TMPDIR:-/tmp}}"
 mkdir -p "$temp"
 rm -rf "$temp/bun-webkit"
 
-docker buildx build -f Dockerfile.windows -t "$CONTAINER_NAME" \
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/docker-build-mode.sh"
+
+docker buildx build -f Dockerfile.windows \
     --build-arg WIN_ARCH="$WIN_ARCH" \
     --build-arg WIN_TRIPLE_ARCH="$WIN_TRIPLE_ARCH" \
     --build-arg WEBKIT_RELEASE_TYPE="$WEBKIT_RELEASE_TYPE" \
@@ -64,7 +66,6 @@ docker buildx build -f Dockerfile.windows -t "$CONTAINER_NAME" \
     --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     --progress=plain \
     --platform=linux/amd64 \
-    --target=artifact \
-    --output type=local,dest="$temp/bun-webkit" .
+    "${BASE[@]}" "${OUTPUT[@]}" .
 
 echo "Successfully built $CONTAINER_NAME to $temp/bun-webkit"
