@@ -87,7 +87,7 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: ALL, arm64: ALL },
     tested: ["asan"],
-    image: () => "linux",
+    image: () => "linux-glibc",
     args: (arch, v) => ({
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
