@@ -206,6 +206,8 @@ GitHub Actions workflows (`.github/workflows/build.yml`) build for:
 
 Artifacts are automatically published to GitHub releases as `autobuild-{sha}`. The release starts as a draft, each build job uploads its tarball onto it, and the `release` job publishes it once every build succeeded (or deletes the draft when one failed).
 
+The `test` job then runs `Tools/Scripts/run-javascriptcore-tests` (JSTests, LayoutTests/js, the PerformanceTests collections) and `testFFI` against the `bin/jsc` shipped by the `bun-webkit-linux-{amd64,arm64}-asan` lanes. It does not gate the release and is `continue-on-error` while the known failures are worked through; the failing tests are listed in the job summary and the full log and results JSON are uploaded as a workflow artifact. To reproduce locally: extract `bun-webkit/bin` from the asan tarball and run `ASAN_OPTIONS=detect_leaks=0:allocator_may_return_null=1 JSCTEST_memoryLimit=4294967296 Tools/Scripts/run-javascriptcore-tests --no-build --root=<path>/bun-webkit --release --jsc-only --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-fail-fast --memory-limited` (add `--filter <regex>` for a subset).
+
 ## Architecture Notes
 
 ### Memory Safety
