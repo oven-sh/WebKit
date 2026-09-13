@@ -253,6 +253,11 @@ public:
     // This just tells you what the callee saves are.
     RegisterSet calleeSaveRegisters() const { return m_calleeSaveRegisters; }
 
+    // General-purpose registers this code must also leave as it found them: what the convention its
+    // callers follow preserves and RegisterSet::calleeSaveRegisters() (the JIT's own) does not.
+    void setAdditionalCalleeSaveRegisters(RegisterSet registers) { m_additionalCalleeSaveRegisters = registers; }
+    RegisterSet additionalCalleeSaveRegisters() const { return m_additionalCalleeSaveRegisters; }
+
     // Recomputes predecessors and deletes unreachable blocks.
     JS_EXPORT_PRIVATE void resetReachability();
     
@@ -415,6 +420,7 @@ private:
     bool m_preserveB3Origins { true };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;
     RegisterSet m_calleeSaveRegisters;
+    RegisterSet m_additionalCalleeSaveRegisters;
     StackSlot* m_calleeSaveStackSlot { nullptr };
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.

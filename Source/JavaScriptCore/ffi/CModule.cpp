@@ -247,6 +247,21 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     while (!worklist.isEmpty()) {
         unsigned functionIndex = worklist.takeLast();
         B3::Procedure proc(bir.usesVectors);
+#if OS(WINDOWS) && CPU(X86_64)
+        // C functions and their callers on Windows expect rsi, rdi and xmm6-xmm15 to survive a call. The JIT's
+        // own convention (and so B3's idea of a callee-saved register) is the System V one, where they do not.
+        // The two integer registers are saved like any other; a vector register can only be saved as a
+        // double, and all 128 bits have to survive, so those ten are left alone instead.
+        {
+            RegisterSet additional;
+            additional.add(X86Registers::esi, IgnoreVectors);
+            additional.add(X86Registers::edi, IgnoreVectors);
+            proc.code().setAdditionalCalleeSaveRegisters(additional);
+            for (auto reg : { X86Registers::xmm6, X86Registers::xmm7, X86Registers::xmm8, X86Registers::xmm9, X86Registers::xmm10,
+                     X86Registers::xmm11, X86Registers::xmm12, X86Registers::xmm13, X86Registers::xmm14, X86Registers::xmm15 })
+                proc.pinRegister(reg);
+        }
+#endif
         BIRToB3 lowering(bir, environment, proc);
         lowering.lowerFunction(functionIndex);
         for (unsigned referenced : lowering.referencedFunctions())
