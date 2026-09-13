@@ -335,9 +335,13 @@ jobs:
         # Also on Windows (Git for Windows' bash).
         shell: bash
     steps:
-      - name: Allow long paths
+      # autocrlf: a test that compares Function.prototype.toString() with a template literal (which has \n whatever the
+      # file has) needs the files as they are in the repository, not with Windows' \r\n.
+      - name: Allow long paths, keep line endings
         if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
       # The tests live in JSTests/, PerformanceTests/ and a few corners of LayoutTests/: js + fast/regex
       # (LayoutTests/jsc-layout-tests.yaml) and the web-platform-tests for wasm with their harness (JSTests/wasm.yaml).
       # The rest of LayoutTests/ is several GB that nothing here reads. A collection that points somewhere that is
