@@ -25459,7 +25459,8 @@ IGNORE_CLANG_WARNINGS_END
                 rarely(slowPath), usually(continuation));
 
             LBasicBlock lastNext = m_out.appendTo(slowPath, continuation);
-            ValueFromBlock slowResult = m_out.anchor(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationToInt32SensibleSlow, doubleValue)));
+            // B3 can hoist a call without side effects above the branch that guards it, so the callee has to accept every double.
+            ValueFromBlock slowResult = m_out.anchor(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationToInt32, doubleValue)));
             m_out.jump(continuation);
 
             m_out.appendTo(continuation, lastNext);
