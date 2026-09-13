@@ -784,6 +784,7 @@ namespace JSC {
         RegisterID* emitNewArrowFunctionExpression(RegisterID*, ArrowFuncExprNode*);
         RegisterID* emitNewMethodDefinition(RegisterID* dst, MethodDefinitionNode*);
         RegisterID* emitNewRegExp(RegisterID* dst, RegExp*);
+        RegisterID* emitNewRegExpForReceiver(RegisterID* dst, RegExp*, bool forTest);
 
         bool shouldSetFunctionName(ExpressionNode*);
         void emitSetFunctionName(RegisterID* value, RegisterID* name);

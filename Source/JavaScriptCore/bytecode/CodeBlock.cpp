@@ -559,6 +559,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         LINK(OpSetPrivateBrand)
         LINK(OpCheckPrivateBrand)
+        LINK(OpNewRegExpShared)
 
         LINK(OpNewArray)
         LINK(OpNewArrayWithSize)
@@ -2256,6 +2257,12 @@ void CodeBlock::stronglyVisitStrongReferences(const ConcurrentJSLocker& locker, 
     forEachObjectAllocationProfile([&](ObjectAllocationProfile& objectAllocationProfile) {
         objectAllocationProfile.visitAggregate(visitor);
     });
+    if (m_metadata) {
+        // Strong: optimized code is compiled with these objects as constants.
+        m_metadata->forEach<OpNewRegExpShared>([&](auto& metadata) {
+            visitor.append(metadata.m_cachedObject);
+        });
+    }
 
 #if ENABLE(JIT)
     forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {

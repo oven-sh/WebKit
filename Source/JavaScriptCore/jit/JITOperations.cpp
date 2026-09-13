@@ -81,7 +81,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "PropertyInlineCache.h"
 #include "PropertyName.h"
 #include "PropertyNameInlines.h"
-#include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
 #include "SuperSampler.h"
@@ -2899,6 +2899,16 @@ JSC_DEFINE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject* globalObj
     RegExp* regexp = static_cast<RegExp*>(regexpPtr);
     static constexpr bool areLegacyFeaturesEnabled = true;
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regexp, areLegacyFeaturesEnabled));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationNewRegExpShared, JSCell*, (JSGlobalObject* globalObject, JSCell* regexpPtr, WriteBarrier<JSCell>* cachedObject, int32_t forTest))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, RegExpObject::literalAsReceiver(globalObject, callFrame->codeBlock(), static_cast<RegExp*>(regexpPtr), forTest, *cachedObject));
 }
 
 // The only reason for returning an UnusedPtr (instead of void) is so that we can reuse the

@@ -291,6 +291,19 @@ op :check_private_brand,
         brand: WriteBarrier[JSCell],
     }
 
+# A RegExp literal that is the receiver of a call to its own test or exec method, as in /x/.test(string), without the g or y flag.
+# Every evaluation of a literal makes a new object, but this one is only ever seen by that builtin, which neither writes to it
+# nor lets it out: while that is so (the realm's watchpoints say) one object per site does. See RegExpObject::isSharedLiteral().
+op :new_reg_exp_shared,
+    args: {
+        dst: VirtualRegister,
+        regexp: VirtualRegister,
+        forTest: bool,
+    },
+    metadata: {
+        cachedObject: WriteBarrier[JSCell],
+    }
+
 op :put_by_id,
     args: {
         base: VirtualRegister,

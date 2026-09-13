@@ -41,8 +41,12 @@ public:
 
     static constexpr uintptr_t lastIndexIsNotWritableFlag = 0b01;
     static constexpr uintptr_t legacyFeaturesDisabledFlag = 0b10;
-    static constexpr uintptr_t flagsMask = lastIndexIsNotWritableFlag | legacyFeaturesDisabledFlag;
+    // The object that one RegExp literal site hands out at every evaluation (op_new_reg_exp_shared). Its only reader is the
+    // builtin test or exec it is the receiver of. Whatever is about to show it to anything else gives that a copy instead.
+    static constexpr uintptr_t sharedLiteralFlag = 0b100;
+    static constexpr uintptr_t flagsMask = lastIndexIsNotWritableFlag | legacyFeaturesDisabledFlag | sharedLiteralFlag;
     static constexpr uintptr_t regExpMask = ~flagsMask;
+    static_assert(flagsMask < MarkedBlock::atomSize);
 
     static RegExpObject* create(VM& vm, Structure* structure, RegExp* regExp, bool areLegacyFeaturesEnabled = true)
     {
@@ -104,6 +108,32 @@ public:
         return !(m_regExpAndFlags & lastIndexIsNotWritableFlag);
     }
 
+    bool isSharedLiteral() const { return m_regExpAndFlags & sharedLiteralFlag; }
+    // Still exactly what evaluating the literal makes. Nothing in the language can get at a shared object to change that, but the
+    // inspector can (it hands out live cells by class): an object that is no longer in this state is not handed out again.
+    bool isSharedLiteralInInitialState(Structure* regExpStructure, RegExp* regExp) const
+    {
+        return m_regExpAndFlags == (std::bit_cast<uintptr_t>(regExp) | sharedLiteralFlag) && structure() == regExpStructure && m_lastIndex.get() == jsNumber(0);
+    }
+    // For op_new_reg_exp_shared: whether, as things stand in this realm, a literal that is the receiver of a call to its own test
+    // (forTest) or exec can only ever reach the original builtin, so that nothing can tell one object from a new one each time.
+    static inline bool canShareLiteralAsReceiver(JSGlobalObject*, bool forTest);
+    // What op_new_reg_exp_shared evaluates to: the site's object from cachedObject while it can stand for a new one, else a new one.
+    static inline JSObject* literalAsReceiver(JSGlobalObject*, CodeBlock*, RegExp*, bool forTest, WriteBarrier<JSCell>& cachedObject);
+    JS_EXPORT_PRIVATE static JSObject* literalAsReceiverSlow(JSGlobalObject*, CodeBlock*, RegExp*, bool forTest, WriteBarrier<JSCell>& cachedObject);
+    static RegExpObject* createSharedLiteral(VM& vm, Structure* structure, RegExp* regExp)
+    {
+        RegExpObject* object = create(vm, structure, regExp);
+        object->m_regExpAndFlags |= sharedLiteralFlag;
+        return object;
+    }
+    // What evaluating the literal would have made: a new object in its initial state, which a shared one is always in.
+    RegExpObject* copyOfSharedLiteral(VM& vm)
+    {
+        ASSERT(isSharedLiteral());
+        return create(vm, structure(), regExp());
+    }
+
     bool test(JSGlobalObject* globalObject, JSString* string) { return !!match(globalObject, string); }
     bool testInline(JSGlobalObject* globalObject, JSString* string) { return !!matchInline(globalObject, string); }
     JS_EXPORT_PRIVATE JSValue exec(JSGlobalObject*, JSString*);
@@ -146,6 +176,8 @@ public:
     bool areLegacyFeaturesEnabled() const { return !(m_regExpAndFlags & legacyFeaturesDisabledFlag); }
 
 private:
+    friend class LLIntOffsetsExtractor;
+
     JS_EXPORT_PRIVATE RegExpObject(VM&, Structure*, RegExp*, bool areLegacyFeaturesEnabled);
 #if ASSERT_ENABLED
     JS_EXPORT_PRIVATE void finishCreation(VM&);

@@ -25,6 +25,24 @@
 
 namespace JSC {
 
+JSObject* RegExpObject::literalAsReceiverSlow(JSGlobalObject* globalObject, CodeBlock* codeBlock, RegExp* regExp, bool forTest, WriteBarrier<JSCell>& cachedObject)
+{
+    VM& vm = globalObject->vm();
+    ASSERT(!regExp->global() && !regExp->sticky());
+    bool canShare = Options::useSharedRegExpLiteralObjects() && canShareLiteralAsReceiver(globalObject, forTest);
+    auto* object = canShare ? createSharedLiteral(vm, globalObject->regExpStructure(), regExp) : create(vm, globalObject->regExpStructure(), regExp);
+
+    // The DFG reads the slot, and looks at the object in it, from its compiler threads under this lock.
+    ConcurrentJSLocker locker(codeBlock->m_lock);
+    // Whatever was there is not handed out again: either sharing is over for this realm, or somebody outside the language got hold of
+    // the object and changed it. It keeps its flag: evaluations that are still in flight may be about to pass it to the builtin.
+    if (canShare)
+        cachedObject.set(vm, codeBlock, object);
+    else
+        cachedObject.clear();
+    return object;
+}
+
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(RegExpObject);
 
 const ClassInfo RegExpObject::s_info = { "RegExp"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RegExpObject) };

@@ -84,6 +84,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
 
     // No uses.
     case op_new_reg_exp:
+    case op_new_reg_exp_shared:
     case op_loop_hint:
     case op_jmp:
     case op_new_object:
@@ -492,6 +493,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpNewArrayWithSize, dst)
     DEFS(OpNewArrayWithSpecies, dst)
     DEFS(OpNewRegExp, dst)
+    DEFS(OpNewRegExpShared, dst)
     DEFS(OpNewFunc, dst)
     DEFS(OpNewFuncExp, dst)
     DEFS(OpNewGeneratorFunc, dst)

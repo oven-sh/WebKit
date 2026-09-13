@@ -3609,6 +3609,12 @@ RegisterID* BytecodeGenerator::emitNewArrayWithSpecies(RegisterID* dst, Register
     return dst;
 }
 
+RegisterID* BytecodeGenerator::emitNewRegExpForReceiver(RegisterID* dst, RegExp* regExp, bool forTest)
+{
+    OpNewRegExpShared::emit(this, dst, addConstantValue(regExp), forTest);
+    return dst;
+}
+
 RegisterID* BytecodeGenerator::emitNewRegExp(RegisterID* dst, RegExp* regExp)
 {
     OpNewRegExp::emit(this, dst, addConstantValue(regExp));

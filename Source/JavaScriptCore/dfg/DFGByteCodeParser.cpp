@@ -101,6 +101,7 @@
 #include "PutByIdFlags.h"
 #include "PutByStatus.h"
 #include "RegExpConstructor.h"
+#include "RegExpObjectInlines.h"
 #include "RegExpPrototype.h"
 #include "SetConstructor.h"
 #include "SetPrivateBrandStatus.h"
@@ -8670,6 +8671,32 @@ void ByteCodeParser::parseBlock(unsigned limit)
             FrozenValue* frozenRegExp = m_graph.freezeStrong(m_inlineStackTop->m_codeBlock->getConstant(bytecode.m_regexp));
             set(bytecode.m_dst, addToGraph(NewRegExp, OpInfo(frozenRegExp), jsConstant(jsNumber(0))));
             NEXT_OPCODE(op_new_reg_exp);
+        }
+
+        case op_new_reg_exp_shared: {
+            auto bytecode = currentInstruction->as<OpNewRegExpShared>();
+            ASSERT(bytecode.m_regexp.isConstant());
+            CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
+            JSGlobalObject* globalObject = codeBlock->globalObjectFor(currentCodeOrigin());
+            JSCell* sharedObject = nullptr;
+            if (Options::useSharedRegExpLiteralObjects() && !m_graph.m_plan.isUnlinked() && RegExpObject::canShareLiteralAsReceiver(globalObject, bytecode.m_forTest)) {
+                ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
+                sharedObject = bytecode.metadata(codeBlock).m_cachedObject.get();
+                if (sharedObject && !uncheckedDowncast<RegExpObject>(sharedObject)->isSharedLiteralInInitialState(globalObject->regExpStructure(), uncheckedDowncast<RegExp>(codeBlock->getConstant(bytecode.m_regexp))))
+                    sharedObject = nullptr;
+            }
+            if (sharedObject) {
+                // The lower tiers already made this site's object, and the code block keeps it. It stands for a new one each time for as long
+                // as the receiver of this call cannot reach anything but the original builtins.
+                m_graph.watchpoints().addLazily(globalObject->regExpPrimordialPropertiesWatchpointSet());
+                if (bytecode.m_forTest)
+                    m_graph.watchpoints().addLazily(globalObject->regExpPrototypeTestWatchpointSet());
+                set(bytecode.m_dst, weakJSConstant(sharedObject));
+                NEXT_OPCODE(op_new_reg_exp_shared);
+            }
+            FrozenValue* frozenRegExp = m_graph.freezeStrong(codeBlock->getConstant(bytecode.m_regexp));
+            set(bytecode.m_dst, addToGraph(NewRegExp, OpInfo(frozenRegExp), jsConstant(jsNumber(0))));
+            NEXT_OPCODE(op_new_reg_exp_shared);
         }
 
         case op_create_rest: {
