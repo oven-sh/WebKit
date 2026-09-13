@@ -1,8 +1,6 @@
 ARG MARCH_FLAG=""
 ARG WEBKIT_RELEASE_TYPE=Release
-ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
-ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
@@ -97,11 +95,9 @@ FROM lane-${LINUX_ARCH} as lane
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
-ARG CPU
 ARG LTO_FLAG
 ARG LINUX_ARCH
 
-ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV LINUX_ARCH=${LINUX_ARCH}
 ENV LTO_FLAG="${LTO_FLAG}"
@@ -111,9 +107,7 @@ FROM lane as build_icu
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
-ARG CPU
 ARG LTO_FLAG
-ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 
 # For aarch64 this is a cross build: ICU uses the container's tools (/icu-host) where it would run its own, and so do
@@ -166,9 +160,7 @@ FROM lane as build_webkit
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
-ARG CPU
 ARG LTO_FLAG
-ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC

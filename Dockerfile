@@ -1,6 +1,5 @@
 ARG MARCH_FLAG=""
 ARG WEBKIT_RELEASE_TYPE=Release
-ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="21"
@@ -23,7 +22,6 @@ FROM --platform=linux/arm64 ubuntu:20.04 as rootfs-arm64
 FROM ubuntu:20.04 as base
 
 ARG LLVM_VERSION
-ARG TARGETARCH
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -31,8 +29,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Both archive.ubuntu.com and azure.archive.ubuntu.com have intermittently
 # timed out from inside the GitHub-hosted docker-buildx network at different
 # times. Prefer Azure (faster on Azure-hosted runners) but fall back to the
-# canonical mirror if `apt-get update` can't reach it. arm64 uses
-# ports.ubuntu.com which has been reachable, so leave it alone.
+# canonical mirror if `apt-get update` can't reach it.
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
 
 # Install basic build dependencies
@@ -83,10 +80,9 @@ RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/nul
 ARG GCC13_DEBS_SHA256_amd64=a2b3b6e10b175bbaaefeb3e9e703ca26a97ed6c1f19ca842d3e0b0c8f941e65b
 ARG GCC13_DEBS_SHA256_arm64=be19db90d94c52c6061280bbadcaad9b09db1e9f2e77a12f8c18c5425d2eb056
 RUN curl -fsSL --retry 5 --retry-connrefused \
-        "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs/gcc-13-focal-${TARGETARCH}.tar.gz" \
+        "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs/gcc-13-focal-amd64.tar.gz" \
         -o /tmp/gcc13.tar.gz \
-    && eval "expected=\$GCC13_DEBS_SHA256_${TARGETARCH}" \
-    && echo "${expected}  /tmp/gcc13.tar.gz" | sha256sum -c - \
+    && echo "${GCC13_DEBS_SHA256_amd64}  /tmp/gcc13.tar.gz" | sha256sum -c - \
     && mkdir -p /tmp/gcc13 && tar xzf /tmp/gcc13.tar.gz -C /tmp/gcc13 \
     && apt-get update \
     && apt-get install -y libc6-dev binutils libisl22 libmpc3 libmpfr6 \
@@ -109,46 +105,16 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
 ARG LLVM_DEBS_SHA256_amd64=759ea9d6d50de9b6062cf40161a24a3a9d70aaf11aa1a544074d126590eb55f7
 ARG LLVM_DEBS_SHA256_arm64=4d4923baa663cb2e1be67e8e7097220604489b0da8b7a4ab5911ac2baf1e0ba6
 RUN curl -fsSL --retry 5 --retry-connrefused \
-        "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-${TARGETARCH}.tar.gz" \
+        "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-amd64.tar.gz" \
         -o /tmp/llvm.tar.gz \
-    && eval "expected=\$LLVM_DEBS_SHA256_${TARGETARCH}" \
-    && echo "${expected}  /tmp/llvm.tar.gz" | sha256sum -c - \
+    && echo "${LLVM_DEBS_SHA256_amd64}  /tmp/llvm.tar.gz" | sha256sum -c - \
     && mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm \
     && apt-get update \
     && apt-get install -y /tmp/llvm/*.deb \
     && rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/*
 
 # Configure library paths
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-        export ARCH_PATH="aarch64-linux-gnu"; \
-    else \
-        export ARCH_PATH="x86_64-linux-gnu"; \
-    fi \
-    && mkdir -p /usr/lib/gcc/${ARCH_PATH}/13 \
-    && ln -sf /usr/lib/${ARCH_PATH}/libstdc++.so.6 /usr/lib/gcc/${ARCH_PATH}/13/ \
-    && echo "/usr/lib/gcc/${ARCH_PATH}/13" > /etc/ld.so.conf.d/gcc-13.conf \
-    && echo "/usr/lib/${ARCH_PATH}" >> /etc/ld.so.conf.d/gcc-13.conf \
-    && ldconfig
-
-# Set up LLVM toolchain symlinks
-RUN for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
-    && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
-    && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
-    && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
-    && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
-    && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
-    && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
-    && ln -sf /usr/bin/ld.lld /usr/bin/ld \
-    && ln -sf /usr/bin/clang /usr/bin/cc \
-    && ln -sf /usr/bin/clang++ /usr/bin/c++
-
-
-# Set up architecture-specific library paths
-RUN if [ "$(uname -m)" = "aarch64" ]; then \
-        export ARCH_PATH="aarch64-linux-gnu"; \
-    else \
-        export ARCH_PATH="x86_64-linux-gnu"; \
-    fi \
+RUN export ARCH_PATH="x86_64-linux-gnu" \
     && mkdir -p /usr/lib/gcc/${ARCH_PATH}/13 \
     && ln -sf /usr/lib/${ARCH_PATH}/libstdc++.so.6 /usr/lib/gcc/${ARCH_PATH}/13/ \
     && echo "/usr/lib/gcc/${ARCH_PATH}/13" > /etc/ld.so.conf.d/gcc-13.conf \
@@ -167,7 +133,7 @@ RUN apt-get update && apt-get install -y \
     make \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up LLVM toolchain symlinks
+# Set up LLVM toolchain symlinks. After the last package install, which could put /usr/bin/ld and /usr/bin/cc back.
 RUN for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
     && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
     && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
@@ -313,12 +279,9 @@ FROM lane-${LINUX_ARCH} as lane
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
-ARG CPU
 ARG LTO_FLAG
 ARG RELEASE_FLAGS
-ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
-ARG TARGETARCH
 ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
@@ -392,7 +355,6 @@ RUN --mount=type=tmpfs,target=/icu \
 COPY . /webkit
 WORKDIR /webkit
 
-ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 

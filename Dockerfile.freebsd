@@ -98,10 +98,6 @@ ARG DEFAULT_CFLAGS
 ARG FREEBSD_VERSION
 ARG FREEBSD_ARCH
 
-ARG ICU_VERSION
-ARG ICU_RELEASE_TAG
-ARG ICU_SHA256
-
 # Target build.
 #
 # GENCCODE_ASSEMBLY (icudefs.mk's name; pkgdataMakefile writes it into icupkg.inc as

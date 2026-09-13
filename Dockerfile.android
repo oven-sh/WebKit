@@ -109,10 +109,6 @@ ARG DEFAULT_CFLAGS
 ARG ANDROID_API
 ARG ANDROID_ARCH
 
-ARG ICU_VERSION
-ARG ICU_RELEASE_TAG
-ARG ICU_SHA256
-
 # Target build.
 #
 # Before configure, filter data/in/icudt78l.dat (using the host icupkg) to drop
