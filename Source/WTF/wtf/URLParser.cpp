@@ -3844,7 +3844,9 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
             }
         }
         if (needsCopy) {
-            buffer.reserveInitialCapacity(host.size());
+            // A host that does not fit in the buffers below is not one that IDNA accepts.
+            if (!buffer.tryReserveInitialCapacity(host.size())) [[unlikely]]
+                return HostParsingResult::InvalidHost;
             for (auto character : host) {
                 if (!isTabOrNewline(character)) [[likely]]
                     buffer.append(character);
@@ -3881,6 +3883,8 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
             Latin1Buffer utf8Encoded;
             utf8Encoded.append(host);
             Latin1Buffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
+            if (!isValidCapacityForVector<char16_t>(percentDecoded.size())) [[unlikely]]
+                return HostParsingResult::InvalidHost;
             String domain = String::fromUTF8(percentDecoded.span());
             if (domain.isNull())
                 return HostParsingResult::InvalidHost;
@@ -3898,12 +3902,15 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
             U8_APPEND(buffer, offset, U8_MAX_LENGTH, *codePoints, isError);
             if (isError)
                 return HostParsingResult::InvalidHost;
-            utf8Encoded.append(std::span { buffer }.first(offset));
+            if (!utf8Encoded.tryAppend(std::span { buffer }.first(offset))) [[unlikely]]
+                return HostParsingResult::InvalidHost;
         }
         Latin1Buffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
         if (charactersAreAllASCII(percentDecoded.span()))
             asciiDomain = domainToASCII(percentDecoded.span(), hostBegin);
         else {
+            if (!isValidCapacityForVector<char16_t>(percentDecoded.size())) [[unlikely]]
+                return HostParsingResult::InvalidHost;
             String domain = String::fromUTF8(percentDecoded.span());
             if (domain.isNull())
                 return HostParsingResult::InvalidHost;
