@@ -63,12 +63,15 @@ const ARMV8 = "-march=armv8-a+crc";
 
 // The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan is
 // "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
+// The sanitizer variants use the system allocator, which is ASan's: bmalloc switches to it at run time under ASan
+// anyway, and USE_SYSTEM_MALLOC also leaves libpas out, so their JIT pool is the allocator the shipped builds have
+// (with mimalloc there is no libpas either) and not libpas's JIT heap, which no shipped build runs.
 const variants = {
   "release": { buildType: "Release", mimalloc: true },
   "lto": { buildType: "Release", mimalloc: true, lto: true },
   "debug": { buildType: "Debug" },
-  "asan": { buildType: "Release", sanitizers: SANITIZERS },
-  "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
+  "asan": { buildType: "Release", sanitizers: SANITIZERS, systemMalloc: true },
+  "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS, systemMalloc: true },
 };
 const ALL = Object.keys(variants);
 const NO_ASAN = ["release", "lto", "debug"];
@@ -78,7 +81,7 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   dockerfile      builds the lane: `base` is the toolchain, the stages on top build ICU and WebKit
 //   packageOS       the "os" of the tarball's package.json
 //   lanes           arch -> variants built for it
-//   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG and USE_*_MIMALLOC
+//   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG, USE_*_MIMALLOC and USE_SYSTEM_MALLOC
 //   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
@@ -242,6 +245,7 @@ const lanes = platforms.flatMap(platform =>
         LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
         USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
         USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
+        USE_SYSTEM_MALLOC: v.systemMalloc ? "ON" : "OFF",
         ...platform.args(arch, v, variant),
       };
       return {

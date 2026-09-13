@@ -8,6 +8,7 @@ ARG FREEBSD_ARCH="x86_64"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
+ARG USE_SYSTEM_MALLOC="OFF"
 # -g is added per-stage below for Debug only — with -O3 + tmpfs, debug info
 # OOMs the linux-x64-gh runner during Release builds (not seen on Android,
 # but FreeBSD's libc++ headers generate notably more DWARF).
@@ -150,6 +151,7 @@ ARG FREEBSD_VERSION
 ARG FREEBSD_ARCH
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
+ARG USE_SYSTEM_MALLOC
 
 COPY . /webkit
 WORKDIR /webkit
@@ -182,6 +184,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DUSE_BUN_EVENT_LOOP=ON \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
+    -DUSE_SYSTEM_MALLOC="$USE_SYSTEM_MALLOC" \
     -DENABLE_FTL_JIT=ON \
     -DENABLE_API_TESTS=OFF \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \

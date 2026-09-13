@@ -8,6 +8,7 @@ ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffu
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
+ARG USE_SYSTEM_MALLOC="OFF"
 # What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
 # `base` carries. The container itself is always linux/amd64.
 ARG LINUX_ARCH="x86_64"
@@ -288,6 +289,7 @@ ARG DEFAULT_CFLAGS
 ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
+ARG USE_SYSTEM_MALLOC
 ARG LINUX_ARCH
 ARG ICU_VERSION
 
@@ -408,6 +410,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
+    -DUSE_SYSTEM_MALLOC="$USE_SYSTEM_MALLOC" \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
