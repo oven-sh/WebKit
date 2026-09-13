@@ -419,6 +419,9 @@ jobs:
               root=$(cygpath -m "$root")
               results=$(cygpath -m "$results")
               platform=(--test-writer=ruby --ruby-runner)
+              # The driver takes the architecture from perl, which on windows-11-arm says x86_64; run-jsc-stress-tests
+              # picks modes and skips by it, so name the one jsc.exe was built for.
+              case "$LABEL" in *-arm64*) platform+=(--architecture arm64) ;; *) platform+=(--architecture x86_64) ;; esac
               ;;
           esac
           # --quick on the small runners: see lanes.mjs. Elsewhere the asan lanes get --no-slow: the tests marked
