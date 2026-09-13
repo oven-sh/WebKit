@@ -457,17 +457,22 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         }
 
         // fn can run user code (Error.prepareStackTrace), which can freeze this error or make one
-        // of these properties non-configurable. putDirect() checks nothing, so skip each write
-        // that an ordinary [[DefineOwnProperty]] would reject at this point.
+        // of these properties non-configurable. putDirect() checks nothing. So a property that is
+        // absent is not added to an error that became non-extensible, and a non-configurable
+        // property keeps its attributes. It takes the value only if an assignment could store it.
         bool becameNonExtensible = wasExtensible && !isStructureExtensible();
         auto putUnlessLocked = [&](PropertyName propertyName, JSValue value) {
+            unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
             unsigned currentAttributes;
             if (isValidOffset(structure()->get(vm, propertyName, currentAttributes))) {
-                if (currentAttributes & PropertyAttribute::DontDelete)
-                    return;
+                if (currentAttributes & PropertyAttribute::DontDelete) {
+                    if (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+                        return;
+                    attributes = currentAttributes;
+                }
             } else if (becameNonExtensible)
                 return;
-            putDirect(vm, propertyName, value, static_cast<unsigned>(PropertyAttribute::DontEnum));
+            putDirect(vm, propertyName, value, attributes);
         };
 
         putUnlessLocked(vm.propertyNames->line, jsNumber(m_lineColumn.line));
