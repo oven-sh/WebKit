@@ -63,7 +63,7 @@ const ARMV8 = "-march=armv8-a+crc";
 
 // The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan is
 // "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
-// The sanitizer variants use the system allocator, which is ASan's: bmalloc switches to it at run time under ASan
+// The sanitizer variants, Windows' excepted (see there), use the system allocator, which is ASan's: bmalloc switches to it at run time under ASan
 // anyway, and USE_SYSTEM_MALLOC also leaves libpas out, so their JIT pool is the allocator the shipped builds have
 // (with mimalloc there is no libpas either) and not libpas's JIT heap, which no shipped build runs.
 const variants = {
@@ -178,6 +178,9 @@ const platforms = [
       MARCH_FLAG: `/clang:${arch === "arm64" ? ARMV8 : NEHALEM}`,
       ICU_MARCH_FLAG: arch === "arm64" ? ARMV8 : NEHALEM,
       ENABLE_SANITIZERS: v.sanitizers ?? "",
+      // bmalloc refuses USE_SYSTEM_MALLOC on Windows (BPlatform.h: aligned memory cannot be freed via ::free), so the
+      // asan lane here keeps bmalloc/libpas.
+      USE_SYSTEM_MALLOC: "OFF",
     }),
   },
   {
