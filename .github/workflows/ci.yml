@@ -428,13 +428,22 @@ jobs:
             --no-fail-fast --memory-limited \
             --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
               # The full output (a line per test run, plus what each test prints) is jsc-tests.log in the artifact; it
-              # is far more than the log viewer shows. Here: every failure as it happens, how far along the run is,
-              # and whatever is not about one test (the runner\x27s own messages, and its results at the end).
-              /^Running / { if (++ran % 5000 == 0) { print ran " test runs started, " failed + 0 " failed"; fflush() } next }
+              # is far more than the log viewer shows. Shown here: what the runner prints before the first test, every
+              # failure as it happens, how far along the run is, and the results of the runner from where they begin.
+              # Nothing else: the tests run in parallel into one pipe, so what they print arrives cut up mid-line and
+              # cannot be told apart by what it looks like.
+              results { print; next }
+              /^\*\* The following JSC stress test failures/ || /^Results for JSC / { results = 1; print; fflush(); next }
+              /^Running / { started = 1; if (++ran % 5000 == 0) { print ran " test runs started, " failed + 0 " failed"; fflush() } next }
               /^FAIL: / { failed++; print; fflush(); next }
-              /^PASS: / || /^Skipping [^ ]*$/ { next }
-              /^[^ ]+\.(js|mjs|wasm|html)\.[^ :]+: / { next }
-              { print; fflush() }'
+              !started { print; fflush(); next }
+              { last[n++ % 40] = $0 }
+              END {
+                if (results) exit
+                # The runner died before its results (an exception of its own, say): what it said last is the clue.
+                print "run-jsc-stress-tests ended without printing results. The last lines of its output:"
+                for (i = (n > 40 ? n - 40 : 0); i < n; i++) print last[i % 40]
+              }'
           status=${PIPESTATUS[0]}
           echo "run-javascriptcore-tests exited with $status"
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
