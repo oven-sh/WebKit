@@ -80,8 +80,10 @@ const NO_ASAN = ["release", "lto", "debug"];
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          variants whose jsc shell the `test` job runs the JavaScriptCore tests with, on a runner of the
-//                   lane's architecture (TESTERS). Those want assertions: a plain Release build compiles out $vm and
-//                   the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED).
+//                   lane's architecture (TESTERS). "asan" is Release with assertions and the sanitizers, and the only
+//                   one every test can pass on: a plain Release build compiles out $vm and the JIT disassembler
+//                   (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED), so on "release",
+//                   which is what ships, the tests that use those fail and the rest say how the shipped build behaves.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -90,7 +92,7 @@ const platforms = [
     dockerfile: "Dockerfile",
     packageOS: "linux",
     lanes: { amd64: ALL, arm64: ALL },
-    tested: ["asan"],
+    tested: ["asan", "release"],
     image: () => "linux-glibc",
     args: (arch, v) => ({
       ...ICU,
