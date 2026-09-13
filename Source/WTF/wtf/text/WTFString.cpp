@@ -131,21 +131,30 @@ String String::convertToLowercaseWithoutLocale() const
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocale() : String { };
 }
 
-String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
+String String::tryConvertToLowercaseWithoutLocale() const
 {
-    // FIXME: Should this function, and the many others like it, be inlined?
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToLowercaseWithoutLocale() : String { };
 }
 
-String String::convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+String String::tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
 {
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+}
+
+String String::tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
 }
 
 String String::convertToUppercaseWithoutLocale() const
 {
     // FIXME: Should this function, and the many others like it, be inlined?
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocale() : String { };
+}
+
+String String::tryConvertToUppercaseWithoutLocale() const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToUppercaseWithoutLocale() : String { };
 }
 
 String String::convertToLowercaseWithLocale(const AtomString& localeIdentifier) const
@@ -160,14 +169,24 @@ String String::convertToUppercaseWithLocale(const AtomString& localeIdentifier) 
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithLocale(localeIdentifier) : String { };
 }
 
-String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
+String String::tryConvertToLowercaseWithLocale(const AtomString& localeIdentifier) const
 {
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToLowercaseWithLocale(localeIdentifier) : String { };
 }
 
-String String::convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+String String::tryConvertToUppercaseWithLocale(const AtomString& localeIdentifier) const
 {
-    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToUppercaseWithLocale(localeIdentifier) : String { };
+}
+
+String String::tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(failingIndex) : String { };
+}
+
+String String::tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const
+{
+    SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->tryConvertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(failingIndex) : String { };
 }
 
 String String::trim(CodeUnitMatchFunction predicate) const
