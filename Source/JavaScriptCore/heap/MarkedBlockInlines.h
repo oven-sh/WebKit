@@ -263,7 +263,18 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     bool isMarking = space()->isMarking();
     uint64_t secret = vm.heapRandom().getUint64();
 
+    // Cells in a page that was decommitted after an earlier sweep read as zapped. Reading them would only fault the page back in.
+    // A block with such pages is never swept by a specialized instantiation (see finishSweepKnowingHeapCellType), so those test nothing per cell.
+    uint16_t zeroPages = specialize ? 0 : m_zeroPagesDuringSweep;
+    ASSERT(zeroPages == m_zeroPagesDuringSweep || destructionMode == BlockHasNoDestructors);
+    unsigned logPageSize = zeroPages ? WTF::ctz(WTF::pageSize()) : 0;
     auto destroy = [&] (void* cell) {
+        if constexpr (!specialize) {
+            if (zeroPages) [[unlikely]] {
+                if (zeroPages & (1u << ((std::bit_cast<char*>(cell) - std::bit_cast<char*>(&block)) >> logPageSize)))
+                    return;
+            }
+        }
         JSCell* jsCell = static_cast<JSCell*>(cell);
         if (!jsCell->isZapped()) {
             destroyFunc(vm, jsCell);
@@ -410,6 +421,9 @@ void MarkedBlock::Handle::finishSweepKnowingHeapCellType(FreeList* freeList, con
     MarksMode marksMode = this->marksMode();
 
     auto trySpecialized = [&] () -> bool {
+        // Decided once per block: the sweep that skips cells in decommitted pages is the unspecialized one.
+        if (m_zeroPagesDuringSweep) [[unlikely]]
+            return false;
         if (scribbleMode != DontScribble)
             return false;
         if (newlyAllocatedMode != DoesNotHaveNewlyAllocated)
