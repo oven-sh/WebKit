@@ -558,6 +558,7 @@ public:
     InlineWatchpointSet m_stringSymbolToPrimitiveWatchpointSet { IsWatched };
     InlineWatchpointSet m_arraySymbolToPrimitiveWatchpointSet { IsWatched };
     InlineWatchpointSet m_regExpPrimordialPropertiesWatchpointSet { IsWatched };
+    InlineWatchpointSet m_regExpPrototypeTestWatchpointSet { IsWatched };
     InlineWatchpointSet m_mapSetWatchpointSet { IsWatched };
     InlineWatchpointSet m_setAddWatchpointSet { IsWatched };
     InlineWatchpointSet m_promiseThenWatchpointSet { IsWatched };
@@ -642,6 +643,7 @@ public:
     InlineWatchpointSet& objectPrototypeValueOfWatchpointSet() LIFETIME_BOUND { return m_objectPrototypeValueOfWatchpointSet; }
     InlineWatchpointSet& arrayPrototypeValueOfWatchpointSet() LIFETIME_BOUND { return m_arrayPrototypeValueOfWatchpointSet; }
     InlineWatchpointSet& regExpPrimordialPropertiesWatchpointSet() LIFETIME_BOUND { return m_regExpPrimordialPropertiesWatchpointSet; }
+    InlineWatchpointSet& regExpPrototypeTestWatchpointSet() LIFETIME_BOUND { return m_regExpPrototypeTestWatchpointSet; }
     InlineWatchpointSet& mapSetWatchpointSet() LIFETIME_BOUND { return m_mapSetWatchpointSet; }
     InlineWatchpointSet& setAddWatchpointSet() LIFETIME_BOUND { return m_setAddWatchpointSet; }
     InlineWatchpointSet& setPrimordialPropertiesWatchpointSet() LIFETIME_BOUND { return m_setPrimordialPropertiesWatchpointSet; }
@@ -1144,6 +1146,7 @@ public:
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
+    static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
     static constexpr ptrdiff_t offsetOfPerformProxyObjectHasFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_performProxyObjectHasFunction); }

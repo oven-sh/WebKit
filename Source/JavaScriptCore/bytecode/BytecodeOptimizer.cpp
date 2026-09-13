@@ -170,6 +170,7 @@ static bool isPure(const Insn& insn)
     case op_typeof:
     case op_new_object:
     case op_new_reg_exp:
+    case op_new_reg_exp_shared:
     case op_new_func:
     case op_new_func_exp:
     case op_new_generator_func:
@@ -220,6 +221,8 @@ static bool allowsOperandSubstitution(const Insn& insn)
     case op_enumerator_next:
     case op_async_iterator_open:
     case op_async_iterator_next:
+    // Reads and writes its iterator operand, and names the registers that op_iterator_open / op_iterator_next keep their state in.
+    case op_iterator_close_check:
         return false;
     default:
         return true;
@@ -1766,6 +1769,7 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
             case op_new_async_generator_func:
             case op_new_async_generator_func_exp:
             case op_new_reg_exp:
+            case op_new_reg_exp_shared:
             case op_to_string:
             case op_strcat:
             case op_typeof:

@@ -173,6 +173,10 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, Cal
             RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(regExp->test(globalObject, str))));
     }
 
+    // From here on |this| is handed to whatever its "exec" property is.
+    if (auto* regExp = dynamicDowncast<RegExpObject>(thisObject); regExp && regExp->isSharedLiteral()) [[unlikely]]
+        thisValue = regExp->copyOfSharedLiteral(vm);
+
     JSValue match = regExpExec(globalObject, thisValue, str);
     RETURN_IF_EXCEPTION(scope, { });
 

@@ -802,15 +802,20 @@ public:
         return notAtomCases;
     }
 
-    JumpList branchIfInlineWatchpointSetIsStillValid(GPRReg setThenScratchGPR)
+    JumpList branchIfInlineWatchpointSetIsStillValid(Address set, GPRReg scratchGPR)
     {
         JumpList result;
-        loadPtr(Address(setThenScratchGPR, InlineWatchpointSet::offsetOfData()), setThenScratchGPR);
-        auto isThinInvalidated = branchPtr(Equal, setThenScratchGPR, TrustedImmPtr(InlineWatchpointSet::encodeState(IsInvalidated)));
-        result.append(branchTestPtr(NonZero, setThenScratchGPR, TrustedImm32(InlineWatchpointSet::IsThinFlag)));
-        result.append(branch8(NotEqual, Address(setThenScratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
+        loadPtr(set.withOffset(InlineWatchpointSet::offsetOfData()), scratchGPR);
+        auto isThinInvalidated = branchPtr(Equal, scratchGPR, TrustedImmPtr(InlineWatchpointSet::encodeState(IsInvalidated)));
+        result.append(branchTestPtr(NonZero, scratchGPR, TrustedImm32(InlineWatchpointSet::IsThinFlag)));
+        result.append(branch8(NotEqual, Address(scratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
         isThinInvalidated.link(this);
         return result;
+    }
+
+    JumpList branchIfInlineWatchpointSetIsStillValid(GPRReg setThenScratchGPR)
+    {
+        return branchIfInlineWatchpointSetIsStillValid(Address(setThenScratchGPR), setThenScratchGPR);
     }
 
     JumpList branchIfInlineWatchpointSetIsStillValid(InlineWatchpointSet& set, GPRReg scratchGPR)

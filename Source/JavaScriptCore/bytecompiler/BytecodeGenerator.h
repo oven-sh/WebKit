@@ -784,6 +784,7 @@ namespace JSC {
         RegisterID* emitNewArrowFunctionExpression(RegisterID*, ArrowFuncExprNode*);
         RegisterID* emitNewMethodDefinition(RegisterID* dst, MethodDefinitionNode*);
         RegisterID* emitNewRegExp(RegisterID* dst, RegExp*);
+        RegisterID* emitNewRegExpForReceiver(RegisterID* dst, RegExp*, bool forTest);
 
         bool shouldSetFunctionName(ExpressionNode*);
         void emitSetFunctionName(RegisterID* value, RegisterID* name);
@@ -987,6 +988,8 @@ namespace JSC {
         RegisterID* emitIteratorGenericNext(RegisterID* dst, RegisterID* nextMethod, RegisterID* iterator, const ThrowableExpressionData* node, JSC::EmitAwait = JSC::EmitAwait::No);
         RegisterID* emitIteratorGenericNextWithValue(RegisterID* dst, RegisterID* nextMethod, RegisterID* iterator, RegisterID* value, const ThrowableExpressionData* node);
         void emitIteratorGenericClose(RegisterID* iterator, const ThrowableExpressionData* node, EmitAwait = EmitAwait::No);
+        // IteratorClose for an iterator that came from emitIteratorOpen, which may have left the three registers without an iterator object.
+        void emitIteratorCloseAfterIteratorOpen(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node);
 
         RegisterID* emitRestParameter(RegisterID* result, unsigned numParametersToSkip);
 
