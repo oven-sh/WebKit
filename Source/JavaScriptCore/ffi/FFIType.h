@@ -302,6 +302,7 @@ struct CompileCounts {
     std::atomic<uint64_t> icStub { 0 };
     std::atomic<uint64_t> dfgCallFFI { 0 };
     std::atomic<uint64_t> ftlCallFFI { 0 };
+    std::atomic<uint64_t> ftlInlineC { 0 };
 };
 
 extern JS_EXPORT_PRIVATE CompileCounts g_ffiCompileCounts;

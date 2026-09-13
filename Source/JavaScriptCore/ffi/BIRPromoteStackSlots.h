@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,43 +20,31 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "B3Compile.h"
+#pragma once
 
-#if ENABLE(B3_JIT)
+#include <wtf/Platform.h>
 
-#include "B3Generate.h"
-#include "B3Procedure.h"
-#include "CCallHelpers.h"
-#include "CompilerTimingScope.h"
-#include "LinkBuffer.h"
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(B3_JIT)
 
-namespace JSC { namespace B3 {
+namespace JSC {
 
-Compilation compile(Procedure& proc)
-{
-    return compile(proc, CString());
-}
+namespace B3 {
+class Procedure;
+} // namespace B3
 
-Compilation compile(Procedure& proc, CString&& name)
-{
-    CompilerTimingScope timingScope("Total B3+Air"_s, "compile"_s);
-    
-    prepareForGeneration(proc);
-    
-    CCallHelpers jit;
-    generate(proc, jit);
-    LinkBuffer linkBuffer(jit, nullptr);
-    if (!name.isNull())
-        linkBuffer.setNameForJITDump(WTF::move(name));
+namespace FFI {
 
-    return Compilation(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
-}
+// B3 keeps every stack slot in memory. C takes the address of locals all the time (`&result`
+// as an out-parameter), and once the callee is inlined that address is only ever loaded from and
+// stored to. This turns each such slot into a B3 Variable, which B3 then puts in a register.
+// Run on a procedure before B3::compile(); returns true if it promoted anything.
+bool promoteStackSlots(B3::Procedure&);
 
-} } // namespace JSC::B3
+} // namespace FFI
 
-#endif // ENABLE(B3_JIT)
+} // namespace JSC
 
+#endif // USE(BUN_JSC_ADDITIONS) && ENABLE(B3_JIT)

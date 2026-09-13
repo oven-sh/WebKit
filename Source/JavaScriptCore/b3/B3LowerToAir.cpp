@@ -436,6 +436,14 @@ private:
     // doesn't prevent us from trying loadPromise on the same value.
     Tmp tmp(Value* value)
     {
+        // The address of a stack slot is one instruction away. Computing it again for each user keeps
+        // it out of a register between uses, where it would become something to spill and reload.
+        if (value->opcode() == SlotBase && m_value && value != m_value && Options::useB3RematerializeStackAddresses()) {
+            Tmp address = m_code.newTmp(GP);
+            append(pointerType() == Int64 ? Air::Lea64 : Air::Lea32, Arg::stack(value->as<SlotBaseValue>()->slot()), address);
+            return address;
+        }
+
         Tmp& tmp = m_valueToTmp[value];
         if (!tmp) {
             while (shouldCopyPropagate(value))

@@ -127,6 +127,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if USE(BUN_JSC_ADDITIONS)
 #include "BunFFI.h"
+#include "CModule.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
@@ -138,6 +139,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <bit>
 #include <cmath>
 #include <cstring>
+#if !OS(WINDOWS)
+#include <dlfcn.h>
+#endif
 #include <optional>
 #endif
 
@@ -2316,6 +2320,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
+static JSC_DECLARE_HOST_FUNCTION(functionCModule);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
 static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
@@ -5053,6 +5058,30 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
 }
 
+// $vm.cModule(cirBytes) -> { exportName: function }. Externs resolve through dlsym.
+JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
+    if (!view)
+        return throwVMTypeError(globalObject, scope, "$vm.cModule: expected a typed array of BIR bytes"_s);
+
+    auto module = FFI::CModule::tryCreate(view->span(), [](const CString& name) -> void* {
+#if OS(WINDOWS)
+        UNUSED_PARAM(name);
+        return nullptr;
+#else
+        return dlsym(RTLD_DEFAULT, name.data());
+#endif
+    });
+    if (!module)
+        return throwVMTypeError(globalObject, scope, module.error());
+    RELEASE_AND_RETURN(scope, JSValue::encode(module.value()->createExportsObject(globalObject)));
+}
+
 static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation&); // defined below with the queue/drain model
 JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -5243,6 +5272,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
     counts->putDirect(vm, Identifier::fromString(vm, "icStub"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.icStub.load())));
     counts->putDirect(vm, Identifier::fromString(vm, "dfgCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.dfgCallFFI.load())));
     counts->putDirect(vm, Identifier::fromString(vm, "ftlCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.ftlCallFFI.load())));
+    counts->putDirect(vm, Identifier::fromString(vm, "ftlInlineC"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.ftlInlineC.load())));
     return JSValue::encode(counts);
 }
 
@@ -5812,6 +5842,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
+    addFunction(vm, allowIfNotFuzz, "cModule"_s, functionCModule, 1);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);

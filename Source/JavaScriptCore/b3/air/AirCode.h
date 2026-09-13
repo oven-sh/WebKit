@@ -164,6 +164,13 @@ public:
 
     unsigned callArgAreaSizeInBytes() const { return m_callArgAreaSize; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Set when the code moves the stack pointer at run time (C's alloca). Stack slots then have
+    // to be addressed from the frame pointer: their distance from the stack pointer is not fixed.
+    bool hasDynamicStackAllocation() const { return m_hasDynamicStackAllocation; }
+    void setHasDynamicStackAllocation() { m_hasDynamicStackAllocation = true; }
+#endif
+
     // You can call this before code generation to force a minimum call arg area size.
     void requestCallArgAreaSizeInBytes(unsigned size)
     {
@@ -402,6 +409,9 @@ private:
     unsigned m_callArgAreaSize { 0 };
     unsigned m_optLevel { defaultOptLevel() };
     bool m_stackIsAllocated { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_hasDynamicStackAllocation { false };
+#endif
     bool m_preserveB3Origins { true };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;
     RegisterSet m_calleeSaveRegisters;

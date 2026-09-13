@@ -2060,6 +2060,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/HeapProfiler.h
 
     ffi/BunFFI.h
+    ffi/BIR.h
+    ffi/BIRModule.h
+    ffi/BIRPromoteStackSlots.h
+    ffi/BIRToB3.h
+    ffi/CModule.h
     ffi/FFICallHost.h
     ffi/FFICallbackThunk.h
     ffi/FFICallingConvention.h

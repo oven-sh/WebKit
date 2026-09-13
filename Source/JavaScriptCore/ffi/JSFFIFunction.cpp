@@ -28,6 +28,7 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "CModule.h"
 #include "Error.h"
 #include "FFICallHost.h"
 #include "FFIConversions.h"
@@ -61,6 +62,12 @@ JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObjec
 }
 
 JSFFIFunction::~JSFFIFunction() = default;
+
+void JSFFIFunction::setCModule(FFI::CModule& module, unsigned functionIndex)
+{
+    m_cModule = &module;
+    m_cModuleFunction = functionIndex;
+}
 
 template<typename Visitor>
 void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)

@@ -39,6 +39,8 @@ class JSGlobalObject;
 
 namespace FFI {
 
+class CModule;
+
 struct CallHooks {
     void* (*before)(JSGlobalObject*, CallFrame*);
     void (*after)(JSGlobalObject*, CallFrame*, void* token);
@@ -77,6 +79,12 @@ public:
     bool isHostPathOnly() const { return !!m_hooks; }
     JITCode* icCode() const { return m_icCode.get(); }
 
+    // Set when target() is a function B3 compiled from C: the module holds its IR, so the FTL
+    // can inline the body instead of calling it.
+    FFI::CModule* cModule() const { return m_cModule.get(); }
+    unsigned cModuleFunction() const { return m_cModuleFunction; }
+    JS_EXPORT_PRIVATE void setCModule(FFI::CModule&, unsigned functionIndex);
+
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, RefPtr<JITCode>&& icCode, const FFI::CallHooks* hooks);
 
@@ -85,6 +93,8 @@ private:
     RefPtr<JITCode> m_icCode; // Keeps the IC entry stub alive; null when no stub.
     WriteBarrier<JSObject> m_owner; // Optional; keeps the owner (e.g. library handle object) alive.
     const FFI::CallHooks* m_hooks; // Optional, static lifetime; non-null => host path only.
+    RefPtr<FFI::CModule> m_cModule; // Owns target()'s code when it was compiled from C.
+    unsigned m_cModuleFunction { 0 };
 };
 
 } // namespace JSC

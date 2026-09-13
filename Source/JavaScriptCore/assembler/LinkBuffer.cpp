@@ -82,7 +82,9 @@ void LinkBuffer::logJITCodeForJITDump(CodeRef<LinkBufferPtrTag>& codeRef, ASCIIL
         return;
 
     auto dumpSimpleName = [&](StringPrintStream& out, ASCIILiteral simpleName) {
-        if (simpleName.isNull())
+        if (!m_nameForJITDump.isNull())
+            out.print(m_nameForJITDump);
+        else if (simpleName.isNull())
             out.print("unspecified");
         else
             out.print(simpleName);

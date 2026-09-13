@@ -40,6 +40,7 @@
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3PureCSE.h"
+#include "B3SlotBaseValue.h"
 #include "B3SSACalculator.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
@@ -347,7 +348,7 @@ public:
                 data.reads.add(effects.reads);
 
                 if (HeapRange writes = effects.writes)
-                    clobber(data, writes);
+                    clobber(data, writes, memory);
                 data.fence |= effects.fence;
 
                 if (memory)
@@ -540,7 +541,7 @@ private:
 
         // Clobber based on writes - this handles both MemoryValue and WasmStruct operations
         if (HeapRange writes = effects.writes)
-            clobber(m_data, writes);
+            clobber(m_data, writes, memory);
 
         // After clobber - CSE and tracking
         if (memory)
@@ -606,7 +607,26 @@ private:
         }
     }
 
-    void clobber(ImpureBlockData& data, HeapRange writes)
+    // A store through the same pointer value at bytes that do not overlap, or into a different stack
+    // slot, cannot change what an earlier access saw, whatever their abstract heaps say.
+    static bool isStoreToOtherBytes(MemoryValue* writer, MemoryValue* memory)
+    {
+        if (!writer || !writer->isStore() || writer->hasFence() || !Options::useB3DisjointOffsetAliasAnalysis())
+            return false;
+        if (writer->lastChild() != memory->lastChild()) {
+            // Two different stack slots are two different objects.
+            auto* writerSlot = writer->lastChild()->as<SlotBaseValue>();
+            auto* memorySlot = memory->lastChild()->as<SlotBaseValue>();
+            return writerSlot && memorySlot && writerSlot->slot() != memorySlot->slot();
+        }
+        int64_t writerBegin = writer->offset();
+        int64_t writerEnd = writerBegin + static_cast<int64_t>(writer->accessByteSize());
+        int64_t memoryBegin = memory->offset();
+        int64_t memoryEnd = memoryBegin + static_cast<int64_t>(memory->accessByteSize());
+        return writerEnd <= memoryBegin || memoryEnd <= writerBegin;
+    }
+
+    void clobber(ImpureBlockData& data, HeapRange writes, MemoryValue* writer = nullptr)
     {
         data.writes.add(writes);
 
@@ -614,6 +634,8 @@ private:
             [&](MemoryValue* memory) {
                 // If memory reads is immutable, clobbering never changes the result.
                 if (memory->readsMutability() == Mutability::Immutable)
+                    return false;
+                if (isStoreToOtherBytes(writer, memory))
                     return false;
                 return memory->range().overlaps(writes);
             });

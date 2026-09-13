@@ -82,9 +82,16 @@ void lowerStackArgs(Code& code)
                 if (result.isValidForm(Move, width))
                     return result;
 
-                result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
-                if (result.isValidForm(Move, width))
-                    return result;
+#if USE(BUN_JSC_ADDITIONS)
+                bool canAddressFromSP = !code.hasDynamicStackAllocation();
+#else
+                bool canAddressFromSP = true;
+#endif
+                if (canAddressFromSP) {
+                    result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
+                    if (result.isValidForm(Move, width))
+                        return result;
+                }
 
                 if (inst.kind.opcode == Patch)
                     return Arg::extendedOffsetAddr(offsetFromFP);
@@ -94,9 +101,11 @@ void lowerStackArgs(Code& code)
                 Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
                 extendedOffsetAddrRegInUse = true;
 
-                Arg largeOffset = Arg::isValidImmForm(offsetFromSP) ? Arg::imm(offsetFromSP) : Arg::bigImm(offsetFromSP);
+                int32_t offsetFromBase = canAddressFromSP ? offsetFromSP : offsetFromFP;
+                Air::Tmp base = Air::Tmp(canAddressFromSP ? MacroAssembler::stackPointerRegister : GPRInfo::callFrameRegister);
+                Arg largeOffset = Arg::isValidImmForm(offsetFromBase) ? Arg::imm(offsetFromBase) : Arg::bigImm(offsetFromBase);
                 insertionSet.insert(insertionIndex, Move, inst.origin, largeOffset, tmp);
-                insertionSet.insert(insertionIndex, Add64, inst.origin, Air::Tmp(MacroAssembler::stackPointerRegister), tmp);
+                insertionSet.insert(insertionIndex, Add64, inst.origin, base, tmp);
                 result = Arg::addr(tmp, 0);
                 return result;
 #elif CPU(X86_64)

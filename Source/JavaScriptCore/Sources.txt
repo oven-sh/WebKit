@@ -1319,6 +1319,10 @@ runtime/InternalFieldTuple.cpp
 heap/BunV8HeapSnapshotBuilder.cpp
 
 ffi/BunFFI.cpp
+ffi/BIRModule.cpp
+ffi/BIRPromoteStackSlots.cpp
+ffi/BIRToB3.cpp
+ffi/CModule.cpp
 ffi/FFICallHost.cpp
 ffi/FFICallbackThunk.cpp
 ffi/FFICallingConvention.cpp

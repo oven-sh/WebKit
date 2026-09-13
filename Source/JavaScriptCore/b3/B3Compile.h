@@ -49,6 +49,8 @@ class Procedure;
 // If this API feels too high-level, you can use B3::generate() directly.
 
 JS_EXPORT_PRIVATE Compilation compile(Procedure&);
+// The same, for code that has a name of its own to show in perf and gdb (see Options::useJITDump).
+JS_EXPORT_PRIVATE Compilation compile(Procedure&, CString&& name);
 
 } } // namespace JSC::B3
 

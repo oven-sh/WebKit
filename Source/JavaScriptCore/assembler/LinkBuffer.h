@@ -194,6 +194,8 @@ public:
     {
     }
 
+    void setNameForJITDump(CString&& name) { m_nameForJITDump = WTF::move(name); }
+
     bool didFailToAllocate() const
     {
         return !m_didAllocate;
@@ -470,6 +472,7 @@ private:
     bool m_isThunk { false };
     CacheFlushOnFinalize m_cacheFlushOnFinalize { CacheFlushOnFinalize::Yes };
     bool m_isRewriting { false };
+    CString m_nameForJITDump; // When set, what perf and gdb are told this code is called.
     Profile m_profile { Profile::Uncategorized };
     CodePtr<LinkBufferPtrTag> m_code;
     Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_linkTasks;

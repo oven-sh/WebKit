@@ -122,6 +122,8 @@
 #include "WebAssemblyFunction.h"
 #include "YarrJITRegisters.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "BIRToB3.h"
+#include "CModule.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
@@ -15501,10 +15503,10 @@ IGNORE_CLANG_WARNINGS_END
 
         FFI::Type returnType = signature.returnType();
         LValue targetValue = m_out.constIntPtr(target);
+        LValue directInt32Result = nullptr;
+        LValue directDoubleResult = nullptr;
+        LValue direct64Result = nullptr;
         if constexpr (directCall) {
-            callPreflight();
-            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
-            LValue callee = m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target));
             LType returnLType = Void;
             switch (returnType) {
             case FFI::Type::Void: returnLType = Void; break;
@@ -15524,46 +15526,75 @@ IGNORE_CLANG_WARNINGS_END
                 returnLType = Int64;
                 break;
             }
-            LValue rawReturn = m_out.call(returnLType, callee, directOperands);
-            TypedPointer returnSlot = slotPointer(nativeArgumentCount);
+            FFI::CModule* cModule = Options::useFFIInlineC() ? ffiFunction->cModule() : nullptr;
+            const FFI::BIR::Function* inlinee = nullptr;
+            if (cModule) {
+                const FFI::BIR::Function& candidate = cModule->bir().functions[ffiFunction->cModuleFunction()];
+                // The declared bun:ffi types are the caller's claim; only splice the body in when
+                // they really are the C function's machine types.
+                const FFI::BIR::Signature& native = cModule->bir().signatures[candidate.signature];
+                bool typesMatch = native.isScalar() && native.parameters.size() == directOperands.size() && FFI::BIRToB3::toB3(native.soleResultOrVoid()) == returnLType;
+                for (unsigned i = 0; typesMatch && i < directOperands.size(); ++i)
+                    typesMatch = directOperands[i]->type() == FFI::BIRToB3::toB3(native.parameters[i].type);
+                if (typesMatch && candidate.hasBody && !candidate.isNeverInline && !candidate.movesStackPointer && !candidate.callsReturnsTwice && !candidate.usesFrameAddress && candidate.insts.size() <= Options::maximumFFIInlineCInstructionCount())
+                    inlinee = &candidate;
+            }
+            // A body with no calls cannot reach JS, so it needs no frame bookkeeping and cannot throw.
+            bool mayReenterJS = !inlinee || inlinee->hasCalls;
+            if (mayReenterJS) {
+                callPreflight();
+                m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            }
+            LValue callee = m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target));
+            LValue rawReturn;
+            if (inlinee) {
+                FFI::g_ffiCompileCounts.ftlInlineC++;
+                FFI::BIRLinkEnvironment environment = cModule->linkEnvironment();
+                FFI::BIRToB3 lowering(cModule->bir(), environment, m_proc);
+                lowering.setBlockFactory([&] { return m_out.newBlock(); });
+                auto inlined = lowering.lowerInline(ffiFunction->cModuleFunction(), m_out.m_block, directOperands.span(), m_out.origin());
+                m_out.appendTo(inlined.continuation);
+                rawReturn = inlined.result;
+            } else
+                rawReturn = m_out.call(returnLType, callee, directOperands);
+            // The result stays in a register: nothing reads the return slot on this path.
             switch (returnType) {
             case FFI::Type::Void:
                 break;
             case FFI::Type::Char: case FFI::Type::Int8:
-                m_out.store64(m_out.signExt32To64(m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(24)), m_out.constInt32(24))), returnSlot);
+                directInt32Result = m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(24)), m_out.constInt32(24));
                 break;
             case FFI::Type::Uint8:
-                m_out.store64(m_out.zeroExt(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), Int64), returnSlot);
+                directInt32Result = m_out.bitAnd(rawReturn, m_out.constInt32(0xff));
                 break;
             case FFI::Type::Int16:
-                m_out.store64(m_out.signExt32To64(m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(16)), m_out.constInt32(16))), returnSlot);
+                directInt32Result = m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(16)), m_out.constInt32(16));
                 break;
             case FFI::Type::Uint16:
-                m_out.store64(m_out.zeroExt(m_out.bitAnd(rawReturn, m_out.constInt32(0xffff)), Int64), returnSlot);
+                directInt32Result = m_out.bitAnd(rawReturn, m_out.constInt32(0xffff));
                 break;
             case FFI::Type::Int32:
-                m_out.store64(m_out.signExt32To64(rawReturn), returnSlot);
+                directInt32Result = rawReturn;
                 break;
             case FFI::Type::Uint32:
-                m_out.store64(m_out.zeroExt(rawReturn, Int64), returnSlot);
+                direct64Result = m_out.zeroExt(rawReturn, Int64);
                 break;
             case FFI::Type::Bool:
-                m_out.store64(m_out.zeroExt(m_out.notEqual(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), m_out.int32Zero), Int64), returnSlot);
+                directInt32Result = m_out.zeroExt(m_out.notEqual(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), m_out.int32Zero), Int32);
                 break;
             case FFI::Type::Float:
-                m_out.storeFloat(rawReturn, returnSlot);
-                m_out.store32(m_out.int32Zero, slotPointer(nativeArgumentCount, 4));
+                directDoubleResult = m_out.floatToDouble(rawReturn);
                 break;
             case FFI::Type::Double:
-                m_out.storeDouble(rawReturn, returnSlot);
+                directDoubleResult = rawReturn;
                 break;
             default: // 64-bit integers, pointer family, jsvalue: raw 64 bits are the encoding.
-                m_out.store64(rawReturn, returnSlot);
+                direct64Result = rawReturn;
                 break;
             }
             if (needsArena)
                 exceptionCheckWithArenaExit(nullptr);
-            else
+            else if (mayReenterJS)
                 operationExceptionCheck<void>(nullptr);
         } else if (needsArena) {
             callPreflight();
@@ -15591,22 +15622,25 @@ IGNORE_CLANG_WARNINGS_END
         case FFI::Type::Int16:
         case FFI::Type::Uint16:
         case FFI::Type::Int32:
-            setJSValue(boxInt32(m_out.load32(returnSlot)));
+            setJSValue(boxInt32(directInt32Result ? directInt32Result : m_out.load32(returnSlot)));
             break;
         case FFI::Type::Uint32:
-            setJSValue(strictInt52ToJSValue(m_out.load64(returnSlot)));
+            if (node->hasInt52Result())
+                setStrictInt52(direct64Result ? direct64Result : m_out.load64(returnSlot));
+            else
+                setJSValue(strictInt52ToJSValue(direct64Result ? direct64Result : m_out.load64(returnSlot)));
             break;
         case FFI::Type::Bool:
-            setJSValue(boxBoolean(m_out.load32(returnSlot)));
+            setJSValue(boxBoolean(directInt32Result ? directInt32Result : m_out.load32(returnSlot)));
             break;
         case FFI::Type::Double:
-            setJSValue(boxDouble(m_out.purifyNaN(m_out.loadDouble(returnSlot))));
+            setJSValue(boxDouble(m_out.purifyNaN(directDoubleResult ? directDoubleResult : m_out.loadDouble(returnSlot))));
             break;
         case FFI::Type::Float:
-            setJSValue(boxDouble(m_out.purifyNaN(m_out.floatToDouble(m_out.loadFloat(returnSlot)))));
+            setJSValue(boxDouble(m_out.purifyNaN(directDoubleResult ? directDoubleResult : m_out.floatToDouble(m_out.loadFloat(returnSlot)))));
             break;
         case FFI::Type::JSValue:
-            setJSValue(m_out.load64(returnSlot));
+            setJSValue(direct64Result ? direct64Result : m_out.load64(returnSlot));
             break;
         case FFI::Type::Int64:
         case FFI::Type::Uint64:
@@ -15616,7 +15650,7 @@ IGNORE_CLANG_WARNINGS_END
         case FFI::Type::CString:
         case FFI::Type::Function:
         case FFI::Type::Buffer: {
-            LValue slotValue = m_out.load64(returnSlot);
+            LValue slotValue = direct64Result ? direct64Result : m_out.load64(returnSlot);
             LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(returnType)));
             LValue boxed;
             if (needsArena) {

@@ -32,6 +32,8 @@
 #include "CPUInlines.h"
 #include "CacheableIdentifierInlines.h"
 #include "DFGGraph.h"
+#include "FFIDFG.h"
+#include "FFISignature.h"
 #include "DFGInsertionSet.h"
 #include "DFGPhase.h"
 #include "DOMJITCallDOMGetterSnippet.h"
@@ -3498,6 +3500,20 @@ private:
         }
 
         case Call: {
+#if USE(BUN_JSC_ADDITIONS)
+            // A call the parser already pinned to one bun:ffi function becomes CallFFI here rather than
+            // in strength reduction, so that the nodes consuming its result are fixed up against the
+            // representation it really produces.
+            if (auto* function = m_graph.varArgChild(node, 0)->dynamicCastConstant<JSFunction*>()) {
+                if (FFI::tryConvertCallToCallFFI(m_graph, m_insertionSet, m_indexInBlock, node, function)) {
+                    // A uint32_t above INT32_MAX has no int32 JSValue; boxing it as a double makes every
+                    // integer use of it slow. Hand it over unboxed, like a Uint32Array load.
+                    if (node->ffiSignature().returnType() == FFI::Type::Uint32 && !node->shouldSpeculateInt32() && node->shouldSpeculateInt52())
+                        node->setResult(NodeResultInt52);
+                    break;
+                }
+            }
+#endif
             attemptToMakeCallDOM(node);
             break;
         }
