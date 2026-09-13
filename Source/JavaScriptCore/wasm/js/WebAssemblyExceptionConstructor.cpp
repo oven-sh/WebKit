@@ -29,6 +29,7 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "BuiltinNames.h"
+#include "ErrorInstanceInlines.h"
 #include "Interpreter.h"
 #include "IteratorOperations.h"
 #include "JITOpaqueByproducts.h"
@@ -100,10 +101,20 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyException, (JSGlobalObject* globa
 
     auto* exception = JSWebAssemblyException::create(vm, structure, tag->tag(), WTF::move(payload));
     if (traceStack) {
+#if USE(BUN_JSC_ADDITIONS)
+        // Take the stack of an Error created here, so that it goes through VM::onComputeErrorInfoJSValue
+        // like every other stack. Interpreter::stackTraceAsString skips that hook.
+        constexpr bool useCurrentFrame = false;
+        auto* error = ErrorInstance::create(vm, globalObject->errorStructure(), String(), JSValue(), nullptr, TypeNothing, ErrorType::Error, useCurrentFrame);
+        JSValue stack = error->get(globalObject, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(scope, { });
+        exception->putDirect(vm, vm.propertyNames->builtinNames().stackPrivateName(), stack, static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete));
+#else
         Vector<StackFrame> stackTrace;
         constexpr size_t framesToSkip = 1;
         vm.interpreter.getStackTrace(exception, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0));
         exception->putDirect(vm, vm.propertyNames->builtinNames().stackPrivateName(), jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete));
+#endif
     }
 
     return JSValue::encode(exception);
