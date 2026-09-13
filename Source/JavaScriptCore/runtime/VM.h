@@ -59,6 +59,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/Lock.h>
 #include <wtf/MallocPtr.h>
 #include <wtf/ObjectIdentifier.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/ThreadSafeRefCountedWithSuppressingSaferCPPChecking.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
 
@@ -936,6 +937,10 @@ public:
     }
 
     void gatherScratchBufferRoots(ConservativeRoots&);
+    void forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* end)>&);
+#if USE(BUN_JSC_ADDITIONS)
+    void forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin, void* end)>&);
+#endif
 
     static constexpr unsigned expectedMaxActiveSideStateCount = 4;
     void pushCheckpointOSRSideState(std::unique_ptr<CheckpointOSRExitSideState>&&);
