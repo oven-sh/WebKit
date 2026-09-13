@@ -601,33 +601,20 @@ void JIT::emit_op_iterator_next(const JSInstruction* instruction)
 void JIT::emit_op_iterator_close_check(const JSInstruction* instruction)
 {
     auto bytecode = instruction->as<OpIteratorCloseCheck>();
+    unsigned target = jumpTarget(instruction, bytecode.m_targetLabel);
     emitGetVirtualRegister(bytecode.m_iterator, regT0);
-    Jump notCell = branchIfNotCell(regT0);
-    Jump isSentinel = branchIfType(regT0, SentinelType);
-    notCell.link(this);
-    moveTrustedValue(jsBoolean(false), regT0);
-    emitPutVirtualRegister(bytecode.m_dst, regT0);
-    Jump done = jump();
+    JumpList fallThrough;
+    fallThrough.append(branchIfNotCell(regT0));
+    fallThrough.append(branchIfNotType(regT0, SentinelType));
 
-    isSentinel.link(this);
     // No iterator object. There is nothing to close while this realm's Array Iterator protocol watchpoint set is intact.
     loadGlobalObject(regT1);
-    loadPtr(Address(regT1, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet() + InlineWatchpointSet::offsetOfData()), regT1);
-    Jump thinAndInvalidated = branchPtr(Equal, regT1, TrustedImmPtr(std::bit_cast<void*>(InlineWatchpointSet::encodeState(IsInvalidated))));
-    Jump thin = branchTestPtr(NonZero, regT1, TrustedImm32(InlineWatchpointSet::IsThinFlag));
-    Jump fatAndInvalidated = branch8(Equal, Address(regT1, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated));
-    thin.link(this);
-    moveTrustedValue(jsBoolean(true), regT0);
-    emitPutVirtualRegister(bytecode.m_dst, regT0);
-    Jump nothingToClose = jump();
+    addJump(branchIfInlineWatchpointSetIsStillValid(Address(regT1, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet()), regT1), target);
 
-    thinAndInvalidated.link(this);
-    fatAndInvalidated.link(this);
     JITSlowPathCall slowPathCall(this, slow_path_iterator_close_check);
     slowPathCall.call();
 
-    done.link(this);
-    nothingToClose.link(this);
+    fallThrough.link(this);
 }
 
 void JIT::emitSlow_op_iterator_next(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)

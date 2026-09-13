@@ -551,7 +551,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpIsObject, dst)
     DEFS(OpIsCellWithType, dst)
     DEFS(OpIsCallable, dst)
-    DEFS(OpIteratorCloseCheck, dst, iterator)
+    DEFS(OpIteratorCloseCheck, iterator)
     DEFS(OpIsConstructor, dst)
     DEFS(OpInById, dst)
     DEFS(OpInByVal, dst)

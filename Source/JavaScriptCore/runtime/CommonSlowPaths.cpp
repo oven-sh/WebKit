@@ -1234,16 +1234,12 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_iterator_close_check)
 {
     BEGIN();
     auto bytecode = pc->as<OpIteratorCloseCheck>();
+    // The interpreter and the Baseline JIT get here when they have to fall through with no iterator object in hand: the watchpoint set, which
+    // covers a "return" property showing up anywhere on the prototype chain of this realm's Array Iterator objects, has fired.
     auto& iterator = GET(bytecode.m_iterator);
-    if (iterator.jsValue() != vm.fastArrayUnboxedSentinel())
-        RETURN(jsBoolean(false));
-
-    // The watchpoint set covers a "return" property showing up anywhere on the prototype chain of this realm's Array Iterator objects.
-    if (globalObject->arrayIteratorProtocolWatchpointSet().isStillValid()) [[likely]]
-        RETURN(jsBoolean(true));
-
+    RELEASE_ASSERT(iterator.jsValue() == vm.fastArrayUnboxedSentinel());
     iterator = materializeUnboxedFastArrayIterator(globalObject, GET(bytecode.m_iterable).jsValue(), GET(bytecode.m_next).jsValue());
-    RETURN(jsBoolean(false));
+    END();
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_strcat)
