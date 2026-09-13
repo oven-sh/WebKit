@@ -33,8 +33,11 @@ const BUILDER = "linux-x64-gh";
 // A toolchain image is built on a standard runner: it is mostly downloading and unpacking, and those are never
 // waited for.
 const IMAGE_BUILDER = "ubuntu-latest";
-// Where a tested lane is tested: a machine that can run it.
-const TESTERS = { amd64: "linux-x64-gh", arm64: "linux-arm64-gh" };
+// GitHub's standard macOS and Windows runners, where the macOS and Windows lanes are tested. They have 3 or 4 cores,
+// so the tests run there with --quick (each test in its default and no-cjit-validate modes, not all of them).
+const MACOS_ARM64 = "macos-15";
+const WINDOWS_X64 = "windows-2025";
+const WINDOWS_ARM64 = "windows-11-arm";
 
 // ThinLTO: the bitcode carries ThinLTO summaries, so the consumer's link gets parallel backends and cross-language
 // importing instead of one giant serial full-LTO module. -fno-split-lto-unit keeps every module a pure summary module
@@ -79,11 +82,12 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
-//   tested          variants whose jsc shell the `test` job runs the JavaScriptCore tests with, on a runner of the
-//                   lane's architecture (TESTERS). "asan" is Release with assertions and the sanitizers, and the only
-//                   one every test can pass on: a plain Release build compiles out $vm and the JIT disassembler
-//                   (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED), so on "release",
-//                   which is what ships, the tests that use those fail and the rest say how the shipped build behaves.
+//   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
+//                   the runner it does that on: a machine of the lane's own platform and architecture. "asan" is
+//                   Release with assertions and the sanitizers, and the only one every test can pass on: a plain Release
+//                   build compiles out $vm and the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER
+//                   default to ASSERT_ENABLED), so on "release", which is what ships, the tests that use those fail and
+//                   the rest say how the shipped build behaves. `quick` is --quick, for the small runners.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -92,7 +96,10 @@ const platforms = [
     dockerfile: "Dockerfile",
     packageOS: "linux",
     lanes: { amd64: ALL, arm64: ALL },
-    tested: ["asan", "release"],
+    tested: {
+      amd64: { on: "linux-x64-gh", variants: ["asan", "release"] },
+      arm64: { on: "linux-arm64-gh", variants: ["asan", "release"] },
+    },
     image: () => "linux-glibc",
     args: (arch, v) => ({
       ...ICU,
@@ -126,6 +133,7 @@ const platforms = [
     label: arch => `bun-webkit-macos-${arch}`,
     dockerfile: "Dockerfile.macos",
     packageOS: "darwin",
+    tested: { arm64: { on: MACOS_ARM64, variants: ["asan", "release"], quick: true } },
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
@@ -146,6 +154,11 @@ const platforms = [
     label: arch => `bun-webkit-windows-${arch}`,
     dockerfile: "Dockerfile.windows",
     packageOS: "windows",
+    // There is no asan lane for arm64.
+    tested: {
+      amd64: { on: WINDOWS_X64, variants: ["asan", "release"], quick: true },
+      arm64: { on: WINDOWS_ARM64, variants: ["release"], quick: true },
+    },
     lanes: {
       // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
       // thunk, DLL) comes from the compiler-rt-windows-* release tag.
@@ -239,8 +252,9 @@ const lanes = platforms.flatMap(platform =>
         dockerfile: platform.dockerfile,
         package_os: platform.packageOS,
         package_cpu: arch === "arm64" ? "arm64" : "x64",
-        test: platform.tested?.includes(variant) ?? false,
-        test_runner: TESTERS[arch],
+        test: platform.tested?.[arch]?.variants.includes(variant) ?? false,
+        test_runner: platform.tested?.[arch]?.on,
+        test_quick: platform.tested?.[arch]?.quick ?? false,
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };
@@ -313,7 +327,7 @@ if (command === "build") {
   const build = ({ label, runner, image, package_os, package_cpu, test }) => ({ label, runner, image, package_os, package_cpu, test });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
   console.log(`labels=${JSON.stringify(labels)}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

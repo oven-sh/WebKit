@@ -322,8 +322,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.test) }}
-    timeout-minutes: 90
+    # The macOS and Windows lanes are tested on GitHub's standard runners, which have 3 or 4 cores.
+    timeout-minutes: ${{ matrix.quick && 300 || 90 }}
+    env:
+      QUICK: ${{ matrix.quick }}
+    defaults:
+      run:
+        # Also on Windows (Git for Windows' bash).
+        shell: bash
     steps:
+      - name: Allow long paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       # The tests live in JSTests/, PerformanceTests/ and a few corners of LayoutTests/: js + fast/regex
       # (LayoutTests/jsc-layout-tests.yaml) and the web-platform-tests for wasm with their harness (JSTests/wasm.yaml).
       # The rest of LayoutTests/ is several GB that nothing here reads. A collection that points somewhere that is
@@ -346,6 +356,7 @@ jobs:
             /LayoutTests/imported/w3c/web-platform-tests/wasm/
             /LayoutTests/imported/w3c/web-platform-tests/resources/
       - name: Install what the test runner needs
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           missing=()
@@ -364,8 +375,10 @@ jobs:
       - name: Unpack the jsc shell
         run: |
           set -euo pipefail
-          tar -xf "$RUNNER_TEMP/jsc-shell.tar" -C "$RUNNER_TEMP"
-          ls -la "$RUNNER_TEMP/bun-webkit/bin"
+          # From inside the directory: GNU tar takes the C: of a Windows path for a host name.
+          cd "$RUNNER_TEMP"
+          tar -xf jsc-shell.tar
+          ls -la bun-webkit/bin
       # testFFI and the JavaScriptCore tests each run whatever the other did, and either failing fails the job.
       - name: testFFI
         if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
@@ -377,22 +390,40 @@ jobs:
           # The jsc shell aborts when its footprint passes this. --memory-limited defaults it to 600MB, which ASAN's
           # overhead (shadow, redzones, quarantine) takes ordinary tests past.
           JSCTEST_memoryLimit: 4294967296
-        run: ${{ runner.temp }}/bun-webkit/bin/testFFI
+        run: |
+          "$RUNNER_TEMP/bun-webkit/bin/testFFI"
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env
         run: |
           set -uo pipefail
-          echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
+          root="$RUNNER_TEMP/bun-webkit"
+          results="$RUNNER_TEMP/jsc-results.json"
+          platform=()
+          case "$RUNNER_OS" in
+            Linux) echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory" ;;
+            macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
+            Windows)
+              echo "$NUMBER_OF_PROCESSORS cores"
+              # As upstream's Windows bots run it: Windows' own perl (not Git for Windows' msys one), test scripts
+              # written as ruby rather than sh, run by the ruby runner rather than make.
+              export PATH="/c/Strawberry/perl/bin:$PATH"
+              root=$(cygpath -m "$root")
+              results=$(cygpath -m "$results")
+              platform=(--test-writer=ruby --ruby-runner)
+              ;;
+          esac
+          # --quick on the small runners: see lanes.mjs.
+          if [ "$QUICK" = true ]; then platform+=(--quick); fi
           # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
           # by the release Dockerfiles, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
           # --no-fail-fast: run everything, report every failure.
           perl Tools/Scripts/run-javascriptcore-tests \
-            --no-build --root="$RUNNER_TEMP/bun-webkit" --release --jsc-only \
+            --no-build --root="$root" --release --jsc-only ${platform[@]+"${platform[@]}"} \
             --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger \
             --no-fail-fast --memory-limited \
-            --json-output="$RUNNER_TEMP/jsc-results.json" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | grep -v '^Skipping [^ ]*$'
+            --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | grep -v '^Skipping [^ ]*$'
           status=${PIPESTATUS[0]}
           echo "run-javascriptcore-tests exited with $status"
           exit "$status"
