@@ -329,6 +329,7 @@ jobs:
     timeout-minutes: ${{ matrix.quick && 300 || 90 }}
     env:
       QUICK: ${{ matrix.quick }}
+      LABEL: ${{ matrix.label }}
     defaults:
       run:
         # Also on Windows (Git for Windows' bash).
@@ -420,6 +421,8 @@ jobs:
           esac
           # --quick on the small runners: see lanes.mjs.
           if [ "$QUICK" = true ]; then platform+=(--quick); fi
+          # The tests marked //@ slow! pass their 300 second hard timeout under ASan.
+          case "$LABEL" in *-asan) platform+=(--no-slow) ;; esac
           # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
           # by the release Dockerfiles, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.

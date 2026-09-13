@@ -116,6 +116,7 @@ my $runWasm = 1;
 
 my $runCLoopMode = 0;
 my $runQuickMode = 0;
+my $noSlowTests = 0; # Bun
 
 my $forceCollectContinuously = 0;
 my $envVars = "";
@@ -304,6 +305,7 @@ Usage: $programName [options] [options to pass to build system]
   --[no-]quick                  Run some (or all) of the regular testing modes (default: $quickModeDefault)
                                 If the runner only runs some it will run the default and no-cjit-validate modes.
                                 Note, this will not change the behavior of tests that specify their own modes.
+  --no-slow                     Bun: skip the tests marked //\@ slow! (run-jsc-stress-tests --no-slow).
 
   --[no-]fail-fast              Stop this script when a test family reports an error or failure (default: $failFastDefault)
   --[no-]force-collectContinuously Enable the collectContinuously mode even if it was disabled on this platform.
@@ -393,6 +395,7 @@ GetOptions(
     'jit-stress-tests!' => \$runJITStressTests,
     'cloop' => \$runCLoopMode,
     'quick!' => \$runQuickMode,
+    'no-slow' => \$noSlowTests,
     'fail-fast!' => \$failFast,
     'force-collectContinuously!' => \$forceCollectContinuously,
     'copy!' => \$copyJSC,
@@ -968,6 +971,10 @@ sub runJSCStressTests
 
     if ($runQuickMode) {
         push(@jscStressDriverCmd, "--quick");
+    }
+
+    if ($noSlowTests) {
+        push(@jscStressDriverCmd, "--no-slow");
     }
 
     if (!$runJITStressTests) {
