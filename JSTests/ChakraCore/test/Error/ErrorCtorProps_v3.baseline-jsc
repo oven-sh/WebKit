@@ -1,9 +1,7 @@
 ReferenceError: RegExpError is not defined
 ReferenceError: ConversionError is not defined
 ---------------------------------
-toString(): function Error() {
-    [native code]
-}
+toString(): function Error() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -14,20 +12,14 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 
 ---------------------------------
-toString(): function EvalError() {
-    [native code]
-}
+toString(): function EvalError() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -38,20 +30,14 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 
 ---------------------------------
-toString(): function RangeError() {
-    [native code]
-}
+toString(): function RangeError() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -62,20 +48,14 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 
 ---------------------------------
-toString(): function ReferenceError() {
-    [native code]
-}
+toString(): function ReferenceError() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -86,20 +66,14 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 
 ---------------------------------
-toString(): function SyntaxError() {
-    [native code]
-}
+toString(): function SyntaxError() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -110,20 +84,14 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 
 ---------------------------------
-toString(): function TypeError() {
-    [native code]
-}
+toString(): function TypeError() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -134,20 +102,14 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 
 ---------------------------------
-toString(): function URIError() {
-    [native code]
-}
+toString(): function URIError() { [native code] }
 Property: 'message'
 Value: 'undefined'
 hasOwnProperty: false
@@ -158,13 +120,9 @@ Property: 'description'
 Value: 'undefined'
 hasOwnProperty: false
 Property: 'call'
-Value: 'function call() {
-    [native code]
-}'
+Value: 'function call() { [native code] }'
 hasOwnProperty: false
 Property: 'apply'
-Value: 'function apply() {
-    [native code]
-}'
+Value: 'function apply() { [native code] }'
 hasOwnProperty: false
 

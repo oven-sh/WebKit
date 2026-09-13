@@ -1,9 +1,7 @@
 Test 'toString()' on simple function:
 function foo() { var x = 1; }
 Test 'toString()' on builtin function parseFloat:
-function parseFloat() {
-    [native code]
-}
+function parseFloat() { [native code] }
 Test 'toString()' on anonymous function:
 function() {
     //anonymous
@@ -32,10 +30,6 @@ function parent() {
 
 }
 Test "somestring".indexOf.toString():
-function indexOf() {
-    [native code]
-}
+function indexOf() { [native code] }
 Test "somestring".indexOf:
-function indexOf() {
-    [native code]
-}
+function indexOf() { [native code] }
