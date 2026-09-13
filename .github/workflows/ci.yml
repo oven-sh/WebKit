@@ -248,8 +248,8 @@ jobs:
     steps: *build_steps
 
   # JavaScriptCore's own test suites (JSTests/, LayoutTests/js, the PerformanceTests collections), run by
-  # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on the
-  # runner that built it. Which lanes are tested, and why those, is in lanes.mjs.
+  # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on a
+  # runner of the architecture it was built for. Which lanes are tested, and why those, is in lanes.mjs.
   #
   # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
   # the release is still published. --no-fail-fast below means every test runs and every failure is reported before

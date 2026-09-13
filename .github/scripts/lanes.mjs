@@ -14,7 +14,8 @@
 //
 // A lane is built by `docker buildx build` of its platform's Dockerfile. The Dockerfile's `base` stage is the
 // toolchain (compilers, SDKs, sysroots) and takes no lane setting; the stages on top build ICU and WebKit from the
-// build arguments below. To add, drop, change or test a lane, change `platforms` and nothing else.
+// build arguments below. Every lane is cross-compiled from the same kind of machine, linux x86_64. To add, drop, change
+// or test a lane, change `platforms` and nothing else.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -26,8 +27,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 // Where the toolchain images are kept.
 const REGISTRY = `ghcr.io/${(process.env.GITHUB_REPOSITORY_OWNER ?? "oven-sh").toLowerCase()}/bun-webkit-build-env`;
 
-const X64 = "linux-x64-gh";
-const ARM64 = "linux-arm64-gh";
+// Every lane builds on this, in a linux/amd64 container: whatever it is for is a --target and a sysroot to clang.
+const BUILDER = "linux-x64-gh";
+// Where a tested lane is tested: a machine that can run it.
+const TESTERS = { amd64: "linux-x64-gh", arm64: "linux-arm64-gh" };
 
 // ThinLTO: the bitcode carries ThinLTO summaries, so the consumer's link gets parallel backends and cross-language
 // importing instead of one giant serial full-LTO module. -fno-split-lto-unit keeps every module a pure summary module
@@ -62,30 +65,28 @@ const NO_ASAN = ["release", "lto", "debug"];
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
 //   dockerfile      builds the lane: `base` is the toolchain, the stages on top build ICU and WebKit
-//   native          the Dockerfile is not a cross-compiler: it builds for the architecture of the container it runs
-//                   in (that architecture's packages, clang without --target). An arm64 lane therefore needs an
-//                   arm64 container, hence an arm64 runner. Every other Dockerfile runs as linux/amd64 whatever the
-//                   target, which is only a --target and a sysroot to it.
 //   packageOS       the "os" of the tarball's package.json
 //   lanes           arch -> variants built for it
 //   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG and USE_*_MIMALLOC
-//   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where the
-//                   Dockerfile runs natively or its `base` carries a per-architecture sysroot. See `images` below.
+//   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
+//                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files the `base` stage copies in, besides the Dockerfile
-//   tested          variants whose jsc shell the `test` job runs the JavaScriptCore tests with. Those have to be able to
-//                   run on the runner that built them, and want assertions: a plain Release build compiles out $vm and
+//   tested          variants whose jsc shell the `test` job runs the JavaScriptCore tests with, on a runner of the
+//                   lane's architecture (TESTERS). Those want assertions: a plain Release build compiles out $vm and
 //                   the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED).
 const platforms = [
   {
     name: "linux",
     label: arch => `bun-webkit-linux-${arch}`,
+    // The container is ubuntu 20.04 x86_64, for its glibc (2.31); arm64 is cross-compiled against an ubuntu 20.04
+    // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
-    native: true,
     packageOS: "linux",
     lanes: { amd64: ALL, arm64: ALL },
     tested: ["asan"],
-    image: arch => `linux-${arch}`,
+    image: () => "linux",
     args: (arch, v) => ({
+      LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
@@ -99,13 +100,16 @@ const platforms = [
   {
     name: "linux-musl",
     label: arch => `bun-webkit-linux-${arch}-musl`,
+    // The container is alpine x86_64; arm64 is cross-compiled against an alpine aarch64 sysroot in the same container.
     dockerfile: "Dockerfile.musl",
-    native: true,
     packageOS: "linux",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
-    image: arch => `linux-musl-${arch}`,
-    args: arch => ({ MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM }),
+    image: () => "linux-musl",
+    args: arch => ({
+      LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
+      MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
+    }),
   },
   {
     // clang --target + a pinned macOS SDK, linked with ld64.lld. mac-release.bash remains for building on a real Mac.
@@ -204,12 +208,12 @@ const lanes = platforms.flatMap(platform =>
       const buildType = platform.buildType?.(v) ?? v.buildType;
       return {
         label: platform.label(arch) + (variant === "release" ? "" : `-${variant}`),
-        runner: platform.native && arch === "arm64" ? ARM64 : X64,
+        runner: BUILDER,
         dockerfile: platform.dockerfile,
-        docker_platform: platform.native && arch === "arm64" ? "linux/arm64" : "linux/amd64",
         package_os: platform.packageOS,
         package_cpu: arch === "arm64" ? "arm64" : "x64",
         test: platform.tested?.includes(variant) ?? false,
+        test_runner: TESTERS[arch],
         image: imageRef(platform, arch),
         build_args: {
           WEBKIT_RELEASE_TYPE: buildType,
@@ -237,7 +241,7 @@ const images = [...new Map(lanes.toReversed().map(lane => [lane.image, lane])).v
 }));
 
 function docker(lane, rest, dryRun) {
-  const argv = ["buildx", "build", "-f", lane.dockerfile, "--platform", lane.docker_platform, "--progress=plain"];
+  const argv = ["buildx", "build", "-f", lane.dockerfile, "--platform", "linux/amd64", "--progress=plain"];
   for (const [key, value] of Object.entries(lane.build_args)) argv.push("--build-arg", `${key}=${value}`);
   argv.push(...rest, ".");
   if (dryRun) return console.log(JSON.stringify(["docker", ...argv]));
@@ -283,7 +287,7 @@ if (command === "build") {
   const build = ({ label, runner, image, package_os, package_cpu }) => ({ label, runner, image, package_os, package_cpu });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(({ label, runner }) => ({ label, runner })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner })))}`);
   console.log(`labels=${JSON.stringify(labels)}`);
   console.log(`images=${matrix(images.map(({ name, image, runner }) => ({ name, image, runner })))}`);
 } else if (command === "--json") {

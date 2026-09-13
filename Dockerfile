@@ -9,15 +9,18 @@ ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffu
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
+# What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
+# `base` carries. The container itself is always linux/amd64.
+ARG LINUX_ARCH="x86_64"
 
-# Use different base images for ARM64 vs x86_64
-FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
-FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-amd64
+# The arm64 ubuntu:20.04, only ever copied from (see the aarch64 sysroot in `base`): nothing of it is run.
+FROM --platform=linux/arm64 ubuntu:20.04 as rootfs-arm64
+
 # `base` is the toolchain and nothing else: it takes no lane setting (LTO_FLAG, MARCH_FLAG, WEBKIT_RELEASE_TYPE, ...), so
 # it is the same for every lane of an architecture. CI builds it once per change, keeps it in ghcr.io, and hands it to
 # the lanes as `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the
 # `image` job). Without that, it is built here like any other stage. Lane settings belong in `lane` below.
-FROM base-$TARGETARCH as base
+FROM ubuntu:20.04 as base
 
 ARG LLVM_VERSION
 ARG TARGETARCH
@@ -198,8 +201,101 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
     ./test && \
     rm test.cpp test
 
+# ───────────────────────────────────────────────────────────────────────────
+# aarch64. This container also builds the arm64 lanes, as a cross-compiler: clang --target=aarch64-unknown-linux-gnu
+# --sysroot=$SYSROOT_AARCH64.
+#
+# The sysroot is what an arm64 ubuntu:20.04 with the packages above installed has where clang looks, from the same
+# places: glibc 2.31 from focal, and libstdc++ and libgcc from the arm64 half of the gcc-13-focal-debs mirror. Nothing
+# here can run arm64 code, so packages are unpacked over the arm64 ubuntu:20.04 image (which brings the merged-/usr
+# layout: --keep-directory-symlink keeps /lib -> usr/lib a symlink) rather than installed.
+#
+# The glibc an artifact is built against decides where it runs. It must be the container's own, 2.31: checked here, and
+# again on every jsc that is linked (the WebKit step below).
+# ───────────────────────────────────────────────────────────────────────────
+ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
+COPY --from=rootfs-arm64 / ${SYSROOT_AARCH64}/
+RUN set -eu; \
+    dpkg --add-architecture arm64; \
+    sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list /etc/apt/sources.list.d/*.list; \
+    for suite in focal focal-updates focal-security; do \
+      echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $suite main universe"; \
+    done > /etc/apt/sources.list.d/arm64.list; \
+    apt-get update; \
+    mkdir -p /tmp/arm64 && cd /tmp/arm64; \
+    apt-get download libc6:arm64 libc6-dev:arm64 linux-libc-dev:arm64 libcrypt1:arm64 libcrypt-dev:arm64; \
+    curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs/gcc-13-focal-arm64.tar.gz" -o gcc13.tar.gz; \
+    echo "${GCC13_DEBS_SHA256_arm64}  gcc13.tar.gz" | sha256sum -c -; \
+    tar xzf gcc13.tar.gz && rm gcc13.tar.gz; \
+    for deb in *.deb; do \
+      dpkg-deb --fsys-tarfile "$deb" | tar -xf - -C "$SYSROOT_AARCH64" --keep-directory-symlink; \
+    done; \
+    container=$(dpkg-query -W -f='${Version}' libc6:amd64); \
+    sysroot=$(dpkg-deb -f libc6_*_arm64.deb Version); \
+    echo "glibc: container $container, aarch64 sysroot $sysroot"; \
+    [ "${container%%-*}" = 2.31 ] && [ "${sysroot%%-*}" = 2.31 ]; \
+    test -L "$SYSROOT_AARCH64/lib"; \
+    test -f "$SYSROOT_AARCH64/usr/lib/aarch64-linux-gnu/libc.so"; \
+    test -f "$SYSROOT_AARCH64/usr/lib/gcc/aarch64-linux-gnu/13/libstdc++.a"; \
+    test -d "$SYSROOT_AARCH64/usr/include/aarch64-linux-gnu/c++/13"; \
+    cd / && rm -rf /tmp/arm64 /var/lib/apt/lists/*
+
+# The sanitizer runtimes for aarch64. An x86_64 LLVM install only has its own; these are the ones the arm64 LLVM
+# packages (the arm64 half of the llvm debs mirror) put in the same place.
+RUN set -eu; \
+    mkdir -p /tmp/llvm-arm64 && cd /tmp/llvm-arm64; \
+    curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-arm64.tar.gz" -o llvm.tar.gz; \
+    echo "${LLVM_DEBS_SHA256_arm64}  llvm.tar.gz" | sha256sum -c -; \
+    tar xzf llvm.tar.gz --wildcards --no-anchored 'libclang-rt-*-dev_*_arm64.deb' && rm llvm.tar.gz; \
+    for deb in $(find . -name 'libclang-rt-*-dev_*_arm64.deb'); do dpkg-deb -x "$deb" unpacked; done; \
+    cp -rn unpacked/usr/lib/llvm-${LLVM_VERSION}/lib/clang/. /usr/lib/llvm-${LLVM_VERSION}/lib/clang/; \
+    find "$(clang -print-resource-dir)/" -name 'libclang_rt.asan*aarch64*' | grep -q .; \
+    cd / && rm -rf /tmp/llvm-arm64
+
+# Verify the cross toolchain: C++20 against the sysroot's libstdc++, plain and with the sanitizers, is an AArch64 ELF.
+RUN set -eu; \
+    printf '#include <iostream>\n#include <numbers>\nint main() { std::cout << std::numbers::pi << std::endl; return 0; }\n' > /tmp/t.cpp; \
+    for san in "" "-fsanitize=address,undefined"; do \
+      env -u LIBRARY_PATH -u CPLUS_INCLUDE_PATH -u C_INCLUDE_PATH -u LDFLAGS \
+        ${CXX} --target=aarch64-unknown-linux-gnu --sysroot=${SYSROOT_AARCH64} -std=c++20 -fuse-ld=lld $san /tmp/t.cpp -o /tmp/t; \
+      llvm-readelf -h /tmp/t | grep -q AArch64; \
+    done; \
+    rm /tmp/t.cpp /tmp/t
+
+# ICU's tools, for this container. ICU runs them while it builds (pkgdata, genrb, ...), and the lanes filter and repack
+# its data with icupkg: a lane that builds ICU for aarch64 cannot run the ones it builds. Same tarball as in `lane`.
+ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu-host.tgz
+RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu-host.tgz --strip-components=1 && rm /icu-host.tgz && cd source && \
+    CFLAGS="-Os" CXXFLAGS="-Os" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
+    make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
+
+# What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
+FROM base as lane-x86_64
+
+ARG MARCH_FLAG
+ARG DEFAULT_CFLAGS
+
+ENV CFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
+ENV CXXFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
+
+FROM base as lane-aarch64
+
+ARG MARCH_FLAG
+ARG DEFAULT_CFLAGS
+
+# `base` points clang at the container's own GCC, headers and libraries, which are x86_64. With a sysroot clang finds
+# the aarch64 ones there by itself, the way it does in an arm64 container, where those paths do not exist.
+ENV LIBRARY_PATH=""
+ENV CPLUS_INCLUDE_PATH=""
+ENV C_INCLUDE_PATH=""
+ENV LDFLAGS="-fuse-ld=lld"
+ENV CFLAGS="--sysroot=${SYSROOT_AARCH64} ${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
+ENV CXXFLAGS="--sysroot=${SYSROOT_AARCH64} ${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
+
 # The lane: its settings, then ICU and WebKit built with them.
-FROM base as lane
+FROM lane-${LINUX_ARCH} as lane
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
@@ -212,12 +308,14 @@ ARG TARGETARCH
 ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
+ARG LINUX_ARCH
 
 ENV LTO_FLAG="${LTO_FLAG}"
-ENV CFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
-ENV CXXFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
 
 # Download and build ICU.
+#
+# For aarch64 this is a cross build: ICU uses the container's tools (/icu-host) where it would run its own, and so do
+# the data filtering and repacking; "$@" is what tells compress-data.ts to assemble for aarch64.
 #
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools).
@@ -251,22 +349,31 @@ RUN --mount=type=tmpfs,target=/icu \
     export CFLAGS="$CFLAGS $G -Os -std=c17 $LTO_FLAG" && \
     export CXXFLAGS="$CXXFLAGS $G -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
+    if [ "$LINUX_ARCH" = aarch64 ]; then \
+        ICU_CROSS="--host=aarch64-unknown-linux-gnu --with-cross-build=/icu-host/source"; \
+        ICUPKG=/icu-host/source/bin/icupkg; \
+        set -- --cc "$CC --target=aarch64-unknown-linux-gnu" --ar llvm-ar; \
+    else \
+        ICU_CROSS=""; \
+        ICUPKG=bin/icupkg; \
+        set --; \
+    fi && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
     patch -p1 < /icu-bun/udata-decompress-hook.patch && \
     cd source && \
-    ./configure --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
+    ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     make -j$(nproc) && \
-    mkdir -p /tmp/ns && bin/icupkg -x numberingSystems.res data/in/icudt78l.dat -d /tmp/ns && \
+    mkdir -p /tmp/ns && $ICUPKG -x numberingSystems.res data/in/icudt78l.dat -d /tmp/ns && \
     stale=$(strings -el /tmp/ns/numberingSystems.res | sed -n 's|^\([A-Za-z_][A-Za-z_]*\)/.*|\1|p' | sort -u | grep -vxE 'ja|zh|zh_Hant' | tr '\n' ' ') && \
     { [ -z "$stale" ] || { echo "rbnf keep-list is stale, also reachable: $stale" >&2; exit 1; }; } && \
-    bin/icupkg -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
+    $ICUPKG -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
+    $ICUPKG --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
     mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg $ICUPKG "$@"
 
 # Copy WebKit source and build
 COPY . /webkit
@@ -276,6 +383,9 @@ ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
+# After linking, the newest glibc symbol version jsc needs is read off it: that is the oldest glibc the artifact runs
+# on, and it must not be past the container's, 2.31.
+#
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
@@ -289,8 +399,12 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     if [ -n "$ENABLE_SANITIZERS" ]; then \
         export ENABLE_ASSERTS="ON"; \
     fi && \
+    CROSS_CMAKE="" && \
+    if [ "$LINUX_ARCH" = aarch64 ]; then \
+        CROSS_CMAKE="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_SYSROOT=$SYSROOT_AARCH64 -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH"; \
+    fi && \
     cd /webkitbuild && \
-    cmake \
+    cmake $CROSS_CMAKE \
     -DPORT="JSCOnly" \
     -DENABLE_STATIC_JSC=ON \
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
@@ -319,6 +433,10 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cd /webkitbuild && \
     cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
+    glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
+    echo "jsc needs glibc symbols up to $glibc" && \
+    { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
@@ -334,6 +452,5 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore
 
 FROM scratch as artifact
-ARG TARGETARCH
 
 COPY --from=lane /output /

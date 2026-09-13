@@ -6,15 +6,19 @@ ARG LLVM_VERSION="21"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
+# What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
+# `base` carries. The container itself is always linux/amd64.
+ARG LINUX_ARCH="x86_64"
 
-# `base` is the toolchain and nothing else: it takes no lane setting, so it is the same for every lane of an
-# architecture. CI builds it once per change, keeps it in ghcr.io, and hands it to the lanes as
+# `base` is the toolchain and nothing else: it takes no lane setting, so it is the same for every lane. CI builds it once per change, keeps it in ghcr.io, and hands it to the lanes as
 # `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the `image` job).
 # Without that, it is built here like any other stage. Lane settings belong in `lane` below.
 FROM alpine:3.23 as base
 
 RUN apk update
 RUN apk add --no-cache cmake make clang21 clang21-static clang21-dev llvm21-dev llvm21-static musl-dev git lld libgcc gcc g++ libstdc++ build-base lld-dev llvm21-libs libc-dev xz zlib zlib-dev libxml2 libxml2-dev
+# What the ICU and WebKit stages need on top of that.
+RUN apk add --no-cache cpio curl tar nodejs patch file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
 
 ENV CXX=clang++-21
 ENV CC=clang-21
@@ -28,16 +32,75 @@ ENV AR llvm-ar
 ENV RANLIB llvm-ranlib
 ENV LD lld
 
+# Install zstd (for icu/compress-data.ts). Pinned to match Bun's vendored
+# decoder so glibc/musl prebuilts compress identically.
+ARG ZSTD_VERSION=1.5.7
+RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
+    && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
+    && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
+    && rm -rf /tmp/zstd-${ZSTD_VERSION} \
+    && zstd --version
+
+# ───────────────────────────────────────────────────────────────────────────
+# aarch64. This container also builds the arm64 lanes, as a cross-compiler: clang --target=aarch64-alpine-linux-musl
+# --sysroot=$SYSROOT_AARCH64.
+#
+# The sysroot is the aarch64 build of the packages clang reads when it compiles and links in this container (musl,
+# libstdc++ and GCC's libgcc and crt files, the kernel headers), from the same Alpine repository at the same time, put
+# there by apk. --no-scripts: nothing here can run aarch64 code.
+#
+# The musl an artifact is built against must be the container's own: checked here.
+# ───────────────────────────────────────────────────────────────────────────
+ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
+RUN set -eu; \
+    mkdir -p "$SYSROOT_AARCH64/etc/apk"; \
+    cp /etc/apk/repositories "$SYSROOT_AARCH64/etc/apk/repositories"; \
+    cp -r /usr/share/apk/keys/aarch64 "$SYSROOT_AARCH64/etc/apk/keys"; \
+    apk add --root "$SYSROOT_AARCH64" --arch aarch64 --initdb --no-scripts --no-cache musl-dev libstdc++-dev gcc linux-headers; \
+    container=$(apk list --installed musl | cut -d' ' -f1); \
+    sysroot=$(apk --root "$SYSROOT_AARCH64" list --installed musl | cut -d' ' -f1); \
+    echo "musl: container $container, aarch64 sysroot $sysroot"; \
+    [ -n "$container" ] && [ "$container" = "$sysroot" ]; \
+    test -f "$SYSROOT_AARCH64/usr/lib/libc.so"; \
+    test -f "$SYSROOT_AARCH64/usr/lib/libstdc++.a"; \
+    ls -d "$SYSROOT_AARCH64"/usr/lib/gcc/aarch64-alpine-linux-musl/*/crtbegin.o
+
+# Verify the cross toolchain: C++20 against the sysroot's libstdc++ is an AArch64 ELF.
+RUN set -eu; \
+    printf '#include <iostream>\n#include <numbers>\nint main() { std::cout << std::numbers::pi << std::endl; return 0; }\n' > /tmp/t.cpp; \
+    env -u CXXFLAGS -u LDFLAGS ${CXX} --target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64} -std=c++20 -fuse-ld=lld /tmp/t.cpp -o /tmp/t; \
+    llvm-readelf -h /tmp/t | grep -q AArch64; \
+    rm /tmp/t.cpp /tmp/t
+
+# ICU's tools, for this container. ICU runs them while it builds (pkgdata, genrb, ...), and the lanes filter and repack
+# its data with icupkg: a lane that builds ICU for aarch64 cannot run the ones it builds. Same tarball as in build_icu.
+ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu-host.tgz
+RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu-host.tgz --strip-components=1 && rm /icu-host.tgz && cd source && \
+    CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
+    make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
+
+# What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
+FROM base as lane-x86_64
+
+FROM base as lane-aarch64
+
+# clang builds for the container's architecture unless told otherwise. `base` also puts the container's own
+# /usr/include on the command line (CXXFLAGS): -I=/usr/include is that directory of the sysroot.
+ENV CFLAGS="--target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64}"
+ENV CXXFLAGS="--target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64} -I=/usr/include"
+
 # The lane's settings. ICU and WebKit build on top of this.
-FROM base as lane
+FROM lane-${LINUX_ARCH} as lane
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
 ARG CPU
 ARG LTO_FLAG
+ARG LINUX_ARCH
 
 ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
+ENV LINUX_ARCH=${LINUX_ARCH}
 ENV LTO_FLAG="${LTO_FLAG}"
 ENV WEBKIT_RELEASE_TYPE="${WEBKIT_RELEASE_TYPE}"
 
@@ -50,17 +113,9 @@ ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 
-RUN apk add --no-cache cpio curl tar nodejs patch
-
-# Install zstd (for icu/compress-data.ts). Pinned to match Bun's vendored
-# decoder so glibc/musl prebuilts compress identically.
-ARG ZSTD_VERSION=1.5.7
-RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
-    && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
-    && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
-    && rm -rf /tmp/zstd-${ZSTD_VERSION} \
-    && zstd --version
-
+# For aarch64 this is a cross build: ICU uses the container's tools (/icu-host) where it would run its own, and so do
+# the data filtering and repacking; "$@" is what tells compress-data.ts to assemble for aarch64.
+#
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools).
 #
@@ -82,19 +137,28 @@ RUN --mount=type=tmpfs,target=/icu \
     export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS -Os -std=c17 $LTO_FLAG" && \
     export CXXFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CXXFLAGS -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
+    if [ "$LINUX_ARCH" = aarch64 ]; then \
+        ICU_CROSS="--host=aarch64-alpine-linux-musl --with-cross-build=/icu-host/source"; \
+        ICUPKG=/icu-host/source/bin/icupkg; \
+        set -- --cc "$CC --target=aarch64-alpine-linux-musl" --ar llvm-ar; \
+    else \
+        ICU_CROSS=""; \
+        ICUPKG=bin/icupkg; \
+        set --; \
+    fi && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
     patch -p1 < /icu-bun/udata-decompress-hook.patch && \
     cd source && \
-    ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
+    ./configure $ICU_CROSS --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
     make -j$(nproc) && \
-    bin/icupkg -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
+    $ICUPKG -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
+    $ICUPKG --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
     mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg $ICUPKG "$@"
 
 FROM lane as build_webkit
 
@@ -106,8 +170,6 @@ ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
-
-RUN apk add --no-cache cpio curl file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
 
 ENV WEBKIT_OUT_DIR=/webkitbuild
 # These are unnecessary on musl
@@ -123,8 +185,12 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
+    CROSS_CMAKE="" && \
+    if [ "$LINUX_ARCH" = aarch64 ]; then \
+        CROSS_CMAKE="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_SYSROOT=$SYSROOT_AARCH64 -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH"; \
+    fi && \
     cd /webkitbuild && \
-    cmake \
+    cmake $CROSS_CMAKE \
     -DPORT="JSCOnly" \
     -DENABLE_STATIC_JSC=ON \
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
@@ -149,6 +215,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cd /webkitbuild && \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
