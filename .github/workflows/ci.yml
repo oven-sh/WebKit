@@ -117,8 +117,8 @@ jobs:
           echo "release_id=${created%% *}" >> "$GITHUB_OUTPUT"
 
   # The toolchain images, in ghcr.io. One whose tag is already there is left alone, so this is a few seconds unless a
-  # Dockerfile's `base` stage changed. Pushing takes `packages: write`; if an image cannot be pushed the lanes that want
-  # it build the toolchain themselves, as they would outside CI.
+  # Dockerfile's `base` stage changed. Pushing takes `packages: write`. The lanes need these images: a leg that cannot
+  # build or push its image fails, and no lane starts.
   image:
     name: image ${{ matrix.name }}
     needs: plan
@@ -136,7 +136,7 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
         run: |
-          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin || true
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo "$IMAGE exists"; else echo "missing=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         if: steps.look.outputs.missing
@@ -150,7 +150,6 @@ jobs:
         with:
           install: true
       - name: Build and push
-        id: push
         if: steps.look.outputs.missing
         env:
           IMAGE: ${{ matrix.image }}
@@ -161,14 +160,10 @@ jobs:
           exports=$(jq -r 'to_entries[] | "export \(.key)=\(.value | @sh)"' <<< "$SCRIPT_ENV")
           eval "$exports"
           # The release script, building only the `base` stage and pushing it (scripts/docker-build-mode.sh).
-          if temp="$RUNNER_TEMP" PUSH_BASE_IMAGE="$IMAGE" bash "$SCRIPT"; then
-            echo "pushed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::could not build and push $IMAGE; the lanes that use it will build the toolchain themselves"
-          fi
+          temp="$RUNNER_TEMP" PUSH_BASE_IMAGE="$IMAGE" bash "$SCRIPT"
       # Only builds of main tidy up: a pull request that changes a Dockerfile has its own images, next to main's.
       - name: Delete the images this one supersedes
-        if: steps.push.outputs.pushed && github.ref == 'refs/heads/main'
+        if: steps.look.outputs.missing && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: /orgs/${{ github.repository_owner }}/packages/container/bun-webkit-build-env
@@ -225,13 +220,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
-          # Start from the lane's toolchain image. Without it the release script builds the toolchain first.
-          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin || true
-          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
-            export BASE_IMAGE="$IMAGE"
-          else
-            echo "::warning::$IMAGE is not in the registry, building the toolchain here"
-          fi
+          # Start from the lane's toolchain image, which `image` made sure is there (scripts/docker-build-mode.sh).
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          export BASE_IMAGE="$IMAGE"
           exports=$(jq -r 'to_entries[] | "export \(.key)=\(.value | @sh)"' <<< "$SCRIPT_ENV")
           eval "$exports"
           temp="$RUNNER_TEMP" bash "$SCRIPT"
