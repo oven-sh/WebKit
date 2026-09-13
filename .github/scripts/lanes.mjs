@@ -62,8 +62,10 @@ const NO_ASAN = ["release", "lto", "debug"];
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
 //   dockerfile      builds the lane: `base` is the toolchain, the stages on top build ICU and WebKit
-//   native          the lane runs on the machine that builds it, so it builds on a runner of its own architecture.
-//                   Everything else is cross-compiled from linux x64.
+//   native          the Dockerfile is not a cross-compiler: it builds for the architecture of the container it runs
+//                   in (that architecture's packages, clang without --target). An arm64 lane therefore needs an
+//                   arm64 container, hence an arm64 runner. Every other Dockerfile runs as linux/amd64 whatever the
+//                   target, which is only a --target and a sysroot to it.
 //   packageOS       the "os" of the tarball's package.json
 //   lanes           arch -> variants built for it
 //   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG and USE_*_MIMALLOC
