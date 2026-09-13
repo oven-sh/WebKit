@@ -84,10 +84,8 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
 //                   the runner it does that on: a machine of the lane's own platform and architecture. "asan" is
-//                   Release with assertions and the sanitizers, and the only one every test can pass on: a plain Release
-//                   build compiles out $vm and the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER
-//                   default to ASSERT_ENABLED), so on "lto" ("release" where there is no lto lane), which is what bun
-//                   ships, the tests that use those fail and the rest say how the shipped build behaves. `quick` is --quick, for the small runners.
+//                   Release with assertions and the sanitizers; "lto" ("release" where there is no lto lane) is what bun
+//                   ships. `quick` is --quick, for the small runners.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
