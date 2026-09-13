@@ -571,16 +571,47 @@ void MarkedBlock::Handle::decommitUnusedPages()
         // Dead cells in these pages read back as zero afterwards, i.e. zapped: destructors already ran in the
         // sweep that preceded this call, and building a free list later writes before it reads.
         OSAllocator::decommit(base + page * pageSize, (runEnd - page) * pageSize);
+        if (Options::poisonDecommittedMarkedBlockPages()) [[unlikely]]
+            poisonDecommittedPages(base + page * pageSize, (runEnd - page) * pageSize);
         page = runEnd;
     }
     m_decommittedPages |= toDecommit;
 #endif
 }
 
+// Testing: nothing may read a decommitted page until the block is swept to a free list or freed. Under ASan a read is
+// reported where it happens; otherwise the pages are filled with a pattern that is neither a zapped cell nor a valid one.
+void MarkedBlock::Handle::poisonDecommittedPages(void* start, size_t size)
+{
+#if ASAN_ENABLED
+    __asan_poison_memory_region(start, size);
+#else
+    memset(start, 0xbd, size);
+#endif
+}
+
+void MarkedBlock::Handle::unpoisonDecommittedPages()
+{
+    size_t pageSize = WTF::pageSize();
+    unsigned pageCount = blockSize / pageSize;
+    char* base = reinterpret_cast<char*>(&block());
+    for (unsigned page = 0; page < pageCount; ++page) {
+        if (!(m_decommittedPages & (1u << page)))
+            continue;
+#if ASAN_ENABLED
+        __asan_unpoison_memory_region(base + page * pageSize, pageSize);
+#else
+        memset(base + page * pageSize, 0, pageSize);
+#endif
+    }
+}
+
 void MarkedBlock::Handle::recommitPages()
 {
     if (!m_decommittedPages) [[likely]]
         return;
+    if (Options::poisonDecommittedMarkedBlockPages()) [[unlikely]]
+        unpoisonDecommittedPages();
 #if OS(DARWIN)
     // OSAllocator::decommit is MADV_FREE_REUSABLE there and wants a matching MADV_FREE_REUSE for the kernel's
     // accounting; elsewhere decommitted anonymous pages simply fault back in as zero pages.
