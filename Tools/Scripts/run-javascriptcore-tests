@@ -52,7 +52,10 @@ maybeEnterWebKitContainerSDK();
 setConfiguration();
 my $configuration = configuration();
 
-if (isLinux()) {
+# Looking up the port takes the port's option (--jsc-only, --gtk, ...) out of @ARGV, which GetOptions below does not
+# know. Bun: also wherever --jsc-only is given, not only on Linux, so that the JSCOnly port can be tested on macOS and
+# Windows (its jsc is <root>/bin/jsc; the Cocoa port's is <root>/jsc next to a JavaScriptCore.framework).
+if (isLinux() || grep { $_ eq "--jsc-only" } @ARGV) {
     portName();
 }
 
