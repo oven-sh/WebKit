@@ -1,6 +1,4 @@
 var abort = $vm.abort;
-var origin = callerSourceOrigin();
-var moduleURL = origin.slice(0, origin.lastIndexOf("/") + 1) + "resources/error-module.js";
 
 function shouldBe(actual, expected)
 {
@@ -16,7 +14,7 @@ function shouldBe(actual, expected)
         } catch (error) {
             errorMessage = String(error);
         }
-        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module '${moduleURL}'.`);
+        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module '${callerSourceOrigin().slice(0, callerSourceOrigin().lastIndexOf("/") + 1)}resources/error-module.js'.`);
     }
     {
         let errorMessage = null;
@@ -25,6 +23,6 @@ function shouldBe(actual, expected)
         } catch (error) {
             errorMessage = String(error);
         }
-        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module '${moduleURL}'.`);
+        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module '${callerSourceOrigin().slice(0, callerSourceOrigin().lastIndexOf("/") + 1)}resources/error-module.js'.`);
     }
 }()).catch(abort);
