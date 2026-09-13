@@ -12,17 +12,19 @@ function shouldBe(actual, expected)
         try {
             await import("./resources/error-module.js");
         } catch (error) {
-            errorMessage = String(error);
+            // This fork's message names the module by its URL; compare with the directory taken off.
+            errorMessage = String(error).replace(/file:\/\/.*\//, "");
         }
-        shouldBe(errorMessage, `SyntaxError: Importing binding name 'x' is not found.`);
+        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module 'error-module.js'.`);
     }
     {
         let errorMessage = null;
         try {
             await import("./resources/error-module.js");
         } catch (error) {
-            errorMessage = String(error);
+            // This fork's message names the module by its URL; compare with the directory taken off.
+            errorMessage = String(error).replace(/file:\/\/.*\//, "");
         }
-        shouldBe(errorMessage, `SyntaxError: Importing binding name 'x' is not found.`);
+        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module 'error-module.js'.`);
     }
 }()).catch(abort);
