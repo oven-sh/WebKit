@@ -1,6 +1,6 @@
-// TODO(bun): port upstream's RegExp buffer boundaries (\A \z \Z, 2f66f5ed23f9) to this fork's YARR. The upstream sync #455
-// brought this test in but kept the fork's YARR (rewritten in #299) where the two conflicted, so the fork has neither the
-// feature nor --useRegExpBufferBoundaries, and the parser rejects \A in a Unicode pattern.
+// TODO(bun): bring in upstream's RegExp buffer boundaries (\A \z \Z, 2f66f5ed23f9). The upstream sync #455 added this test
+// but not that commit's changes under yarr/, so the fork has neither the feature nor --useRegExpBufferBoundaries, and the
+// parser rejects \A in a Unicode pattern.
 //@ skip
 //@ requireOptions("--useRegExpBufferBoundaries=1")
 
