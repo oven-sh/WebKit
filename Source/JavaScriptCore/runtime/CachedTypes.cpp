@@ -4930,8 +4930,8 @@ protected:
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
-    // @importModule.
-    static constexpr uint32_t cachedTypesFormatRevision = 5;
+    // @importModule. 6: op_iterator_close_check (opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 6;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

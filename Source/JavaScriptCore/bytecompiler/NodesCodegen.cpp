@@ -5856,7 +5856,15 @@ void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) 
         return;
     }
 
+    // op_iterator_next and op_iterator_close_check read the iterable back from its register for as long as the iterator is open,
+    // so it has to be in one that nothing emitted below (default values, nested targets) can assign to: a temporary, or the slot
+    // of the argument that a parameter pattern binds from (no name refers to it, and a function with a pattern among its
+    // parameters has an arguments object that is not mapped to them).
     RefPtr<RegisterID> iterable = rhs;
+    if (!rhs->isTemporary() && !rhs->virtualRegister().isArgument()) {
+        iterable = generator.newTemporary();
+        generator.move(iterable.get(), rhs);
+    }
     RefPtr<RegisterID> iterator = generator.newTemporary();
     RefPtr<RegisterID> nextOrIndex = generator.newTemporary();
     {
@@ -5868,7 +5876,7 @@ void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) 
     }
 
     if (m_targetPatterns.isEmpty()) {
-        generator.emitIteratorGenericClose(iterator.get(), this);
+        generator.emitIteratorCloseAfterIteratorOpen(iterator.get(), nextOrIndex.get(), iterable.get(), this);
         return;
     }
 
@@ -5980,7 +5988,7 @@ void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) 
     auto emitIteratorClose = [&](BytecodeGenerator& generator) {
         Ref<Label> iteratorClosed = generator.newLabel();
         generator.emitJumpIfTrue(done.get(), iteratorClosed.get());
-        generator.emitIteratorGenericClose(iterator.get(), this);
+        generator.emitIteratorCloseAfterIteratorOpen(iterator.get(), nextOrIndex.get(), iterable.get(), this);
         generator.emitLabel(iteratorClosed.get());
     };
 

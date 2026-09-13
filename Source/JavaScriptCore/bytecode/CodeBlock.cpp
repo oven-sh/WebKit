@@ -522,10 +522,18 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     }
 
     const auto& instructionStream = instructions();
+    // op_iterator_close_check and the jtrue that follows it stand in front of every IteratorClose sequence of a for-of or an array pattern.
+    // They cost next to nothing in any tier, and they are not counted: tier-up thresholds and inlining budgets scale with this number, and
+    // making every such function look 8 bigger than it did shifts what gets compiled when, for no reason (JetStream2's Babylon: one more
+    // large FTL compilation, +4% instructions).
+    bool previousWasIteratorCloseCheck = false;
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
-        m_bytecodeCost += opcodeLengths[opcodeID] + 1;
+        bool isFree = opcodeID == op_iterator_close_check || (previousWasIteratorCloseCheck && opcodeID == op_jtrue);
+        previousWasIteratorCloseCheck = opcodeID == op_iterator_close_check;
+        if (!isFree)
+            m_bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
         LINK(OpGetByVal)
         LINK(OpGetPrivateName)

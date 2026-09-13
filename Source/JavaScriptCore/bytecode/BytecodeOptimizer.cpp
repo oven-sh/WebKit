@@ -220,6 +220,8 @@ static bool allowsOperandSubstitution(const Insn& insn)
     case op_enumerator_next:
     case op_async_iterator_open:
     case op_async_iterator_next:
+    // Reads and writes its iterator operand, and names the registers that op_iterator_open / op_iterator_next keep their state in.
+    case op_iterator_close_check:
         return false;
     default:
         return true;
