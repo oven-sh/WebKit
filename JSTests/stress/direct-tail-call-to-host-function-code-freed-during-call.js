@@ -1,5 +1,5 @@
-//@ runDefault("--zeroExecutableMemoryOnFree=1", "--useConcurrentJIT=0")
-//@ runDefault("--zeroExecutableMemoryOnFree=1", "--useConcurrentJIT=0", "--useFTLJIT=0")
+//@ runDefault("--zeroExecutableMemoryOnFree=1", "--useConcurrentJIT=0", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000")
+//@ runDefault("--zeroExecutableMemoryOnFree=1", "--useConcurrentJIT=0", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000", "--useFTLJIT=0")
 
 // A direct tail call to a host function must not run the call thunk from the
 // caller's own JIT code. The tail call destroys the caller's frame, so nothing
@@ -34,7 +34,7 @@ const arg = {
 
 function hot(v) { return o.f(v); }
 
-for (let i = 0; i < 50000; i++)
+for (let i = 0; i < testLoopCount; i++)
     hot(arg);
 
 armed = true;
@@ -44,5 +44,5 @@ for (let i = 0; i < 3; i++) {
         throw new Error(`expected "x", got ${result}`);
 }
 
-if (hookCalls !== 50003)
-    throw new Error(`expected 50003 hook calls, got ${hookCalls}`);
+if (hookCalls !== testLoopCount + 3)
+    throw new Error(`expected ${testLoopCount + 3} hook calls, got ${hookCalls}`);
