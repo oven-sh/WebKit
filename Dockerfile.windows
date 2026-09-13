@@ -17,7 +17,7 @@
 # Differences from the native Windows build:
 #   - ICU is cross-compiled from source with clang's GNU driver + llvm-ar
 #     instead of MSBuild + the ICU Visual Studio solution. Same version
-#     (78.3), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
+#     (icu/source.json), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
 #     statically-embedded 32 MB data table.
 #   - The "patch the cmake .bat files" workaround is not needed: cmake on a
 #     Linux host generates POSIX shell commands for custom commands.
@@ -47,9 +47,6 @@ ARG WIN_SDK_VERSION="10.0.26100"
 # manifest xwin caches as pkg_manifest_*.vsman): bump it together with MSVC_CRT_VERSION.
 ARG MSVC_CRT_ARM64_DEBUG_URL="https://download.visualstudio.microsoft.com/download/pr/67cf767c-5e71-47c2-a54a-cd5631e28942/317e00c77dc51611fd7bec279b1ef67790bc73df8fe5bbc19432213b84d5e7ee/Microsoft.VC.14.44.17.14.CRT.ARM64.Desktop.debug.base.vsix"
 ARG MSVC_CRT_ARM64_DEBUG_SHA256="317e00c77dc51611fd7bec279b1ef67790bc73df8fe5bbc19432213b84d5e7ee"
-ARG ICU_VERSION="78.3"
-ARG ICU_MAJOR="78"
-ARG ICU_SHA256="3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
 
 # ───────────────────────────────────────────────────────────────────────────
 # base — LLVM + the xwin-splatted MSVC CRT and Windows SDK
@@ -215,6 +212,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf
       | tar -xJ -C /usr/local --strip-components=1 && \
     node --version
 
+# Which ICU: icu/source.json, by way of lanes.mjs.
 ARG ICU_VERSION
 ARG ICU_SHA256
 ADD --checksum=sha256:${ICU_SHA256} \
@@ -247,7 +245,7 @@ ARG WIN_ARCH
 ARG WIN_TRIPLE_ARCH
 ARG WEBKIT_RELEASE_TYPE
 ARG ICU_MARCH_FLAG
-ARG ICU_MAJOR
+ARG ICU_VERSION
 ARG LLVM_VERSION
 
 COPY icu/ /icu-bun/
@@ -330,7 +328,7 @@ RUN mkdir -p /icu-out/lib /icu-out/include && \
       --cc "clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc" --ar llvm-ar --obj-format coff && \
     SIZE=$(stat -c%s /icu-out/lib/sicudt.lib) && echo "sicudt.lib: ${SIZE} bytes" && \
     test "$SIZE" -gt 8000000 && test "$SIZE" -lt 16000000 && \
-    llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R icudt${ICU_MAJOR}_dat" && \
+    llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R icudt${ICU_VERSION%%.*}_dat" && \
     llvm-nm-${LLVM_VERSION} /icu-out/lib/sicudt.lib | grep -q " R bun_icu_zstd_dict"
 
 # ───────────────────────────────────────────────────────────────────────────

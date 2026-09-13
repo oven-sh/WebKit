@@ -1,9 +1,15 @@
 # build-icu.ps1 - Build ICU statically for Windows
 #
-# Builds ICU from source with static CRT (/MT) for use with JavaScriptCore.
+# Builds ICU from source with static CRT (/MT) for use with JavaScriptCore, on a Windows machine.
 #
-# Nothing in this repository runs this: CI cross-compiles the Windows lanes on Linux (Dockerfile.windows). Bun does,
-# when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
+# Nothing in this repository runs this. The ICU that ships is built on Linux by Dockerfile.windows, with ICU's
+# configure/make; this is the same ICU built with ICU's other build system, MSBuild, which is the one that runs on
+# Windows. Bun runs it when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
+#
+# The same as the ICU that ships: the version (icu/source.json), clang as the compiler on both architectures, the code
+# generation floor, /MT[d], static libraries, and the data filter (stage 1b). Not the same, neither of which matters to
+# a build of Bun from source: the data is not repacked with per-item zstd (icu/compress-data.ts), and udata.cpp does
+# not carry the decompression hook (icu/udata-decompress-hook.patch), so ICU reads its data raw.
 #
 # Usage:
 #   .\build-icu.ps1 [-Platform x64|ARM64] [-BuildType Release|Debug] [-OutputDir WebKitBuild/icu]
@@ -32,7 +38,11 @@ if (-not $OutputDir) {
 $ICU_LIB_DIR = Join-Path $OutputDir "lib"
 $ICU_INCLUDE_DIR = Join-Path $OutputDir "include"
 
-$ICU_SOURCE_URL = "https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz"
+# Which ICU: icu/source.json, the same file the Dockerfiles get it from (by way of .github/scripts/lanes.mjs).
+$icu = Get-Content (Join-Path $PSScriptRoot "icu/source.json") -Raw | ConvertFrom-Json
+$ICU_VERSION = $icu.version
+$ICU_MAJOR = $ICU_VERSION.Split(".")[0]
+$ICU_SOURCE_URL = "https://github.com/unicode-org/icu/releases/download/release-$ICU_VERSION/icu4c-$ICU_VERSION-sources.tgz"
 
 # Verify Python 3 is available (required for ICU data build)
 try {
@@ -64,8 +74,13 @@ $ICU_SOURCE_DIR = Join-Path $OutputDir "source"
 
 # --- Download ICU source ---
 if (-not (Test-Path $ICU_TARBALL) -and -not (Test-Path $ICU_SOURCE_DIR)) {
-    Write-Host ":: Downloading ICU"
+    Write-Host ":: Downloading ICU $ICU_VERSION"
     Invoke-WebRequest -Uri $ICU_SOURCE_URL -OutFile $ICU_TARBALL
+    $sha256 = (Get-FileHash $ICU_TARBALL -Algorithm SHA256).Hash.ToLower()
+    if ($sha256 -ne $icu.sha256) {
+        Remove-Item $ICU_TARBALL
+        throw "ICU tarball has sha256 $sha256, expected $($icu.sha256)"
+    }
 }
 
 if (-not (Test-Path $ICU_SOURCE_DIR)) {
@@ -76,14 +91,17 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
 }
 
+# The code generation floor, the same as the lanes that ship (.github/scripts/lanes.mjs).
 if ($Platform -eq "x64") {
     $ArchFlag = "/clang:-march=nehalem"
 } else {
-    $ArchFlag = ""
+    $ArchFlag = "/clang:-march=armv8-a+crc"
 }
 
-# ClangCL for stage 2 so -march= limits codegen (MSVC /arch:SSE2 is a no-op on x64).
-$ToolsetArg = if ($Platform -eq "x64") { @("/p:PlatformToolset=ClangCL") } else { @() }
+# ClangCL for stage 2, on both architectures: clang is what compiles everything else that ships, and -march= only
+# limits code generation under it (MSVC /arch:SSE2 is a no-op on x64). Needs Visual Studio's "C++ Clang tools for
+# Windows" component.
+$ToolsetArg = @("/p:PlatformToolset=ClangCL")
 
 # --- Function to patch vcxproj files for static library build with /MT ---
 function Patch-IcuVcxProj {
@@ -317,14 +335,14 @@ if (Test-Path $i18nLibSrc) {
 
 # ICU data library - output location depends on platform
 $binDir = if ($Platform -eq "x64") { "bin64" } else { "bin$Platform" }
-$icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "..\$binDir\sicudt78.lib"
+$icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "..\$binDir\sicudt$ICU_MAJOR.lib"
 
 # Check alternative locations
 if (-not (Test-Path $icuDataLibSrc)) {
-    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\tmp\sicudt78.lib"
+    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\tmp\sicudt$ICU_MAJOR.lib"
 }
 if (-not (Test-Path $icuDataLibSrc)) {
-    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\sicudt78.lib"
+    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\sicudt$ICU_MAJOR.lib"
 }
 if (-not (Test-Path $icuDataLibSrc)) {
     $foundLib = Get-ChildItem -Path $OutputDir -Recurse -Filter "sicudt*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1

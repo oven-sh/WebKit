@@ -20,7 +20,7 @@ node .github/scripts/lanes.mjs
 node .github/scripts/lanes.mjs build bun-webkit-macos-arm64-lto --output /tmp/bun-webkit
 ```
 
-There are deliberately no other build scripts: `lanes.mjs` and the Dockerfiles are the only place the flags of a shipped build are written down. `build-icu.ps1` is not part of CI; Bun runs it when it builds WebKit from source on Windows (`scripts/build/deps/webkit.ts` in oven-sh/bun).
+There are deliberately no other build scripts: `lanes.mjs` and the Dockerfiles are the only place the flags of a shipped build are written down. Which ICU is built and bundled is `icu/source.json` (version and sha256) and nowhere else: `lanes.mjs` passes it to the Dockerfiles, so bumping ICU is a change to that one file. `build-icu.ps1` is not part of CI; Bun runs it when it builds WebKit from source on Windows (`scripts/build/deps/webkit.ts` in oven-sh/bun). It builds the same ICU (same `icu/source.json`, clang on both architectures) with ICU's MSBuild projects, because ICU's configure/make, which CI uses on Linux, does not run on Windows; its header lists the two ways its output differs from what ships.
 
 ### Building `jsc` for development (CMake)
 ```bash

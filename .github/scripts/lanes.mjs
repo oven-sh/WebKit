@@ -47,6 +47,10 @@ const LTO_WINDOWS = "/clang:-flto=thin /clang:-fno-split-lto-unit";
 
 const SANITIZERS = "address,undefined";
 
+// Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
+const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
+const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
+
 // The code generation floor. There is one per architecture: WebKit used to ship a haswell x64 build next to a nehalem
 // "baseline" one, which meant every x64 consumer had to pick, and a consumer that picked wrong either raised its CPU
 // requirement silently or gave up cross-language LTO because the matching variant did not exist. A consumer that wants
@@ -89,6 +93,7 @@ const platforms = [
     tested: ["asan"],
     image: () => "linux-glibc",
     args: (arch, v) => ({
+      ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
@@ -109,6 +114,7 @@ const platforms = [
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
     image: () => "linux-musl",
     args: arch => ({
+      ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
     }),
@@ -149,6 +155,7 @@ const platforms = [
     lto: LTO_WINDOWS,
     image: () => "windows",
     args: (arch, v) => ({
+      ...ICU,
       WIN_ARCH: arch === "arm64" ? "arm64" : "x64",
       WIN_TRIPLE_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       // WebKit is built by clang-cl, ICU by clang's GNU driver.
@@ -165,6 +172,7 @@ const platforms = [
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     image: arch => `freebsd-${arch}`,
     args: arch => ({
+      ...ICU,
       FREEBSD_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       FREEBSD_VERSION: "14.3",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
@@ -178,6 +186,7 @@ const platforms = [
     lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
     image: () => "android",
     args: arch => ({
+      ...ICU,
       ANDROID_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       ANDROID_API: "28",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=cortex-a78` : NEHALEM,

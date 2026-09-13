@@ -246,7 +246,10 @@ RUN set -eu; \
 # builds (pkgdata, genrb, ...), and the lanes filter and repack its data with icupkg: a lane that builds ICU for
 # aarch64 cannot run the ones it builds. LDFLAGS without this stage's -L/usr/lib/x86_64-linux-gnu, as in the lanes' own
 # ICU step: that is where the distribution's ICU is, and the tools would be linked against it instead of this one.
-ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu.tgz
+# Which ICU: icu/source.json, by way of lanes.mjs.
+ARG ICU_VERSION
+ARG ICU_SHA256
+ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu.tgz
 RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 && cd source && \
     CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
     make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
@@ -286,6 +289,7 @@ ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 ARG LINUX_ARCH
+ARG ICU_VERSION
 
 ENV LTO_FLAG="${LTO_FLAG}"
 
@@ -297,7 +301,7 @@ ENV LTO_FLAG="${LTO_FLAG}"
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools).
 #
-# After the first `make` (which produces bin/icupkg), filter data/in/icudt78l.dat
+# After the first `make` (which produces bin/icupkg), filter data/in/icudt<major>l.dat
 # to drop converters/translit/stringprep/confusables/unames — Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
 #
@@ -341,15 +345,15 @@ RUN --mount=type=tmpfs,target=/icu \
     cd source && \
     ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     make -j$(nproc) && \
-    mkdir -p /tmp/ns && $ICUPKG -x numberingSystems.res data/in/icudt78l.dat -d /tmp/ns && \
+    mkdir -p /tmp/ns && $ICUPKG -x numberingSystems.res data/in/icudt${ICU_VERSION%%.*}l.dat -d /tmp/ns && \
     stale=$(strings -el /tmp/ns/numberingSystems.res | sed -n 's|^\([A-Za-z_][A-Za-z_]*\)/.*|\1|p' | sort -u | grep -vxE 'ja|zh|zh_Hant' | tr '\n' ' ') && \
     { [ -z "$stale" ] || { echo "rbnf keep-list is stale, also reachable: $stale" >&2; exit 1; }; } && \
-    $ICUPKG -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    $ICUPKG --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
-    mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
+    $ICUPKG -l data/in/icudt${ICU_VERSION%%.*}l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
+    $ICUPKG --auto_toc_prefix -r data/in/rm.lst data/in/icudt${ICU_VERSION%%.*}l.dat data/in/icudt${ICU_VERSION%%.*}l_filtered.dat && \
+    mv -f data/in/icudt${ICU_VERSION%%.*}l_filtered.dat data/in/icudt${ICU_VERSION%%.*}l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg $ICUPKG "$@"
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt${ICU_VERSION%%.*}l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg $ICUPKG "$@"
 
 # Copy WebKit source and build
 COPY . /webkit
