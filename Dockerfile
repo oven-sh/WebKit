@@ -414,6 +414,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
+    llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q "Machine:.*$(if [ "$LINUX_ARCH" = aarch64 ]; then echo AArch64; else echo X86-64; fi)" && \
     llvm-readelf -d $WEBKIT_OUT_DIR/bin/jsc | grep NEEDED && \
     llvm-readelf -d $WEBKIT_OUT_DIR/bin/jsc | grep -q 'NEEDED.*libm\.so\.6' && \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \

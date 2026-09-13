@@ -69,26 +69,39 @@ if ($env:VSINSTALLDIR -eq $null) {
 
 $null = mkdir $OutputDir -ErrorAction SilentlyContinue
 
-$ICU_TARBALL = Join-Path $OutputDir "icu4c-src.tgz"
+$ICU_TARBALL = Join-Path $OutputDir "icu4c-$ICU_VERSION-src.tgz"
 $ICU_SOURCE_DIR = Join-Path $OutputDir "source"
+# Which version $ICU_SOURCE_DIR was extracted from. $OutputDir outlives an ICU bump, and a source tree of another
+# version (or of no recorded version) must not be what gets built.
+$ICU_SOURCE_STAMP = Join-Path $OutputDir "source-version.txt"
 
-# --- Download ICU source ---
-if (-not (Test-Path $ICU_TARBALL) -and -not (Test-Path $ICU_SOURCE_DIR)) {
-    Write-Host ":: Downloading ICU $ICU_VERSION"
-    Invoke-WebRequest -Uri $ICU_SOURCE_URL -OutFile $ICU_TARBALL
+if (Test-Path $ICU_SOURCE_DIR) {
+    $have = if (Test-Path $ICU_SOURCE_STAMP) { (Get-Content $ICU_SOURCE_STAMP -Raw).Trim() } else { "" }
+    if ($have -ne $ICU_VERSION) {
+        Write-Host ":: $ICU_SOURCE_DIR is ICU '$have', not $ICU_VERSION: removing it"
+        Remove-Item -Recurse -Force $ICU_SOURCE_DIR
+    }
+}
+
+if (-not (Test-Path $ICU_SOURCE_DIR)) {
+    # --- Download ICU source ---
+    if (-not (Test-Path $ICU_TARBALL)) {
+        Write-Host ":: Downloading ICU $ICU_VERSION"
+        Invoke-WebRequest -Uri $ICU_SOURCE_URL -OutFile $ICU_TARBALL
+    }
+    # Also of a tarball that was already there.
     $sha256 = (Get-FileHash $ICU_TARBALL -Algorithm SHA256).Hash.ToLower()
     if ($sha256 -ne $icu.sha256) {
         Remove-Item $ICU_TARBALL
         throw "ICU tarball has sha256 $sha256, expected $($icu.sha256)"
     }
-}
 
-if (-not (Test-Path $ICU_SOURCE_DIR)) {
     Write-Host ":: Extracting ICU"
     # ICU tarball extracts to icu/ directory
     $extractDir = Split-Path -Parent $OutputDir
     tar.exe -xzf $ICU_TARBALL -C $extractDir
     if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
+    Set-Content -Path $ICU_SOURCE_STAMP -Value $ICU_VERSION
 }
 
 # The code generation floor, the same as the lanes that ship (.github/scripts/lanes.mjs).

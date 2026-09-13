@@ -312,6 +312,9 @@ jobs:
   # the job fails.
   test:
     name: Test ${{ matrix.label }}
+    # It runs the branch's code, and only needs to check it out: the jsc shell is an artifact of this run.
+    permissions:
+      contents: read
     needs:
       - plan
       - build-tested
@@ -438,12 +441,12 @@ jobs:
           {
             echo "### JavaScriptCore tests: $LABEL"
             echo
-            echo "$(jq '.stressTestFailures | length' "$results") failing runs, in $(jq '[.stressTestFailures[] | sub("\\.js\\..*$"; ".js")] | unique | length' "$results") test files."
+            echo "$(jq '.stressTestFailures // [] | length' "$results") failing runs, in $(jq '[(.stressTestFailures // [])[] | sub("\\.js\\..*$"; ".js")] | unique | length' "$results") test files."
             echo
             echo "<details><summary>Failing test files</summary>"
             echo
             echo '```'
-            jq -r '[.stressTestFailures[] | sub("\\.js\\..*$"; ".js")] | group_by(.) | .[] | "\(length)\t\(.[0])"' "$results"
+            jq -r '[(.stressTestFailures // [])[] | sub("\\.js\\..*$"; ".js")] | group_by(.) | .[] | "\(length)\t\(.[0])"' "$results"
             echo '```'
             echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
