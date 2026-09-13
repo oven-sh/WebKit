@@ -117,6 +117,9 @@ shouldBe(o0?.a?.['b']?.()?.()?.c, 42);
 shouldBe(o0?.i?.['j']?.()?.()?.k, undefined);
 shouldBe((o0.a?._b)?.().c, 42);
 shouldBe((o0.a?._b)().c, 42);
+shouldBe((o0.i?._b)?.().c, undefined);
+shouldThrowTypeError(() => (o0.i?._b)().c, '(o0.i?._b) is not a function');
+shouldThrowTypeError(() => (o0.i?.['_b'])().c, '(o0.i?.[\'_b\']) is not a function');
 
 shouldBe(({ undefined: 3 })?.[null?.a], 3);
 shouldBe((() => 3)?.(null?.a), 3);
