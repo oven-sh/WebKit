@@ -217,7 +217,7 @@ ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
 COPY --from=rootfs-arm64 / ${SYSROOT_AARCH64}/
 RUN set -eu; \
     dpkg --add-architecture arm64; \
-    sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list /etc/apt/sources.list.d/*.list; \
+    find /etc/apt/sources.list /etc/apt/sources.list.d -name '*.list' -exec sed -i 's/^deb http/deb [arch=amd64] http/' {} +; \
     for suite in focal focal-updates focal-security; do \
       echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $suite main universe"; \
     done > /etc/apt/sources.list.d/arm64.list; \

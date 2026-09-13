@@ -47,15 +47,16 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 #
 # The sysroot is the aarch64 build of the packages clang reads when it compiles and links in this container (musl,
 # libstdc++ and GCC's libgcc and crt files, the kernel headers), from the same Alpine repository at the same time, put
-# there by apk. --no-scripts: nothing here can run aarch64 code.
+# there by apk, which checks them against Alpine's aarch64 keys (symlinks in /usr/share/apk/keys, hence cp -L).
+# --no-scripts: nothing here can run aarch64 code.
 #
 # The musl an artifact is built against must be the container's own: checked here.
 # ───────────────────────────────────────────────────────────────────────────
 ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
 RUN set -eu; \
-    mkdir -p "$SYSROOT_AARCH64/etc/apk"; \
+    mkdir -p "$SYSROOT_AARCH64/etc/apk/keys"; \
     cp /etc/apk/repositories "$SYSROOT_AARCH64/etc/apk/repositories"; \
-    cp -r /usr/share/apk/keys/aarch64 "$SYSROOT_AARCH64/etc/apk/keys"; \
+    cp -L /usr/share/apk/keys/aarch64/* "$SYSROOT_AARCH64/etc/apk/keys/"; \
     apk add --root "$SYSROOT_AARCH64" --arch aarch64 --initdb --no-scripts --no-cache musl-dev libstdc++-dev gcc linux-headers; \
     container=$(apk list --installed musl | cut -d' ' -f1); \
     sysroot=$(apk --root "$SYSROOT_AARCH64" list --installed musl | cut -d' ' -f1); \
