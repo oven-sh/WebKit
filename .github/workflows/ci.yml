@@ -307,11 +307,9 @@ jobs:
   # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on a
   # runner of the architecture it was built for. Which lanes are tested, and why those, is in lanes.mjs.
   #
-  # `release` does not wait for this job, so nothing here holds back or deletes a release. For now a failing test does
-  # not fail the job either (the two test steps are continue-on-error): the failures are a warning on the run, a list
-  # in the job summary and the uploaded log and results. What does fail the job is not getting as far as running the
-  # tests: no checkout, no jsc shell. To make failing tests fail the run, drop the two continue-on-error lines.
-  # --no-fail-fast below means every test runs and every failure is reported.
+  # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
+  # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
+  # the job fails.
   test:
     name: Test ${{ matrix.label }}
     needs:
@@ -383,8 +381,6 @@ jobs:
           ls -la bun-webkit/bin
       # testFFI and the JavaScriptCore tests each run whatever the other did, and either failing fails the job.
       - name: testFFI
-        id: testffi
-        continue-on-error: true
         if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
         env: &test_env
           # detect_leaks=0: LeakSanitizer reports the shell's deliberate exit-time leaks and turns every exit code into 1.
@@ -397,8 +393,6 @@ jobs:
         run: |
           "$RUNNER_TEMP/bun-webkit/bin/testFFI"
       - name: run-javascriptcore-tests
-        id: jsctests
-        continue-on-error: true
         if: *have_jsc
         env: *test_env
         run: |
@@ -437,19 +431,10 @@ jobs:
         if: always()
         env:
           LABEL: ${{ matrix.label }}
-          TESTFFI: ${{ steps.testffi.outcome }}
-          JSCTESTS: ${{ steps.jsctests.outcome }}
         run: |
           set -euo pipefail
-          # The steps are continue-on-error, so this is where their failing shows: a warning on the run's page.
-          [ "$TESTFFI" != failure ] || echo "::warning title=$LABEL::testFFI failed"
           results="$RUNNER_TEMP/jsc-results.json"
-          if [ ! -f "$results" ]; then
-            [ "$JSCTESTS" != failure ] || echo "::warning title=$LABEL::run-javascriptcore-tests failed without writing results"
-            exit 0
-          fi
-          files=$(jq '[.stressTestFailures[] | sub("\\.js\\..*$"; ".js")] | unique | length' "$results")
-          [ "$files" = 0 ] || echo "::warning title=$LABEL::JavaScriptCore tests: $files test files fail (list in the job summary)"
+          [ -f "$results" ] || { echo "no results file"; exit 0; }
           {
             echo "### JavaScriptCore tests: $LABEL"
             echo
