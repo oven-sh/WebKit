@@ -37,21 +37,24 @@ public:
     enum class Format : uint8_t { AYUV, NV12, NV21, P010, YUV420, YVU420, YUV444, YUV411, YUV422, A420 };
     enum class YuvToRgbColorSpace : uint8_t { Bt601, Bt709, Bt2020, Smpte240M };
     enum class TransferFunction : uint8_t { Bt709, Pq };
+    // FIXME: stop building CoordinatedPlatformLayerBufferYUV when texture mapper
+    // is disabled once these enums are no longer used by skia compositor.
+#if USE(TEXTURE_MAPPER)
     static std::unique_ptr<CoordinatedPlatformLayerBufferYUV> create(Format, unsigned planeCount, std::array<unsigned, 4>&& planes, std::array<unsigned, 4>&& yuvPlane, std::array<unsigned, 4>&& yuvPlaneOffset, YuvToRgbColorSpace, TransferFunction, const IntSize&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
     static std::unique_ptr<CoordinatedPlatformLayerBufferYUV> create(Format, unsigned planeCount, Vector<RefPtr<BitmapTexture>, 4>&& textures, std::array<unsigned, 4>&& yuvPlane, std::array<unsigned, 4>&& yuvPlaneOffset, YuvToRgbColorSpace, TransferFunction, const IntSize&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
     CoordinatedPlatformLayerBufferYUV(Format, unsigned planeCount, std::array<unsigned, 4>&& planes, std::array<unsigned, 4>&& yuvPlane, std::array<unsigned, 4>&& yuvPlaneOffset, YuvToRgbColorSpace, TransferFunction, const IntSize&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
     CoordinatedPlatformLayerBufferYUV(Format, unsigned planeCount, Vector<RefPtr<BitmapTexture>, 4>&& textures, std::array<unsigned, 4>&& yuvPlane, std::array<unsigned, 4>&& yuvPlaneOffset, YuvToRgbColorSpace, TransferFunction, const IntSize&, OptionSet<TextureMapperFlags>, std::unique_ptr<GLFence>&&);
     virtual ~CoordinatedPlatformLayerBufferYUV();
-
-    const RefPtr<BitmapTexture>& texture(size_t index) const { RELEASE_ASSERT(index < m_planeCount); return m_textures[index]; }
+#endif
 
 private:
 #if USE(TEXTURE_MAPPER)
     void paintToTextureMapper(TextureMapper&, const FloatRect&, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0) override;
 #else
-    sk_sp<SkImage> skiaImage() override;
+    sk_sp<SkImage> skiaImage() override { RELEASE_ASSERT_NOT_REACHED(); };
 #endif
 
+#if USE(TEXTURE_MAPPER)
     Format m_format { Format::AYUV };
     unsigned m_planeCount { 0 };
     Vector<RefPtr<BitmapTexture>, 4> m_textures;
@@ -60,10 +63,13 @@ private:
     std::array<unsigned, 4> m_yuvPlaneOffset;
     YuvToRgbColorSpace m_yuvToRgbColorSpace { YuvToRgbColorSpace::Bt601 };
     TransferFunction m_transferFunction { TransferFunction::Bt709 };
+#endif
 };
 
 } // namespace WebCore
 
+#if USE(TEXTURE_MAPPER)
 SPECIALIZE_TYPE_TRAITS_COORDINATED_PLATFORM_LAYER_BUFFER_TYPE(CoordinatedPlatformLayerBufferYUV, Type::YUV)
+#endif
 
 #endif // USE(COORDINATED_GRAPHICS)

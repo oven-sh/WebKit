@@ -877,7 +877,7 @@ void LocalAuthenticator::continueGetAssertionAfterUserVerification(Ref<WebCore::
 
 void LocalAuthenticator::receiveException(ExceptionData&& exception, WebAuthenticationStatus status) const
 {
-    LOG_ERROR("%s", exception.message.utf8().data());
+    LOG_ERROR("%s", exception.message.utf8().legacyCStringPointer());
 
     // Roll back the just created credential.
     if (m_provisionalCredentialId) {

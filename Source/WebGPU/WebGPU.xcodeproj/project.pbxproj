@@ -211,6 +211,8 @@
 		979240C029753B2A0050EA2C /* PhaseTimer.h in Headers */ = {isa = PBXBuildFile; fileRef = 979240BC29753B2A0050EA2C /* PhaseTimer.h */; };
 		979240C829769AC00050EA2C /* EntryPointRewriter.h in Headers */ = {isa = PBXBuildFile; fileRef = 979240C629769AC00050EA2C /* EntryPointRewriter.h */; };
 		979240C929769AC00050EA2C /* EntryPointRewriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 979240C729769AC00050EA2C /* EntryPointRewriter.cpp */; };
+		E00000012026000000000003 /* EvaluationOrderRewriter.h in Headers */ = {isa = PBXBuildFile; fileRef = E00000012026000000000001 /* EvaluationOrderRewriter.h */; };
+		E00000012026000000000004 /* EvaluationOrderRewriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E00000012026000000000002 /* EvaluationOrderRewriter.cpp */; };
 		9797BA442B6D5BA70020F22E /* ASTConstAssertStatement.h in Headers */ = {isa = PBXBuildFile; fileRef = 9797BA422B6D5BA60020F22E /* ASTConstAssertStatement.h */; };
 		9797BA452B6D5BA70020F22E /* ASTConstAssert.h in Headers */ = {isa = PBXBuildFile; fileRef = 9797BA432B6D5BA60020F22E /* ASTConstAssert.h */; };
 		979EDBB12A826B2800B4B7D0 /* GlobalSorting.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 979EDBAF2A826B2800B4B7D0 /* GlobalSorting.cpp */; };
@@ -567,6 +569,8 @@
 		979240BC29753B2A0050EA2C /* PhaseTimer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PhaseTimer.h; sourceTree = "<group>"; };
 		979240C629769AC00050EA2C /* EntryPointRewriter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EntryPointRewriter.h; sourceTree = "<group>"; };
 		979240C729769AC00050EA2C /* EntryPointRewriter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = EntryPointRewriter.cpp; sourceTree = "<group>"; };
+		E00000012026000000000001 /* EvaluationOrderRewriter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EvaluationOrderRewriter.h; sourceTree = "<group>"; };
+		E00000012026000000000002 /* EvaluationOrderRewriter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = EvaluationOrderRewriter.cpp; sourceTree = "<group>"; };
 		9797BA422B6D5BA60020F22E /* ASTConstAssertStatement.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ASTConstAssertStatement.h; sourceTree = "<group>"; };
 		9797BA432B6D5BA60020F22E /* ASTConstAssert.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ASTConstAssert.h; sourceTree = "<group>"; };
 		979EDBAF2A826B2800B4B7D0 /* GlobalSorting.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = GlobalSorting.cpp; sourceTree = "<group>"; };
@@ -802,6 +806,8 @@
 				978A912B298AB8EE00B37E5E /* ContextProviderInlines.h */,
 				979240C729769AC00050EA2C /* EntryPointRewriter.cpp */,
 				979240C629769AC00050EA2C /* EntryPointRewriter.h */,
+				E00000012026000000000002 /* EvaluationOrderRewriter.cpp */,
+				E00000012026000000000001 /* EvaluationOrderRewriter.h */,
 				979EDBAF2A826B2800B4B7D0 /* GlobalSorting.cpp */,
 				979EDBB02A826B2800B4B7D0 /* GlobalSorting.h */,
 				97F547B6298055D90011D79A /* GlobalVariableRewriter.cpp */,
@@ -1161,6 +1167,7 @@
 				978A912A298AB60200B37E5E /* ContextProvider.h in Headers */,
 				978A912C298AB8EE00B37E5E /* ContextProviderInlines.h in Headers */,
 				979240C829769AC00050EA2C /* EntryPointRewriter.h in Headers */,
+				E00000012026000000000003 /* EvaluationOrderRewriter.h in Headers */,
 				979EDBB22A826B2800B4B7D0 /* GlobalSorting.h in Headers */,
 				97F547B9298055D90011D79A /* GlobalVariableRewriter.h in Headers */,
 				97CB27D32F730F670024DD32 /* IOValidator.h in Headers */,
@@ -1465,6 +1472,7 @@
 				97E21C972A2512F7009CEB0E /* ConstantValue.cpp in Sources */,
 				97C36CFF29F1730100CFB379 /* Constraints.cpp in Sources */,
 				979240C929769AC00050EA2C /* EntryPointRewriter.cpp in Sources */,
+				E00000012026000000000004 /* EvaluationOrderRewriter.cpp in Sources */,
 				979EDBB12A826B2800B4B7D0 /* GlobalSorting.cpp in Sources */,
 				97F547B8298055D90011D79A /* GlobalVariableRewriter.cpp in Sources */,
 				97CB27D22F730F670024DD32 /* IOValidator.cpp in Sources */,

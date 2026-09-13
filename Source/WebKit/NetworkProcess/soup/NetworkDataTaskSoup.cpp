@@ -59,7 +59,7 @@ static const size_t gDefaultReadBufferSize = 8192;
 NetworkDataTaskSoup::NetworkDataTaskSoup(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
     : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByDedicatedWorker)
     , m_frameID(parameters.webFrameID)
-    , m_pageID(parameters.webPageID)
+    , m_webPageProxyID(parameters.webPageProxyID)
     , m_shouldContentSniff(parameters.contentSniffingPolicy)
     , m_shouldPreconnectOnly(parameters.shouldPreconnectOnly)
     , m_sourceOrigin(parameters.sourceOrigin)
@@ -137,7 +137,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
 {
     m_currentRequest = WTF::move(request);
     if (m_currentRequest.url().protocolIsFile()) {
-        m_file = adoptGRef(g_file_new_for_path(m_currentRequest.url().fileSystemPath().utf8().data()));
+        m_file = adoptGRef(g_file_new_for_path(m_currentRequest.url().fileSystemPath().utf8().legacyCStringPointer()));
         return;
     }
 
@@ -182,7 +182,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
     bool shouldBlockCookies = wasBlockingCookies == WasBlockingCookies::Yes || m_storedCredentialsPolicy == StoredCredentialsPolicy::EphemeralStateless;
     if (!shouldBlockCookies) {
         if (auto* networkStorageSession = m_session->networkStorageSession())
-            shouldBlockCookies = networkStorageSession->shouldBlockCookies(m_currentRequest, m_frameID, m_pageID, WebCore::ShouldRelaxThirdPartyCookieBlocking::No, WebCore::IsKnownCrossSiteTracker::No);
+            shouldBlockCookies = networkStorageSession->shouldBlockCookies(m_currentRequest, m_frameID, m_webPageProxyID, WebCore::ShouldRelaxThirdPartyCookieBlocking::No, WebCore::IsKnownCrossSiteTracker::No);
     }
     if (shouldBlockCookies)
         soup_message_disable_feature(m_soupMessage.get(), SOUP_TYPE_COOKIE_JAR);
@@ -600,10 +600,10 @@ void NetworkDataTaskSoup::completeAuthentication(const AuthenticationChallenge& 
     case ProtectionSpace::AuthenticationScheme::NTLM:
     case ProtectionSpace::AuthenticationScheme::Negotiate:
     case ProtectionSpace::AuthenticationScheme::OAuth:
-        soup_auth_authenticate(challenge.soupAuth(), credential.user().utf8().data(), credential.password().utf8().data());
+        soup_auth_authenticate(challenge.soupAuth(), credential.user().utf8().legacyCStringPointer(), credential.password().utf8().legacyCStringPointer());
         break;
     case ProtectionSpace::AuthenticationScheme::ClientCertificatePINRequested: {
-        CString password = credential.password().utf8();
+        auto password = credential.password().utf8();
         g_tls_password_set_value(challenge.tlsPassword(), reinterpret_cast<const unsigned char*>(password.data()), password.length());
         soup_message_tls_client_certificate_password_request_complete(m_soupMessage.get());
         break;
@@ -1225,8 +1225,8 @@ void NetworkDataTaskSoup::download()
         return;
     }
 
-    CString downloadDestinationPath = m_pendingDownloadLocation.utf8();
-    m_downloadDestinationFile = adoptGRef(g_file_new_for_path(downloadDestinationPath.data()));
+    auto downloadDestinationPath = m_pendingDownloadLocation.utf8();
+    m_downloadDestinationFile = adoptGRef(g_file_new_for_path(downloadDestinationPath.legacyCStringPointer()));
     GRefPtr<GFileOutputStream> outputStream;
     GUniqueOutPtr<GError> error;
     if (m_allowOverwriteDownload)
@@ -1238,7 +1238,7 @@ void NetworkDataTaskSoup::download()
         return;
     }
 
-    GUniquePtr<char> intermediatePath(g_strdup_printf("%s.wkdownload", downloadDestinationPath.data()));
+    GUniquePtr<char> intermediatePath(g_strdup_printf("%s.wkdownload", downloadDestinationPath.legacyCStringPointer()));
     m_downloadIntermediateFile = adoptGRef(g_file_new_for_path(intermediatePath.get()));
     outputStream = adoptGRef(g_file_replace(m_downloadIntermediateFile.get(), nullptr, TRUE, G_FILE_CREATE_NONE, nullptr, &error.outPtr()));
     if (!outputStream) {
@@ -1306,9 +1306,9 @@ void NetworkDataTaskSoup::didFinishDownload()
     }
 
     GRefPtr<GFileInfo> info = adoptGRef(g_file_info_new());
-    CString uri = m_response.url().string().utf8();
-    g_file_info_set_attribute_string(info.get(), "metadata::download-uri", uri.data());
-    g_file_info_set_attribute_string(info.get(), "xattr::xdg.origin.url", uri.data());
+    auto uri = m_response.url().string().utf8();
+    g_file_info_set_attribute_string(info.get(), "metadata::download-uri", uri.legacyCStringPointer());
+    g_file_info_set_attribute_string(info.get(), "xattr::xdg.origin.url", uri.legacyCStringPointer());
     g_file_set_attributes_async(m_downloadDestinationFile.get(), info.get(), G_FILE_QUERY_INFO_NONE, RunLoopSourcePriority::AsyncIONetwork, nullptr, nullptr, nullptr);
 
     clearRequest();

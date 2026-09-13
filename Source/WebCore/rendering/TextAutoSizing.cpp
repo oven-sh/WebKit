@@ -267,7 +267,7 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
         );
         parentEvaluatedLineHeight *= scaleChange;
 
-        // This calculation matches the line-height computed size calculation in StyleBuilderCustom::applyValueLineHeight().
+        // This calculation matches the line-height computed size calculation in Style::BuilderCustom::applyValueLineHeight().
         if (auto fixedLineHeight = parentLineHeight.tryLength(); fixedLineHeight && fixedLineHeight->resolveZoom(Style::ZoomFactor::none()) == parentEvaluatedLineHeight)
             continue;
 

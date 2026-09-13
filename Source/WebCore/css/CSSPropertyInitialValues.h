@@ -36,5 +36,6 @@ enum CSSValueID : uint16_t;
 bool isInitialValueForLonghand(CSSPropertyID, const CSSValue&);
 ASCIILiteral initialValueTextForLonghand(CSSPropertyID);
 CSSValueID initialValueIDForLonghand(CSSPropertyID);
+Ref<CSSValue> initialCSSValueForLonghand(CSSPropertyID);
 
 } // namespace WebCore

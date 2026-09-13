@@ -75,10 +75,10 @@ void StringPrintStream::vprintf(const char* format, va_list passedArgList)
     }
 }
 
-CString StringPrintStream::toCString() const
+UTF8CString StringPrintStream::toUTF8CString() const
 {
     ASSERT(m_length == strlenSpan(m_buffer));
-    return CString(m_buffer.first(m_length));
+    return UTF8CString { byteCast<char8_t>(m_buffer.first(m_length)) };
 }
 
 void StringPrintStream::reset()

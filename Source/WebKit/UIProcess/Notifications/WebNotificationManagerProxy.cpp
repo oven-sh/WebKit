@@ -42,6 +42,7 @@
 #include <ranges>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -101,7 +102,7 @@ static std::optional<WebPageProxyIdentifier> NODELETE identifierForPagePointer(W
 
 void WebNotificationManagerProxy::show(WebPageProxy* webPage, IPC::Connection& connection, const WebCore::NotificationData& notificationData, RefPtr<WebCore::NotificationResources>&& notificationResources)
 {
-    LOG(Notifications, "WebPageProxy (%p) asking to show notification (%s)", webPage, notificationData.notificationID.toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "WebPageProxy ("_s << webPage << ") asking to show notification ("_s << notificationData.notificationID.toString() << ")"_s);
 
     auto notification = WebNotification::createNonPersistent(notificationData, identifierForPagePointer(webPage), connection);
     showImpl(webPage, WTF::move(notification), WTF::move(notificationResources));
@@ -109,7 +110,7 @@ void WebNotificationManagerProxy::show(WebPageProxy* webPage, IPC::Connection& c
 
 bool WebNotificationManagerProxy::showPersistent(const WebsiteDataStore& dataStore, IPC::Connection* connection, const WebCore::NotificationData& notificationData, RefPtr<WebCore::NotificationResources>&& notificationResources)
 {
-    LOG(Notifications, "WebsiteDataStore (%p) asking to show notification (%s)", &dataStore, notificationData.notificationID.toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "WebsiteDataStore ("_s << &dataStore << ") asking to show notification ("_s << notificationData.notificationID.toString() << ")"_s);
 
     auto notification = WebNotification::createPersistent(notificationData, dataStore.configuration().identifier(), connection);
     return showImpl(nullptr, WTF::move(notification), WTF::move(notificationResources));
@@ -184,7 +185,7 @@ void WebNotificationManagerProxy::providerDidShowNotification(WebNotificationIde
         return;
     }
 
-    LOG(Notifications, "Provider did show notification (%s)", notification->coreNotificationID().toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "Provider did show notification ("_s << notification->coreNotificationID().toString() << ")"_s);
 
     auto connection = notification->sourceConnection();
     if (!connection)
@@ -195,7 +196,7 @@ void WebNotificationManagerProxy::providerDidShowNotification(WebNotificationIde
 
 static void dispatchDidClickNotification(WebNotification* notification)
 {
-    LOG(Notifications, "Provider did click notification (%s)", notification->coreNotificationID().toString().utf8().data());
+    LOG_WITH_STREAM(Notifications, stream << "Provider did click notification ("_s << notification->coreNotificationID().toString() << ")"_s);
 
     if (!notification)
         return;
@@ -248,11 +249,9 @@ void WebNotificationManagerProxy::providerDidCloseNotifications(API::Array* glob
             if (!dataValue)
                 continue;
 
-            auto span = dataValue->span();
-            if (span.size() != 16)
+            coreNotificationID = WTF::UUID::tryCreate(dataValue->span());
+            if (!coreNotificationID)
                 continue;
-
-            coreNotificationID = WTF::UUID { std::span<const uint8_t, 16> { span } };
         }
 
         ASSERT(coreNotificationID);
@@ -275,7 +274,7 @@ void WebNotificationManagerProxy::providerDidCloseNotifications(API::Array* glob
 
     for (auto& notification : closedNotifications) {
         if (auto connection = notification->sourceConnection()) {
-            LOG(Notifications, "Provider did close notification (%s)", notification->coreNotificationID().toString().utf8().data());
+            LOG_WITH_STREAM(Notifications, stream << "Provider did close notification ("_s << notification->coreNotificationID().toString() << ")"_s);
             Vector<WTF::UUID> notificationIDs = { notification->coreNotificationID() };
             connection->send(Messages::WebNotificationManager::DidCloseNotifications(notificationIDs), 0);
         }
@@ -322,7 +321,7 @@ static Vector<String> apiArrayToSecurityOriginStrings(API::Array* origins)
 
 void WebNotificationManagerProxy::providerDidUpdateNotificationPolicy(const API::SecurityOrigin* origin, bool enabled)
 {
-    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", origin->securityOrigin().toString().utf8().data(), enabled);
+    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", origin->securityOrigin().toString().utf8().legacyCStringPointer(), enabled);
 
     auto originString = origin->securityOrigin().toString();
     if (originString.isEmpty())

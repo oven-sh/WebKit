@@ -162,6 +162,13 @@ GPUFlagsConstant GPUTexture::usage() const
     return m_usage;
 }
 
+// Only compatibility mode, which WebKit does not implement, gives a texture a binding view
+// dimension; undefined tells code written for that mode there is no restriction here.
+JSC::JSValue GPUTexture::textureBindingViewDimension() const
+{
+    return JSC::jsUndefined();
+}
+
 static GPUTextureFormat NODELETE depthSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format

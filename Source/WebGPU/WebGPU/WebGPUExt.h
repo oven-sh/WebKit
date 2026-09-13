@@ -66,6 +66,8 @@ typedef enum WGPUBufferBindingTypeExtended {
     WGPUBufferBindingType_Float3x2 = WGPUBufferBindingType_Force32 - 1,
     WGPUBufferBindingType_Float4x3 = WGPUBufferBindingType_Force32 - 2,
     WGPUBufferBindingType_ArrayLength = WGPUBufferBindingType_Force32 - 3,
+    WGPUBufferBindingType_Float3x3 = WGPUBufferBindingType_Force32 - 4,
+    WGPUBufferBindingType_UInt2 = WGPUBufferBindingType_Force32 - 5,
 } WGPUBufferBindingTypeExtended;
 
 typedef enum WGPUSTypeExtended {
@@ -85,6 +87,10 @@ typedef struct WGPUExternalTextureDescriptor {
     char const * label; // nullable
     CVPixelBufferRef pixelBuffer;
     WGPUColorSpace colorSpace;
+    // The size the source presents the frame at, which the pixel buffer does not carry. Zero when the
+    // source could not say, and then the frame's own decoded size stands in for it.
+    uint32_t visibleWidth;
+    uint32_t visibleHeight;
 } WGPUExternalTextureDescriptor;
 
 // How a decoded frame has to be transformed to be presented, which its pixel buffer does not carry:
@@ -110,7 +116,7 @@ typedef struct WGPUImageCopyExternalImage {
     // pixelBuffer.
     WGPUVideoFrameRotation pixelBufferRotation;
     WGPUBool pixelBufferIsMirrored;
-    // Format of the IOSurface's single plane. Only the uncompressed colour formats which can back an
+    // Format of the IOSurface's single plane. Only the uncompressed color formats which can back an
     // accelerated 2D canvas are accepted; anything else must not reach here.
     WGPUTextureFormat sourceFormat;
     // Top-left corner of the sub-rect to copy, in source pixels.
@@ -127,7 +133,7 @@ typedef struct WGPUImageCopyExternalImage {
     WGPUColorSpace colorSpace;
 } WGPUImageCopyExternalImage;
 
-// WGPUImageCopyTexture plus the GPUImageCopyTextureTagged colour-space and alpha tags.
+// WGPUImageCopyTexture plus the GPUImageCopyTextureTagged color-space and alpha tags.
 typedef struct WGPUImageCopyTextureTagged {
     WGPUTexture texture;
     uint32_t mipLevel;

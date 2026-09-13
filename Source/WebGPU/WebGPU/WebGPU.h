@@ -782,6 +782,9 @@ typedef enum WGPUTextureUsage {
     WGPUTextureUsage_StorageBinding = 0x00000008,
     WGPUTextureUsage_RenderAttachment = 0x00000010,
     WGPUTextureUsage_Transient = 0x00000020,
+    // Carries the fact that the caller asked for a usage bit that does not exist, so that texture
+    // creation can reject it rather than acting on the bits it happened to recognize.
+    WGPUTextureUsage_Invalid = 0x00000040,
     WGPUTextureUsage_Force32 = 0x7FFFFFFF
 } WGPUTextureUsage WGPU_ENUM_ATTRIBUTE;
 typedef WGPUFlags WGPUTextureUsageFlags WGPU_ENUM_ATTRIBUTE;

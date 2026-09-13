@@ -267,6 +267,15 @@ void VideoPresentationManager::removeContext(WebCore::MediaPlayerClientIdentifie
     m_videoElements.remove(*videoElement);
 }
 
+RefPtr<WebCore::HTMLVideoElement> VideoPresentationManager::videoElementForContext(WebCore::MediaPlayerClientIdentifier contextId) const
+{
+    auto it = m_contextMap.find(contextId);
+    if (it == m_contextMap.end())
+        return nullptr;
+
+    return std::get<0>(it->value)->videoElement();
+}
+
 void VideoPresentationManager::addClientForContext(WebCore::MediaPlayerClientIdentifier contextId)
 {
     auto addResult = m_clientCounts.add(contextId, 1);

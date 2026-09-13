@@ -27,7 +27,7 @@
 #pragma once
     void activeTexture(uint32_t texture);
     void attachShader(uint32_t program, uint32_t shader);
-    void bindAttribLocation(uint32_t arg0, uint32_t index, CString&& name);
+    void bindAttribLocation(uint32_t arg0, uint32_t index, UTF8CString&& name);
     void bindBuffer(uint32_t target, uint32_t arg1);
     void bindFramebuffer(uint32_t target, uint32_t arg1);
     void bindRenderbuffer(uint32_t target, uint32_t arg1);
@@ -78,7 +78,7 @@
     void activeAttribs(uint32_t program, CompletionHandler<void(Vector<WebCore::GCGLAttribActiveInfo>&&)>&&);
     void activeUniforms(uint32_t program, CompletionHandler<void(Vector<WebCore::GCGLUniformActiveInfo>&&)>&&);
     void getBufferParameteri(uint32_t target, uint32_t pname, CompletionHandler<void(int32_t)>&&);
-    void getString(uint32_t name, CompletionHandler<void(CString&&)>&&);
+    void getString(uint32_t name, CompletionHandler<void(UTF8CString&&)>&&);
     void getFloatv(uint32_t pname, uint64_t valueSize, CompletionHandler<void(std::span<const float>)>&&);
     void getIntegerv(uint32_t pname, uint64_t valueSize, CompletionHandler<void(std::span<const int32_t>)>&&);
     void getIntegeri_v(uint32_t pname, uint32_t index, CompletionHandler<void(std::span<const int32_t, 4>)>&&); // NOLINT
@@ -87,10 +87,10 @@
     void getProgrami(uint32_t program, uint32_t pname, CompletionHandler<void(int32_t)>&&);
     void getBooleanv(uint32_t pname, uint64_t valueSize, CompletionHandler<void(std::span<const bool>)>&&);
     void getFramebufferAttachmentParameteri(uint32_t target, uint32_t attachment, uint32_t pname, CompletionHandler<void(int32_t)>&&);
-    void getProgramInfoLog(uint32_t arg0, CompletionHandler<void(CString&&)>&&);
+    void getProgramInfoLog(uint32_t arg0, CompletionHandler<void(UTF8CString&&)>&&);
     void getRenderbufferParameteri(uint32_t target, uint32_t pname, CompletionHandler<void(int32_t)>&&);
     void getShaderi(uint32_t arg0, uint32_t pname, CompletionHandler<void(int32_t)>&&);
-    void getShaderInfoLog(uint32_t arg0, CompletionHandler<void(CString&&)>&&);
+    void getShaderInfoLog(uint32_t arg0, CompletionHandler<void(UTF8CString&&)>&&);
     void getShaderPrecisionFormat(uint32_t shaderType, uint32_t precisionType, CompletionHandler<void(std::span<const int32_t, 2>, int32_t)>&&);
     void getTexParameterf(uint32_t target, uint32_t pname, CompletionHandler<void(float)>&&);
     void getTexParameteri(uint32_t target, uint32_t pname, CompletionHandler<void(int32_t)>&&);
@@ -113,7 +113,7 @@
     void renderbufferStorage(uint32_t target, uint32_t internalformat, int32_t width, int32_t height);
     void sampleCoverage(float value, bool invert);
     void scissor(int32_t x, int32_t y, int32_t width, int32_t height);
-    void shaderSource(uint32_t arg0, CString&& arg1);
+    void shaderSource(uint32_t arg0, UTF8CString&& arg1);
     void stencilFunc(uint32_t func, int32_t ref, uint32_t mask);
     void stencilFuncSeparate(uint32_t face, uint32_t func, int32_t ref, uint32_t mask);
     void stencilMask(uint32_t mask);
@@ -188,7 +188,7 @@
     void compressedTexImage3D1(uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height, int32_t depth, int32_t border, int32_t imageSize, uint64_t offset);
     void compressedTexSubImage3D0(uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset, int32_t zoffset, int32_t width, int32_t height, int32_t depth, uint32_t format, std::span<const uint8_t>&& data);
     void compressedTexSubImage3D1(uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset, int32_t zoffset, int32_t width, int32_t height, int32_t depth, uint32_t format, int32_t imageSize, uint64_t offset);
-    void getFragDataLocation(uint32_t program, CString&& name, CompletionHandler<void(int32_t)>&&);
+    void getFragDataLocation(uint32_t program, UTF8CString&& name, CompletionHandler<void(int32_t)>&&);
     void uniform1ui(int32_t location, uint32_t v0);
     void uniform2ui(int32_t location, uint32_t v0, uint32_t v1);
     void uniform3ui(int32_t location, uint32_t v0, uint32_t v1, uint32_t v2);
@@ -240,17 +240,17 @@
     void bindTransformFeedback(uint32_t target, uint32_t id);
     void beginTransformFeedback(uint32_t primitiveMode);
     void endTransformFeedback();
-    void transformFeedbackVaryings(uint32_t program, Vector<CString>&& varyings, uint32_t bufferMode);
+    void transformFeedbackVaryings(uint32_t program, Vector<UTF8CString>&& varyings, uint32_t bufferMode);
     void getTransformFeedbackVarying(uint32_t program, uint32_t index, CompletionHandler<void(std::optional<WebCore::GCGLTransformFeedbackActiveInfo>&&)>&&);
     void pauseTransformFeedback();
     void resumeTransformFeedback();
     void bindBufferBase(uint32_t target, uint32_t index, uint32_t buffer);
     void bindBufferRange(uint32_t target, uint32_t index, uint32_t buffer, uint64_t offset, uint64_t arg4);
-    void getUniformBlockIndex(uint32_t program, CString&& uniformBlockName, CompletionHandler<void(uint32_t)>&&);
-    void getActiveUniformBlockName(uint32_t program, uint32_t uniformBlockIndex, CompletionHandler<void(CString&&)>&&);
+    void getUniformBlockIndex(uint32_t program, UTF8CString&& uniformBlockName, CompletionHandler<void(uint32_t)>&&);
+    void getActiveUniformBlockName(uint32_t program, uint32_t uniformBlockIndex, CompletionHandler<void(UTF8CString&&)>&&);
     void uniformBlockBinding(uint32_t program, uint32_t uniformBlockIndex, uint32_t uniformBlockBinding);
     void getActiveUniformBlockiv(uint32_t program, uint32_t uniformBlockIndex, uint32_t pname, uint64_t paramsSize, CompletionHandler<void(std::span<const int32_t>)>&&);
-    void getTranslatedShaderSourceANGLE(uint32_t arg0, CompletionHandler<void(CString&&)>&&);
+    void getTranslatedShaderSourceANGLE(uint32_t arg0, CompletionHandler<void(UTF8CString&&)>&&);
     void createQueryEXT(uint32_t name);
     void deleteQueryEXT(uint32_t query);
     void isQueryEXT(uint32_t query, CompletionHandler<void(bool)>&&);

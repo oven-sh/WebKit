@@ -25,7 +25,7 @@
 
 #import "config.h"
 
-#if PLATFORM(IOS_FAMILY)
+#if HAVE(UIKIT_PRINTING)
 
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"

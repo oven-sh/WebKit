@@ -75,8 +75,8 @@ bool RenderTextFragment::canBeSelectionLeaf() const
         return firstLetter() || textNode->hasEditableStyle();
     }
     // First-letter is always selectable.
-    CheckedPtr anonymousInlineWrapper = dynamicDowncast<RenderInline>(this->parent());
-    return anonymousInlineWrapper && anonymousInlineWrapper->firstLetterRemainingText();
+    CheckedPtr anonymousInlineWrapper = dynamicDowncast<RenderBoxModelObject>(this->parent());
+    return anonymousInlineWrapper && anonymousInlineWrapper->isInlineBox() && anonymousInlineWrapper->firstLetterRemainingText();
 }
 
 void RenderTextFragment::setTextInternal(const String& newText, bool force)

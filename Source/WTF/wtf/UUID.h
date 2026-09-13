@@ -49,9 +49,6 @@ class StringView;
 class UUID {
 WTF_DEPRECATED_MAKE_FAST_ALLOCATED(UUID);
 public:
-    static constexpr UInt128 emptyValue = 0;
-    static constexpr UInt128 deletedValue = 1;
-
     static UUID createVersion4()
     {
         return UUID { };
@@ -73,26 +70,30 @@ public:
     WTF_EXPORT_PRIVATE static std::optional<UUID> parse(StringView);
     WTF_EXPORT_PRIVATE static std::optional<UUID> parseVersion4(StringView);
 
-    explicit UUID(std::span<const uint8_t, 16> span)
+    static std::optional<UUID> tryCreate(std::span<const uint8_t> span)
     {
-        memcpySpan(asMutableByteSpan(m_data), span);
+        if (span.size() != 16)
+            return std::nullopt;
+        UUID uuid { span.first<16>() };
+        if (!uuid.isValid())
+            return std::nullopt;
+        return uuid;
     }
 
-    explicit UUID(std::span<const uint8_t> span)
+    // Used by the generated IPC decoder, see WTFArgumentCoders.serialization.in.
+    static std::optional<UUID> tryCreate(uint64_t high, uint64_t low)
     {
-        RELEASE_ASSERT(span.size() == 16);
-        memcpySpan(asMutableByteSpan(m_data), span);
+        auto data = (static_cast<UInt128>(high) << 64) | low;
+        if (data == emptyValue || data == deletedValue)
+            return std::nullopt;
+        return UUID { data };
     }
 
-    explicit constexpr UUID(UInt128 data)
-        : m_data(data)
+    // For hardcoded UUID constants. consteval, so a reserved value is a build error rather than a
+    // crash, and raw values still have no way in at runtime other than the fallible factories.
+    static consteval UUID createConstant(uint64_t high, uint64_t low)
     {
-    }
-
-    explicit UUID(uint64_t high, uint64_t low)
-        : m_data((static_cast<UInt128>(high) << 64) | low)
-    {
-        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!isHashTableDeletedValue());
+        return UUID { (static_cast<UInt128>(high) << 64) | low };
     }
 
     std::span<const uint8_t, 16> span() const LIFETIME_BOUND
@@ -102,20 +103,11 @@ public:
 
     friend bool operator==(const UUID&, const UUID&) = default;
 
+    // Public so that composite types can build their own hash traits. Unlike the empty value, the deleted
+    // value is not a usable "no UUID" sentinel, since Markable and HashTraits both treat it as engaged.
     explicit constexpr UUID(HashTableDeletedValueType)
         : m_data(deletedValue)
     {
-    }
-
-    explicit constexpr UUID(HashTableEmptyValueType)
-        : m_data(emptyValue)
-    {
-    }
-
-    static bool isValid(uint64_t high, uint64_t low)
-    {
-        auto data = (static_cast<UInt128>(high) << 64) | low;
-        return data != deletedValue && data != emptyValue;
     }
 
     constexpr bool isHashTableDeletedValue() const { return m_data == deletedValue; }
@@ -132,8 +124,33 @@ public:
     uint64_t high() const { return static_cast<uint64_t>(m_data >> 64);  }
 
 private:
-    WTF_EXPORT_PRIVATE UUID();
+    friend struct HashTraits<UUID>;
+    friend struct MarkableTraits<UUID>;
     friend void add(Hasher&, UUID);
+
+    // The empty and deleted values are reserved for HashTraits and MarkableTraits. Code that needs to express
+    // "no UUID" should use Markable<WTF::UUID> or std::optional<WTF::UUID> rather than naming these.
+    static constexpr UInt128 emptyValue = 0;
+    static constexpr UInt128 deletedValue = 1;
+
+    // Private so that raw bytes can only enter through tryCreate(), which rejects the reserved values.
+    explicit UUID(std::span<const uint8_t, 16> span)
+    {
+        memcpySpan(asMutableByteSpan(m_data), span);
+    }
+
+    explicit constexpr UUID(UInt128 data)
+        : m_data(data)
+    {
+        RELEASE_ASSERT(data != emptyValue && data != deletedValue);
+    }
+
+    explicit constexpr UUID(HashTableEmptyValueType)
+        : m_data(emptyValue)
+    {
+    }
+
+    WTF_EXPORT_PRIVATE UUID();
 
     WTF_EXPORT_PRIVATE static UInt128 generateWeakRandomUUIDVersion4();
 
@@ -143,7 +160,7 @@ private:
 template<>
 struct MarkableTraits<UUID> {
     static bool isEmptyValue(const UUID& uuid) { return !uuid; }
-    static UUID emptyValue() { return UUID { UInt128 { 0 } }; }
+    static UUID emptyValue() { return UUID { HashTableEmptyValue }; }
 };
 
 inline void add(Hasher& hasher, UUID uuid)
@@ -173,30 +190,35 @@ WTF_EXPORT_PRIVATE String createVersion4UUIDStringWeak();
 WTF_EXPORT_PRIVATE String bootSessionUUIDString();
 WTF_EXPORT_PRIVATE bool isVersion4UUID(StringView);
 
+// 128 bits rendered in the canonical UUID form, for bits that are UUID-shaped but cannot be held in a
+// UUID because they may be a reserved value, such as a FIDO AAGUID: 16 arbitrary vendor bytes, and
+// commonly all-zero. StringTypeAdapter<UUID> is this with the bits taken from a UUID.
+struct UUIDCanonicalForm {
+    uint64_t high { 0 };
+    uint64_t low { 0 };
+};
+
 template<>
-class StringTypeAdapter<UUID> {
+class StringTypeAdapter<UUIDCanonicalForm> {
 public:
-    StringTypeAdapter(UUID uuid)
-        : m_uuid { uuid }
+    StringTypeAdapter(UUIDCanonicalForm bits)
+        : m_bits { bits }
     {
     }
 
     template<typename Func>
     auto handle(Func&& func) const -> decltype(auto)
     {
-        UInt128 data = m_uuid.data();
-        auto high = static_cast<uint64_t>(data >> 64);
-        auto low = static_cast<uint64_t>(data);
         return handleWithAdapters(std::forward<Func>(func),
-            hex(high >> 32, 8, Lowercase),
+            hex(m_bits.high >> 32, 8, Lowercase),
             '-',
-            hex((high >> 16) & 0xffff, 4, Lowercase),
+            hex((m_bits.high >> 16) & 0xffff, 4, Lowercase),
             '-',
-            hex(high & 0xffff, 4, Lowercase),
+            hex(m_bits.high & 0xffff, 4, Lowercase),
             '-',
-            hex(low >> 48, 4, Lowercase),
+            hex(m_bits.low >> 48, 4, Lowercase),
             '-',
-            hex(low & 0xffffffffffff, 12, Lowercase));
+            hex(m_bits.low & 0xffffffffffff, 12, Lowercase));
     }
 
     unsigned length() const
@@ -220,7 +242,16 @@ public:
     }
 
 private:
-    UUID m_uuid;
+    UUIDCanonicalForm m_bits;
+};
+
+template<>
+class StringTypeAdapter<UUID> : public StringTypeAdapter<UUIDCanonicalForm> {
+public:
+    StringTypeAdapter(UUID uuid)
+        : StringTypeAdapter<UUIDCanonicalForm> { { uuid.high(), uuid.low() } }
+    {
+    }
 };
 
 }

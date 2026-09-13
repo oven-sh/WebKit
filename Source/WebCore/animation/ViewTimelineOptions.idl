@@ -27,7 +27,7 @@ typedef (DOMString or CSSOMKeywordValue) CSSOMKeywordish;
 
 // https://drafts.csswg.org/scroll-animations/#dictdef-viewtimelineoptions
 dictionary ViewTimelineOptions {
-    Element subject;
+    required Element subject;
     ScrollAxis axis = "block";
     (DOMString or sequence<(CSSNumericValue or CSSOMKeywordish)>) inset = "auto";
 };

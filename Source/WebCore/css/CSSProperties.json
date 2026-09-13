@@ -1430,7 +1430,6 @@
                 "auto"
             ],
             "codegen-properties": {
-                "font-description-name-for-methods": "SpecifiedLocale",
                 "font-property": true,
                 "high-priority": true,
                 "computed-style-storage-container": "opaque",
@@ -7324,8 +7323,7 @@
             "specification": {
                 "category": "css-scroll-anchoring",
                 "url": "https://www.w3.org/TR/css-scroll-anchoring-1/#propdef-overflow-anchor"
-            },
-            "status": "in development"
+            }
         },
         "overflow-wrap": {
             "animation-type": "discrete",
@@ -7953,22 +7951,20 @@
             "status": "in development"
         },
         "portal-transform": {
-            "animation-type": "discrete",
+            "animation-type": "by computed value",
             "initial": "auto",
-            "values": [
-                "none",
-                "auto"
-            ],
             "codegen-properties": {
                 "enable-if": "ENABLE_SPATIAL_PORTAL",
                 "settings-flag": "spatialPortalEnabled",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::PortalTransform",
-                "parser-grammar": "<<values>>"
+                "parser-function": "consumePortalTransform",
+                "parser-grammar-unused": "none | auto | [ auto? <transform-list> ] | [ <transform-list> auto <transform-list>? ]",
+                "parser-grammar-unused-reason": "The position of the `auto` keyword is significant."
             },
             "specification": {
-                "url": "https://webkit.github.io/explainers/css-spatial/Overview.html#portals"
+                "url": "https://webkit.github.io/explainers/css-spatial/Overview.html#stage-transform"
             },
             "status": "in development"
         },
@@ -9729,7 +9725,7 @@
             "initial": "0px",
             "codegen-properties": {
                 "computed-style-initial-constexpr": true,
-                "computed-style-storage-path": ["m_inheritedData"],
+                "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::WebkitBorderSpacing",
                 "parser-grammar": "<length [0,inf]>"
@@ -9775,7 +9771,7 @@
             "initial": "0px",
             "codegen-properties": {
                 "computed-style-initial-constexpr": true,
-                "computed-style-storage-path": ["m_inheritedData"],
+                "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::WebkitBorderSpacing",
                 "parser-grammar": "<length [0,inf]>"
@@ -10422,6 +10418,7 @@
             ],
             "codegen-properties": {
                 "settings-flag": "colorFilterEnabled",
+                "skip-style-extractor": true,
                 "computed-style-storage-path": ["m_inheritedRareData", "appleColorFilter"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::AppleColorFilter",
@@ -11209,7 +11206,7 @@
             }
         },
         "-webkit-hyphenate-limit-after": {
-            "animation-type": "not animatable (legacy)",
+            "animation-type": "by computed value",
             "inherited": true,
             "initial": "auto",
             "values": [
@@ -11220,12 +11217,12 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::HyphenateLimitEdge",
-                "parser-grammar": "auto | <number [0,inf]>"
+                "parser-grammar": "auto | <integer [0,inf]>"
             },
-            "status": "non-standard"
+            "status": "obsolete"
         },
         "-webkit-hyphenate-limit-before": {
-            "animation-type": "not animatable (legacy)",
+            "animation-type": "by computed value",
             "inherited": true,
             "initial": "auto",
             "values": [
@@ -11236,30 +11233,63 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::HyphenateLimitEdge",
-                "parser-grammar": "auto | <number [0,inf]>"
+                "parser-grammar": "auto | <integer [0,inf]>"
             },
-            "status": "non-standard"
+            "status": "obsolete"
         },
-        "-webkit-hyphenate-limit-lines": {
-            "animation-type": "not animatable (legacy)",
+        "hyphenate-limit-lines": {
+            "animation-type": "by computed value",
             "inherited": true,
             "initial": "no-limit",
             "values": [
                 "no-limit"
             ],
             "codegen-properties": {
+                "aliases": [
+                    "-webkit-hyphenate-limit-lines"
+                ],
                 "computed-style-initial-constexpr": true,
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::HyphenateLimitLines",
-                "parser-grammar": "no-limit | <number [0,inf]>"
-            },
-            "status": {
-                "status": "experimental"
+                "parser-grammar": "no-limit | <integer [0,inf]>"
             },
             "specification": {
                 "category": "css-text",
                 "url": "https://www.w3.org/TR/css-text-4/#propdef-hyphenate-limit-lines"
+            }
+        },
+        "-internal-hyphenate-limit-chars-word": {
+            "animation-type": "by computed value",
+            "inherited": true,
+            "initial": "auto",
+            "values": [
+                "auto"
+            ],
+            "codegen-properties": {
+                "computed-style-initial-constexpr": true,
+                "computed-style-storage-path": ["m_inheritedRareData"],
+                "computed-style-storage-kind": "value",
+                "computed-style-type": "Style::HyphenateLimitEdge",
+                "parser-grammar": "auto | <integer [0,inf]>",
+                "internal-only": true
+            },
+            "status": "non-standard"
+        },
+        "hyphenate-limit-chars": {
+            "codegen-properties": {
+                "longhands": [
+                    "-internal-hyphenate-limit-chars-word",
+                    "-webkit-hyphenate-limit-before",
+                    "-webkit-hyphenate-limit-after"
+                ],
+                "parser-function": "consumeHyphenateLimitCharsShorthand",
+                "parser-grammar-unused": "[ auto | <integer [0,inf]> ]{1,3}",
+                "parser-grammar-unused-reason": "Needs support for shorthand grammars."
+            },
+            "specification": {
+                "category": "css-text",
+                "url": "https://www.w3.org/TR/css-text-4/#propdef-hyphenate-limit-chars"
             }
         },
         "hyphens": {
@@ -12580,7 +12610,7 @@
                 "parser-grammar": "<<values>>",
                 "comment": "Not an alias of 'user-select': this property is inherited, and it only applies when it has been specified and 'user-select' has not (hence the has-explicitly-set flags on both)."
             },
-            "status": "non-standard"
+            "status": "obsolete"
         },
         "user-select": {
             "animation-type": "not animatable (needs triage)",
@@ -12605,9 +12635,6 @@
                 "computed-style-type": "UserSelect",
                 "parser-grammar": "<<values>>",
                 "settings-flag": "cssUserSelectEnabled"
-            },
-            "status": {
-                "status": "experimental"
             },
             "specification": {
                 "category": "css-ui",

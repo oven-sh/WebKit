@@ -88,9 +88,9 @@ void UIScriptControllerGtk::copyText(JSStringRef text)
 {
     auto string = text->string().utf8();
 #if USE(GTK4)
-    gdk_clipboard_set_text(gdk_display_get_clipboard(gdk_display_get_default()), string.data());
+    gdk_clipboard_set_text(gdk_display_get_clipboard(gdk_display_get_default()), string.legacyCStringPointer());
 #else
-    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), string.data(), string.length());
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), string.legacyCStringPointer(), string.length());
 #endif
 }
 
@@ -204,10 +204,10 @@ static Ref<JSON::Object> toJSONObject(GVariant* variant)
 JSObjectRef UIScriptControllerGtk::contentsOfUserInterfaceItem(JSStringRef interfaceItem) const
 {
     auto* webView = TestController::singleton().mainWebView()->platformView();
-    GRefPtr<GVariant> contentDictionary = WKViewContentsOfUserInterfaceItem(webView, toWTFString(interfaceItem).utf8().data());
+    GRefPtr<GVariant> contentDictionary = WKViewContentsOfUserInterfaceItem(webView, toWTFString(interfaceItem).utf8().legacyCStringPointer());
     auto jsonObject = toJSONObject(contentDictionary.get());
 
-    return JSValueToObject(m_context->jsContext(), contentDictionary ? JSValueMakeFromJSONString(m_context->jsContext(), createJSString(jsonObject->toJSONString().utf8().data()).get()) : JSValueMakeUndefined(m_context->jsContext()), nullptr);
+    return JSValueToObject(m_context->jsContext(), contentDictionary ? JSValueMakeFromJSONString(m_context->jsContext(), createJSString(jsonObject->toJSONString().utf8().legacyCStringPointer()).get()) : JSValueMakeUndefined(m_context->jsContext()), nullptr);
 }
 
 void UIScriptControllerGtk::setWebViewEditable(bool editable)
@@ -276,7 +276,7 @@ void UIScriptControllerGtk::sendEventStream(JSStringRef eventsJSON, JSValueRef c
 
         auto eventTypeString = eventObject->getString("type"_s);
         if (!eventTypeString) {
-            WTFLogAlways("Failed to find type key in %s", eventTypeString.utf8().data());
+            WTFLogAlways("Failed to find type key in %s", eventTypeString.utf8().legacyCStringPointer());
             break;
         }
 
@@ -292,7 +292,7 @@ void UIScriptControllerGtk::sendEventStream(JSStringRef eventsJSON, JSValueRef c
             if (!momentumPhaseString.isNull()) {
                 momentumPhase = wheelEventPhaseFromString(momentumPhaseString);
                 if (momentumPhase == WheelEventPhase::Cancelled || momentumPhase == WheelEventPhase::MayBegin) {
-                    WTFLogAlways("Invalid value %s for momentumPhase", momentumPhaseString.utf8().data());
+                    WTFLogAlways("Invalid value %s for momentumPhase", momentumPhaseString.utf8().legacyCStringPointer());
                     break;
                 }
             }

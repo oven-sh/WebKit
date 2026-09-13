@@ -32,7 +32,7 @@
 namespace WebCore {
 
 struct ViewTimelineOptions {
-    RefPtr<Element> subject;
+    Ref<Element> subject;
     ScrollAxis axis;
     ViewTimelineInsetValue inset;
 };

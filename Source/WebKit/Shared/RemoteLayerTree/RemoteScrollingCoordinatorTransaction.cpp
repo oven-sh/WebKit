@@ -320,7 +320,7 @@ String RemoteScrollingCoordinatorTransaction::description() const
 
 void RemoteScrollingCoordinatorTransaction::dump() const
 {
-    WTFLogAlways("%s", description().utf8().data());
+    WTFLogAlways("%s", description().utf8().legacyCStringPointer());
 }
 #endif // !defined(NDEBUG) || !LOG_DISABLED
 

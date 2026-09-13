@@ -50,6 +50,7 @@
 #include "SVGLayerTransformUpdater.h"
 #include "SVGSVGElement.h"
 #include "SVGViewSpec.h"
+#include "ScrollbarUpdateScope.h"
 #include "TransformState.h"
 #include "VisibleRectContext.h"
 #include <wtf/SetForScope.h>
@@ -271,6 +272,11 @@ void RenderSVGRoot::layout()
 
     invalidateBackgroundObscurationStatus();
     svgSVGElement().invalidateCachedViewportSizes();
+
+    if (!isDocumentElementRenderer()) {
+        if (CheckedPtr layer = this->layer(); layer && layer->scrollableArea())
+            layer->updateScrollInfoAfterLayout();
+    }
 
     repainter.repaintAfterLayout();
     clearNeedsLayout();

@@ -49,26 +49,45 @@ public:
 private:
 #if USE(TEXTURE_MAPPER)
     void paintToTextureMapper(TextureMapper&, const FloatRect&, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0) override;
-#else
-    sk_sp<SkImage> skiaImage() override;
-#endif
 
-    std::unique_ptr<CoordinatedPlatformLayerBuffer> createBufferIfNeeded(bool gstGLEnabled, const sk_sp<GrContextThreadSafeProxy>&);
+    std::unique_ptr<CoordinatedPlatformLayerBuffer> createBufferIfNeeded(bool gstGLEnabled);
 #if USE(GBM) && GST_CHECK_VERSION(1, 24, 0)
-    std::unique_ptr<CoordinatedPlatformLayerBuffer> createBufferFromDMABufMemory(const sk_sp<GrContextThreadSafeProxy>&);
+    std::unique_ptr<CoordinatedPlatformLayerBuffer> createBufferFromDMABufMemory();
 #endif
 #if USE(GSTREAMER_GL)
     std::unique_ptr<CoordinatedPlatformLayerBuffer> createBufferFromGLMemory();
 #endif
-
-#if USE(TEXTURE_MAPPER)
     void createBufferFromMappedFrameIfNeeded();
+
+#else
+    sk_sp<SkImage> skiaImage() override;
+
+    void createSkiaImageIfNeeded(const sk_sp<GrContextThreadSafeProxy>&, bool gstGLEnabled);
+
+#if USE(GBM)
+    void createSkiaImageForQualcommDecoder();
+#if GST_CHECK_VERSION(1, 24, 0)
+    void createSkiaImageForDMABufMemory(const sk_sp<GrContextThreadSafeProxy>&);
+#endif
+#endif
+
+    void createSkiaImageForMainMemory(std::unique_ptr<GstMappedFrame>&&);
+
+#if USE(GSTREAMER_GL)
+    void createSkiaImageForGLMemory(GstGLMemory*, std::unique_ptr<GstMappedFrame>&&, const sk_sp<GrContextThreadSafeProxy>&);
+    void createSkiaImageForSinglePlaneGLMemory(GstGLMemory*, std::unique_ptr<GstMappedFrame>&&, const sk_sp<GrContextThreadSafeProxy>&);
+    void createSkiaImageForYUVGLMemory(std::unique_ptr<GstMappedFrame>&&, const sk_sp<GrContextThreadSafeProxy>&);
+#endif
 #endif
 
     Ref<VideoFrameGStreamer> m_videoFrame;
-    std::optional<GstMappedFrame> m_mappedVideoFrame;
     std::optional<GstVideoDecoderPlatform> m_videoDecoderPlatform;
     std::unique_ptr<CoordinatedPlatformLayerBuffer> m_buffer;
+#if USE(TEXTURE_MAPPER)
+    std::optional<GstMappedFrame> m_mappedVideoFrame;
+#else
+    sk_sp<SkImage> m_image;
+#endif
 };
 
 } // namespace WebCore

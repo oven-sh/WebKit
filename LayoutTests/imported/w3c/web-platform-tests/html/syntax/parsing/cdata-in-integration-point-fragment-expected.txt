@@ -9,4 +9,9 @@ PASS CDATA allowed when fragment-parsing with <desc> context (SVG HTML integrati
 PASS CDATA allowed when fragment-parsing with <title> context (SVG HTML integration point)
 PASS CDATA allowed when fragment-parsing with <path> context (non-integration-point SVG element)
 PASS CDATA not allowed when fragment-parsing with <div> context (HTML element)
+PASS CDATA allowed at the start of a fragment with <ms> context (MathML text integration point)
+PASS CDATA allowed at the start of a fragment with <title> context (SVG HTML integration point)
+PASS CDATA allowed at the start of a fragment with <path> context (non-integration-point SVG element)
+PASS CDATA allowed at the start of a fragment with <annotation-xml> context (non-integration-point MathML element)
+PASS CDATA not allowed at the start of a fragment with <div> context (HTML element)
 

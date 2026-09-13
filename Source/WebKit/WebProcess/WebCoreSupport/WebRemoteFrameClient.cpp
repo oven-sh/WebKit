@@ -235,9 +235,9 @@ void WebRemoteFrameClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTr
     WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(data);
 }
 
-void WebRemoteFrameClient::broadcastFrameTreeSyncDataToOtherProcesses(const FrameTreeSyncSerializationData& data)
+void WebRemoteFrameClient::broadcastFrameTreeSyncDataToOtherProcesses(FrameTreeSyncSerializationData&& data)
 {
-    WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(data);
+    WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(WTF::move(data));
 }
 
 void WebRemoteFrameClient::didNotifyUserActivation(MonotonicTime activationTime)

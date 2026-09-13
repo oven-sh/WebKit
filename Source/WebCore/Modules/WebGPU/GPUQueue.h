@@ -62,7 +62,7 @@ public:
 
     void submit(Vector<Ref<GPUCommandBuffer>>&&);
 
-    using OnSubmittedWorkDonePromise = DOMPromiseDeferred<IDLNull>;
+    using OnSubmittedWorkDonePromise = DOMPromiseDeferred<void>;
     void onSubmittedWorkDone(OnSubmittedWorkDonePromise&&);
 
     ExceptionOr<void> writeBuffer(

@@ -46,6 +46,7 @@ class VertexArrayVk : public VertexArrayImpl
                                        const gl::AttributesMask &dirtyDefaultAttribsMask);
 
     angle::Result updateStreamedAttribs(const gl::Context *context,
+                                        const gl::AttributesMask activeStreamingAttribsMask,
                                         GLint firstVertex,
                                         GLsizei vertexOrIndexCount,
                                         GLuint baseInstance,
@@ -54,7 +55,8 @@ class VertexArrayVk : public VertexArrayImpl
                                         const void *indices,
                                         gl::AttributesMask *strideDirtyAttribMaskOut);
 
-    void resetInactiveStreamedAttribs(const gl::Context *context);
+    void updateCurrentActiveStreamingAttribsMask(const gl::Context *context,
+                                                 vk::BufferHelper &emptyBuffer);
 
     angle::Result handleLineLoop(ContextVk *contextVk,
                                  GLint firstVertex,
@@ -140,6 +142,15 @@ class VertexArrayVk : public VertexArrayImpl
         return mCurrentArrayBuffers;
     }
 
+    angle::Result convertIndexBufferGPU(ContextVk *contextVk,
+                                        BufferVk *bufferVk,
+                                        const void *indices);
+
+    angle::Result convertIndexBufferIndirectGPU(ContextVk *contextVk,
+                                                vk::BufferHelper *srcIndirectBuf,
+                                                VkDeviceSize srcIndirectBufOffset,
+                                                vk::BufferHelper **indirectBufferVkOut);
+
     angle::Result convertIndexBufferCPU(ContextVk *contextVk,
                                         gl::DrawElementsType indexType,
                                         size_t indexCount,
@@ -152,6 +163,8 @@ class VertexArrayVk : public VertexArrayImpl
 
     void syncDirtyDisabledAttribs(ContextVk *contextVk,
                                   const gl::AttributesMask &disabledAttributesMask);
+    void resetInactiveStreamingAttribs(const gl::AttributesMask inactiveAttribMask,
+                                       vk::BufferHelper &emptyBuffer);
 
   private:
 
@@ -217,6 +230,8 @@ class VertexArrayVk : public VertexArrayImpl
     vk::BufferHelperQueue mCachedStreamIndexBuffers;
 
     ConversionBuffer mStreamedIndexData;
+    ConversionBuffer mTranslatedByteIndexData;
+    ConversionBuffer mTranslatedByteIndirectData;
 
     LineLoopHelper mLineLoopHelper;
     Optional<GLint> mLineLoopBufferFirstIndex;

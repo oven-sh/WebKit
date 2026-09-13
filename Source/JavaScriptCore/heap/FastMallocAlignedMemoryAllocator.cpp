@@ -29,20 +29,67 @@
 #include "MarkedBlock.h"
 #include "Options.h"
 #include "VM.h"
+#include <mutex>
+#include <wtf/FastMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
+
+#if USE(LIBPAS)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <bmalloc/bmalloc_prefault_supply.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#else
 #include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
-#include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
+#endif
 
 namespace JSC {
 
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
 
+static bool warmUpMarkedBlocksIsEnabled()
+{
+    // Mini mode trades throughput for footprint, which is the opposite bargain.
+    return Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount() && !VM::isInMiniMode();
+}
+
+// Bringing up a VM takes a few dozen blocks, and a short program never asks for many more; for
+// it the helper thread is only a thread to create, fault a supply on and tear down again at exit.
+// So the supply stays dormant until the process has requested this many blocks. A heap that
+// is ramping passes the threshold within its first milliseconds of allocation, and the helper
+// then fills the supply to its full depth as it would have from the first request.
+static bool isPastWarmUpStartThreshold()
+{
+    static std::atomic<bool> past { false };
+    static std::atomic<unsigned> requests { 0 };
+    if (past.load(std::memory_order_relaxed)) [[likely]]
+        return true;
+    if (requests.fetch_add(1, std::memory_order_relaxed) + 1 < Options::warmUpMarkedBlockStartAfterBlocks())
+        return false;
+    past.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+#if USE(LIBPAS)
+
+static void configureWarmUpSupply()
+{
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        bmalloc_prefault_supply_set_block_size(MarkedBlock::blockSize);
+        bmalloc_prefault_supply_idle_timeout_in_milliseconds = Options::warmUpMarkedBlockIdleTimeout() * 1000;
+        bmalloc_prefault_supply_target = warmUpMarkedBlocksIsEnabled() ? Options::warmUpMarkedBlockCount() : 0;
+    });
+}
+
+#else // !USE(LIBPAS)
+
+// bmalloc_prefault_supply is part of libpas. A build whose fastMalloc is mimalloc or the system
+// allocator has no libpas, so it keeps the supply JSC had before 320895@main moved it there.
 namespace {
 
 // Lets a test drive the exhaustion path without running the machine out of memory.
@@ -66,36 +113,13 @@ void* tryAllocateBlock()
 // interval passes with no demand at all.
 class WarmUpBlockProvider {
 public:
-    using Phase = WarmUpMarkedBlockPhase;
+    enum class Phase : uint8_t { Stopped, Armed, StandingDown };
 
     WarmUpBlockProvider()
         : m_lock(Box<Lock>::create())
         , m_condition(AutomaticThreadCondition::create())
         , m_thread(adoptRef(*new WarmUpThread(Locker { *m_lock }, *this)))
     {
-    }
-
-    static bool isEnabled()
-    {
-        // Mini mode trades throughput for footprint, which is the opposite of the bargain here.
-        return Options::useWarmUpMarkedBlocks() && Options::warmUpMarkedBlockCount() && !VM::isInMiniMode();
-    }
-
-    // Bringing up a VM takes a few dozen blocks, and a short program never asks for many more; for
-    // it the helper thread is only a thread to create, fault a supply on and tear down again at exit.
-    // So the provider stays dormant until the process has requested this many blocks. A heap that
-    // is ramping passes the threshold within its first milliseconds of allocation, and the helper
-    // then fills the supply to its full depth as it would have from the first request.
-    static bool isPastStartThreshold()
-    {
-        static std::atomic<bool> past { false };
-        static std::atomic<unsigned> requests { 0 };
-        if (past.load(std::memory_order_relaxed)) [[likely]]
-            return true;
-        if (requests.fetch_add(1, std::memory_order_relaxed) + 1 < Options::warmUpMarkedBlockStartAfterBlocks())
-            return false;
-        past.store(true, std::memory_order_relaxed);
-        return true;
     }
 
     static WarmUpBlockProvider& singleton()
@@ -122,10 +146,10 @@ public:
         return result;
     }
 
-    WarmUpMarkedBlockState stateForTesting()
+    unsigned blockCountForTesting()
     {
         Locker locker { *m_lock };
-        return { m_blocks.size(), m_phase };
+        return static_cast<unsigned>(m_blocks.size());
     }
 
 private:
@@ -245,19 +269,42 @@ private:
 
 } // anonymous namespace
 
-WarmUpMarkedBlockState warmUpMarkedBlockStateForTesting()
+#endif // USE(LIBPAS)
+
+bool warmUpMarkedBlocksAreEnabledForTesting()
 {
-    return WarmUpBlockProvider::singleton().stateForTesting();
+#if USE(LIBPAS)
+    configureWarmUpSupply();
+    return !!bmalloc_prefault_supply_target;
+#else
+    return warmUpMarkedBlocksIsEnabled();
+#endif
+}
+
+unsigned warmUpMarkedBlockCountForTesting()
+{
+#if USE(LIBPAS)
+    configureWarmUpSupply();
+    return bmalloc_prefault_supply_block_count();
+#else
+    return WarmUpBlockProvider::singleton().blockCountForTesting();
+#endif
 }
 
 void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool shouldFail)
 {
+#if USE(LIBPAS)
+    // Read by the libpas filling thread, written here by whichever thread runs the test.
+    __atomic_store_n(&bmalloc_prefault_supply_allocation_should_fail_for_testing, shouldFail, __ATOMIC_RELAXED);
+#else
     s_allocationFailsForTesting.store(shouldFail, std::memory_order_relaxed);
+#endif
 }
 
 #else // ENABLE(MALLOC_HEAP_BREAKDOWN)
 
-WarmUpMarkedBlockState warmUpMarkedBlockStateForTesting() { return { }; }
+bool warmUpMarkedBlocksAreEnabledForTesting() { return false; }
+unsigned warmUpMarkedBlockCountForTesting() { return 0; }
 void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool) { }
 
 #endif
@@ -276,15 +323,21 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 #if ENABLE(MALLOC_HEAP_BREAKDOWN)
     return m_heap.memalign(alignment, size, true);
 #else
+
     // MarkedBlock::tryCreate is the only caller today and always asks for a block-shaped region.
     // The guard keeps a future caller of some other size from being handed a block.
-    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && WarmUpBlockProvider::isEnabled() && WarmUpBlockProvider::isPastStartThreshold()) {
+    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
+#if USE(LIBPAS)
+        configureWarmUpSupply();
+        return bmalloc_prefault_supply_try_allocate();
+#else
         if (void* block = WarmUpBlockProvider::singleton().tryTake())
             return block;
+#endif
     }
+
     return tryFastCompactAlignedMalloc(alignment, size);
 #endif
-
 }
 
 void FastMallocAlignedMemoryAllocator::freeAlignedMemory(void* basePtr)

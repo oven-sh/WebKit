@@ -138,7 +138,7 @@ void Database::registerToSaveAtExit(const char* filename)
     m_shouldSaveAtExit = true;
 }
 
-void Database::logEvent(CodeBlock* codeBlock, const char* summary, const CString& detail)
+void Database::logEvent(CodeBlock* codeBlock, const char* summary, const UTF8CString& detail)
 {
     Locker locker { m_lock };
     

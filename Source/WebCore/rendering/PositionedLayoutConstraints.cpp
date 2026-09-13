@@ -730,7 +730,7 @@ static LayoutPoint staticDistance(const RenderBoxModelObject& container, const R
         hasSeenNonInlineBoxContainer = true;
     }
 
-    if (!hasSeenNonInlineBoxContainer && is<RenderInline>(container)) {
+    if (!hasSeenNonInlineBoxContainer && container.isInlineBox()) {
         // This is a simple case of when the containing block is formed by a positioned inline box with no block boxes in-between (e.g <span style="position: relative">)
         return initialStaticPosition();
     }

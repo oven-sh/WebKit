@@ -28,6 +28,7 @@
 #if USE(LIBWEBRTC)
 #include "RTCNetwork.h"
 
+#include <string_view>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/posix/SocketPOSIX.h>
@@ -44,6 +45,13 @@ static_assert
  };
 
  */
+
+// libwebrtc takes names and addresses as absl::string_view, which is char-based, so the UTF-8
+// bytes have to be reinterpreted to hand them over.
+static std::string_view toStdStringView(const UTF8CString& string LIFETIME_BOUND)
+{
+    return std::string_view { byteCast<char>(string.span()) };
+}
 
 RTCNetwork::RTCNetwork(String&& name, String&& description, IPAddress prefix, int prefixLength, int type, uint16_t id, int preference, bool active, bool ignored, int scopeID, Vector<InterfaceAddress>&& ips)
     : name(WTF::move(name))
@@ -62,7 +70,7 @@ std::unique_ptr<webrtc::Network> RTCNetwork::value() const
 {
     auto nameUTF8 = name.utf8();
     auto descriptionUTF8 = description.utf8();
-    webrtc::Network network({ nameUTF8.span().data(), nameUTF8.span().size() }, { descriptionUTF8.span().data(), descriptionUTF8.span().size() }, prefix.rtcAddress(), prefixLength, webrtc::AdapterType(type));
+    webrtc::Network network(toStdStringView(nameUTF8), toStdStringView(descriptionUTF8), prefix.rtcAddress(), prefixLength, webrtc::AdapterType(type));
     network.set_id(id);
     network.set_preference(preference);
     network.set_active(active);
@@ -103,7 +111,7 @@ webrtc::SocketAddress SocketAddress::rtcAddress() const
     result.SetPort(port);
     result.SetScopeID(scopeID);
     auto hostnameUTF8 = hostname.utf8();
-    result.SetIP({ hostnameUTF8.span().data(), hostnameUTF8.span().size() });
+    result.SetIP(toStdStringView(hostnameUTF8));
     if (ipAddress)
         result.SetResolvedIP(ipAddress->rtcAddress());
     return result;
@@ -112,7 +120,7 @@ webrtc::SocketAddress SocketAddress::rtcAddress() const
 SocketAddress::SocketAddress(const webrtc::SocketAddress& value)
     : port(value.port())
     , scopeID(value.scope_id())
-    , hostname(value.hostname())
+    , hostname(String::fromUTF8(value.hostname()))
     , ipAddress(value.IsUnresolvedIP() ? std::nullopt : std::optional(IPAddress(value.ipaddr())))
 {
 }

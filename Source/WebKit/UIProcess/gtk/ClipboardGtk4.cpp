@@ -254,16 +254,17 @@ void Clipboard::readURL(CompletionHandler<void(String&& url, String&& title)>&& 
 void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<void(int64_t)>&& completionHandler)
 {
     Vector<GdkContentProvider*> providers;
-    if (selectionData.hasMarkup()) {
-        CString markup = selectionData.markup().utf8();
-        GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(markup.data(), markup.length()));
-        providers.append(gdk_content_provider_new_for_bytes("text/html", bytes.get()));
-    }
 
     if (selectionData.hasURIList()) {
-        CString uriList = selectionData.uriList().utf8();
-        GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(uriList.data(), uriList.length()));
+        auto uriList = selectionData.uriList().utf8();
+        GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(uriList.legacyCStringPointer(), uriList.length()));
         providers.append(gdk_content_provider_new_for_bytes("text/uri-list", bytes.get()));
+    }
+
+    if (selectionData.hasMarkup()) {
+        auto markup = selectionData.markup().utf8();
+        GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(markup.legacyCStringPointer(), markup.length()));
+        providers.append(gdk_content_provider_new_for_bytes("text/html", bytes.get()));
     }
 
     if (selectionData.hasImage()) {
@@ -272,7 +273,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
     }
 
     if (selectionData.hasText())
-        providers.append(gdk_content_provider_new_typed(G_TYPE_STRING, selectionData.text().utf8().data()));
+        providers.append(gdk_content_provider_new_typed(G_TYPE_STRING, selectionData.text().utf8().legacyCStringPointer()));
 
     if (selectionData.canSmartReplace()) {
         GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(nullptr, 0));
@@ -286,7 +287,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
 
     for (const auto& it : selectionData.buffers()) {
         GRefPtr<GBytes> bytes = it.value->createGBytes();
-        providers.append(gdk_content_provider_new_for_bytes(it.key.utf8().data(), bytes.get()));
+        providers.append(gdk_content_provider_new_for_bytes(it.key.utf8().legacyCStringPointer(), bytes.get()));
     }
 
     if (providers.isEmpty()) {

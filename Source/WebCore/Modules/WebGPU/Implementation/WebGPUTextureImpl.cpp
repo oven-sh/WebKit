@@ -49,12 +49,12 @@ TextureImpl::~TextureImpl() = default;
 
 RefPtr<TextureView> TextureImpl::createView(const std::optional<TextureViewDescriptor>& descriptor)
 {
-    CString label = descriptor ? descriptor->label.utf8() : CString(""_s);
+    auto label = descriptor ? descriptor->label.utf8() : UTF8CString(""_s);
 
     Ref convertToBackingContext = m_convertToBackingContext;
 
     WGPUTextureViewDescriptor backingDescriptor {
-        .label = label.data(),
+        .label = label.legacyCStringPointer(),
         .format = descriptor && descriptor->format ? convertToBackingContext->convertToBacking(*descriptor->format) : WGPUTextureFormat_Undefined,
         .dimension = descriptor && descriptor->dimension ? convertToBackingContext->convertToBacking(*descriptor->dimension) : WGPUTextureViewDimension_Undefined,
         .baseMipLevel = descriptor ? descriptor->baseMipLevel : 0,
@@ -80,7 +80,7 @@ void TextureImpl::undestroy()
 
 void TextureImpl::setLabelInternal(const String& label)
 {
-    wgpuTextureSetLabel(m_backing.get(), label.utf8().data());
+    wgpuTextureSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

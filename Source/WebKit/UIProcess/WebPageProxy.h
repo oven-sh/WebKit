@@ -1211,9 +1211,6 @@ public:
     WebCore::FloatRect selectionBoundingRectInRootViewCoordinates() const;
 #endif
 
-    void processWillSuspend();
-    void processDidResume();
-
 #if PLATFORM(COCOA)
     using SelectWithGestureCompletionHandler = CompletionHandler<void(SelectWithGestureResult)>;
     void selectWithGesture(std::optional<WebCore::FrameIdentifier>, WebCore::IntPoint, GestureType, GestureRecognizerState, bool isInteractingWithFocusedElement, SelectWithGestureCompletionHandler&&);
@@ -4321,7 +4318,11 @@ private:
 
     bool m_lastNavigationWasAppInitiated { true };
     bool m_isRunningModalJavaScriptDialog { false };
-    Deque<Function<void(DialogDisposition)>> m_queuedModalDialogs;
+    struct QueuedModalDialog {
+        WeakPtr<WebFrameProxy> frame;
+        Function<void(DialogDisposition)> show;
+    };
+    Deque<QueuedModalDialog> m_queuedModalDialogs;
     bool m_isSuspended { false };
 
 #if HAVE(SAFE_BROWSING)

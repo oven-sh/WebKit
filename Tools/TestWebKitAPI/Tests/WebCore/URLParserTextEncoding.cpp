@@ -70,7 +70,9 @@ struct ExpectedParts {
 template<typename T, typename U>
 bool eq(T&& s1, U&& s2)
 {
-    EXPECT_STREQ(s1.utf8().data(), s2.utf8().data());
+    // Compared as UTF-8 bytes, matching the returned condition, so that a null String
+    // matches an empty one.
+    EXPECT_STREQ(s1.utf8().legacyCStringPointer(), s2.utf8().legacyCStringPointer());
     return s1.utf8() == s2.utf8();
 }
 

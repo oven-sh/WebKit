@@ -32,7 +32,7 @@ function test()
     let suite = InspectorTest.createAsyncSuite("Debugger.scriptParsed.sourceURLRepeatedIdenticalExecutions");
 
     // Disable breakpoints to ensure we do not avoid the CodeCache.
-    DebuggerAgent.setBreakpointsActive(false);
+    InspectorTest.mainFrameTarget.DebuggerAgent.setBreakpointsActive(false);
 
     suite.addTestCase({
         name: "CheckFunctionConstructorMultipleTimes",

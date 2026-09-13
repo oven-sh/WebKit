@@ -103,24 +103,47 @@ private:
     RefPtr<TextureView> m_view;
 };
 
-static bool isRenderableTextureView(const auto& texture, WGPULoadOp loadOp, WGPUStoreOp storeOp)
-{
-    if (texture.usage() & WGPUTextureUsage_Transient) {
-        if (loadOp != WGPULoadOp_Clear || storeOp != WGPUStoreOp_Discard)
-            return false;
-    }
-
-    return (texture.usage() & WGPUTextureUsage_RenderAttachment) && (texture.is2DTexture() || texture.is2DArrayTexture() || texture.is3DTexture()) && texture.mipLevelCount() == 1 && texture.arrayLayerCount() <= 1;
-}
-
 static bool isAllowableTextureView(const auto& texture, WGPULoadOp loadOp, WGPUStoreOp storeOp)
 {
-    if (texture.usage() & WGPUTextureUsage_Transient) {
+    // A view can narrow the usages it allows, but it cannot make a memoryless texture behave like a
+    // regular one, so the transient rule follows the texture the view is a view of.
+    if (texture.apiParentTexture().usage() & WGPUTextureUsage_Transient) {
         if (loadOp != WGPULoadOp_Clear || storeOp != WGPUStoreOp_Discard)
             return false;
     }
 
     return true;
+}
+
+// A depth stencil attachment has a load and store op per aspect, and only the aspects present in
+// its format may specify them, so the transient rule has to be applied per present aspect.
+static bool isAllowableDepthStencilTextureView(const auto& texture, bool hasDepthComponent, WGPULoadOp depthLoadOp, WGPUStoreOp depthStoreOp, bool hasStencilComponent, WGPULoadOp stencilLoadOp, WGPUStoreOp stencilStoreOp)
+{
+    if (hasDepthComponent && !isAllowableTextureView(texture, depthLoadOp, depthStoreOp))
+        return false;
+
+    return !hasStencilComponent || isAllowableTextureView(texture, stencilLoadOp, stencilStoreOp);
+}
+
+static bool hasRenderableTextureViewProperties(const auto& texture)
+{
+    return (texture.usage() & WGPUTextureUsage_RenderAttachment) && (texture.is2DTexture() || texture.is2DArrayTexture() || texture.is3DTexture()) && texture.mipLevelCount() == 1 && texture.arrayLayerCount() <= 1;
+}
+
+static bool isRenderableTextureView(const auto& texture, WGPULoadOp loadOp, WGPUStoreOp storeOp)
+{
+    return isAllowableTextureView(texture, loadOp, storeOp) && hasRenderableTextureViewProperties(texture);
+}
+
+// The renderable properties of a depth stencil attachment only describe something while the view
+// still has memory behind it, but the per-aspect transient rule applies to a destroyed view just the
+// same. Kept as one entry point taking the view once so Swift does not have to pass it repeatedly.
+static bool isRenderableDepthStencilTextureView(const auto& texture, const Device& device, bool isDestroyed, bool hasDepthComponent, WGPULoadOp depthLoadOp, WGPUStoreOp depthStoreOp, bool hasStencilComponent, WGPULoadOp stencilLoadOp, WGPUStoreOp stencilStoreOp)
+{
+    if (!isDestroyed && (!Texture::isDepthStencilRenderableFormat(texture.format(), device) || !hasRenderableTextureViewProperties(texture)))
+        return false;
+
+    return isAllowableDepthStencilTextureView(texture, hasDepthComponent, depthLoadOp, depthStoreOp, hasStencilComponent, stencilLoadOp, stencilStoreOp);
 }
 
 }

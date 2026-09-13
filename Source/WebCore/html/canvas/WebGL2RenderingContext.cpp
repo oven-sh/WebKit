@@ -2545,8 +2545,7 @@ String WebGL2RenderingContext::getActiveUniformBlockName(WebGLProgram& program, 
     }
     // Index not validated because the error will be set by the GraphicsContextGL and the return value will be
     // the expected null.
-    CString name = protect(graphicsContextGL())->getActiveUniformBlockName(program.object(), index);
-    return String::fromUTF8(name.span());
+    return protect(graphicsContextGL())->getActiveUniformBlockName(program.object(), index);
 }
 
 void WebGL2RenderingContext::uniformBlockBinding(WebGLProgram& program, GCGLuint uniformBlockIndex, GCGLuint uniformBlockBinding)

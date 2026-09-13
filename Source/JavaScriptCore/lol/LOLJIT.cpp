@@ -276,7 +276,7 @@ void LOLJIT::privateCompileMainPass()
         ASSERT(m_currentInstruction->size());
 
         if (m_disassembler)
-            m_disassembler->setForBytecodeMainPath(m_bytecodeIndex.offset(), label(), toCString("Allocator State Before: ", m_fastAllocator));
+            m_disassembler->setForBytecodeMainPath(m_bytecodeIndex.offset(), label(), toUTF8CString("Allocator State Before: ", m_fastAllocator));
         m_pcToCodeOriginMapBuilder.appendItem(label(), CodeOrigin(m_bytecodeIndex));
         m_labels[m_bytecodeIndex.offset()] = label();
 
@@ -610,7 +610,7 @@ void LOLJIT::privateCompileSlowCases()
         BytecodeIndex firstTo = iter->to;
 
         if (m_disassembler)
-            m_disassembler->setForBytecodeSlowPath(m_bytecodeIndex.offset(), label(), toCString("Allocator State Before: ", m_replayAllocator));
+            m_disassembler->setForBytecodeSlowPath(m_bytecodeIndex.offset(), label(), toUTF8CString("Allocator State Before: ", m_replayAllocator));
 
         std::optional<JITSizeStatistics::Marker> sizeMarker;
         if (Options::dumpBaselineJITSizeStatistics()) [[unlikely]] {
@@ -769,8 +769,8 @@ void LOLJIT::privateCompileSlowCases()
             dataLogLn("At ", firstTo, " linked ", iter - iterStart, " slow cases");
 
         if (firstTo.offset() == m_bytecodeIndex.offset()) {
-            RELEASE_ASSERT_WITH_MESSAGE(iter == m_slowCases.end() || firstTo.offset() != iter->to.offset(), "Not enough jumps linked in slow case codegen while handling %s.", toCString(currentInstruction->opcodeID()).data());
-            RELEASE_ASSERT_WITH_MESSAGE(firstTo.offset() == (iter - 1)->to.offset(), "Too many jumps linked in slow case codegen while handling %s.", toCString(currentInstruction->opcodeID()).data());
+            RELEASE_ASSERT_WITH_MESSAGE(iter == m_slowCases.end() || firstTo.offset() != iter->to.offset(), "Not enough jumps linked in slow case codegen while handling %s.", toUTF8CString(currentInstruction->opcodeID()).legacyCStringPointer());
+            RELEASE_ASSERT_WITH_MESSAGE(firstTo.offset() == (iter - 1)->to.offset(), "Too many jumps linked in slow case codegen while handling %s.", toUTF8CString(currentInstruction->opcodeID()).legacyCStringPointer());
         }
 
         jump().linkTo(fastPathResumePoint(), this);

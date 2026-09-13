@@ -67,7 +67,9 @@ DECLARE_SYSTEM_HEADER
 #import <UIKit/UIPopoverPresentationController_Private.h>
 #import <UIKit/UIPresentationController_Private.h>
 #import <UIKit/UIPress_Private.h>
+#if HAVE(UIKIT_PRINTING)
 #import <UIKit/UIPrintPageRenderer_Private.h>
+#endif
 #import <UIKit/UIResponder_Private.h>
 #import <UIKit/UIScene_Private.h>
 #import <UIKit/UIScrollEvent_Private.h>
@@ -442,9 +444,11 @@ typedef struct CGSVGDocument *CGSVGDocumentRef;
 @property (nonatomic, setter=_setMagnifierEnabled:) BOOL _magnifierEnabled;
 @end
 
+#if HAVE(UIKIT_PRINTING)
 @interface UIPrintPageRenderer ()
 @property (readonly) UIPrintRenderingQuality requestedRenderingQuality;
 @end
+#endif
 
 @interface UIResponder ()
 - (void)_wheelChangedWithEvent:(UIEvent *)event;

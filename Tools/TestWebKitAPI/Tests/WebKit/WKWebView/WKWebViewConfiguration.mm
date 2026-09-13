@@ -463,7 +463,7 @@ TEST(WebKit, OverrideReferrer)
         }
         EXPECT_TRUE(strnstr(request.span().data(), "\r\nReferer: overridereferer\r\n", request.size()));
         EXPECT_FALSE(strnstr(request.span().data(), "eferrer", request.size()));
-        EXPECT_EQ(String(request.span()).split("Referer"_s).size(), 2u);
+        EXPECT_EQ(String::fromLatin1(request.span()).split("Referer"_s).size(), 2u);
         if (path == "/example"_s) {
             co_await connection.awaitableSend(HTTPResponse("<script>window.location = 'https://webkit.org/webkit'</script>"_s).serialize());
             continue;

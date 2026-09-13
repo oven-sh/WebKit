@@ -71,10 +71,6 @@ Ref<NetworkDataTask> NetworkDataTask::create(NetworkSession& session, NetworkDat
 #endif
     }();
 
-#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    dataTask->setEmulatedConditions(session.bytesPerSecondLimit());
-#endif
-
     return dataTask;
 }
 
@@ -118,6 +114,16 @@ NetworkDataTask::~NetworkDataTask()
     if (CheckedPtr session = m_session.get())
         session->unregisterNetworkDataTask(*this);
 }
+
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+void NetworkDataTask::notifyEmulatedConditionsChanged()
+{
+    if (RefPtr client = m_client.get())
+        client->emulatedConditionsDidChange();
+}
+
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
 bool NetworkDataTask::hasPendingStreamBody() const
 {

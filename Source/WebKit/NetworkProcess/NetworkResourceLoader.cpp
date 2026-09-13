@@ -65,34 +65,31 @@
 #include <WebCore/BlobDataFileReference.h>
 #include <WebCore/COEPInheritenceViolationReportBody.h>
 #include <WebCore/CORPViolationReportBody.h>
-#include <WebCore/CacheValidation.h>
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/DiagnosticLoggingKeys.h>
-#include <WebCore/ExceptionOr.h>
 #include <WebCore/HTTPParsers.h>
 #include <WebCore/HTTPStatusCodes.h>
 #include <WebCore/LegacySchemeRegistry.h>
 #include <WebCore/LinkHeader.h>
 #include <WebCore/LinkRelAttribute.h>
+#include <WebCore/LocalNetworkAccess.h>
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/OriginAccessPatterns.h>
 #include <WebCore/PendingStreamState.h>
-#include <WebCore/RFC8941.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ReportingScope.h>
 #include <WebCore/ResourceLoaderOptions.h>
 #include <WebCore/SWServer.h>
 #include <WebCore/SameSiteInfo.h>
 #include <WebCore/SecurityOrigin.h>
+#include <WebCore/SecurityOriginData.h>
 #include <WebCore/SecurityPolicy.h>
 #include <WebCore/ShareableResource.h>
 #include <WebCore/SharedBuffer.h>
-#include <WebCore/URLPattern.h>
-#include <WebCore/URLPatternOptions.h>
 #include <WebCore/ViolationReportType.h>
 #include <wtf/Borrow.h>
 #include <wtf/CallbackAggregator.h>
@@ -278,7 +275,7 @@ void NetworkResourceLoader::startRequest(const ResourceRequest& newRequest)
 
             WTF::switchOn(result,
                 [protectedThis] (ResourceError& error) {
-                    LOADER_RELEASE_LOG_WITH_THIS(protectedThis, "start: NetworkLoadChecker::check returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d, isCancellation=%d)", error.domain().utf8().data(), error.errorCode(), error.isCancellation());
+                    LOADER_RELEASE_LOG_WITH_THIS(protectedThis, "start: NetworkLoadChecker::check returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d, isCancellation=%d)", error.domain().utf8().legacyCStringPointer(), error.errorCode(), error.isCancellation());
                     if (!error.isCancellation())
                         protectedThis->didFailLoading(error);
                 },
@@ -429,7 +426,7 @@ bool NetworkResourceLoader::shouldSendResourceLoadMessages() const
 bool NetworkResourceLoader::isLocalFileLoadAllowed(const URL& url)
 {
     bool pathIsAllowed = !pathIsBlockedForSandboxExtensions(url.fileSystemPath());
-    LOADER_RELEASE_LOG("isLocalFileLoadAllowed: allowed = %d, path = %{public}s", pathIsAllowed, url.fileSystemPath().utf8().data());
+    LOADER_RELEASE_LOG("isLocalFileLoadAllowed: allowed = %d, path = %{public}s", pathIsAllowed, url.fileSystemPath().utf8().legacyCStringPointer());
     return pathIsAllowed;
 }
 #endif // ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
@@ -454,10 +451,8 @@ void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoa
         if (isSynchronous() || m_parameters.maximumBufferingTime > 0_s)
             m_bufferedData.empty();
 
-        if (canUseCache(request)) {
+        if (canUseCache(request))
             m_bufferedDataForCache.empty();
-            m_compressionDictionaryInfoForCache.reset();
-        }
     }
 
     NetworkLoadParameters parameters = m_parameters.networkLoadParameters();
@@ -519,7 +514,7 @@ void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoa
         networkLoad->startWithScheduling();
 
     if (weakThis && networkLoad)
-        LOADER_RELEASE_LOG("startNetworkLoad: Going to the network (description=%" PUBLIC_LOG_STRING ")", networkLoad->description().utf8().data());
+        LOADER_RELEASE_LOG("startNetworkLoad: Going to the network (description=%" PUBLIC_LOG_STRING ")", networkLoad->description().utf8().legacyCStringPointer());
 }
 
 ResourceLoadInfo NetworkResourceLoader::resourceLoadInfo()
@@ -901,6 +896,38 @@ std::optional<ResourceError> NetworkResourceLoader::doCrossOriginOpenerHandlingO
     return std::nullopt;
 }
 
+// FIXME: Main resources are skipped entirely. Top-level navigations are exempt per the spec, but an
+// iframe navigation is in scope and has to be judged against its initiator rather than the document
+// being navigated away from. That needs NavigationRequester to carry the initiator's address space and
+// permissions-policy state. See https://bugs.webkit.org/show_bug.cgi?id=319908
+void NetworkResourceLoader::checkLocalNetworkAccess(const ResourceRequest& request, const URL& currentURL, IPAddressSpace connectionAddressSpace, CompletionHandler<void(std::optional<ResourceError>)>&& completionHandler)
+{
+    if (!WebCore::canDetermineConnectionAddressSpace() || !connectionToWebProcess().localNetworkAccessEnabled() || isMainResource())
+        return completionHandler(std::nullopt);
+
+    CheckedPtr networkSession = protect(connectionToWebProcess())->networkSession();
+    if (!networkSession)
+        return completionHandler(std::nullopt);
+
+    auto sourceOrigin = m_parameters.sourceOrigin ? m_parameters.sourceOrigin->data() : SecurityOriginData { };
+    auto topOrigin = m_parameters.topOrigin ? m_parameters.topOrigin->data() : SecurityOriginData { };
+
+    // FIXME: The permissions-policy features are not plumbed yet, so both are treated as allowed, which
+    // is their default. See https://bugs.webkit.org/show_bug.cgi?id=319908
+    performLocalNetworkAccessCheck(request, currentURL, connectionAddressSpace, m_parameters.clientAddressSpace,
+        m_parameters.clientIsSecureContext, ClientOrigin { topOrigin, sourceOrigin }, true, true,
+        [networkSession](const ClientOrigin& origin, IPAddressSpace addressSpace, CompletionHandler<void(WebCore::PermissionState)>&& permissionHandler) {
+            permissionHandler(networkSession->requestLocalNetworkAccessPermission(origin, addressSpace, true));
+        }, [this, protectedThis = Ref { *this }, url = currentURL, completionHandler = WTF::move(completionHandler)](std::optional<ResourceError> error) mutable {
+            // A rejected fetch surfaces as a bare TypeError, so the reason would otherwise be invisible.
+            if (error) {
+                send(Messages::WebPage::AddConsoleMessage { frameID(), MessageSource::Security, MessageLevel::Error,
+                    makeString("Blocked a local network request to '"_s, url.stringCenterEllipsizedToLength(), "' because "_s, error->localizedDescription(), "."_s), coreIdentifier() }, pageID());
+            }
+            completionHandler(WTF::move(error));
+        });
+}
+
 void NetworkResourceLoader::processClearSiteDataHeader(const WebCore::ResourceResponse& response, CompletionHandler<void()>&& completionHandler)
 {
     if (!m_parameters.isClearSiteDataHeaderEnabled)
@@ -949,103 +976,6 @@ void NetworkResourceLoader::processClearSiteDataHeader(const WebCore::ResourceRe
             triggeringFrame = frameID();
         protect(connectionToWebProcess().networkProcess())->parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::ReloadExecutionContextsForOrigin(clientOrigin, sessionID(), triggeringFrame), [callbackAggregator] { });
     }
-}
-
-static const String* stringBareItem(const RFC8941::ItemOrInnerList& value)
-{
-    auto* bareItem = std::get_if<RFC8941::BareItem>(&value);
-    return bareItem ? std::get_if<String>(bareItem) : nullptr;
-}
-
-// https://fetch.spec.whatwg.org/#http-network-or-cache-fetch step 19, and
-// https://www.rfc-editor.org/rfc/rfc9842#name-use-as-dictionary.
-void NetworkResourceLoader::processUseAsDictionaryHeader(const ResourceResponse& response)
-{
-    if (response.tainting() == ResourceResponse::Tainting::Opaque)
-        return;
-
-    auto header = response.httpHeaderField(HTTPHeaderName::UseAsDictionary);
-    if (header.isEmpty())
-        return;
-
-    auto dictionaryValue = RFC8941::parseDictionaryStructuredFieldValue(header);
-    if (!dictionaryValue)
-        return;
-
-    NetworkCache::CompressionDictionaryEntry::Info info;
-    for (auto& [name, valueAndParameters] : *dictionaryValue) {
-        auto& value = valueAndParameters.first;
-        if (name == "match"_s) {
-            auto* match = stringBareItem(value);
-            if (!match)
-                return;
-            info.match = *match;
-        } else if (name == "id"_s) {
-            static constexpr unsigned maximumDictionaryIdLength = 1024;
-            auto* id = stringBareItem(value);
-            if (!id || !id->containsOnlyASCII() || id->length() > maximumDictionaryIdLength)
-                return;
-            info.id = *id;
-        } else if (name == "type"_s) {
-            auto* bareItem = std::get_if<RFC8941::BareItem>(&value);
-            auto* type = bareItem ? std::get_if<RFC8941::Token>(bareItem) : nullptr;
-            if (!type || type->string() != "raw"_s)
-                return;
-        } else if (name == "match-dest"_s) {
-            auto* matchDest = std::get_if<RFC8941::InnerList>(&value);
-            if (!matchDest)
-                return;
-            for (auto& [item, parameters] : *matchDest) {
-                auto* destinationString = std::get_if<String>(&item);
-                if (!destinationString)
-                    return;
-                if (auto destination = NetworkCache::parseFetchDestination(*destinationString))
-                    info.matchDest.add(*destination);
-            }
-            // Unsupported destinations are dropped, but at least one must remain.
-            if (info.matchDest.isEmpty())
-                return;
-        }
-    }
-
-    if (info.match.isEmpty())
-        return;
-
-    auto& url = m_networkLoad ? m_networkLoad->currentRequest().url() : originalRequest().url();
-    if (!WebCore::shouldTreatAsPotentiallyTrustworthy(url))
-        return;
-
-    auto patternResult = URLPattern::create(info.match, String { url.string() }, { });
-    if (patternResult.hasException())
-        return;
-    Ref pattern = patternResult.releaseReturnValue();
-    if (pattern->hasRegExpGroups())
-        return;
-
-    auto port = url.port();
-    if (pattern->protocol() != url.protocol() || pattern->hostname() != url.host() || pattern->port() != (port ? String::number(*port) : emptyString()))
-        return;
-
-    // The record keeps the lifetime the response allowed rather than the response, so that a
-    // dictionary can be matched without decoding one. https://www.rfc-editor.org/rfc/rfc9842#name-dictionary-freshness-requir
-    auto responseTimestamp = WallTime::now();
-    auto freshnessLifetime = computeFreshnessLifetimeForHTTPFamily(response, responseTimestamp);
-    auto currentAge = computeCurrentAge(response, responseTimestamp);
-    if (freshnessLifetime <= currentAge)
-        return;
-    info.expirationTime = responseTimestamp + (freshnessLifetime - currentAge);
-
-    m_compressionDictionaryInfoForCache = WTF::move(info);
-}
-
-void NetworkResourceLoader::storeCompressionDictionaryIfNeeded(const ResourceResponse& response, RefPtr<WebCore::FragmentedSharedBuffer>&& body)
-{
-    if (!m_compressionDictionaryInfoForCache || !body)
-        return;
-
-    LOADER_RELEASE_LOG("storeCompressionDictionaryIfNeeded: Storing compression dictionary in HTTP disk cache");
-    auto info = std::exchange(m_compressionDictionaryInfoForCache, std::nullopt);
-    protect(m_cache)->storeCompressionDictionary(m_networkLoad ? m_networkLoad->currentRequest() : originalRequest(), response, WTF::move(body), WTF::move(*info));
 }
 
 static BrowsingContextGroupSwitchDecision NODELETE toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
@@ -1170,7 +1100,7 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
     };
 #endif
 
-    LOADER_RELEASE_LOG("didReceiveResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, hasCachedEntryForValidation=%d, hasNetworkLoadChecker=%d)", receivedResponse.httpStatusCode(), receivedResponse.mimeType().utf8().data(), receivedResponse.expectedContentLength(), !!m_cacheEntryForValidation, !!m_networkLoadChecker);
+    LOADER_RELEASE_LOG("didReceiveResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, hasCachedEntryForValidation=%d, hasNetworkLoadChecker=%d)", receivedResponse.httpStatusCode(), receivedResponse.mimeType().utf8().legacyCStringPointer(), receivedResponse.expectedContentLength(), !!m_cacheEntryForValidation, !!m_networkLoadChecker);
 
 #if ENABLE(CONTENT_FILTERING)
     if (m_contentFilter && !protect(m_contentFilter)->continueAfterResponseReceived(receivedResponse))
@@ -1224,20 +1154,14 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
     if (!isSynchronous() && m_response.isMultipart())
         m_bufferedData.reset();
 
-    if (m_response.isMultipart()) {
+    if (m_response.isMultipart())
         m_bufferedDataForCache.reset();
-        m_compressionDictionaryInfoForCache.reset();
-    }
 
     if (m_cacheEntryForValidation) {
         bool validationSucceeded = m_response.httpStatusCode() == httpStatus304NotModified;
         LOADER_RELEASE_LOG("didReceiveResponse: Received revalidation response (validationSucceeded=%d, wasOriginalRequestConditional=%d)", validationSucceeded, originalRequest().isConditional());
         if (validationSucceeded) {
             m_cacheEntryForValidation = protect(m_cache)->update(originalRequest(), *m_cacheEntryForValidation, m_response, m_privateRelayed);
-            if (connectionToWebProcess().compressionDictionaryEnabled()) {
-                processUseAsDictionaryHeader(m_cacheEntryForValidation->response());
-                storeCompressionDictionaryIfNeeded(m_cacheEntryForValidation->response(), m_cacheEntryForValidation->buffer());
-            }
             // If the request was conditional then this revalidation was not triggered by the network cache and we pass the 304 response to WebCore.
             if (originalRequest().isConditional()) {
                 // Add CORP header to the 304 response if previously set to avoid being blocked by load checker due to COEP.
@@ -1258,7 +1182,7 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
     if (networkLoadChecker) {
         auto error = networkLoadChecker->validateResponse(m_networkLoad ? m_networkLoad->currentRequest() : originalRequest(), m_response);
         if (!error.isNull()) {
-            LOADER_RELEASE_LOG_ERROR("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8().data(), error.errorCode());
+            LOADER_RELEASE_LOG_ERROR("didReceiveResponse: NetworkLoadChecker::validateResponse returned an error (error.domain=%" PUBLIC_LOG_STRING ", error.code=%d)", error.domain().utf8().legacyCStringPointer(), error.errorCode());
             RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }, error = WTF::move(error)] {
                 if (protectedThis->m_networkLoad)
                     protectedThis->didFailLoading(error);
@@ -1271,6 +1195,21 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
 
     initializeReportingEndpoints(m_response);
 
+    checkLocalNetworkAccess(m_parameters.request, m_networkLoad ? m_networkLoad->currentRequest().url() : m_response.url(), m_response.ipAddressSpace(), [this, protectedThis = Ref { *this }, privateRelayed, resourceLoadInfo = WTF::move(resourceLoadInfo), completionHandler = WTF::move(completionHandler)](std::optional<ResourceError> localNetworkAccessError) mutable {
+        if (localNetworkAccessError) {
+            LOADER_RELEASE_LOG_ERROR("didReceiveResponse: Blocked by Local Network Access check");
+            RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }, error = WTF::move(*localNetworkAccessError)] {
+                if (protectedThis->m_networkLoad)
+                    protectedThis->didFailLoading(error);
+            });
+            return completionHandler(PolicyAction::Ignore);
+        }
+        continueDidReceiveResponseAfterLocalNetworkAccessCheck(privateRelayed, WTF::move(resourceLoadInfo), WTF::move(completionHandler));
+    });
+}
+
+void NetworkResourceLoader::continueDidReceiveResponseAfterLocalNetworkAccessCheck(PrivateRelayed privateRelayed, ResourceLoadInfo&& resourceLoadInfo, ResponseCompletionHandler&& completionHandler)
+{
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(m_response)) {
         LOADER_RELEASE_LOG_ERROR("didReceiveResponse: Interrupting main resource load due to CSP frame-ancestors or X-Frame-Options");
         auto response = sanitizeResponseIfPossible(ResourceResponse { m_response }, ResourceResponse::SanitizationType::CrossOriginSafe);
@@ -1298,9 +1237,6 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
     }
 
     processClearSiteDataHeader(m_response, [this, protectedThis = Ref { *this }, privateRelayed, resourceLoadInfo = WTF::move(resourceLoadInfo), completionHandler = WTF::move(completionHandler)] () mutable {
-        if (connectionToWebProcess().compressionDictionaryEnabled())
-            processUseAsDictionaryHeader(m_response);
-
         auto response = sanitizeResponseIfPossible(ResourceResponse { m_response }, ResourceResponse::SanitizationType::CrossOriginSafe);
         if (isSynchronous()) {
             LOADER_RELEASE_LOG("didReceiveResponse: Using response for synchronous load");
@@ -1641,6 +1577,20 @@ void NetworkResourceLoader::willSendRedirectedRequestInternal(ResourceRequest&& 
 }
 
 void NetworkResourceLoader::continueWillSendRedirectedRequestAfterContentFiltering(ResourceRequest&& request, ResourceRequest&& redirectRequest, ResourceResponse&& redirectResponse, IsFromServiceWorker isFromServiceWorker, CompletionHandler<void(WebCore::ResourceRequest&&)>&& completionHandler)
+{
+    // A redirect never reaches didReceiveResponse, so this hop needs its own check, judged against the
+    // connection that served the 302 rather than the one the request started on.
+    checkLocalNetworkAccess(redirectRequest, redirectRequest.url(), redirectResponse.ipAddressSpace(), [this, protectedThis = Ref { *this }, request = WTF::move(request), redirectRequest = WTF::move(redirectRequest), redirectResponse = WTF::move(redirectResponse), isFromServiceWorker, completionHandler = WTF::move(completionHandler)](std::optional<ResourceError> localNetworkAccessError) mutable {
+        if (localNetworkAccessError) {
+            LOADER_RELEASE_LOG_ERROR("willSendRedirectedRequest: Blocked by Local Network Access check");
+            didFailLoading(*localNetworkAccessError);
+            return completionHandler({ });
+        }
+        continueWillSendRedirectedRequestAfterLocalNetworkAccessCheck(WTF::move(request), WTF::move(redirectRequest), WTF::move(redirectResponse), isFromServiceWorker, WTF::move(completionHandler));
+    });
+}
+
+void NetworkResourceLoader::continueWillSendRedirectedRequestAfterLocalNetworkAccessCheck(ResourceRequest&& request, ResourceRequest&& redirectRequest, ResourceResponse&& redirectResponse, IsFromServiceWorker isFromServiceWorker, CompletionHandler<void(WebCore::ResourceRequest&&)>&& completionHandler)
 {
     std::optional<WebCore::PCM::AttributionTriggerData> privateClickMeasurementAttributionTriggerData;
     if (auto result = WebCore::PrivateClickMeasurement::parseAttributionRequest(redirectRequest.url())) {
@@ -2120,9 +2070,6 @@ void NetworkResourceLoader::tryStoreAsCacheEntry()
         }
         return;
     }
-
-    storeCompressionDictionaryIfNeeded(m_response, m_bufferedDataForCache.copyBuffer());
-
     LOADER_RELEASE_LOG("tryStoreAsCacheEntry: Storing entry in HTTP disk cache");
     protect(m_cache)->store(m_networkLoad->currentRequest(), m_response, m_privateRelayed, m_bufferedDataForCache.takeBuffer(), [loader = Ref { *this }](auto&& mappedBody) mutable {
 #if ENABLE(SHAREABLE_RESOURCE)
@@ -2199,6 +2146,21 @@ void NetworkResourceLoader::didRetrieveCacheEntry(std::unique_ptr<NetworkCache::
         didReceiveMainResourceResponse(response);
 
     initializeReportingEndpoints(response);
+
+    // A cache hit resolved to a real address when the entry was stored, so it needs the same check.
+    checkLocalNetworkAccess(originalRequest(), response.url(), response.ipAddressSpace(), [this, protectedThis = Ref { *this }, entry = WTF::move(entry)](std::optional<ResourceError> localNetworkAccessError) mutable {
+        if (localNetworkAccessError) {
+            LOADER_RELEASE_LOG_ERROR("didRetrieveCacheEntry: Blocked by Local Network Access check");
+            didFailLoading(*localNetworkAccessError);
+            return;
+        }
+        continueDidRetrieveCacheEntryAfterLocalNetworkAccessCheck(WTF::move(entry));
+    });
+}
+
+void NetworkResourceLoader::continueDidRetrieveCacheEntryAfterLocalNetworkAccessCheck(std::unique_ptr<NetworkCache::Entry> entry)
+{
+    auto response = entry->response();
 
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(response)) {
         LOADER_RELEASE_LOG_ERROR("didRetrieveCacheEntry: Stopping load due to CSP Frame-Ancestors or X-Frame-Options");
@@ -2419,28 +2381,28 @@ void NetworkResourceLoader::logCookieInformation() const
     CheckedPtr networkStorageSession = protect(connectionToWebProcess().networkProcess())->storageSession(sessionID());
     ASSERT(networkStorageSession);
 
-    logCookieInformation(protect(m_connection), "NetworkResourceLoader"_s, reinterpret_cast<const void*>(this), *networkStorageSession, originalRequest().firstPartyForCookies(), SameSiteInfo::create(originalRequest()), originalRequest().url(), originalRequest().httpReferrer(), frameID(), pageID(), coreIdentifier());
+    logCookieInformation(protect(m_connection), "NetworkResourceLoader"_s, reinterpret_cast<const void*>(this), *networkStorageSession, originalRequest().firstPartyForCookies(), SameSiteInfo::create(originalRequest()), originalRequest().url(), originalRequest().httpReferrer(), frameID(), webPageProxyID(), coreIdentifier());
 }
 
-static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
+static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
 {
     ASSERT(NetworkResourceLoader::shouldLogCookieInformation(connection, networkStorageSession.sessionID()));
 
     auto escapedURL = escapeForJSON(url.string());
     auto escapedFirstParty = escapeForJSON(firstParty.string());
     auto escapedFrameID = escapeIDForJSON(frameID);
-    auto escapedPageID = escapeIDForJSON(pageID);
+    auto escapedWebPageProxyID = escapeIDForJSON(webPageProxyID);
     auto escapedIdentifier = escapeIDForJSON(identifier);
     auto escapedReferrer = escapeForJSON(referrer);
 
 #define LOCAL_LOG_IF_ALLOWED(fmt, ...) RELEASE_LOG_IF(connection.isAlwaysOnLoggingAllowed(), Network, "%p - %s::" fmt, loggedObject, label.characters(), ##__VA_ARGS__)
 #define LOCAL_LOG(str, ...) \
-    LOCAL_LOG_IF_ALLOWED("logCookieInformation: BLOCKED cookie access for webPageID=%s, frameID=%s, resourceID=%s, firstParty=%s: " str, escapedPageID.utf8().data(), escapedFrameID.utf8().data(), escapedIdentifier.utf8().data(), escapedFirstParty.utf8().data(), ##__VA_ARGS__)
+    LOCAL_LOG_IF_ALLOWED("logCookieInformation: BLOCKED cookie access for webPageProxyID=%s, frameID=%s, resourceID=%s, firstParty=%s: " str, escapedWebPageProxyID.utf8().legacyCStringPointer(), escapedFrameID.utf8().legacyCStringPointer(), escapedIdentifier.utf8().legacyCStringPointer(), escapedFirstParty.utf8().legacyCStringPointer(), ##__VA_ARGS__)
 
-    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
+    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", "BLOCKED");
     LOCAL_LOG("  \"hasStorageAccess\": %" PUBLIC_LOG_STRING ",", "false");
-    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().data());
+    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"isSameSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isSameSite ? "true" : "false");
     LOCAL_LOG("  \"isTopSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isTopSite ? "true" : "false");
     LOCAL_LOG("  \"cookies\": []");
@@ -2449,30 +2411,30 @@ static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connectio
 #undef LOCAL_LOG_IF_ALLOWED
 }
 
-static void logCookieInformationInternal(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const WebCore::SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
+static void logCookieInformationInternal(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const WebCore::SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
 {
     ASSERT(NetworkResourceLoader::shouldLogCookieInformation(connection, networkStorageSession.sessionID()));
 
     Vector<WebCore::Cookie> cookies;
-    if (!networkStorageSession.getRawCookies(firstParty, sameSiteInfo, url, frameID, pageID, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, cookies))
+    if (!networkStorageSession.getRawCookies(firstParty, sameSiteInfo, url, frameID, webPageProxyID, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, cookies))
         return;
 
     auto escapedURL = escapeForJSON(url.string());
     auto escapedPartition = escapeForJSON(emptyString());
     auto escapedReferrer = escapeForJSON(referrer);
     auto escapedFrameID = escapeIDForJSON(frameID);
-    auto escapedPageID = escapeIDForJSON(pageID);
+    auto escapedWebPageProxyID = escapeIDForJSON(webPageProxyID);
     auto escapedIdentifier = escapeIDForJSON(identifier);
-    bool hasStorageAccess = (frameID && pageID) ? networkStorageSession.hasStorageAccess(WebCore::RegistrableDomain { url }, WebCore::RegistrableDomain { firstParty }, frameID.value(), pageID.value()) : false;
+    bool hasStorageAccess = (frameID && webPageProxyID) ? networkStorageSession.hasStorageAccess(WebCore::RegistrableDomain { url }, WebCore::RegistrableDomain { firstParty }, frameID, webPageProxyID) : false;
 
 #define LOCAL_LOG_IF_ALLOWED(fmt, ...) RELEASE_LOG_IF(connection.isAlwaysOnLoggingAllowed(), Network, "%p - %s::" fmt, loggedObject, label.characters(), ##__VA_ARGS__)
 #define LOCAL_LOG(str, ...) \
-    LOCAL_LOG_IF_ALLOWED("logCookieInformation: webPageID=%s, frameID=%s, resourceID=%s: " str, escapedPageID.utf8().data(), escapedFrameID.utf8().data(), escapedIdentifier.utf8().data(), ##__VA_ARGS__)
+    LOCAL_LOG_IF_ALLOWED("logCookieInformation: webPageProxyID=%s, frameID=%s, resourceID=%s: " str, escapedWebPageProxyID.utf8().legacyCStringPointer(), escapedFrameID.utf8().legacyCStringPointer(), escapedIdentifier.utf8().legacyCStringPointer(), ##__VA_ARGS__)
 
-    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
-    LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", escapedPartition.utf8().data());
+    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().legacyCStringPointer());
+    LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", escapedPartition.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"hasStorageAccess\": %" PUBLIC_LOG_STRING ",", hasStorageAccess ? "true" : "false");
-    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().data());
+    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().legacyCStringPointer());
     LOCAL_LOG("  \"isSameSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isSameSite ? "true" : "false");
     LOCAL_LOG("  \"isTopSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isTopSite ? "true" : "false");
     LOCAL_LOG("  \"cookies\": [");
@@ -2492,17 +2454,17 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
         auto escapedCommentURL = escapeForJSON(cookie.commentURL.string());
         // FIXME: Log Same-Site policy for each cookie. See <https://bugs.webkit.org/show_bug.cgi?id=184894>.
 
-        LOCAL_LOG("  { \"name\": \"%" PUBLIC_LOG_STRING "\",", escapedName.utf8().data());
-        LOCAL_LOG("    \"value\": \"%" PUBLIC_LOG_STRING "\",", escapedValue.utf8().data());
-        LOCAL_LOG("    \"domain\": \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8().data());
-        LOCAL_LOG("    \"path\": \"%" PUBLIC_LOG_STRING "\",", escapedPath.utf8().data());
+        LOCAL_LOG("  { \"name\": \"%" PUBLIC_LOG_STRING "\",", escapedName.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"value\": \"%" PUBLIC_LOG_STRING "\",", escapedValue.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"domain\": \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"path\": \"%" PUBLIC_LOG_STRING "\",", escapedPath.utf8().legacyCStringPointer());
         LOCAL_LOG("    \"created\": %f,", cookie.created);
         LOCAL_LOG("    \"expires\": %f,", cookie.expires.value_or(0));
         LOCAL_LOG("    \"httpOnly\": %" PUBLIC_LOG_STRING ",", cookie.httpOnly ? "true" : "false");
         LOCAL_LOG("    \"secure\": %" PUBLIC_LOG_STRING ",", cookie.secure ? "true" : "false");
         LOCAL_LOG("    \"session\": %" PUBLIC_LOG_STRING ",", cookie.session ? "true" : "false");
-        LOCAL_LOG("    \"comment\": \"%" PUBLIC_LOG_STRING "\",", escapedComment.utf8().data());
-        LOCAL_LOG("    \"commentURL\": \"%" PUBLIC_LOG_STRING "\"", escapedCommentURL.utf8().data());
+        LOCAL_LOG("    \"comment\": \"%" PUBLIC_LOG_STRING "\",", escapedComment.utf8().legacyCStringPointer());
+        LOCAL_LOG("    \"commentURL\": \"%" PUBLIC_LOG_STRING "\"", escapedCommentURL.utf8().legacyCStringPointer());
         LOCAL_LOG("  }%" PUBLIC_LOG_STRING, trailingComma.characters());
     }
     LOCAL_LOG("]}");
@@ -2510,14 +2472,14 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
 #undef LOCAL_LOG_IF_ALLOWED
 }
 
-void NetworkResourceLoader::logCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
+void NetworkResourceLoader::logCookieInformation(NetworkConnectionToWebProcess& connection, ASCIILiteral label, const void* loggedObject, const NetworkStorageSession& networkStorageSession, const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, const String& referrer, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, std::optional<WebCore::ResourceLoaderIdentifier> identifier)
 {
     ASSERT(shouldLogCookieInformation(connection, networkStorageSession.sessionID()));
 
-    if (networkStorageSession.shouldBlockCookies(firstParty, url, frameID, pageID, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No))
-        logBlockedCookieInformation(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, pageID, identifier);
+    if (networkStorageSession.shouldBlockCookies(firstParty, url, frameID, webPageProxyID, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No))
+        logBlockedCookieInformation(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, webPageProxyID, identifier);
     else
-        logCookieInformationInternal(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, pageID, identifier);
+        logCookieInformationInternal(connection, label, loggedObject, networkStorageSession, firstParty, sameSiteInfo, url, referrer, frameID, webPageProxyID, identifier);
 }
 #endif // !RELEASE_LOG_DISABLED
 

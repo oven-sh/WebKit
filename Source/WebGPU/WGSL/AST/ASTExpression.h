@@ -34,6 +34,7 @@ namespace WGSL {
 class BoundsCheckVisitor;
 class ConstantRewriter;
 class EntryPointRewriter;
+class EvaluationOrderRewriter;
 class PointerRewriter;
 class RewriteGlobalVariables;
 class TypeChecker;
@@ -52,6 +53,7 @@ class Expression : public Node {
     friend BoundsCheckVisitor;
     friend ConstantRewriter;
     friend EntryPointRewriter;
+    friend EvaluationOrderRewriter;
     friend PointerRewriter;
     friend RewriteGlobalVariables;
     friend TypeChecker;

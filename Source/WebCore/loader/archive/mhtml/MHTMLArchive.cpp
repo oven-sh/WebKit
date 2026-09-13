@@ -157,7 +157,7 @@ Ref<FragmentedSharedBuffer> MHTMLArchive::generateMHTMLData(Page* page)
     stringBuilder.append("\";\r\n\tboundary=\""_s, boundary, "\"\r\n\r\n"_s);
 
     ASSERT(stringBuilder.toString().containsOnlyASCII());
-    CString asciiString = stringBuilder.toString().utf8();
+    auto asciiString = stringBuilder.toString().utf8();
     SharedBufferBuilder mhtmlData;
     mhtmlData.append(asciiString.span());
 

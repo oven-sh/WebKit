@@ -25,25 +25,24 @@
 
 #pragma once
 
+#include <WebCore/URLMatch.h>
 #include <wtf/BitSet.h>
+#include <wtf/OptionSet.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace WebCore {
 
 enum class QuirkSite : uint8_t {
     Amazon,
     BankOfAmerica,
-    BestBuy,
     Bing,
     CBSSports,
-    CEAC,
-    Dictionary,
     EA,
     Facebook,
     GoogleDocs,
     GoogleProperty,
     GoogleMaps,
-    IHeart,
-    InVideo,
+    GoogleSearch,
     LinkedIn,
     MyBinder,
     NBA,
@@ -51,11 +50,9 @@ enum class QuirkSite : uint8_t {
     Outlook,
     Reddit,
     SoundCloud,
-    Thesaurus,
     TikTok,
     Vimeo,
     Walmart,
-    WebEx,
 
     NumberOfSites
 };
@@ -335,9 +332,41 @@ enum class QuirkBehaviorID {
 
 using QuirkBitSet = WTF::BitSet<static_cast<size_t>(QuirkBehaviorID::NumberOfIDs)>;
 
+struct QuirkParameters {
+    ASCIILiteral script;
+
+    static consteval QuirkParameters fromScript(ASCIILiteral script)
+    {
+        return QuirkParameters {
+            .script = script
+        };
+    }
+};
+
+enum class QuirkParametersNeeded : uint8_t {
+    NeedsScript = 1 << 0,
+};
+
 struct QuirkBehavior {
     QuirkBehaviorID id;
     bool isAvailable { false };
+    OptionSet<QuirkParametersNeeded> quirkParametersNeeded { };
+    std::optional<URLMatch> urlCondition { std::nullopt };
+    std::optional<QuirkParameters> parameters { std::nullopt };
+
+    consteval QuirkBehavior operator()(QuirkParameters params) const
+    {
+        auto copy = *this;
+        copy.parameters = params;
+        return copy;
+    }
+
+    consteval QuirkBehavior when(const URLMatch& urlCondition) const
+    {
+        auto copy = *this;
+        copy.urlCondition = urlCondition;
+        return copy;
+    }
 };
 
 // One QuirkBehavior per QuirkBehaviorID, for use in the quirk table.
@@ -390,7 +419,7 @@ inline constexpr QuirkBehavior needsSuppressedPauseEventOnFullscreenExitQuirk { 
 inline constexpr QuirkBehavior needsPreloadAutoQuirk { WebCore::QuirkBehaviorID::NeedsPreloadAutoQuirk, BuildCondition::iOSFamily };
 inline constexpr QuirkBehavior needsResettingTransitionCancelsRunningTransitionQuirk { WebCore::QuirkBehaviorID::NeedsResettingTransitionCancelsRunningTransitionQuirk, BuildCondition::always };
 inline constexpr QuirkBehavior needsReuseLiveRangeForSelectionUpdateQuirk { WebCore::QuirkBehaviorID::NeedsReuseLiveRangeForSelectionUpdateQuirk, BuildCondition::always };
-inline constexpr QuirkBehavior needsScriptToEvaluateBeforeRunningScriptFromURLQuirk { WebCore::QuirkBehaviorID::NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk, BuildCondition::always };
+inline constexpr QuirkBehavior needsScriptToEvaluateBeforeRunningScriptFromURLQuirk { WebCore::QuirkBehaviorID::NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk, BuildCondition::always, QuirkParametersNeeded::NeedsScript };
 inline constexpr QuirkBehavior needsScrollbarWidthThinDisabledQuirk { WebCore::QuirkBehaviorID::NeedsScrollbarWidthThinDisabledQuirk, BuildCondition::always };
 inline constexpr QuirkBehavior needsSeekingSupportDisabledQuirk { WebCore::QuirkBehaviorID::NeedsSeekingSupportDisabledQuirk, BuildCondition::always };
 inline constexpr QuirkBehavior needsSupportsProgressMonitoringQuirk { WebCore::QuirkBehaviorID::NeedsSupportsProgressMonitoringQuirk, BuildCondition::mediaSource };

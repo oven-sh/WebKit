@@ -29,6 +29,7 @@
 
 #include "WasmDebugServerUtilities.h"
 #include "WasmVirtualAddress.h"
+#include <optional>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -39,6 +40,13 @@
 namespace JSC {
 namespace Wasm {
 
+// A bytecode patch persists while either a breakpoint site or single-step references it. Instances
+// of a module share one bytecode buffer, so a breakpoint patches that buffer once for all of them.
+//
+// Sites are scoped to the instance their address names. LLDB gives every instance its own library
+// and places a site in each, so a site says "stop this instance here", not "stop this bytecode".
+// A sibling instance reaching the same patched byte has no breakpoint there and resumes through
+// the patch without reporting a stop.
 class JS_EXPORT_PRIVATE BreakpointManager {
     WTF_MAKE_TZONE_ALLOCATED(BreakpointManager);
 
@@ -46,21 +54,44 @@ public:
     BreakpointManager() = default;
     ~BreakpointManager();
 
-    bool hasBreakpoints();
+    // What the interpreter should do with a trap raised by a patched byte.
+    struct TrapAction {
+        OpType displacedOpcode { OpType::Unreachable }; // The opcode the patch replaced; resuming dispatches it.
+        // Absent when nothing at this PC belongs to the instance that reached it.
+        std::optional<Breakpoint::Type> stopType;
+    };
+
     bool hasOneTimeBreakpoints();
 
-    Breakpoint* findBreakpoint(VirtualAddress);
-    void setBreakpoint(VirtualAddress, Breakpoint&&);
-    bool removeBreakpoint(VirtualAddress);
+    // Absent when no breakpoint patched this PC, i.e. the trap is a genuine `unreachable`.
+    std::optional<TrapAction> trapActionFor(const uint8_t* pc, VirtualAddress hitAddress);
+
+    // One-time breakpoints serving a step. Not instance scoped: a step belongs to the debuggee
+    // VM, which is the only one running while it is in flight.
+    void setStepBreakpoint(const ModuleInformation& owner, uint8_t* pc);
     void clearAllOneTimeBreakpoints();
+
+    // Breakpoint sites installed by LLDB (Z0/z0), scoped to the instance the address names.
+    void setBreakpointAt(VirtualAddress, const ModuleInformation& owner, uint8_t* pc);
+    bool removeBreakpointAt(VirtualAddress);
+
+    // Drops the sites an instance held. LLDB unloads the library of a collected instance without
+    // sending z0 for the sites in it, so nothing else releases the patch they keep alive.
+    void removeSitesForInstance(uint32_t instanceId);
+
     void clearAllBreakpoints();
 
+    RefPtr<Breakpoint> breakpointAt(const uint8_t* pc); // FIXME: Should be used for test only
+
 private:
-    bool removeBreakpointImpl(VirtualAddress) WTF_REQUIRES_LOCK(m_lock);
+    Breakpoint& ensurePatched(const ModuleInformation& owner, uint8_t* pc) WTF_REQUIRES_LOCK(m_lock);
+    void releasePatchIfUnused(uint8_t* pc) WTF_REQUIRES_LOCK(m_lock);
+    bool removeSiteImpl(VirtualAddress) WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
-    UncheckedKeyHashMap<VirtualAddress, Breakpoint> m_breakpoints WTF_GUARDED_BY_LOCK(m_lock);
-    UncheckedKeyHashSet<VirtualAddress> m_oneTimeBreakpoints WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<uint8_t*, Ref<Breakpoint>> m_breakpoints WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashSet<uint8_t*> m_oneTimeBreakpoints WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<VirtualAddress, uint8_t*> m_addressToPC WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace Wasm

@@ -436,7 +436,6 @@ static bool NODELETE isSafeRedirectionResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::LastModified
         || name == HTTPHeaderName::Age
         || name == HTTPHeaderName::Pragma
-        || name == HTTPHeaderName::ReferrerPolicy
         || name == HTTPHeaderName::Refresh
         || name == HTTPHeaderName::Vary
         || name == HTTPHeaderName::CrossOriginOpenerPolicy

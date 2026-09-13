@@ -211,7 +211,7 @@ WebKitWebExtensionMatchPattern* webkit_web_extension_match_pattern_new_with_stri
 
     if (error && internalError) {
         g_set_error(error, webkit_web_extension_match_pattern_error_quark(),
-            toWebKitWebExtensionMatchPatternError(internalError->errorCode()), internalError->localizedDescription().utf8().data(), nullptr);
+            toWebKitWebExtensionMatchPatternError(internalError->errorCode()), internalError->localizedDescription().utf8().legacyCStringPointer(), nullptr);
     }
 
     return webkitWebExtensionMatchPatternCreate(matchPattern);
@@ -241,7 +241,7 @@ WebKitWebExtensionMatchPattern* webkit_web_extension_match_pattern_new_with_sche
 
     if (error && internalError) {
         g_set_error(error, webkit_web_extension_match_pattern_error_quark(),
-            toWebKitWebExtensionMatchPatternError(internalError->errorCode()), internalError->localizedDescription().utf8().data(), nullptr);
+            toWebKitWebExtensionMatchPatternError(internalError->errorCode()), internalError->localizedDescription().utf8().legacyCStringPointer(), nullptr);
     }
 
     return webkitWebExtensionMatchPatternCreate(matchPattern);

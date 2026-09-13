@@ -693,7 +693,7 @@ static constexpr bool unreachableForValue = false;
         if (LOG_CHANNEL(channel).state != logChannelStateOff) { \
             WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine); \
             commands; \
-            WTFLog(&LOG_CHANNEL(channel), "%s", stream.release().utf8().data()); \
+            WTFLog(&LOG_CHANNEL(channel), "%s", stream.release().utf8().legacyCStringPointer()); \
         } \
     } while (0)
 #endif
@@ -890,13 +890,13 @@ inline const char* wtfLogPriorityName(int priority)
 #define ALWAYS_LOG_WITH_STREAM(commands) do { \
         WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine); \
         commands; \
-        WTFLogAlways("%s", stream.release().utf8().data()); \
+        WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer()); \
     } while (0)
 
 #define WTF_ALWAYS_LOG(commands) do { \
         WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine); \
         stream << commands; \
-        WTFLogAlways("%s", stream.release().utf8().data()); \
+        WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer()); \
     } while (0)
 
 /* RELEASE_ASSERT */
@@ -908,6 +908,10 @@ inline const char* wtfLogPriorityName(int priority)
         CRASH_WITH_INFO(__VA_ARGS__); \
 } while (0)
 #define RELEASE_ASSERT_WITH_MESSAGE(assertion, ...) RELEASE_ASSERT(assertion)
+#define RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(assertion, ...) do { \
+    if (UNLIKELY_FOR_C_ASSERTIONS(!(assertion))) \
+        CRASH_WITH_UNQUALIFIED_FUNCTION_NAME_AND_INFO(__VA_ARGS__); \
+} while (0)
 #define RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(assertion) RELEASE_ASSERT(assertion)
 #define RELEASE_ASSERT_NOT_REACHED(...) CRASH_WITH_INFO(__VA_ARGS__)
 #define RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT() CRASH_UNDER_CONSTEXPR_CONTEXT();
@@ -926,6 +930,7 @@ inline const char* wtfLogPriorityName(int priority)
 
 #define RELEASE_ASSERT(assertion, ...) ASSERT(assertion, __VA_ARGS__)
 #define RELEASE_ASSERT_WITH_MESSAGE(assertion, ...) ASSERT_WITH_MESSAGE(assertion, __VA_ARGS__)
+#define RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(assertion, ...) ASSERT(assertion, __VA_ARGS__)
 #define RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(assertion) ASSERT_WITH_SECURITY_IMPLICATION(assertion)
 #define RELEASE_ASSERT_NOT_REACHED(...) ASSERT_NOT_REACHED(__VA_ARGS__)
 #define RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT() ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT()
@@ -1123,6 +1128,22 @@ inline void compilerFenceForCrash()
     } while (false)
 #endif
 #endif // CRASH_WITH_INFO
+
+#ifndef CRASH_WITH_UNQUALIFIED_FUNCTION_NAME_AND_INFO
+#if !VA_OPT_SUPPORTED
+#define CRASH_WITH_UNQUALIFIED_FUNCTION_NAME_AND_INFO(...) do { \
+        WTF::isIntegralOrPointerType(__VA_ARGS__); \
+        compilerFenceForCrash(); \
+        WTFCrashWithInfo(__LINE__, __FILE__, __func__, ##__VA_ARGS__); \
+    } while (false)
+#else
+#define CRASH_WITH_UNQUALIFIED_FUNCTION_NAME_AND_INFO(...) do { \
+        WTF::isIntegralOrPointerType(__VA_ARGS__); \
+        compilerFenceForCrash(); \
+        WTFCrashWithInfo(__LINE__, __FILE__, __func__ __VA_OPT__(,) __VA_ARGS__); \
+    } while (false)
+#endif
+#endif // CRASH_WITH_UNQUALIFIED_FUNCTION_NAME_AND_INFO
 
 #ifndef CRASH_WITH_SECURITY_IMPLICATION_AND_INFO
 #define CRASH_WITH_SECURITY_IMPLICATION_AND_INFO CRASH_WITH_INFO

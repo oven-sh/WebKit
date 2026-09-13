@@ -213,6 +213,7 @@
 #include "Navigator.h"
 #include "NavigatorMediaSession.h"
 #include "NestingLevelIncrementer.h"
+#include "NetworkLoadPolicy.h"
 #include "NodeIterator.h"
 #include "NodeRareData.h"
 #include "NodeWithIndex.h"
@@ -834,6 +835,9 @@ Document::~Document()
         ASSERT(m_intersectionObserverData->registrations.isEmpty());
     }
 
+    ASSERT(m_localIntersectionObservers.isEmpty());
+    ASSERT(m_remoteIntersectionObservers.isEmpty());
+
     removeFromDocumentsMap();
 
     // We need to remove from the contexts map very early in the destructor so that calling postTask() on this Document from another thread is safe.
@@ -1016,6 +1020,12 @@ void Document::commonTeardown()
     for (auto& weakLocalIntersectionObserver : localIntersectionObservers) {
         if (RefPtr localIntersectionObserver = weakLocalIntersectionObserver.get())
             localIntersectionObserver->disconnect();
+    }
+
+    auto remoteIntersectionObservers = m_remoteIntersectionObservers;
+    for (auto& weakRemoteIntersectionObserver : remoteIntersectionObservers) {
+        if (RefPtr remoteIntersectionObserver = weakRemoteIntersectionObserver.get())
+            remoteIntersectionObserver->disconnect();
     }
 
     auto resizeObservers = m_resizeObservers;
@@ -2056,7 +2066,7 @@ void Document::setReadyState(ReadyState readyState)
                 eventTiming->domLoading = now;
             // We do this here instead of in the Document constructor because monotonicTimestamp() is 0 when the Document constructor is running.
             if (!url().isEmpty())
-                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8().data(), frame() && frame()->isMainFrame());
+                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8().legacyCStringPointer(), frame() && frame()->isMainFrame());
             WTFEmitSignpost(this, NavigationAndPaintTiming, "domLoading");
         }
         break;
@@ -3335,7 +3345,7 @@ bool Document::updateLayoutIfDimensionsOutOfDate(Element& element, OptionSet<Dim
             }
 
             // Require the entire container chain to be boxes or SVG or inline box in block-inline-inline case.
-            if (is<RenderInline>(*currentRenderer) && currentBox && currentBox->isBlockLevelBox())
+            if (currentRenderer->isInlineBox() && currentBox && currentBox->isBlockLevelBox())
                 continue;
 
             if (!currentRenderer->isSVGRenderer()) {
@@ -8586,7 +8596,7 @@ void Document::enforceSandboxFlags(SandboxFlags flags, SandboxFlagsSource source
     bool wasSandboxedOrigin = isSandboxed(SandboxFlag::Origin);
     SecurityContext::enforceSandboxFlags(flags, source);
 
-    if (RefPtr page = this->page(); page && page->hasRemoteFrames()) {
+    if (RefPtr page = this->page(); page && page->mainFrame().tree().containsRemoteFrame()) {
         bool sandboxedStateDidChange = wasSandboxedOrigin != isSandboxed(SandboxFlag::Origin);
         if (!sandboxedStateDidChange)
             return;
@@ -10545,7 +10555,7 @@ void Document::updateRemoteIntersectionObservers()
     if (!page)
         return;
 
-    ASSERT(page->hasRemoteFrames());
+    ASSERT(page->mainFrame().tree().containsRemoteFrame());
 
     RefPtr mainFrame = this->page()->mainFrame();
     if (!mainFrame)
@@ -11674,7 +11684,7 @@ const Style::ComputedStyle& Document::initialStyle() const
         auto allowUserInstalledFonts = settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
 
         FontCascadeDescription fontDescription;
-        fontDescription.setSpecifiedLocale(contentLanguage());
+        fontDescription.setComputedLocale(contentLanguage());
         fontDescription.setOneFamily(WTF::move(initialFontFamily));
         fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
         fontDescription.setComputedSize(initialComputedFontSize);
@@ -12058,6 +12068,14 @@ std::optional<PAL::SessionID> Document::sessionID() const
         return page->sessionID();
 
     return std::nullopt;
+}
+
+const NetworkLoadPolicy& Document::networkLoadPolicy() const
+{
+    if (RefPtr page = this->page())
+        return page->networkLoadPolicy();
+
+    return NetworkLoadPolicy::unrestricted();
 }
 
 void Document::addElementWithPendingUserAgentShadowTreeUpdate(Element& element)

@@ -63,7 +63,7 @@ static void javaScriptCallback(WKTypeRef result, WKErrorRef error, void* ctx)
     else if (WKDoubleGetTypeID() == WKGetTypeID(result)) {
         double value = WKDoubleGetValue((WKDoubleRef)result);
         String s = makeString(value);
-        context->actualString = adopt(JSStringCreateWithUTF8CString(s.utf8().data()));
+        context->actualString = adopt(JSStringCreateWithUTF8CString(s.utf8().legacyCStringPointer()));
     } else
         WTFLogAlways("Unexpected type %d", WKGetTypeID(result));
 

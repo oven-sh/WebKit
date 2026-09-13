@@ -49,15 +49,15 @@ DragSource::DragSource(GtkWidget* webView)
 
         switch (info) {
         case DragTargetType::Text:
-            gtk_selection_data_set_text(data, drag.m_selectionData->text().utf8().data(), -1);
+            gtk_selection_data_set_text(data, drag.m_selectionData->text().utf8().legacyCStringPointer(), -1);
             break;
         case DragTargetType::Markup: {
-            CString markup = drag.m_selectionData->markup().utf8();
+            auto markup = drag.m_selectionData->markup().utf8();
             gtk_selection_data_set(data, gdk_atom_intern_static_string("text/html"), 8, reinterpret_cast<const guchar*>(markup.data()), markup.length());
             break;
         }
         case DragTargetType::URIList: {
-            CString uriList = drag.m_selectionData->uriList().utf8();
+            auto uriList = drag.m_selectionData->uriList().utf8();
             gtk_selection_data_set(data, gdk_atom_intern_static_string("text/uri-list"), 8, reinterpret_cast<const guchar*>(uriList.data()), uriList.length());
             break;
         }

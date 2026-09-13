@@ -45,6 +45,15 @@ inline WeakGCSet<ValueArg, HashArg, TraitsArg>::~WeakGCSet()
 }
 
 template<typename ValueArg, typename HashArg, typename TraitsArg>
+inline void WeakGCSet<ValueArg, HashArg, TraitsArg>::reconcileWeakReferencesAtGCEnd(VM&, CollectionScope collectionScope)
+{
+    // Entries hold Weak<>, which WeakBlock::reap has already nulled out. Only the removal is left,
+    // and it is deferred to full collections because removing rehashes the set.
+    if (collectionScope == CollectionScope::Full)
+        pruneStaleEntries();
+}
+
+template<typename ValueArg, typename HashArg, typename TraitsArg>
 NEVER_INLINE void WeakGCSet<ValueArg, HashArg, TraitsArg>::pruneStaleEntries()
 {
     m_set.removeIf([](auto& entry) {

@@ -37,6 +37,8 @@
 #include "MemoryObjectStore.h"
 #include "ThreadSafeDataBuffer.h"
 
+#include <wtf/text/TextStream.h>
+
 namespace WebCore {
 namespace IDBServer {
 
@@ -103,7 +105,7 @@ void MemoryIndex::notifyCursorsOfAllRecordsChanged()
 
 IDBGetResult MemoryIndex::getResultForKeyRange(IndexedDB::IndexRecordType type, const IDBKeyRangeData& range) const
 {
-    LOG(IndexedDB, "MemoryIndex::getResultForKeyRange - %s", range.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIndex::getResultForKeyRange - "_s << range.loggingString());
 
     CheckedPtr records = m_records.get();
     if (!records)

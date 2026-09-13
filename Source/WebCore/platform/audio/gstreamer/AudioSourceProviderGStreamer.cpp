@@ -120,7 +120,7 @@ AudioSourceProviderGStreamer::AudioSourceProviderGStreamer(MediaStreamTrackPriva
         pipelineNamePrefix = "incoming-"_s;
 
     auto pipelineName = makeString(pipelineNamePrefix, "WebAudioProvider_MediaStreamTrack_"_s, source.id());
-    m_pipeline = gst_element_factory_make("pipeline", pipelineName.utf8().data());
+    m_pipeline = gst_element_factory_make("pipeline", pipelineName.utf8().legacyCStringPointer());
     registerActivePipeline(m_pipeline);
     ASP_DEBUG("MediaStream WebAudio provider created");
 

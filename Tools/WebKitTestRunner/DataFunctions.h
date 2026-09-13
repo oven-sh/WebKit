@@ -43,7 +43,9 @@ inline WKDataRef dataValue(WKTypeRef value)
 
 inline WTF::UUID dataToUUID(WKDataRef data)
 {
-    return WTF::UUID { WKDataGetSpan(data) };
+    auto uuid = WTF::UUID::tryCreate(WKDataGetSpan(data));
+    RELEASE_ASSERT(uuid);
+    return *uuid;
 }
 
 inline WKRetainPtr<WKDataRef> uuidToData(const WTF::UUID& uuid)

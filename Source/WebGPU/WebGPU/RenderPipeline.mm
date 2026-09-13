@@ -1698,9 +1698,19 @@ std::pair<Ref<RenderPipeline>, NSString*> Device::createRenderPipeline(const WGP
         depthBias = depthStencil->depthBias;
         depthBiasSlopeScale = depthStencil->depthBiasSlopeScale;
         depthBiasClamp = depthStencil->depthBiasClamp;
+
+        // Depth bias is derived from the slope of the primitive being rasterized, which only points
+        // and lines lack, so for those topologies it has to be left at zero.
+        auto topology = descriptor.primitive.topology;
+        if (topology != WGPUPrimitiveTopology_TriangleList && topology != WGPUPrimitiveTopology_TriangleStrip) {
+            if (depthBias || depthBiasSlopeScale || depthBiasClamp)
+                return returnInvalidRenderPipeline(*this, isAsync, "depthBias, depthBiasSlopeScale, and depthBiasClamp must be 0 unless primitive.topology is a triangle topology"_s);
+        }
     }
 
-    if (descriptor.fragment && !hasAtLeastOneColorTarget && !descriptor.depthStencil)
+    // A render pipeline needs somewhere to render to. hasAtLeastOneColorTarget can only be set from
+    // the fragment state's targets, so a vertex-only pipeline has to bring its own depth-stencil.
+    if (!hasAtLeastOneColorTarget && !descriptor.depthStencil)
         return returnInvalidRenderPipeline(*this, isAsync, "No color targets or depth stencil were specified in the descriptor"_s);
     if (usesFragDepth && mtlRenderPipelineDescriptor.depthAttachmentPixelFormat == MTLPixelFormatInvalid)
         return returnInvalidRenderPipeline(*this, isAsync, "Shader writes to frag depth but no depth texture set"_s);

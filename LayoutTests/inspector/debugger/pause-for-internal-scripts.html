@@ -42,7 +42,7 @@ function test()
         description: "Should not be able to step into statements which use internal injected scripts.",
         expression: "setTimeout(entryInternalObject)",
         // Call out directly to the backend since there is no other way to wait on the command result if changing via the setting.
-        setup: async () => { return DebuggerAgent.setPauseForInternalScripts(false); },
+        setup: async () => { return InspectorTest.mainFrameTarget.DebuggerAgent.setPauseForInternalScripts(false); },
         steps: [
             "over",
                 "in", // internalObject.test(1)
@@ -57,8 +57,8 @@ function test()
         description: "Should be able to step into statements which use internal injected scripts.",
         expression: "setTimeout(entryInternalObject)",
         // Call out directly to the backend since there is no other way to wait on the command result if changing via the setting.
-        setup: async () => { return DebuggerAgent.setPauseForInternalScripts(true); },
-        teardown: async () => { return DebuggerAgent.setPauseForInternalScripts(false); },
+        setup: async () => { return InspectorTest.mainFrameTarget.DebuggerAgent.setPauseForInternalScripts(true); },
+        teardown: async () => { return InspectorTest.mainFrameTarget.DebuggerAgent.setPauseForInternalScripts(false); },
         steps: [
             "over",
                 "in", // internalObject.test(1)

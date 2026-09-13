@@ -35,8 +35,8 @@ namespace TestWebKitAPI {
 TEST(Inspector, ConsoleMessageBasicMessage)
 {
     Inspector::ConsoleMessage msg(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Debug, "Basic error message"_s);
-    EXPECT_STREQ("Basic error message", msg.message().utf8().data());
-    EXPECT_STREQ("Basic error message", msg.toString().utf8().data());
+    EXPECT_EQ("Basic error message"_s, msg.message());
+    EXPECT_EQ("Basic error message"_s, msg.toString());
 }
 
 TEST(Inspector, ConsoleMessageJSONValueBasicMessage)
@@ -44,8 +44,8 @@ TEST(Inspector, ConsoleMessageJSONValueBasicMessage)
     Inspector::ConsoleMessage msg(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Debug, {
         {JSONLogValue::Type::String, "JSONValue basic error message"_s}
     }, nullptr, 0);
-    EXPECT_STREQ("JSONValue basic error message", msg.message().utf8().data());
-    EXPECT_STREQ("JSONValue basic error message", msg.toString().utf8().data());
+    EXPECT_EQ("JSONValue basic error message"_s, msg.message());
+    EXPECT_EQ("JSONValue basic error message"_s, msg.toString());
 }
 
 TEST(Inspector, ConsoleMessageSeveralJSONValues)
@@ -55,8 +55,8 @@ TEST(Inspector, ConsoleMessageSeveralJSONValues)
         {JSONLogValue::Type::JSON, "{\"key\": \"value\"}"_s},
         {JSONLogValue::Type::String, "bar"_s},
     }, nullptr, 0);
-    EXPECT_STREQ("foo", msg.message().utf8().data());
-    EXPECT_STREQ("foo{\"key\": \"value\"}bar", msg.toString().utf8().data());
+    EXPECT_EQ("foo"_s, msg.message());
+    EXPECT_EQ("foo{\"key\": \"value\"}bar"_s, msg.toString());
 }
 
 } // namespace TestWebKitAPI

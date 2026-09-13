@@ -329,9 +329,9 @@ TEST(ISOBox, WebVTTCue)
     ISOWebVTTCue cue;
     ASSERT_TRUE(cue.read(view));
 
-    EXPECT_STREQ("cue-1", cue.id().utf8().data());
-    EXPECT_STREQ("align:center", cue.settings().utf8().data());
-    EXPECT_STREQ("Hello, world!", cue.cueText().utf8().data());
+    EXPECT_EQ("cue-1"_s, cue.id());
+    EXPECT_EQ("align:center"_s, cue.settings());
+    EXPECT_EQ("Hello, world!"_s, cue.cueText());
     EXPECT_TRUE(cue.sourceID().isEmpty());
     EXPECT_TRUE(cue.originalStartTime().isEmpty());
 }

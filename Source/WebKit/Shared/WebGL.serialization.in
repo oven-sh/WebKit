@@ -164,7 +164,7 @@ enum class WebCore::GraphicsContextGLSimulatedEventForTesting : uint8_t {
 
 header: <WebCore/GraphicsContextGLActiveInfo.h>
 [AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::GCGLUniformActiveInfo {
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int size;
     int blockIndex;
@@ -176,13 +176,13 @@ header: <WebCore/GraphicsContextGLActiveInfo.h>
 };
 header: <WebCore/GraphicsContextGLActiveInfo.h>
 [AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::GCGLAttribActiveInfo {
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int location;
 };
 header: <WebCore/GraphicsContextGLActiveInfo.h>
 [AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::GCGLTransformFeedbackActiveInfo {
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int size;
 };

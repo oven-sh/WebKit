@@ -777,7 +777,7 @@ WKURLRequestRef InjectedBundlePage::willSendRequestForFrame(WKBundlePageRef page
 
             auto blockedURL = sanitizeExternalURL(urlString.get());
             auto script = makeString("console.log('Blocked access to external URL "_s, blockedURL, "');"_s);
-            auto scriptRef = adopt(JSStringCreateWithUTF8CString(script.utf8().data()));
+            auto scriptRef = adopt(JSStringCreateWithUTF8CString(script.utf8().legacyCStringPointer()));
             JSEvaluateScript(jsContext, scriptRef.get(), 0, 0, 0, 0);
             return nullptr;
         }
@@ -786,7 +786,7 @@ WKURLRequestRef InjectedBundlePage::willSendRequestForFrame(WKBundlePageRef page
     if (testRunner) {
         String body = testRunner->willSendRequestHTTPBody();
         if (!body.isEmpty()) {
-            CString cBody = body.utf8();
+            auto cBody = body.utf8();
             auto body = adoptWK(WKDataCreate(reinterpret_cast<const unsigned char*>(cBody.data()), cBody.length()));
             return WKURLRequestCopySettingHTTPBody(request, body.get());
         }

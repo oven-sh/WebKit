@@ -90,7 +90,7 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, GPUSize64 offset, std::optional<G
             if (protectedThis->m_destroyed)
                 promise.reject(Exception { ExceptionCode::OperationError, "buffer destroyed during mapAsync"_s });
             else
-                promise.resolve(nullptr);
+                promise.resolve();
             return;
         }
 
@@ -99,7 +99,7 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, GPUSize64 offset, std::optional<G
             protectedThis->m_mapState = GPUBufferMapState::Mapped;
             protectedThis->m_mappedRangeOffset = offset;
             protectedThis->m_mappedRangeSize = size.value_or(protectedThis->m_bufferSize - protectedThis->m_mappedRangeOffset);
-            promise.resolve(nullptr);
+            promise.resolve();
         } else {
             if (protectedThis->m_mapState == GPUBufferMapState::Pending)
                 protectedThis->m_mapState = GPUBufferMapState::Unmapped;

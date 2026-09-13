@@ -111,6 +111,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/WebGPU/GPUDeviceLostInfo.idl \
     $(WebCore)/Modules/WebGPU/GPUDeviceLostReason.idl \
     $(WebCore)/Modules/WebGPU/GPUDeviceUncapturedError.idl \
+    $(WebCore)/Modules/WebGPU/GPUError.idl \
     $(WebCore)/Modules/WebGPU/GPUErrorFilter.idl \
     $(WebCore)/Modules/WebGPU/GPUExtent3DDict.idl \
     $(WebCore)/Modules/WebGPU/GPUExternalTexture.idl \
@@ -1251,6 +1252,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/ProcessingInstruction.idl \
     $(WebCore)/dom/ProgressEvent.idl \
     $(WebCore)/dom/PromiseRejectionEvent.idl \
+    $(WebCore)/dom/QuotaExceededError.idl \
+    $(WebCore)/dom/QuotaExceededErrorOptions.idl \
     $(WebCore)/dom/Range+CSSOMView.idl \
     $(WebCore)/dom/Range+DOMParsing.idl \
     $(WebCore)/dom/Range.idl \

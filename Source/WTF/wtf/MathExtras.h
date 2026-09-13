@@ -29,6 +29,7 @@
 #include <bit>
 #include <climits>
 #include <cmath>
+#include <concepts>
 #include <float.h>
 #include <limits>
 #include <numbers>
@@ -429,6 +430,14 @@ constexpr bool isMultipleOf(unsigned factor, T value)
 }
 
 template<typename T> constexpr bool isInRange(const T& a, const T& min, const T& max) { return a >= min && a <= max; }
+
+// Unlike std::abs, this is defined for the most negative value of the type, whose magnitude a
+// signed type cannot represent.
+template<std::signed_integral SignedType> constexpr std::make_unsigned_t<SignedType> absoluteValueAsUnsigned(SignedType value)
+{
+    std::make_unsigned_t<SignedType> magnitude = value;
+    return value < 0 ? -magnitude : magnitude;
+}
 
 // decompose 'number' to its sign, exponent, and mantissa components.
 // The result is interpreted as:

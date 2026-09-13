@@ -87,7 +87,7 @@ Style::ComputedStyle resolveForDocument(const Document& document)
         auto& settings = renderView->frame().settings();
 
         FontCascadeDescription fontDescription;
-        fontDescription.setSpecifiedLocale(document.contentLanguage());
+        fontDescription.setComputedLocale(document.contentLanguage());
         fontDescription.setOneFamily(WebCore::FontFamily { standardFamily, FontFamilyKind::Generic });
         fontDescription.setShouldAllowUserInstalledFonts(settings.shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
 

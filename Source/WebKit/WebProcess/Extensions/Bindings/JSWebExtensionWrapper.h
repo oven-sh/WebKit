@@ -117,7 +117,7 @@ RefPtr<WebPage> toWebPage(JSContextRef);
 
 inline JSRetainPtr<JSStringRef> toJSString(const String& string)
 {
-    return JSRetainPtr(Adopt, JSStringCreateWithUTF8CString(!string.isEmpty() ? string.utf8().data() : ""));
+    return JSRetainPtr(Adopt, JSStringCreateWithUTF8CString(!string.isEmpty() ? string.utf8().legacyCStringPointer() : ""));
 }
 
 inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, JSValueRef value)

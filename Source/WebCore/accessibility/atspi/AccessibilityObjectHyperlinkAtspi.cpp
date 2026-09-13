@@ -42,7 +42,7 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_hyperlinkFunctions = {
         } else if (!g_strcmp0(methodName, "GetURI")) {
             int index;
             g_variant_get(parameters, "(i)", &index);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->url().string().utf8().data() : ""));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->url().string().utf8().legacyCStringPointer() : ""));
         } else if (!g_strcmp0(methodName, "IsValid"))
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", atspiObject->m_coreObject ? TRUE : FALSE));
     },

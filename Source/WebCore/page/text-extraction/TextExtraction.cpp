@@ -104,11 +104,13 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/RegularExpression.h>
 #include <ranges>
+#include <unicode/ubrk.h>
 #include <unicode/uchar.h>
 #include <wtf/Box.h>
 #include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/CharacterNames.h>
 
 #if ENABLE(DATA_DETECTION)
@@ -2702,6 +2704,30 @@ static String adjacentRenderedTextLabelDescription(const Element& element, Vecto
     return { };
 }
 
+static bool hrefLacksEnoughContext(StringView href)
+{
+    return href.isEmpty() || href == "#"_s || startsWithLettersIgnoringASCIICase(href, "javascript:"_s);
+}
+
+static bool containsMultipleWords(StringView text)
+{
+    UBreakIterator* iterator = WTF::wordBreakIterator(text);
+    if (!iterator)
+        return false;
+
+    unsigned wordCount = 0;
+    ubrk_first(iterator);
+    for (int position = ubrk_next(iterator); position != UBRK_DONE; position = ubrk_next(iterator)) {
+        if (!isWordTextBreak(iterator))
+            continue;
+
+        if (++wordCount > 1)
+            return true;
+    }
+
+    return false;
+}
+
 static bool hasNoRenderedTextOrLabeledChild(Element& element)
 {
     if (containsLetterOrDigit(normalizeText(plainText(makeRangeSelectingNodeContents(element), behaviorsForTextExtraction))))
@@ -2730,14 +2756,16 @@ static String textDescription(Element& element, Vector<String>& stringsToValidat
 
     auto needsParentContext = true;
     auto hasAccessibleName = false;
+    auto hrefLacksEnoughContext = false;
 
     if (element.isLink()) {
         if (auto text = normalizeText(element.attributeWithoutSynchronization(HTMLNames::hrefAttr)); !text.isEmpty()) {
             auto shortenedHREF = shortenedHREFAttributeForDescription(text);
+            hrefLacksEnoughContext = TextExtraction::hrefLacksEnoughContext(shortenedHREF);
             description.append(makeString(" with href "_s, wrapWithDoubleQuotes(shortenedHREF)));
             stringsToValidate.append(WTF::move(shortenedHREF));
             needsParentContext = false;
-            hasAccessibleName = true;
+            hasAccessibleName = !hrefLacksEnoughContext;
         }
     }
 
@@ -2822,13 +2850,18 @@ static String textDescription(Element& element, Vector<String>& stringsToValidat
     }
 
     String neighborTextDescription;
-    if (isTargetElement && !hasAccessibleName && (is<HTMLImageElement>(element) || element.isSVGElement() || hasNoRenderedTextOrLabeledChild(element))) {
-        bool hasImageAltText = false;
-        if (RefPtr image = dynamicDowncast<HTMLImageElement>(element))
-            hasImageAltText = !normalizeText(image->altText()).isEmpty();
+    if (isTargetElement && !hasAccessibleName) {
+        bool isSingleWordLinkWithoutDestination = hrefLacksEnoughContext
+            && !containsMultipleWords(normalizeText(plainText(makeRangeSelectingNodeContents(element), behaviorsForTextExtraction)));
 
-        if (!hasImageAltText)
-            neighborTextDescription = adjacentRenderedTextLabelDescription(element, stringsToValidate);
+        if (is<HTMLImageElement>(element) || element.isSVGElement() || hasNoRenderedTextOrLabeledChild(element) || isSingleWordLinkWithoutDestination) {
+            bool hasImageAltText = false;
+            if (RefPtr image = dynamicDowncast<HTMLImageElement>(element))
+                hasImageAltText = !normalizeText(image->altText()).isEmpty();
+
+            if (!hasImageAltText)
+                neighborTextDescription = adjacentRenderedTextLabelDescription(element, stringsToValidate);
+        }
     }
 
     auto describedElement = [&] {

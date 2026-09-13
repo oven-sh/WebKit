@@ -566,7 +566,7 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*targetRenderer))
             return renderBox->borderBoundingBox();
 
-        if (is<RenderInline>(targetRenderer)) {
+        if (targetRenderer->isInlineBox()) {
             Vector<LayoutRect> rects;
             targetRenderer->boundingRects(rects, { });
             return unionRect(rects);

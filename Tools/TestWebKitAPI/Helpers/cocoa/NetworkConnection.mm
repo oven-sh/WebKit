@@ -164,7 +164,7 @@ void Connection::sendHTTPMessagingResponse(const HTTPResponse& response, Complet
     RetainPtr httpResponse = adoptNS(nw_http_response_create(response.statusCode, nullptr));
     RetainPtr fields = adoptNS(nw_http_fields_create());
     for (auto& pair : response.headerFields)
-        nw_http_fields_append(fields.get(), pair.key.utf8().data(), pair.value.utf8().data());
+        nw_http_fields_append(fields.get(), pair.key.utf8().legacyCStringPointer(), pair.value.utf8().legacyCStringPointer());
     nw_http_response_set_header_fields(httpResponse.get(), fields.get());
 
     RetainPtr metadata = adoptNS(nw_http_create_metadata_for_response(httpResponse.get()));

@@ -484,6 +484,14 @@ TEST(WKWebExtensionAPILocalization, Placeholders)
                 },
             },
         },
+        @"key13": @{
+            messageKey: @"$count$ apples",
+            placeholdersKey: @{
+                @"count": @{
+                    placeholderDictionaryContentKey: @"$1",
+                },
+            },
+        },
     };
 
     auto *backgroundScript = Util::constructScript(@[
@@ -509,6 +517,13 @@ TEST(WKWebExtensionAPILocalization, Placeholders)
 
         [NSString stringWithFormat:@"placeholders = %@", Util::constructJSArrayOfStrings(@[ @"value1", @"value2" ])],
         @"browser.test.assertEq(browser.i18n.getMessage('key6', placeholders), 'value1 and value2 but not  or ')",
+
+        @"browser.test.assertEq(browser.i18n.getMessage('key13', [5]), '5 apples')",
+        @"browser.test.assertEq(browser.i18n.getMessage('key13', [0]), '0 apples')",
+        @"browser.test.assertEq(browser.i18n.getMessage('key11', [5, 6]), '5 6')",
+        @"browser.test.assertEq(browser.i18n.getMessage('key11', [5, 'trackers']), '5 trackers')",
+        @"browser.test.assertEq(browser.i18n.getMessage('key11', [true, null]), 'true null')",
+        @"browser.test.assertEq(browser.i18n.getMessage('key11', [{}, [1, 2, 3]]), '[object Object] 1,2,3')",
 
         // Finish
         @"browser.test.notifyPass()",

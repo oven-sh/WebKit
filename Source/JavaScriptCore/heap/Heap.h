@@ -59,6 +59,7 @@
 #include <wtf/NotFound.h>
 #include <wtf/ParallelHelperPool.h>
 #include <wtf/SegmentedVector.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/Threading.h>
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -537,6 +538,7 @@ public:
 
     JS_EXPORT_PRIVATE void registerWeakGCHashTable(WeakGCHashTable*);
     JS_EXPORT_PRIVATE void unregisterWeakGCHashTable(WeakGCHashTable*);
+    void addDirtyWeakGCHashTable(WeakGCHashTable*);
 
     void addLogicallyEmptyWeakBlock(WeakBlock*);
 
@@ -805,7 +807,7 @@ private:
 
     void cancelDeferredWorkIfNeeded();
     void reapWeakHandles();
-    void pruneStaleEntriesFromWeakGCHashTables();
+    void reconcileWeakGCHashTables();
     void sweepArrayBuffers();
     void snapshotUnswept();
     void deleteSourceProviderCaches();
@@ -1003,6 +1005,7 @@ private:
     unsigned m_deferralDepth { 0 };
 
     UncheckedKeyHashSet<WeakGCHashTable*> m_weakGCHashTables;
+    SentinelLinkedList<WeakGCHashTable, BasicRawSentinelNode<WeakGCHashTable>> m_dirtyWeakGCHashTables;
     
 #if ENABLE(WEBASSEMBLY)
     UncheckedKeyHashSet<Ref<Wasm::Callee>> m_wasmCalleesPendingDestruction WTF_GUARDED_BY_LOCK(m_wasmCalleesPendingDestructionLock);
@@ -1316,7 +1319,7 @@ public:
     FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
 #undef DEFINE_NON_ISO_SUBSPACE_MEMBER
 
-    CString m_signpostMessage;
+    UTF8CString m_signpostMessage;
 };
 
 namespace GCClient {

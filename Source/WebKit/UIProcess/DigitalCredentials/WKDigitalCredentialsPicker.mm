@@ -65,6 +65,7 @@
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/Base64.h>
 #import <wtf/text/StringCommon.h>
+#import <wtf/text/TextStream.h>
 #import <wtf/text/WTFString.h>
 
 #import "WebKitSwiftSoftLink.h"
@@ -317,7 +318,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
 {
     WTF::switchOn(requestData,
         [](const auto& requestData) {
-            LOG(DigitalCredentials, "WKDigitalCredentialsPicker: Digital Credentials - Presenting with request data: %s.", requestData.topOrigin.toString().utf8().data());
+            LOG_WITH_STREAM(DigitalCredentials, stream << "WKDigitalCredentialsPicker: Digital Credentials - Presenting with request data: "_s << requestData.topOrigin.toString() << "."_s);
     });
     _completionHandler = WTF::move(completionHandler);
 
@@ -414,7 +415,7 @@ static RetainPtr<NSArray<NSArray<WKIdentityDocumentPresentmentRequestAuthenticat
             return;
         }
 
-        LOG(DigitalCredentials, "The document provider returned response data: %s.", responseData.utf8().data());
+        LOG_WITH_STREAM(DigitalCredentials, stream << "The document provider returned response data: "_s << responseData << "."_s);
         RetainPtr<NSString> protocol = response.protocolString;
 
         if ([protocol isEqualToString:@"org.iso.mdoc"]) {

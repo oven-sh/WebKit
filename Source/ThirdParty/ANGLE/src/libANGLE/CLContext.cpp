@@ -6,18 +6,27 @@
 // CLContext.cpp: Implements the cl::Context class.
 //
 
-#include "libANGLE/CLContext.h"
 #include "common/unsafe_buffers.h"
 
+#include <angle_cl.h>
+
+#include "libANGLE/CLBitField.h"
 #include "libANGLE/CLBuffer.h"
 #include "libANGLE/CLCommandQueue.h"
+#include "libANGLE/CLContext.h"
+#include "libANGLE/CLDevice.h"
 #include "libANGLE/CLEvent.h"
 #include "libANGLE/CLImage.h"
 #include "libANGLE/CLMemory.h"
+#include "libANGLE/CLObject.h"
+#include "libANGLE/CLPlatform.h"
 #include "libANGLE/CLProgram.h"
 #include "libANGLE/CLSampler.h"
+#include "libANGLE/cl_types.h"
+#include "libANGLE/cl_utils.h"
 
 #include <cstring>
+#include <string>
 
 namespace cl
 {
@@ -84,7 +93,7 @@ angle::Result Context::getInfo(ContextInfo name,
 
 angle::Result Context::setDestructorCallback(ContextCB pfnNotify, void *userData)
 {
-    mDestructorCallbacks->emplace(pfnNotify, userData);
+    mDestructorCallbacks.add(pfnNotify, userData);
     return angle::Result::Continue;
 }
 
@@ -373,17 +382,7 @@ angle::Result Context::waitForEvents(cl_uint numEvents, const cl_event *eventLis
 
 Context::~Context()
 {
-    // TODO(aannestrand): make dtor callback handling a "helper" util and reuse for CLMemory dtor
-    // http://anglebug.com/496408119
-    std::stack<CallbackData> callbacks;
-    mDestructorCallbacks->swap(callbacks);
-    while (!callbacks.empty())
-    {
-        const ContextCB callback = callbacks.top().first;
-        void *const userData     = callbacks.top().second;
-        callbacks.pop();
-        callback(this, userData);
-    }
+    mDestructorCallbacks.invoke(this);
 }
 
 void Context::ErrorCallback(const char *errinfo, const void *privateInfo, size_t cb, void *userData)
@@ -417,6 +416,9 @@ Memory::PropArray Context::ConvertArmMemPropToMemProp(const cl_import_properties
                 {
                     case CL_IMPORT_TYPE_DMA_BUF_ARM:
                         convertedProperties.push_back(CL_EXTERNAL_MEMORY_HANDLE_DMA_BUF_KHR);
+                        // cl_khr_external_memory expects DMA_BUF to be an integral type
+                        convertedProperties.push_back(
+                            static_cast<cl_mem_properties>(*static_cast<const int32_t *>(handle)));
                         break;
                     case CL_IMPORT_TYPE_HOST_ARM:
                     case CL_IMPORT_TYPE_ANDROID_HARDWARE_BUFFER_ARM:
@@ -425,7 +427,6 @@ Memory::PropArray Context::ConvertArmMemPropToMemProp(const cl_import_properties
                         UNIMPLEMENTED();
                         continue;
                 }
-                convertedProperties.push_back(reinterpret_cast<cl_mem_properties>(handle));
             }
             else if (propertiesIterator->name == CL_IMPORT_TYPE_PROTECTED_ARM)
             {

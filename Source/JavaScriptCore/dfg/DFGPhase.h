@@ -75,7 +75,7 @@ private:
     void endPhase();
 
     bool m_disableGraphValidation { false };
-    CString m_graphDumpBeforePhase;
+    UTF8CString m_graphDumpBeforePhase;
 };
 
 template<typename PhaseType>

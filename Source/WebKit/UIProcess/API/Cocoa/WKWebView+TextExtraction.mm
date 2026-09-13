@@ -679,11 +679,11 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
     ](std::optional<WebKit::ConnectedRemapCandidate>&& candidate) mutable {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf || !candidate) {
-            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Interaction failed; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().data());
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Interaction failed; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().legacyCStringPointer());
             return reportStaleNode();
         }
 
-        RELEASE_LOG(TextExtraction, "<%@: %p> Interaction failed; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().data());
+        RELEASE_LOG(TextExtraction, "<%@: %p> Interaction failed; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().legacyCStringPointer());
         interaction.nodeIdentifier = candidate->nodeIdentifier;
         [strongSelf _performInteraction:WTF::move(interaction) inFrame:RefPtr { candidate->frame.ptr() } actionType:actionType staleNodeResolution:WebKit::StaleNodeResolutionState {
             .requestedIdentifier = requestedIdentifier,
@@ -1040,7 +1040,7 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
 
 #if PLATFORM(MAC)
     if ([self _activePopupButtonCell] && interaction.action == WebCore::TextExtraction::Action::SelectMenuItem && !interaction.text.isEmpty())
-        return completionHandler([NSString stringWithFormat:@"Select popup menu item labeled '%s'", interaction.text.utf8().data()], nil);
+        return completionHandler([NSString stringWithFormat:@"Select popup menu item labeled '%s'", interaction.text.utf8().legacyCStringPointer()], nil);
 #endif
 
     [self _describeInteraction:WTF::move(interaction) inFrame:targetFrame staleNodeResolution:WebKit::StaleNodeResolutionState { .requestedIdentifier = nodeIdentifierString } completionHandler:completionHandler];
@@ -1075,7 +1075,7 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
         }
 
         if (!result.describesInteractionTarget) {
-            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Unable to describe the target of an interaction with node %" PUBLIC_LOG_STRING, [strongSelf class], strongSelf.get(), staleNodeResolution.requestedIdentifier.utf8().data());
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Unable to describe the target of an interaction with node %" PUBLIC_LOG_STRING, [strongSelf class], strongSelf.get(), staleNodeResolution.requestedIdentifier.utf8().legacyCStringPointer());
             auto errorDescription = makeString("Unable to describe the target of the interaction."_s, resolutionIsStale ? staleNodeIdentifierGuidance : ""_s);
             completionHandler(nil, [NSError errorWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:@{
                 NSDebugDescriptionErrorKey: errorDescription.createNSString()
@@ -1140,11 +1140,11 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
     ](std::optional<WebKit::ConnectedRemapCandidate>&& candidate) mutable {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf || !candidate) {
-            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Describe target missing; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().data());
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Describe target missing; every node that uid=%" PUBLIC_LOG_STRING " could be re-resolved to is also stale", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().legacyCStringPointer());
             return reportStaleNode();
         }
 
-        RELEASE_LOG(TextExtraction, "<%@: %p> Describe target missing; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().data());
+        RELEASE_LOG(TextExtraction, "<%@: %p> Describe target missing; re-resolved stale node %" PUBLIC_LOG_STRING " to a connected node and retrying", [strongSelf class], strongSelf.get(), requestedIdentifier.utf8().legacyCStringPointer());
         interaction.nodeIdentifier = candidate->nodeIdentifier;
         [strongSelf _describeInteraction:WTF::move(interaction) inFrame:RefPtr { candidate->frame.ptr() } staleNodeResolution:WebKit::StaleNodeResolutionState {
             .requestedIdentifier = requestedIdentifier,

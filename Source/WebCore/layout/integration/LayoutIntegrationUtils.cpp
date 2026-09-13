@@ -31,11 +31,20 @@
 #include "LayoutIntegrationFormattingContextLayout.h"
 #include "LayoutState.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderObject.h"
 #include "RenderObjectInlines.h"
 
 namespace WebCore {
 namespace Layout {
+
+const Style::ComputedStyle& IntegrationUtils::firstNonAnonymousAncestorStyle(const Box& box)
+{
+    CheckedPtr renderer = box.rendererForIntegration();
+    if (auto* ancestor = renderer ? renderer->firstNonAnonymousAncestor() : nullptr)
+        return ancestor->style();
+    return box.style();
+}
 
 // https://drafts.csswg.org/css-grid-2/#item-margins
 // Percent/Calc padding and sizing resolves against the gridAreaInlineSize, not the block size of the grid container.

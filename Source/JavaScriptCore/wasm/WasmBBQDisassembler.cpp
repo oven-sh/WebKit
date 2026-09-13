@@ -86,11 +86,11 @@ Vector<BBQDisassembler::DumpedOp> BBQDisassembler::dumpVectorForInstructions(Lin
         unsigned nextIndex = i + 1;
         if (nextIndex >= labels.size()) {
             dumpDisassembly(out, linkBuffer, std::get<0>(labels[i]), endLabel);
-            result.last().disassembly = out.toCString();
+            result.last().disassembly = out.toUTF8CString();
             return result;
         }
         dumpDisassembly(out, linkBuffer, std::get<0>(labels[i]), std::get<0>(labels[nextIndex]));
-        result.last().disassembly = out.toCString();
+        result.last().disassembly = out.toUTF8CString();
         i = nextIndex;
     }
 

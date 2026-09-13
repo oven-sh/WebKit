@@ -54,7 +54,7 @@ void UIScriptContext::runUIScript(const String& script, unsigned scriptCallbackI
 {
     m_currentScriptCallbackID = scriptCallbackID;
 
-    auto stringRef = adopt(JSStringCreateWithUTF8CString(script.utf8().data()));
+    auto stringRef = adopt(JSStringCreateWithUTF8CString(script.utf8().legacyCStringPointer()));
 
     JSValueRef exception = nullptr;
     JSValueRef result = JSEvaluateScript(m_context.get(), stringRef.get(), 0, 0, 1, &exception);

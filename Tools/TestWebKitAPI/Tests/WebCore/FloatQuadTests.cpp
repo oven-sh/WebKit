@@ -119,7 +119,7 @@ static void checkIsEmpty(bool expectation, FloatQuad&& quad)
 
     TextStream stream;
     stream << quad;
-    WTFLogAlways("Expected quad: %s to be %s", stream.release().utf8().data(), expectation ? "empty" : "non-empty");
+    WTFLogAlways("Expected quad: %s to be %s", stream.release().utf8().legacyCStringPointer(), expectation ? "empty" : "non-empty");
 }
 
 TEST(FloatQuad, IsEmpty)

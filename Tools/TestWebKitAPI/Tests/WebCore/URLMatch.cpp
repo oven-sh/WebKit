@@ -177,6 +177,44 @@ TEST(URLMatchTest, PathIsMatchesTheWholePath)
     EXPECT_FALSE(matchesURL(match, "https://shopee.sg/Payment/Account-Linking/Landing"_s));
 }
 
+TEST(URLMatchTest, LastPathComponentIsMatchesOnlyTheFinalSegment)
+{
+    auto match = URLMatch::anyURL().when(lastPathComponentIs("CheckBrowserClose.js"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://ceac.state.gov/CheckBrowserClose.js"_s));
+    EXPECT_TRUE(matchesURL(match, "https://ceac.state.gov/js/vendor/CheckBrowserClose.js?v=3"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/js/NotCheckBrowserClose.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/CheckBrowserClose.js/inner.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/checkbrowserclose.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/"_s));
+}
+
+TEST(URLMatchTest, LastPathComponentStartsWithIgnoresEarlierSegments)
+{
+    auto match = URLMatch::anyURL().when(lastPathComponentStartsWith("pushdownload."_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://webex.com/pushdownload.js"_s));
+    EXPECT_TRUE(matchesURL(match, "https://webex.com/static/pushdownload.1a2b3c.js"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://webex.com/pushdownload/main.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://webex.com/vendor-pushdownload.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://webex.com/"_s));
+}
+
+TEST(URLMatchTest, LastPathComponentEndsWithIgnoresTheQuery)
+{
+    auto match = URLMatch::host("player.anyclip.com"_s).when(lastPathComponentEndsWith("lre.js"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://player.anyclip.com/lre.js"_s));
+    EXPECT_TRUE(matchesURL(match, "https://player.anyclip.com/player/lre.js?pubname=abc"_s));
+    EXPECT_TRUE(matchesURL(match, "https://player.anyclip.com/anyclip-widget-lre.js"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://player.anyclip.com/lre.js/wrapper.min.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://player.anyclip.com/lre.json"_s));
+    EXPECT_FALSE(matchesURL(match, "https://cdn.anyclip.com/lre.js"_s));
+}
+
 TEST(URLMatchTest, PathOrFragmentContainsSearchesBoth)
 {
     auto match = URLMatch::domain("icloud.com"_s).when(pathOrFragmentContains("mail"_s));

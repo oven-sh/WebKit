@@ -226,7 +226,7 @@ static gboolean webkitWebExtensionContextInitableInit(GInitable* initable, GCanc
         for (Ref internalError : context->errors()) {
             if (internalError->domain() == WEBKIT_CONTEXT_ERROR_DOMAIN) {
                 g_set_error_literal(error, webkit_web_extension_context_error_quark(),
-                    toWebKitWebExtensionContextError(internalError->errorCode()), internalError->localizedDescription().utf8().data());
+                    toWebKitWebExtensionContextError(internalError->errorCode()), internalError->localizedDescription().utf8().legacyCStringPointer());
                 return FALSE;
             }
         }
@@ -492,7 +492,7 @@ void webkit_web_extension_context_load_background_content(WebKitWebExtensionCont
     context->priv->context->loadBackgroundContent([task = WTF::move(task)](RefPtr<API::Error> error) {
         if (error) {
             g_task_return_new_error(task.get(), webkit_web_extension_context_error_quark(),
-                toWebKitWebExtensionContextError(error->errorCode()), "%s", error->localizedDescription().utf8().data());
+                toWebKitWebExtensionContextError(error->errorCode()), "%s", error->localizedDescription().utf8().legacyCStringPointer());
         } else
             g_task_return_boolean(task.get(), TRUE);
     });

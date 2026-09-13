@@ -61,6 +61,8 @@ InheritedRareData::InheritedRareData()
 #endif
     , listStyleType(ComputedStyle::initialListStyleType())
     , blockEllipsis(ComputedStyle::initialBlockEllipsis())
+    , borderHorizontalSpacing(ComputedStyle::initialBorderHorizontalSpacing())
+    , borderVerticalSpacing(ComputedStyle::initialBorderVerticalSpacing())
     , textIndent(ComputedStyle::initialTextIndent())
     , listStyleImage(ComputedStyle::initialListStyleImage())
     , dynamicRangeLimit(ComputedStyle::initialDynamicRangeLimit())
@@ -80,6 +82,7 @@ InheritedRareData::InheritedRareData()
     , lineFitEdge(ComputedStyle::initialLineFitEdge())
     , widows(ComputedStyle::initialWidows())
     , orphans(ComputedStyle::initialOrphans())
+    , internalHyphenateLimitCharsWord(ComputedStyle::initialInternalHyphenateLimitCharsWord())
     , hyphenateLimitBefore(ComputedStyle::initialHyphenateLimitBefore())
     , hyphenateLimitAfter(ComputedStyle::initialHyphenateLimitAfter())
     , hyphenateLimitLines(ComputedStyle::initialHyphenateLimitLines())
@@ -167,6 +170,8 @@ inline InheritedRareData::InheritedRareData(const InheritedRareData& o)
 #endif
     , listStyleType(o.listStyleType)
     , blockEllipsis(o.blockEllipsis)
+    , borderHorizontalSpacing(o.borderHorizontalSpacing)
+    , borderVerticalSpacing(o.borderVerticalSpacing)
     , textIndent(o.textIndent)
     , listStyleImage(o.listStyleImage)
     , dynamicRangeLimit(o.dynamicRangeLimit)
@@ -186,6 +191,7 @@ inline InheritedRareData::InheritedRareData(const InheritedRareData& o)
     , lineFitEdge(o.lineFitEdge)
     , widows(o.widows)
     , orphans(o.orphans)
+    , internalHyphenateLimitCharsWord(o.internalHyphenateLimitCharsWord)
     , hyphenateLimitBefore(o.hyphenateLimitBefore)
     , hyphenateLimitAfter(o.hyphenateLimitAfter)
     , hyphenateLimitLines(o.hyphenateLimitLines)
@@ -299,6 +305,7 @@ bool InheritedRareData::operator==(const InheritedRareData& o) const
         && hyphenateLimitBefore == o.hyphenateLimitBefore
         && hyphenateLimitAfter == o.hyphenateLimitAfter
         && hyphenateLimitLines == o.hyphenateLimitLines
+        && internalHyphenateLimitCharsWord == o.internalHyphenateLimitCharsWord
 #if ENABLE(DARK_MODE_CSS)
         && colorScheme == o.colorScheme
 #endif
@@ -354,6 +361,8 @@ bool InheritedRareData::operator==(const InheritedRareData& o) const
         && listStyleImage == o.listStyleImage
         && listStyleType == o.listStyleType
         && blockEllipsis == o.blockEllipsis
+        && borderHorizontalSpacing == o.borderHorizontalSpacing
+        && borderVerticalSpacing == o.borderVerticalSpacing
         && mathDepth == o.mathDepth;
 }
 
@@ -364,7 +373,6 @@ void InheritedRareData::dumpDifferences(TextStream& ts, const InheritedRareData&
 
     LOG_IF_DIFFERENT(usedZoom);
     LOG_IF_DIFFERENT(deviceScaleFactor);
-
     LOG_IF_DIFFERENT(listStyleImage);
 
     LOG_IF_DIFFERENT(textStrokeWidth);
@@ -482,6 +490,7 @@ void InheritedRareData::dumpDifferences(TextStream& ts, const InheritedRareData&
     LOG_IF_DIFFERENT(visitedLinkStrokeColor);
 
     LOG_IF_DIFFERENT(hyphenateCharacter);
+    LOG_IF_DIFFERENT(internalHyphenateLimitCharsWord);
     LOG_IF_DIFFERENT(hyphenateLimitBefore);
     LOG_IF_DIFFERENT(hyphenateLimitAfter);
     LOG_IF_DIFFERENT(hyphenateLimitLines);
@@ -505,6 +514,9 @@ void InheritedRareData::dumpDifferences(TextStream& ts, const InheritedRareData&
 
     LOG_IF_DIFFERENT(listStyleType);
     LOG_IF_DIFFERENT(blockEllipsis);
+
+    LOG_IF_DIFFERENT(borderHorizontalSpacing);
+    LOG_IF_DIFFERENT(borderVerticalSpacing);
 
     LOG_IF_DIFFERENT(mathDepth);
 }

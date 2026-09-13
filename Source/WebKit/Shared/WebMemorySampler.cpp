@@ -174,7 +174,7 @@ void WebMemorySampler::appendCurrentMemoryUsageToFile()
     }
     statString.append('\n');
 
-    CString utf8String = statString.toString().utf8();
+    auto utf8String = statString.toString().utf8();
     m_sampleLogFile.write(byteCast<uint8_t>(utf8String.span()));
 }
 

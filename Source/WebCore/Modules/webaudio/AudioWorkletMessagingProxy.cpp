@@ -66,7 +66,8 @@ static WorkletParameters generateWorkletParameters(AudioWorklet& worklet)
         document->advancedPrivacyProtections(),
         document->noiseInjectionHashSalt(),
         document->agentClusterID(),
-        protect(document->contentSecurityPolicy())->responseHeaders()
+        protect(document->contentSecurityPolicy())->responseHeaders(),
+        document->networkLoadPolicy()
     };
 }
 

@@ -42,6 +42,8 @@
 #include "GPUComputePipelineDescriptor.h"
 #include "GPUExternalTexture.h"
 #include "GPUExternalTextureDescriptor.h"
+#include "GPUInternalError.h"
+#include "GPUOutOfMemoryError.h"
 #include "GPUPipelineError.h"
 #include "GPUPipelineLayout.h"
 #include "GPUPipelineLayoutDescriptor.h"
@@ -62,6 +64,7 @@
 #include "GPUTextureDescriptor.h"
 #include "GPUTextureFormat.h"
 #include "GPUUncapturedErrorEvent.h"
+#include "GPUValidationError.h"
 #include "HTMLVideoElement.h"
 #include "InspectorInstrumentation.h"
 #include "JSDOMConvertInterface.h"
@@ -799,16 +802,16 @@ void GPUDevice::pushErrorScope(GPUErrorFilter errorFilter)
     m_backing->pushErrorScope(convertToBacking(errorFilter));
 }
 
-static GPUError createGPUErrorFromWebGPUError(auto& webGPUError)
+static Ref<GPUError> createGPUErrorFromWebGPUError(auto& webGPUError)
 {
     return WTF::switchOn(WTF::move(*webGPUError),
-        [](Ref<WebGPU::OutOfMemoryError>&& outOfMemoryError) -> GPUError {
+        [](Ref<WebGPU::OutOfMemoryError>&& outOfMemoryError) -> Ref<GPUError> {
             return GPUOutOfMemoryError::create(WTF::move(outOfMemoryError));
         },
-        [](Ref<WebGPU::ValidationError>&& validationError) -> GPUError {
+        [](Ref<WebGPU::ValidationError>&& validationError) -> Ref<GPUError> {
             return GPUValidationError::create(WTF::move(validationError));
         },
-        [](Ref<WebGPU::InternalError>&& internalError) -> GPUError {
+        [](Ref<WebGPU::InternalError>&& internalError) -> Ref<GPUError> {
             return GPUInternalError::create(WTF::move(internalError));
         }
     );
@@ -819,12 +822,13 @@ void GPUDevice::popErrorScope(ErrorScopePromise&& errorScopePromise)
     m_backing->popErrorScope([promise = WTF::move(errorScopePromise)](bool success, std::optional<WebGPU::Error>&& error) mutable {
         if (!error) {
             if (success)
-                promise.resolve(std::nullopt);
+                promise.resolve(nullptr);
             else
                 promise.reject(Exception { ExceptionCode::OperationError, "popErrorScope failed"_s });
             return;
         }
-        promise.resolve(createGPUErrorFromWebGPUError(error));
+        Ref gpuError = createGPUErrorFromWebGPUError(error);
+        promise.resolve(gpuError.ptr());
     });
 }
 

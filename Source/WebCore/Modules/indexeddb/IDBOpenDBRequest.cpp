@@ -41,6 +41,7 @@
 #include "Logging.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -98,7 +99,7 @@ void IDBOpenDBRequest::versionChangeTransactionDidFinish()
 
 void IDBOpenDBRequest::fireSuccessAfterVersionChangeCommit()
 {
-    LOG(IndexedDB, "IDBOpenDBRequest::fireSuccessAfterVersionChangeCommit() - %s", resourceIdentifier().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBOpenDBRequest::fireSuccessAfterVersionChangeCommit() - "_s << resourceIdentifier().loggingString());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(hasPendingActivity());
@@ -112,7 +113,7 @@ void IDBOpenDBRequest::fireSuccessAfterVersionChangeCommit()
 
 void IDBOpenDBRequest::fireErrorAfterVersionChangeCompletion()
 {
-    LOG(IndexedDB, "IDBOpenDBRequest::fireErrorAfterVersionChangeCompletion() - %s", resourceIdentifier().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBOpenDBRequest::fireErrorAfterVersionChangeCompletion() - "_s << resourceIdentifier().loggingString());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(hasPendingActivity());
@@ -140,7 +141,7 @@ void IDBOpenDBRequest::dispatchEvent(Event& event)
 
     if (RefPtr transaction = m_transaction; transaction && transaction->isVersionChange() && (event.type() == eventNames().errorEvent || event.type() == eventNames().successEvent)) {
         if (!transaction->isFinishedOrFinishing()) {
-            RELEASE_LOG_FAULT(IndexedDB, "IDBOpenDBRequest::dispatchEvent: version change transaction %" PUBLIC_LOG_STRING " is not finishing or finished", transaction->info().identifier().loggingString().utf8().data());
+            RELEASE_LOG_FAULT(IndexedDB, "IDBOpenDBRequest::dispatchEvent: version change transaction %" PUBLIC_LOG_STRING " is not finishing or finished", transaction->info().identifier().loggingString().utf8().legacyCStringPointer());
             return;
         }
         transaction->database().connectionProxy().didFinishHandlingVersionChangeTransaction(transaction->database().databaseConnectionIdentifier(), *transaction);

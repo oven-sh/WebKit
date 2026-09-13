@@ -463,7 +463,7 @@ void DrawLinesForText::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("double"_s, doubleLines());
     ts.dumpProperty("lineSegments"_s, lineSegments());
     ts.dumpProperty("is-printing"_s, isPrinting());
-    ts.dumpProperty("double"_s, doubleLines());
+    ts.dumpProperty("style"_s, style());
 }
 
 void DrawDotsForDocumentMarker::apply(GraphicsContext& context) const

@@ -29,6 +29,8 @@
 #include "config.h"
 #include "CDMClearKey.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(ENCRYPTED_MEDIA)
 
 #include "CDMKeySystemConfiguration.h"
@@ -487,29 +489,29 @@ void CDMInstanceSessionClearKey::updateLicense(const String& sessionId, LicenseT
 
     RefPtr<JSON::Object> root = CDMUtilities::parseJSONObject(response);
     if (!root) {
-        LOG(EME, "EME - ClearKey - session %s update payload was not valid JSON", sessionId.utf8().data());
+        LOG_WITH_STREAM(EME, stream << "EME - ClearKey - session "_s << sessionId << " update payload was not valid JSON"_s);
         dispatchCallback(false, std::nullopt, SuccessValue::Failed);
         return;
     }
 
     RefPtr parentInstance = this->parentInstance();
     if (!parentInstance) {
-        LOG(EME, "EME - ClearKey - session %s is in an invalid state", sessionId.utf8().data());
+        LOG_WITH_STREAM(EME, stream << "EME - ClearKey - session "_s << sessionId << " is in an invalid state"_s);
         dispatchCallback(false, std::nullopt, SuccessValue::Failed);
         return;
     }
 
 
-    LOG(EME, "EME - ClearKey - updating license for session %s which currently contains %u keys", sessionId.utf8().data(), m_keyStore.numKeys());
+    LOG_WITH_STREAM(EME, stream << "EME - ClearKey - updating license for session "_s << sessionId << " which currently contains "_s << m_keyStore.numKeys() << " keys"_s);
 
     if (auto decodedKeys = parseLicenseFormat(*root)) {
         bool keysChanged = m_keyStore.addKeys(WTF::move(*decodedKeys));
 
-        LOG(EME, "EME - ClearKey - session %s has %u keys after update()", sessionId.utf8().data(), m_keyStore.numKeys());
+        LOG_WITH_STREAM(EME, stream << "EME - ClearKey - session "_s << sessionId << " has "_s << m_keyStore.numKeys() << " keys after update()"_s);
 
         std::optional<KeyStatusVector> changedKeys;
         if (keysChanged) {
-            LOG(EME, "EME - ClearKey - session %s has changed keys", sessionId.utf8().data());
+            LOG_WITH_STREAM(EME, stream << "EME - ClearKey - session "_s << sessionId << " has changed keys"_s);
             parentInstance->mergeKeysFrom(m_keyStore);
             changedKeys = m_keyStore.convertToJSKeyStatusVector();
         }
@@ -519,14 +521,14 @@ void CDMInstanceSessionClearKey::updateLicense(const String& sessionId, LicenseT
     }
 
     if (parseLicenseReleaseAcknowledgementFormat(*root)) {
-        LOG(EME, "EME - ClearKey - session %s release acknowledged, clearing all known keys", sessionId.utf8().data());
+        LOG_WITH_STREAM(EME, stream << "EME - ClearKey - session "_s << sessionId << " release acknowledged, clearing all known keys"_s);
         parentInstance->unrefAllKeysFrom(m_keyStore);
         m_keyStore.clear();
         dispatchCallback(true, std::nullopt, SuccessValue::Succeeded);
         return;
     }
 
-    LOG(EME, "EME - ClearKey - session %s update payload was an unrecognized format", sessionId.utf8().data());
+    LOG_WITH_STREAM(EME, stream << "EME - ClearKey - session "_s << sessionId << " update payload was an unrecognized format"_s);
     dispatchCallback(false, std::nullopt, SuccessValue::Failed);
 }
 

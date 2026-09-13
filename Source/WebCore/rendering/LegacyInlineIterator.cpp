@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "config.h"
 #include "LegacyInlineIterator.h"
 
+#include "RenderObjectInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {

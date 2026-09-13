@@ -1641,7 +1641,7 @@ std::expected<UTF8CString, UTF8ConversionError> StringImpl::tryGetUTF8(Conversio
     return utf8ForCharacters(span16(), mode);
 }
 
-CString StringImpl::utf8(ConversionMode mode) const
+UTF8CString StringImpl::utf8(ConversionMode mode) const
 {
     auto expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);

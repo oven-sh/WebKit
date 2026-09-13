@@ -85,7 +85,7 @@ void DaemonConnectionSet::broadcastConsoleMessage(JSC::MessageLevel messageLevel
 {
     OSObjectPtr dictionary = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
     xpc_dictionary_set_uint64(dictionary.get(), protocolDebugMessageLevelKey, static_cast<uint64_t>(messageLevel));
-    xpc_dictionary_set_string(dictionary.get(), protocolDebugMessageKey, message.utf8().data());
+    xpc_dictionary_set_string(dictionary.get(), protocolDebugMessageKey, message.utf8().legacyCStringPointer());
     for (auto& connection : m_connections.keys())
         xpc_connection_send_message(connection.get(), dictionary.get());
 }

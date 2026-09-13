@@ -30,6 +30,6 @@
 namespace JSC {
 
 // Replace all whitespace runs with a single space.
-CString reduceWhitespace(const CString&);
+UTF8CString reduceWhitespace(const UTF8CString&);
 
 } // namespace JSC

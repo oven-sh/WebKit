@@ -59,6 +59,7 @@ public:
     void visit(AST::Parameter&) override;
     void visit(AST::VariableStatement&) override;
     void visit(AST::IdentifierExpression&) override;
+    void visit(AST::CallExpression&) override;
 
 private:
     using Builtins = HashSet<Builtin, WTF::IntHash<Builtin>, WTF::StrongEnumHashTraits<Builtin>>;
@@ -78,6 +79,7 @@ private:
 
     ShaderModule& m_shaderModule;
     HashSet<const CallGraph::Global*> m_usedGlobals { };
+    Vector<CallGraph::TextureSamplerPair> m_textureSamplerPairs { };
     ShaderStage m_stage { ShaderStage::Vertex };
 };
 
@@ -97,7 +99,9 @@ void IOValidator::validateIO()
         CHECK(visit(entryPoint.function));
 
         const_cast<CallGraph::EntryPoint&>(entryPoint).usedGlobals.addAll(m_usedGlobals);
+        const_cast<CallGraph::EntryPoint&>(entryPoint).textureSamplerPairs = WTF::move(m_textureSamplerPairs);
         m_usedGlobals.clear();
+        m_textureSamplerPairs.clear();
 
         CHECK(validateResources(entryPoint));
     }
@@ -126,19 +130,28 @@ void IOValidator::collectGlobals()
 void IOValidator::visit(AST::Function& function)
 {
     HashSet<const CallGraph::Global*> usedGlobals;
+    Vector<CallGraph::TextureSamplerPair> textureSamplerPairs;
     for (auto& callee : m_shaderModule.callGraph().callees(function)) {
         if (!callee.usedGlobals.isEmpty()) {
             usedGlobals.addAll(callee.usedGlobals);
+            for (auto& pair : callee.textureSamplerPairs)
+                textureSamplerPairs.appendIfNotContains(pair);
             continue;
         }
 
         visit(*callee.target);
         const_cast<CallGraph::Callee&>(callee).usedGlobals.addAll(m_usedGlobals);
+        const_cast<CallGraph::Callee&>(callee).textureSamplerPairs = m_textureSamplerPairs;
         usedGlobals.addAll(m_usedGlobals);
+        for (auto& pair : m_textureSamplerPairs)
+            textureSamplerPairs.appendIfNotContains(pair);
         m_usedGlobals.clear();
+        m_textureSamplerPairs.clear();
     }
 
     m_usedGlobals.addAll(usedGlobals);
+    for (auto& pair : textureSamplerPairs)
+        m_textureSamplerPairs.appendIfNotContains(pair);
     AST::Visitor::visit(function);
 }
 
@@ -183,6 +196,71 @@ void IOValidator::visit(AST::IdentifierExpression& identifier)
         }
     }
     m_usedGlobals.add(*variable);
+}
+
+static bool isTextureBinding(const Type* type)
+{
+    if (!type)
+        return false;
+    if (std::holds_alternative<Types::Texture>(*type) || std::holds_alternative<Types::TextureDepth>(*type) || std::holds_alternative<Types::TextureStorage>(*type))
+        return true;
+    auto* primitive = std::get_if<Types::Primitive>(type);
+    return primitive && primitive->kind == Types::Primitive::TextureExternal;
+}
+
+static bool isSamplerBinding(const Type* type)
+{
+    if (!type)
+        return false;
+    auto* primitive = std::get_if<Types::Primitive>(type);
+    return primitive && (primitive->kind == Types::Primitive::Sampler || primitive->kind == Types::Primitive::SamplerComparison);
+}
+
+static bool takesTextureAndSampler(const String& builtin)
+{
+    return builtin == "textureGather"_s
+        || builtin == "textureGatherCompare"_s
+        || builtin == "textureSample"_s
+        || builtin == "textureSampleBaseClampToEdge"_s
+        || builtin == "textureSampleBias"_s
+        || builtin == "textureSampleCompare"_s
+        || builtin == "textureSampleCompareLevel"_s
+        || builtin == "textureSampleGrad"_s
+        || builtin == "textureSampleLevel"_s;
+}
+
+void IOValidator::visit(AST::CallExpression& call)
+{
+    AST::Visitor::visit(call);
+
+    // Only the type checker knows whether a call names a builtin or a user function, and it
+    // records that as the resolved target.
+    if (!takesTextureAndSampler(call.resolvedTarget()))
+        return;
+
+    const CallGraph::Global* texture = nullptr;
+    const CallGraph::Global* sampler = nullptr;
+    for (auto& argument : call.arguments()) {
+        auto* identifier = dynamicDowncast<AST::IdentifierExpression>(argument);
+        if (!identifier)
+            continue;
+        auto* global = readVariable(identifier->identifier());
+        // FIXME: a texture or a sampler reaching the builtin through a function parameter
+        // resolves to no global, so the pair goes unrecorded. Tracking those needs the pair
+        // analysis to run over the call graph rather than over each function in isolation.
+        if (!global || !*global)
+            continue;
+        auto* storeType = (*global)->declaration->storeType();
+        if (isTextureBinding(storeType))
+            texture = *global;
+        else if (isSamplerBinding(storeType))
+            sampler = *global;
+    }
+
+    if (!texture || !sampler || !texture->resource || !sampler->resource)
+        return;
+
+    m_textureSamplerPairs.appendIfNotContains(CallGraph::TextureSamplerPair { *texture->resource, *sampler->resource });
 }
 
 void IOValidator::validateResources(const CallGraph::EntryPoint& entryPoint)

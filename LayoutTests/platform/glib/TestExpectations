@@ -482,6 +482,7 @@ imported/w3c/web-platform-tests/html/editing/editing-0/spelling-and-grammar-chec
 # Drag-and-drop testdriver automation is not supported on GTK/WPE.
 webkit.org/b/66547 imported/w3c/web-platform-tests/html/editing/dnd/events/dragenter-dragleave-related-target.html [ Skip ]
 webkit.org/b/66547 fast/events/drag-relatedTarget.html [ Skip ]
+imported/w3c/web-platform-tests/html/editing/dnd/datastore/datatransferitemlist-clear-read-only.html [ Skip ]
 
 imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir_auto-pre-N-between-Rs.html [ Pass ]
 imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir_auto-textarea-N-between-Rs.html [ Pass ]
@@ -2634,6 +2635,14 @@ webkit.org/b/295127  transitions/svg-text-shadow-transition.html [ Pass Failure 
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # WebAnimations-related bugs
+
+# Apple ports dont's support `steps()` and `linear()` accelerated animations
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-2.html [ Skip ]
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-3.html [ Skip ]
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-6.html [ Skip ]
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-7.html [ Skip ]
+webkit.org/b/323852 webanimations/transform-animation-with-steps-timing-function-not-accelerated.html [ Skip ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 
 webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/css/animation-range-ignored.html [ Skip ]
@@ -2885,12 +2894,14 @@ fast/mediastream/apply-constraints-video.html [ Failure ]
 fast/mediastream/cloned-video-stream-aspect-ratio.html [ Failure ]
 fast/mediastream/getDisplayMedia-frame-rate.html [ Failure ]
 fast/mediastream/getDisplayMedia-size.html [ Failure ]
-fast/mediastream/getUserMedia-default.html [ Failure ]
+webkit.org/b/324111 fast/mediastream/getUserMedia-default.html [ Timeout Failure ]
 fast/mediastream/getUserMedia-video-rescaling.html [ Failure ]
 fast/mediastream/getUserMedia-frame-rate.html [ Failure ]
 fast/mediastream/get-user-media-constraints.html [ Failure ]
 fast/mediastream/get-user-media-ideal-constraints.html [ Failure ]
 fast/mediastream/image-capture-grabFrame.html [ Failure ]
+
+webkit.org/b/324108 webrtc/disable-encryption.html [ Pass Crash ]
 
 # No AudioSession category handling in WPE/GTK ports.
 fast/mediastream/microphone-interruption-and-audio-session.html [ Skip ]
@@ -3887,6 +3898,12 @@ webkit.org/b/160243 fast/text/complex-small-caps-non-bmp-capitalize.html [ Image
 webkit.org/b/160246 fast/text/multiple-feature-properties.html [ ImageOnlyFailure ]
 webkit.org/b/160248 fast/text/combining-mark-paint.html [ ImageOnlyFailure ]
 webkit.org/b/160248 fast/text/synthetic-bold-transformed.html [ ImageOnlyFailure ]
+
+# Skia's outline emboldening paints a GPOS-anchored mark about one font unit above the same bar
+# drawn by a precomposed glyph. The horizontal placement is correct, so this is a sub-pixel
+# vertical offset in the port, not the mark displacement these tests were written for.
+imported/w3c/web-platform-tests/css/css-fonts/synthetic-bold-combining-mark-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-fonts/synthetic-bold-combining-mark-002.html [ ImageOnlyFailure ]
 webkit.org/b/160249 fast/shrink-wrap/rect-shrink-wrap.html [ ImageOnlyFailure ]
 webkit.org/b/161583 accessibility/auto-fill-types.html [ Failure ]
 webkit.org/b/162815 fast/text/variations/font-face-clamp.html [ ImageOnlyFailure ]
@@ -5155,9 +5172,6 @@ webkit.org/b/315756 fast/css/container-query-orientation-modal-dialog-crash.html
 
 webkit.org/b/316158 fullscreen/full-screen-enter-while-exiting-mid-completion-handler.html [ Crash Pass ]
 
-webkit.org/b/316192 [ Release ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/no-cors.https.html [ Crash Pass ]
-webkit.org/b/316192 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/cors-check.https.html [ Crash Failure Pass ]
-
 webkit.org/b/316427 webkit.org/b/315994 animations/restart-after-scroll.html [ Pass Failure Crash ]
 
 webkit.org/b/316428 imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-inert-invoker.html [ Pass Failure ]
@@ -5278,9 +5292,6 @@ webkit.org/b/320648 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/compu
 
 webkit.org/b/321482 imported/w3c/web-platform-tests/css/filter-effects/filtered-inline-is-container.html [ ImageOnlyFailure ]
 
-webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count-on-src-change.html [ Crash Failure Timeout Pass ]
-webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count.html [ Crash Failure Timeout Pass ]
-
 webkit.org/b/164277 fast/preloader/image-srcset.html [ Pass Failure ]
 
 webkit.org/b/318029 [ Release ] media/media-source/media-source-seek-twice.html [ Pass Timeout ]
@@ -5306,8 +5317,6 @@ webkit.org/b/322815 imported/w3c/web-platform-tests/mediacapture-record/MediaRec
 webkit.org/b/322816 imported/w3c/web-platform-tests/resource-timing/initiator-type/style.html [ Failure Pass ]
 
 webkit.org/b/323002 [ Debug ] fast/events/tabindex-focus-blur-all.html [ Crash Pass ]
-webkit.org/b/323003 [ Release ] imported/w3c/web-platform-tests/webrtc-stats/hardware-capability-stats.https.html [ Crash Pass ]
-webkit.org/b/323003 [ Release ] imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-connectionState.https.html [ Crash Pass ]
 webkit.org/b/314218 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/track/track-element/track-cues-enter-seeking.html [ Failure Pass ]
 
 webkit.org/b/323308 http/tests/web-locks/web-lock-in-third-party-serviceworker.html [ Failure Pass ]
@@ -5315,6 +5324,8 @@ webkit.org/b/323309 ipc/getpixelbuffer-layerbacking-heap-disclosure.html [ Pass 
 
 # Gardening 2026-09-09
 webkit.org/b/323776 http/wpt/webcodecs/configure-encoder-big-frame-size.html [ Failure Pass ]
+
+webkit.org/b/324046 imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-20.xml [ Failure ]
 
 # These now pass on the GLib ports; the generic expectations in LayoutTests/TestExpectations still apply elsewhere.
 webkit.org/b/249918 imported/w3c/web-platform-tests/css/css-lists/list-marker-symbol-bidi.html [ Pass ]

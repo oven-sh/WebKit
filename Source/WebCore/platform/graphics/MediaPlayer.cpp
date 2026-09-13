@@ -26,6 +26,8 @@
 #include "config.h"
 #include "MediaPlayer.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(VIDEO)
 
 #include "CommonAtomStrings.h"
@@ -669,7 +671,7 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 
     // Don't delete and recreate the player unless it comes from a different engine.
     if (!engine) {
-        LOG(Media, "MediaPlayer::loadWithNextMediaEngine - no media engine found for type \"%s\"", contentType().raw().utf8().data());
+        LOG_WITH_STREAM(Media, stream << "MediaPlayer::loadWithNextMediaEngine - no media engine found for type \""_s << contentType().raw() << "\""_s);
         m_currentMediaEngine = engine.get();
         m_private = nullptr;
     } else if (m_currentMediaEngine.get() != engine.get()) {

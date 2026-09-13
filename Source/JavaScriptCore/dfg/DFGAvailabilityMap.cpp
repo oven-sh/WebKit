@@ -123,10 +123,10 @@ void AvailabilityMap::validateAvailability(Graph& graph, Node* where) const
 
                     if (localAvailability.flushedAt().virtualRegister() == heapFlushLocation.virtualRegister()) {
                         if (localAvailability.hasNode() && heapPair.value.node() != localAvailability.node())
-                            DFG_CRASH(graph, where, toCString("Materialization flushed availability ", heapPair.value, " and local flushed availability ", localAvailability, " disagree on which DFG node the same stack slot holds in ", *this).data());
+                            DFG_CRASH(graph, where, toUTF8CString("Materialization flushed availability ", heapPair.value, " and local flushed availability ", localAvailability, " disagree on which DFG node the same stack slot holds in ", *this).legacyCStringPointer());
 
                         if (heapFlushLocation.format() != localAvailability.flushedAt().format())
-                            DFG_CRASH(graph, where, toCString("Materialization should be flushed (", heapPair.value, ") but corresponding local doesn't exist or match (", localAvailability, ") in ", *this).data());
+                            DFG_CRASH(graph, where, toUTF8CString("Materialization should be flushed (", heapPair.value, ") but corresponding local doesn't exist or match (", localAvailability, ") in ", *this).legacyCStringPointer());
                         break;
                     }
                 }

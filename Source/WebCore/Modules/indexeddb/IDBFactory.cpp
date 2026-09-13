@@ -41,6 +41,7 @@
 #include "Page.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -105,14 +106,14 @@ ExceptionOr<Ref<IDBOpenDBRequest>> IDBFactory::openInternal(ScriptExecutionConte
     if (!databaseIdentifier.isValid())
         return Exception { ExceptionCode::TypeError, "IDBFactory.open() called with an invalid security origin"_s };
 
-    LOG(IndexedDBOperations, "IDB opening database: %s %" PRIu64, name.utf8().data(), version);
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB opening database: "_s << name << " "_s << version);
 
     return connectionProxy->openDatabase(context, databaseIdentifier, version);
 }
 
 ExceptionOr<Ref<IDBOpenDBRequest>> IDBFactory::deleteDatabase(ScriptExecutionContext& context, const String& name)
 {
-    LOG(IndexedDB, "IDBFactory::deleteDatabase - %s", name.utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBFactory::deleteDatabase - "_s << name);
 
     Ref connectionProxy = ensureConnectionProxy(context);
 
@@ -128,7 +129,7 @@ ExceptionOr<Ref<IDBOpenDBRequest>> IDBFactory::deleteDatabase(ScriptExecutionCon
     if (!databaseIdentifier.isValid())
         return Exception { ExceptionCode::TypeError, "IDBFactory.deleteDatabase() called with an invalid security origin"_s };
 
-    LOG(IndexedDBOperations, "IDB deleting database: %s", name.utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB deleting database: "_s << name);
 
     return connectionProxy->deleteDatabase(context, databaseIdentifier);
 }

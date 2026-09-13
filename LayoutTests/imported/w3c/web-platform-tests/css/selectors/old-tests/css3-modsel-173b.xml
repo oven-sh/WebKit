@@ -18,13 +18,13 @@
  </head>
  <body>
   <tests xmlns="http://css.example.net/" xmlns:test="http://css.example.net/">
-   <testA attribute="pass">This should be green.</testa>
-   <testB attribute="pass">This should be green.</testb>
-   <testC attribute="pass">This should be green.</testc>
-   <testD attribute="pass">This should be green.</testd>
-   <testE attribute="pass">This should be green.</teste>
-   <testF attribute="pass">This should be green.</testf>
-   <testG attribute="pass">This should be green.</testg>
+   <testA attribute="pass">This should be green.</testA>
+   <testB attribute="pass">This should be green.</testB>
+   <testC attribute="pass">This should be green.</testC>
+   <testD attribute="pass">This should be green.</testD>
+   <testE attribute="pass">This should be green.</testE>
+   <testF attribute="pass">This should be green.</testF>
+   <testG attribute="pass">This should be green.</testG>
   </tests>
 </body>
 </html>

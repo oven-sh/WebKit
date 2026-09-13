@@ -74,7 +74,7 @@ protected:
     // Asserts that matching without a regular-expression engine agrees with the regex-based path.
     void expectWithoutRegExpAgreesWithRegExp(ASCIILiteral pattern, ASCIILiteral baseURL, ASCIILiteral url, WebCore::URLPatternOptions options = { }) const
     {
-        SCOPED_TRACE(makeString("pattern="_s, pattern, " baseURL="_s, baseURL, " url="_s, url, " ignoreCase="_s, options.ignoreCase ? "true"_s : "false"_s).utf8().data());
+        SCOPED_TRACE(makeString("pattern="_s, pattern, " baseURL="_s, baseURL, " url="_s, url, " ignoreCase="_s, options.ignoreCase ? "true"_s : "false"_s).utf8().legacyCStringPointer());
 
         auto regexResult = WebCore::URLPattern::create(String(pattern), String(baseURL), WebCore::URLPatternOptions { options });
         ASSERT_FALSE(regexResult.hasException());
@@ -424,7 +424,7 @@ TEST_F(URLPatternTest, WithoutRegExpIgnoreCaseUnicodeAgreesWithRegExpPath)
     auto nonMatchingURL = String::fromUTF8("https://example.com/other/x");
 
     for (auto& url : { matchingURL, nonMatchingURL }) {
-        SCOPED_TRACE(makeString("url="_s, url).utf8().data());
+        SCOPED_TRACE(makeString("url="_s, url).utf8().legacyCStringPointer());
 
         auto regexResult = WebCore::URLPattern::create(String { pattern }, String(), WebCore::URLPatternOptions { ignoreCase });
         ASSERT_FALSE(regexResult.hasException());

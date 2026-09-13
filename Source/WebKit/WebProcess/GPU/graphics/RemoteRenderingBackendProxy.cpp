@@ -388,9 +388,9 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::moveToImageBuffer(Re
     return result;
 }
 
-UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(RemoteSnapshotIdentifier snapshotIdentifier)
+UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, RemoteSnapshotIdentifier snapshotIdentifier)
 {
-    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(*this);
+    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, *this);
     send(Messages::RemoteRenderingBackend::CreateSnapshotRecorder(recorder->identifier(), snapshotIdentifier));
     return recorder;
 }

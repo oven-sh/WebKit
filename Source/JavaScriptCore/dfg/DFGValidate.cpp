@@ -43,7 +43,7 @@ namespace {
 
 class Validate {
 public:
-    Validate(Graph& graph, GraphDumpMode graphDumpMode, CString graphDumpBeforePhase)
+    Validate(Graph& graph, GraphDumpMode graphDumpMode, UTF8CString graphDumpBeforePhase)
         : m_graph(graph)
         , m_graphDumpMode(graphDumpMode)
         , m_graphDumpBeforePhase(graphDumpBeforePhase)
@@ -1145,7 +1145,7 @@ private:
 
     Graph& m_graph;
     GraphDumpMode m_graphDumpMode;
-    CString m_graphDumpBeforePhase;
+    UTF8CString m_graphDumpBeforePhase;
 
     UncheckedKeyHashMap<Node*, unsigned> m_myRefCounts;
     Vector<uint32_t> m_myTupleRefCounts;
@@ -1154,7 +1154,7 @@ private:
 
 } // End anonymous namespace.
 
-void validate(Graph& graph, GraphDumpMode graphDumpMode, CString graphDumpBeforePhase)
+void validate(Graph& graph, GraphDumpMode graphDumpMode, UTF8CString graphDumpBeforePhase)
 {
     Validate validationObject(graph, graphDumpMode, graphDumpBeforePhase);
     validationObject.validate();

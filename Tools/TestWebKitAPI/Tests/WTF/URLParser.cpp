@@ -69,7 +69,7 @@ struct ExpectedParts {
 
 bool eq(StringView s1, StringView s2)
 {
-    EXPECT_STREQ(s1.utf8().data(), s2.utf8().data());
+    EXPECT_EQ(s1, s2);
     return s1.utf8() == s2.utf8();
 }
 

@@ -220,8 +220,19 @@ public:
         id<MTLTexture> _Nullable texture1 { nil };
         simd::float3x2 uvRemappingMatrix;
         simd::float4x3 colorSpaceConversionMatrix;
+        // Converts the frame's primaries to the color space the import asked for, applied to
+        // linear-light values. All zero, which no real conversion can be, when the frame's primaries
+        // already are that color space and the transfer function round trip has to be skipped.
+        simd::float3x3 primariesConversionMatrix { simd::float3x3(0.f) };
     };
-    ExternalTextureData createExternalTextureFromPixelBuffer(CVPixelBufferRef, WGPUColorSpace) const;
+    // A single-plane frame's color is premultiplied into a copy when it is imported for sampling,
+    // because textureSampleBaseClampToEdge() has to filter premultiplied color rather than
+    // premultiply what the sampler filtered. copyExternalImageToTexture() carries the frame's color
+    // through unchanged instead, and asks for the planes as they arrived.
+    enum class PremultiplyAlpha : bool { No, Yes };
+    ExternalTextureData createExternalTextureFromPixelBuffer(CVPixelBufferRef, WGPUColorSpace, PremultiplyAlpha) const;
+    id<MTLTexture> _Nullable premultipliedAlphaTexture(id<MTLTexture>, MTLPixelFormat, std::optional<MTLTextureSwizzleChannels> sourceSwizzle) const;
+    id<MTLComputePipelineState> _Nullable premultiplyAlphaPipeline() const;
     RefPtr<XRSubImage> getXRViewSubImage(XRProjectionLayer&);
     RefPtr<XRSubImage> NODELETE getXRViewSubImage() const;
     id<MTLTexture> _Nullable getXRViewSubImageDepthTexture() const;
@@ -314,6 +325,7 @@ private:
     id<MTLTexture> m_placeholderDepthStencilTexture { nil };
     id<MTLBuffer> _Nullable m_dispatchCallBuffer { nil };
     id<MTLComputePipelineState> _Nullable m_dispatchCallPipelineState { nil };
+    mutable id<MTLComputePipelineState> _Nullable m_premultiplyAlphaPipeline { nil };
 
     id<MTLRenderPipelineState> _Nullable m_indexBufferClampUintPSO { nil };
     id<MTLRenderPipelineState> _Nullable m_indexBufferClampUshortPSO { nil };

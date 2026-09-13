@@ -271,6 +271,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/ComplexTextController.cpp
         Tests/WebCore/ContextMenuAction.cpp
         Tests/WebCore/CookieJar.cpp
+        Tests/WebCore/CredentialStorage.cpp
         Tests/WebCore/CryptoDigest.cpp
         Tests/WebCore/CtapPinTest.cpp
         Tests/WebCore/CtapRequestTest.cpp
@@ -307,6 +308,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/KeyedCoding.cpp
         Tests/WebCore/LayoutRoundedRectTests.cpp
         Tests/WebCore/LayoutUnitTests.cpp
+        Tests/WebCore/LocalNetworkAccess.cpp
         Tests/WebCore/LoginStatus.cpp
         Tests/WebCore/MIMESniffer.cpp
         Tests/WebCore/MIMETypeRegistry.cpp
@@ -497,9 +499,11 @@ if (ENABLE_WEBKIT)
 
     set(TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
         ${CMAKE_BINARY_DIR}
+        ${bmalloc_FRAMEWORK_HEADERS_DIR}
         ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
         ${PAL_FRAMEWORK_HEADERS_DIR}
         ${TESTWEBKITAPI_DIR}
+        ${WTF_FRAMEWORK_HEADERS_DIR}
         ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
         ${WebKit_FRAMEWORK_HEADERS_DIR}
         ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}
@@ -588,7 +592,7 @@ if (ENABLE_WEBKIT)
         set(TestWebKitAPIInjectedBundle_LIBRARY_TYPE SHARED)
     endif ()
     add_library(TestWebKitAPIInjectedBundle ${TestWebKitAPIInjectedBundle_LIBRARY_TYPE} ${TestWebKitAPIInjectedBundle_SOURCES})
-    WEBKIT_ADD_PREFIX_HEADER(TestWebKitAPIInjectedBundle Helpers/TestWebKitAPIPrefix.h PREFIX_LANGUAGES CXX)
+    WEBKIT_ADD_PREFIX_HEADER(TestWebKitAPIInjectedBundle Helpers/TestWebKitAPIPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
 
     target_compile_definitions(TestWebKitAPIInjectedBundle PRIVATE BUILDING_TestWebKit)
     target_include_directories(TestWebKitAPIInjectedBundle PRIVATE ${TestWebKit_PRIVATE_INCLUDE_DIRECTORIES})

@@ -102,6 +102,8 @@ public:
 
     static bool updateStyleIfNeededForProperty(Element&, CSSPropertyID);
 
+    WEBCORE_EXPORT static WTF::String appleColorFilterSerializationForTesting(Element&);
+
 private:
     // The renderer we should use for resolving layout-dependent properties.
     const RenderElement* computeRenderer() const;

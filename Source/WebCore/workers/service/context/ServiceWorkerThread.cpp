@@ -63,6 +63,7 @@
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 using namespace PAL;
 
@@ -119,7 +120,8 @@ static WorkerParameters generateWorkerParameters(const ServiceWorkerContextData&
         { },
         advancedPrivacyProtections,
         noiseInjectionHashSalt,
-        makeString(Process::identifier().toUInt64(), "-serviceworker-"_s, contextData.serviceWorkerIdentifier.toUInt64())
+        makeString(Process::identifier().toUInt64(), "-serviceworker-"_s, contextData.serviceWorkerIdentifier.toUInt64()),
+        NetworkLoadPolicy::unrestricted()
     };
 }
 
@@ -223,7 +225,7 @@ void ServiceWorkerThread::queueTaskToPostMessage(MessageWithMessagePorts&& messa
                         addMismatch("host"_s);
                     if (serviceWorkerGlobalScope.url().port() != sourceClient->url().port())
                         addMismatch("port"_s);
-                    RELEASE_LOG_FAULT(ServiceWorker, "ServiceWorkerThread::queueTaskToPostMessage service worker and client mismatch: %s", mismatchParts.toString().utf8().data());
+                    RELEASE_LOG_FAULT(ServiceWorker, "ServiceWorkerThread::queueTaskToPostMessage service worker and client mismatch: %s", mismatchParts.toString().utf8().legacyCStringPointer());
                     ASSERT_NOT_REACHED();
                     return ExtendableMessageEventSource { WTF::move(sourceClient) };
                 }
@@ -534,7 +536,7 @@ void ServiceWorkerThread::start(Function<void(const String&, bool)>&& callback)
     WorkerThread::start([callback = WTF::move(callback), weakThis = ThreadSafeWeakPtr { *this }](auto& errorMessage) mutable {
 #ifndef NDEBUG
         if (!errorMessage.isEmpty())
-            LOG(ServiceWorker, "Service worker thread failed to start: %s", errorMessage.utf8().data());
+            LOG_WITH_STREAM(ServiceWorker, stream << "Service worker thread failed to start: "_s << errorMessage);
 #endif
         bool doesHandleFetch = true;
         if (RefPtr protectedThis = weakThis.get()) {

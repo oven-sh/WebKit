@@ -41,14 +41,15 @@ Ref<ExternalTexture> Device::createExternalTexture(const WGPUExternalTextureDesc
     if (!isValid())
         return ExternalTexture::createInvalid(*this);
 
-    return ExternalTexture::create(RetainPtr { descriptor.pixelBuffer }.get(), descriptor.colorSpace, *this);
+    return ExternalTexture::create(RetainPtr { descriptor.pixelBuffer }.get(), descriptor.colorSpace, simd::uint2 { descriptor.visibleWidth, descriptor.visibleHeight }, *this);
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ExternalTexture);
 
-ExternalTexture::ExternalTexture(CVPixelBufferRef pixelBuffer, WGPUColorSpace colorSpace, Device& device)
+ExternalTexture::ExternalTexture(CVPixelBufferRef pixelBuffer, WGPUColorSpace colorSpace, simd::uint2 visibleSize, Device& device)
     : m_pixelBuffer(pixelBuffer)
     , m_colorSpace(colorSpace)
+    , m_visibleSize(visibleSize)
     , m_device(device)
 {
     update(pixelBuffer);

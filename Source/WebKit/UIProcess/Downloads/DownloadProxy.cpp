@@ -224,7 +224,7 @@ void DownloadProxy::updateQuarantinePropertiesIfPossible()
     if (!file)
         return;
 
-    auto error = qtn_file_init_with_path(file.get(), path.data());
+    auto error = qtn_file_init_with_path(file.get(), path.legacyCStringPointer());
     if (error)
         return;
 
@@ -235,7 +235,7 @@ void DownloadProxy::updateQuarantinePropertiesIfPossible()
     if (error)
         return;
 
-    qtn_file_apply_to_path(file.get(), path.data());
+    qtn_file_apply_to_path(file.get(), path.legacyCStringPointer());
 }
 #endif
 

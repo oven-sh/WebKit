@@ -283,7 +283,7 @@ static String psoPreamble()
 static void printPsoOnProgramExit(int sig)
 {
     if (psoReproStringBuilder().length())
-        /* NOLINT */ WTFLogAlways("// ------------------------------------------------------------------------\n// Dumping Metal repro case:\n// ------------------------------------------------------------------------\n%s\n// ------------------------------------------------------------------------\n// End of repro case\n// ------------------------------------------------------------------------", psoReproStringBuilder().toString().utf8().data());
+        /* NOLINT */ WTFLogAlways("// ------------------------------------------------------------------------\n// Dumping Metal repro case:\n// ------------------------------------------------------------------------\n%s\n// ------------------------------------------------------------------------\n// End of repro case\n// ------------------------------------------------------------------------", psoReproStringBuilder().toString().utf8().legacyCStringPointer());
 
     if (existingSigabortHandlers()[sig])
         existingSigabortHandlers()[sig](sig);

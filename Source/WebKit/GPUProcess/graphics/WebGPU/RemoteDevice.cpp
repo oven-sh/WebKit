@@ -98,7 +98,7 @@ RemoteDevice::RemoteDevice(GPUConnectionToWebProcess& gpuConnectionToWebProcess,
     , m_objectHeap(objectHeap)
     , m_streamConnection(streamConnection.copyRef())
     , m_identifier(identifier)
-    , m_queue(RemoteQueue::create(device.queue(), objectHeap, WTF::move(streamConnection), gpu, queueIdentifier))
+    , m_queue(RemoteQueue::create(gpuConnectionToWebProcess, device.queue(), objectHeap, WTF::move(streamConnection), gpu, queueIdentifier))
 #if ENABLE(VIDEO)
     , m_videoFrameObjectHeap(gpuConnectionToWebProcess.videoFrameObjectHeap())
 #if PLATFORM(COCOA)

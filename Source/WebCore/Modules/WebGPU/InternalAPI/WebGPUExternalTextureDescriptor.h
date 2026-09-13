@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/IntSize.h>
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/VideoFrame.h>
 #include <WebCore/WebGPUObjectDescriptorBase.h>
@@ -49,6 +50,10 @@ using VideoSourceIdentifier = Variant<std::optional<WebCore::MediaPlayerIdentifi
 struct ExternalTextureDescriptor : public ObjectDescriptorBase {
     VideoSourceIdentifier videoBacking;
     PredefinedColorSpace colorSpace { PredefinedColorSpace::SRGB };
+    // The size the source presents the frame at, which is not the size the frame was decoded into: a
+    // WebCodecs frame carries a display size of its own, and a video element's intrinsic size accounts
+    // for its aspect ratio. Empty when the source could not say, and then the decoded size stands in.
+    IntSize visibleSize;
 };
 
 } // namespace WebCore::WebGPU

@@ -852,7 +852,7 @@ bool SubstitutionResolver::substituteAttrFunction(CSSParserTokenRange argumentsR
     //  leading and trailing whitespace, to be parsed as a <number-token>. Values that fail to
     //  parse trigger fallback."
     case AttrType::Number: {
-        auto trimmedValue = attributeValue.string().trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        auto trimmedValue = StringView { attributeValue }.trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
         CSSTokenizer tokenizer(trimmedValue);
         auto tokenRange = tokenizer.tokenRange();
         tokenRange.consumeWhitespace();
@@ -861,7 +861,7 @@ bool SubstitutionResolver::substituteAttrFunction(CSSParserTokenRange argumentsR
         auto numberToken = tokenRange.consumeIncludingWhitespace();
         if (!tokenRange.atEnd())
             return substituteFailure();
-        m_intermediateTokenStrings.append(WTF::move(trimmedValue));
+        m_intermediateTokenStrings.append(attributeValue.string());
         m_intermediateTokenStrings.appendVector(tokenizer.escapedStringsForAdoption());
         tokens.append(CSSParserToken(numberToken.numericValue(), numberToken.numericValueType(), numberToken.numericSign(), numberToken.value()));
         return true;
@@ -875,7 +875,7 @@ bool SubstitutionResolver::substituteAttrFunction(CSSParserTokenRange argumentsR
         // "If the <attr-unit> does not match a known CSS unit, it triggers fallback."
         if (attrType == AttrType::Unit && parsedAttrType->unitType == CSSUnitType::Unknown)
             return substituteFailure();
-        auto trimmedValue = attributeValue.string().trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        auto trimmedValue = StringView { attributeValue }.trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
         CSSTokenizer tokenizer(trimmedValue);
         auto tokenRange = tokenizer.tokenRange();
         tokenRange.consumeWhitespace();
@@ -889,7 +889,7 @@ bool SubstitutionResolver::substituteAttrFunction(CSSParserTokenRange argumentsR
             token.convertToPercentage();
         else
             token.convertToDimensionWithUnit(parsedAttrType->unitType);
-        m_intermediateTokenStrings.append(WTF::move(trimmedValue));
+        m_intermediateTokenStrings.append(attributeValue.string());
         m_intermediateTokenStrings.appendVector(tokenizer.escapedStringsForAdoption());
         tokens.append(token);
         return true;

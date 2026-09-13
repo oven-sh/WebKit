@@ -39,6 +39,7 @@
 #import "ResourceLoader.h"
 #import "Settings.h"
 #import <wtf/NeverDestroyed.h>
+#import <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -78,7 +79,7 @@ LegacyPreviewLoader::LegacyPreviewLoader(ResourceLoader& loader, const ResourceR
 {
     ASSERT(PreviewConverter::supportsMIMEType(response.mimeType()));
     protect(m_converter)->addClient(*this);
-    LOG(Network, "LegacyPreviewLoader created with preview file name \"%s\".", m_converter->previewFileName().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "LegacyPreviewLoader created with preview file name \""_s << m_converter->previewFileName() << "\"."_s);
 }
 
 LegacyPreviewLoader::~LegacyPreviewLoader() = default;

@@ -32,6 +32,7 @@
 #include "BoundsCheck.h"
 #include "CallGraph.h"
 #include "EntryPointRewriter.h"
+#include "EvaluationOrderRewriter.h"
 #include "GlobalSorting.h"
 #include "GlobalVariableRewriter.h"
 #include "IOValidator.h"
@@ -104,6 +105,9 @@ Variant<SuccessfulCheck, FailedCheck> staticCheck(const String& wgsl, const std:
     CHECK_PASS(validateIO, shaderModule);
     CHECK_PASS(validateVisibility, shaderModule);
     RUN_PASS(mangleNames, shaderModule);
+    // Must run before the pointer rewriter, which inlines a pointer's initializer into each of its
+    // uses and would carry any side effect in that initializer along with it.
+    RUN_PASS(rewriteEvaluationOrder, shaderModule);
     RUN_PASS(rewritePointers, shaderModule);
     CHECK_PASS(aliasAnalysis, shaderModule);
     CHECK_PASS(uniformityAnalysis, shaderModule);

@@ -46,14 +46,14 @@ PhaseScope::PhaseScope(Code& code, ASCIILiteral name)
     }
 
     if (shouldSaveIRBeforePhase())
-        m_dumpBefore = toCString(code);
+        m_dumpBefore = toUTF8CString(code);
 }
 
 PhaseScope::~PhaseScope()
 {
     m_code.setLastPhaseName(m_name);
     if (shouldValidateIRAtEachPhase())
-        validate(m_code, m_dumpBefore.data());
+        validate(m_code, m_dumpBefore.legacyCStringPointer());
 
     if (Options::dumpIonGraph()) [[unlikely]]
         m_code.appendIonGraphPass(m_name);

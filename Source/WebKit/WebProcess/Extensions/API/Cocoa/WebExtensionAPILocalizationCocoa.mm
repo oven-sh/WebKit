@@ -51,7 +51,7 @@ namespace WebKit {
 
 class JSWebExtensionWrappable;
 
-NSString *WebExtensionAPILocalization::getMessage(NSString* messageName, id substitutions)
+NSString *WebExtensionAPILocalization::getMessage(NSString* messageName, JSValue *substitutions)
 {
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/i18n/getMessage
 
@@ -59,18 +59,19 @@ NSString *WebExtensionAPILocalization::getMessage(NSString* messageName, id subs
     if (!localization)
         return @"";
 
-    NSArray<NSString *> *substitutionsArray;
-    if ([substitutions isKindOfClass:NSString.class])
-        substitutionsArray = @[ substitutions ];
-    else if ([substitutions isKindOfClass:NSArray.class]) {
-        substitutionsArray = filterObjects((NSArray *)substitutions, ^bool(id, id value) {
-            return [value isKindOfClass:NSString.class];
-        });
+    Vector<String> substitutionsVector;
+
+    if (substitutions && !substitutions.isUndefined && !substitutions.isNull) {
+        if (substitutions.isArray) {
+            auto count = [[substitutions valueForProperty:@"length"] toUInt32];
+            substitutionsVector.reserveInitialCapacity(count);
+            for (unsigned i = 0; i < count; ++i)
+                substitutionsVector.append(String { [[substitutions valueAtIndex:i] toString] });
+        } else
+            substitutionsVector.append(String { [substitutions toString] });
     }
 
-    auto substitutionsVector = makeVector<String>(substitutionsArray);
-
-    return localization->localizedStringForKey(messageName, substitutionsVector).createNSString().autorelease();
+    return localization->localizedStringForKey(messageName, WTF::move(substitutionsVector)).createNSString().autorelease();
 }
 
 NSString *WebExtensionAPILocalization::getUILanguage()

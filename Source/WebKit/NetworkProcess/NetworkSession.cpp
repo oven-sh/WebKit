@@ -32,6 +32,7 @@
 #include "LoadedWebArchive.h"
 #include "Logging.h"
 #include "NetworkBroadcastChannelRegistry.h"
+#include "NetworkDataTask.h"
 #include "NetworkLoadScheduler.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
@@ -40,7 +41,6 @@
 #include "NetworkSessionCreationParameters.h"
 #include "NetworkStorageManager.h"
 #include "NotificationManagerMessageHandlerMessages.h"
-#include "PingLoad.h"
 #include "PrivateClickMeasurementClientImpl.h"
 #include "PrivateClickMeasurementManager.h"
 #include "PrivateClickMeasurementManagerProxy.h"
@@ -54,6 +54,8 @@
 #include "WebSharedWorkerServer.h"
 #include "WebSocketTask.h"
 #include <WebCore/CookieJar.h>
+#include <WebCore/LocalNetworkAccess.h>
+#include <WebCore/PermissionState.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SWServer.h>
 #include <numeric>
@@ -248,6 +250,31 @@ NetworkSession::~NetworkSession()
     destroyResourceLoadStatistics([] { });
     for (auto& loader : std::exchange(m_keptAliveLoads, { }))
         loader->abort();
+}
+
+WebCore::PermissionState NetworkSession::requestLocalNetworkAccessPermission(const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace, bool canPrompt)
+{
+    auto iterator = m_localNetworkAccessPermissions.find({ origin, addressSpace });
+    auto hasRecordedDecision = iterator != m_localNetworkAccessPermissions.end();
+
+    switch (WebCore::localNetworkAccessPermissionRequestOutcome(addressSpace, hasRecordedDecision, canPrompt)) {
+    // FIXME: This leaves a connection whose peer address is unavailable unrecoverable for the user. It
+    // should become unreachable once CFNetwork reports the connection's address space directly
+    // (rdar://183944437).
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::RefuseAsUndetermined:
+        return WebCore::PermissionState::Denied;
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::UseRecordedDecision:
+        return iterator->value;
+    // Prompt, not Denied: nothing is recorded, so the origin can still be asked about from a page.
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::RefuseAsUnpromptable:
+        return WebCore::PermissionState::Prompt;
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::Prompt:
+        break;
+    }
+
+    // FIXME: There is nothing to ask yet, so an origin that could be prompted is refused instead. The
+    // prompt and the grant store land in https://bugs.webkit.org/show_bug.cgi?id=319907
+    return WebCore::PermissionState::Denied;
 }
 
 void NetworkSession::destroyResourceLoadStatistics(CompletionHandler<void()>&& completionHandler)
@@ -613,7 +640,7 @@ void NetworkSession::setPrivateClickMeasurementAppBundleIDForTesting(String&& ap
 #if PLATFORM(COCOA)
     auto appBundleID = applicationBundleIdentifier();
     if (!isRunningTest(appBundleID))
-        WTFLogAlways("isRunningTest() returned false. appBundleID is %s.", appBundleID.isEmpty() ? "empty" : appBundleID.utf8().data());
+        WTFLogAlways("isRunningTest() returned false. appBundleID is %s.", appBundleID.isEmpty() ? "empty" : appBundleID.utf8().legacyCStringPointer());
     RELEASE_ASSERT(isRunningTest(applicationBundleIdentifier()));
 #endif
     m_privateClickMeasurement->setPrivateClickMeasurementAppBundleIDForTesting(WTF::move(appBundleIDForTesting));
@@ -786,12 +813,13 @@ void NetworkSession::requestBackgroundFetchPermission(const ClientOrigin& origin
 }
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-void NetworkSession::setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit)
+void NetworkSession::setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency)
 {
-    m_bytesPerSecondLimit = WTF::move(bytesPerSecondLimit);
+    m_emulatedBandwidthBytesPerSecond = bandwidthBytesPerSecond;
+    m_emulatedLatency = latency;
 
-    m_dataTaskSet.forEach([&] (auto& task) {
-        task.setEmulatedConditions(m_bytesPerSecondLimit);
+    m_dataTaskSet.forEach([](auto& task) {
+        task.notifyEmulatedConditionsChanged();
     });
 }
 #endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)

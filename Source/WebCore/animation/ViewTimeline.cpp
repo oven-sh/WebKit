@@ -60,9 +60,8 @@ ExceptionOr<Ref<ViewTimeline>> ViewTimeline::create(Document& document, ViewTime
 
     auto viewTimeline = ViewTimeline::create({ nullAtom() }, options.axis, WTF::move(*insets), Style::ZoomFactor::none());
 
-    viewTimeline->setSubject(options.subject.get());
-    if (auto subject = options.subject)
-        protect(subject->document())->updateLayoutIgnorePendingStylesheets();
+    viewTimeline->setSubject(options.subject.ptr());
+    protect(options.subject->document())->updateLayoutIgnorePendingStylesheets();
     viewTimeline->cacheCurrentTime();
 
     return viewTimeline;

@@ -47,7 +47,7 @@ void Font::platformCharWidthInit()
     initCharWidths();
 }
 
-void Font::platformInit()
+void FontBase::platformInit()
 {
     m_syntheticBoldOffset = m_platformData.syntheticBold() ? 1.0f : 0.f;
 

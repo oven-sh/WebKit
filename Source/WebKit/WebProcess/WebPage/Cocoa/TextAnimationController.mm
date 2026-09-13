@@ -244,18 +244,21 @@ void TextAnimationController::addSourceTextAnimationForActiveWritingToolsSession
     }
 
     // On iOS this will search for the completion handler to pass the text indicator to so that the animation can continue.
-    protect(m_webPage.get())->addTextAnimationForAnimationID(sourceAnimationUUID, { WebCore::TextAnimationType::Source, runMode, WTF::UUID(WTF::UUID::emptyValue), sourceAnimationUUID, destinationAnimationUUID }, textIndicator, WTF::move(completionHandler));
+    protect(m_webPage.get())->addTextAnimationForAnimationID(sourceAnimationUUID, { WebCore::TextAnimationType::Source, runMode, { }, sourceAnimationUUID, destinationAnimationUUID }, textIndicator, WTF::move(completionHandler));
     m_activeAnimation = sourceAnimationUUID;
     m_textAnimationRanges.append({ sourceAnimationUUID, replaceCharacterRange });
 }
 
-void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const std::optional<WebCore::CharacterRange>& characterRangeAfterReplace, const String& string)
+void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSession(Markable<WTF::UUID> sourceAnimationUUIDValue, Markable<WTF::UUID> destinationAnimationUUIDValue, const std::optional<WebCore::CharacterRange>& characterRangeAfterReplace, const String& string)
 {
     RefPtr webPage = m_webPage.get();
-    if (!characterRangeAfterReplace) {
+    if (!characterRangeAfterReplace || !sourceAnimationUUIDValue || !destinationAnimationUUIDValue) {
         webPage->didEndPartialIntelligenceTextAnimation();
         return;
     }
+
+    auto sourceAnimationUUID = *sourceAnimationUUIDValue;
+    auto destinationAnimationUUID = *destinationAnimationUUIDValue;
 
     auto sessionRange = contextRangeForActiveWritingToolsSession();
     if (!sessionRange) {
@@ -281,13 +284,14 @@ void TextAnimationController::addDestinationTextAnimationForActiveWritingToolsSe
     auto endPosition = makeContainerOffsetPosition(sessionRange->start);
     auto endBoundaryPoint = makeBoundaryPoint(endOfEditableContent(endPosition));
 
-    WTF::UUID unanimatedRangeUUID { WTF::UUID::emptyValue };
+    Markable<WTF::UUID> unanimatedRangeUUID;
     if (endBoundaryPoint) {
         auto unanimatedRange = makeSimpleRangeHelper(replacedRangeAfterReplace.end, *endBoundaryPoint);
 
         if (unanimatedRange) {
-            unanimatedRangeUUID = WTF::UUID::createVersion4();
-            m_unanimatedRangeData = { unanimatedRangeUUID, *unanimatedRange };
+            auto animationUUID = WTF::UUID::createVersion4();
+            unanimatedRangeUUID = animationUUID;
+            m_unanimatedRangeData = { animationUUID, *unanimatedRange };
         }
     }
 

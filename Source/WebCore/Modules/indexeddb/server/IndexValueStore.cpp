@@ -32,6 +32,7 @@
 #include "MemoryIndex.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -165,7 +166,7 @@ Vector<IDBKeyData> IndexValueStore::findKeysWithValueKey(const IDBKeyData& value
 
 IDBKeyData IndexValueStore::lowestKeyWithRecordInRange(const IDBKeyRangeData& range) const
 {
-    LOG(IndexedDB, "IndexValueStore::lowestKeyWithRecordInRange - %s", range.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IndexValueStore::lowestKeyWithRecordInRange - "_s << range.loggingString());
 
     if (range.isExactlyOneKey())
         return m_records.contains(range.lowerKey) ? range.lowerKey : IDBKeyData();

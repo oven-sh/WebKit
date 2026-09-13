@@ -176,15 +176,15 @@ TargetListing RemoteInspector::listingForInspectionTarget(const RemoteInspection
         return nullptr;
 
     return g_variant_new("(tsssb)", static_cast<guint64>(target.targetIdentifier()),
-        targetDebuggableType(target.type()), target.name().utf8().data(),
-        target.type() == RemoteInspectionTarget::Type::JavaScript ? "null" : target.url().utf8().data(),
+        targetDebuggableType(target.type()), target.name().utf8().legacyCStringPointer(),
+        target.type() == RemoteInspectionTarget::Type::JavaScript ? "null" : target.url().utf8().legacyCStringPointer(),
         target.hasLocalDebugger());
 }
 
 TargetListing RemoteInspector::listingForAutomationTarget(const RemoteAutomationTarget& target) const
 {
     return g_variant_new("(tsssb)", static_cast<guint64>(target.targetIdentifier()),
-        "Automation", target.name().utf8().data(), "null", target.isPaired());
+        "Automation", target.name().utf8().legacyCStringPointer(), "null", target.isPaired());
 }
 
 void RemoteInspector::pushListingsNow()
@@ -235,7 +235,7 @@ void RemoteInspector::sendMessageToRemote(TargetID targetIdentifier, const Strin
     if (!m_socketConnection)
         return;
 
-    m_socketConnection->sendMessage("SendMessageToFrontend", g_variant_new("(ts)", static_cast<guint64>(targetIdentifier), message.utf8().data()));
+    m_socketConnection->sendMessage("SendMessageToFrontend", g_variant_new("(ts)", static_cast<guint64>(targetIdentifier), message.utf8().legacyCStringPointer()));
 }
 
 void RemoteInspector::receivedGetTargetListMessage()

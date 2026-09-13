@@ -138,7 +138,7 @@ WTF_EXPORT_PRIVATE bool markPurgeable(const String&);
 WTF_EXPORT_PRIVATE Vector<String> listDirectory(const String& path); // Returns file names, not full paths.
 WTF_EXPORT_PRIVATE void traverseDirectory(const String& path, NOESCAPE const Function<void(const String& fileName, FileType)>&);
 
-WTF_EXPORT_PRIVATE CString fileSystemRepresentation(const String&);
+WTF_EXPORT_PRIVATE UTF8CString fileSystemRepresentation(const String&);
 #if !PLATFORM(WIN)
 WTF_EXPORT_PRIVATE String stringFromFileSystemRepresentation(const char*);
 #endif
@@ -156,7 +156,7 @@ WTF_EXPORT_PRIVATE std::optional<uint64_t> overwriteEntireFile(const String& pat
 WTF_EXPORT_PRIVATE std::pair<String, FileHandle> openTemporaryFile(StringView prefix, StringView suffix = { }, const String& temporaryDirectory = { });
 WTF_EXPORT_PRIVATE String createTemporaryFile(StringView prefix, StringView suffix = { });
 #if PLATFORM(COCOA)
-WTF_EXPORT_PRIVATE std::pair<FileHandle, CString> createTemporaryFileInDirectory(const String& directory, const String& suffix);
+WTF_EXPORT_PRIVATE std::pair<FileHandle, String> createTemporaryFileInDirectory(const String& directory, const String& suffix);
 #endif
 WTF_EXPORT_PRIVATE FileHandle openFile(const String& path, FileOpenMode, FileAccessPermission = FileAccessPermission::All, OptionSet<FileLockMode> = { }, bool failIfFileExists = false);
 
@@ -176,15 +176,19 @@ WTF_EXPORT_PRIVATE bool filesHaveSameVolume(const String&, const String&);
 WTF_EXPORT_PRIVATE RetainPtr<CFURLRef> pathAsURL(const String&);
 #endif
 
+// The name of the running executable, as reported by the platform.
+#if USE(GLIB) || PLATFORM(COCOA)
+WTF_EXPORT_PRIVATE UTF8CString currentExecutableName();
+#endif
+
 #if USE(GLIB)
 WTF_EXPORT_PRIVATE String filenameForDisplay(const String&);
-WTF_EXPORT_PRIVATE CString currentExecutablePath();
-WTF_EXPORT_PRIVATE CString currentExecutableName();
+WTF_EXPORT_PRIVATE UTF8CString currentExecutablePath();
 WTF_EXPORT_PRIVATE String userCacheDirectory();
 WTF_EXPORT_PRIVATE String userDataDirectory();
 WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
 #if ENABLE(DEVELOPER_MODE)
-WTF_EXPORT_PRIVATE CString webkitTopLevelDirectory();
+WTF_EXPORT_PRIVATE UTF8CString webkitTopLevelDirectory();
 #endif
 #endif // USE(GLIB)
 

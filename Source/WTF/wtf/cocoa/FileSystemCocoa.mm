@@ -41,6 +41,7 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/spi/cocoa/BOMSPI.h>
+#import <wtf/text/CString.h>
 #import <wtf/text/MakeString.h>
 #import <wtf/text/StringCommon.h>
 
@@ -125,7 +126,7 @@ String extractTemporaryZipArchive(const String& path)
         };
 
         auto copier = BOMCopierNew();
-        if (BOMCopierCopyWithOptions(copier, newURL.path.fileSystemRepresentation, fileSystemRepresentation(temporaryDirectory).data(), bridge_cast(options)))
+        if (BOMCopierCopyWithOptions(copier, newURL.path.fileSystemRepresentation, fileSystemRepresentation(temporaryDirectory).legacyCStringPointer(), bridge_cast(options)))
             temporaryDirectory = nullString();
         BOMCopierFree(copier);
     }];
@@ -166,7 +167,7 @@ std::pair<String, FileHandle> openTemporaryFile(StringView prefix, StringView su
     temporaryFilePath.append("XXXXXX"_span);
     
     // Append the file name suffix.
-    CString suffixUTF8 = suffix.utf8();
+    auto suffixUTF8 = suffix.utf8();
     temporaryFilePath.append(suffixUTF8.spanIncludingNullTerminator());
 
     auto fileHandle = FileHandle::adopt(mkostemps(temporaryFilePath.mutableSpan().data(), suffixUTF8.length(), O_CLOEXEC));
@@ -204,13 +205,13 @@ NSString *createTemporaryDirectory(NSString *directoryPrefix)
     return [[NSFileManager defaultManager] stringWithFileSystemRepresentation:path.span().data() length:length];
 }
 
-std::pair<FileHandle, CString> createTemporaryFileInDirectory(const String& directory, const String& suffix)
+std::pair<FileHandle, String> createTemporaryFileInDirectory(const String& directory, const String& suffix)
 {
     auto fsSuffix = fileSystemRepresentation(suffix);
     auto templatePath = pathByAppendingComponents(directory, { { makeString("XXXXXX"_s, suffix) } });
     auto fsTemplatePath = fileSystemRepresentation(templatePath);
-    auto fileHandle = FileHandle::adopt(mkstemps(fsTemplatePath.mutableSpanIncludingNullTerminator().data(), fsSuffix.length()));
-    return { WTF::move(fileHandle), WTF::move(fsTemplatePath) };
+    auto fileHandle = FileHandle::adopt(mkstemps(byteCast<char>(fsTemplatePath.mutableSpanIncludingNullTerminator()).data(), fsSuffix.length()));
+    return { WTF::move(fileHandle), String::fromUTF8(fsTemplatePath.span()) };
 }
 
 #ifdef IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES
@@ -280,7 +281,7 @@ bool makeSafeToUseMemoryMapForPath(const String& path)
     NSError *error = nil;
     BOOL success = [[NSFileManager defaultManager] setAttributes:@{ NSFileProtectionKey: NSFileProtectionCompleteUnlessOpen } ofItemAtPath:path.createNSString().get() error:&error];
     if (error || !success) {
-        WTFLogAlways("makeSafeToUseMemoryMapForPath(%s) failed with error %@", path.utf8().data(), error);
+        WTFLogAlways("makeSafeToUseMemoryMapForPath(%s) failed with error %@", path.utf8().legacyCStringPointer(), error);
         return false;
     }
     return true;
@@ -294,7 +295,7 @@ bool setExcludedFromBackup(const String& path, bool excluded)
 
     NSError *error;
     if (![[NSURL fileURLWithPath:path.createNSString().get() isDirectory:YES] setResourceValue:[NSNumber numberWithBool:excluded] forKey:NSURLIsExcludedFromBackupKey error:&error]) {
-        LOG_ERROR("Cannot exclude path '%s' from backup with error '%@'", path.utf8().data(), error.localizedDescription);
+        LOG_ERROR("Cannot exclude path '%s' from backup with error '%@'", path.utf8().legacyCStringPointer(), error.localizedDescription);
         return false;
     }
 
@@ -303,13 +304,13 @@ bool setExcludedFromBackup(const String& path, bool excluded)
 
 bool markPurgeable(const String& path)
 {
-    CString fileSystemPath = fileSystemRepresentation(path);
+    auto fileSystemPath = fileSystemRepresentation(path);
     if (fileSystemPath.isNull())
         return false;
 
 #if HAVE(APFS_CACHEDELETE_PURGEABLE)
     uint64_t flags = APFS_MARK_PURGEABLE | APFS_PURGEABLE_DATA_TYPE | APFS_PURGEABLE_MARK_CHILDREN;
-    return !fsctl(fileSystemPath.data(), APFSIOC_MARK_PURGEABLE, &flags, 0);
+    return !fsctl(fileSystemPath.legacyCStringPointer(), APFSIOC_MARK_PURGEABLE, &flags, 0);
 #else
     return false;
 #endif
@@ -378,6 +379,11 @@ std::optional<String> homeDirectory()
     return String::fromUTF8(pwd.pw_dir);
 }
 #endif // PLATFORM(MAC) || PLATFORM(MACCATALYST)
+
+UTF8CString currentExecutableName()
+{
+    return UTF8CString { byteCast<char8_t>(getprogname()) };
+}
 
 } // namespace FileSystemImpl
 } // namespace WTF

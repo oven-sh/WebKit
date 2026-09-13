@@ -64,7 +64,7 @@ var propertiesToTest = {
     "hyphenate-character": true,
     "-webkit-hyphenate-limit-after": true,
     "-webkit-hyphenate-limit-before": true,
-    "-webkit-hyphenate-limit-lines": true,
+    "hyphenate-limit-lines": true,
     "-webkit-hyphens": true,
     "justify-content": true,
     "justify-self": true,

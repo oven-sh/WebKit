@@ -756,9 +756,9 @@ static GLfloat QuerySingleGLFloat(const FunctionsGL *functions, GLenum name)
 
 static GLfloat QueryGLFloatRange(const FunctionsGL *functions, GLenum name, size_t index)
 {
-    GLfloat result[2] = {};
-    functions->getFloatv(name, result);
-    return ANGLE_UNSAFE_TODO(result[index]);
+    std::array<GLfloat, 2> result = {};
+    functions->getFloatv(name, result.data());
+    return result[index];
 }
 
 static gl::TypePrecision QueryTypePrecision(const FunctionsGL *functions,
@@ -1579,25 +1579,7 @@ void GenerateCaps(const FunctionsGL *functions,
     extensions->depthClampEXT         = nativegl::SupportsDepthClamp(functions);
     extensions->polygonOffsetClampEXT = nativegl::SupportsPolygonOffsetClamp(functions);
 
-    if (functions->standard == STANDARD_GL_DESKTOP)
-    {
-        extensions->polygonModeNV = true;
-    }
-    else if (functions->hasGLESExtension("GL_NV_polygon_mode"))
-    {
-        // Some drivers expose the extension string without supporting its caps.
-        ANGLE_GL_CLEAR_ERRORS(functions);
-        functions->isEnabled(GL_POLYGON_OFFSET_LINE_NV);
-        if (functions->getError() != GL_NO_ERROR)
-        {
-            WARN() << "Not enabling GL_NV_polygon_mode because "
-                      "its native driver support is incomplete.";
-        }
-        else
-        {
-            extensions->polygonModeNV = true;
-        }
-    }
+    extensions->polygonModeNV    = nativegl::SupportsPolygonMode(functions);
     extensions->polygonModeANGLE = extensions->polygonModeNV;
 
     // This functionality is provided by Shader Model 5 and should be available in GLSL 4.00
@@ -2344,6 +2326,10 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     ANGLE_FEATURE_CONDITION(features, splitLevel0PboFullSubImage2D,
                             isPowerVRDriver && powerVRVersion < (std::array<int, 2>{26, 2}));
 
+    // TODO(crbug.com/548127218): conditionalize this workaround on PowerVR
+    // driver version.
+    ANGLE_FEATURE_CONDITION(features, uploadOversizedMipLevelsViaUnpackBuffer, isPowerVRDriver);
+
     ANGLE_FEATURE_CONDITION(features, initializeCurrentVertexAttributes, isNvidia);
 
     ANGLE_FEATURE_CONDITION(features, unpackLastRowSeparatelyForPaddingInclusion,
@@ -2420,6 +2406,9 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     ANGLE_FEATURE_CONDITION(features, resetBaseLevelForASTCSubImage, IsPowerVR(vendor));
     ANGLE_FEATURE_CONDITION(features, recreateImmutableTextureOnBaseLevelIncrease,
                             IsPowerVR(vendor));
+    ANGLE_FEATURE_CONDITION(features, resetTexStorage2DBaseLevel, IsPowerVR(vendor));
+    ANGLE_FEATURE_CONDITION(features, recreateTextureOnTexImage3dDepthIncrease,
+                            isQualcomm && IsAndroid());
 
     ANGLE_FEATURE_CONDITION(features, useTempForNonZeroBaseLevelGenMipmapUsingCopyImageSubData,
                             IsPowerVR(vendor));
@@ -2530,7 +2519,7 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // XWayland defaults to a 1hz refresh rate when the "surface is not visible", which sometimes
     // causes issues in Chrome. To get around this, default to a 30Hz refresh rate if we see bogus
     // from the driver.
-    ANGLE_FEATURE_CONDITION(features, clampMscRate, IsLinux() && IsWayland());
+    ANGLE_FEATURE_CONDITION(features, clampMscRate, IsLinux() && IsXWayland());
 
     ANGLE_FEATURE_CONDITION(features, bindTransformFeedbackBufferBeforeBindBufferRange, IsApple());
 
@@ -2671,6 +2660,9 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // http://crbug.com/534468209
     ANGLE_FEATURE_CONDITION(features, flushQueriesBeforeDeletingOrUnbindingFbo, isMali);
 
+    // http://crbug.com/546252753
+    ANGLE_FEATURE_CONDITION(features, finishBeforeBlitFramebufferMultiAttachment, isMali);
+
     // https://crbug.com/40264674
     ANGLE_FEATURE_CONDITION(features, disableClipControl, IsMaliG72OrG76OrG51(functions));
 
@@ -2764,6 +2756,10 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // Disable EXT_clear_texture entirely on IMG as a speculative fix for driver crashes.
     ANGLE_FEATURE_CONDITION(features, disableClearTexture, IsPowerVR(vendor));
 
+    // Forces a flush before generating a mipmap, which avoids a bad state in the IMG driver if
+    // the texture's base level is still bound to an active FBO.
+    ANGLE_FEATURE_CONDITION(features, flushBeforeGenerateMipmap, IsPowerVR(vendor));
+
     // IMG GL drivers crash while compiling shaders with more than the limit of uniform blocks.
     ANGLE_FEATURE_CONDITION(features, validateMaxPerStageUniformBlocksAtCompileTime,
                             IsPowerVR(vendor));
@@ -2782,6 +2778,10 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // http://crbug.com/499602793
     ANGLE_FEATURE_CONDITION(features, reattachTextureToFboAfterLayerIncrease,
                             IsPowerVR(vendor) && IsAndroid());
+
+    // crbug.com/553172761
+    ANGLE_FEATURE_CONDITION(features, useTexSubImageForHostTwiddledNpotUploads,
+                            false /* IsPowerVR(vendor) */);
 
     // Mac Intel drivers are unable to allocate buffers larger than ~1gb
     ANGLE_FEATURE_CONDITION(features, limitMaxBufferSizeTo1gb, isApple && isIntel);
@@ -3062,13 +3062,26 @@ bool SupportsBlendEquationAdvancedCoherent(const FunctionsGL *functions)
 
 bool SupportsPolygonMode(const FunctionsGL *functions)
 {
-    return functions->standard == STANDARD_GL_DESKTOP ||
-           functions->hasGLESExtension("GL_NV_polygon_mode");
-}
+    if (functions->standard == STANDARD_GL_DESKTOP)
+    {
+        return true;
+    }
 
-bool SupportsPolygonModeNV(const FunctionsGL *functions)
-{
-    return functions->hasGLESExtension("GL_NV_polygon_mode");
+    if (functions->hasGLESExtension("GL_NV_polygon_mode"))
+    {
+        // Some GLES drivers expose the extension string without supporting its caps.
+        // Try the extension-specific state query to check support.
+        ANGLE_GL_CLEAR_ERRORS(functions);
+        functions->isEnabled(GL_POLYGON_OFFSET_LINE_NV);
+        if (functions->getError() == GL_NO_ERROR)
+        {
+            return true;
+        }
+        WARN() << "Not enabling GL_NV_polygon_mode because "
+                  "its native driver support is incomplete.";
+    }
+
+    return false;
 }
 
 bool SupportsPolygonOffsetClamp(const FunctionsGL *functions)

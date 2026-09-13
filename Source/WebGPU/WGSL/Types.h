@@ -217,6 +217,8 @@ struct Function {
     WTF::Vector<const Type*> parameters;
     const Type* result;
     bool mustUse;
+    // An entry point may not be the target of a function call.
+    bool isEntryPoint;
 };
 
 struct Reference {
