@@ -1,7 +1,7 @@
 import { shouldBe } from "./resources/assert.js"
 
 function moduleURL(name) {
-    return import.meta.url.replace(/[^/]*$/, "import-error/" + name);
+    return import.meta.url.slice(0, import.meta.url.lastIndexOf("/") + 1) + "import-error/" + name;
 }
 
 Promise.all([

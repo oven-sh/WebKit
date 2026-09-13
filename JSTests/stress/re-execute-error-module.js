@@ -1,5 +1,6 @@
 var abort = $vm.abort;
-var moduleURL = callerSourceOrigin().replace(/[^/]*$/, "resources/error-module.js");
+var origin = callerSourceOrigin();
+var moduleURL = origin.slice(0, origin.lastIndexOf("/") + 1) + "resources/error-module.js";
 
 function shouldBe(actual, expected)
 {
