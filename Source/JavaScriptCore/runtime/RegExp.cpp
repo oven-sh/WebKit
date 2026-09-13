@@ -500,6 +500,11 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
     return true;
 }
 
+bool RegExp::wasUsedInCurrentFullCollectionCycle(VM& vm) const
+{
+    return m_lastUseEpoch == static_cast<uint8_t>(vm.heap.objectSpace().markingVersion());
+}
+
 void RegExp::deleteCode()
 {
     Locker locker { cellLock() };
