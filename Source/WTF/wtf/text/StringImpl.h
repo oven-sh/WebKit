@@ -209,6 +209,8 @@ public:
 
     // Prefer using isValidLength over MaxLength when the character type is known.
     template<typename> static constexpr bool isValidLength(size_t);
+    // The longest length isValidLength accepts. For char16_t it is less than MaxLength.
+    template<typename> static constexpr unsigned maxValidLength();
 
     static constexpr unsigned MaxLength = StringImplShape::MaxLength;
 
@@ -1261,10 +1263,16 @@ template<typename T> inline size_t StringImpl::allocationSize(Checked<size_t> ta
 }
 
 template<typename CharacterType>
-inline constexpr bool StringImpl::isValidLength(size_t length)
+inline constexpr unsigned StringImpl::maxValidLength()
 {
     // In order to not overflow the unsigned length, the check for (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) is needed when sizeof(CharacterType) == 2.
-    constexpr size_t max = std::min(static_cast<size_t>(MaxLength), (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) / sizeof(CharacterType));
+    return static_cast<unsigned>(std::min(static_cast<size_t>(MaxLength), (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) / sizeof(CharacterType)));
+}
+
+template<typename CharacterType>
+inline constexpr bool StringImpl::isValidLength(size_t length)
+{
+    constexpr size_t max = maxValidLength<CharacterType>();
     return length <= max;
 }
 
