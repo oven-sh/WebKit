@@ -12,8 +12,8 @@ shouldBe(eval("moduleVariable"), 42);
 
 shouldThrow(() => {
     (0, eval)("moduleVariable");
-}, `ReferenceError: Can't find variable: moduleVariable`);
+}, `ReferenceError: moduleVariable is not defined`);
 
 shouldThrow(() => {
     (Function("moduleVariable"))();
-}, `ReferenceError: Can't find variable: moduleVariable`);
+}, `ReferenceError: moduleVariable is not defined`);

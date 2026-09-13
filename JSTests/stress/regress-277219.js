@@ -73,8 +73,8 @@ function shouldThrow(func, expectedMessage) {
 }
 
 for (var i = 0; i < 1e4; i++) {
-  shouldThrow(testScopeRestorationAfterExceptionInTry, "ReferenceError: Can't find variable: x");
-  shouldThrow(testScopeRestorationAfterExceptionInTry2, "ReferenceError: Can't find variable: x");
-  shouldThrow(testScopeRestorationAfterExceptionInCatch, "ReferenceError: Can't find variable: x");
-  shouldThrow(testScopeRestorationAfterExceptionInCatch2, "ReferenceError: Can't find variable: x");
+  shouldThrow(testScopeRestorationAfterExceptionInTry, "ReferenceError: x is not defined");
+  shouldThrow(testScopeRestorationAfterExceptionInTry2, "ReferenceError: x is not defined");
+  shouldThrow(testScopeRestorationAfterExceptionInCatch, "ReferenceError: x is not defined");
+  shouldThrow(testScopeRestorationAfterExceptionInCatch2, "ReferenceError: x is not defined");
 }
