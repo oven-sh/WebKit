@@ -1478,6 +1478,7 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
             return new (m_parserArena) BytecodeIntrinsicNode(BytecodeIntrinsicNode::Type::Function, location, intrinsic->entry(), intrinsic->identifier(), args, divot, divotStart, divotEnd);
     }
 
+    bool calleeIsOptionalChain = false;
     if (func->isOptionalChain()) {
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(func);
         if (optionalChain->expr()->isLocation()) {
@@ -1485,8 +1486,10 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
             // We must take care to preserve our `this` value in cases like `a?.b?.()` and `(a?.b)()`, respectively.
             if (isOptionalCall)
                 return makeFunctionCallNode(location, optionalChain->expr(), previousBaseWasSuper, args, divotStart, divot, divotEnd, callOrApplyChildDepth, isOptionalCall);  
-            optionalChain->setExpr(makeFunctionCallNode(location, optionalChain->expr(), previousBaseWasSuper, args, divotStart, divot, divotEnd, callOrApplyChildDepth, isOptionalCall));
-            return optionalChain;
+            // The parentheses in `(a?.b)()` end the optional chain, so the call is not part of it. A nullish `a`
+            // short-circuits the callee to undefined, and the call still happens (and throws).
+            func = optionalChain->expr();
+            calleeIsOptionalChain = true;
         }
     }
 
@@ -1505,12 +1508,18 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
         BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(func);
         FunctionCallBracketNode* node = new (m_parserArena) FunctionCallBracketNode(location, bracket->base(), bracket->subscript(), bracket->subscriptHasAssignments(), args, divot, divotStart, divotEnd, isOptionalCall);
         node->setSubexpressionInfo(bracket->divot(), bracket->divotEnd().offset);
+        if (calleeIsOptionalChain)
+            node->setCalleeIsOptionalChain();
         return node;
     }
     ASSERT(func->isDotAccessorNode());
     DotAccessorNode* dot = static_cast<DotAccessorNode*>(func);
     FunctionCallDotNode* node = nullptr;
-    if (!previousBaseWasSuper && (dot->identifier() == m_vm.propertyNames->builtinNames().callPublicName() || dot->identifier() == m_vm.propertyNames->builtinNames().callPrivateName()))
+    if (calleeIsOptionalChain) {
+        // Only the generic node knows how to end the optional chain at the callee, so `(a?.call)()` and the like get no special node.
+        node = new (m_parserArena) FunctionCallDotNode(location, dot->base(), dot->identifier(), dot->type(), args, divot, divotStart, divotEnd, isOptionalCall);
+        node->setCalleeIsOptionalChain();
+    } else if (!previousBaseWasSuper && (dot->identifier() == m_vm.propertyNames->builtinNames().callPublicName() || dot->identifier() == m_vm.propertyNames->builtinNames().callPrivateName()))
         node = new (m_parserArena) CallFunctionCallDotNode(location, dot->base(), dot->identifier(), dot->type(), args, divot, divotStart, divotEnd, isOptionalCall, callOrApplyChildDepth);
     else if (!previousBaseWasSuper && (dot->identifier() == m_vm.propertyNames->builtinNames().applyPublicName() || dot->identifier() == m_vm.propertyNames->builtinNames().applyPrivateName())) {
         // FIXME: This check is only needed because we haven't taught the bytecode generator to inline
