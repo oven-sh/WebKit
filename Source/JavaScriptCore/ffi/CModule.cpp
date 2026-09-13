@@ -40,7 +40,9 @@
 #include "JSFFIFunction.h"
 #include "ObjectConstructor.h"
 #include <wtf/FastMalloc.h>
-#if !OS(WINDOWS)
+#if OS(WINDOWS)
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #endif
 #include "Disassembler.h"
@@ -145,7 +147,10 @@ CModule::~CModule()
 {
     if (m_data)
         fastFree(m_data);
-#if !OS(WINDOWS)
+#if OS(WINDOWS)
+    for (void* library : m_libraries)
+        FreeLibrary(static_cast<HMODULE>(library));
+#else
     for (void* library : m_libraries)
         dlclose(library);
 #endif
@@ -167,6 +172,30 @@ static void* openLibrary(const CString& name)
     }
     return dlopen(name.data(), RTLD_LAZY | RTLD_LOCAL);
 }
+
+static void* symbolIn(void* library, const char* name) { return dlsym(library, name); }
+static String lastLibraryError() { return String::fromUTF8(dlerror()); }
+#else
+// `#pragma comment(lib, "user32.lib")` names an import library; what it imports from is the DLL of that name.
+static void* openLibrary(const CString& name)
+{
+    auto span = name.span();
+    CString fileName = name;
+    auto isImportLibrary = [&] {
+        if (span.size() <= 4)
+            return false;
+        auto suffix = span.last(4);
+        return suffix[0] == '.' && (suffix[1] | 0x20) == 'l' && (suffix[2] | 0x20) == 'i' && (suffix[3] | 0x20) == 'b';
+    };
+    if (isImportLibrary())
+        fileName = makeString(span.first(span.size() - 4), ".dll"_s).utf8();
+    else if (!memchr(name.data(), '.', name.length()) && !memchr(name.data(), '\\', name.length()) && !memchr(name.data(), '/', name.length()))
+        fileName = makeString(span, ".dll"_s).utf8();
+    return LoadLibraryA(fileName.data());
+}
+
+static void* symbolIn(void* library, const char* name) { return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(library), name)); }
+static String lastLibraryError() { return makeString("error "_s, static_cast<unsigned>(GetLastError())); }
 #endif
 
 std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> bytes, const ExternResolver& resolver)
@@ -188,23 +217,19 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     if (bir.usesVectors && !Options::useWasmSIMD())
         return std::unexpected<String>("this C code uses 128-bit vectors, which need AVX on x86-64"_s);
 
-#if !OS(WINDOWS)
     for (const CString& name : bir.libraries) {
         void* handle = openLibrary(name);
         if (!handle)
-            return std::unexpected<String>(makeString("cannot load library '"_s, name.span(), "': "_s, String::fromUTF8(dlerror())));
+            return std::unexpected<String>(makeString("cannot load library '"_s, name.span(), "': "_s, lastLibraryError()));
         module->m_libraries.append(handle);
     }
-#endif
 
     for (const BIR::Extern& entry : bir.externs) {
         void* address = nullptr;
-#if !OS(WINDOWS)
         for (void* library : module->m_libraries) {
-            if ((address = dlsym(library, entry.name.data())))
+            if ((address = symbolIn(library, entry.name.data())))
                 break;
         }
-#endif
         if (!address)
             address = resolver(entry.name);
         if (!address && !entry.isWeak)
