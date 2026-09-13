@@ -399,7 +399,9 @@ jobs:
         if: *have_jsc
         env: *test_env
         run: |
-          set -uo pipefail
+          # Not -e, which the shell is started with: the tests failing must not end the script at the pipeline below,
+          # before jsc-failures.log is written. The status is passed on at the end.
+          set +e -uo pipefail
           root="$RUNNER_TEMP/bun-webkit"
           results="$RUNNER_TEMP/jsc-results.json"
           platform=()
