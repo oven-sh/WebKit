@@ -180,6 +180,10 @@ public:
     }
     ExpressionInfo& expressionInfo() const { return const_cast<UnlinkedCodeBlock*>(this)->expressionInfo(); }
     bool hasExpressionInfo() { return !expressionInfo().isEmpty(); }
+    // Null while the expression info is still in the cache payload. For a caller that cannot take m_lock or allocate
+    // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use entryForInstPC(),
+    // which does neither; lineColumnForInstPC() fills a cache.
+    ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
