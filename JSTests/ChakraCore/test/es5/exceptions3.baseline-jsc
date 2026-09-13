@@ -1,17 +1,17 @@
- Array.prototype.sort.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Array.prototype.slice.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Array.prototype.shift.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Array.prototype.reverse.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Array.prototype.push.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Array.prototype.pop.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Array.prototype.join.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
- Object.prototype.propertyIsEnumerable.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: Can't find variable: document
+ Array.prototype.sort.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Array.prototype.slice.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Array.prototype.shift.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Array.prototype.reverse.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Array.prototype.push.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Array.prototype.pop.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Array.prototype.join.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
+ Object.prototype.propertyIsEnumerable.call(document);; throws;;   -expected: es3 TypeError ::: ReferenceError: document is not defined
  delete this; ends without error; 
  var xnew = new Object(); var y = new xnew(); throws;;   -expected: es3, es5 TypeError ::: TypeError: Object is not a constructor (evaluating 'new xnew()')
  var x = new Object(); var y = x.ffm; ends without error; 
 var x = new Object(); x.ff() throws;;   -expected: es3, es5 TypeError ::: TypeError: x.ff is not a function. (In 'x.ff()', 'x.ff' is undefined)
-var x = function f(){return "inner";}();   -expected: es3, es5 R3eferenceError ::: ReferenceError: Can't find variable: ff
-call to undefined fg() throws;   -expected: es3 - TypeError, es5-ReferenceError ::: ReferenceError: Can't find variable: fg
+var x = function f(){return "inner";}();   -expected: es3, es5 R3eferenceError ::: ReferenceError: ff is not defined
+call to undefined fg() throws;   -expected: es3 - TypeError, es5-ReferenceError ::: ReferenceError: fg is not defined
  call to an non function object ooj();;;   -expected: es3, es5 TypeError ::: TypeError: ooj is not a function. (In 'ooj()', 'ooj' is an instance of Object)
  o_undef();;;   -expected: es3, es5 TypeError ::: TypeError: o_undef is not a function. (In 'o_undef()', 'o_undef' is undefined)
  o_null();;;   -expected: es3, es5 TypeError ::: TypeError: o_null is not a function. (In 'o_null()', 'o_null' is null)

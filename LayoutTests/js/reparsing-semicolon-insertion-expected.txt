@@ -7,7 +7,7 @@ PASS commaTest() is undefined.
 PASS varCommaTest() is undefined.
 PASS constCommaTest() is undefined.
 PASS commaParenTest() is undefined.
-PASS commaParenThrowTest() threw exception ReferenceError: Can't find variable: x.
+PASS commaParenThrowTest() threw exception ReferenceError: x is not defined.
 PASS successfullyParsed is true
 
 TEST COMPLETE

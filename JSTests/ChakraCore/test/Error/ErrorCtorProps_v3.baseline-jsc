@@ -1,5 +1,5 @@
-ReferenceError: Can't find variable: RegExpError
-ReferenceError: Can't find variable: ConversionError
+ReferenceError: RegExpError is not defined
+ReferenceError: ConversionError is not defined
 ---------------------------------
 toString(): function Error() {
     [native code]
