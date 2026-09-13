@@ -1,30 +1,38 @@
-name: Build WebKit (Reusable)
+name: CI
 
-# plan ──> build, build-tested ──> release
-#                     └────────> test
+# Builds every lane of bun-webkit and publishes them as one GitHub release; tests the lanes that are marked as tested.
 #
-# The lanes (one <label>.tar.gz each: which runner, which release script, which settings, tested or not) are defined
-# in .github/scripts/plan.mjs and nowhere else. `plan` turns them into the matrices of the jobs below.
+#   push to main         release autobuild-<sha>
+#   pull request         prerelease autobuild-preview-pr-<n>-<sha8>, linked from a comment on the pull request
+#
+#   plan ──> create-release
+#        ──> build, build-tested ──> release ──> comment (pull requests)
+#                        └────────> test
+#
+# A lane is one <label>.tar.gz on the release. The lanes (which runner, which release script, which settings, tested or
+# not) are defined in .github/scripts/plan.mjs and nowhere else; `plan` turns them into the matrices of the jobs below.
 
 on:
-  workflow_call:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
     inputs:
-      build_ref:
-        description: 'Git ref to build (commit SHA, branch, or tag)'
-        type: string
-        required: true
-      release_tag:
-        description: 'Full release tag (including autobuild- prefix)'
-        type: string
-        required: true
-      is_prerelease:
-        description: 'Mark release as prerelease'
-        type: boolean
-        default: false
-    outputs:
-      release_tag:
-        description: 'The release tag that was created'
-        value: ${{ jobs.release.outputs.tag }}
+      pr_number:
+        description: 'Pull request to build a preview of. Leave empty (and run from main) to build main.'
+        required: false
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # A newer commit on a pull request replaces the build of the older one. Builds of main never cancel each other.
+  group: ${{ (github.event.pull_request.number || inputs.pr_number) && format('preview-build-pr-{0}', github.event.pull_request.number || inputs.pr_number) || format('ci-{0}', github.sha) }}
+  cancel-in-progress: ${{ (github.event.pull_request.number || inputs.pr_number) && true || false }}
 
 jobs:
   plan:
@@ -32,19 +40,66 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      # What is built: the commit, the tag of the release it is published as, whether that is a prerelease, and the
+      # pull request it is a preview of (empty for main).
+      ref: ${{ steps.target.outputs.ref }}
+      tag: ${{ steps.target.outputs.tag }}
+      prerelease: ${{ steps.target.outputs.prerelease }}
+      pr: ${{ steps.target.outputs.pr }}
       # Matrices ({"include": [lane, ...]}) of the lanes that are only built, of the lanes that are also tested, and
       # of the test job; and the labels of all lanes.
-      build: ${{ steps.plan.outputs.build }}
-      build_tested: ${{ steps.plan.outputs.build_tested }}
-      test: ${{ steps.plan.outputs.test }}
-      labels: ${{ steps.plan.outputs.labels }}
+      build: ${{ steps.lanes.outputs.build }}
+      build_tested: ${{ steps.lanes.outputs.build_tested }}
+      test: ${{ steps.lanes.outputs.test }}
+      labels: ${{ steps.lanes.outputs.labels }}
     steps:
+      - name: What to build
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR" ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "::error::Only main is built without a pull request. Run this from main, or give pr_number."
+              exit 1
+            fi
+            ref=$GITHUB_SHA
+            tag=autobuild-$GITHUB_SHA
+            prerelease=false
+          else
+            if [ "$EVENT" = pull_request ]; then
+              # A preview build publishes a release: only for people who could push one themselves.
+              permission=$(gh api "repos/$GH_REPO/collaborators/$ACTOR/permission" --jq .permission)
+              if [ "$permission" != admin ] && [ "$permission" != write ]; then
+                echo "::error::$ACTOR does not have write access. Someone who does can build this pull request by running this workflow with pr_number."
+                exit 1
+              fi
+              ref=$PR_HEAD
+            else
+              ref=$(gh api "repos/$GH_REPO/pulls/$PR" --jq .head.sha)
+            fi
+            tag=autobuild-preview-pr-$PR-${ref:0:8}
+            prerelease=true
+          fi
+          echo "building $ref as $tag"
+          {
+            echo "ref=$ref"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+            echo "pr=$PR"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.build_ref }}
+          ref: ${{ steps.target.outputs.ref }}
           sparse-checkout: .github/scripts
-      - name: Plan
-        id: plan
+      - name: Lanes
+        id: lanes
         run: |
           set -euo pipefail
           node .github/scripts/plan.mjs
@@ -55,6 +110,7 @@ jobs:
   # tag and is invisible to anyone without push access, so a half-built release is never downloadable.
   create-release:
     name: Create draft release
+    needs: plan
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -67,9 +123,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.release_tag }}
-          TARGET: ${{ inputs.build_ref }}
-          PRERELEASE: ${{ inputs.is_prerelease }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          TARGET: ${{ needs.plan.outputs.ref }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
           set -euo pipefail
           # A release for this tag can exist from an earlier run. Published (this is a re-run of a run that succeeded):
@@ -94,7 +150,6 @@ jobs:
             --jq '"\(.id) \(.html_url)"')
           echo "created draft $created"
           echo "release_id=${created%% *}" >> "$GITHUB_OUTPUT"
-
 
   # `build` and `build-tested` are one job in two halves: the same steps, over the lanes `test` does not wait for and
   # the lanes it does. `needs:` names a job, never one leg of its matrix, so the lanes that are tested have to be a job
@@ -129,7 +184,7 @@ jobs:
           "$llvmPath\bin" >> $Env:GITHUB_PATH
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.build_ref }}
+          ref: ${{ needs.plan.outputs.ref }}
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
@@ -152,7 +207,7 @@ jobs:
           SCRIPT_ENV: ${{ toJSON(matrix.env) }}
           PACKAGE_OS: ${{ matrix.package_os }}
           PACKAGE_CPU: ${{ matrix.package_cpu }}
-          BUILD_REF: ${{ inputs.build_ref }}
+          BUILD_REF: ${{ needs.plan.outputs.ref }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -178,10 +233,10 @@ jobs:
             $env:Path = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\;" + $env:Path
           }
           $env:WEBKIT_OUTPUT_DIR = "bun-webkit"
-          $env:BUN_WEBKIT_VERSION = "${{ inputs.build_ref }}"
+          $env:BUN_WEBKIT_VERSION = "${{ needs.plan.outputs.ref }}"
           $env:CMAKE_BUILD_TYPE = "${{ matrix.build_type }}"
           $env:PACKAGE_JSON_LABEL = "${{ matrix.label }}"
-          $env:GITHUB_SHA = "${{ inputs.build_ref }}"
+          $env:GITHUB_SHA = "${{ needs.plan.outputs.ref }}"
           $env:PACKAGE_JSON_ARCH = "${{ matrix.package_cpu }}"
           $env:GITHUB_REPOSITORY = "${{ github.repository }}"
           ./windows-release.ps1 -Platform $platform
@@ -190,7 +245,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.release_tag }}
+          TAG: ${{ needs.plan.outputs.tag }}
           LABEL: ${{ matrix.label }}
           DIR: ${{ matrix.platform == 'windows-native' && '.' || runner.temp }}
         run: |
@@ -241,7 +296,7 @@ jobs:
       # The rest of LayoutTests/ is several GB that nothing here reads.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.build_ref }}
+          ref: ${{ needs.plan.outputs.ref }}
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
@@ -263,7 +318,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.release_tag }}
+          TAG: ${{ needs.plan.outputs.tag }}
           LABEL: ${{ matrix.label }}
           DIR: ${{ runner.temp }}
         run: |
@@ -341,7 +396,7 @@ jobs:
     name: release
     # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
     # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
-    if: always()
+    if: always() && needs.plan.result == 'success'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -360,7 +415,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.release_tag }}
+          TAG: ${{ needs.plan.outputs.tag }}
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
           NEEDS: ${{ toJSON(needs) }}
           LABELS: ${{ needs.plan.outputs.labels }}
@@ -391,3 +446,69 @@ jobs:
             echo "deleted draft $TAG (id $RELEASE_ID)"
           fi
           exit 1
+
+  # Pull requests: link the published release from a comment, one row per commit that was built.
+  comment:
+    name: Comment on the pull request
+    needs:
+      - plan
+      - release
+    if: needs.plan.outputs.pr != '' && needs.release.result == 'success'
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Update preview build comment
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const marker = '<!-- preview-build-comment -->';
+            const prNumber = ${{ needs.plan.outputs.pr }};
+            const releaseTag = '${{ needs.plan.outputs.tag }}';
+            const sha = '${{ needs.plan.outputs.ref }}';
+            const shortSha = sha.substring(0, 8);
+            const releaseUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${releaseTag}`;
+            const newEntry = `| \`${shortSha}\` | [\`${releaseTag}\`](${releaseUrl}) | ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC |`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            // Build table
+            let previousRows = '';
+            if (existing) {
+              const lines = existing.body.split('\n');
+              const tableLines = lines.filter(l => l.startsWith('| `'));
+              previousRows = tableLines.length > 0 ? '\n' + tableLines.join('\n') : '';
+            }
+
+            const body = [
+              marker,
+              '## Preview Builds',
+              '',
+              '| Commit | Release | Date |',
+              '|--------|---------|------|',
+              newEntry + previousRows
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body
+              });
+            }

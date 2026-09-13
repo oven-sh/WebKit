@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The lanes of .github/workflows/build-reusable.yml: what is built, on which runner, with which script and settings,
+// The lanes of .github/workflows/ci.yml: what is built, on which runner, with which script and settings,
 // and which lanes are tested. One lane is one <label>.tar.gz on the release.
 //
 //   node .github/scripts/plan.mjs             print the lanes, one per line
