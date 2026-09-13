@@ -32,8 +32,8 @@ ARG MARCH_FLAG="-mcpu=apple-m1"
 ARG LLVM_VERSION="21"
 ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
-# Matches the native macOS lane's CMAKE_C_FLAGS (build-reusable.yml) plus -g
-# from mac-release.bash. Cross-only additions live in the build stage.
+# Matches mac-release.bash's CMAKE_C_FLAGS (the native build) plus -g. Cross-only
+# additions live in the build stage.
 ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
 # Per-variant extras (the native lanes' matrix.cpp_flags), e.g.
 # -D_LIBCXX_ENABLE_ASSERTIONS=1 for Debug.

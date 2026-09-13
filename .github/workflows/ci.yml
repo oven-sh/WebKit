@@ -44,6 +44,10 @@ env:
 jobs:
   plan:
     name: Plan
+    # Not for a pull request from a fork: its token cannot publish anything, so all it would do is occupy every large
+    # runner for an hour and fail at the upload. Everything below needs this job, so nothing else runs either. Push the
+    # branch to this repository to build it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

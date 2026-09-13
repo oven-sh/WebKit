@@ -192,15 +192,21 @@ const platforms = [
   },
 ];
 
-// A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage and
-// the files that stage copies in. Changing either makes a new tag, which the `image` job finds missing and builds;
-// changing anything else (the ICU or WebKit stages, the sources) leaves it alone.
-function imageRef(platform, arch) {
+// A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage, the
+// files that stage copies in, and the build arguments it takes (the ARGs it declares that a lane sets: FREEBSD_VERSION,
+// MACOS_DEPLOYMENT_TARGET, ANDROID_API, ...). Changing any of those makes a new tag, which `plan` finds missing and
+// `image` builds; changing anything else (the ICU or WebKit stages, the sources, other settings) leaves it alone.
+function imageRef(platform, arch, buildArgs) {
   const dockerfile = readFileSync(join(root, platform.dockerfile), "utf8");
-  const base = /^FROM\s.*\sAS\s+base\s*$/im.exec(dockerfile);
-  if (!base) throw new Error(`${platform.dockerfile} has no \`base\` stage`);
-  const next = /^FROM\s/m.exec(dockerfile.slice(base.index + base[0].length));
-  const hash = createHash("sha256").update(next ? dockerfile.slice(0, base.index + base[0].length + next.index) : dockerfile);
+  const from = /^FROM\s.*\sAS\s+base\s*$/im.exec(dockerfile);
+  if (!from) throw new Error(`${platform.dockerfile} has no \`base\` stage`);
+  const start = from.index + from[0].length;
+  const next = /^FROM\s/m.exec(dockerfile.slice(start));
+  const end = next ? start + next.index : dockerfile.length;
+  const hash = createHash("sha256").update(dockerfile.slice(0, end));
+  for (const [, name] of dockerfile.slice(start, end).matchAll(/^ARG\s+(\w+)/gm)) {
+    if (name in buildArgs) hash.update(`${name}=${buildArgs[name]}\n`);
+  }
   const add = path => {
     if (!statSync(join(root, path)).isDirectory()) return hash.update(path).update(readFileSync(join(root, path)));
     for (const entry of readdirSync(join(root, path)).sort()) add(join(path, entry));
@@ -214,6 +220,13 @@ const lanes = platforms.flatMap(platform =>
     names.map(variant => {
       const v = variants[variant];
       const buildType = platform.buildType?.(v) ?? v.buildType;
+      const buildArgs = {
+        WEBKIT_RELEASE_TYPE: buildType,
+        LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
+        USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
+        USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
+        ...platform.args(arch, v, variant),
+      };
       return {
         label: platform.label(arch) + (variant === "release" ? "" : `-${variant}`),
         runner: BUILDER,
@@ -222,14 +235,8 @@ const lanes = platforms.flatMap(platform =>
         package_cpu: arch === "arm64" ? "arm64" : "x64",
         test: platform.tested?.includes(variant) ?? false,
         test_runner: TESTERS[arch],
-        image: imageRef(platform, arch),
-        build_args: {
-          WEBKIT_RELEASE_TYPE: buildType,
-          LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
-          USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
-          USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
-          ...platform.args(arch, v, variant),
-        },
+        image: imageRef(platform, arch, buildArgs),
+        build_args: buildArgs,
       };
     }),
   ),
