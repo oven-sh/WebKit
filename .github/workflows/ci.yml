@@ -389,7 +389,9 @@ jobs:
         env: &test_env
           # detect_leaks=0: LeakSanitizer reports the shell's deliberate exit-time leaks and turns every exit code into 1.
           # allocator_may_return_null=1: tests that provoke out-of-memory expect a JS exception, not an ASAN abort.
-          ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1
+          # allow_user_segv_handler=1: on Linux under ASan, JSC turns its wasm fault signal handler off, and wasm shared
+          # memory with it, unless this (or handle_segv=0) is in ASAN_OPTIONS (Options.cpp).
+          ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1:allow_user_segv_handler=1
           UBSAN_OPTIONS: print_stacktrace=1
           # The jsc shell aborts when its footprint passes this. --memory-limited defaults it to 600MB, which ASAN's
           # overhead (shadow, redzones, quarantine) takes ordinary tests past.
