@@ -20,7 +20,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -74,7 +74,7 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG and USE_*_MIMALLOC
 //   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
-//   imageInputs     files the `base` stage copies in, besides the Dockerfile
+//   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          variants whose jsc shell the `test` job runs the JavaScriptCore tests with, on a runner of the
 //                   lane's architecture (TESTERS). Those want assertions: a plain Release build compiles out $vm and
 //                   the JIT disassembler (BUN_ENABLE_JSDOLLARVM / BUN_ENABLE_JIT_DISASSEMBLER default to ASSERT_ENABLED).
@@ -125,7 +125,7 @@ const platforms = [
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
     image: arch => `macos-${arch}`,
-    imageInputs: ["macos-cross/xmac.mjs"],
+    imageInputs: ["macos-cross"],
     args: (arch, v, variant) => ({
       MACOS_ARCH: arch === "arm64" ? "arm64" : "x86_64",
       MACOS_DEPLOYMENT_TARGET: "13.0",
@@ -201,7 +201,11 @@ function imageRef(platform, arch) {
   if (!base) throw new Error(`${platform.dockerfile} has no \`base\` stage`);
   const next = /^FROM\s/m.exec(dockerfile.slice(base.index + base[0].length));
   const hash = createHash("sha256").update(next ? dockerfile.slice(0, base.index + base[0].length + next.index) : dockerfile);
-  for (const input of platform.imageInputs ?? []) hash.update(readFileSync(join(root, input)));
+  const add = path => {
+    if (!statSync(join(root, path)).isDirectory()) return hash.update(path).update(readFileSync(join(root, path)));
+    for (const entry of readdirSync(join(root, path)).sort()) add(join(path, entry));
+  };
+  for (const input of platform.imageInputs ?? []) add(input);
   return `${REGISTRY}:${platform.image(arch)}-${hash.digest("hex").slice(0, 16)}`;
 }
 

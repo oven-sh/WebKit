@@ -143,7 +143,7 @@ RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/
 # against the minimal mach type stubs in macos-cross/. See
 # macos-cross/README.md for why this is sound.
 # ───────────────────────────────────────────────────────────────────────────
-FROM base AS build_mig
+# Part of `base`: it is the same for every lane.
 ARG BOOTSTRAP_CMDS_TAG
 COPY macos-cross/ /macos-cross/
 RUN git clone --depth=1 --branch ${BOOTSTRAP_CMDS_TAG} \
@@ -158,7 +158,8 @@ RUN git clone --depth=1 --branch ${BOOTSTRAP_CMDS_TAG} \
        error.c global.c header.c mig.c routine.c server.c statement.c \
        string.c type.c user.c utils.c lexxer.c parser.c && \
     install -m 0755 /macos-cross/mig /usr/local/bin/mig && \
-    migcom -version
+    migcom -version && \
+    rm -rf /bootstrap_cmds
 
 # ───────────────────────────────────────────────────────────────────────────
 # WebKit (JSCOnly)
@@ -177,7 +178,6 @@ ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 
-COPY --from=build_mig /usr/local/bin/mig /usr/local/bin/migcom /usr/local/bin/
 COPY . /webkit
 WORKDIR /webkit
 

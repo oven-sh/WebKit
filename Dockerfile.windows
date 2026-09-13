@@ -198,6 +198,36 @@ RUN for pair in "x86_64 x64" "aarch64 arm64"; do \
       file /tmp/t.exe | grep -q "PE32+" && rm -f /tmp/t.c /tmp/t.exe; \
     done
 
+# What the ICU stage needs that does not depend on the lane, so that no lane downloads or rebuilds it: the tools
+# for icu/compress-data.ts, ICU's sources, and ICU's tools for this container (stage 1 of the two-stage build
+# described below).
+#
+# The tools: the zstd CLI (built from source: noble's apt has 1.5.5, 1.5.7 matches Bun's vendored decoder), node
+# (>= 23.6 for type stripping), and patch for the udata.cpp hook.
+ARG ZSTD_VERSION=1.5.7
+ARG NODE_VERSION=24.16.0
+RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
+    make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
+    cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
+    rm -rf /tmp/zstd-${ZSTD_VERSION} && \
+    zstd --version && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
+      | tar -xJ -C /usr/local --strip-components=1 && \
+    node --version
+
+ARG ICU_VERSION
+ARG ICU_SHA256
+ADD --checksum=sha256:${ICU_SHA256} \
+    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
+RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz
+
+# Stage 1: host build — only the tools matter.
+RUN mkdir -p /icu-host && cd /icu-host && \
+    CC=clang CXX=clang++ /icu-src/source/runConfigureICU Linux \
+      --enable-static --disable-shared --disable-samples --disable-tests --disable-extras && \
+    make -j$(nproc) && test -x bin/pkgdata && test -x bin/icupkg
+
 # ───────────────────────────────────────────────────────────────────────────
 # ICU — two-stage cross build. Host tools first (icupkg/pkgdata/genccode run
 # on the build machine), then the target build with clang's GNU driver
@@ -223,35 +253,12 @@ ARG ICU_MAJOR
 ARG ICU_SHA256
 ARG LLVM_VERSION
 
-# Tools for icu/compress-data.ts: zstd CLI (built from source — noble's apt
-# has 1.5.5; 1.5.7 matches Bun's vendored decoder), node (>= 23.6 for type
-# stripping), and patch for the udata.cpp hook.
-ARG ZSTD_VERSION=1.5.7
-ARG NODE_VERSION=24.16.0
-RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
-    make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
-    cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
-    rm -rf /tmp/zstd-${ZSTD_VERSION} && \
-    zstd --version && \
-    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
-      | tar -xJ -C /usr/local --strip-components=1 && \
-    node --version
-
 COPY icu/ /icu-bun/
 
-ADD --checksum=sha256:${ICU_SHA256} \
-    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
-# stage comment above); it lands in the cross-built sicuuc.lib.
-RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
-    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
-
-# Stage 1: host build — only the tools matter.
-RUN mkdir -p /icu-host && cd /icu-host && \
-    CC=clang CXX=clang++ /icu-src/source/runConfigureICU Linux \
-      --enable-static --disable-shared --disable-samples --disable-tests --disable-extras && \
-    make -j$(nproc) && test -x bin/pkgdata && test -x bin/icupkg
+# stage comment above); it lands in the cross-built sicuuc.lib. The host tools in `base` were built without it, which
+# is the same thing: the hook is null in them either way.
+RUN patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
 
 # Filter the prebuilt data package the same way the native build does
 # (build-icu.ps1 STAGE 1b): drop charset converters, transliteration rules,

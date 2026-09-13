@@ -72,10 +72,11 @@ RUN set -eu; \
     llvm-readelf -h /tmp/t | grep -q AArch64; \
     rm /tmp/t.cpp /tmp/t
 
-# ICU's tools, for this container. ICU runs them while it builds (pkgdata, genrb, ...), and the lanes filter and repack
-# its data with icupkg: a lane that builds ICU for aarch64 cannot run the ones it builds. Same tarball as in build_icu.
-ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu-host.tgz
-RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu-host.tgz --strip-components=1 && rm /icu-host.tgz && cd source && \
+# ICU's sources (/icu.tgz, which the lanes build from) and its tools for this container. ICU runs those while it
+# builds (pkgdata, genrb, ...), and the lanes filter and repack its data with icupkg: a lane that builds ICU for
+# aarch64 cannot run the ones it builds.
+ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu.tgz
+RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 && cd source && \
     CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
     make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
 
@@ -131,7 +132,6 @@ ARG DEFAULT_CFLAGS
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
 # The repacked libicudata.a also embeds the trained zstd dictionary.
 COPY icu/ /icu-bun/
-ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS -Os -std=c17 $LTO_FLAG" && \
