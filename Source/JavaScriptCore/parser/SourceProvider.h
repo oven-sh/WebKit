@@ -82,11 +82,6 @@ public:
     JS_EXPORT_PRIVATE virtual void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*) const { }
     JS_EXPORT_PRIVATE virtual void commitCachedBytecode() const { }
 #if USE(BUN_JSC_ADDITIONS)
-    // A 64-bit hash of source(). SourceCodeKey tells two sources apart by it and never compares their text, so it has to
-    // be a hash of the whole text and wide enough to stand for it. The default hashes source() once, in the one pass
-    // that also yields StringImpl::hash(), and keeps the result. A provider that hashed its text while loading it
-    // returns that hash, and then nothing here reads the text.
-    JS_EXPORT_PRIVATE virtual uint64_t contentHash() const;
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
 #endif
@@ -151,9 +146,6 @@ private:
     JS_EXPORT_PRIVATE void NODELETE getID();
 
     std::atomic<unsigned> m_lockingCount { 0 };
-#if USE(BUN_JSC_ADDITIONS)
-    mutable std::atomic<uint64_t> m_contentHash { 0 }; // 0: not computed yet.
-#endif
     SourceProviderSourceType m_sourceType;
     SourceOrigin m_sourceOrigin;
     String m_sourceURL;
@@ -181,18 +173,8 @@ public:
 
     unsigned hash() const override
     {
-#if USE(BUN_JSC_ADDITIONS)
-        // A string nobody has hashed yet gets its one pass here, and that pass yields the 64 bits too (contentHash()).
-        // One that has its hash is not read at all.
-        if (!m_source->hasHash())
-            contentHash();
-#endif
         return m_source.get().hash();
     }
-
-#if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE uint64_t contentHash() const override;
-#endif
 
     StringView source() const override
     {

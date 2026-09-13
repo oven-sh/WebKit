@@ -30,8 +30,6 @@
 #include <wtf/FileSystem.h>
 #include <wtf/ProcessID.h>
 #include <wtf/text/MakeString.h>
-#include <wtf/text/AtomStringImpl.h>
-#include <wtf/text/StringHasherInlines.h>
 
 namespace JSC {
 
@@ -48,32 +46,6 @@ SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& source
 }
 
 SourceProvider::~SourceProvider() = default;
-
-#if USE(BUN_JSC_ADDITIONS)
-uint64_t SourceProvider::contentHash() const
-{
-    uint64_t hash = m_contentHash.load(std::memory_order_relaxed);
-    if (hash)
-        return hash;
-    // The same for an 8-bit and a 16-bit copy of one text, like StringImpl::hash().
-    StringView text = source();
-    hash = text.is8Bit() ? RapidHash::computeHash64(text.span8()) : RapidHash::computeHash64(text.span16());
-    if (!hash)
-        hash = 1;
-    m_contentHash.store(hash, std::memory_order_relaxed);
-    return hash;
-}
-
-uint64_t StringSourceProvider::contentHash() const
-{
-    bool stringHadItsHash = m_source->hasHash();
-    uint64_t hash = SourceProvider::contentHash();
-    // StringImpl::hash() is the low 24 bits of the same 64: the string keeps them, so that hashing it is never a second pass.
-    if (!stringHadItsHash && !m_source->hasHash() && !m_source->isStatic() && !m_source->isAtom() && !m_source->isSymbol() && hash != 1)
-        AtomStringImpl::adoptPrecomputedHash(m_source.get(), RapidHash::maskTop8Bits(hash));
-    return hash;
-}
-#endif
 
 void SourceProvider::lockUnderlyingBuffer()
 {

@@ -85,14 +85,6 @@ namespace JSC {
             return m_provider->hash();
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-        uint64_t contentHash() const
-        {
-            ASSERT(m_provider);
-            return m_provider->contentHash();
-        }
-#endif
-
         StringView view() const
         {
             if (!m_provider)

@@ -4900,11 +4900,6 @@ public:
         m_flags = key.m_flags.m_flags;
         m_hash = key.hash();
         m_functionConstructorParametersEndPosition = key.m_functionConstructorParametersEndPosition;
-#if USE(BUN_JSC_ADDITIONS)
-        uint64_t contentHash = key.contentHash();
-        m_contentHashLow = static_cast<uint32_t>(contentHash);
-        m_contentHashHigh = static_cast<uint32_t>(contentHash >> 32);
-#endif
     }
 
     void decode(Decoder& decoder, SourceCodeKey& key) const
@@ -4914,9 +4909,6 @@ public:
         key.m_flags.m_flags = m_flags;
         key.m_hash = m_hash;
         key.m_functionConstructorParametersEndPosition = m_functionConstructorParametersEndPosition;
-#if USE(BUN_JSC_ADDITIONS)
-        key.m_contentHash = static_cast<uint64_t>(m_contentHashHigh) << 32 | m_contentHashLow;
-#endif
     }
 
 private:
@@ -4925,11 +4917,6 @@ private:
     unsigned m_flags;
     unsigned m_hash;
     int m_functionConstructorParametersEndPosition;
-#if USE(BUN_JSC_ADDITIONS)
-    // Two halves, so that the 4-byte alignment of everything in the cache stays.
-    uint32_t m_contentHashLow;
-    uint32_t m_contentHashHigh;
-#endif
 };
 
 class GenericCacheEntry {
@@ -4943,8 +4930,8 @@ protected:
     // need not notice) still rejects older payloads. Bump when you do that. 1: CachedFunctionExecutable::IsClass.
     // 2: CachedFunctionExecutable's varint tail reordered into a hot and a cold part. 3: the records' integrity trailers dropped.
     // 4: GenericCacheEntry lost its (always empty) boot session UUID. 5: module code declares @moduleLoader and passes it to
-    // @importModule. 6: CachedSourceCodeKey carries the key's 64-bit content hash.
-    static constexpr uint32_t cachedTypesFormatRevision = 6;
+    // @importModule.
+    static constexpr uint32_t cachedTypesFormatRevision = 5;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5228,8 +5215,8 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
 // The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
 // and with it the serialized form.
 static_assert(sizeof(GenericCacheEntry) == 12);
-static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 52);
-static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 52);
+static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 44);
+static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 44);
 static_assert(sizeof(BuiltinFunctionCacheEntry) == 24);
 static_assert(sizeof(VariableLengthObjectBase) == 4);
 static_assert(sizeof(CachedPtr<CachedString>) == 4);
@@ -5264,11 +5251,7 @@ static_assert(sizeof(CachedProgramCodeBlock) == 56);
 static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);
 static_assert(sizeof(CachedSimpleJumpTable) == 20);
-#if USE(BUN_JSC_ADDITIONS)
-static_assert(sizeof(CachedSourceCodeKey) == 36);
-#else
 static_assert(sizeof(CachedSourceCodeKey) == 28);
-#endif
 static_assert(sizeof(CachedSourceOrigin) == 4);
 static_assert(sizeof(CachedSourceProvider) == 8);
 static_assert(sizeof(CachedString) == 4);
