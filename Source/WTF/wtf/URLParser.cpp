@@ -1568,10 +1568,14 @@ URLParser::URLParser(URL& result, String&& input, const URL& base, const URLText
 #if ASSERT_ENABLED
     if (!m_didSeeSyntaxViolation) {
         // Force a syntax violation at the beginning to make sure we get the same result.
-        URL parsed;
-        URLParser parser(parsed, makeString(' ', inputString), base, nonUTF8QueryEncoding);
-        if (parsed.isValid())
-            ASSERT(allValuesEqual(parsed, m_url));
+        // An input that is already String::MaxLength long has no room for the space, and tryMakeString returns a null String for it.
+        String inputStringWithLeadingSpace = tryMakeString(' ', inputString);
+        if (!inputStringWithLeadingSpace.isNull()) {
+            URL parsed;
+            URLParser parser(parsed, WTF::move(inputStringWithLeadingSpace), base, nonUTF8QueryEncoding);
+            if (parsed.isValid())
+                ASSERT(allValuesEqual(parsed, m_url));
+        }
     }
 #endif // ASSERT_ENABLED
 
