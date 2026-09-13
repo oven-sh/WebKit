@@ -2,6 +2,9 @@
 #
 # Builds ICU from source with static CRT (/MT) for use with JavaScriptCore.
 #
+# Nothing in this repository runs this: CI cross-compiles the Windows lanes on Linux (Dockerfile.windows). Bun does,
+# when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
+#
 # Usage:
 #   .\build-icu.ps1 [-Platform x64|ARM64] [-BuildType Release|Debug] [-OutputDir WebKitBuild/icu]
 #

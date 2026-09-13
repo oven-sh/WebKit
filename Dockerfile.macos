@@ -1,9 +1,8 @@
 # Cross-compiles JavaScriptCore (PORT=JSCOnly) for macOS on a Linux host:
 # clang --target=<arch>-apple-macosx against a pinned macOS SDK, linked with
-# ld64.lld. Produces the same bun-webkit tarball layout as mac-release.bash
-# does on a real Mac, plus the LTO variants.
+# ld64.lld.
 #
-# Differences from the native macOS build:
+# Differences from a build on a Mac:
 #   - The linker is ld64.lld instead of Apple's ld (required: there is no
 #     Apple ld for Linux). Only executables (LLIntOffsetsExtractor, jsc) are
 #     linked; the shipped artifacts are static archives.
@@ -32,8 +31,7 @@ ARG MARCH_FLAG="-mcpu=apple-m1"
 ARG LLVM_VERSION="21"
 ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
-# Matches mac-release.bash's CMAKE_C_FLAGS (the native build) plus -g. Cross-only
-# additions live in the build stage.
+# What every variant is compiled with. Cross-only additions live in the build stage.
 ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
 # Per-variant extras (CPP_FLAGS in .github/scripts/lanes.mjs), e.g.
 # -D_LIBCXX_ENABLE_ASSERTIONS=1 for Debug.

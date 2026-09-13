@@ -114,7 +114,7 @@ const platforms = [
     }),
   },
   {
-    // clang --target + a pinned macOS SDK, linked with ld64.lld. mac-release.bash remains for building on a real Mac.
+    // clang --target + a pinned macOS SDK, linked with ld64.lld.
     label: arch => `bun-webkit-macos-${arch}`,
     dockerfile: "Dockerfile.macos",
     packageOS: "darwin",
@@ -134,8 +134,7 @@ const platforms = [
     }),
   },
   {
-    // clang-cl --target + an xwin-downloaded MSVC CRT and Windows SDK + lld-link. windows-release.ps1 remains for
-    // building on a real Windows machine.
+    // clang-cl --target + an xwin-downloaded MSVC CRT and Windows SDK + lld-link.
     label: arch => `bun-webkit-windows-${arch}`,
     dockerfile: "Dockerfile.windows",
     packageOS: "windows",

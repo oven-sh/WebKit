@@ -1,7 +1,6 @@
 # Cross-compiles JavaScriptCore (PORT=JSCOnly) for Windows on a Linux host:
 # clang-cl --target=<arch>-pc-windows-msvc against an xwin-downloaded MSVC
-# CRT + Windows SDK, linked with lld-link. Produces the same bun-webkit
-# tarball layout as windows-release.ps1 does on a real Windows runner.
+# CRT + Windows SDK, linked with lld-link.
 #
 # Builds on the upstream Linux->Windows cross support in
 # Source/cmake/OptionsMSVC.cmake (webkit.org bugs 282276 and 309681), which
