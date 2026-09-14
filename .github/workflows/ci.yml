@@ -420,10 +420,6 @@ jobs:
               # As upstream's Windows bots run it: Windows' own perl (not Git for Windows' msys one), test scripts
               # written as ruby rather than sh, run by the ruby runner rather than make.
               export PATH="/c/Strawberry/perl/bin:$PATH"
-              # run-jsc-stress-tests runs a copy of jsc.exe alone in its own directory (it cannot make a symlink here),
-              # and the asan jsc.exe needs clang_rt.asan_dynamic-x86_64.dll, which is in bin/: Windows looks for a
-              # DLL on PATH too.
-              export PATH="$(cygpath -u "$root/bin"):$PATH"
               root=$(cygpath -m "$root")
               results=$(cygpath -m "$results")
               platform=(--test-writer=ruby --ruby-runner)
@@ -432,13 +428,8 @@ jobs:
               case "$LABEL" in *-arm64*) platform+=(--architecture arm64) ;; *) platform+=(--architecture x86_64) ;; esac
               ;;
           esac
-          # --quick on the small runners: see lanes.mjs. Elsewhere the asan lanes get --no-slow: the tests marked
-          # //@ slow! pass their 300 second hard timeout under ASan. One or the other: run-jsc-stress-tests keeps both
-          # in one $mode, the later one wins, and --quick skips the slow! tests too.
-          if [ "$QUICK" = true ]; then platform+=(--quick)
-          else case "$LABEL" in *-asan) platform+=(--no-slow) ;; esac; fi
-          # --asan: the tests marked //@ skip if $asan do not run.
-          case "$LABEL" in *-asan) platform+=(--asan) ;; esac
+          # --quick on the small runners: see lanes.mjs.
+          if [ "$QUICK" = true ]; then platform+=(--quick); fi
           # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
           # by the release Dockerfiles, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.

@@ -86,9 +86,10 @@ const NO_ASAN = ["release", "lto", "debug"];
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
-//                   the runner it does that on: a machine of the lane's own platform and architecture. "asan" is
-//                   Release with assertions and the sanitizers; "lto" ("release" where there is no lto lane) is what bun
-//                   ships. `quick` is --quick, for the small runners.
+//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" ("release"
+//                   where there is no lto lane) is what bun ships. The asan lanes are not tested: the tests take 65 to
+//                   100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick` is --quick, for
+//                   the small runners.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -98,8 +99,8 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: ALL, arm64: ALL },
     tested: {
-      amd64: { on: "linux-x64-gh", variants: ["asan", "lto"] },
-      arm64: { on: "linux-arm64-gh", variants: ["asan", "lto"] },
+      amd64: { on: "linux-x64-gh", variants: ["lto"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
     image: () => "linux-glibc",
     args: (arch, v) => ({
@@ -134,7 +135,7 @@ const platforms = [
     label: arch => `bun-webkit-macos-${arch}`,
     dockerfile: "Dockerfile.macos",
     packageOS: "darwin",
-    tested: { arm64: { on: MACOS_ARM64, variants: ["asan", "lto"], quick: true } },
+    tested: { arm64: { on: MACOS_ARM64, variants: ["lto"], quick: true } },
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
@@ -157,7 +158,7 @@ const platforms = [
     packageOS: "windows",
     // There is no asan lane for arm64, and no lto one: bun ships its plain release build.
     tested: {
-      amd64: { on: WINDOWS_X64, variants: ["asan", "lto"], quick: true },
+      amd64: { on: WINDOWS_X64, variants: ["lto"], quick: true },
       arm64: { on: WINDOWS_ARM64, variants: ["release"], quick: true },
     },
     lanes: {
