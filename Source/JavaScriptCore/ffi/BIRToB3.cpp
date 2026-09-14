@@ -390,6 +390,10 @@ BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block,
     RELEASE_ASSERT(arguments.size() == signature.parameters.size());
     m_origin = origin;
     m_proc.setHasCodeFromC();
+    // A procedure that says it has no 128-bit values keeps only the low halves of the vector registers the
+    // platform's convention preserves across the calls it makes.
+    if (m_module.usesVectors)
+        m_proc.setUsesSIMD();
     if (m_inlineStack.isEmpty())
         m_inlineStack.append(functionIndex);
 
