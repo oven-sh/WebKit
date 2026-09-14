@@ -1,7 +1,10 @@
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
 // An atomic read-modify-write whose address is a stack slot that many other instructions also address. B3 stops
 // folding an address into its users once there are more than ten of them, and lowering an atomic makes a loop:
 // what computes the address has to end up in front of the loop.
-load("./asm.js", "caller relative");
+load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n }), t8 = n => ({ u8: n });
 const AND = 2, OR = 3, EXCHANGE = 5, SEQ_CST = 4;

@@ -1,4 +1,7 @@
-load("./asm.js", "caller relative");
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
+load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n });
 const sizes = [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 24, 31, 33, 63, 64, 65, 100];

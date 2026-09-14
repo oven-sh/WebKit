@@ -1,4 +1,7 @@
-load("./asm.js", "caller relative");
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
+load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n });
 const module = assemble({
@@ -22,7 +25,4 @@ eq(m.ident(0xffffffff), 4294967295, "max"); eq(m.ident(0x80000000), 2147483648, 
 function escape(n) { const a = []; for (let i = 0; i < n; i++) a.push(m.ident(0xfffffff0 + (i & 15))); return a[n - 1]; }
 eq(escape(200000), 0xfffffff0 + ((200000 - 1) & 15), "escapes to the heap as a number");
 
-function loopC(n) { let t = 0; for (let i = 0; i < n; i++) t ^= m.mixu(i); return t; }
-function loopJS(n) { let t = 0; for (let i = 0; i < n; i++) t ^= mixJS(i); return t; }
-function time(name, f) { f(1e5); f(1e6); let best = Infinity, r; for (let k = 0; k < 5; k++) { const t0 = preciseTime(); r = f(5e7); best = Math.min(best, preciseTime() - t0); } print(name.padEnd(18), (best * 1e9 / 5e7).toFixed(2), "ns/iter", r); }
-time("C mixu (u32)", loopC); time("JS mix", loopJS);
+print("u32 ok");

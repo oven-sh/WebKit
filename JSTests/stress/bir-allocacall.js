@@ -1,6 +1,9 @@
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
 // A call made after the stack pointer has moved (C's alloca, a VLA) passes its stack arguments above the stack
 // pointer as it is then, not where the frame's outgoing-argument area was when the function was entered.
-load("./asm.js", "caller relative");
+load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n }), t8 = n => ({ u8: n });
 const COUNT = 12; // more than either ABI passes in registers

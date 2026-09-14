@@ -1,5 +1,8 @@
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
 // The constant part of a module's data: readable, addressable like the rest, and what follows it writable.
-load("./asm.js", "caller relative");
+load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n }), t8 = n => ({ u8: n });
 const PART = 16384; // what the format says the writable part is aligned to

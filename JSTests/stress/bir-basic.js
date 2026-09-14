@@ -1,4 +1,7 @@
-load("./asm.js", "caller relative");
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
+load("./resources/bir-assembler.js", "caller relative");
 
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 

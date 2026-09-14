@@ -25,14 +25,15 @@ function assemble(m) {
     const [arch, os] = $vm.cModuleHost();
     w.raw([0x42, 0x49, 0x52, 0x30]).u8(arch).u8(os).u8(8).u8(0);
     w.uv(m.sigs.length);
-    // sig = { ret: type | [types], variadic, params: [type | {byval: size, align, exhausts} | {sret: true}] }
+    // sig = { ret: type | [types], variadic, params: [type | {byval: size, align, exhausts} | {sret: true} | {kind: raw byte}] }
     for (const s of m.sigs) {
         const rets = Array.isArray(s.ret) ? s.ret : s.ret === T.void ? [] : [s.ret];
         w.uv(rets.length); rets.forEach(r => w.u8(r));
-        w.u8(s.variadic ? 1 : 0).uv(s.params.length);
+        w.u8(typeof s.variadic === "number" ? s.variadic : s.variadic ? 1 : 0).uv(s.params.length);
         for (const p of s.params) {
             if (typeof p === "number") w.u8(0).u8(p);
-            else if (p.byval) w.u8(1).uv(p.byval).uv(p.align || 8).u8(p.exhausts || 0);
+            else if ("byval" in p) w.u8(1).uv(p.byval).uv(p.align ?? 8).u8(p.exhausts || 0);
+            else if ("kind" in p) w.u8(p.kind);
             else w.u8(2);
         }
     }
@@ -47,8 +48,8 @@ function assemble(m) {
     w.uv((tls.relocs || []).length);
     for (const r of tls.relocs || []) w.uv(r.offset).u8(r.kind).uv(r.index).sv(r.addend || 0);
     w.uv(m.funcs.length);
-    // flags: bit 0 exported, bit 3 never inlined
-    for (const f of m.funcs) w.str(f.name).uv(f.sig).u8((f.exported ? 1 : 0) | (f.noinline ? 8 : 0));
+    // flags: bit 0 exported, bit 1 calls setjmp, bit 2 always_inline, bit 3 noinline, bit 4 declared inline
+    for (const f of m.funcs) w.str(f.name).uv(f.sig).u8(f.flags ?? ((f.exported ? 1 : 0) | (f.returnsTwice ? 2 : 0) | (f.alwaysInline ? 4 : 0) | (f.noinline ? 8 : 0) | (f.inlineHint ? 16 : 0)));
     for (const f of m.funcs) {
         w.uv((f.locals || []).length); (f.locals || []).forEach(t => w.u8(t));
         w.uv((f.slots || []).length); (f.slots || []).forEach(s => w.uv(s.size).uv(s.align));
@@ -56,7 +57,9 @@ function assemble(m) {
         for (const block of f.blocks) {
             w.uv(block.length);
             for (const inst of block) {
-                w.u8(OP[inst[0]]);
+                // An opcode by name, or a raw byte.
+                if (typeof inst[0] !== "number" && !(inst[0] in OP)) throw new Error("no opcode named " + inst[0]);
+                w.u8(typeof inst[0] === "number" ? inst[0] : OP[inst[0]]);
                 for (const operand of inst.slice(1)) {
                     if (typeof operand === "number") w.uv(operand);
                     else if ("s" in operand) w.sv(operand.s);
@@ -76,4 +79,13 @@ function assemble(m) {
     for (const name of libraries) w.str(name);
     for (const list of [m.constructors || [], m.destructors || []]) { w.uv(list.length); list.forEach(f => w.uv(f)); }
     return new Uint8Array(w.b);
+}
+
+// Collects the instructions of one block and numbers the values they define: `def` for an instruction
+// with one result, `run` for one with none. `firstValue` is the number of values defined before the block
+// (the function's parameters, for its first block).
+class Block {
+    constructor(firstValue) { this.next = firstValue; this.insts = []; }
+    def(...inst) { this.insts.push(inst); return this.next++; }
+    run(...inst) { this.insts.push(inst); }
 }

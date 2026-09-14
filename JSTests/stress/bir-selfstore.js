@@ -1,6 +1,9 @@
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
 // `*p = p; return p + n`: B3 fuses a store and an increment of its address into one post-indexed store on ARM64,
 // but must not when the stored value is that address: `str x0, [x0], #imm` is UNPREDICTABLE and traps on Apple silicon.
-load("./asm.js", "caller relative");
+load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n }), t8 = n => ({ u8: n });
 const m = $vm.cModule(assemble({

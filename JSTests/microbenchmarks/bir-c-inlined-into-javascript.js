@@ -1,4 +1,7 @@
-load("./asm.js", "caller relative");
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
+load("../stress/resources/bir-assembler.js", "caller relative");
 const s = n => ({ s: n });
 const bytes = assemble({
     sigs: [{ ret: T.i32, params: [T.i32, T.i32] }, { ret: T.i32, params: [T.i32] }],
@@ -32,7 +35,7 @@ function time(name, f, n) {
     for (let k = 0; k < 5; k++) { const t0 = preciseTime(); r = f(n); best = Math.min(best, preciseTime() - t0); }
     print(name.padEnd(10), (best * 1e9 / n).toFixed(2), "ns/iter", "result", r);
 }
-const N = 5e7;
+const N = 1e7;
 time("add", runAdd, N);
 time("mix C", runMix, N);
 time("mix JS", runMixJS, N);

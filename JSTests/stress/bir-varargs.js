@@ -1,4 +1,7 @@
-load("./asm.js", "caller relative");
+//@ skip if !$isFTLPlatform
+//@ requireOptions("--useDollarVM=1")
+
+load("./resources/bir-assembler.js", "caller relative");
 // The walker below reads a System V x86-64 va_list by hand.
 { const [arch, os] = $vm.cModuleHost(); if (arch !== 0 || os === 2) { print("varargs skipped: not x86-64 System V"); quit(); } }
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
