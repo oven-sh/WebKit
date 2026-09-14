@@ -434,11 +434,18 @@ private:
     // Notice that we did use tmp in the fall-back case at the end, because by then, we know for sure
     // that we want a tmp. But using tmpPromise in the tryThings() calls ensures that doing so
     // doesn't prevent us from trying loadPromise on the same value.
+    static bool lowersToSeveralBlocks(Value* value)
+    {
+        return value->as<AtomicValue>() || (value->opcode() == Select && value->type().isVector());
+    }
+
     Tmp tmp(Value* value)
     {
         // The address of a stack slot is one instruction away. Computing it again for each user keeps
         // it out of a register between uses, where it would become something to spill and reload.
-        if (value->opcode() == SlotBase && m_value && value != m_value && Options::useB3RematerializeStackAddresses()) {
+        // Not for a user whose lowering makes blocks of its own: what is appended while it is being lowered
+        // does not stay in front of the code that uses it.
+        if (value->opcode() == SlotBase && m_value && value != m_value && Options::useB3RematerializeStackAddresses() && !lowersToSeveralBlocks(m_value)) {
             Tmp address = m_code.newTmp(GP);
             append(pointerType() == Int64 ? Air::Lea64 : Air::Lea32, Arg::stack(value->as<SlotBaseValue>()->slot()), address);
             return address;
