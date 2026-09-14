@@ -502,7 +502,7 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
 
 bool RegExp::wasUsedInCurrentFullCollectionCycle(VM& vm) const
 {
-    return m_lastUseEpoch == static_cast<uint8_t>(vm.heap.objectSpace().markingVersion());
+    return m_lastUseEpoch == currentUseEpoch(vm);
 }
 
 void RegExp::deleteCode()
@@ -513,8 +513,8 @@ void RegExp::deleteCode()
         return;
     m_state = NotCompiled;
     m_minimumSize = 0;
-    m_atom = String();
-    m_specificPattern = Yarr::SpecificPattern::None;
+    // m_atom and m_specificPattern stay: they describe the pattern (every compile sets them to the same values), the fast paths that
+    // use them never run the code, and RegExpCachedResult needs the atom of a one-character match it has yet to reify.
 #if ENABLE(YARR_JIT)
     if (m_regExpJITCode)
         m_regExpJITCode->clear(locker);
