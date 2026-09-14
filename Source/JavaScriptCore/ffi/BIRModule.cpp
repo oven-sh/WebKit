@@ -255,9 +255,9 @@ private:
         Data& data = m_module->data;
         uint32_t initializedSize;
         std::span<const uint8_t> initialized;
-        if (!varuint(data.size) || !varuint(data.alignment) || !count(initializedSize) || !bytes(initializedSize, initialized))
+        if (!varuint(data.size) || !varuint(data.alignment) || !varuint(data.readOnlySize) || !count(initializedSize) || !bytes(initializedSize, initialized))
             return false;
-        if (data.size > (1ull << 32) || initializedSize > data.size)
+        if (data.size > (1ull << 32) || initializedSize > data.size || data.readOnlySize > data.size)
             return fail("bad data segment size"_s);
         if (!data.alignment || (data.alignment & (data.alignment - 1)) || data.alignment > 4096)
             return fail("bad data segment alignment"_s);

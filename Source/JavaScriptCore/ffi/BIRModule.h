@@ -97,6 +97,7 @@ struct ThreadLocalData {
 struct Data {
     uint64_t size { 0 };
     uint64_t alignment { 1 };
+    uint64_t readOnlySize { 0 };
     Vector<uint8_t> initialized;
     Vector<Reloc> relocs;
 };

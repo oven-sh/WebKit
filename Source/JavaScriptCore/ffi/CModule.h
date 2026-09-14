@@ -89,6 +89,7 @@ private:
 
     std::unique_ptr<BIR::Module> m_bir;
     uint8_t* m_data { nullptr };
+    size_t m_dataAllocationSize { 0 };
     Vector<void*> m_functionTable;
     Vector<void*> m_externAddresses;
     Vector<std::unique_ptr<Compilation>> m_compilations;

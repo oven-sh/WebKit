@@ -23,7 +23,7 @@ function assemble(m) {
     const w = new W();
     // These modules use nothing that differs between targets, so they say they are for whichever this is.
     const [arch, os] = $vm.cModuleHost();
-    w.raw([0x42, 0x49, 0x52, 0x36]).u8(arch).u8(os).u8(8).u8(0);
+    w.raw([0x42, 0x49, 0x52, 0x37]).u8(arch).u8(os).u8(8).u8(0);
     w.uv(m.sigs.length);
     // sig = { ret: type | [types], variadic, params: [type | {byval: size, align, exhausts} | {sret: true}] }
     for (const s of m.sigs) {
@@ -40,7 +40,7 @@ function assemble(m) {
     w.uv(externs.length);
     for (const e of externs) w.str(e.name).u8(e.kind || 0).uv(e.sig);
     const d = m.data || { size: 0, align: 1, init: [], relocs: [] };
-    w.uv(d.size).uv(d.align).uv(d.init.length).raw(d.init).uv(d.relocs.length);
+    w.uv(d.size).uv(d.align).uv(d.readOnly || 0).uv(d.init.length).raw(d.init).uv(d.relocs.length);
     for (const r of d.relocs) w.uv(r.offset).u8(r.kind).uv(r.index).sv(r.addend || 0);
     const tls = m.tls || { size: 0, align: 1, init: [] };
     w.uv(tls.size).uv(tls.align).uv(tls.init.length).raw(tls.init);

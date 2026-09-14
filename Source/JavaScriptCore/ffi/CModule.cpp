@@ -40,6 +40,8 @@
 #include "JSFFIFunction.h"
 #include "ObjectConstructor.h"
 #include <wtf/FastMalloc.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #if OS(WINDOWS)
 #include <windows.h>
 #else
@@ -146,7 +148,7 @@ BIRLinkEnvironment CModule::linkEnvironment() const
 CModule::~CModule()
 {
     if (m_data)
-        fastFree(m_data);
+        OSAllocator::decommitAndRelease(m_data, m_dataAllocationSize);
 #if OS(WINDOWS)
     for (void* library : m_libraries)
         FreeLibrary(static_cast<HMODULE>(library));
@@ -247,9 +249,11 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
         module->m_externAddresses.append(address);
     }
 
-    size_t dataSize = std::max<size_t>(bir.data.size, 1);
-    module->m_data = static_cast<uint8_t*>(fastAlignedMalloc(std::max<size_t>(bir.data.alignment, 16), roundUpToMultipleOf<16>(dataSize)));
-    memset(module->m_data, 0, dataSize);
+    // Whole pages, which the system hands over zeroed: the constant part is protected below.
+    module->m_dataAllocationSize = roundUpToMultipleOf(pageSize(), std::max<size_t>(bir.data.size, 1));
+    module->m_data = static_cast<uint8_t*>(OSAllocator::tryReserveAndCommit(module->m_dataAllocationSize));
+    if (!module->m_data)
+        return std::unexpected<String>("out of memory for the module's data"_s);
     memcpy(module->m_data, bir.data.initialized.span().data(), bir.data.initialized.size());
 
     module->m_functionTable.fill(nullptr, bir.functions.size());
@@ -344,6 +348,8 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
         uint64_t address = module->relocatedAddress(reloc, nullptr);
         memcpy(module->m_data + reloc.offset, &address, sizeof(address));
     }
+    if (size_t constantBytes = roundDownToMultipleOf(pageSize(), static_cast<size_t>(bir.data.readOnlySize)))
+        OSAllocator::protect(module->m_data, constantBytes, true, false);
 
     for (uint32_t constructor : bir.constructors)
         reinterpret_cast<void (*)()>(module->m_functionTable[constructor])();
