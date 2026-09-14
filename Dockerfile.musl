@@ -47,33 +47,47 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 # --sysroot=$SYSROOT_AARCH64.
 #
 # The sysroot is the aarch64 build of the packages clang reads when it compiles and links in this container (musl,
-# libstdc++ and GCC's libgcc and crt files, the kernel headers), from the same Alpine repository at the same time, put
-# there by apk, which checks them against Alpine's aarch64 keys (symlinks in /usr/share/apk/keys, hence cp -L).
-# --no-scripts: nothing here can run aarch64 code.
+# libstdc++ and GCC's libgcc and crt files, the kernel headers, fortify-headers), from the same Alpine repository at the
+# same time, put there by apk, which checks them against Alpine's aarch64 keys (symlinks in /usr/share/apk/keys, hence
+# cp -L). --no-scripts: nothing here can run aarch64 code.
 #
-# The musl an artifact is built against must be the container's own: checked here.
+# fortify-headers: Alpine's clang defines _FORTIFY_SOURCE=2 by itself and looks for the checked libc wrappers in
+# <sysroot>/usr/include/fortify. This container has them as a dependency of clang; a sysroot has no clang, and without
+# them the define does nothing (musl has no fortify of its own) and the aarch64 lanes lose the checks the x86_64 ones have.
+#
+# The musl and the fortify-headers an artifact is built against must be the container's own: checked here.
 # ───────────────────────────────────────────────────────────────────────────
 ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
 RUN set -eu; \
     mkdir -p "$SYSROOT_AARCH64/etc/apk/keys"; \
     cp /etc/apk/repositories "$SYSROOT_AARCH64/etc/apk/repositories"; \
     cp -L /usr/share/apk/keys/aarch64/* "$SYSROOT_AARCH64/etc/apk/keys/"; \
-    apk add --root "$SYSROOT_AARCH64" --arch aarch64 --initdb --no-scripts --no-cache musl-dev libstdc++-dev gcc linux-headers; \
+    apk add --root "$SYSROOT_AARCH64" --arch aarch64 --initdb --no-scripts --no-cache musl-dev libstdc++-dev gcc linux-headers fortify-headers; \
     container=$(apk list --installed musl | cut -d' ' -f1); \
     sysroot=$(apk --root "$SYSROOT_AARCH64" list --installed musl | cut -d' ' -f1); \
     echo "musl: container $container, aarch64 sysroot $sysroot"; \
     [ -n "$container" ] || { echo "error: could not tell which musl this container has" >&2; exit 1; }; \
     [ "$container" = "$sysroot" ] || { echo "error: the aarch64 sysroot's musl is not the container's" >&2; exit 1; }; \
+    container=$(apk list --installed fortify-headers | cut -d' ' -f1); \
+    sysroot=$(apk --root "$SYSROOT_AARCH64" list --installed fortify-headers | cut -d' ' -f1); \
+    echo "fortify-headers: container $container, aarch64 sysroot $sysroot"; \
+    [ -n "$container" ] || { echo "error: this container has no fortify-headers" >&2; exit 1; }; \
+    [ "$container" = "$sysroot" ] || { echo "error: the aarch64 sysroot's fortify-headers is not the container's" >&2; exit 1; }; \
+    test -f "$SYSROOT_AARCH64/usr/include/fortify/string.h"; \
     test -f "$SYSROOT_AARCH64/usr/lib/libc.so"; \
     test -f "$SYSROOT_AARCH64/usr/lib/libstdc++.a"; \
     ls -d "$SYSROOT_AARCH64"/usr/lib/gcc/aarch64-alpine-linux-musl/*/crtbegin.o
 
-# Verify the cross toolchain: C++20 against the sysroot's libstdc++ is an AArch64 ELF.
+# Verify the cross toolchain: C++20 against the sysroot's libstdc++ is an AArch64 ELF, and a memcpy compiles to the
+# fortified one (it traps on overlap) for aarch64 as it does for this container, with the include flag the lanes pass.
 RUN set -eu; \
     printf '#include <iostream>\n#include <numbers>\nint main() { std::cout << std::numbers::pi << std::endl; return 0; }\n' > /tmp/t.cpp; \
     env -u CXXFLAGS -u LDFLAGS ${CXX} --target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64} -std=c++20 -fuse-ld=lld /tmp/t.cpp -o /tmp/t; \
     llvm-readelf -h /tmp/t | grep -q AArch64; \
-    rm /tmp/t.cpp /tmp/t
+    printf '#include <string.h>\n#include <stdint.h>\nuint64_t load(const void* p) { uint64_t v; memcpy(&v, p, 8); return v; }\n' > /tmp/f.cpp; \
+    env -u CXXFLAGS -u LDFLAGS ${CXX} -Os -S -o - /tmp/f.cpp | grep -q 'ud2' || { echo "error: memcpy is not fortified in this container" >&2; exit 1; }; \
+    env -u CXXFLAGS -u LDFLAGS ${CXX} --target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64} -I=/usr/include -Os -S -o - /tmp/f.cpp | grep -q 'brk' || { echo "error: memcpy is not fortified for aarch64" >&2; exit 1; }; \
+    rm /tmp/t.cpp /tmp/t /tmp/f.cpp
 
 # ICU's sources (/icu.tgz, which the lanes build from) and its tools for this container. ICU runs those while it
 # builds (pkgdata, genrb, ...), and the lanes filter and repack its data with icupkg: a lane that builds ICU for
