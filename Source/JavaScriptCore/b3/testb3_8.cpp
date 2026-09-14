@@ -26,6 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
+#include "AirGenerate.h"
 #include <wtf/Int128.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -3387,48 +3388,136 @@ void testStackAddressInAUserThatLowersToALoop()
 void testAccessBelowAStackSlot()
 {
     // C may form any address from a local's; what it finds there is its business, and B3 compiles it.
-    Procedure proc;
-    proc.setHasCodeFromC();
-    BasicBlock* root = proc.addBlock();
-    Value* low = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
-    Value* high = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
-    root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const64Value>(proc, Origin(), 7), low, 0);
-    root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const64Value>(proc, Origin(), 7), high, 0);
-    Value* below = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), root->appendNew<Value>(proc, Add, Origin(), high, root->appendNew<Const64Value>(proc, Origin(), -8)), 0);
-    Value* belowFolded = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), low, -8);
-    // Whatever is there, the loads were emitted and ran.
-    root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, BitOr, Origin(), root->appendNew<Value>(proc, BitXor, Origin(), below, below), root->appendNew<Value>(proc, BitXor, Origin(), belowFolded, belowFolded)));
-    CHECK_EQ(compileAndRun<int64_t>(proc), 0);
+    // void f(long offset, long* out) { long low = 7, high = 7; out[0] = *(long*)((char*)&high + offset); out[1] = (&high)[-1]; out[2] = (&low)[-1]; }
+    for (unsigned optLevel : { 0, 1, 2 }) {
+        Procedure proc;
+        proc.setHasCodeFromC();
+        proc.setOptLevel(optLevel);
+        BasicBlock* root = proc.addBlock();
+        Value* offset = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* out = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+        Value* low = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
+        Value* high = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
+        root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const64Value>(proc, Origin(), 7), low, 0);
+        root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const64Value>(proc, Origin(), 7), high, 0);
+        // Where the offset is not known until the code runs, and where it is: in the instruction, and added first.
+        Value* belowByRegister = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), root->appendNew<Value>(proc, Add, Origin(), high, offset), 0);
+        Value* belowByAddition = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), root->appendNew<Value>(proc, Add, Origin(), high, root->appendNew<Const64Value>(proc, Origin(), -8)), 0);
+        Value* belowTheOther = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), low, -8);
+        root->appendNew<MemoryValue>(proc, Store, Origin(), belowByRegister, out, 0);
+        root->appendNew<MemoryValue>(proc, Store, Origin(), belowByAddition, out, 8);
+        root->appendNew<MemoryValue>(proc, Store, Origin(), belowTheOther, out, 16);
+        root->appendNewControlValue(proc, Return, Origin());
+
+        generateToAir(proc);
+        // The loads are there, the offset in them: below the slot itself.
+        unsigned accessesBelowASlot = 0;
+        for (Air::BasicBlock* block : proc.code()) {
+            for (Air::Inst& inst : *block) {
+                for (Air::Arg& arg : inst.args())
+                    accessesBelowASlot += arg.isStack() && arg.offset() == -8;
+            }
+        }
+        CHECK_EQ(accessesBelowASlot, optLevel ? 2u : 1u);
+
+        Air::prepareForGeneration(proc.code());
+        CCallHelpers jit;
+        generate(proc, jit);
+        LinkBuffer linkBuffer(jit, nullptr);
+        auto code = FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testb3 compilation");
+        // Whatever is there, the two that name the same place found the same thing.
+        int64_t found[3] = { 1, 2, 3 };
+        invoke<void>(code.code(), static_cast<int64_t>(-8), found);
+        CHECK_EQ(found[0], found[1]);
+    }
 }
 
 #endif // USE(BUN_JSC_ADDITIONS)
 
 void testCompareAndSwapIsNotMovedPastALoad()
 {
-    // old = CAS(cell: 0 -> 5); seen = *cell; return seen * (old == 0)
-    // The compare-and-swap can be emitted where its result is compared, but not if that is past the load.
-    for (bool useBranch : { false, true }) {
-        Procedure proc;
-        BasicBlock* root = proc.addBlock();
-        BasicBlock* taken = proc.addBlock();
-        BasicBlock* notTaken = proc.addBlock();
-        Value* cell = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
-        Value* zero = root->appendNew<Const64Value>(proc, Origin(), 0);
-        Value* old = root->appendNew<AtomicValue>(proc, AtomicStrongCAS, Origin(), Width64, zero, root->appendNew<Const64Value>(proc, Origin(), 5), cell);
-        Value* seen = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), cell, 0);
-        Value* swapped = root->appendNew<Value>(proc, Equal, Origin(), old, zero);
-        if (useBranch) {
-            root->appendNewControlValue(proc, Branch, Origin(), swapped, FrequentedBlock(taken), FrequentedBlock(notTaken));
-            taken->appendNewControlValue(proc, Return, Origin(), seen);
-            notTaken->appendNewControlValue(proc, Return, Origin(), notTaken->appendNew<Const64Value>(proc, Origin(), -1));
-        } else {
-            root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, Mul, Origin(), seen, root->appendNew<Value>(proc, ZExt32, Origin(), swapped)));
-            taken->appendNewControlValue(proc, Oops, Origin());
-            notTaken->appendNewControlValue(proc, Oops, Origin());
+    // old = CAS(cell: 0 -> 5); seen = *cell (or: *cell = 7); then something that tests whether it swapped.
+    // The compare-and-swap can be emitted where its result is tested, but not if that is past the access between
+    // them. Each of these is a shape the lowering emits as one compare-and-swap that sets the flags.
+    enum class Shape { EqualStrong, BranchEqualStrong, BranchStrongExpectingZero, XorWeak, BranchWeak };
+    for (Shape shape : { Shape::EqualStrong, Shape::BranchEqualStrong, Shape::BranchStrongExpectingZero, Shape::XorWeak, Shape::BranchWeak }) {
+        for (bool storeBetween : { false, true }) {
+            Procedure proc;
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* swappedCase = proc.addBlock();
+            BasicBlock* notSwappedCase = proc.addBlock();
+            Value* cell = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+            Value* zero = root->appendNew<Const64Value>(proc, Origin(), 0);
+            Value* five = root->appendNew<Const64Value>(proc, Origin(), 5);
+            bool isWeak = shape == Shape::XorWeak || shape == Shape::BranchWeak;
+            // A strong one gives back the old value, a weak one whether it swapped.
+            Value* result = root->appendNew<AtomicValue>(proc, isWeak ? AtomicWeakCAS : AtomicStrongCAS, Origin(), Width64, zero, five, cell);
+            Value* seen;
+            if (storeBetween) {
+                seen = root->appendNew<Const64Value>(proc, Origin(), 7);
+                root->appendNew<MemoryValue>(proc, Store, Origin(), seen, cell, 0);
+            } else
+                seen = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), cell, 0);
+            Value* notSwapped = notSwappedCase->appendNew<Const64Value>(proc, Origin(), -1);
+            // The test's result as a value of its own: not part of a branch or a select.
+            auto returnByArithmetic = [&](Value* scaled, int64_t scale) {
+                root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, Add, Origin(), seen, root->appendNew<Value>(proc, Mul, Origin(), root->appendNew<Value>(proc, ZExt32, Origin(), scaled), root->appendNew<Const64Value>(proc, Origin(), scale))));
+                swappedCase->appendNewControlValue(proc, Oops, Origin());
+                notSwappedCase->appendNewControlValue(proc, Oops, Origin());
+            };
+            auto returnByBranch = [&](Value* predicate, bool takenMeansSwapped) {
+                root->appendNewControlValue(proc, Branch, Origin(), predicate, FrequentedBlock(takenMeansSwapped ? swappedCase : notSwappedCase), FrequentedBlock(takenMeansSwapped ? notSwappedCase : swappedCase));
+                swappedCase->appendNewControlValue(proc, Return, Origin(), seen);
+                notSwappedCase->appendNewControlValue(proc, Return, Origin(), notSwapped);
+            };
+            switch (shape) {
+            case Shape::EqualStrong:
+                // seen + 100 when it swapped.
+                returnByArithmetic(root->appendNew<Value>(proc, Equal, Origin(), result, zero), 100);
+                break;
+            case Shape::BranchEqualStrong:
+                returnByBranch(root->appendNew<Value>(proc, Equal, Origin(), result, zero), true);
+                break;
+            case Shape::BranchStrongExpectingZero:
+                // The old value is zero exactly when it swapped.
+                returnByBranch(result, false);
+                break;
+            case Shape::XorWeak:
+                // seen + 200 when it swapped, seen + 100 when it did not.
+                seen = root->appendNew<Value>(proc, Add, Origin(), seen, root->appendNew<Const64Value>(proc, Origin(), 200));
+                returnByArithmetic(root->appendNew<Value>(proc, BitXor, Origin(), result, root->appendNew<Const32Value>(proc, Origin(), 1)), -100);
+                break;
+            case Shape::BranchWeak:
+                returnByBranch(result, true);
+                break;
+            }
+            auto code = compileProc(proc);
+            int64_t seenWhenSwapped = storeBetween ? 7 : 5;
+            int64_t seenWhenNotSwapped = storeBetween ? 7 : 0;
+            int64_t whenSwapped = seenWhenSwapped;
+            int64_t whenNotSwapped = -1;
+            if (shape == Shape::EqualStrong) {
+                whenSwapped = seenWhenSwapped + 100;
+                whenNotSwapped = seenWhenNotSwapped;
+            } else if (shape == Shape::XorWeak) {
+                whenSwapped = seenWhenSwapped + 200;
+                whenNotSwapped = seenWhenNotSwapped + 100;
+            }
+            // A weak one may fail for no reason, and then the cell is as it was; it does not fail every time.
+            bool swapped = false;
+            for (unsigned attempt = 0; attempt < 100 && !swapped; ++attempt) {
+                int64_t value = 0;
+                int64_t returned = invoke<int64_t>(*code, &value);
+                if (isWeak && returned == whenNotSwapped) {
+                    CHECK_EQ(value, seenWhenNotSwapped);
+                    continue;
+                }
+                CHECK_EQ(returned, whenSwapped);
+                CHECK_EQ(value, seenWhenSwapped);
+                swapped = true;
+            }
+            CHECK(swapped);
         }
-        int64_t value = 0;
-        CHECK_EQ(compileAndRun<int64_t>(proc, &value), 5);
-        CHECK_EQ(value, 5);
     }
 }
 
