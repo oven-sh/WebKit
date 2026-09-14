@@ -36,9 +36,10 @@
 //
 // Encoding. Little-endian. varuint = unsigned LEB128, varint = signed LEB128,
 // str = varuint byte length + UTF-8 bytes, type = u8 (Type below). A count (anything written `n...`
-// below) is at most 2^24. A byte or bit described as reserved or not described is zero. The decoder
-// (BIRModule.cpp) refuses a module that breaks any rule stated here; "Limits" at the end lists the
-// ones that are sizes.
+// below, and a str's length) is at most 2^24. A length written `...Bytes` is that of a run of bytes a
+// segment starts out holding: it is at most the room the segment has for the run, and has no other
+// limit. A byte or bit described as reserved or not described is zero. The decoder (BIRModule.cpp)
+// refuses a module that breaks any rule stated here; "Limits" at the end lists the ones that are sizes.
 //
 //   module:
 //     magic "BIR0"
@@ -50,12 +51,13 @@
 //                                for ByValStack: varuint size; varuint align (8 or 16); u8 exhausts (Exhausts);
 //                                for IndirectResult: nothing (only as the first parameter)
 //     varuint nexterns; extern*: { str name; u8 kind (ExternKind); varuint sig }   (sig is 0 for Data)
-//     data:             { varuint size; varuint align; varuint readOnly; varuint ninit; u8[ninit];
+//     data:             { varuint size; varuint align; varuint readOnly;
+//                         varuint constantBytes; u8[constantBytes];    (what data[0 ...] holds when the module is loaded)
+//                         varuint writableBytes; u8[writableBytes];    (what data[readOnly ...] holds when the module is loaded)
 //                         varuint nrelocs; reloc*: { varuint offset; u8 kind (RelocKind); varuint index; varint addend } }
-//                       (the first readOnly bytes are what the program never writes: string literals, const objects. The
-//                        whole pages among them cannot be written once the module is loaded, so that part is padded to a
-//                        multiple of 16384, the largest page size there is to run on, and readOnly includes the padding)
-//     tls:              { varuint size; varuint align; varuint ninit; u8[ninit];    (the image every thread's copy starts from)
+//                       (see "The data segment" below)
+//     tls:              { varuint size; varuint align; varuint imageBytes; u8[imageBytes];   (what every thread's copy starts as;
+//                                                                                     imageBytes <= size, the rest is zero)
 //                         varuint nrelocs; reloc* }                                  (as in data; applied to each copy as it is created.
 //                                                                                     kind Tls: the address of that same copy + index)
 //     varuint nfuncs;   decl*:   { str name; varuint sig; u8 flags (bit0 = exported, bit1 = calls a function that returns twice: setjmp,
@@ -76,9 +78,20 @@
 //                                                                 does not call them; it hands them to whoever owns the process's
 //                                                                 exit. A loaded module is never unloaded, see CModule.h)
 //
-// data is one segment holding every global and string literal: the first ninit bytes are
-// initialized, the rest (up to size) is zero. A reloc writes an 8-byte absolute address at
-// data[offset]: Data => &data[index] + addend, Func => entry of function `index`,
+// The data segment. data is one segment of `size` bytes holding every global and string literal, in
+// two parts. The constant part is data[0, readOnly): what the program never writes (string literals,
+// const objects). The writable part is data[readOnly, size): everything else. Once the module is
+// loaded the whole pages of the constant part cannot be written, and the writable part does not share a
+// page with it on any system: when there is a writable part (readOnly < size), readOnly is a multiple
+// of 16384 (dataPage below), the largest page size there is to run on. With no writable part readOnly
+// is size, whatever that is; with no constant part it is 0.
+//   Each part's content is given separately, and only as far as it is not zero: the constant part starts as
+// the constantBytes bytes given followed by zeros (constantBytes <= readOnly), the writable part as the
+// writableBytes bytes given followed by zeros (writableBytes <= size - readOnly). Neither run holds the
+// padding between the parts; either may be empty.
+//   A reloc's offset (and a Data reloc's index, and DataAddr's offset) is an offset into the whole
+// segment, in either part. A reloc writes an 8-byte absolute address at data[offset], before the
+// constant part is protected: Data => &data[index] + addend, Func => entry of function `index`,
 // Extern => resolved address of extern `index` (+ addend).
 //
 // tls holds every `_Thread_local` object the module defines. Each thread that runs the module's code
@@ -214,7 +227,7 @@
 //
 // Limits. What is past one of these the frontend diagnoses in the source, or arranges differently (an
 // offset that does not fit is added to the address instead).
-//   data: size <= 4 GiB, align a power of two <= 4096.  tls: size <= 256 MiB, align a power of two <= 4096.
+//   data: size <= 4 GiB, align a power of two <= 4096, readOnly <= size.  tls: size <= 256 MiB, align a power of two <= 4096.
 //   A reloc's 8 bytes lie inside its segment; a Data (Tls) reloc's index is <= the segment's size.
 //   slot: size <= 256 MiB, align a power of two <= 4096; the slots of one function, each rounded up to 16 plus its
 //   alignment, <= 1 GiB.  StackAlloc: align a power of two <= 4096.
@@ -225,6 +238,9 @@
 namespace JSC { namespace FFI { namespace BIR {
 
 constexpr uint8_t magic[4] = { 'B', 'I', 'R', '0' };
+
+// What the writable part of the data segment starts at a multiple of.
+constexpr uint64_t dataPage = 16384;
 
 enum class Arch : uint8_t { X86_64 = 0, ARM64 = 1 };
 enum class OS : uint8_t { Linux = 0, Darwin = 1, Windows = 2, FreeBSD = 3 };

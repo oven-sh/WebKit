@@ -328,7 +328,8 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     module->m_data = static_cast<uint8_t*>(OSAllocator::tryReserveAndCommit(module->m_dataAllocationSize));
     if (!module->m_data)
         return std::unexpected<String>("out of memory for the module's data"_s);
-    memcpy(module->m_data, bir.data.initialized.span().data(), bir.data.initialized.size());
+    memcpy(module->m_data, bir.data.constants.data(), bir.data.constants.size());
+    memcpy(module->m_data + bir.data.readOnlySize, bir.data.writable.data(), bir.data.writable.size());
 
     module->m_functionTable.fill(nullptr, bir.functions.size());
     BIRLinkEnvironment environment = module->linkEnvironment();
@@ -465,7 +466,8 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
         if (!bodyIsKept(function))
             function.releaseBody();
     }
-    module->m_bir->data.initialized = { };
+    module->m_bir->data.constants = { };
+    module->m_bir->data.writable = { };
 
     // From here on the program's code runs, and what it does may point into the module.
     {

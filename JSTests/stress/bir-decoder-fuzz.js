@@ -69,6 +69,15 @@ add({
     exports: [{ name: "memory", func: 0, ret: FFI.u64, args: [FFI.ptr] }],
 });
 
+// Both parts of the data, some of each given, relocations in each.
+add({
+    sigs: [{ ret: T.i64, params: [] }],
+    data: { size: 16384 + 48, align: 16, readOnly: 16384, constants: [1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 9], init: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+        relocs: [{ offset: 8, kind: 0, index: 16384 }, { offset: 16384 + 16, kind: 0, index: 16 }, { offset: 16384 + 32, kind: 1, index: 0 }] },
+    funcs: [{ name: "parts", sig: 0, exported: true, blocks: [[["DataAddr", 8], ["Load", b(MEM.i64), 0, s(0)], ["Load", b(MEM.i64), 1, s(16)], ["Load", b(MEM.i8u), 2, s(0)], ["ZExt32", 3], ["Ret", 4]]] }],
+    exports: [{ name: "parts", func: 0, ret: FFI.u64, args: [] }],
+});
+
 // Vectors and atomics.
 add({
     sigs: [{ ret: T.void, params: [T.i64, T.i64] }, { ret: T.v128, params: [T.v128, T.v128] }, { ret: T.i32, params: [T.i64, T.i32] }],

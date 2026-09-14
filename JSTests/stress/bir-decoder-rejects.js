@@ -127,9 +127,48 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     rejects("extern nothing defines", withExtern({ name: "nothing_defines_this", kind: 1, sig: 0 }), /^undefined symbol 'nothing_defines_this'$/, "");
 
     const withData = data => voidFunction([[["RetVoid"]]], { module: { data: { align: 8, init: [], relocs: [], ...data } } });
-    rejects("more initialized data than data", withData({ size: 2, init: [1, 2, 3] }), /bad data segment size/);
-    rejects("more constant data than data", withData({ size: 8, readOnly: 16 }), /bad data segment size/);
+    const PART = 16384;
+    rejects("a constant part longer than the data", withData({ size: 8, readOnly: 16 }), /bad data segment size/);
     rejects("data over 4 GiB", withData({ size: 2 ** 32 + 1 }), /bad data segment size/);
+    // The two runs of bytes: each as long as its part at most, and all there.
+    accepts("as many initialized bytes as data", withData({ size: 3, init: [1, 2, 3] }));
+    rejects("one more initialized byte than data", withData({ size: 2, init: [1, 2, 3] }), /more initialized data than the writable part/);
+    accepts("as many constant bytes as the constant part", withData({ size: 3, readOnly: 3, constants: [1, 2, 3] }));
+    rejects("one more constant byte than the constant part", withData({ size: 3, readOnly: 2, constants: [1, 2, 3] }), /writable part of the data segment does not start at a multiple of 16384/);
+    rejects("one more constant byte than the constant part, which is all there is", withData({ size: 2, readOnly: 2, constants: [1, 2, 3] }), /more constant data than the constant part/);
+    rejects("one more constant byte than a constant part of 16384", withData({ size: PART + 8, readOnly: PART, constants: new Array(PART + 1).fill(1) }), /more constant data than the constant part/);
+    accepts("both parts filled", withData({ size: PART + 8, readOnly: PART, constants: new Array(PART).fill(1), init: new Array(8).fill(2) }));
+    rejects("one more initialized byte than the writable part", withData({ size: PART + 8, readOnly: PART, init: new Array(9).fill(2) }), /more initialized data than the writable part/);
+    rejects("an initialized byte and no writable part", withData({ size: PART, readOnly: PART, init: [1] }), /more initialized data than the writable part/);
+    // A length is checked against what the segment has room for, then against what is left of the input.
+    {
+        // `run` is "constants" or "init": that run said to be as long as everything after its length, and one byte longer.
+        const marker = [0xab, 0xcd, 0xef];
+        const restOfInput = (run, data) => {
+            const bytes = assemble(withData({ ...data, [run]: marker }));
+            const start = bytes.findIndex((_, i) => marker.every((byte, j) => bytes[i + j] === byte));
+            return bytes.length - start;
+        };
+        for (const [run, lengthField, data] of [["constants", "constantBytes", { size: PART, readOnly: PART }], ["init", "initBytes", { size: PART }]]) {
+            const rest = restOfInput(run, data);
+            rejects(`${run}: a run as long as the rest of the input`, withData({ ...data, [run]: marker, [lengthField]: rest }), /bad varuint|unexpected end of input/);
+            rejects(`${run}: a run one byte longer than the rest of the input`, withData({ ...data, [run]: marker, [lengthField]: rest + 1 }), /unexpected end of input/);
+            accepts(`${run}: a run of the three bytes that are there`, withData({ ...data, [run]: marker, [lengthField]: 3 }));
+        }
+    }
+    rejects("an initialized run of 4 GiB in a few bytes", withData({ size: 2 ** 32, initBytes: 2 ** 32 }), /unexpected end of input/);
+    rejects("an initialized run of 2^63 bytes", withData({ size: 2 ** 32, initBytes: 2n ** 63n }), /more initialized data than the writable part/);
+    rejects("a constant run of 2^64 - 1 bytes", withData({ size: PART, readOnly: PART, constantBytes: 2n ** 64n - 1n }), /more constant data than the constant part/);
+    // The length of a run is not a count of things: it may be more than 2^24 (bir-large-data.js loads one that is).
+    rejects("an initialized run of 2^24 + 1 bytes that is not there", withData({ size: 2 ** 25, initBytes: 2 ** 24 + 1 }), /unexpected end of input/);
+    rejects("a constant run of 2^24 + 1 bytes that is not there", withData({ size: 2 ** 25, readOnly: 2 ** 25, constantBytes: 2 ** 24 + 1 }), /unexpected end of input/);
+    // Where the writable part starts.
+    for (const readOnly of [1, 100, 4096, 8192, PART - 1, PART + 1, PART + 4096])
+        rejects(`a writable part at ${readOnly}`, withData({ size: 2 * PART, readOnly }), /writable part of the data segment does not start at a multiple of 16384/);
+    for (const readOnly of [0, PART, 2 * PART])
+        accepts(`a writable part at ${readOnly}`, withData({ size: 2 * PART + 1, readOnly }));
+    for (const size of [1, 100, 4096, PART - 1, PART + 1])
+        accepts(`a constant part of ${size} bytes and no writable part`, withData({ size, readOnly: size }));
     for (const align of [0, 3, 8192])
         rejects(`data aligned to ${align}`, withData({ size: 8, align }), /bad data segment alignment/);
     accepts("data aligned to 4096", withData({ size: 8, align: 4096 }));
@@ -144,7 +183,19 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
 
     const withTls = tls => voidFunction([[["RetVoid"]]], { module: { tls: { align: 8, init: [], ...tls } } });
     rejects("thread-local data over 256 MiB", withTls({ size: 2 ** 28 + 1 }), /bad thread-local segment size/);
-    rejects("more initialized thread-local data than there is", withTls({ size: 1, init: [1, 2] }), /bad thread-local segment size/);
+    accepts("thread-local data of 256 MiB", withTls({ size: 2 ** 28 }));
+    accepts("as many initialized thread-local bytes as there is thread-local data", withTls({ size: 2, init: [1, 2] }));
+    rejects("one more initialized thread-local byte than there is thread-local data", withTls({ size: 1, init: [1, 2] }), /more initialized thread-local data than the thread-local segment/);
+    rejects("an initialized byte and no thread-local data", withTls({ size: 0, init: [1] }), /more initialized thread-local data than the thread-local segment/);
+    {
+        const marker = [0xab, 0xcd, 0xef];
+        const bytes = assemble(withTls({ size: 64, init: marker }));
+        const rest = bytes.length - bytes.findIndex((_, i) => marker.every((byte, j) => bytes[i + j] === byte));
+        rejects("a thread-local image as long as the rest of the input", withTls({ size: 64, init: marker, initBytes: rest }), /bad varuint|unexpected end of input/);
+        rejects("a thread-local image one byte longer than the rest of the input", withTls({ size: 64, init: marker, initBytes: rest + 1 }), /unexpected end of input/);
+    }
+    rejects("a thread-local image of 2^24 + 1 bytes that is not there", withTls({ size: 2 ** 25, initBytes: 2 ** 24 + 1 }), /unexpected end of input/);
+    rejects("a thread-local image of 2^63 bytes", withTls({ size: 2 ** 28, initBytes: 2n ** 63n }), /more initialized thread-local data than the thread-local segment/);
     for (const align of [0, 6, 8192])
         rejects(`thread-local data aligned to ${align}`, withTls({ size: 8, align }), /bad thread-local segment alignment/);
     accepts("thread-local relocation to itself", withTls({ size: 16, relocs: [{ offset: 8, kind: 3, index: 0 }] }));

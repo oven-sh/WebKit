@@ -5,17 +5,32 @@ const OP = { ConstI32: 0x01, ConstI64: 0x02, ConstF32: 0x03, ConstF64: 0x04, Con
 const MEM = { i8s: 0, i8u: 1, i16s: 2, i16u: 3, i32: 4, i64: 5, f32: 6, f64: 7, v128: 8 };
 const LANE = { i8x16: 0, i16x8: 1, i32x4: 2, i64x2: 3, f32x4: 4, f64x2: 5 };
 
+// A long run of bytes is kept as it is given; everything else collects in `b`.
 class W {
-    constructor() { this.b = []; }
+    constructor() { this.b = []; this.parts = []; }
+    flush() { if (this.b.length) { this.parts.push(new Uint8Array(this.b)); this.b = []; } }
+    bytes() {
+        this.flush();
+        const result = new Uint8Array(this.parts.reduce((length, part) => length + part.length, 0));
+        let offset = 0;
+        for (const part of this.parts) { result.set(part, offset); offset += part.length; }
+        return result;
+    }
     u8(v) { this.b.push(v & 0xff); return this; }
     uv(v) { v = BigInt(v); do { let byte = Number(v & 0x7fn); v >>= 7n; if (v) byte |= 0x80; this.b.push(byte); } while (v); return this; }
     sv(v) { v = BigInt(v); for (;;) { let byte = Number(v & 0x7fn); v >>= 7n; const done = (v === 0n && !(byte & 0x40)) || (v === -1n && (byte & 0x40)); if (!done) byte |= 0x80; this.b.push(byte); if (done) break; } return this; }
     str(s) { const bytes = [...s].map(c => c.charCodeAt(0)); this.uv(bytes.length); this.b.push(...bytes); return this; }
     f64(v) { const dv = new DataView(new ArrayBuffer(8)); dv.setFloat64(0, v, true); for (let i = 0; i < 8; i++) this.b.push(dv.getUint8(i)); return this; }
-    raw(bytes) { this.b.push(...bytes); return this; }
+    raw(bytes) {
+        if (bytes.length < 4096) this.b.push(...bytes);
+        else { this.flush(); this.parts.push(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); }
+        return this;
+    }
 }
 
-// module = { sigs: [{ret, params, variadic}], externs: [{name, sig}], data: {size, align, init: [], relocs: []},
+// module = { sigs: [{ret, params, variadic}], externs: [{name, sig}],
+//            data: {size, align, readOnly, constants: [] (what data[0 ...] starts as), init: [] (what data[readOnly ...] starts as), relocs: []},
+//            tls: {size, align, init: [], relocs: []},
 //            funcs: [{name, sig, exported, noinline, locals: [], slots: [], blocks: [[inst...]]}], exports: [{name, func, ret, args}] }
 // inst = [opName, ...operands] where operands are already in wire order; numbers tagged via helper objects:
 //   {s: n} signed varint, {f64: x} raw f64, {u8: n} byte, plain number => varuint
@@ -41,10 +56,11 @@ function assemble(m) {
     w.uv(externs.length);
     for (const e of externs) w.str(e.name).u8(e.kind || 0).uv(e.sig);
     const d = m.data || { size: 0, align: 1, init: [], relocs: [] };
-    w.uv(d.size).uv(d.align).uv(d.readOnly || 0).uv(d.init.length).raw(d.init).uv(d.relocs.length);
+    const constants = d.constants || [];
+    w.uv(d.size).uv(d.align).uv(d.readOnly || 0).uv(d.constantBytes ?? constants.length).raw(constants).uv(d.initBytes ?? d.init.length).raw(d.init).uv(d.relocs.length);
     for (const r of d.relocs) w.uv(r.offset).u8(r.kind).uv(r.index).sv(r.addend || 0);
     const tls = m.tls || { size: 0, align: 1, init: [] };
-    w.uv(tls.size).uv(tls.align).uv(tls.init.length).raw(tls.init);
+    w.uv(tls.size).uv(tls.align).uv(tls.initBytes ?? tls.init.length).raw(tls.init);
     w.uv((tls.relocs || []).length);
     for (const r of tls.relocs || []) w.uv(r.offset).u8(r.kind).uv(r.index).sv(r.addend || 0);
     w.uv(m.funcs.length);
@@ -78,7 +94,7 @@ function assemble(m) {
     w.uv(libraries.length);
     for (const name of libraries) w.str(name);
     for (const list of [m.constructors || [], m.destructors || []]) { w.uv(list.length); list.forEach(f => w.uv(f)); }
-    return new Uint8Array(w.b);
+    return w.bytes();
 }
 
 // Collects the instructions of one block and numbers the values they define: `def` for an instruction

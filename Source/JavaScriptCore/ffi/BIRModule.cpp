@@ -140,6 +140,18 @@ private:
         return count(length) && bytes(length, result);
     }
 
+    // The bytes part of a segment starts as: their length, which is at most the `room` the segment has for
+    // them, and the bytes.
+    bool image(uint64_t room, ASCIILiteral tooLong, std::span<const uint8_t>& result)
+    {
+        uint64_t length;
+        if (!varuint(length))
+            return false;
+        if (length > room)
+            return fail(tooLong);
+        return bytes(length, result);
+    }
+
     bool type(Type& result, bool allowVoid)
     {
         uint8_t raw;
@@ -280,15 +292,17 @@ private:
         }
 
         Data& data = m_module->data;
-        uint32_t initializedSize;
-        std::span<const uint8_t> initialized;
-        if (!varuint(data.size) || !varuint(data.alignment) || !varuint(data.readOnlySize) || !count(initializedSize) || !bytes(initializedSize, initialized))
+        if (!varuint(data.size) || !varuint(data.alignment) || !varuint(data.readOnlySize))
             return false;
-        if (data.size > (1ull << 32) || initializedSize > data.size || data.readOnlySize > data.size)
+        if (data.size > (1ull << 32) || data.readOnlySize > data.size)
             return fail("bad data segment size"_s);
         if (!data.alignment || (data.alignment & (data.alignment - 1)) || data.alignment > 4096)
             return fail("bad data segment alignment"_s);
-        data.initialized.append(initialized);
+        if (data.readOnlySize < data.size && data.readOnlySize % dataPage)
+            return fail("the writable part of the data segment does not start at a multiple of 16384"_s);
+        if (!image(data.readOnlySize, "more constant data than the constant part of the data segment"_s, data.constants)
+            || !image(data.size - data.readOnlySize, "more initialized data than the writable part of the data segment"_s, data.writable))
+            return false;
         auto relocs = [&](Vector<Reloc>& list, uint64_t segmentSize, RelocKind lastKind) -> bool {
             uint32_t relocCount;
             if (!count(relocCount))
@@ -312,14 +326,15 @@ private:
 
         {
             ThreadLocalData& tls = m_module->tls;
-            uint32_t tlsInitializedSize;
             std::span<const uint8_t> tlsInitialized;
-            if (!varuint(tls.size) || !varuint(tls.alignment) || !count(tlsInitializedSize) || !bytes(tlsInitializedSize, tlsInitialized))
+            if (!varuint(tls.size) || !varuint(tls.alignment))
                 return false;
-            if (tls.size > (1ull << 28) || tlsInitializedSize > tls.size)
+            if (tls.size > (1ull << 28))
                 return fail("bad thread-local segment size"_s);
             if (!tls.alignment || (tls.alignment & (tls.alignment - 1)) || tls.alignment > 4096)
                 return fail("bad thread-local segment alignment"_s);
+            if (!image(tls.size, "more initialized thread-local data than the thread-local segment"_s, tlsInitialized))
+                return false;
             tls.initialized.append(tlsInitialized);
             if (!relocs(tls.relocs, tls.size, RelocKind::Tls))
                 return false;

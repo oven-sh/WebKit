@@ -95,11 +95,15 @@ struct ThreadLocalData {
     Vector<Reloc> relocs;
 };
 
+// `constants` and `writable` are views of the bytes the module was decoded from: what data[0 ...] and
+// data[readOnlySize ...] start as. Whoever decodes a module copies them where they go while it still has those
+// bytes; CModule::tryCreate does, and empties them.
 struct Data {
     uint64_t size { 0 };
     uint64_t alignment { 1 };
     uint64_t readOnlySize { 0 };
-    Vector<uint8_t> initialized;
+    std::span<const uint8_t> constants;
+    std::span<const uint8_t> writable;
     Vector<Reloc> relocs;
 };
 
