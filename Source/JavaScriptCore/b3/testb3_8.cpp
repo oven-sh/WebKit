@@ -3282,6 +3282,60 @@ void testLoadEliminationAcrossStackSlots()
     CHECK_EQ(loadsLeft(false, false), 1u);
 }
 
+void testLoadEliminationAfterManyStores()
+{
+    // int a[50000] = { x, x + 1, ... }; then elements read back: in code lowered from C none of the stores takes
+    // away what is known of the others, so every load is the value stored, and finding that out takes time in
+    // proportion to their number, not to its square. Through a pointer, and into a stack slot with a second slot
+    // written between the stores. Every element is read back where only load elimination runs; every thousandth
+    // where the code is compiled and run too (that many values live at once are not what this is about).
+    constexpr unsigned count = 50000;
+    for (bool intoASlot : { false, true }) {
+        for (unsigned readEvery : { 1u, 1000u }) {
+            Procedure proc;
+            proc.setHasCodeFromC();
+            BasicBlock* root = proc.addBlock();
+            Value* x = root->appendNew<Value>(proc, Trunc, Origin(), root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+            Value* base = intoASlot
+                ? static_cast<Value*>(root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(count * 4)))
+                : static_cast<Value*>(root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+            Value* other = intoASlot ? root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8)) : nullptr;
+            for (unsigned i = 0; i < count; ++i) {
+                Value* element = root->appendNew<Value>(proc, Add, Origin(), x, root->appendNew<Const32Value>(proc, Origin(), i));
+                root->appendNew<MemoryValue>(proc, Store, Origin(), element, base, static_cast<int32_t>(i * 4));
+                if (other)
+                    root->appendNew<MemoryValue>(proc, Store, Origin(), element, other, 0);
+            }
+            Value* sum = root->appendNew<Const32Value>(proc, Origin(), 0);
+            uint32_t expected = 0;
+            for (unsigned i = 0; i < count; i += readEvery) {
+                sum = root->appendNew<Value>(proc, Add, Origin(), sum, root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), base, static_cast<int32_t>(i * 4)));
+                expected += 7 + i;
+            }
+            root->appendNewControlValue(proc, Return, Origin(), sum);
+
+            proc.resetReachability();
+            MonotonicTime before = MonotonicTime::now();
+            eliminateCommonSubexpressions(proc);
+            Seconds took = MonotonicTime::now() - before;
+            validate(proc);
+            CHECK_EQ(countValues(proc, Load), 0u);
+            // A fraction of a second. The square of 50,000 was half a minute.
+            CHECK(took < 10_s);
+            if (readEvery == 1)
+                continue;
+
+            Vector<int32_t> memory;
+            memory.fill(-1, count);
+            CHECK_EQ(static_cast<uint32_t>(compileAndRun<int32_t>(proc, 7, memory.mutableSpan().data())), expected);
+            if (!intoASlot) {
+                for (unsigned i = 0; i < count; ++i)
+                    CHECK_EQ(memory[i], static_cast<int32_t>(7 + i));
+            }
+        }
+    }
+}
+
 void testRematerializeStackAddresses()
 {
     // long f(long x) { long a[24]; for each i: a[i] = x + i; escape(a); return sum of a[i]; }

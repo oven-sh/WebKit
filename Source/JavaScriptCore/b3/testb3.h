@@ -1525,6 +1525,7 @@ void testCompareAndSwapIsNotMovedPastALoad();
 #if USE(BUN_JSC_ADDITIONS)
 void testLoadEliminationByAddress();
 void testLoadEliminationAcrossStackSlots();
+void testLoadEliminationAfterManyStores();
 void testRematerializeStackAddresses();
 void testStackAddressInAUserThatLowersToALoop();
 void testAccessBelowAStackSlot();

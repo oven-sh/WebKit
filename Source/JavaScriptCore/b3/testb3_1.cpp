@@ -1409,6 +1409,7 @@ void run(const TestConfig* config)
 #if USE(BUN_JSC_ADDITIONS)
     RUN(testLoadEliminationByAddress());
     RUN(testLoadEliminationAcrossStackSlots());
+    RUN(testLoadEliminationAfterManyStores());
     RUN(testRematerializeStackAddresses());
     RUN(testStackAddressInAUserThatLowersToALoop());
     RUN(testAccessBelowAStackSlot());
