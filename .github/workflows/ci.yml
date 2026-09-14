@@ -437,6 +437,8 @@ jobs:
           # in one $mode, the later one wins, and --quick skips the slow! tests too.
           if [ "$QUICK" = true ]; then platform+=(--quick)
           else case "$LABEL" in *-asan) platform+=(--no-slow) ;; esac; fi
+          # --asan: the tests marked //@ skip if $asan do not run.
+          case "$LABEL" in *-asan) platform+=(--asan) ;; esac
           # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
           # by the release Dockerfiles, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.

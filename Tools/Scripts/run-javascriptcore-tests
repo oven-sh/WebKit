@@ -117,6 +117,7 @@ my $runWasm = 1;
 my $runCLoopMode = 0;
 my $runQuickMode = 0;
 my $noSlowTests = 0; # Bun
+my $asanBuild = 0; # Bun
 
 my $forceCollectContinuously = 0;
 my $envVars = "";
@@ -306,6 +307,7 @@ Usage: $programName [options] [options to pass to build system]
                                 If the runner only runs some it will run the default and no-cjit-validate modes.
                                 Note, this will not change the behavior of tests that specify their own modes.
   --no-slow                     Bun: skip the tests marked //\@ slow! (run-jsc-stress-tests --no-slow).
+  --asan                        Bun: the build under test has AddressSanitizer; skip the tests marked //\@ skip if \$asan.
 
   --[no-]fail-fast              Stop this script when a test family reports an error or failure (default: $failFastDefault)
   --[no-]force-collectContinuously Enable the collectContinuously mode even if it was disabled on this platform.
@@ -396,6 +398,7 @@ GetOptions(
     'cloop' => \$runCLoopMode,
     'quick!' => \$runQuickMode,
     'no-slow' => \$noSlowTests,
+    'asan' => \$asanBuild,
     'fail-fast!' => \$failFast,
     'force-collectContinuously!' => \$forceCollectContinuously,
     'copy!' => \$copyJSC,
@@ -975,6 +978,10 @@ sub runJSCStressTests
 
     if ($noSlowTests) {
         push(@jscStressDriverCmd, "--no-slow");
+    }
+
+    if ($asanBuild) {
+        push(@jscStressDriverCmd, "--asan");
     }
 
     if (!$runJITStressTests) {
