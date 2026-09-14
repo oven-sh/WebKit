@@ -38,6 +38,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/SourceTaintedOrigin.h>
 #include <wtf/Lock.h>
+#include <wtf/SharedTask.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/ArgList.h>
@@ -201,14 +202,31 @@ private:
         // The generator returns nullptr when it provided every value.
         using LazySyntheticSourceGenerator = WTF::Function<JSObject*(JSGlobalObject*, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)>;
 
+        // What evaluating the module does (a Synthetic Module Record's [[EvaluationSteps]]): run once, when the module
+        // is first evaluated, which is after every module it was requested before and before every module that
+        // imports it. It may run arbitrary JS and throw; what it throws is the module's evaluation error, which
+        // everything that imports the module then fails with. Null for a module whose evaluation does nothing.
+        using SyntheticSourceEvaluator = WTF::Function<void(JSGlobalObject*, const Identifier& moduleKey)>;
+        using SharedSyntheticSourceEvaluator = SharedTask<void(JSGlobalObject*, const Identifier& moduleKey)>;
+
         static Ref<SyntheticSourceProvider> create(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
         {
-            return adoptRef(*new SyntheticSourceProvider(WTF::move(generator), nullptr, sourceOrigin, WTF::move(sourceURL)));
+            return adoptRef(*new SyntheticSourceProvider(WTF::move(generator), nullptr, nullptr, sourceOrigin, WTF::move(sourceURL)));
+        }
+
+        static Ref<SyntheticSourceProvider> create(SyntheticSourceGenerator&& generator, SyntheticSourceEvaluator&& evaluator, const SourceOrigin& sourceOrigin, String sourceURL)
+        {
+            return adoptRef(*new SyntheticSourceProvider(WTF::move(generator), nullptr, WTF::move(evaluator), sourceOrigin, WTF::move(sourceURL)));
         }
 
         static Ref<SyntheticSourceProvider> createWithLazyExports(LazySyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
         {
-            return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
+            return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), nullptr, sourceOrigin, WTF::move(sourceURL)));
+        }
+
+        static Ref<SyntheticSourceProvider> createWithLazyExports(LazySyntheticSourceGenerator&& generator, SyntheticSourceEvaluator&& evaluator, const SourceOrigin& sourceOrigin, String sourceURL)
+        {
+            return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), WTF::move(evaluator), sourceOrigin, WTF::move(sourceURL)));
         }
 
         unsigned hash() const final
@@ -230,19 +248,24 @@ private:
             return nullptr;
         }
 
-    
+        // Shared with every record made from this provider; each runs it when it is evaluated.
+        SharedSyntheticSourceEvaluator* evaluator() const { return m_evaluator.get(); }
+
     private:
-        JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
+        JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, SyntheticSourceEvaluator&& evaluator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
             : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Synthetic)
             , m_source("[native code]"_s)
             , m_generator(WTF::move(generator))
             , m_lazyGenerator(WTF::move(lazyGenerator))
         {
+            if (evaluator)
+                m_evaluator = createSharedTask<void(JSGlobalObject*, const Identifier&)>(WTF::move(evaluator));
         }
 
         String m_source;
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
+        RefPtr<SharedSyntheticSourceEvaluator> m_evaluator;
     };
 
 #if ENABLE(WEBASSEMBLY)

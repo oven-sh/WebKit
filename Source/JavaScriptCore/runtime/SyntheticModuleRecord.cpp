@@ -75,6 +75,7 @@ void SyntheticModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_lazyExportsSource);
+    visitor.append(thisObject->m_evaluationError);
 #endif
 }
 
@@ -85,10 +86,34 @@ Synchronousness SyntheticModuleRecord::link(JSGlobalObject*, RefPtr<ScriptFetche
     return Synchronousness::Sync;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSValue SyntheticModuleRecord::evaluate(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSValue error = m_evaluationError.get()) {
+        throwException(globalObject, scope, error);
+        return { };
+    }
+    // Taken before they run: evaluating the module again from inside them (it imports itself some way) does nothing,
+    // as for a JavaScript module that is reached again while it is being evaluated.
+    if (RefPtr steps = std::exchange(m_evaluationSteps, nullptr)) {
+        steps->run(globalObject, moduleKey());
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            if (!vm.isTerminationException(exception))
+                m_evaluationError.set(vm, this, exception->value());
+            return { };
+        }
+    }
+    return jsUndefined();
+}
+#else
 JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
 {
     return jsUndefined();
 }
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
 SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType)
