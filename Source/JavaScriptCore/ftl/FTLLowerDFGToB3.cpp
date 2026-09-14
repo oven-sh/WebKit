@@ -14090,6 +14090,13 @@ IGNORE_CLANG_WARNINGS_END
                 auto emitCallTarget = [&]() {
                     jit.emitFunctionPrologue();
                     jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
+                    if (isTail) {
+                        // The tail call's frame shuffle took this CodeBlock off the stack, and the host function returns
+                        // into this code: a collection it triggers must still find the CodeBlock. The conservative scan
+                        // keeps alive any CodeBlock whose pointer is on the stack; the epilogue below drops the slot.
+                        jit.subPtr(CCallHelpers::TrustedImm32(stackAlignmentBytes()), CCallHelpers::stackPointerRegister);
+                        jit.storePtr(CCallHelpers::TrustedImmPtr(jit.codeBlock()), CCallHelpers::Address(CCallHelpers::stackPointerRegister));
+                    }
                     jit.storePtr(GPRInfo::callFrameRegister, &vm->topCallFrame);
                     if (calleeScope)
                         jit.move(CCallHelpers::TrustedImmPtr(calleeScope), GPRInfo::argumentGPR0);

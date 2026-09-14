@@ -1022,6 +1022,13 @@ void SpeculativeJIT::emitCall(Node* node)
             auto emitCallTarget = [&]() {
                 emitFunctionPrologue();
                 emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
+                if (isTail) {
+                    // The tail call's frame shuffle took this CodeBlock off the stack, and the host function returns into
+                    // this code: a collection it triggers must still find the CodeBlock. The conservative scan keeps alive
+                    // any CodeBlock whose pointer is on the stack; the epilogue below drops the slot.
+                    subPtr(TrustedImm32(stackAlignmentBytes()), stackPointerRegister);
+                    storePtr(CCallHelpers::TrustedImmPtr(m_graph.m_codeBlock), Address(stackPointerRegister));
+                }
                 storePtr(GPRInfo::callFrameRegister, &vm().topCallFrame);
                 if (calleeScope)
                     move(CCallHelpers::TrustedImmPtr(calleeScope), GPRInfo::argumentGPR0);
