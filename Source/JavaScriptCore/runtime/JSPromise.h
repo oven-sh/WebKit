@@ -123,6 +123,7 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
+    void forEachPendingReactionUnlocked(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
 #endif
 
     JS_EXPORT_PRIVATE static JSPromise* resolvedPromise(JSGlobalObject*, JSValue);

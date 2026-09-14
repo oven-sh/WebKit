@@ -35,6 +35,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <array>
@@ -243,40 +244,7 @@ protected:
     Offset m_offset;
 };
 
-#if USE(BUN_JSC_ADDITIONS)
-// A payload order file is about code, and JSC does not name code: its embedder does, however it likes, and says which
-// function a name is for by what JSC knows the function by. That is where it starts in its provider's text, in code units,
-// and which of the functions that may start there it is.
-enum class OrderFunctionKind : uint8_t {
-    Function, // starts where its parameters do (the start of the function's own SourceCode)
-    InnerBody, // what JSC makes of the body of an async function or of a generator; starts where that body does
-    ClassFields, // initializes a class's fields, and has no text but theirs; starts where the first of them does
-    DefaultConstructor, // of a class that does not write one: its text is a builtin's; starts where the class does
-};
-struct OrderFunctionKey {
-    uint32_t start { 0 };
-    OrderFunctionKind kind { OrderFunctionKind::Function };
-    friend auto operator<=>(const OrderFunctionKey&, const OrderFunctionKey&) = default;
-};
-// A table keyed by what an order file names something by reserves the top two values; names that come out of an order
-// file or from the embedder are checked (isValidOrderHash) before they go into one.
-using OrderHashSet = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-constexpr bool isValidOrderHash(uint64_t hash) { return hash <= std::numeric_limits<uint64_t>::max() - 2; }
-
-// What a BytecodeOrderRecorder saw decoded. It knows a source by the payload its code came out of, and where in it its
-// cache entry starts: a payload that is recorded outlives the program, so its address says which it is, for good.
-struct RecordedOrderSource {
-    const uint8_t* payload { nullptr };
-    uint32_t entryOffset { 0 }; // CachedBytecode::entryOffset
-    friend bool operator==(const RecordedOrderSource&, const RecordedOrderSource&) = default;
-};
-struct RecordedOrderFunction {
-    unsigned source; // an index into the list of sources it comes with
-    OrderFunctionKey key;
-};
-#endif
-
-class Decoder : public RefCounted<Decoder> {
+class Decoder : public ThreadSafeRefCounted<Decoder> {
     WTF_MAKE_NONCOPYABLE(Decoder);
 
 public:

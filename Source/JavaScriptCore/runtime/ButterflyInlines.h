@@ -110,7 +110,7 @@ ALWAYS_INLINE unsigned Butterfly::optimalContiguousVectorLength(Structure* struc
     return optimalContiguousVectorLength(structure ? structure->outOfLineCapacity() : 0, vectorLength);
 }
 
-inline Butterfly* Butterfly::tryCreateUninitialized(VM& vm, JSObject*, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, size_t indexingPayloadSizeInBytes, GCDeferralContext* deferralContext)
+ALWAYS_INLINE Butterfly* Butterfly::tryCreateUninitialized(VM& vm, JSObject*, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, size_t indexingPayloadSizeInBytes, GCDeferralContext* deferralContext)
 {
     size_t size = totalSize(preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
     void* base = vm.auxiliarySpace().allocate(vm, size, deferralContext, AllocationFailureMode::ReturnNull);
@@ -122,7 +122,7 @@ inline Butterfly* Butterfly::tryCreateUninitialized(VM& vm, JSObject*, size_t pr
     return result;
 }
 
-inline Butterfly* Butterfly::createUninitialized(VM& vm, JSObject*, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, size_t indexingPayloadSizeInBytes)
+ALWAYS_INLINE Butterfly* Butterfly::createUninitialized(VM& vm, JSObject*, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, size_t indexingPayloadSizeInBytes)
 {
     size_t size = totalSize(preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
     void* base = vm.auxiliarySpace().allocate(vm, size, nullptr, AllocationFailureMode::Assert);
@@ -131,7 +131,7 @@ inline Butterfly* Butterfly::createUninitialized(VM& vm, JSObject*, size_t preCa
     return result;
 }
 
-inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
+ALWAYS_INLINE Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
 {
     size_t size = totalSize(preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
     void* base = vm.auxiliarySpace().allocate(vm, size, nullptr, AllocationFailureMode::ReturnNull);
@@ -153,7 +153,7 @@ inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, si
     return result;
 }
 
-inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
+ALWAYS_INLINE Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
 {
     Butterfly* result = tryCreate(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingHeader, indexingPayloadSizeInBytes);
 
@@ -161,7 +161,7 @@ inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, size_t preC
     return result;
 }
 
-inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, Structure* structure)
+ALWAYS_INLINE Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, Structure* structure)
 {
     return create(
         vm, intendedOwner, 0, structure->outOfLineCapacity(),

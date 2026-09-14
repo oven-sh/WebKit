@@ -606,7 +606,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     heap.notifyIsSafeToCollect();
 
     if (Options::startupJITDeferralScale() > 1) [[unlikely]]
-        m_startupJITDeferralScale = Options::startupJITDeferralScale();
+        WTF::atomicStore(&m_startupJITDeferralScale, Options::startupJITDeferralScale(), std::memory_order_relaxed);
     
     if (Options::useProfiler()) [[unlikely]] {
         m_perBytecodeProfiler = makeUnique<Profiler::Database>(*this);
@@ -1305,13 +1305,13 @@ void VM::setStartupJITDeferralScale(double scale)
     if (!(scale > 1)) {
         // No CodeBlock walk: counters armed under the scale were clipped to re-check within one normal
         // threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their next visit.
-        if (m_startupJITDeferralScale != 1)
-            dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: embedder (scale was ", String::number(m_startupJITDeferralScale), ")");
-        m_startupJITDeferralScale = 1;
+        if (double previous = startupJITDeferralScale(); previous != 1)
+            dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: embedder (scale was ", String::number(previous), ")");
+        WTF::atomicStore(&m_startupJITDeferralScale, 1.0, std::memory_order_relaxed);
         return;
     }
     dataLogLnIf(Options::verboseOSR(), "Startup JIT deferral scale set to ", String::number(scale));
-    m_startupJITDeferralScale = scale;
+    WTF::atomicStore(&m_startupJITDeferralScale, scale, std::memory_order_relaxed);
 }
 
 void VM::setLastStackTop(const Thread& thread)

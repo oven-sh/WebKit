@@ -2731,6 +2731,9 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
 
     GPRTemporary temporary;
     GPRReg temporaryReg = temporaryRegisterForPutByVal(temporary, node);
+    std::optional<GPRTemporary> lengthScratch; // SPEC-jit §5.5 length updates (history §46): the hole leg's CAS-max.
+    if (!arrayMode.isInBounds() && lengthRaiseUsesCAS(m_graph.varArgChild(node, 0)))
+        lengthScratch.emplace(this);
 
     Jump slowCase;
 
@@ -2747,7 +2750,10 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
             speculationCheck(OutOfBounds, JSValueSource(), nullptr, slowCase);
 
         add32(TrustedImm32(1), propertyReg, temporaryReg);
-        store32(temporaryReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
+        if (lengthScratch)
+            emitRaisePublicLength(storageReg, temporaryReg, lengthScratch->gpr());
+        else
+            store32(temporaryReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
 
         inBounds.link(this);
     }
@@ -2818,6 +2824,9 @@ void SpeculativeJIT::compileDoublePutByVal(Node* node)
 
     GPRTemporary temporary;
     GPRReg temporaryReg = temporaryRegisterForPutByVal(temporary, node);
+    std::optional<GPRTemporary> lengthScratch; // SPEC-jit §5.5 length updates (history §46): the hole leg's CAS-max.
+    if (!arrayMode.isInBounds() && lengthRaiseUsesCAS(m_graph.varArgChild(node, 0)))
+        lengthScratch.emplace(this);
 
     Jump slowCase;
 
@@ -2834,7 +2843,10 @@ void SpeculativeJIT::compileDoublePutByVal(Node* node)
             speculationCheck(OutOfBounds, JSValueSource(), nullptr, slowCase);
 
         add32(TrustedImm32(1), propertyReg, temporaryReg);
-        store32(temporaryReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
+        if (lengthScratch)
+            emitRaisePublicLength(storageReg, temporaryReg, lengthScratch->gpr());
+        else
+            store32(temporaryReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
 
         inBounds.link(this);
     }
@@ -9552,7 +9564,7 @@ void SpeculativeJIT::recordArrayAllocationGILOff(Node* node, GPRReg resultGPR)
     // resultGPR is a temporary, which the slow path's silent spill does not
     // preserve: the operation hands the array back as its result instead.
     addSlowPathGenerator(slowPathCall(sawConversion, this, operationArrayAllocationProfileSawConversionGILOff, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(profile), resultGPR));
-    storeLastArrayToAllocationProfileGILOff(word, resultGPR, scratch1.gpr(), scratch2.gpr());
+    storeLastArrayToAllocationProfileGILOff(word, resultGPR, scratch1.gpr(), scratch2.gpr(), ArrayAllocationProfile::gilOffReportSampleMask);
 }
 
 void SpeculativeJIT::compileNewArray(Node* node)
@@ -10582,6 +10594,12 @@ void SpeculativeJIT::compileArrayPush(Node* node)
 
     GPRReg resultGPR { storageLengthGPR };
 
+    // SPEC-jit §5.5 length updates (history §46): GIL off without the E2 elision, the flat fast paths raise the length
+    // with the CAS-max. ArrayStorage's inline legs are owner-exclusive (a foreign AS flip takes a stop) and stay plain.
+    std::optional<GPRTemporary> lengthScratch;
+    if (node->arrayMode().type() != Array::ArrayStorage && lengthRaiseUsesCAS(arrayEdge))
+        lengthScratch.emplace(this);
+
     auto getStorageBufferAddress = [&] (GPRReg storageGPR, GPRReg indexGPR, int32_t offset, GPRReg bufferGPR) {
         static_assert(sizeof(JSValue) == 8 && 1 << 3 == 8, "This is strongly assumed in the code below.");
         getEffectiveAddress(BaseIndex(storageGPR, indexGPR, TimesEight, offset), bufferGPR);
@@ -10603,7 +10621,10 @@ void SpeculativeJIT::compileArrayPush(Node* node)
             Jump slowPath = branch32(AboveOrEqual, storageLengthGPR, Address(storageGPR, Butterfly::offsetOfVectorLength()));
             storeValue(valueGPR, BaseIndex(storageGPR, storageLengthGPR, TimesEight));
             add32(TrustedImm32(1), storageLengthGPR);
-            store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+            if (lengthScratch)
+                emitRaisePublicLength(storageGPR, storageLengthGPR, lengthScratch->gpr());
+            else
+                store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
             boxInt32(storageLengthGPR, resultGPR);
 
             addSlowPathGenerator(
@@ -10635,7 +10656,10 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         add32(TrustedImm32(elementCount), bufferGPR);
         Jump slowPath = branch32(Above, bufferGPR, Address(storageGPR, Butterfly::offsetOfVectorLength()));
 
-        store32(bufferGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+        if (lengthScratch)
+            emitRaisePublicLength(storageGPR, bufferGPR, lengthScratch->gpr());
+        else
+            store32(bufferGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
         getStorageBufferAddress(storageGPR, storageLengthGPR, 0, bufferGPR);
         add32(TrustedImm32(elementCount), storageLengthGPR);
         boxInt32(storageLengthGPR, resultGPR);
@@ -10683,7 +10707,10 @@ void SpeculativeJIT::compileArrayPush(Node* node)
             Jump slowPath = branch32(AboveOrEqual, storageLengthGPR, Address(storageGPR, Butterfly::offsetOfVectorLength()));
             storeDouble(valueFPR, BaseIndex(storageGPR, storageLengthGPR, TimesEight));
             add32(TrustedImm32(1), storageLengthGPR);
-            store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+            if (lengthScratch)
+                emitRaisePublicLength(storageGPR, storageLengthGPR, lengthScratch->gpr());
+            else
+                store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
             boxInt32(storageLengthGPR, resultGPR);
 
             addSlowPathGenerator(
@@ -10713,7 +10740,10 @@ void SpeculativeJIT::compileArrayPush(Node* node)
         add32(TrustedImm32(elementCount), bufferGPR);
         Jump slowPath = branch32(Above, bufferGPR, Address(storageGPR, Butterfly::offsetOfVectorLength()));
 
-        store32(bufferGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+        if (lengthScratch)
+            emitRaisePublicLength(storageGPR, bufferGPR, lengthScratch->gpr());
+        else
+            store32(bufferGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
         getStorageBufferAddress(storageGPR, storageLengthGPR, 0, bufferGPR);
         add32(TrustedImm32(elementCount), storageLengthGPR);
         boxInt32(storageLengthGPR, resultGPR);
@@ -11342,6 +11372,24 @@ auto SpeculativeJIT::planThreadedButterflyAccess(Edge base) -> ThreadedButterfly
     return plan;
 }
 
+bool SpeculativeJIT::lengthRaiseUsesCAS(Edge base)
+{
+    if (!Options::useJSThreads() || !g_jscConfig.gilOffProcess)
+        return false;
+    return !planThreadedButterflyAccess(base).elideSharedWriteCheck;
+}
+
+// Raises storageGPR's publicLength to at least newLengthGPR and never lowers it: the runtime's
+// Butterfly::bumpPublicLengthToAtLeast (SPEC-jit §5.5 length updates). Clobbers scratchGPR.
+void SpeculativeJIT::emitRaisePublicLength(GPRReg storageGPR, GPRReg newLengthGPR, GPRReg scratchGPR)
+{
+    Label retry = label();
+    load32(Address(storageGPR, Butterfly::offsetOfPublicLength()), scratchGPR);
+    Jump done = branch32(AboveOrEqual, scratchGPR, newLengthGPR);
+    branchAtomicWeakCAS32(Failure, scratchGPR, newLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength())).linkTo(retry, this);
+    done.link(this);
+}
+
 // R7/F7: re-load the structureID (coherence makes the re-load sound; Task-8
 // gap note) and make the butterfly load address-dependent on it. ARM64 only;
 // x86-64 is TSO (no-op): plain load there. scratchGPR is clobbered.
@@ -11620,7 +11668,10 @@ void SpeculativeJIT::compileContiguousPutByValSegmentedAware(Node* node)
         // speculationCheck(slowCase)` gate); OutOfBounds takes the operation.
         routeMiss(branch32(AboveOrEqual, propertyReg, Address(storageReg, Butterfly::offsetOfVectorLength())), OutOfBounds);
         add32(TrustedImm32(1), propertyReg, scratchReg);
-        store32(scratchReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
+        if (lengthRaiseUsesCAS(m_graph.varArgChild(node, 0))) // SPEC-jit §5.5 length updates (history §46); slotReg is free on this arm.
+            emitRaisePublicLength(storageReg, scratchReg, slotReg);
+        else
+            store32(scratchReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
         inBounds.link(this);
     }
     storeValue(valueRegs, BaseIndex(storageReg, propertyReg, TimesEight));
@@ -11712,7 +11763,10 @@ void SpeculativeJIT::compileDoublePutByValSegmentedAware(Node* node)
         // Contiguous variant for the Clobberize/DoesGC purity rationale.
         routeMiss(branch32(AboveOrEqual, propertyReg, Address(storageReg, Butterfly::offsetOfVectorLength())), OutOfBounds);
         add32(TrustedImm32(1), propertyReg, scratchReg);
-        store32(scratchReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
+        if (lengthRaiseUsesCAS(m_graph.varArgChild(node, 0))) // SPEC-jit §5.5 length updates (history §46); slotReg is free on this arm.
+            emitRaisePublicLength(storageReg, scratchReg, slotReg);
+        else
+            store32(scratchReg, Address(storageReg, Butterfly::offsetOfPublicLength()));
         inBounds.link(this);
     }
     storeDouble(valueReg, BaseIndex(storageReg, propertyReg, TimesEight));
@@ -11854,7 +11908,10 @@ void SpeculativeJIT::compileArrayPushSegmentedAware(Node* node)
     slowCases.append(branch32(AboveOrEqual, storageLengthGPR, Address(storageGPR, Butterfly::offsetOfVectorLength())));
     storeValue(valueRegs, BaseIndex(storageGPR, storageLengthGPR, TimesEight));
     add32(TrustedImm32(1), storageLengthGPR);
-    store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+    if (lengthRaiseUsesCAS(m_graph.varArgChild(node, 1))) // SPEC-jit §5.5 length updates (history §46): the owner's window is not exclusive.
+        emitRaisePublicLength(storageGPR, storageLengthGPR, scratchGPR);
+    else
+        store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
     boxInt32(storageLengthGPR, resultRegs);
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationArrayPush, resultRegs, LinkableConstant::globalObject(*this, node), valueRegs, baseGPR));

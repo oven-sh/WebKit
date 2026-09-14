@@ -56,6 +56,14 @@ for (let i = 0; i < N; ++i) {
     if (hotObject() !== "function") throw new Error("Object.keys wrong");
     if (hotArray() !== "function") throw new Error("Array.from wrong");
 }
+// The flag forces concurrent compilation whatever --useConcurrentJIT says, and on a loaded machine the DFG code can
+// arrive after the loop above: keep calling until all three have it (30 s deadline). The bounds below are unchanged.
+for (let deadline = preciseTime() + 30; preciseTime() < deadline && !(numberOfDFGCompiles(hotString) && numberOfDFGCompiles(hotObject) && numberOfDFGCompiles(hotArray));) {
+    for (let i = 0; i < 1000; ++i) {
+        if (hotString() !== "function" || hotObject() !== "function" || hotArray() !== "function")
+            throw new Error("a static property read the wrong value");
+    }
+}
 
 // Step 3: convergence bound. Under useConcurrentJIT=0 + the pinned thresholds
 // each function compiles to DFG, exits at most once (Array), recompiles, then

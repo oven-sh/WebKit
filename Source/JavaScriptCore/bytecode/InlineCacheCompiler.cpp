@@ -1900,12 +1900,15 @@ static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelp
     CCallHelpers::Jump hasButterfly = jit.branchTest64(CCallHelpers::NonZero, scratch2GPR);
 
     {
-        JIT_COMMENT(jit, "butterfly-less: N2-LF claim");
-        loadOldStructureIDBits(scratch1GPR);
-        jit.move(scratch1GPR, scratch2GPR);
-        jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
-        slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
-        // Committed: the lane is ours (nuked); nothing below can fail.
+        if (g_jscConfig.gilOffProcess) {
+            JIT_COMMENT(jit, "butterfly-less: N2-LF claim");
+            loadOldStructureIDBits(scratch1GPR);
+            jit.move(scratch1GPR, scratch2GPR);
+            jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
+            slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
+            // Committed: the lane is ours (nuked); nothing below can fail.
+        } else
+            JIT_COMMENT(jit, "butterfly-less: GIL on, unclaimed (OM E4-G)");
         loadOffset(scratch1GPR); // inline by construction (no butterfly)
         jit.storeValue(valueGPR, CCallHelpers::BaseIndex(baseGPR, scratch1GPR, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
         jit.storeFence();
@@ -1923,15 +1926,18 @@ static void emitConcurrentNonReallocatingTransition(CCallHelpers& jit, CCallHelp
         // same lane first and RESTART when they lose). The butterfly word must
         // be re-derived after the claim: scratch1 held the tag test, scratch2
         // the pointer, and the CAS needs both registers.
-        loadOldStructureIDBits(scratch1GPR);
-        jit.move(scratch1GPR, scratch2GPR);
-        jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
-        slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
-        // Committed. The word cannot move while an owner-tagged SW=0 instance's
-        // lane is held (SW flips need the un-nuked header, locked writers lost
-        // the lane), so the re-load yields the same payload.
-        jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
-        jit.and64(CCallHelpers::TrustedImm64(butterflyPointerMask), scratch2GPR);
+        if (g_jscConfig.gilOffProcess) {
+            loadOldStructureIDBits(scratch1GPR);
+            jit.move(scratch1GPR, scratch2GPR);
+            jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
+            slow.append(jit.branchAtomicStrongCAS32(CCallHelpers::Failure, scratch1GPR, scratch2GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset())));
+            // Committed. The word cannot move while an owner-tagged SW=0 instance's
+            // lane is held (SW flips need the un-nuked header, locked writers lost
+            // the lane), so the re-load yields the same payload.
+            jit.load64(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+            jit.and64(CCallHelpers::TrustedImm64(butterflyPointerMask), scratch2GPR);
+        } else
+            JIT_COMMENT(jit, "GIL on, unclaimed (OM E4-G): scratch2 still holds the masked butterfly");
         loadOffset(scratch1GPR);
         CCallHelpers::Jump isInline = jit.branch32(CCallHelpers::LessThan, scratch1GPR, CCallHelpers::TrustedImm32(firstOutOfLineOffset));
         jit.neg32(scratch1GPR);
@@ -2664,6 +2670,8 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
 
         auto allocator = makeDefaultScratchAllocator(scratchGPR);
         GPRReg scratch2GPR = allocator.allocateScratchGPR();
+        // The flat hole leg's CAS-max loop needs the current length in its own register GIL off (SPEC-jit §5.5).
+        GPRReg lengthGPR = g_jscConfig.gilOffProcess && accessCase.m_type != AccessCase::IndexedArrayStorageStore ? allocator.allocateScratchGPR() : InvalidGPRReg;
         ScratchRegisterAllocator::PreservedState preservedState;
 
         CCallHelpers::JumpList failAndIgnore;
@@ -2760,6 +2768,20 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
             jit.add32(CCallHelpers::TrustedImm32(1), scratch2GPR);
             jit.store32(scratch2GPR, CCallHelpers::Address(scratchGPR, ArrayStorage::lengthOffset()));
             jit.sub32(CCallHelpers::TrustedImm32(1), scratch2GPR);
+            jit.jump().linkTo(storeResult, &jit);
+        } else if (g_jscConfig.gilOffProcess) {
+            // SPEC-jit §5.5 length updates (history §46): GIL off another thread may raise the length between our read
+            // and our write, so the hole leg raises it with a CAS that never lowers it (the runtime's
+            // Butterfly::bumpPublicLengthToAtLeast). The store at storeResult recomputes scratch2GPR.
+            isOutOfBounds.link(&jit);
+            failAndIgnore.append(jit.branch32(CCallHelpers::AboveOrEqual, propertyGPR, CCallHelpers::Address(scratchGPR, Butterfly::offsetOfVectorLength())));
+            if (m_propertyCache.arrayProfileGPR() != InvalidGPRReg)
+                jit.or32(CCallHelpers::TrustedImm32(static_cast<uint32_t>(ArrayProfileFlag::MayStoreHole)), CCallHelpers::Address(m_propertyCache.arrayProfileGPR(), ArrayProfile::offsetOfArrayProfileFlags()));
+            jit.add32(CCallHelpers::TrustedImm32(1), propertyGPR, scratch2GPR);
+            auto retry = jit.label();
+            jit.load32(CCallHelpers::Address(scratchGPR, Butterfly::offsetOfPublicLength()), lengthGPR);
+            jit.branch32(CCallHelpers::AboveOrEqual, lengthGPR, scratch2GPR).linkTo(storeResult, &jit);
+            jit.branchAtomicWeakCAS32(CCallHelpers::Failure, lengthGPR, scratch2GPR, CCallHelpers::Address(scratchGPR, Butterfly::offsetOfPublicLength())).linkTo(retry, &jit);
             jit.jump().linkTo(storeResult, &jit);
         } else {
             isOutOfBounds.link(&jit);
@@ -6075,6 +6097,21 @@ static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpL
         jit.signExtend32ToPtr(scratch1GPR, scratch1GPR);
         jit.storeValue(valueGPR, CCallHelpers::BaseIndex(scratch2GPR, scratch1GPR, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)));
 
+        if (!g_jscConfig.gilOffProcess) {
+            // GIL on (OM E4-G): no other mutator can be inside a window on this object, so no claim and no re-check;
+            // the marker's order stays nuked(S), word, S' (the first fence matters on non-x86).
+            JIT_COMMENT(jit, "GIL on: nuke, publish, S'");
+            jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), scratch3GPR);
+            jit.or32(CCallHelpers::TrustedImm32(StructureID::nukedStructureIDBit), scratch3GPR);
+            jit.store32(scratch3GPR, CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()));
+            jit.storeFence();
+            jit.loadButterflyTIDTag(scratch4GPR);
+            jit.orPtr(scratch2GPR, scratch4GPR);
+            jit.store64(scratch4GPR, CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()));
+            jit.storeFence();
+            jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()));
+            return;
+        }
         JIT_COMMENT(jit, "claim, re-check, publish");
         jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfStructureID()), scratch3GPR);
         jit.move(scratch3GPR, scratch4GPR);
@@ -7628,8 +7665,13 @@ AccessGenerationResult InlineCacheCompiler::compileHandler(const GCSafeConcurren
         // shared across code blocks and cannot implement the per-site
         // spill/restore + makeshift-catch-handler protocol the repatching ICs
         // use, so if this invariant unexpectedly fails, refuse to cache rather
-        // than generate a stub that cannot restore those registers.
-        if (codeBlock->jitCode()->liveRegistersToPreserveAtExceptionHandlingCallSite(codeBlock, m_propertyCache.callSiteIndex).numberOfSetRegisters())
+        // than generate a stub that cannot restore those registers. A value on the
+        // stack is reported as the frame and stack pointers (ValueRep::usedRegisters);
+        // the catch reads it from the frame, which no stub disturbs, so those two do
+        // not count (SPEC-jit history §44).
+        RegisterSet liveAtCatch = codeBlock->jitCode()->liveRegistersToPreserveAtExceptionHandlingCallSite(codeBlock, m_propertyCache.callSiteIndex);
+        liveAtCatch.exclude(RegisterSet::stackRegisters());
+        if (liveAtCatch.numberOfSetRegisters())
             return AccessGenerationResult::GaveUp;
     }
 #endif

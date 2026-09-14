@@ -158,6 +158,22 @@ ALWAYS_INLINE Butterfly* flatButterflySnapshotForStructure(JSObject* source, Str
     return untaggedButterfly(word);
 }
 
+// AUDIT R9-19 (ninth round): GIL off, the fast data-property copies read a source's slots under one structure check
+// while other threads can delete from the source (a deleted slot can read empty) or transition it. After the reads they
+// check that the source still has the structure they checked and that no value they read is empty, and copy property
+// by property otherwise. Flag off and GIL on no other thread can change the source during the copy.
+ALWAYS_INLINE bool dataPropertyReadsStillValid(JSObject* source, StructureID checkedStructureID, const EncodedJSValue* values, size_t count)
+{
+    WTF::loadLoadFence();
+    if (source->structureID() != checkedStructureID)
+        return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (!JSValue::decode(values[i]))
+            return false;
+    }
+    return true;
+}
+
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
     static constexpr bool verbose = false;
@@ -298,8 +314,23 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
 
     // Flag-on, butterfly() asserts a flat word; the structure's capacity is the same test without the load.
     unsigned propertyCapacity = sourceStructure->outOfLineCapacity();
+    // AUDIT R9-19: GIL off, a slot another thread cleared while it was copied leaves the clone with an empty value;
+    // such a clone is dropped and the generic path copies property by property.
+    auto validClone = [&](JSFinalObject* clone) -> JSObject* {
+        if (!vm.gilOff()) [[likely]]
+            return clone;
+        WTF::loadLoadFence();
+        if (source->structureID() != sourceStructureID)
+            return nullptr;
+        bool sawEmpty = false;
+        sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            sawEmpty = !clone->getDirect(entry.offset());
+            return !sawEmpty;
+        });
+        return sawEmpty ? nullptr : clone;
+    };
     if (!propertyCapacity)
-        return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, sourceStructure, nullptr, source->inlineStorage());
+        return validClone(JSFinalObject::createWithButterflyCopyingInlineStorage(vm, sourceStructure, nullptr, source->inlineStorage()));
 
     DeferGC deferGC(vm);
     Butterfly* newButterfly = Butterfly::createUninitialized(vm, nullptr, 0, propertyCapacity, /* hasIndexingHeader */ false, 0);
@@ -312,7 +343,7 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
         sourceButterfly = source->butterfly();
     // memcpy is fine since newButterfly is not tied to any object yet.
     memcpy(newButterfly->propertyStorage() - propertyCapacity, sourceButterfly->propertyStorage() - propertyCapacity, propertyCapacity * sizeof(EncodedJSValue));
-    return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, sourceStructure, newButterfly, source->inlineStorage());
+    return validClone(JSFinalObject::createWithButterflyCopyingInlineStorage(vm, sourceStructure, newButterfly, source->inlineStorage()));
 }
 
 ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject* target, JSObject* source, Vector<UniquedStringImpl*, 8>& properties, MarkedArgumentBuffer& values)
@@ -365,6 +396,9 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
         return true;
     });
+
+    if (vm.gilOff() && !dataPropertyReadsStillValid(source, sourceStructure->id(), values.data(), values.size())) [[unlikely]]
+        return false;
 
     if (source->canHaveExistingOwnIndexedProperties()) {
         objectAssignIndexedPropertiesFast(globalObject, target, source);

@@ -242,7 +242,7 @@ inline Butterfly* tryCreateArrayButterfly(VM& vm, JSObject* intendedOwner, unsig
     return butterfly;
 }
 
-inline JSArray* JSArray::createWithButterfly(VM& vm, GCDeferralContext* deferralContext, Structure* structure, Butterfly* butterfly)
+ALWAYS_INLINE JSArray* JSArray::createWithButterfly(VM& vm, GCDeferralContext* deferralContext, Structure* structure, Butterfly* butterfly)
 {
     JSArray* array = new (NotNull, allocateCell<JSArray>(vm, deferralContext)) JSArray(vm, structure, butterfly);
     array->finishCreation(vm);

@@ -1,3 +1,6 @@
+//@ threadsNoAmplify
+// (A timing benchmark: its BENCH line differs on every run, so under the amplifier every run diverges from the
+// reference. It runs plain under --amplify.)
 // SPEC-heap.md T10: option-off allocation bench for the I10 serial-perf gate.
 //
 // Runs with NO options (useSharedGCHeap defaults off): this is the

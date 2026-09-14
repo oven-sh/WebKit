@@ -914,7 +914,8 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
 
     auto sourceStructure = source->structure();
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
-        if ((!excludedSet || excludedSet->isEmpty()) && objectCloneFast(vm, target, source))
+        // GIL off the clone copies the source's storage wholesale while other threads can change it (AUDIT R9-19).
+        if (!vm.gilOff() && (!excludedSet || excludedSet->isEmpty()) && objectCloneFast(vm, target, source))
             return JSValue::encode(target);
 
         EnsureStillAliveScope sourceStructureScope(sourceStructure);
@@ -945,17 +946,21 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         });
         RETURN_IF_EXCEPTION(scope, { });
 
-        // excludedSet is no longer used.
-        ensureStillAliveHere(unlinkedCodeBlock);
+        // AUDIT R9-19: GIL off another thread can delete from or transition the source while it is read; if it did,
+        // the generic loop below copies property by property.
+        if (!vm.gilOff() || dataPropertyReadsStillValid(source, sourceStructure->id(), values.data(), values.size())) [[likely]] {
+            // excludedSet is no longer used.
+            ensureStillAliveHere(unlinkedCodeBlock);
 
-        if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
-            target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
-        else {
-            for (size_t i = 0; i < properties.size(); ++i)
-                target->putDirect(vm, properties[i], values.at(i));
+            if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
+                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            else {
+                for (size_t i = 0; i < properties.size(); ++i)
+                    target->putDirect(vm, properties[i], values.at(i));
+            }
+
+            return JSValue::encode(target);
         }
-
-        return JSValue::encode(target);
     }
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -1040,9 +1045,12 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
         });
         RETURN_IF_EXCEPTION(scope, { });
 
-        target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
-
-        return JSValue::encode(target);
+        // AUDIT R9-19: GIL off another thread can delete from or transition the source while it is read; if it did,
+        // the generic loop below copies property by property into the still-empty target.
+        if (!vm.gilOff() || dataPropertyReadsStillValid(source, sourceStructure->id(), values.data(), values.size())) [[likely]] {
+            target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            return JSValue::encode(target);
+        }
     }
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);

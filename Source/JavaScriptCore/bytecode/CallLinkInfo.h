@@ -100,13 +100,9 @@ struct CallLinkRecord {
 
     uintptr_t comparand { 0 }; // Callee cell, or sentinel: bit 0 (CallLinkInfo::polymorphicCalleeMask) = always-call.
     CodePtr<JSEntryPtrTag> target { }; // Entrypoint (monomorphic/virtual/stub/direct).
-    CodeBlock* codeBlockToTransfer { nullptr }; // Stored to the callee frame by the fast path.
-    // The heap holding codeBlockToTransfer's publish-time pin
-    // (Heap::pinRetiredCallLinkRecordCodeBlock); null when nothing is pinned.
-    // Whoever frees the record — the epoch holder or the owning
-    // CallLinkInfo's destructor — releases that pin, so a callee is retained
-    // only while some record still names it. Not read by JIT'd code.
-    JSC::Heap* pinHeap { nullptr };
+    // Stored to the callee frame by the fast path. Not a GC root: a record naming a CodeBlock is on that block's
+    // m_incomingCalls, and the End phase that finds the block dead clears it (SPEC-jit §5.8, history §43).
+    CodeBlock* codeBlockToTransfer { nullptr };
 
     static constexpr ptrdiff_t offsetOfComparand() { return OBJECT_OFFSETOF(CallLinkRecord, comparand); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(CallLinkRecord, target); }
@@ -117,12 +113,12 @@ struct CallLinkRecord {
 static_assert(CallLinkRecord::offsetOfComparand() == 0);
 static_assert(CallLinkRecord::offsetOfTarget() == 8);
 static_assert(CallLinkRecord::offsetOfCodeBlockToTransfer() == 16);
-static_assert(sizeof(CallLinkRecord) == 32);
+static_assert(sizeof(CallLinkRecord) == 24);
 #endif
 
 // Frees a record that no mutator can reach any more (its owning CallLinkInfo
-// is being destroyed), releasing the record's CodeBlock pin first. Flag-off
-// m_record is always null, so only the null test remains.
+// is being destroyed). Flag-off m_record is always null, so only the null test
+// remains.
 void destroyUnreachableCallLinkRecordSlow(CallLinkRecord*);
 ALWAYS_INLINE void destroyUnreachableCallLinkRecord(CallLinkRecord* record)
 {
@@ -167,8 +163,8 @@ public:
     // and setVirtualCall re-acquire it, and the destruction-context removers
     // (CallLinkInfoBase::removeOnDestruction, ~CallLinkInfo) take it
     // unconditionally. Nothing under this lock may allocate a GC cell: every
-    // allocation on the locked paths is fastMalloc (stub routines, records,
-    // pin-set entries). A cell allocation could block on an allocator stripe
+    // allocation on the locked paths is fastMalloc (stub routines, records).
+    // A cell allocation could block on an allocator stripe
     // held by another mutator whose sweep is running ~CallLinkInfo and
     // waiting for this lock — a deadlock no safepoint could break. Static
     // member: no layout change.
@@ -442,7 +438,9 @@ public:
         if (isLinked()) {
             if (auto* stub = this->stub())
                 stub->forEachDependentCell(functor);
-            else if (JSObject* callee = m_callee.get()) {
+            // Unvalidated: GIL off another thread can relink this site between the mode read above and this one, leaving
+            // the always-call sentinel in m_callee, which is not a cell (AUDIT R9-17).
+            else if (JSObject* callee = m_callee.unvalidatedGet()) {
                 if (!(std::bit_cast<uintptr_t>(callee) & polymorphicCalleeMask))
                     functor(callee);
             }

@@ -374,11 +374,11 @@ void JITCode::setOptimizationThresholdBasedOnCompilationResult(
     switch (result) {
     case CompilationResult::CompilationSuccessful:
         optimizeNextInvocation(codeBlock);
-        codeBlock->baselineVersion()->m_hasBeenCompiledWithFTL = true;
+        codeBlock->baselineVersion()->setHasBeenCompiledWithFTL();
         return;
     case CompilationResult::CompilationFailed:
         dontOptimizeAnytimeSoon(codeBlock);
-        codeBlock->baselineVersion()->m_didFailFTLCompilation = true;
+        codeBlock->baselineVersion()->setFailedFTLCompilation();
         codeBlock->didFailFTLCompilation();
         return;
     case CompilationResult::CompilationDeferred:

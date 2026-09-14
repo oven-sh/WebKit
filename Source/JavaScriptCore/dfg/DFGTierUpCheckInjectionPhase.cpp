@@ -56,7 +56,7 @@ public:
         if (!Options::useFTLJIT())
             return false;
         
-        if (m_graph.m_profiledBlock->m_didFailFTLCompilation)
+        if (m_graph.m_profiledBlock->hasFailedFTLCompilation())
             return false;
 
         if (!Options::bytecodeRangeToFTLCompile().isInRange(m_graph.m_profiledBlock->instructionsSize()))

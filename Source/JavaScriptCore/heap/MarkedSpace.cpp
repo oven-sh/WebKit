@@ -251,6 +251,28 @@ void MarkedSpace::sweepBlocks()
         });
 }
 
+unsigned MarkedSpace::sweepWeakBearingBlocks(unsigned budget)
+{
+    ASSERT(heap().isSharedServer() && heap().worldIsStoppedForAllClients());
+    // Start in the directory where the last call ran out of budget, so the first directories do not take the whole
+    // budget every cycle (SPEC-heap history §35).
+    Vector<BlockDirectory*, 64> directories;
+    forEachDirectory(
+        [&] (BlockDirectory& directory) -> IterationStatus {
+            directories.append(&directory);
+            return IterationStatus::Continue;
+        });
+    unsigned swept = 0;
+    size_t count = directories.size();
+    for (size_t i = 0; i < count && swept < budget; ++i) {
+        size_t index = (m_weakBearingSweepDirectoryCursor + i) % count;
+        swept += directories[index]->sweepWeakBearingBlocks(budget - swept);
+        if (swept >= budget)
+            m_weakBearingSweepDirectoryCursor = index;
+    }
+    return swept;
+}
+
 void MarkedSpace::registerPreciseAllocation(PreciseAllocation* allocation, bool isNewAllocation)
 {
     // SharedGC (§5.6/I16): once the server is shared, the precise registry
@@ -565,12 +587,14 @@ void MarkedSpace::endMarking()
     
     m_newlyAllocatedVersion = nextVersion(m_newlyAllocatedVersion);
     
-    for (unsigned i = m_preciseAllocationsOffsetForThisCollection; i < m_preciseAllocations.size(); ++i)
+    for (unsigned i = m_preciseAllocationsOffsetForThisCollection; i < m_preciseAllocations.size(); ++i) {
         m_preciseAllocations[i]->clearNewlyAllocated();
+        m_preciseAllocations[i]->clearAllocatedSinceLastMarking();
+    }
 
     if (ASSERT_ENABLED) {
         for (PreciseAllocation* allocation : m_preciseAllocations)
-            ASSERT_UNUSED(allocation, !allocation->isNewlyAllocated());
+            ASSERT_UNUSED(allocation, !allocation->isNewlyAllocated() && !allocation->isAllocatedSinceLastMarking());
     }
 
     forEachDirectory(

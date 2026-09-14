@@ -696,6 +696,8 @@ public:
     // gate-CAS through the ISS store) and re-reads ISS. After such an edge,
     // relaxed reads here are coherence-bound to return true.
     bool isSharedServer() const { return m_isSharedServer.load(std::memory_order_relaxed); }
+    struct WeakBearingSweepStats { uint64_t cycles; uint64_t blocks; unsigned maxUnrequested; };
+    WeakBearingSweepStats weakBearingSweepStats() const { return { m_weakBearingSweepCycles.load(std::memory_order_relaxed), m_weakBearingSweptBlocks.load(std::memory_order_relaxed), m_weakBearingSweepMaxUnrequested.load(std::memory_order_relaxed) }; }
 
     // SPEC-congc §5.2/§5.3(3) C1R (F33; ANNEX CGD4.4): the per-client
     // barrier-state routing predicate := useConcurrentSharedGCMarking && ISS.
@@ -1032,38 +1034,6 @@ public:
     inline bool isDeferred() const;
 
     CodeBlockSet& codeBlockSet() { return *m_codeBlocks; }
-
-    // SPEC-jit §5.8/§4.4 (record-named CodeBlock identity; w16 follow-up
-    // jit-null-metadatatable-counter-bump): a replaced/unlinked call-link
-    // record is retired through RetiredJITArtifacts (epoch-deferred), which
-    // keeps the RECORD memory and the target machine code dispatchable for a
-    // straggler that loaded `r = m_record` before the replacement. But the record's
-    // `codeBlockToTransfer` is a raw GC-cell pointer the straggler stores
-    // into the callee frame BEFORE any conservative root can see it (the
-    // only copies live inside the record itself during the few-instruction
-    // dispatch window, I16). Nothing kept that CELL alive: the GC could
-    // sweep the named CodeBlock and recycle its IsoSubspace slot, so the
-    // straggler transferred a WRONG live CodeBlock into the callee frame —
-    // observed as the unlinked-DFG/baseline prologue materializing
-    // m_jitData==null from a recycled FTL CodeBlock cell and crashing on the
-    // tier-up counter bump at jitDataRegister+offsetOfJITExecuteCounter
-    // (SIGSEGV write at 0x28, r13==0, scalebench W=16). These pins make every
-    // record's named CodeBlock a validated GC root for exactly the record's
-    // lifetime: pinned at publish, unpinned when the record is actually
-    // destroyed (epoch expiry). Marking validates each
-    // entry against codeBlockSet() under its lock, so an entry whose cell
-    // the GC already declared dead (removed by
-    // clearCurrentlyExecutingAndRemoveDeadCodeBlocks before any pin-driven
-    // mark could retain it) is skipped, never resurrected; a recycled slot
-    // re-added as a NEW CodeBlock is over-marked (kept alive) — benign.
-    // Counted: multiple retired records may name one CodeBlock. Lock order:
-    // the pin lock is taken OUTSIDE codeBlockSet()'s lock (the marking
-    // constraint holds both, pin lock first); pin/unpin take only the pin
-    // lock and never run under the codeBlockSet lock. Callable from any
-    // mutator (the §5.8 writers run under
-    // CallLinkInfo::s_callLinkSerializationLock, which never parks).
-    void pinRetiredCallLinkRecordCodeBlock(void* codeBlock);
-    void unpinRetiredCallLinkRecordCodeBlock(void* codeBlock);
 
 #if USE(FOUNDATION)
     template<typename T> inline void releaseSoon(RetainPtr<T>&&);
@@ -1737,9 +1707,6 @@ private:
     // comment for the full protocol.
     StrongSet m_strongSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
-    // §5.8 record-named CodeBlock pins — see pinRetiredCallLinkRecordCodeBlock.
-    Lock m_retiredCallLinkRecordCodeBlocksLock;
-    HashCountedSet<void*> m_retiredCallLinkRecordCodeBlocks WTF_GUARDED_BY_LOCK(m_retiredCallLinkRecordCodeBlocksLock);
     std::unique_ptr<JITStubRoutineSet> m_jitStubRoutines;
     CFinalizerOwner m_cFinalizerOwner;
     LambdaFinalizerOwner m_lambdaFinalizerOwner { *this };
@@ -1998,6 +1965,10 @@ private:
     // consumed by updateAllocationLimits — all world-stopped; always 0 when
     // !isSharedServer() or with a single attached client.
     size_t m_sharedGCWindowRetainedBytesThisCycle { 0 };
+    // SPEC-heap history §35, for $vm.weakBearingSweepStats(): written by the conductor inside the stop, read by any thread.
+    Atomic<uint64_t> m_weakBearingSweepCycles { 0 };
+    Atomic<uint64_t> m_weakBearingSweptBlocks { 0 };
+    Atomic<unsigned> m_weakBearingSweepMaxUnrequested { 0 };
     GCSafepointEpoch m_safepointEpoch; // §11.
     Lock m_stopTheWorldSafepointHookLock;
     Vector<void (*)(JSC::Heap&)> m_stopTheWorldSafepointHooks WTF_GUARDED_BY_LOCK(m_stopTheWorldSafepointHookLock);

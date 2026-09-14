@@ -169,6 +169,10 @@ public:
     // fired, never watched.
     InlineWatchpointSet& gilOffDoubleDemotionSet() { return m_gilOffDoubleDemotionSet; }
     static constexpr ptrdiff_t offsetOfLastArrayWord() { return OBJECT_OFFSETOF(ArrayAllocationProfile, m_storage); }
+    // The optimized report stores its array only when the word records none, or when the array's address has these
+    // bits clear: about one allocation in 32 per thread, whose allocations of one size class are sequential. In the
+    // steady state the word shared by every allocating thread is then only read (SPEC-objectmodel history §32).
+    static constexpr int32_t gilOffReportSampleMask = 31 << 4;
 
 private:
     using Storage = CompactPointerTuple<JSArray*, uint16_t>;

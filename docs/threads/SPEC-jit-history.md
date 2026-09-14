@@ -1206,3 +1206,141 @@ convert nothing. Int32 and Undecided arrays keep converting to Contiguous
 (stop-free relabels for the allocating thread, OM T4-O), and a Double-profiled
 put site whose value is not a number keeps its conversion (that array does
 change shape, once). Flag-off / GIL on: unchanged.
+
+## 43. Ninth landing round: record-named CodeBlocks are not pinned (E1)
+
+§5.8's records carry `codeBlockToTransfer`, which the fast path stores into
+the callee frame. An earlier amendment pinned that CodeBlock as a validated
+GC root from the record's publication until its retirement epoch expired
+(`RetiredJITArtifacts::pinPublishedCallLinkRecordCodeBlock`), after a
+W=16 scaling run showed a callee prologue reading the fields of a recycled
+CodeBlock slot. The pin retains too much: flag on, a function linked from
+any live caller keeps its optimized code, and everything that code's own
+records name, for as long as the caller lives. The new base's idle aging
+(`stress/codeblock-aging-ftl-idle.js`: FTL code with no execution counter of
+its own is jettisoned by an idle collection after a quiet period) therefore
+never fires flag on; flag off, upstream holds the callee weakly and unlinks
+its incoming calls when it dies.
+
+Why the pin is not needed. The failure it answered was a straggler entering
+a DEAD CodeBlock through a still-linked call after the world resumed: a dead
+block's incoming calls used to be unlinked by `~CodeBlock`, which runs on a
+lazy sweep after the resume, so a call made between the resume and that sweep
+could load the dead cell's pointer (after the conservative scan, so nothing
+marked it) and race the slot's reuse. TSAN-TRIAGE §17.2 row 17 closed that
+window where it opens: flag on,
+`CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks` unlinks every
+dead block's incoming calls in the End phase, world stopped, which clears
+their records (`unlinkOrUpgrade` -> `clearRecord`). With that in place:
+(1) every published record that names a CodeBlock C is on C's
+`m_incomingCalls` from before any stop at which C could be found dead until
+the record is replaced or cleared - the three publishers that name a
+CodeBlock (`setMonomorphicCallee` from `linkMonomorphicCall`,
+`unlinkOrUpgradeImpl`'s upgrade arm, `DirectCallLinkInfo::setCallTarget`
+from `linkDirectCall` and the upgrade arm) link the CallLinkInfo into C's
+list right after publishing, under the process-wide link lock, with no poll
+in between, and the linking thread holds C in a local across both, so a stop
+that could intervene would mark C through the conservative scan; the
+publishers that name no CodeBlock (virtual, polymorphic stub) are not
+affected; (2) a stop that finds C dead clears every record naming it before
+any mutator resumes; (3) the fast path from the `m_record` load to the frame
+store and the call has no poll (F6, I16), so a record loaded before a stop is
+consumed before it, and the callee frame then holds C, which the next stop's
+conservative scan marks; (4) a retired record is read only by such
+in-window stragglers, and none spans a stop. So after any stop no reachable
+record names a dead CodeBlock and no thread holds one; the pin adds nothing
+but retention.
+
+Change: the publish-time pin, its hand-over to the retired holder, the
+record's `pinHeap`, the heap's pinned-CodeBlock set and its marking
+constraint are removed; a retired record is plain data again (freed at epoch
+expiry). Test: `stress/codeblock-aging-ftl-idle.js` flag on (both GIL
+modes), and the W=16 scaling workload and call-heavy corpus tests under the
+amplifier, which is where the original failure was seen.
+
+## 44. Ninth landing round: FTL handler ICs at sites that can catch in their own frame
+
+With the flag on the FTL uses handler ICs (shared stubs; §5.2/D1). A shared stub cannot implement the per-site
+spill/restore and makeshift catch handler the repatching ICs use, so `InlineCacheCompiler::compileHandler` refuses to
+cache an FTL site whose exception exit reports live registers, and the site's every later access goes to the C++
+`...GaveUp` operation. The check counted a value kept on the stack as the frame and stack pointers (that is what
+`ValueRep::usedRegisters` reports for a stack slot), so any site that can throw into a catch of its own frame with a
+live value on the stack gave up. The common case is a property-adding helper inlined into a `for-of` loop, whose
+iterator-close handler is such a catch: the micro set's astar-like-nodes row made 700,000-1,000,000 give-ups a run
+GIL on and GIL off (`jit/ftl-handler-ic-in-catch-range-caches.js`), which with the transition C++ paths behind it was
+most of the row's 3x instruction count against flag off. Fix: the check ignores the frame and stack pointers - the
+catch reads a stack-resident value from the frame, which no stub disturbs; a value B3 keeps in any other register
+still makes the site give up. Considered and rejected: late-clobbering the callee-save registers too at such sites,
+so that B3 could keep no exit value in a register at all - with every volatile and callee-save register clobbered some
+patchpoints had no register left for their operands (`jit/ftl-handler-ic-throw-caught.js`: "FATAL: no register for
+%tmp", both GIL modes). Flag off: unchanged (repatching ICs).
+
+## 45. Ninth landing round: GIL on, the transition handlers do not claim (OM E4-G)
+
+The handler and per-case transition stubs (`emitConcurrentNonReallocatingTransition`, the allocating leg of
+`transitionHandlerImpl`) and the megamorphic probe's transition arm emit the claimed form only in a GIL-off process;
+GIL on they emit the owner predicate followed by the unclaimed sequence of OM E4-G. The rationale and the ordering
+argument are in SPEC-objectmodel history (E4-G). Measured: class-ctor-4 GIL on (four adds per construction through
+handler ICs, poly-proto) 0.61x its cycles, megamorphic-put-transition 0.86x, astar-like-nodes 0.86x (LANDING-PLAN, ninth round, Phase 3.2); `objectmodel/gil-on-unclaimed-transitions-across-handoffs.js` passes 5 of 5 and 500 of 500 amplified runs in both GIL modes.
+
+## 46. Ninth landing round: generated length updates on a shared butterfly, GIL off (I21; AUDIT R9-22)
+
+Found by the end-of-round amplifier campaign (one GIL-off run of `objectmodel/i03-n3-first-install-races.js`: "length
+after racing installs: expected 4 but got 3"); older than the round. Four threads each store one element into a fresh
+`new Array()`; rarely the array ends one element short. Under the amplifier GIL off, 8,000 runs a build at load about 35:
+the final candidate 11, the round's first build 2. The element is stored: a racing thread's plain length store lowers
+the length over it, so every reader treats it as a hole (raising the length again shows it). Interleaving: thread A
+bumps the length with the C++ CAS-max; thread B, in a generated hole-store leg, has already read the old length and
+plain-stores index + 1 below A's value. The C++ writers were made CAS-max in an earlier round (i03-t5, the racing
+growers); the generated code was not. By tier (a spin-barrier variant, 1,500 rounds): `--useJIT=0` 0 failures,
+Baseline only 2, up to DFG 2, default 5; storing through `Reflect.set` (the C++ path) 0 of 200 rounds where plain
+stores lose 2.
+
+Sites (every generated update of a published butterfly's length): LLInt `put_by_val` hole leg; the Baseline IC's
+indexed-store hole leg and its array-length setter; DFG `PutByVal` hole store (contiguous, double and their
+segmented-aware variants), `MultiPutByVal`'s hole, `ArrayPush` (single, multiple, segmented-aware), `ArrayPop`,
+`ArrayShift`, `ArrayUnshift`; FTL's `PutByVal` hole case, `ArrayPush`, `ArrayPop`, `ArrayUnshift`. Stores into freshly
+allocated butterflies are not affected.
+
+Rule (§5.5, length updates): GIL off, a plain length store only on the owner leg of DFG/FTL code whose plan elided the
+shared-write check; otherwise the runtime operation (CAS-max bump, §9.5 push/pop); the LLInt and the Baseline take the
+operation GIL off. The hole store is still recorded in the array profile on those paths (`MayStoreHole`: the
+interpreter before its branch, the Baseline IC before bailing, the runtime's CAS-max when it raises the length);
+otherwise the optimizing tiers speculate in bounds on arrays that take hole stores. A first version (r9v) routed the
+legs but dropped that profiling: FTL compiled the store in bounds, and a barrier reproduction lost the length in about 55
+% of rounds through a path not isolated (no assertion in Debug; `--useJIT=0`, interpreter plus Baseline, and up to DFG
+were clean; only FTL-compiled store code failed). With the profiling (r9w) every reproduction is clean, including one
+that warms the store up in bounds first - which the build before the fix fails in 947 of 1,500 rounds (the Baseline
+IC's plain hole leg, reached from FTL's in-bounds exits).
+
+Test: `jit/length-update-races-gil-off.js` (four threads, disjoint interleaved hole stores into one flat array, 400
+rounds; concurrent pushes are not checked - a push reads the length and stores at it, so two pushers may write one index;
+the fix makes a push's length update monotone, not the push atomic): before (r9u) 3 of 5 runs fail GIL off, after (r9w)
+5 of 5 pass; GIL on passes, flag off skips. Barrier reproductions, 1,500 rounds GIL off, r9u -> r9w: fresh array 3 -> 0,
+pre-converted array 0 of 200 in `repro2` both, in-bounds warm-up 947 -> 0; `objectmodel/i03-n3-first-install-races.js`
+amplified, 8 x 1,000 runs: 11 -> 0.
+
+Cost, and the second amendment. Routing the lower tiers' hole store to the operation (r9w) cost a hole-filling loop run
+in the interpreter and Baseline (`--useDFGJIT=0`) 3.57x the instructions GIL off (260 M -> 929 M; GIL on 0.998, all
+tiers 1.006, push/pop/length-setter loops within 2 %). So the interpreter's and the Baseline IC's hole store raise the
+length inline with the runtime's CAS-max (load; done if already at least index + 1; 32-bit weak CAS; retry), GIL off
+only (r9x): hole-filling loop 1.115x (r9w 3.57x), push loop 1.000x.
+
+Third amendment (r9y). Checking the runtime's forms showed that routing was no fix for push: `JSArray::pushInline`'s
+flag-on owner leg (Int32/Contiguous/Double) raised the length with a plain store, and once the array's set has fired a
+foreign writer flips SW with a lock-free DCAS and raises the length itself, so the owner's store can lower it (R9-22's
+runtime half; an audit of every runtime `setPublicLength` found no other plain raise of a published flat butterfly). The
+runtime's pop, shift and setLength shrink store plainly by design (SPEC-objectmodel review round 3: shrink-vs-grow is a
+program-level race), so routing the lowers had bought nothing. The rule became: every raise is the CAS-max GIL off unless
+E2-elided - inline in every tier (`SpeculativeJIT::emitRaisePublicLength`, FTL `raisePublicLength`) and in pushInline;
+lowers and ArrayStorage legs (owner-exclusive: a foreign AS flip takes a stop) stay plain. The test gained a second part
+- the owner pushes while three threads store into holes above it - which failed 2 of r9u's 5 failing runs.
+
+Counts, r9u -> r9y, GIL off: the test 5 of 5 runs fail -> 5 of 5 pass (it also passes with `--useDFGJIT=0`,
+`--useFTLJIT=0` and `--useJIT=0`; GIL on passes; flag off skips); barrier reproductions of 1,500 rounds (fresh array,
+pre-converted, in-bounds warm-up 947 -> 0, lower tiers, up to DFG) all 0; `objectmodel/i03-n3-first-install-races.js`
+amplified, 8 x 1,000 runs: 11 -> 0. Cost, instructions (median of 5), r9u -> r9y: once the sets have fired, a
+hole/push/pop/push-then-setter loop 1.09/1.09/1.06/1.08x (r9w: 3.9/3.5/3.5/3.2x); lower tiers, hole 1.11x and push
+1.02x; unfired all tiers GIL off 0.94-0.99x and GIL on 0.96-0.99x; flag off 0.93-1.005x (array-push microbenchmarks
+0.999x/1.000x: pushInline's GIL-off branch is not measurable); scaling workloads at 4 threads 0.96-1.00x.
+

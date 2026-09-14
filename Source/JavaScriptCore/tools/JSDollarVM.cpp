@@ -107,6 +107,7 @@
 #include <wtf/Language.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/ProcessID.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/TimeZone.h>
@@ -423,6 +424,70 @@ void Root::visitChildrenImpl(JSCell* thisObject, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(Root);
+
+// Records which thread ran each destructor: the creating thread or another (SPEC-heap §10G). Totals are process-wide.
+class DestructionProbe final : public JSDestructibleObject {
+public:
+    using Base = JSDestructibleObject;
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    static DestructionProbe* create(VM& vm, JSGlobalObject* globalObject, bool takesAPILock)
+    {
+        DollarVMAssertScope assertScope;
+        Structure* structure = createStructure(vm, globalObject, jsNull());
+        auto* probe = new (NotNull, allocateCell<DestructionProbe>(vm)) DestructionProbe(vm, structure, takesAPILock);
+        probe->finishCreation(vm);
+        s_created.exchangeAdd(1);
+        return probe;
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        static_cast<DestructionProbe*>(cell)->DestructionProbe::~DestructionProbe();
+    }
+
+    ~DestructionProbe()
+    {
+        if (m_takesAPILock) {
+            // An embedder's teardown may take the API lock (SPEC-heap §10G; F8 conductor re-entry).
+            JSLockHolder locker(vm());
+        }
+        if (WTF::Thread::currentSingleton().uid() == m_creatorThreadUID)
+            s_destroyedOnCreatingThread.exchangeAdd(1);
+        else
+            s_destroyedOnOtherThread.exchangeAdd(1);
+    }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    DECLARE_INFO;
+
+    static Atomic<uint64_t> s_created;
+    static Atomic<uint64_t> s_destroyedOnCreatingThread;
+    static Atomic<uint64_t> s_destroyedOnOtherThread;
+
+private:
+    DestructionProbe(VM& vm, Structure* structure, bool takesAPILock)
+        : Base(vm, structure)
+        , m_creatorThreadUID(WTF::Thread::currentSingleton().uid())
+        , m_takesAPILock(takesAPILock)
+    {
+    }
+
+    uint32_t m_creatorThreadUID;
+    bool m_takesAPILock;
+};
+
+Atomic<uint64_t> DestructionProbe::s_created;
+Atomic<uint64_t> DestructionProbe::s_destroyedOnCreatingThread;
+Atomic<uint64_t> DestructionProbe::s_destroyedOnOtherThread;
 
 class SimpleObject : public JSNonFinalObject {
 public:
@@ -1922,6 +1987,7 @@ void JSTestCustomGetterSetter::finishCreation(VM& vm)
 
 const ClassInfo Element::s_info = { "Element"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Element) };
 const ClassInfo Root::s_info = { "Root"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Root) };
+const ClassInfo DestructionProbe::s_info = { "DestructionProbe"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DestructionProbe) };
 const ClassInfo SimpleObject::s_info = { "SimpleObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SimpleObject) };
 const ClassInfo ImpureGetter::s_info = { "ImpureGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImpureGetter) };
 const ClassInfo CustomGetter::s_info = { "CustomGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CustomGetter) };
@@ -2289,6 +2355,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateBuiltin);
 static JSC_DECLARE_HOST_FUNCTION(functionRunTaintedString);
 static JSC_DECLARE_HOST_FUNCTION(functionGetPrivateProperty);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateRoot);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateDestructionProbe);
+static JSC_DECLARE_HOST_FUNCTION(functionDestructionProbeCounts);
+static JSC_DECLARE_HOST_FUNCTION(functionWeakBearingSweepStats);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateElement);
 static JSC_DECLARE_HOST_FUNCTION(functionGetElement);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateSimpleObject);
@@ -3899,6 +3968,40 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateRoot, (JSGlobalObject* globalObject, Call
     return JSValue::encode(Root::create(vm, globalObject));
 }
 
+// Usage: $vm.createDestructionProbe()
+// Usage: $vm.createDestructionProbe([takesAPILock]) - with true, the probe's destructor takes a JSLockHolder, as an
+// embedder's teardown may.
+JSC_DEFINE_HOST_FUNCTION(functionCreateDestructionProbe, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(DestructionProbe::create(globalObject->vm(), globalObject, callFrame->argument(0).toBoolean(globalObject)));
+}
+
+// [created, destroyed on the creating thread, destroyed on another thread], process-wide.
+// Usage: $vm.destructionProbeCounts()
+JSC_DEFINE_HOST_FUNCTION(functionDestructionProbeCounts, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    MarkedArgumentBuffer values;
+    values.append(jsNumber(DestructionProbe::s_created.load()));
+    values.append(jsNumber(DestructionProbe::s_destroyedOnCreatingThread.load()));
+    values.append(jsNumber(DestructionProbe::s_destroyedOnOtherThread.load()));
+    return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
+}
+
+// Usage: $vm.weakBearingSweepStats() -> [cycle ends that swept weak-bearing blocks, blocks swept in all, the most one
+// unrequested cycle end swept] (SPEC-heap history §35). All zero unless the heap is shared.
+JSC_DEFINE_HOST_FUNCTION(functionWeakBearingSweepStats, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    auto stats = globalObject->vm().heap.weakBearingSweepStats();
+    MarkedArgumentBuffer values;
+    values.append(jsNumber(stats.cycles));
+    values.append(jsNumber(stats.blocks));
+    values.append(jsNumber(stats.maxUnrequested));
+    return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionCreateElement, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4925,6 +5028,40 @@ JSC_DEFINE_HOST_FUNCTION(functionUseThreadGIL, (JSGlobalObject*, CallFrame*))
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsBoolean(Options::useThreadGIL()));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// [useThinChildExecutables, useLazySymbolTableConstants, usePrelinkedModuleInfo] after option validation: the bytecode
+// cache's deferred decoding, which the GIL-off activation checklist turns off.
+// Usage: $vm.lazyDecodingOptions()
+JSC_DEFINE_HOST_FUNCTION(functionLazyDecodingOptions, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    MarkedArgumentBuffer values;
+    values.append(jsBoolean(Options::useThinChildExecutables()));
+    values.append(jsBoolean(Options::useLazySymbolTableConstants()));
+    values.append(jsBoolean(Options::usePrelinkedModuleInfo()));
+    return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
+}
+
+// How many reactions JSPromise::forEachPendingReaction reports for a pending promise, or -1 for anything else.
+// Usage: $vm.pendingPromiseReactionCount(promise)
+JSC_DEFINE_HOST_FUNCTION(functionPendingPromiseReactionCount, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
+    if (!promise)
+        return JSValue::encode(jsNumber(-1));
+    // GIL off other threads change the status under the cell lock; forEachPendingReaction checks it under that lock.
+    if (!promise->vm().gilOff() && promise->status() != JSPromise::Status::Pending)
+        return JSValue::encode(jsNumber(-1));
+    unsigned count = 0;
+    promise->forEachPendingReaction(ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>([&](InternalMicrotask, JSValue, JSValue) {
+        ++count;
+        return true;
+    }));
+    return JSValue::encode(jsNumber(count));
+}
+#endif
 
 // Returns true if Gigacage is enabled.
 // Usage: $vm.isGigacageEnabled()
@@ -6133,6 +6270,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "setImpureGetterDelegate"_s, functionSetImpureGetterDelegate, 2);
 
     addConstructibleFunction(vm, allowIfNotFuzz, "Root"_s, functionCreateRoot, 0);
+    addFunction(vm, allowIfNotFuzz, "createDestructionProbe"_s, functionCreateDestructionProbe, 0);
+    addFunction(vm, allowIfNotFuzz, "destructionProbeCounts"_s, functionDestructionProbeCounts, 0);
+    addFunction(vm, allowIfNotFuzz, "weakBearingSweepStats"_s, functionWeakBearingSweepStats, 0);
     addConstructibleFunction(vm, allowIfNotFuzz, "Element"_s, functionCreateElement, 1);
 
     addFunction(vm, allowIfNotFuzz, "getElement"_s, functionGetElement, 1);
@@ -6217,6 +6357,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
     addFunction(vm, alwaysAllow, "useThreadGIL"_s, functionUseThreadGIL, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "pendingPromiseReactionCount"_s, functionPendingPromiseReactionCount, 1);
+    addFunction(vm, alwaysAllow, "lazyDecodingOptions"_s, functionLazyDecodingOptions, 0);
+#endif
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);

@@ -65,11 +65,19 @@ void HeapProfiler::clearSnapshots()
 // analyzeVariableNameEdge needs SymbolTable entries, which cannot be faulted in from inside marking.
 static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)
 {
-    HeapIterationScope iterationScope(vm.heap);
-    vm.heap.symbolTableSpace.forEachLiveCell([](HeapCell* cell, HeapCell::Kind) {
-        SUPPRESS_MEMORY_UNSAFE_CAST auto* symbolTable = static_cast<SymbolTable*>(cell);
-        ConcurrentJSLocker locker(symbolTable->m_lock);
-        symbolTable->materializeCachedEntriesIfNeeded(locker);
+    // Only a table decoded with useLazySymbolTableConstants can still be pending.
+    if (!Options::useLazySymbolTableConstants())
+        return;
+    // A HeapIterationScope stops allocation, which on a shared heap is legal only while no other client can allocate
+    // (MarkedSpace::willStartIterating; SPEC-heap history, ninth round). The snapshot builders get here with
+    // collection prevented and the JSLock held, and the walk does not allocate cells or call into JS.
+    vm.heap.runWithOtherClientsStopped([&] {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.symbolTableSpace.forEachLiveCell([](HeapCell* cell, HeapCell::Kind) {
+            SUPPRESS_MEMORY_UNSAFE_CAST auto* symbolTable = static_cast<SymbolTable*>(cell);
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            symbolTable->materializeCachedEntriesIfNeeded(locker);
+        });
     });
 }
 

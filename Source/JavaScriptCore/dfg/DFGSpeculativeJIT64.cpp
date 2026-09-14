@@ -9725,6 +9725,7 @@ void SpeculativeJIT::compileArrayUnshift(Node* node)
     GPRReg baseGPR = base.gpr();
     GPRReg storageGPR = storage.gpr();
     GPRReg storageLengthGPR = storageLength.gpr();
+    bool unshiftRaiseUsesCAS = lengthRaiseUsesCAS(arrayEdge); // SPEC-jit §5.5 length updates (history §46).
 
     switch (node->arrayMode().type()) {
     case Array::Int32:
@@ -9759,7 +9760,10 @@ void SpeculativeJIT::compileArrayUnshift(Node* node)
             lengthOneDone.link(this);
             store64(valueGPR, Address(storageGPR));
             add32(TrustedImm32(1), storageLengthGPR);
-            store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+            if (unshiftRaiseUsesCAS)
+                emitRaisePublicLength(storageGPR, storageLengthGPR, tmpGPR);
+            else
+                store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
             boxInt32(storageLengthGPR, storageLengthGPR);
 
             addSlowPathGenerator(slowPathCall(slowCases, this, operationArrayUnshift, storageLengthGPR, LinkableConstant::globalObject(*this, node), baseGPR, valueGPR));
@@ -9809,6 +9813,9 @@ void SpeculativeJIT::compileArrayUnshift(Node* node)
 
             FPRTemporary existing(this);
             FPRReg existingFPR = existing.fpr();
+            std::optional<GPRTemporary> lengthScratch;
+            if (unshiftRaiseUsesCAS)
+                lengthScratch.emplace(this);
 
             JumpList slowCases;
             load32(Address(storageGPR, Butterfly::offsetOfPublicLength()), storageLengthGPR);
@@ -9828,7 +9835,10 @@ void SpeculativeJIT::compileArrayUnshift(Node* node)
             lengthOneDone.link(this);
             storeDouble(valueFPR, Address(storageGPR));
             add32(TrustedImm32(1), storageLengthGPR);
-            store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
+            if (lengthScratch)
+                emitRaisePublicLength(storageGPR, storageLengthGPR, lengthScratch->gpr());
+            else
+                store32(storageLengthGPR, Address(storageGPR, Butterfly::offsetOfPublicLength()));
             boxInt32(storageLengthGPR, storageLengthGPR);
 
             addSlowPathGenerator(slowPathCall(slowCases, this, operationArrayUnshiftDouble, storageLengthGPR, LinkableConstant::globalObject(*this, node), baseGPR, valueFPR));
@@ -10257,6 +10267,7 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
         load8(Address(baseGPR, JSCell::indexingTypeAndMiscOffset()), scratch1GPR);
         and32(TrustedImm32(IndexingModeMask), scratch1GPR);
 
+        bool holeRaiseUsesCAS = lengthRaiseUsesCAS(baseEdge); // SPEC-jit §5.5 length updates (history §46).
         auto handleJSArrayStore = [&](IndexingType expectedMode) {
             if (Options::useJSThreads()) [[unlikely]] {
                 // As in compileMultiGetByVal, but with the write predicate.
@@ -10280,7 +10291,10 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
                     speculationCheck(OutOfBounds, JSValueSource(baseGPR), nullptr, outOfVector);
 
                 add32(TrustedImm32(1), indexGPR, lengthScratchGPR);
-                store32(lengthScratchGPR, Address(scratch2GPR, Butterfly::offsetOfPublicLength()));
+                if (holeRaiseUsesCAS) // scratch1GPR (the indexing mode) is dead once this mode's leg runs.
+                    emitRaisePublicLength(scratch2GPR, lengthScratchGPR, scratch1GPR);
+                else
+                    store32(lengthScratchGPR, Address(scratch2GPR, Butterfly::offsetOfPublicLength()));
 
                 inBoundsCase.link(this);
             }

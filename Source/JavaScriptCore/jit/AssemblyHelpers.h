@@ -1311,17 +1311,26 @@ public:
         none.link(this);
         return notDouble;
     }
-    void storeLastArrayToAllocationProfileGILOff(const void* wordAddress, GPRReg array, GPRReg scratch1, GPRReg scratch2)
+    void storeLastArrayToAllocationProfileGILOff(const void* wordAddress, GPRReg array, GPRReg scratch1, GPRReg scratch2, int32_t sampleMask)
     {
         // Re-load the type half here rather than reusing part 1's word: the
         // slow path in between may have just moved the recommendation off
-        // Double, and re-storing the stale half would undo that.
+        // Double, and re-storing the stale half would undo that. Store only
+        // when no array is recorded (none yet, or the slow path consumed it)
+        // or when `array & sampleMask` is zero (ArrayAllocationProfile::gilOffReportSampleMask).
         move(TrustedImmPtr(wordAddress), scratch2);
         load64(Address(scratch2), scratch1);
+        Jump sampled = branchTest64(Zero, array, TrustedImm32(sampleMask));
+        move(scratch1, scratch2);
+        and64(TrustedImm64((1ull << 48) - 1), scratch2);
+        Jump recorded = branchTest64(NonZero, scratch2);
+        sampled.link(this);
+        move(TrustedImmPtr(wordAddress), scratch2);
         urshift64(TrustedImm32(48), scratch1);
         lshift64(TrustedImm32(48), scratch1);
         or64(array, scratch1);
         store64(scratch1, Address(scratch2));
+        recorded.link(this);
     }
 
     // These methods convert between doubles, and doubles boxed and JSValues.

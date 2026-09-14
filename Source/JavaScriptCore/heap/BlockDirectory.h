@@ -70,6 +70,7 @@ public:
     void NODELETE snapshotUnsweptForEdenCollection();
     void NODELETE snapshotUnsweptForFullCollection();
     void sweep();
+    unsigned sweepWeakBearingBlocks(unsigned budget);
     void shrink();
     // Frees empty, non-destructible, not-in-use blocks while the space's
     // capacity exceeds targetCapacity; returns true if it stopped because the
@@ -254,6 +255,7 @@ private:
     // the Handle first. MarkedBlocks are often cold when first accessed so this can accelerate sweeping.
     Vector<std::pair<MarkedBlock::Handle*, MarkedBlock*>> m_blocks;
     Vector<unsigned> m_freeBlockIndices;
+    size_t m_weakBearingSweepCursor { 0 }; // Conductor-only, inside the stop (sweepWeakBearingBlocks).
 
     // Mutator uses this to guard resizing the bitvectors. Those things in the GC that may run
     // concurrently to the mutator must lock this when accessing the bitvectors.

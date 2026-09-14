@@ -2548,8 +2548,24 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
             loadi %opcodeStruct%::Metadata::m_arrayProfile.m_arrayProfileFlags[t5], t2
             ori constexpr ArrayProfileFlag::MayStoreHole, t2
             storei t2, %opcodeStruct%::Metadata::m_arrayProfile.m_arrayProfileFlags[t5]
+            leap _g_config, t2
+            bbneq JSCConfigOffset + JSC::Config::gilOffProcess[t2], 0, .casMaxLength
             addi 1, t3, t2
             storei t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0]
+            jmp .storeResult
+
+        .casMaxLength:
+            # SPEC-jit sec.5.5 length updates (history sec.46): GIL off another thread may raise the length between our
+            # read and our write, so it is raised with a CAS that never lowers it. The butterfly moves to t1 (the store
+            # callback reloads t1): x86's cmpxchg takes the expected value in t0.
+            move t0, t1
+            addi 1, t3, t2
+        .casMaxLengthRetry:
+            loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t0
+            biaeq t0, t2, .casMaxLengthDone
+            batomicweakcasi t0, t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .casMaxLengthRetry
+        .casMaxLengthDone:
+            move t1, t0
             jmp .storeResult
         end
 

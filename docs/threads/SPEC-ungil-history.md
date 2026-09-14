@@ -9089,3 +9089,217 @@ publication, so it is met per run only sometimes and not more often by
 longer runs; counted over runs: 8 of 2,400 plain GIL-off runs crashed
 before (19 of 7,200 shorter ones), 0 of 2,400 and 0 of 9,600 after; the
 cve test under the amplifier 13 of 24,000 runs before, 0 of 24,000 after.
+
+## Ninth landing round: lazily created FunctionExecutables GIL off (rebase follow-up)
+
+The new base creates a CodeBlock's FunctionExecutables on first use
+(`useLazyFunctionExecutables`, on by default, every non-eval CodeBlock without
+profilers): the entry for an inner function stays null until a `new_func*`
+slow path, the Baseline constant-pool fill or
+`prepareLazyStateForConcurrentCompilation` asks for it, and
+`m_numberOfUnmaterializedFunctionExecutables` counts the null entries so that
+`ensureFunctionExecutablesMaterialized` can stop early. Upstream wrote it for
+one mutator ("mutator only"): read the entry, `link()` an executable, store it
+with a plain `WriteBarrier::set`, decrement a plain counter. GIL off several
+threads run the same outer function's first `new_func` at once. Found by the
+rebased tree's own passes before any audit row was acted on: the Debug
+corpus asserted `!slot && m_numberOfUnmaterializedFunctionExecutables` and
+`!m_numberOfUnmaterializedFunctionExecutables` in four tests GIL off
+(`cve/mc-code-deferred-fire-stale-window.js`,
+`cve/mc-tdwn-vm-teardown-unjoined.js`, `dw1-sort-comparator-osr.js`,
+`giloff-prologue-tiers-up-frame-code-block.js`), and TSAN reported the plain
+store racing `materializeFunctionExecutable` on another thread and, through
+it, a FunctionExecutable's `InferredValue` read by a thread that had not
+constructed it. Consequences without the rule: two executables for one
+declaration (closures split between them), a counter that wraps or stays
+above zero (a prepared block then keeps a hole, which the DFG turns into an
+exit taken every time), and an unordered publication of a fresh cell.
+
+Rule (§K.3's lazy publication, in its duplicate-construction form: the
+candidate is a fresh cell with no effect outside itself, so racers may each
+build one and only publication is exclusive). GIL off,
+`materializeFunctionExecutable` returns an entry another thread has already
+published; otherwise it links its candidate and publishes it with one
+compare-and-swap from null (acquire-release). The winner then runs the
+write barrier and decrements the counter with an atomic subtract; a loser
+returns the winner's executable and drops its own (garbage). Readers
+(`functionDecl`, `functionExpr`, the `*IfMaterialized` forms the compiler
+threads use after the prepared bit) load the entry once and use the pointer;
+the address dependency orders the executable's fields on hardware, and under
+TSAN the load is an acquire so that TSAN sees the edge. The counter may lag a
+published entry by the winner's few instructions, so the two assertions that
+read it as "all entries are present" (the end of
+`ensureFunctionExecutablesMaterialized`, the replacement-copy constructor)
+accept a non-zero count GIL off; what they vouch for - every entry non-null
+after the loop - holds regardless, and the replacement copy starts its own
+count at zero (its source was prepared). Flag off and GIL on: the plain path,
+unchanged (a `new_func` slow path does not hand the GIL over; `link()`
+allocates but a GIL-on collection does not change mutators). Test:
+`vmstate/lazy-function-executables-race-gil-off.js` (six threads enter a fresh
+outer function with 24 inner declarations at once, forty times; every thread
+must get functions of one executable per declaration).
+
+## Ninth landing round: the GIL-off activation checklist runs on a settled option set
+
+`Options::notifyOptionsChanged` carries the U0 activation checklist: refuse a
+GIL-off shape without the shared-heap trio, refuse it without
+`useThreadGILOffUnsafe`, refuse it on non-64-bit and non-Linux builds (each by
+forcing `useThreadGIL=1`), and, for a GIL-off shape, force off LOL, Wasm and
+the FFI JIT paths. Every `setOption(..., verify = true)` runs
+`notifyOptionsChanged`, and `Options::initialize` applies the `JSC_*`
+environment that way, one variable at a time, in `environ` order; an
+embedder's customization callback (Bun applies its `BUN_JSC_*` options there)
+does the same. So the checklist judged intermediate states. With
+`JSC_useThreadGIL=0` ahead of `JSC_useThreadGILOffUnsafe=1`, the state after
+the first was "GIL off without the override": refused, logged ("refusing
+GIL-off configuration ... forcing useThreadGIL=1"), `useThreadGIL` forced to
+1. The shell ends GIL off anyway because its heuristic pass re-reads every
+`JSC_*` variable after the loop and the initializer's final validation then
+sees the whole set; an embedder whose options come only through the callback
+has no second pass and ends GIL ON, silently. And a GIL-off-looking
+intermediate state followed by `useThreadGIL=1` would have left Wasm, LOL and
+the FFI JIT paths forced off in a GIL-on process.
+
+Rule: while `Options::initialize` is applying its batch (from its start to
+the final `notifyOptionsChanged` after the customization callback), the
+checklist is deferred; that final validation runs it once, on the settled
+set. After initialization every validation runs it, as before - the shell
+parses its command line with `verify = false` and validates once, so a
+command line is one batch too. The normalization that `useJSThreads` implies
+the VMLite/atom-table/structure-lock trio, and the gilOffProcess latch, are
+unchanged. Flag off: the checklist's branches all require `useJSThreads`, so
+nothing changes. Test: `api/options-environment-order-gil-off.js` sets the
+four GIL-off variables with `useThreadGIL=0` second (a new runner directive,
+`threadsForbidOutput`, fails the run if the refusal line appears) and asserts
+`$vm.useThreadGIL()` is false.
+
+## Ninth landing round: the bytecode cache's lazy state and prelinked module records GIL off
+
+The new base defers decoding work out of a bytecode-cache load until first use
+(AUDIT-upstream-since-rebase §8): a child `UnlinkedFunctionExecutable`'s
+name, TDZ variables, rare data and cold scalars stay in the payload
+(`useThinChildExecutables`), a SymbolTable constant's entries stay there
+(`useLazySymbolTableConstants`), a three-character identifier goes through a
+small VM-wide cache before the atom table (`useFastCachedAtoms`), and a
+module record created from a prelinked graph builds its by-name maps on
+demand (`usePrelinkedModuleInfo`). All four assume one mutator: the thin
+child's members are a union switched by `settle()` with no lock (R9-1); one
+`Decoder` per payload serves the eager decode under the compilation lock and
+the lazy paths under a table's lock or none, with a non-atomic reference
+count and growable tables (R9-3); `cloneScopePart` reads a table's pending
+state without its lock (R9-4); the three-character cache is created and
+evicted with plain stores (R9-5); a lazy `atomFor` can overwrite a slot the
+eager path set to a cell (R9-6); a prelinked record sets its "materialized"
+flag before filling the maps a spawned thread may read (R9-8). The earlier
+row VM-12 made bytecode-cache decoding GIL-off-safe by one invariant: every
+decode holds the GIL-off compilation lock. The lazy paths broke it.
+
+Rule: in a GIL-off process the activation checklist turns
+`useThinChildExecutables`, `useLazySymbolTableConstants` and
+`usePrelinkedModuleInfo` off, so a payload is decoded eagerly under the
+compilation lock again and a prelinked record copies its entries out of the
+graph at creation, before it is published (the form an ordinary
+ModuleAnalyzer record has); the three-character cache is bypassed GIL off
+(`AtomStringImpl::add`). `Decoder` and `PrelinkedModuleGraph` become
+thread-safe reference counted in every mode: their references are dropped by
+destructors on whichever thread sweeps. With the GIL on all of it stays on:
+one mutator runs at a time and none of these paths calls into JS or hands the
+GIL over. Cost, GIL off only: a bytecode-cache load decodes what it used to
+defer (the pre-rebase behaviour); measured in PERF-RESULTS. A lock-based form
+that keeps the deferral GIL off (the compilation lock in each materializer,
+re-checking the deferred bit under it) is the recorded alternative.
+
+Smaller rows of the same reading, each with its rule:
+- R9-12: two mutators can build a catch's value-profile buffer at once. GIL
+  off the buffer is published by a compare-and-swap from null; the loser
+  frees its own and returns the winner's.
+- R9-13: `CodeBlock::jettison` exempted OldAge from its stop assertion. Every
+  OldAge jettison comes from the end phase of a collection, world stopped;
+  the assertion now requires that stop for OldAge as it does a JSThreads stop
+  for the other reasons.
+- R9-14: `VM::m_startupJITDeferralScale` and `m_asyncContextTrackingEnabled`
+  are read by every thread and written once or by the embedder; they are
+  relaxed atomics (plain moves; TSAN hygiene).
+- R9-11: the embedder-facing walkers of a pending promise's reactions
+  (`JSPromise::forEachPendingReaction`, used by the module loader's
+  async-cycle check and by Bun's async stack traces, and
+  `asyncStackTraceContext`) load the packed kind/flags/cell word, the slot and
+  the reaction chain separately and without a lock. GIL off every writer of a
+  shared promise's packed word and slot holds its cell lock, and a settle
+  takes the chain out under it and then reverses it in place (`setNext`)
+  after releasing it; a walker racing either reads a kind with another state's
+  cell, or follows next pointers the reversal is rewriting. Rule: GIL off a
+  walker takes the cell lock, returns if the promise is no longer pending, and
+  copies what it reports (task, promise, context per reaction) before
+  releasing it - under the lock the chain cannot be taken out, so it is not
+  being reversed - then roots the copies (`MarkedArgumentBuffer`, before any
+  safepoint) and calls back outside the lock (the callback may allocate).
+  Flag off and GIL on: the unlocked walk, unchanged.
+- R9-17 (found by the rebased Debug corpus, `giloff-prologue-tiers-up-frame-code-block.js`
+  GIL off: a validated read of `0x1`): the new base's global inlining planner
+  collects the callees a CodeBlock's call sites name
+  (`CodeBlock::collectProfiledCallees` -> `CallLinkInfo::forEachDependentCell`)
+  on the mutator under the block's lock and with collection deferred; GIL off
+  another thread relinks those sites under the link lock at the same time, so
+  the mode it reads as Monomorphic can be Virtual by the time it reads
+  `m_callee`, which then holds the always-call sentinel. The value only feeds
+  an inlining heuristic and the cells cannot be collected meanwhile; the read
+  is now unvalidated and the sentinel filtered before the callee is used (Debug
+  validated the cell first and crashed; Release returned the sentinel to the
+  filter already).
+- R9-15 (module namespace objects; AUDIT-upstream-since-rebase §8): a record's
+  namespace object is created on first use by `getModuleNamespace`. GIL off a
+  spawned thread reaches that by reading an `export * as` binding through
+  another namespace, or by running a top-level-await continuation, so two
+  threads could each build one: the module environment's `*namespace*` slot
+  and the record's field could then keep different objects (`m.sub` and the
+  main thread's `import()` disagree), and a reader without acquire ordering
+  could see the field before the slot. The object is still built outside any
+  lock (building takes the record's cell lock through the resolution cache,
+  which is not recursive). It is published by a compare-and-swap on the field;
+  every thread returns the winner, and only the winner then writes the
+  environment's `*namespace*` slot, outside any lock. A first version
+  published under the record's cell lock with the slot written first; the
+  Debug corpus caught the slot write reaching a trap check with the cell lock
+  held (`!GCCellLockDepth::current()`), which GIL off can deadlock a stop, so
+  the lock was dropped. A reader that sees the field set but the slot still
+  empty (the window between the two writes) uses the field instead of
+  throwing a TDZ error (`JSModuleNamespaceObject::getOwnPropertySlotCommon`;
+  flag off and GIL on the slot is written first, so that branch is never
+  taken). The fast path reads the field with an acquire load GIL off. The
+  deferred namespace is published the same way. Flag off and GIL on:
+  unchanged. Test: `api/module-namespace-identity-gil-off.js` (eight modules
+  of 2,000 exports each, re-exported as namespaces; four threads and the main
+  thread read each binding at once). Adjacent and not fixed this round: the
+  move of a cyclic module record to Evaluating is not claimed under its cell
+  lock (the rule AUD1.K3(c) states), so evaluation driven from a spawned thread
+  (a deferred namespace's `evaluateSync`, a top-level-await continuation)
+  writes the status unlocked; LANDING-PLAN Open items.
+
+## Ninth landing round: the VMManager counters under the shared collector's stop (AUDIT R9-20; open)
+
+Bun's `worker_threads` test, GIL off with the keep-alive preload, aborted in `VMManager::enterStopTheWorldParticipation`
+on `RELEASE_ASSERT(m_numberOfStoppedVMs + m_numberOfBlockedVMs <= m_numberOfActiveVMs)`, reached from a spawned JS
+thread leaving an `Atomics.wait` on an object property and polling the shared collector's stop (`StopReason::GC`,
+requested by `Heap::openSharedGCStopWindow`): 1 of 3 and 1 of 5 runs of the r9e tree under heavy load, and once in the
+r9b ledger run.
+
+Not the new base's `VMBlockingScope`: under useJSThreads the SharedArrayBuffer wait takes the per-wait-node path before
+it, and under gdb no VM was counted blocked in 146 stop windows. The count that goes wrong is `stopped`: `resumeTheWorld`
+leaves `m_numberOfStoppedVMs` to be decremented by each woken thread after it re-takes the world lock (a thread whose
+resume hook blocks on the next stop stays counted), and the next stop, begun from RunAll, zeroes `active` and recounts
+only the VMs that are entered. A thread still counted stopped whose VM is not recounted leaves stopped > active, and
+the next arrival trips the assertion. Candidate escapes: a representative that arrived at a trap poll outside any
+VMEntryScope (Bun runs C++ from its event loop; the jsc shell never does, which may be why seven jsc repros and 60+
+runs never failed), a sibling thread's exit decrementing the VM while its representative is counted stopped, and a VM
+destroyed during a stop (removed from the list but not uncounted).
+
+Not fixed this round: the abort did not recur in 28 later runs (the final tree's Bun, and 8 runs of the r9e Bun at a
+lower load), so a fix could not be tested against it. The design, for when it is: each VM carries a counted-stopped
+flag set with the stopped count; the recount at a stop's start counts VMs holding it as active; the representative
+clears it at participation exit and, if its VM is not entered, decrements the VM on the way out; a destroyed VM not
+counted stopped is uncounted; `stopped <= active` is asserted at the recount, where a stale count is made. Shipped
+instead: with the flag on, VMManager records its last 128 counter transitions (the operation, the VM, the thread, the
+counts, whether the VM was entered) and prints them with every VM's state when the invariant breaks, so the next
+occurrence names its escape.
+

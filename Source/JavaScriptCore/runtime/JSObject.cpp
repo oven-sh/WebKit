@@ -911,9 +911,12 @@ JSValue JSObject::tryGetIndexQuicklyConcurrent(unsigned i, ArrayProfile* arrayPr
 // the element store above each call is published no later than the length;
 // the reader-side acquire gap (ARM64) is the KNOWN RESIDUAL recorded at
 // Butterfly::bumpPublicLengthToAtLeast.
-static ALWAYS_INLINE void updatePublicLengthAfterDenseStoreConcurrent(Butterfly* butterfly, unsigned i)
+static ALWAYS_INLINE void updatePublicLengthAfterDenseStoreConcurrent(Butterfly* butterfly, unsigned i, ArrayProfile* arrayProfile = nullptr)
 {
-    butterfly->bumpPublicLengthToAtLeast(i + 1);
+    // SPEC-jit §5.5 length updates (history §46): the generated hole legs take this path GIL off, so it records the hole
+    // in the profile the way they did - otherwise DFG/FTL speculate in bounds on arrays that take hole stores.
+    if (butterfly->bumpPublicLengthToAtLeast(i + 1) && arrayProfile)
+        arrayProfile->setMayStoreHole();
 }
 
 // §4.6 F1 for ArrayStorage writers: the first foreign write to an (owner, SW=0)
@@ -997,7 +1000,7 @@ bool JSObject::trySetIndexQuicklyConcurrent(VM& vm, unsigned i, JSValue v, Array
             return true;
         }
         butterfly->contiguous().at(this, i).setWithoutWriteBarrier(v);
-        updatePublicLengthAfterDenseStoreConcurrent(butterfly, i);
+        updatePublicLengthAfterDenseStoreConcurrent(butterfly, i, arrayProfile);
         vm.writeBarrier(this, v);
         return true;
     }
@@ -1016,7 +1019,7 @@ bool JSObject::trySetIndexQuicklyConcurrent(VM& vm, unsigned i, JSValue v, Array
         if (i >= butterfly->vectorLength())
             return false;
         butterfly->contiguous().at(this, i).setWithoutWriteBarrier(v);
-        updatePublicLengthAfterDenseStoreConcurrent(butterfly, i);
+        updatePublicLengthAfterDenseStoreConcurrent(butterfly, i, arrayProfile);
         vm.writeBarrier(this, v);
         return true;
     }
@@ -1049,7 +1052,7 @@ bool JSObject::trySetIndexQuicklyConcurrent(VM& vm, unsigned i, JSValue v, Array
             return true;
         }
         WTF::atomicStore(&butterfly->contiguousDouble().at(this, i).m_data, value, std::memory_order_relaxed); // relaxed atomic (intentionally racy JS value word)
-        updatePublicLengthAfterDenseStoreConcurrent(butterfly, i);
+        updatePublicLengthAfterDenseStoreConcurrent(butterfly, i, arrayProfile);
         return true;
     }
     case NonArrayWithArrayStorage:

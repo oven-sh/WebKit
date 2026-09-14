@@ -254,8 +254,10 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 
     // SPEC-objectmodel Task 8 (§4.4) + review round 3 (§3 foreign-first-write
     // protocol, I12/I21): the flat in-place fast paths below mutate a FLAT
-    // word (element store + plain setPublicLength) and are sound only for the
-    // word's exclusive owner - (currentTID, 0). Everything else routes through
+    // word (element store + length raise) and are sound only for the word's
+    // owner - (currentTID, 0). GIL off even the owner raises with the CAS-max
+    // (SPEC-jit §5.5: once the set has fired, a foreign writer flips SW
+    // lock-free and raises the length itself). Everything else routes through
     // the §9.5 indexed driver, which carries the gates the fast paths elide:
     //   - segmented words: spine-addressed stores, CAS-max length bumps (the
     //     flat accessors would garbage-decode the spine);
@@ -424,7 +426,10 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
             butterfly->contiguousInt32().at(this, length).setWithoutWriteBarrier(value);
-            butterfly->setPublicLength(length + 1);
+            if (g_jscConfig.gilOffProcess) [[unlikely]]
+                butterfly->bumpPublicLengthToAtLeast(length + 1); // SPEC-jit §5.5 length updates: a foreign writer may have raised it (R9-22).
+            else
+                butterfly->setPublicLength(length + 1);
             return;
         }
 
@@ -445,7 +450,10 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
             butterfly->contiguous().at(this, length).setWithoutWriteBarrier(value);
-            butterfly->setPublicLength(length + 1);
+            if (g_jscConfig.gilOffProcess) [[unlikely]]
+                butterfly->bumpPublicLengthToAtLeast(length + 1); // SPEC-jit §5.5 length updates: a foreign writer may have raised it (R9-22).
+            else
+                butterfly->setPublicLength(length + 1);
             vm.writeBarrier(this, value);
             return;
         }
@@ -482,7 +490,10 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
             butterfly->contiguousDouble().at(this, length) = valueAsDouble;
-            butterfly->setPublicLength(length + 1);
+            if (g_jscConfig.gilOffProcess) [[unlikely]]
+                butterfly->bumpPublicLengthToAtLeast(length + 1); // SPEC-jit §5.5 length updates: a foreign writer may have raised it (R9-22).
+            else
+                butterfly->setPublicLength(length + 1);
             return;
         }
 

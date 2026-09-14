@@ -145,6 +145,7 @@ public:
     void snapshotUnswept();
     void clearNewlyAllocated();
     void sweepBlocks();
+    unsigned sweepWeakBearingBlocks(unsigned budget);
     void sweepPreciseAllocations();
     void assertNoUnswept();
     size_t objectCount();
@@ -249,6 +250,7 @@ private:
     SentinelLinkedList<WeakSet, BasicRawSentinelNode<WeakSet>> m_newActiveWeakSets;
 
     SinglyLinkedListWithTail<BlockDirectory> m_directories;
+    unsigned m_weakBearingSweepDirectoryCursor { 0 }; // Conductor-only, inside the stop (sweepWeakBearingBlocks).
 
     friend class HeapVerifier;
 };

@@ -40,11 +40,14 @@
 #                                  GIL-off failure is deterministic; a
 #                                  flaky race pin would flap XFAIL/XPASS.
 #   //@ threadsEnv("NAME=value", ...)
+#   //@ threadsForbidOutput("text", ...)  a run whose output (stdout+stderr) contains
+#                                  one of the texts FAILs, even if it exited 0
 #                                  set these environment variables for
 #                                  every run of the file (for example
 #                                  GIGACAGE_ENABLED=0, so that a wild
 #                                  access faults instead of landing in
 #                                  the cage)
+#   //@ threadsNoAmplify        (timing-ratio checks: run plain under --amplify)
 #   //@ threadsRequireGILOff
 #                                  the test waits for another thread by
 #                                  spinning on shared state. GIL-on, threads
@@ -419,6 +422,15 @@ probe_options() { # $1 = space-joined args ("" => trivially supported)
     done
     local probe_args=()
     read -r -a probe_args <<<"$key"
+    # The probe asks whether this option set parses and brings up an empty program; continuous collection only makes
+    # that bring-up slow (a Debug build under load took 90-300 s for `-e ''` and the probe's timeout failed tests
+    # that pass), so it is left out of the probe - the test itself still runs with it.
+    local filtered=()
+    local a
+    for a in "${probe_args[@]}"; do
+        [[ "$a" == --collectContinuously=* ]] || filtered+=("$a")
+    done
+    probe_args=(${filtered[@]+"${filtered[@]}"})
     local probe_err
     probe_err="$(mktemp "${TMPDIR:-/tmp}/threads-probe-err.XXXXXX")" || die "mktemp failed"
     local status=0
@@ -485,6 +497,43 @@ file_env() { # $1 = file
     done < "$1"
 }
 
+# ---- threadsForbidOutput support ----
+# Fills FILE_FORBID with the texts of the file's threadsForbidOutput directives.
+file_forbid_output() { # $1 = file
+    FILE_FORBID=()
+    local line word
+    while IFS= read -r line; do
+        [[ "$line" == "//@"* ]] || return 0
+        [[ "$line" == '//@ threadsForbidOutput('* ]] || continue
+        while IFS= read -r word; do
+            FILE_FORBID+=("$word")
+        done < <(grep -o '"[^"]*"' <<<"$line" | tr -d '"')
+    done < "$1"
+}
+# Prints the first forbidden text found in $TMP_OUT; status 0 iff one was found.
+forbidden_output_found() {
+    local text
+    for text in ${FILE_FORBID[@]+"${FILE_FORBID[@]}"}; do
+        if grep -qsF -- "$text" "$TMP_OUT"; then
+            echo "$text"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ---- threadsNoAmplify support ----
+# A test whose check is a timing ratio (a scaling or fence check) runs plain under --amplify: the amplifier's random
+# yields slow one side of the ratio, and a timing failure there says nothing about a race.
+file_no_amplify() { # $1 = file
+    local line
+    while IFS= read -r line; do
+        [[ "$line" == "//@"* ]] || return 1
+        [[ "$line" == '//@ threadsNoAmplify'* ]] && return 0
+    done < "$1"
+    return 1
+}
+
 # ---- threadsRequireGILOff support ----
 file_requires_giloff() { # $1 = file
     local line
@@ -545,7 +594,7 @@ fi
 
 run_one() { # file, args...
     local file="$1"; shift
-    if [[ "$AMPLIFY" -eq 1 && -x "$AMPLIFY_SH" ]]; then
+    if [[ "$AMPLIFY" -eq 1 && -x "$AMPLIFY_SH" ]] && ! file_no_amplify "$file"; then
         local aargs=()
         [[ -n "${AMPLIFY_RUNS:-}" ]] && aargs+=(--runs "$AMPLIFY_RUNS")
         local opt
@@ -555,14 +604,21 @@ run_one() { # file, args...
         env ${FILE_ENV[@]+"${FILE_ENV[@]}"} "$AMPLIFY_SH" ${aargs[@]+"${aargs[@]}"} "$JSC" "$file" >"$TMP_OUT" 2>&1
         return $?
     fi
-    if [[ "$AMPLIFY" -eq 1 && "$WARNED_NO_AMPLIFY" -eq 0 ]]; then
+    if [[ "$AMPLIFY" -eq 1 && ! -x "$AMPLIFY_SH" && "$WARNED_NO_AMPLIFY" -eq 0 ]]; then
         echo "run-tests: warning: $AMPLIFY_SH not found/executable; running plain" >&2
         WARNED_NO_AMPLIFY=1
     fi
-    ${TIMEOUT_WRAP[@]+"${TIMEOUT_WRAP[@]}"} env ${FILE_ENV[@]+"${FILE_ENV[@]}"} "$JSC" "$@" "$file" >"$TMP_OUT" 2>&1
+    # Continuous collection makes bring-up and teardown slow and load-sensitive on a Debug build (an empty program
+    # took 90-300 s under the parallel corpus's load, 2-3 s at load 24): such tests get three times the timeout.
+    local wrap=(${TIMEOUT_WRAP[@]+"${TIMEOUT_WRAP[@]}"}) secs="$TEST_TIMEOUT_SECS"
+    if [[ ${#wrap[@]} -gt 0 && " $* " == *" --collectContinuously=1 "* ]]; then
+        secs=$((TEST_TIMEOUT_SECS * 3))
+        wrap=(timeout -k 10 "$secs")
+    fi
+    ${wrap[@]+"${wrap[@]}"} env ${FILE_ENV[@]+"${FILE_ENV[@]}"} "$JSC" "$@" "$file" >"$TMP_OUT" 2>&1
     local status=$?
-    if [[ ${#TIMEOUT_WRAP[@]} -gt 0 && ( $status -eq 124 || $status -eq 137 ) ]]; then
-        echo "run-tests: TIMEOUT after ${TEST_TIMEOUT_SECS}s (hang): $file" >>"$TMP_OUT"
+    if [[ ${#wrap[@]} -gt 0 && ( $status -eq 124 || $status -eq 137 ) ]]; then
+        echo "run-tests: TIMEOUT after ${secs}s (hang): $file" >>"$TMP_OUT"
     fi
     return $status
 }
@@ -582,6 +638,7 @@ for file in "${FILES[@]}"; do
         FILE_XFAIL_GILOFF=1
     fi
     file_env "$file"
+    file_forbid_output "$file"
     FILE_REQUIRES_GILOFF=0
     if file_requires_giloff "$file"; then
         FILE_REQUIRES_GILOFF=1
@@ -648,6 +705,11 @@ for file in "${FILES[@]}"; do
             if grep -qs '^THREADS-PREMISE-SKIP:' "$TMP_OUT"; then
                 SKIPPED=$((SKIPPED + 1))
                 echo "SKIP $label (premise inverted by ambient configuration; ambient JSC_* env: ${AMBIENT_JSC_ENV:-none detected})"
+                sed 's/^/     | /' "$TMP_OUT"
+            elif forbidden="$(forbidden_output_found)"; then
+                FAIL=$((FAIL + 1))
+                FAILED_TESTS+=("$label [forbidden output]")
+                echo "FAIL $label (output contains \"$forbidden\", which the file's threadsForbidOutput directive forbids)"
                 sed 's/^/     | /' "$TMP_OUT"
             elif [[ "$RUN_XFAIL" -eq 1 ]]; then
                 FAIL=$((FAIL + 1))

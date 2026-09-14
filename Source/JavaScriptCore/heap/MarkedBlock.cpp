@@ -546,7 +546,7 @@ void MarkedBlock::Handle::didRemoveFromDirectory()
     // (steal, shrink, teardown), so no cell in it is being converted and no
     // lock-free hint reader can race this clear. Same gate as every other
     // hint touch (see m_isDestructibleHint).
-    if (m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess) [[unlikely]]
+    if (g_jscConfig.gilOffProcess && m_directory->heap().isSharedServer()) [[unlikely]]
         WTF::atomicStore(&m_isDestructibleHint, false, std::memory_order_relaxed);
 
     m_index = std::numeric_limits<unsigned>::max();

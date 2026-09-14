@@ -105,7 +105,7 @@ CompilationResult BaselineJITPlan::finalize()
         CODEBLOCK_LOG_EVENT(m_codeBlock, "delayJITCompile", ("compilation failed"));
         dataLogLnIf(Options::verboseOSR(), "    JIT compilation failed.");
         m_codeBlock->dontJITAnytimeSoon();
-        m_codeBlock->m_didFailJITCompilation = true;
+        m_codeBlock->setFailedJITCompilation();
         break;
     case CompilationResult::CompilationSuccessful:
         WTF::crossModifyingCodeFence();

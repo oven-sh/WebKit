@@ -66,10 +66,15 @@ public:
 
     ValueArg* get(const KeyType& key) const
     {
-        if (m_locking == WeakGCMapLocking::Yes) {
-            Locker locker { m_lock };
-            return m_map.get(key);
-        }
+        // The locked lookup is out of line so the unlocked one inlines as upstream's does (flag off never locks).
+        if (m_locking == WeakGCMapLocking::Yes) [[unlikely]]
+            return getLocked(key);
+        return m_map.get(key);
+    }
+
+    NEVER_INLINE ValueArg* getLocked(const KeyType& key) const
+    {
+        Locker locker { m_lock };
         return m_map.get(key);
     }
 

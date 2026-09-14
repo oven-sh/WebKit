@@ -45,6 +45,13 @@ ALWAYS_INLINE VM& VMTraps::vm() const
 
 inline void VMTraps::deferTermination(DeferAction deferAction)
 {
+    deferTermination(vm(), deferAction);
+}
+
+// `vm` is this instance's VM (vm()), passed by callers that already hold it.
+inline void VMTraps::deferTermination(VM& vm, DeferAction deferAction)
+{
+    ASSERT(&vm == &this->vm());
     auto originalCount = m_deferTerminationCount++;
     ASSERT(m_deferTerminationCount < UINT_MAX);
     // Strictly speaking, we're only interested in vm.hasPendingTerminationException() here.
@@ -52,15 +59,21 @@ inline void VMTraps::deferTermination(DeferAction deferAction)
     // Since this checks is intended to be cheap, we'll just do the cheaper check of vm.exception()
     // which itself rarely returns true. We'll let the slow path do the full
     // vm.hasPendingTerminationException() check instead.
-    if (!originalCount && vm().exception()) [[unlikely]]
+    if (!originalCount && vm.exception()) [[unlikely]]
         deferTerminationSlow(deferAction);
 }
 
 inline void VMTraps::undoDeferTermination(DeferAction deferAction)
 {
+    undoDeferTermination(vm(), deferAction);
+}
+
+inline void VMTraps::undoDeferTermination(VM& vm, DeferAction deferAction)
+{
+    ASSERT(&vm == &this->vm());
     ASSERT(m_deferTerminationCount > 0);
-    ASSERT(!m_suspendedTerminationException || vm().hasTerminationRequest());
-    if (!--m_deferTerminationCount && vm().hasTerminationRequest()) [[unlikely]]
+    ASSERT(!m_suspendedTerminationException || vm.hasTerminationRequest());
+    if (!--m_deferTerminationCount && vm.hasTerminationRequest()) [[unlikely]]
         undoDeferTerminationSlow(deferAction);
 }
 

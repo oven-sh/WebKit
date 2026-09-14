@@ -901,6 +901,51 @@ void jsThreadsThreadGranularStopTheWorldAndRun(VM& vm, const ScopedLambda<void()
         selfClient->acquireHeapAccess(); // ...re-acquire access LAST (R1.i).
 }
 
+namespace {
+struct VMManagerCounterEvent {
+    const char* what;
+    VM* vm;
+    uint32_t thread;
+    unsigned stopped;
+    unsigned active;
+    unsigned blocked;
+    int mode;
+    bool entered;
+};
+constexpr unsigned vmManagerCounterEventCount = 128;
+VMManagerCounterEvent s_vmManagerCounterEvents[vmManagerCounterEventCount];
+unsigned s_vmManagerCounterEventNext;
+}
+
+void VMManager::recordCounterEvent(const char* what, VM* vm) WTF_REQUIRES_LOCK(m_worldLock)
+{
+    if (!Options::useJSThreads())
+        return;
+    s_vmManagerCounterEvents[s_vmManagerCounterEventNext++ % vmManagerCounterEventCount] = {
+        what, vm, Thread::currentSingleton().uid(), m_numberOfStoppedVMs, m_numberOfActiveVMs, m_numberOfBlockedVMs,
+        static_cast<int>(m_worldMode), vm ? vm->isEntered() : false };
+}
+
+void VMManager::dumpCountersForAssertion(VM& vm) WTF_REQUIRES_LOCK(m_worldLock)
+{
+    dataLogLn("VMManager counters broke: stopped ", m_numberOfStoppedVMs, " blocked ", m_numberOfBlockedVMs, " active ", m_numberOfActiveVMs,
+        " mode ", static_cast<int>(m_worldMode), " reason ", static_cast<int>(m_currentStopReason), "; arriving VM ", RawPointer(&vm),
+        " entered ", vm.isEntered(), " gilOff ", vm.gilOff(), " thread ", Thread::currentSingleton().uid());
+    iterateVMs([&](VM& each) {
+        dataLogLn("  VM ", RawPointer(&each), " entered ", each.isEntered(), " countedActive ", each.traps().m_hasBeenCountedAsActive,
+            " gilOff ", each.gilOff(), " servicing ", RawPointer(gilOffServicingThreads().get(&each)));
+        return IterationStatus::Continue;
+    });
+    if (!Options::useJSThreads())
+        return;
+    unsigned n = std::min(s_vmManagerCounterEventNext, vmManagerCounterEventCount);
+    for (unsigned i = 0; i < n; ++i) {
+        auto& e = s_vmManagerCounterEvents[(s_vmManagerCounterEventNext - n + i) % vmManagerCounterEventCount];
+        dataLogLn("  ", e.what, " vm ", RawPointer(e.vm), " thread ", e.thread, " -> stopped ", e.stopped, " active ", e.active,
+            " blocked ", e.blocked, " mode ", e.mode, " entered ", e.entered);
+    }
+}
+
 void VMManager::incrementActiveVMs(VM& vm) WTF_REQUIRES_LOCK(m_worldLock)
 {
     RELEASE_ASSERT(m_worldMode != Mode::RunAll);
@@ -908,6 +953,7 @@ void VMManager::incrementActiveVMs(VM& vm) WTF_REQUIRES_LOCK(m_worldLock)
     if (!vm.traps().m_hasBeenCountedAsActive) {
         m_numberOfActiveVMs++;
         vm.traps().m_hasBeenCountedAsActive = true;
+        recordCounterEvent("active++", &vm);
     }
 }
 
@@ -936,6 +982,7 @@ void VMManager::decrementActiveVMs(VM& vm) WTF_REQUIRES_LOCK(m_worldLock)
     } else if (vm.traps().m_hasBeenCountedAsActive) {
         m_numberOfActiveVMs--;
         vm.traps().m_hasBeenCountedAsActive = false;
+        recordCounterEvent("active--", &vm);
     }
 
     auto shouldResumeAll = [&] WTF_REQUIRES_LOCK(m_worldLock) {
@@ -993,6 +1040,7 @@ CONCURRENT_SAFE void VMManager::requestStopAllInternal(StopReason reason)
             // For RunAll mode, do want to reset m_numberOfActiveVMs, and incrementActiveVMs()
             // below will re-calculate the current true value of m_numberOfActiveVMs.
             m_numberOfActiveVMs = 0;
+            recordCounterEvent("active=0 (stop from RunAll)", nullptr);
         }
 
         // INVARIANT (load-bearing for the §A.3 conductor's resume recheck,
@@ -1121,6 +1169,7 @@ void VMManager::resumeTheWorld() WTF_REQUIRES_LOCK(m_worldLock)
     m_servingVM = nullptr;
     m_targetVM = nullptr;
     m_numberOfActiveVMs = invalidNumberOfActiveVMs; // invalid when not Stopped.
+    recordCounterEvent("resume", nullptr);
     m_worldMode = Mode::RunAll;
     m_worldConditionVariable.notifyAll();
 
@@ -1200,6 +1249,7 @@ void VMManager::notifyVMBlocking(VM& vm)
     ASSERT(vm.isEntered());
     RELEASE_ASSERT(!std::exchange(vm.traps().m_isInBlockingScope, true));
     ++m_numberOfBlockedVMs;
+    recordCounterEvent("blocked++", &vm);
     notifyDebuggerOfVMStopping(vm);
     if (m_worldMode != Mode::RunAll && allActiveVMsHaveReachedStoppingPoint()) {
         // We assume the main thread VM is never blocked while entered, so at least one VM
@@ -1218,6 +1268,7 @@ void VMManager::notifyVMUnblocking(VM& vm, StopTheWorldEvent exitEvent)
         ASSERT(vm.isEntered());
         RELEASE_ASSERT(std::exchange(vm.traps().m_isInBlockingScope, false));
         --m_numberOfBlockedVMs;
+        recordCounterEvent("blocked--", &vm);
         if (m_worldMode == Mode::RunAll) {
             notifyDebuggerOfVMResuming(vm);
             return;
@@ -1227,6 +1278,7 @@ void VMManager::notifyVMUnblocking(VM& vm, StopTheWorldEvent exitEvent)
         // blocked, then let enterStopTheWorldParticipation() below actually park it (or otherwise
         // fold it back into servicing the current request).
         ++m_numberOfStoppedVMs;
+        recordCounterEvent("stopped++ (unblocked)", &vm);
     }
 
     enterStopTheWorldParticipation(vm, exitEvent);
@@ -1460,6 +1512,7 @@ void VMManager::notifyVMStop(VM& vm, StopTheWorldEvent event)
 
         incrementActiveVMs(vm);
         ++m_numberOfStoppedVMs;
+        recordCounterEvent("stopped++", &vm);
 
         // Must be inside this lock. Once m_numberOfStoppedVMs == m_numberOfActiveVMs,
         // the STW callback fires and the debugger assumes isStopped() on every VM.
@@ -1495,6 +1548,8 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
         {
             Locker lock { m_worldLock };
 
+            if (m_numberOfStoppedVMs + m_numberOfBlockedVMs > m_numberOfActiveVMs) [[unlikely]]
+                dumpCountersForAssertion(vm);
             RELEASE_ASSERT(m_numberOfStoppedVMs + m_numberOfBlockedVMs <= m_numberOfActiveVMs);
 
             auto fetchTopPriorityStopReason = [&] {
@@ -1777,6 +1832,7 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
         RELEASE_ASSERT(!m_servingVM || m_servingVM == &vm);
 
         numberOfStoppedVMs = --m_numberOfStoppedVMs;
+        recordCounterEvent("stopped--", &vm);
 
         notifyDebuggerOfVMResuming(vm);
     }
@@ -1820,6 +1876,7 @@ void VMManager::notifyVMDestruction(VM& vm)
         Locker locker { m_worldLock };
         if (s_recentVM == &vm)
             s_recentVM = nullptr;
+        recordCounterEvent("destroy", &vm);
         m_vmList.remove(vm.threadContext());
         m_numberOfVMs--;
         // §A.3.8 tenure sweep: a representative entry normally removes

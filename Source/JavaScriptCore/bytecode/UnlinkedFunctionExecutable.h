@@ -90,7 +90,7 @@ public:
     const Identifier& name() const;
     const Identifier& ecmaName() const
     {
-        if (m_nameIsDeferred) [[unlikely]]
+        if (isDeferred(NameIsDeferred)) [[unlikely]]
             materializeDeferredNameSlow();
         return m_ecmaName;
     }
@@ -99,7 +99,7 @@ public:
     // copied out of it instead of being materialized.
     String ecmaNameWithoutGC() const
     {
-        if (m_nameIsDeferred) [[unlikely]]
+        if (isDeferred(NameIsDeferred)) [[unlikely]]
             return ecmaNameWithoutGCSlow();
         return m_ecmaName.string();
     }
@@ -107,13 +107,13 @@ public:
     // For threads other than the mutator (compiler-thread dumps): null while the name is still only in the bytecode cache.
     const Identifier* tryGetEcmaNameConcurrently() const
     {
-        if (WTF::atomicLoad(const_cast<bool*>(&m_nameIsDeferred), std::memory_order_acquire))
+        if (WTF::atomicLoad(const_cast<uint8_t*>(&m_deferredState), std::memory_order_acquire) & NameIsDeferred)
             return nullptr;
         return &m_ecmaName;
     }
     void setEcmaName(const Identifier& name)
     {
-        if (m_nameIsDeferred) [[unlikely]]
+        if (isDeferred(NameIsDeferred)) [[unlikely]]
             materializeDeferredNameSlow();
         ASSERT(!m_hasName || name == m_ecmaName);
         m_ecmaName = name;
@@ -140,7 +140,7 @@ public:
     // and GC threads use tryGetEcmaNameConcurrently() (FunctionExecutable::inferredNameForTools()).
     void materializeDeferredMembersIfNeeded() const
     {
-        if (m_membersAreDeferred) [[unlikely]]
+        if (isDeferred(MembersAreDeferred)) [[unlikely]]
             materializeDeferredMembersSlow();
     }
     // Likewise for the source positions only introspection reads (toString, debugger, profilers, FunctionExecutable
@@ -148,7 +148,7 @@ public:
     // Calling the function does not need them either.
     void materializeDeferredScalarsIfNeeded() const
     {
-        if (m_scalarsAreDeferred) [[unlikely]]
+        if (isDeferred(ScalarsAreDeferred)) [[unlikely]]
             materializeDeferredScalarsSlow();
     }
 
@@ -183,18 +183,17 @@ public:
         vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
     }
 
-    // recordParse on the parsing thread races readers (isInStrictContext() etc.)
-    // on other threads, so these three fields are dedicated bytes accessed with
-    // relaxed atomics, like the ScriptExecutable copies of the same fields.
+    // recordParse on the parsing thread races readers (isInStrictContext() etc.) on other threads, so the two feature
+    // sets share one 16-bit word written with one relaxed store, and m_hasCapturedVariables is a dedicated byte, like
+    // the ScriptExecutable copies of the same fields.
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
-        WTF::atomicStore(&m_features, features, std::memory_order_relaxed);
-        WTF::atomicStore(&m_lexicallyScopedFeatures, lexicallyScopedFeatures, std::memory_order_relaxed);
+        WTF::atomicStore(&m_featureWord, packFeatureWord(features, lexicallyScopedFeatures), std::memory_order_relaxed);
         WTF::atomicStore(&m_hasCapturedVariables, hasCapturedVariables, std::memory_order_relaxed);
     }
 
-    CodeFeatures features() const { return WTF::atomicLoad(const_cast<CodeFeatures*>(&m_features), std::memory_order_relaxed); }
-    LexicallyScopedFeatures lexicallyScopedFeatures() const { return WTF::atomicLoad(const_cast<LexicallyScopedFeatures*>(&m_lexicallyScopedFeatures), std::memory_order_relaxed); }
+    CodeFeatures features() const { return featureWord() & codeFeaturesMask; }
+    LexicallyScopedFeatures lexicallyScopedFeatures() const { return static_cast<LexicallyScopedFeatures>(featureWord() >> bitWidthOfCodeFeatures); }
     bool hasCapturedVariables() const { return WTF::atomicLoad(const_cast<bool*>(&m_hasCapturedVariables), std::memory_order_relaxed); }
 
     PrivateBrandRequirement privateBrandRequirement() const { return static_cast<PrivateBrandRequirement>(m_privateBrandRequirement); }
@@ -381,6 +380,13 @@ private:
     unsigned m_isGeneratedFromCache : 1;
     unsigned m_lineCount : 31;
     unsigned m_unlinkedFunctionStart: 31;
+    unsigned m_isBuiltinFunction : 1;
+    unsigned m_unlinkedBodyStartColumn : 31;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
+    // m_lineCount, m_unlinkedBodyEndColumn, m_parametersStartOffset and m_unlinkedFunctionEnd may be written late
+    // (ScalarsAreDeferred); the bit each shares its word with is one only the mutator reads.
+    unsigned m_unlinkedBodyEndColumn : 31;
+    unsigned m_superBinding : 1;
     unsigned m_startOffset : 31;
     unsigned m_isCached : 1;
     unsigned m_sourceLength : 31;
@@ -402,24 +408,44 @@ private:
     uint8_t m_evalContextType : 2;
     uint8_t m_hasName : 1;
     uint8_t m_isClass : 1;
-    // m_features, m_lexicallyScopedFeatures, m_hasCapturedVariables and
-    // m_singletonHasBeenInvalidated are written after construction on one thread
-    // while other threads read them. Each is a dedicated uint16 or byte, never a
-    // bit-field, so a store cannot clobber a neighbor, and every access is a
-    // relaxed atomic, which is a plain load or store on every supported target
-    // (an implicit read of a std::atomic is seq_cst, an acquire load on ARM64, so
-    // m_singletonHasBeenInvalidated is touched only through its accessors).
-    // m_sourceParseMode is constructor-only and sits here so the group packs
-    // into the bytes before the 8-aligned union; sizeof stays 96.
-    CodeFeatures m_features;
+    // m_featureWord, m_hasCapturedVariables, m_singletonHasBeenInvalidated and
+    // m_deferredState are written after construction on one thread while other
+    // threads read them. Each is a dedicated uint16 or byte, never a bit-field,
+    // so a store cannot clobber a neighbor, and every access is a relaxed atomic
+    // (acquire/release where a flag publishes data), which is a plain load or
+    // store on every supported target (an implicit read of a std::atomic is
+    // seq_cst, an acquire load on ARM64, so m_singletonHasBeenInvalidated is
+    // touched only through its accessors). m_featureWord packs CodeFeatures (low
+    // bitWidthOfCodeFeatures bits) and LexicallyScopedFeatures, which
+    // recordParse() writes together. m_sourceParseMode is constructor-only.
+    // The group fills the eight bytes before the 8-aligned union; sizeof stays 96.
+    static constexpr uint16_t codeFeaturesMask = (1u << bitWidthOfCodeFeatures) - 1;
+    static_assert(bitWidthOfCodeFeatures + bitWidthOfLexicallyScopedFeatures <= 16);
+    static uint16_t packFeatureWord(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures)
+    {
+        ASSERT(!(features & ~codeFeaturesMask));
+        return static_cast<uint16_t>(features | (static_cast<unsigned>(lexicallyScopedFeatures) << bitWidthOfCodeFeatures));
+    }
+    uint16_t featureWord() const { return WTF::atomicLoad(const_cast<uint16_t*>(&m_featureWord), std::memory_order_relaxed); }
+    uint16_t m_featureWord;
     SourceParseMode m_sourceParseMode;
-    LexicallyScopedFeatures m_lexicallyScopedFeatures;
     bool m_hasCapturedVariables;
     std::atomic<bool> m_singletonHasBeenInvalidated { false };
-    // Own bytes, not bits of the group above: the mutator clears these late, while compiler threads read that group.
-    bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
-    bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live
-    bool m_scalarsAreDeferred { false }; // the record's cold tail was not read yet (those four members are 0); implies m_membersAreDeferred (that state holds the record)
+    // The bytecode cache's deferred members (Options::useThinChildExecutables()). Set by the decoding constructor;
+    // cleared late by the materializing thread while compiler threads read the bit-field group above.
+    enum DeferredStateBit : uint8_t {
+        NameIsDeferred = 1 << 0, // m_ecmaName is still in the cache record; implies MembersAreDeferred
+        MembersAreDeferred = 1 << 1, // TDZ variables + rare data are still in the cache record; the m_members Pending union member is live
+        ScalarsAreDeferred = 1 << 2, // the record's cold tail was not read yet (those four members are 0); implies MembersAreDeferred (that state holds the record)
+    };
+    bool isDeferred(DeferredStateBit bit) const { return WTF::atomicLoad(const_cast<uint8_t*>(&m_deferredState), std::memory_order_relaxed) & bit; }
+    void setDeferred(DeferredStateBit bit) { WTF::atomicStore(&m_deferredState, static_cast<uint8_t>(m_deferredState | bit), std::memory_order_relaxed); }
+    void clearDeferred(DeferredStateBit bit, std::memory_order order = std::memory_order_relaxed)
+    {
+        uint8_t state = WTF::atomicLoad(&m_deferredState, std::memory_order_relaxed);
+        WTF::atomicStore(&m_deferredState, static_cast<uint8_t>(state & ~bit), order);
+    }
+    uint8_t m_deferredState { 0 };
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;
@@ -438,7 +464,7 @@ private:
 
     Identifier m_ecmaName;
 
-    // parentScopeTDZVariables and rareData, or, while m_membersAreDeferred, the cache record they still live in.
+    // parentScopeTDZVariables and rareData, or, while MembersAreDeferred, the cache record they still live in.
     class DeferredMembers {
     public:
         struct Live {
@@ -486,7 +512,7 @@ inline UnlinkedFunctionExecutable& UnlinkedFunctionExecutable::DeferredMembers::
     return *std::bit_cast<UnlinkedFunctionExecutable*>(std::bit_cast<uintptr_t>(this) - OBJECT_OFFSETOF(UnlinkedFunctionExecutable, m_members));
 }
 
-inline bool UnlinkedFunctionExecutable::DeferredMembers::isPending() const { return owner().m_membersAreDeferred; }
+inline bool UnlinkedFunctionExecutable::DeferredMembers::isPending() const { return owner().isDeferred(MembersAreDeferred); }
 
 inline UnlinkedFunctionExecutable::DeferredMembers::~DeferredMembers()
 {
@@ -501,7 +527,7 @@ inline void UnlinkedFunctionExecutable::DeferredMembers::defer(Decoder& decoder,
     ASSERT(!isPending() && !m_live.parentScopeTDZVariables && !m_live.rareData);
     m_live.~Live();
     new (&m_pending) Pending { &decoder, &record };
-    owner().m_membersAreDeferred = true;
+    owner().setDeferred(MembersAreDeferred);
 }
 
 inline void UnlinkedFunctionExecutable::DeferredMembers::settle(Live&& live)
@@ -509,7 +535,7 @@ inline void UnlinkedFunctionExecutable::DeferredMembers::settle(Live&& live)
     ASSERT(isPending());
     m_pending.~Pending();
     new (&m_live) Live(WTF::move(live));
-    owner().m_membersAreDeferred = false;
+    owner().clearDeferred(MembersAreDeferred);
 }
 
 #if !ASSERT_ENABLED

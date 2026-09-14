@@ -219,6 +219,7 @@ PreciseAllocation::PreciseAllocation(JSC::Heap& heap, size_t size, Subspace* sub
     , m_cellSize(size)
     , m_isNewlyAllocated(true)
     , m_hasValidCell(true)
+    , m_isAllocatedSinceLastMarking(true)
     , m_adjustment(adjustment)
     , m_attributes(subspace->attributes())
     , m_subspace(subspace)

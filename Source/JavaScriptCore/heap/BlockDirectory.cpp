@@ -513,6 +513,40 @@ void BlockDirectory::sweep()
     }
 }
 
+unsigned BlockDirectory::sweepWeakBearingBlocks(unsigned budget)
+{
+    // SPEC-heap §10E (ninth round): every sweep that runs alongside mutators skips weak-bearing blocks (sweep() above,
+    // LocalAllocator::tryAllocateIn, the steal and the IncrementalSweeper) and leaves them for a world-stopped sweep;
+    // this is that sweep, run by the conductor at the end of every conducted cycle. At most `budget` blocks, resuming
+    // after the last block the previous call swept (history §35).
+    ASSERT(heap().worldIsStoppedForAllClients());
+    unsigned swept = 0;
+    Locker locker(bitvectorLock());
+    size_t size = m_blocks.size();
+    size_t start = m_weakBearingSweepCursor < size ? m_weakBearingSweepCursor : 0;
+    for (unsigned pass = 0; pass < 2 && swept < budget; ++pass) {
+        size_t end = pass ? start : size;
+        for (size_t index = pass ? 0 : start; index < end && swept < budget; ++index) {
+            index = (unsweptBits() & ~inUseBits()).findBit(index, true);
+            if (index >= end)
+                break;
+            MarkedBlock::Handle* block = m_blocks[index];
+            if (!block->weakSet().head())
+                continue;
+            setIsInUse(index, true);
+            {
+                DropLockForScope scope(locker);
+                block->sweep(nullptr);
+            }
+            ASSERT(!isUnswept(index));
+            setIsInUse(index, false);
+            ++swept;
+            m_weakBearingSweepCursor = index + 1;
+        }
+    }
+    return swept;
+}
+
 void BlockDirectory::shrink()
 {
     // SharedGC (T8 audit, MC-SAFE S4): reached via MarkedSpace::shrink() —

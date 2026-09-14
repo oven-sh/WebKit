@@ -1005,14 +1005,16 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         xor64(scratch2GPR, scratch1GPR);
         urshift64(TrustedImm32(butterflyTIDShift), scratch1GPR); // the 16 tag bits: (currentTID, SW=0) <=> zero
         slowCases.append(branchTest32(NonZero, scratch1GPR));
-        load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOldStructureID()), scratch1GPR);
-        move(scratch1GPR, scratch2GPR);
-        or32(TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
-        slowCases.append(branchAtomicStrongCAS32(Failure, scratch1GPR, scratch2GPR, Address(baseGPR, JSCell::structureIDOffset())));
-        // Committed: the lane is ours; nothing below can fail. The word of a
-        // claimed owner-tagged SW=0 instance cannot move, so re-derive the
-        // (possibly absent) butterfly from a fresh load.
-        load64(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        if (g_jscConfig.gilOffProcess) {
+            load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOldStructureID()), scratch1GPR);
+            move(scratch1GPR, scratch2GPR);
+            or32(TrustedImm32(StructureID::nukedStructureIDBit), scratch2GPR);
+            slowCases.append(branchAtomicStrongCAS32(Failure, scratch1GPR, scratch2GPR, Address(baseGPR, JSCell::structureIDOffset())));
+            // Committed: the lane is ours; nothing below can fail. The word of a
+            // claimed owner-tagged SW=0 instance cannot move, so re-derive the
+            // (possibly absent) butterfly from a fresh load.
+            load64(Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        } // GIL on (OM E4-G): no claim; scratch2 still holds the word the owner test read.
         and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), scratch2GPR);
         load16(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfOffset()), scratch1GPR);
         load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfNewStructureID()), scratch3GPR);

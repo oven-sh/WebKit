@@ -799,20 +799,13 @@ void Options::executeDumpOptions()
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-void Options::notifyOptionsChanged()
+// The GIL-off activation checklist (SPEC-ungil U0): it decides from the whole option set, so while
+// Options::initialize applies options one at a time (the JSC_* environment, the embedder's customization
+// callback) it waits for the final validation of that batch instead of judging each intermediate state.
+static bool s_deferGILOffActivationChecklist = false;
+
+static void applyGILOffActivationChecklist()
 {
-    AllowUnfinalizedAccessScope scope;
-
-    // SPEC-vmstate §3 R2 (M_opts2): useJSThreads=1 MUST imply all three
-    // vmstate flags. (The prep-stub `useThreads` alias was removed by
-    // INTEGRATE-api 9.2-1, so its normalization line is dropped per
-    // INTEGRATE-vmstate cross-WS item 14.)
-    if (Options::useJSThreads()) {
-        Options::useSharedAtomStringTable() = true;
-        Options::useVMLite() = true;
-        Options::useStructureAllocationLock() = true;
-    }
-
     // UNGIL §0 U0 (config gate; landed at U-T14 with the default flip):
     // GIL-off ("useJSThreads && !useThreadGIL") additionally requires the
     // full trio {useVMLite, useSharedAtomStringTable, useSharedGCHeap}. A
@@ -896,6 +889,18 @@ void Options::notifyOptionsChanged()
         Options::useFFIDirectCall() = false;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A bytecode cache's lazily decoded state (a thin child executable's members, a SymbolTable constant's entries) and a
+    // prelinked module record's by-name maps materialize on first use with one mutator in mind: GIL off they are decoded
+    // eagerly, under the compilation lock, as before the deferral existed (SPEC-ungil history, ninth round; AUDIT R9-1,
+    // R9-3, R9-4, R9-6, R9-8).
+    if (Options::useJSThreads() && !Options::useThreadGIL()) {
+        Options::useThinChildExecutables() = false;
+        Options::useLazySymbolTableConstants() = false;
+        Options::usePrelinkedModuleInfo() = false;
+    }
+#endif
+
 #if !(CPU(X86_64) || CPU(ARM64)) || ENABLE(C_LOOP)
     // UNGIL §A.1.3 / AB-1 (A6-amend review finding, 2026-06-11): the GIL-off
     // Group-3 mode split is implemented only for the 64-bit JIT
@@ -933,6 +938,24 @@ void Options::notifyOptionsChanged()
         Options::useThreadGIL() = true;
     }
 #endif
+}
+
+void Options::notifyOptionsChanged()
+{
+    AllowUnfinalizedAccessScope scope;
+
+    // SPEC-vmstate §3 R2 (M_opts2): useJSThreads=1 MUST imply all three
+    // vmstate flags. (The prep-stub `useThreads` alias was removed by
+    // INTEGRATE-api 9.2-1, so its normalization line is dropped per
+    // INTEGRATE-vmstate cross-WS item 14.)
+    if (Options::useJSThreads()) {
+        Options::useSharedAtomStringTable() = true;
+        Options::useVMLite() = true;
+        Options::useStructureAllocationLock() = true;
+    }
+
+    if (!s_deferGILOffActivationChecklist)
+        applyGILOffActivationChecklist();
 
     // gilOffProcess is option-derived and immutable for the process.
     // Config::latchGILOffProcess() copies the derivation into the Config
@@ -1371,6 +1394,8 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
             Config::enableRestrictedOptions();
 #endif
 
+            s_deferGILOffActivationChecklist = true;
+
             // Initialize each of the options with their default values:
 #define INIT_OPTION(type_, name_, defaultValue_, availability_, description_) { \
                 name_() = defaultValue_; \
@@ -1434,7 +1459,9 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
             optionsCustomizationCallback();
 
             // No more options changes after this point. notifyOptionsChanged() will
-            // do sanity checks and fix up options as needed.
+            // do sanity checks and fix up options as needed, and runs the GIL-off
+            // activation checklist on the settled set.
+            s_deferGILOffActivationChecklist = false;
             notifyOptionsChanged();
 
             // The code below acts on options that have been finalized.

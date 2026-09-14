@@ -601,7 +601,7 @@ public:
     // (firstLazilyMaterializedFunctionDecl()).
     FunctionExecutable* functionDecl(unsigned index)
     {
-        if (FunctionExecutable* executable = m_functionDecls[index].get()) [[likely]]
+        if (FunctionExecutable* executable = loadFunctionExecutableEntry(m_functionDecls[index])) [[likely]]
             return executable;
         return materializeFunctionDeclSlow(index);
     }
@@ -609,13 +609,23 @@ public:
     std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { ASSERT(!m_numberOfUnmaterializedFunctionExecutables); return m_functionDecls.span(); } // EvalCode links eagerly
     FunctionExecutable* functionExpr(unsigned index)
     {
-        if (FunctionExecutable* executable = m_functionExprs[index].get()) [[likely]]
+        if (FunctionExecutable* executable = loadFunctionExecutableEntry(m_functionExprs[index])) [[likely]]
             return executable;
         return materializeFunctionExprSlow(index);
     }
     size_t numberOfFunctionExprs() const { return m_functionExprs.size(); }
-    FunctionExecutable* functionDeclIfMaterialized(unsigned index) { return m_functionDecls[index].get(); }
-    FunctionExecutable* functionExprIfMaterialized(unsigned index) { return m_functionExprs[index].get(); }
+    FunctionExecutable* functionDeclIfMaterialized(unsigned index) { return loadFunctionExecutableEntry(m_functionDecls[index]); }
+    FunctionExecutable* functionExprIfMaterialized(unsigned index) { return loadFunctionExecutableEntry(m_functionExprs[index]); }
+    // GIL off another thread may publish an entry (materializeFunctionExecutable). A reader loads it once and uses the
+    // pointer, which orders the executable's fields on hardware; under TSAN the load is the acquire that stands for it.
+    static FunctionExecutable* loadFunctionExecutableEntry(const WriteBarrier<FunctionExecutable>& entry)
+    {
+#if TSAN_ENABLED
+        return WTF::atomicLoad(const_cast<FunctionExecutable**>(std::bit_cast<FunctionExecutable* const*>(&entry)), std::memory_order_acquire);
+#else
+        return entry.get();
+#endif
+    }
     
     const BitVector& bitVector(size_t i) LIFETIME_BOUND { return m_unlinkedCode->bitVector(i); }
 
@@ -976,7 +986,7 @@ public:
     // Idempotent; mutator only; defers GC while the ensure* functions run.
     void prepareLazyStateForConcurrentCompilation()
     {
-        if (m_isLazyStatePreparedForConcurrentCompilation) [[likely]]
+        if (hasStateBit(IsLazyStatePreparedForConcurrentCompilation, std::memory_order_acquire)) [[likely]]
             return;
         prepareLazyStateForConcurrentCompilationSlow();
     }
@@ -984,9 +994,7 @@ public:
     // Any thread. Acquire-ordered against everything prepare published.
     bool isLazyStatePreparedForConcurrentCompilation() const
     {
-        bool prepared = m_isLazyStatePreparedForConcurrentCompilation;
-        WTF::loadLoadFence();
-        return prepared;
+        return hasStateBit(IsLazyStatePreparedForConcurrentCompilation, std::memory_order_acquire);
     }
     // Lazy SymbolTable constants need no hook and do not gate the prepared bit: SymbolTable::materializeCachedEntries
     // declines off the mutator and concurrent readers take a pending table as having no entries (SymbolTable.h).
@@ -1105,17 +1113,51 @@ public:
     RelaxedAtomicCapabilityLevel m_capabilityLevelState;
 #endif
 
-    // m_didFailJITCompilation / m_didFailFTLCompilation / m_hasBeenCompiledWithFTL moved out
-    // of this bit-field cluster: they are advisory flags raced between mutator slow paths and
-    // the DFG/FTL threshold paths (TSAN-TRIAGE family 2), so they must live in their own
-    // bytes as relaxed atomics. They are declared next to m_tierUpInFlight below to reuse the
-    // bytes freed by compressing that latch array (keeps sizeof(CodeBlock) unchanged).
     // m_isJettisoned: not a bit-field anymore — written by ScriptExecutable::installCode
     // (any lite) while siblings read the neighboring m_capabilityLevelState byte; see the
     // TSAN family 5 comment above.
     RelaxedAtomicBool m_isJettisoned { false };
 
     bool m_visitChildrenSkippedDueToOldAge { false };
+
+#if ENABLE(JIT)
+    // THREADS §5.7.2 (SPEC-jit Task 12): one in-flight bit per tier-up edge (see
+    // TierUpEdge above). Zero-initialized; touched solely by the threshold slow paths
+    // via tryBeginTierUp/endTierUp (fetch_or/fetch_and keep the per-edge 0->1 CAS
+    // semantics).
+    std::atomic<uint8_t> m_tierUpInFlight { 0 };
+#endif
+
+    // Flags written after the block is published, one bit each in m_stateBits, set and
+    // cleared with atomic read-modify-writes so that no writer can lose another's bit.
+    // DidFail*Compilation / HasBeenCompiledWithFTL are advisory compilation outcomes raced
+    // between mutator threshold slow paths (shouldTriggerFTLCompile, operationOptimize) and
+    // the compilation-result paths (DFG::JITCode, DFG::JITFinalizer, BaselineJITPlan)
+    // (THREADS §5.7.7, TSAN-TRIAGE family 2). IsLazyStatePreparedForConcurrentCompilation /
+    // HasCatchThatExecutedWithoutBuffer are the lazy-state bits of
+    // prepareLazyStateForConcurrentCompilation() and useLazyCatchLiveness: written by
+    // mutators (several at once GIL off), read by compiler threads. The writes are rare
+    // (at most a few per block), the reads plain byte loads. Sharing one byte with
+    // m_tierUpInFlight's neighbour keeps sizeof(CodeBlock) at 224.
+    enum StateBit : uint8_t {
+        DidFailJITCompilation = 1 << 0,
+        DidFailFTLCompilation = 1 << 1,
+        HasBeenCompiledWithFTL = 1 << 2,
+        IsLazyStatePreparedForConcurrentCompilation = 1 << 3,
+        HasCatchThatExecutedWithoutBuffer = 1 << 4,
+    };
+    bool hasStateBit(StateBit bit, std::memory_order order = std::memory_order_relaxed) const { return m_stateBits.load(order) & bit; }
+    void setStateBit(StateBit bit, std::memory_order order = std::memory_order_relaxed) { m_stateBits.fetch_or(bit, order); }
+    void clearStateBit(StateBit bit) { m_stateBits.fetch_and(static_cast<uint8_t>(~bit), std::memory_order_relaxed); }
+    std::atomic<uint8_t> m_stateBits { 0 };
+
+public:
+    bool hasFailedJITCompilation() const { return hasStateBit(DidFailJITCompilation); }
+    void setFailedJITCompilation() { setStateBit(DidFailJITCompilation); }
+    bool hasFailedFTLCompilation() const { return hasStateBit(DidFailFTLCompilation); }
+    void setFailedFTLCompilation() { setStateBit(DidFailFTLCompilation); }
+    bool hasBeenCompiledWithFTL() const { return hasStateBit(HasBeenCompiledWithFTL); }
+    void setHasBeenCompiledWithFTL() { setStateBit(HasBeenCompiledWithFTL); }
 
     // Internal methods for use by validation code. It would be private if it wasn't
     // for the fact that we use it from anonymous namespaces.
@@ -1171,7 +1213,7 @@ public:
     // Mutator only, on the baseline block, before a DFG / FTL plan parses it: creates the buffers useLazyCatchLiveness deferred. True if it created one.
     bool ensureCatchLivenessIsComputedForExecutedCatches()
     {
-        if (m_hasCatchThatExecutedWithoutBuffer) [[unlikely]]
+        if (hasStateBit(HasCatchThatExecutedWithoutBuffer)) [[unlikely]]
             return ensureCatchLivenessIsComputedForExecutedCatchesSlow();
         return false;
     }
@@ -1320,27 +1362,7 @@ private:
     unsigned m_bytecodeCost { 0 };
     VirtualRegister m_scopeRegister;
     mutable CodeBlockHash m_hash;
-#if ENABLE(JIT)
-    // THREADS §5.7.2 (SPEC-jit Task 12): one in-flight bit per tier-up edge (see
-    // TierUpEdge above). Zero-initialized; touched solely by the threshold slow paths
-    // via tryBeginTierUp/endTierUp (fetch_or/fetch_and keep the per-edge 0->1 CAS
-    // semantics). Compressed from one byte per edge to one bit per edge so the three
-    // relocated advisory flags below reuse the freed bytes — the 32-bit field cluster
-    // keeps its exact size (sizeof(CodeBlock) <= 224 assert below).
-    std::atomic<uint8_t> m_tierUpInFlight { 0 };
-#endif
-public:
-    // THREADS §5.7.7 (TSAN-TRIAGE family 2): advisory compilation-outcome flags, raced
-    // between mutator threshold slow paths (shouldTriggerFTLCompile, operationOptimize)
-    // and the DFG/FTL compilation-result paths (setOptimizationThresholdBasedOnCompilationResult,
-    // DFG::JITFinalizer, BaselineJITPlan). Intentionally public (assigned directly from
-    // those paths, as before). Moved out of the bit-field cluster above into their own
-    // relaxed-atomic bytes; see RelaxedAtomicBool. Default-initialized to false (no
-    // longer in the constructor init lists).
-    RelaxedAtomicBool m_didFailJITCompilation;
-    RelaxedAtomicBool m_didFailFTLCompilation;
-    RelaxedAtomicBool m_hasBeenCompiledWithFTL;
-private:
+    unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in m_functionDecls / m_functionExprs that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
 
     WriteBarrier<UnlinkedCodeBlock> m_unlinkedCode;
     WriteBarrier<ScriptExecutable> m_ownerExecutable;
@@ -1380,10 +1402,6 @@ private:
     Vector<WriteBarrier<Unknown>> m_constantRegisters;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
-    unsigned m_numberOfUnmaterializedFunctionExecutables { 0 }; // null entries in the two vectors above that a new_func* may still ask for (useLazyFunctionExecutables); mutator only
-    // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
-    uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
-    uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);
