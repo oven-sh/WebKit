@@ -301,6 +301,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, evacuateAuxiliaryBlocksAfterEveryFullCollection, false, Normal, "testing: evacuate every Auxiliary block after each full collection, wherever the mutator happens to be, and scribble the old copies"_s) \
     v(Bool, poisonDecommittedMarkedBlockPages, false, Normal, "testing: make any read of a decommitted MarkedBlock page before the block's next sweep to a free list fail (ASan poison; without ASan a 0xbd fill)"_s) \
     v(Bool, decommitUnusedMarkedBlockPagesAfterEdenCollections, false, Normal, "also do it for blocks swept after an eden collection (mostly young blocks that are refilled straight away)") \
+    v(Bool, releaseIdleRegExpCodeWhenShrinkingFootprint, false, Normal, "VM::shrinkFootprintNow(KeepCodeInUse) also drops the compiled code of RegExps that have not matched since the last full collection began"_s) \
     v(Double, sizeClassProgression, 1.4, Normal, nullptr) \
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \
     v(Bool, dumpSizeClasses, false, Normal, nullptr) \
