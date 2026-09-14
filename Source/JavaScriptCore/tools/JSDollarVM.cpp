@@ -3959,7 +3959,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
-// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock }
+// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock, blockSize }
 JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -3979,6 +3979,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalO
     result->putDirect(vm, Identifier::fromString(vm, "blocksWithDecommittedPages"_s), jsNumber(blocksWithDecommittedPages));
     result->putDirect(vm, Identifier::fromString(vm, "decommittedPages"_s), jsNumber(decommittedPages));
     result->putDirect(vm, Identifier::fromString(vm, "pagesPerBlock"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize / WTF::pageSize())));
+    result->putDirect(vm, Identifier::fromString(vm, "blockSize"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize)));
     return JSValue::encode(result);
 }
 

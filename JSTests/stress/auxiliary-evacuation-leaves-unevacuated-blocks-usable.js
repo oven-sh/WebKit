@@ -10,6 +10,8 @@ function assert(condition, message) {
 }
 function makeArray(i) { return [i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7, i + 8]; }
 noInline(makeArray);
+// The counts below are for MarkedBlocks of 16 KB; a block is larger where pages can be (64 KB on Linux arm64).
+const scale = $vm.markedBlockStatistics().blockSize / (16 * 1024);
 const shapes = [];
 function populate() {
     for (let i = 0; i < 150; ++i) {
@@ -21,7 +23,7 @@ function populate() {
             names++;
         assert(names === 10, "for-in");
         shapes.push(object);
-        for (let j = 0; j < 450; ++j)
+        for (let j = 0; j < 450 * scale; ++j)
             makeArray(j);
     }
 }
@@ -32,7 +34,7 @@ const result = $vm.evacuateAuxiliaryBlocks(0.5);
 assert(!result.skipped && result.candidateBlocks >= 100 && result.cellsWithoutSingleOwner >= 100, "most sparse blocks hold a cell that cannot move: " + JSON.stringify(result));
 const blocksBefore = $vm.markedBlockStatistics().blocks;
 const kept = [];
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < 20000 * scale; ++i)
     kept.push(makeArray(i));
 const blocksAfter = $vm.markedBlockStatistics().blocks;
 assert(blocksAfter - blocksBefore < 70, "new storage went into the free cells of the sparse blocks: " + blocksBefore + " -> " + blocksAfter + " blocks " + JSON.stringify(result));

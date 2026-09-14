@@ -1421,6 +1421,20 @@ static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
     return result;
 }
 
+// Where the out-of-line storage of an object begins, if Heap::evacuateSparseAuxiliaryBlocks may move it: it is a cell of a
+// MarkedBlock of the Auxiliary subspace. Null for an object without storage, for copy-on-write storage (a JSCellButterfly,
+// possibly shared) and for storage that is a precise allocation.
+static void* baseOfMovableStorage(JSObject* object)
+{
+    Butterfly* butterfly = object->butterfly();
+    if (!butterfly || isCopyOnWrite(object->indexingMode()))
+        return nullptr;
+    void* base = butterfly->base(object->structure());
+    if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(base)))
+        return nullptr;
+    return base;
+}
+
 // Null if Heap::evacuateSparseAuxiliaryBlocks can run now. None of this is an error on the caller's part.
 ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
 {
@@ -1589,7 +1603,8 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
             if (!preciseObjects.isEmpty() && address >= preciseObjects.first().first) {
                 auto iterator = std::ranges::upper_bound(preciseObjects, address, { }, &std::pair<uintptr_t, PreciseAllocation*>::first);
                 PreciseAllocation* allocation = (iterator - 1)->second;
-                if (address - (iterator - 1)->first < allocation->cellSize()) {
+                // One past the end included: that keeps a precise allocation alive (ConservativeRoots::genericAddPointer).
+                if (address - (iterator - 1)->first <= allocation->cellSize()) {
                     cellsOnStack.add(allocation->cell());
                     return;
                 }
@@ -1637,11 +1652,8 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
             if (!cell->isObject())
                 return;
             JSObject* object = asObject(cell);
-            Butterfly* butterfly = object->butterfly();
-            if (!butterfly || isCopyOnWrite(object->indexingMode()))
-                return;
-            void* base = butterfly->base(object->structure());
-            if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(base)))
+            void* base = baseOfMovableStorage(object);
+            if (!base)
                 return;
             MarkedBlock* block = MarkedBlock::blockFor(base);
             if (!candidateBlocks.contains(block))
@@ -1747,12 +1759,8 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
         m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
             if (!isJSCellKind(kind) || !static_cast<JSCell*>(heapCell)->isObject())
                 return IterationStatus::Continue;
-            JSObject* object = asObject(static_cast<JSCell*>(heapCell));
-            Butterfly* butterfly = object->butterfly();
-            if (!butterfly || isCopyOnWrite(object->indexingMode()))
-                return IterationStatus::Continue;
-            void* base = butterfly->base(object->structure());
-            if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(base)))
+            void* base = baseOfMovableStorage(asObject(static_cast<JSCell*>(heapCell)));
+            if (!base)
                 return IterationStatus::Continue;
             MarkedBlock::Handle& handle = MarkedBlock::blockFor(base)->handle();
             HeapCell* storage = static_cast<HeapCell*>(handle.cellAlign(base));
@@ -1765,8 +1773,11 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
     return finish();
 }
 
-// Testing (evacuateAuxiliaryBlocksAfterEveryFullCollection): called by the allocation slow path once a full collection has
-// finished, i.e. under whatever frames the mutator has on its stack at its next allocation that takes that path.
+// Testing (evacuateAuxiliaryBlocksAfterEveryFullCollection): called by the allocation slow path (where that has no
+// GCDeferralContext) once a full collection has finished, i.e. under whatever frames the mutator has on its stack at that
+// allocation: compiled code and natives in the middle of an allocation, with storage pointers in registers and spill slots.
+// Not called where a synchronous collection (gc()) returns to its caller: once cells have moved nothing moves again before
+// the next full collection, so an evacuation there would take the place of the one under those frames.
 void Heap::evacuateAuxiliaryBlocksIfDue()
 {
     if (!m_auxiliaryEvacuationIsDue || reasonNotToEvacuateAuxiliaryBlocksNow())

@@ -33,7 +33,9 @@ function check(object, seed) {
 noInline(makeArray); noInline(makeObject); noInline(makeGrownArray);
 
 // Each survivor is followed by more than a block's worth of garbage of the same size, so every survivor sits in a sparse block.
-function garbage(make) { for (let j = 0; j < 450; ++j) make(-j); }
+// (450 for MarkedBlocks of 16 KB; a block is larger where pages can be: 64 KB on Linux arm64.)
+const garbagePerSurvivor = 450 * $vm.markedBlockStatistics().blockSize / (16 * 1024);
+function garbage(make) { for (let j = 0; j < garbagePerSurvivor; ++j) make(-j); }
 noInline(garbage);
 function makeSparse(make, count) {
     const result = [];
