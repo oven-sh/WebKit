@@ -224,7 +224,9 @@ CModule::~CModule()
 }
 
 #if !OS(WINDOWS)
-// `#pragma comment(lib, "sqlite3")` means what `-lsqlite3` means; a path or file name is used as is.
+// `#pragma comment(lib, "sqlite3")` means what `-lsqlite3` means: libsqlite3.so (libsqlite3.dylib), the name a
+// linker looks for, which many systems only have once the library's development package is installed. A name
+// with a '/' or a '.' in it is handed to dlopen as it is, which is how to name a run-time library ("libz.so.1").
 static void* openLibrary(const CString& name)
 {
     bool isBareName = !memchr(name.data(), '/', name.length()) && !memchr(name.data(), '.', name.length());

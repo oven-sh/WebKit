@@ -1,5 +1,5 @@
 //@ skip if !$isFTLPlatform
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useConcurrentJIT=0")
 
 load("./resources/bir-assembler.js", "caller relative");
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
@@ -98,7 +98,6 @@ for (let i = 0; i < 2e5; i++) {
     eq(m.via_ptr(i), i * 2 + 1, "via_ptr hot");
 }
 eq(m.hello_len(), 5, "strlen after");
-print("ok", JSON.stringify($vm.ffiCompileCounts()));
 function hotSw(n) { let t = 0; for (let i = 0; i < n; i++) t += m.sw(i & 7); return t; }
 function hotPtr(n) { let t = 0; for (let i = 0; i < n; i++) t = (t + m.via_ptr(i)) | 0; return t; }
 function hotTen(n) { let t = 0; for (let i = 0; i < n; i++) t = (t + m.ten(i, 2, 3, 4, 5, 6, 7, 8, 9, 10)) | 0; return t; }
@@ -111,4 +110,11 @@ for (let k = 0; k < 3; k++) {
     eq(hotTen(1e6), e, "hotTen");
     eq(hotLen(1e6), 5e6, "hotLen");
 }
-print("hot ok", JSON.stringify($vm.ffiCompileCounts()));
+// The loops above are there so that the calls also run from optimized code and with the C bodies spliced into it:
+// with the compiler threads off, by now they have.
+{
+    const counts = $vm.ffiCompileCounts();
+    if ($vm.useDFGJIT() && !counts.dfgCallFFI) throw new Error("no call of a C function was compiled by the DFG: " + JSON.stringify(counts));
+    if ($vm.useFTLJIT() && (!counts.ftlCallFFI || !counts.ftlInlineC)) throw new Error("no C function was inlined into JavaScript by the FTL: " + JSON.stringify(counts));
+}
+print("hot ok");

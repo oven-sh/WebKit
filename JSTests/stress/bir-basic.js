@@ -1,5 +1,5 @@
 //@ skip if !$isFTLPlatform
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useConcurrentJIT=0")
 
 load("./resources/bir-assembler.js", "caller relative");
 
@@ -51,4 +51,11 @@ eq(m.scale(1.5, 4), 6, "scale");
 let t = 0;
 for (let i = 0; i < 1e6; i++) t = (t + m.add(i, 1)) | 0;
 eq(t, (1e6 * (1e6 - 1) / 2 + 1e6) | 0, "hot loop");
-print("ok", JSON.stringify($vm.ffiCompileCounts ? $vm.ffiCompileCounts() : null));
+// The loops above are there so that the calls also run from optimized code and with the C bodies spliced into it:
+// with the compiler threads off, by now they have.
+{
+    const counts = $vm.ffiCompileCounts();
+    if ($vm.useDFGJIT() && !counts.dfgCallFFI) throw new Error("no call of a C function was compiled by the DFG: " + JSON.stringify(counts));
+    if ($vm.useFTLJIT() && (!counts.ftlCallFFI || !counts.ftlInlineC)) throw new Error("no C function was inlined into JavaScript by the FTL: " + JSON.stringify(counts));
+}
+print("ok");

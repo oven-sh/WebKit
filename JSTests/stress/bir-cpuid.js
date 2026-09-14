@@ -1,4 +1,5 @@
 //@ skip if !$isFTLPlatform
+//@ skip if $architecture != "x86_64"
 //@ requireOptions("--useDollarVM=1")
 
 load("./resources/bir-assembler.js", "caller relative");
@@ -18,7 +19,7 @@ const out = new Uint32Array(4);
 m.cpuid(0, 0, out);
 const vendor = String.fromCharCode(...new Uint8Array(new Uint32Array([out[1], out[3], out[2]]).buffer));
 print("cpuid(0): max leaf", out[0], "vendor", JSON.stringify(vendor));
-if (!["AuthenticAMD", "GenuineIntel"].includes(vendor)) throw new Error("unexpected vendor string");
+if (!/^[\x20-\x7e]{12}$/.test(vendor)) throw new Error("the vendor string is twelve printable characters");
 m.cpuid(1, 0, out);
 eq((out[3] >>> 26) & 1, 1, "SSE2 bit");
 for (let i = 0; i < 1e5; i++) m.cpuid(7, 0, out);

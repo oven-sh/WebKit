@@ -1,4 +1,5 @@
 //@ skip if !$isFTLPlatform
+//@ skip if $architecture != "x86_64"
 //@ requireOptions("--useDollarVM=1")
 
 load("./resources/bir-assembler.js", "caller relative");
