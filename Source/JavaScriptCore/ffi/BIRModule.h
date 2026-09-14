@@ -30,6 +30,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include "BIR.h"
+#include "FFISignature.h"
 #include "FFIType.h"
 #include "JSExportMacros.h"
 #include <span>
@@ -147,6 +148,7 @@ struct Function {
     bool callsReturnsTwice { false }; // Calls setjmp or the like: control can come back into its frame.
     Vector<Type> locals;
     Vector<Slot> slots;
+    uint64_t frameBytes { 0 }; // What `slots` add to a frame, their alignment padding included.
     Vector<Block> blocks;
     Vector<Inst> insts;
     Vector<int64_t> extra;
@@ -154,6 +156,13 @@ struct Function {
     bool hasCalls { false }; // Call, CallExtern or CallIndirect: may re-enter JS.
     bool movesStackPointer { false }; // StackAlloc or StackRestore.
     bool hasBody { true }; // False once compiled, for a function too large to ever be inlined again.
+
+    // Whether the body can run in a caller's frame instead of one of its own. One that moves the stack
+    // pointer relies on its own return to release what it allocated. One that calls setjmp can be re-entered
+    // by longjmp, which restores the registers of the frame it runs in: that must be a frame whose variables
+    // the frontend kept in memory, not a caller's. (A variadic one reads its own frame too; that is its
+    // signature's to say.)
+    bool canBeInlined() const { return hasBody && !isNeverInline && !movesStackPointer && !callsReturnsTwice && !usesFrameAddress; }
 
     void releaseBody()
     {
@@ -169,8 +178,7 @@ struct Function {
 struct Export {
     String name;
     uint32_t function { 0 };
-    FFI::Type returnType { FFI::Type::Void };
-    Vector<FFI::Type> arguments;
+    RefPtr<FFI::Signature> signature; // The JS-facing types. Never null in a decoded module.
 };
 
 class Module {

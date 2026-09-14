@@ -205,7 +205,7 @@ ArgumentLayout layoutArguments(const BIR::Signature& signature, std::span<const 
             location.kind = ArgumentLocation::Kind::StackBytes;
             nextStackOffset = roundUpToMultipleOf(static_cast<unsigned>(parameter.alignment), nextStackOffset);
             location.stackOffset = nextStackOffset;
-            nextStackOffset += static_cast<unsigned>(parameter.size);
+            nextStackOffset += roundUpToMultipleOf<8>(static_cast<unsigned>(parameter.size));
             if (parameter.exhausts == BIR::Exhausts::IntegerRegisters)
                 gprIndex = gprs.size();
             else if (parameter.exhausts == BIR::Exhausts::FloatRegisters)
@@ -240,21 +240,23 @@ BIRToB3::BIRToB3(const BIR::Module& module, const BIRLinkEnvironment& environmen
     , m_environment(environment)
     , m_proc(proc)
     , m_inlinedInstructionBudget(Options::maximumBIRInlinedInstructionsPerFunction())
+    , m_alwaysInlineInstructionBudget(Options::maximumBIRAlwaysInlinedInstructionsPerFunction())
 {
 }
 
 bool BIRToB3::shouldInlineCallee(unsigned functionIndex, bool hasConstantArgument) const
 {
-    // A variadic body reads its own frame (VaStart), so it must keep one. One that moves the stack
-    // pointer relies on its own return to release what it allocated.
-    // One that calls setjmp can be re-entered by longjmp, which restores the registers of the frame it
-    // runs in: that must be a frame whose variables the frontend kept in memory, not a caller's.
     const BIR::Function& callee = m_module.functions[functionIndex];
-    if (m_module.signatures[callee.signature].isVariadic || callee.movesStackPointer || callee.callsReturnsTwice || callee.usesFrameAddress)
+    // A variadic body reads its own frame (VaStart), so it must keep one.
+    if (!callee.canBeInlined() || m_module.signatures[callee.signature].isVariadic)
         return false;
-    if (m_inlineStack.contains(functionIndex) || !callee.hasBody)
+    if (m_inlineStack.contains(functionIndex))
         return false;
-    if (callee.isNeverInline)
+    // Each level of inlining is a level of recursion in this lowering.
+    if (m_inlineStack.size() >= maximumInlineDepth)
+        return false;
+    // Frame offsets are 32-bit.
+    if (m_frameBytes + callee.frameBytes > maximumFrameBytes)
         return false;
     size_t size = callee.insts.size();
     // The author says its callers' constant arguments are what make it fast, so it has a budget of its
@@ -262,6 +264,11 @@ bool BIRToB3::shouldInlineCallee(unsigned functionIndex, bool hasConstantArgumen
     if (callee.isAlwaysInline)
         return size <= m_alwaysInlineInstructionBudget;
     if (size > m_inlinedInstructionBudget)
+        return false;
+    // The callee's locals become the caller's for as long as the caller runs. Nothing here knows when two
+    // of them are never live together, so they do not share room: a buffer in a helper called on a rare
+    // path would be part of every activation of a recursive caller.
+    if (callee.frameBytes > Options::maximumBIRInlineCalleeFrameBytes())
         return false;
     // About what passing arguments, calling, and a prologue and epilogue come to: inlining something
     // this small shrinks the caller no matter how many callers there are.
@@ -333,6 +340,7 @@ void BIRToB3::lowerFunction(unsigned functionIndex)
     m_inlineStack.append(functionIndex);
     const BIR::Function& function = m_module.functions[functionIndex];
     const BIR::Signature& signature = m_module.signatures[function.signature];
+    m_proc.setHasCodeFromC();
 
     BasicBlock* entry = m_proc.addBlock();
     m_block = entry;
@@ -388,6 +396,7 @@ BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block,
     const BIR::Signature& signature = m_module.signatures[function.signature];
     RELEASE_ASSERT(arguments.size() == signature.parameters.size());
     m_origin = origin;
+    m_proc.setHasCodeFromC();
     if (m_inlineStack.isEmpty())
         m_inlineStack.append(functionIndex);
 
@@ -401,7 +410,10 @@ BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block,
         }
         m_block = block;
         Value* copy = block->appendNew<SlotBaseValue>(m_proc, m_origin, m_proc.addStackSlot(parameter.size));
-        block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(copyMemory)), copy, arguments[i], constant(Int64, static_cast<int64_t>(parameter.size)));
+        Value* size = constant(Int64, static_cast<int64_t>(parameter.size));
+        if (!emitSmallMemoryCopy(copy, arguments[i], size))
+            block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(copyMemory)), copy, arguments[i], size);
+        m_frameBytes += parameter.size;
         privateArguments.append(copy);
     }
 
@@ -415,14 +427,13 @@ BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block,
     inlined.continuation = target.continuation;
     for (Variable* variable : target.results)
         inlined.results.append(target.continuation->appendNew<VariableValue>(m_proc, B3::Get, m_origin, variable));
-    if (!inlined.results.isEmpty())
-        inlined.result = inlined.results[0];
     return inlined;
 }
 
 void BIRToB3::emitBody(const BIR::Function& function, BasicBlock* entry, std::span<Value* const> arguments, const ReturnTarget* returnTarget)
 {
     m_body.returnTarget = returnTarget;
+    m_frameBytes += function.frameBytes;
     m_body.values.fill(nullptr, function.valueCount);
     for (unsigned i = 0; i < arguments.size(); ++i)
         m_body.values[i] = arguments[i];
@@ -710,6 +721,24 @@ Value* BIRToB3::emitVectorConversion(BIR::VConvertKind kind, Value* value)
         }
         return result;
     }
+    case K::F32x4ToI32x4X86:
+    case K::F64x2ToI32x4ZeroX86: {
+#if CPU(X86_64)
+        // cvttps2dq and cvttpd2dq as they are: a lane that does not fit, or is NaN, becomes 0x80000000.
+        PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, V128, m_origin);
+        patchpoint->append(value, ValueRep::SomeRegister);
+        patchpoint->effects = Effects::none();
+        patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            if (kind == K::F32x4ToI32x4X86)
+                jit.m_assembler.vcvttps2dq_rr(params[1].fpr(), params[0].fpr());
+            else
+                jit.m_assembler.vcvttpd2dq_rr(params[1].fpr(), params[0].fpr());
+        });
+        return patchpoint;
+#else
+        break; // The decoder refuses these in a module for any other target.
+#endif
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -887,6 +916,8 @@ Value* BIRToB3::emitAtomic(const BIR::Inst& inst)
     // as strong as any order C can ask for.
     switch (inst.op) {
     case Op::AtomicLoad: {
+        if (order == BIR::MemOrder::Relaxed)
+            return emitOpaqueAccess(kind, m_body.values[inst.a], 0, nullptr);
         B3::Opcode opcode = B3::Load;
         switch (kind) {
         case BIR::MemKind::I8S:
@@ -904,10 +935,10 @@ Value* BIRToB3::emitAtomic(const BIR::Inst& inst)
         default:
             break;
         }
-        HeapRange fence = order == BIR::MemOrder::Relaxed ? HeapRange() : HeapRange::top();
+        // Acquire and sequentially consistent: a load that nothing after it moves ahead of (ldar on ARM64).
         if (opcode == B3::Load)
-            return m_block->appendNew<MemoryValue>(m_proc, opcode, valueType, m_origin, m_body.values[inst.a], 0, HeapRange::top(), fence);
-        return m_block->appendNew<MemoryValue>(m_proc, opcode, m_origin, m_body.values[inst.a], 0, HeapRange::top(), fence);
+            return m_block->appendNew<MemoryValue>(m_proc, opcode, valueType, m_origin, m_body.values[inst.a], 0, HeapRange::top(), HeapRange::top());
+        return m_block->appendNew<MemoryValue>(m_proc, opcode, m_origin, m_body.values[inst.a], 0, HeapRange::top(), HeapRange::top());
     }
     case Op::AtomicStore: {
         Value* stored = m_body.values[inst.a];
@@ -916,9 +947,14 @@ Value* BIRToB3::emitAtomic(const BIR::Inst& inst)
             m_block->appendNew<AtomicValue>(m_proc, AtomicXchg, m_origin, width, stored, address);
             return nullptr;
         }
+        // x86 does not move a store ahead of an earlier load or store, so there a release store is a store
+        // the compiler leaves in place. ARM64 has an instruction for it (stlr), which is B3's fenced store.
+        if (order == BIR::MemOrder::Relaxed || isX86()) {
+            emitOpaqueAccess(kind, address, 0, stored);
+            return nullptr;
+        }
         B3::Opcode opcode = width == Width8 ? Store8 : width == Width16 ? Store16 : B3::Store;
-        HeapRange fence = order == BIR::MemOrder::Relaxed ? HeapRange() : HeapRange::top();
-        m_block->appendNew<MemoryValue>(m_proc, opcode, m_origin, stored, address, 0, HeapRange::top(), fence);
+        m_block->appendNew<MemoryValue>(m_proc, opcode, m_origin, stored, address, 0, HeapRange::top(), HeapRange::top());
         return nullptr;
     }
     case Op::AtomicRmw: {
@@ -959,8 +995,13 @@ Value* BIRToB3::emitAtomic(const BIR::Inst& inst)
         return old;
     }
     case Op::Fence:
-        if (order != BIR::MemOrder::Relaxed)
+        // Only a sequentially consistent fence keeps an earlier store ahead of a later load, which is the one
+        // reordering x86 does: the others are there a point the compiler moves no load across. On ARM64 each
+        // is a dmb ish.
+        if (order == BIR::MemOrder::SequentiallyConsistent)
             m_block->appendNew<FenceValue>(m_proc, m_origin);
+        else if (order != BIR::MemOrder::Relaxed)
+            m_block->appendNew<FenceValue>(m_proc, m_origin, HeapRange(), HeapRange::top());
         return nullptr;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -1019,6 +1060,51 @@ bool BIRToB3::emitSmallMemoryFill(Value* destination, Value* byte, Value* size)
     return true;
 }
 
+Value* BIRToB3::emitMathFunction(const BIR::Function& function, const BIR::Inst& inst, const BIR::Signature& signature)
+{
+    // The C library's rounding and square root functions, by their reserved names: each is one instruction.
+    if (inst.extraCount != 1 || !signature.isScalar() || signature.results.size() != 1)
+        return nullptr;
+    BIR::Type type = signature.results[0];
+    if ((type != BIR::Type::F32 && type != BIR::Type::F64) || signature.parameters[0].type != type)
+        return nullptr;
+    auto name = m_module.externs[inst.a].name.span();
+    if (type == BIR::Type::F32) {
+        if (name.empty() || name.back() != 'f')
+            return nullptr;
+        name = name.first(name.size() - 1);
+    }
+    auto is = [&](ASCIILiteral literal) { return equalSpans(name, literal.span()); };
+    Value* argument = m_body.values[static_cast<uint32_t>(function.extra[inst.extraOffset])];
+    if (is("fabs"_s))
+        return m_block->appendNew<Value>(m_proc, B3::Abs, m_origin, argument);
+    if (MacroAssembler::supportsFloatingPointRounding()) {
+        if (is("floor"_s))
+            return m_block->appendNew<Value>(m_proc, B3::Floor, m_origin, argument);
+        if (is("ceil"_s))
+            return m_block->appendNew<Value>(m_proc, B3::Ceil, m_origin, argument);
+        if (is("trunc"_s))
+            return m_block->appendNew<Value>(m_proc, B3::FTrunc, m_origin, argument);
+    }
+    if (!is("sqrt"_s))
+        return nullptr;
+    // The instruction's result is the function's. A NaN result is the one case in which the function does
+    // more (the argument was negative: it sets errno), so that case still calls it.
+    Value* root = m_block->appendNew<Value>(m_proc, B3::Sqrt, m_origin, argument);
+    Variable* result = m_proc.addVariable(root->type());
+    m_block->appendNew<VariableValue>(m_proc, B3::Set, m_origin, result, root);
+    BasicBlock* callBlock = newBlock();
+    BasicBlock* continuation = newBlock();
+    m_block->appendNewControlValue(m_proc, Branch, m_origin, m_block->appendNew<Value>(m_proc, B3::Equal, m_origin, root, root),
+        FrequentedBlock(continuation), FrequentedBlock(callBlock, FrequencyClass::Rare));
+    m_block = callBlock;
+    Vector<Value*, 1> called = emitCall(function, inst, signature, pointer(m_environment.externAddresses[inst.a]));
+    m_block->appendNew<VariableValue>(m_proc, B3::Set, m_origin, result, called[0]);
+    m_block->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(continuation));
+    m_block = continuation;
+    return m_block->appendNew<VariableValue>(m_proc, B3::Get, m_origin, result);
+}
+
 void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst& inst)
 {
     // The frontend chose a register for every operand and assembled the code for that choice, so all
@@ -1032,15 +1118,9 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
         code.append(static_cast<uint8_t>(extra[cursor++]));
 
     auto toReg = [](uint8_t reg) -> Reg {
-#if CPU(X86_64)
         if (reg < 16)
             return Reg(static_cast<GPRReg>(reg));
         return Reg(static_cast<FPRReg>(reg - 16));
-#else
-        if (reg < 32)
-            return Reg(static_cast<GPRReg>(reg));
-        return Reg(static_cast<FPRReg>(reg - 32));
-#endif
     };
 
     size_t inputCount = extra[cursor++];
@@ -1060,8 +1140,7 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
     }
     size_t clobberCount = extra[cursor++];
     RegisterSet clobbered;
-    for (size_t i = 0; i < clobberCount; ++i)
-    {
+    for (size_t i = 0; i < clobberCount; ++i) {
         Reg reg = toReg(static_cast<uint8_t>(extra[cursor++]));
         // A vector register is clobbered in full.
         if (reg.isFPR())
@@ -1080,16 +1159,14 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
         patchpoint->resultConstraints = WTF::move(outputConstraints);
     patchpoint->clobberLate(clobbered);
     patchpoint->setGenerator([code = WTF::move(code)](CCallHelpers& jit, const StackmapGenerationParams&) {
-#if CPU(ARM64)
-        // Whole instructions: the decoder refused anything else.
-        for (size_t i = 0; i + 4 <= code.size(); i += 4) {
-            uint32_t instruction;
-            memcpy(&instruction, code.span().data() + i, 4);
-            jit.m_assembler.buffer().putInt(static_cast<int32_t>(instruction));
-        }
-#else
+#if CPU(X86_64)
         for (uint8_t byte : code)
             jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+#else
+        // The decoder refuses InlineAsm in a module for any other target.
+        UNUSED_PARAM(jit);
+        UNUSED_PARAM(code);
+        RELEASE_ASSERT_NOT_REACHED();
 #endif
     });
     if (outputTypes.size() == 1)
@@ -1100,21 +1177,22 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
     }
 }
 
-Value* BIRToB3::emitVolatileAccess(const BIR::Inst& inst)
+Value* BIRToB3::emitOpaqueAccess(BIR::MemKind kind, Value* address, int32_t offset, Value* stored)
 {
-    // B3 has no volatile memory operation (a fenced store is an xchg on x86). A patchpoint that
-    // claims to read and write everything is opaque to it: B3 will not merge it with another access,
-    // forward a value through it, move it past another memory operation, or drop it.
-    BIR::MemKind kind = static_cast<BIR::MemKind>(inst.aux);
-    int32_t offset = static_cast<int32_t>(inst.imm);
-    bool isLoad = inst.op == Op::Load;
-    PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, isLoad ? toB3(inst.resultType) : B3::Type(Void), m_origin);
+    // One load or store instruction that B3 will not merge with another access, forward a value
+    // through, move past another memory operation, hoist out of a loop, or drop: what a volatile access
+    // is, and what a relaxed atomic one has to be (a loop that polls one must see another thread's
+    // store). B3's own fenced accesses are stronger than either needs: a fenced store is an xchg on
+    // x86. A patchpoint that claims to read and write everything is opaque to B3.
+    bool isLoad = !stored;
+    B3::Type loadedType = kind == BIR::MemKind::I64 ? Int64 : kind == BIR::MemKind::F32 ? Float : kind == BIR::MemKind::F64 ? Double : kind == BIR::MemKind::V128 ? V128 : Int32;
+    PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, isLoad ? loadedType : B3::Type(Void), m_origin);
     patchpoint->effects = Effects::forCall();
     if (isLoad)
         patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
     else
-        patchpoint->append(m_body.values[inst.a], ValueRep::SomeRegister);
-    patchpoint->append(m_body.values[isLoad ? inst.a : inst.b], ValueRep::SomeRegister);
+        patchpoint->append(stored, ValueRep::SomeRegister);
+    patchpoint->append(address, ValueRep::SomeRegister);
     patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         CCallHelpers::Address address(params[1].gpr(), offset);
@@ -1305,24 +1383,23 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
         resultTypes.append(toB3(result));
 #if CPU(X86_64)
     constexpr GPRReg calleeGPR = X86Registers::r10;
-    constexpr GPRReg copyGPR = X86Registers::r11;
 #else
     constexpr GPRReg calleeGPR = ARM64Registers::x9;
-    constexpr GPRReg copyGPR = ARM64Registers::x10;
 #endif
     // Everything the call reads is computed first; the patchpoint that uses it comes after.
     Vector<std::pair<Value*, ValueRep>> children;
     children.append({ target, ValueRep::reg(calleeGPR) });
 
     struct ByValCopy {
-        unsigned stackOffset;
+        Value* source;
         unsigned size;
-        unsigned childIndex; // which child holds the source address
+        unsigned stackOffset;
     };
     Vector<ByValCopy> copies;
     // An aggregate this small goes to the outgoing arguments eight bytes at a time, as ordinary
     // stack arguments: nothing about it has to be in a register while the call is set up. (Every
     // register-pinned operand of the patchpoint is live at once, and there are only so many.)
+    // Exactly the object's bytes are read: what follows it may not be there to read.
     constexpr unsigned maximumByValueSizeInPieces = 64;
     auto appendInPieces = [&](Value* source, unsigned size, unsigned stackOffset) {
         unsigned offset = 0;
@@ -1378,11 +1455,55 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
                 appendInPieces(argument, size, location.stackOffset);
                 break;
             }
-            copies.append({ location.stackOffset, size, static_cast<unsigned>(children.size()) });
-            children.append({ argument, ValueRep::SomeRegister });
+            copies.append({ argument, size, location.stackOffset });
             break;
         }
         }
+    }
+
+    // A larger aggregate is copied into the outgoing arguments by code of its own, just ahead of the call:
+    // nothing between there and the call writes that part of the stack. Each copy needs its source in a
+    // register only while it runs, so a call can pass any number of them.
+    m_proc.requestCallArgAreaSizeInBytes(layout.stackBytes);
+    for (const ByValCopy& copy : copies) {
+        PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
+        patchpoint->effects = Effects::forCall();
+        patchpoint->append(copy.source, ValueRep::SomeRegister);
+        patchpoint->numGPScratchRegisters = 3;
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        unsigned size = copy.size;
+        unsigned stackOffset = copy.stackOffset;
+        patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg source = params[0].gpr();
+            GPRReg destination = params.gpScratch(0);
+            GPRReg offset = params.gpScratch(1);
+            GPRReg chunk = params.gpScratch(2);
+            jit.addPtr(CCallHelpers::TrustedImm32(stackOffset), CCallHelpers::stackPointerRegister, destination);
+            unsigned wholeWords = size & ~7u;
+            jit.move(CCallHelpers::TrustedImm32(0), offset);
+            CCallHelpers::Label loop = jit.label();
+            jit.load64(CCallHelpers::BaseIndex(source, offset, CCallHelpers::TimesOne), chunk);
+            jit.store64(chunk, CCallHelpers::BaseIndex(destination, offset, CCallHelpers::TimesOne));
+            jit.add64(CCallHelpers::TrustedImm32(8), offset);
+            jit.branch64(CCallHelpers::Below, offset, CCallHelpers::TrustedImm32(wholeWords)).linkTo(loop, &jit);
+            // The last few bytes, read exactly.
+            unsigned done = wholeWords;
+            if (size - done >= 4) {
+                jit.load32(CCallHelpers::Address(source, done), chunk);
+                jit.store32(chunk, CCallHelpers::Address(destination, done));
+                done += 4;
+            }
+            if (size - done >= 2) {
+                jit.load16(CCallHelpers::Address(source, done), chunk);
+                jit.store16(chunk, CCallHelpers::Address(destination, done));
+                done += 2;
+            }
+            if (size - done >= 1) {
+                jit.load8(CCallHelpers::Address(source, done), chunk);
+                jit.store8(chunk, CCallHelpers::Address(destination, done));
+            }
+        });
     }
 
     B3::Type patchpointType = resultTypes.isEmpty() ? B3::Type(Void) : resultTypes.size() == 1 ? resultTypes[0] : m_proc.addTuple(Vector<B3::Type>(resultTypes));
@@ -1402,18 +1523,8 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     }
     for (auto& [child, constraint] : children)
         patchpoint->append(child, constraint);
-    m_proc.requestCallArgAreaSizeInBytes(layout.stackBytes);
 
-    unsigned resultReps = resultTypes.size();
-    patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
-        for (const ByValCopy& copy : copies) {
-            // params[] lists one rep per result, then one per child.
-            GPRReg source = params[resultReps + copy.childIndex].gpr();
-            for (unsigned offset = 0; offset < copy.size; offset += 8) {
-                jit.load64(CCallHelpers::Address(source, offset), copyGPR);
-                jit.store64(copyGPR, CCallHelpers::Address(CCallHelpers::stackPointerRegister, copy.stackOffset + offset));
-            }
-        }
+    patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams&) {
 #if CPU(X86_64)
         if (cc == NativeCC::SysV64)
             jit.move(CCallHelpers::TrustedImm32(usedVectorRegisters), X86Registers::eax);
@@ -1641,7 +1752,7 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
         return unary(B3::BitwiseCast);
     case Op::Load: {
         if (inst.isVolatile) {
-            define(emitVolatileAccess(inst));
+            define(emitOpaqueAccess(static_cast<BIR::MemKind>(inst.aux), value(inst.a), static_cast<int32_t>(inst.imm), nullptr));
             return;
         }
         Value* address = value(inst.a);
@@ -1671,7 +1782,7 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
     }
     case Op::Store: {
         if (inst.isVolatile) {
-            emitVolatileAccess(inst);
+            emitOpaqueAccess(static_cast<BIR::MemKind>(inst.aux), value(inst.b), static_cast<int32_t>(inst.imm), value(inst.a));
             return;
         }
         Value* stored = value(inst.a);
@@ -1785,6 +1896,10 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
                 return;
             }
         }
+        if (Value* result = emitMathFunction(function, inst, signature)) {
+            define(result);
+            return;
+        }
         defineAll(emitCall(function, inst, signature, pointer(m_environment.externAddresses[inst.a])));
         return;
     }
@@ -1840,12 +1955,12 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
         return;
     case Op::Trap: {
         PatchpointValue* trap = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
+        // The patchpoint ends the block itself: control does not come out of it.
         trap->effects = Effects::forCall();
         trap->effects.terminal = true;
         trap->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams&) {
             jit.breakpoint();
         });
-        m_block->appendNewControlValue(m_proc, Oops, m_origin);
         return;
     }
     }

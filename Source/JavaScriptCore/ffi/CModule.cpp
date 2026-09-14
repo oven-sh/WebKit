@@ -32,26 +32,29 @@
 #include "B3EstimateStaticExecutionCounts.h"
 #include "B3FixSSA.h"
 #include "B3Procedure.h"
-#include "BIRPromoteStackSlots.h"
 #include "BIRToB3.h"
+#include "Disassembler.h"
 #include "FFICallingConvention.h"
 #include "JITCompilation.h"
 #include "JSCInlines.h"
 #include "JSFFIFunction.h"
 #include "ObjectConstructor.h"
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/ProcessID.h>
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadingPrimitives.h>
+#include <wtf/text/MakeString.h>
+
 #if OS(WINDOWS)
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
-#include "Disassembler.h"
-#include <wtf/HashMap.h>
-#include <wtf/ProcessID.h>
-#include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -61,18 +64,77 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CModule);
 
 namespace {
 
-// A thread's copies of the `_Thread_local` objects of the modules whose code it has run. The
-// blocks are freed when the thread exits.
+// A thread's copies of the `_Thread_local` objects of the modules whose code it has run.
 struct ThreadLocalBlocks {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ThreadLocalBlocks);
     ~ThreadLocalBlocks()
     {
         for (auto& entry : blocks)
             fastFree(entry.value);
     }
     UncheckedKeyHashMap<uint64_t, void*> blocks;
+    unsigned destructorRounds { 0 };
 };
 
+// The blocks are freed when the thread exits, by the system's thread-specific-data destructor and not by
+// a C++ thread_local one: those run before the program's own pthread_key_create and tss_create
+// destructors, which may still use the thread's `_Thread_local` objects.
+#if OS(WINDOWS)
+void WINAPI destroyThreadLocalBlocks(void* blocks)
+{
+    delete static_cast<ThreadLocalBlocks*>(blocks);
+}
+
+ThreadLocalBlocks& threadLocalBlocks()
+{
+    static DWORD key = FlsAlloc(destroyThreadLocalBlocks);
+    auto* blocks = static_cast<ThreadLocalBlocks*>(FlsGetValue(key));
+    if (!blocks) {
+        blocks = new ThreadLocalBlocks;
+        FlsSetValue(key, blocks);
+    }
+    return *blocks;
+}
+#else
+WTF::ThreadSpecificKey s_threadLocalBlocksKey;
+
+// The system calls every key's destructor, then does so again for the keys that were given a value
+// meanwhile, PTHREAD_DESTRUCTOR_ITERATIONS times over. Asking for another round until the last one
+// keeps the blocks there for the program's own destructors, whichever order the keys were made in.
+void destroyThreadLocalBlocks(void* value)
+{
+    auto* blocks = static_cast<ThreadLocalBlocks*>(value);
+    if (++blocks->destructorRounds < PTHREAD_DESTRUCTOR_ITERATIONS) {
+        WTF::threadSpecificSet(s_threadLocalBlocksKey, blocks);
+        return;
+    }
+    delete blocks;
+}
+
+ThreadLocalBlocks& threadLocalBlocks()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        WTF::threadSpecificKeyCreate(&s_threadLocalBlocksKey, destroyThreadLocalBlocks);
+    });
+    auto* blocks = static_cast<ThreadLocalBlocks*>(WTF::threadSpecificGet(s_threadLocalBlocksKey));
+    if (!blocks) {
+        blocks = new ThreadLocalBlocks;
+        WTF::threadSpecificSet(s_threadLocalBlocksKey, blocks);
+    }
+    return *blocks;
+}
+#endif
+
 std::atomic<uint64_t> s_nextThreadLocalKey { 1 };
+
+// Every module that finished loading, for as long as the process lives (see CModule.h).
+Lock s_loadedModulesLock;
+Vector<Ref<CModule>>& loadedModules() WTF_REQUIRES_LOCK(s_loadedModulesLock)
+{
+    static NeverDestroyed<Vector<Ref<CModule>>> modules;
+    return modules;
+}
 
 } // anonymous namespace
 
@@ -82,8 +144,9 @@ CModule::CModule(std::unique_ptr<BIR::Module>&& bir)
 {
 }
 
-std::pair<uint8_t, uint8_t> CModule::hostTarget()
+std::optional<std::pair<uint8_t, uint8_t>> CModule::hostTarget()
 {
+#if (CPU(X86_64) || CPU(ARM64)) && (OS(DARWIN) || OS(WINDOWS) || OS(FREEBSD) || OS(LINUX))
 #if CPU(X86_64)
     constexpr BIR::Arch arch = BIR::Arch::X86_64;
 #else
@@ -98,14 +161,16 @@ std::pair<uint8_t, uint8_t> CModule::hostTarget()
 #else
     constexpr BIR::OS os = BIR::OS::Linux;
 #endif
-    return { static_cast<uint8_t>(arch), static_cast<uint8_t>(os) };
+    return { { static_cast<uint8_t>(arch), static_cast<uint8_t>(os) } };
+#else
+    return std::nullopt;
+#endif
 }
 
 void* SYSV_ABI CModule::threadLocalBase(void* context)
 {
-    static thread_local ThreadLocalBlocks threadBlocks;
     CModule& module = *static_cast<CModule*>(context);
-    auto result = threadBlocks.blocks.ensure(module.m_threadLocalKey, [&] {
+    auto result = threadLocalBlocks().blocks.ensure(module.m_threadLocalKey, [&] {
         const BIR::ThreadLocalData& tls = module.m_bir->tls;
         size_t size = std::max<size_t>(tls.size, 1);
         void* block = fastAlignedMalloc(std::max<size_t>(tls.alignment, 16), roundUpToMultipleOf<16>(size));
@@ -215,12 +280,19 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     Ref<CModule> module = adoptRef(*new CModule(WTF::move(decoded.value())));
     const BIR::Module& bir = module->bir();
 
-    auto [hostArch, hostOS] = hostTarget();
-    if (static_cast<uint8_t>(bir.arch) != hostArch || static_cast<uint8_t>(bir.os) != hostOS)
+    auto host = hostTarget();
+    if (!host)
+        return std::unexpected<String>("compiled C does not run on this platform"_s);
+    if (static_cast<uint8_t>(bir.arch) != host->first || static_cast<uint8_t>(bir.os) != host->second)
         return std::unexpected<String>("BIR module was compiled for a different target"_s);
 
-    if (bir.usesVectors && !Options::useWasmSIMD())
+    if (bir.usesVectors && !Options::useWasmSIMD()) {
+#if CPU(X86_64)
         return std::unexpected<String>("this C code uses 128-bit vectors, which need AVX on x86-64"_s);
+#else
+        return std::unexpected<String>("this C code uses 128-bit vectors, which are turned off (useWasmSIMD)"_s);
+#endif
+    }
 
     for (const CString& name : bir.libraries) {
         void* handle = openLibrary(name);
@@ -283,8 +355,7 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
         enqueue(constructor);
     for (uint32_t destructor : bir.destructors)
         enqueue(destructor);
-    while (!worklist.isEmpty()) {
-        unsigned functionIndex = worklist.takeLast();
+    auto compile = [&](unsigned functionIndex) {
         B3::Procedure proc(bir.usesVectors);
 #if OS(WINDOWS) && CPU(X86_64)
         // C functions and their callers on Windows expect rsi, rdi and xmm6-xmm15 to survive a call. The JIT's
@@ -305,8 +376,6 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
         lowering.lowerFunction(functionIndex);
         for (unsigned referenced : lowering.referencedFunctions())
             enqueue(referenced);
-        if (Options::useBIRPromoteStackSlots() && !bir.functions[functionIndex].callsReturnsTwice)
-            promoteStackSlots(proc);
         // C locals are B3 Variables. B3 turns those into SSA values only after its strength reduction,
         // loop-invariant hoisting and load/store elimination have run, so to those passes every use of a
         // pointer held in a local is a different, unknown address. JS and wasm arrive in SSA form already.
@@ -342,6 +411,43 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
         }
 #endif
         module->m_compilations.append(WTF::move(compilation));
+    };
+    auto compileEverythingQueued = [&] {
+        while (!worklist.isEmpty())
+            compile(worklist.takeLast());
+    };
+    compileEverythingQueued();
+
+    // The optimizing JIT lowers a small exported function a second time, into its JavaScript caller, and
+    // decides afresh what to inline into it. Whatever it decides, what that lowering calls has to have
+    // an entry: every function named by a body it may lower, which is every body that is kept that an
+    // exported one reaches.
+    auto bodyIsKept = [&](const BIR::Function& function) {
+        return function.insts.size() <= Options::maximumFFIInlineCInstructionCount();
+    };
+    {
+        Vector<unsigned> mayBeLoweredAgain;
+        Vector<bool> isVisited;
+        isVisited.fill(false, bir.functions.size());
+        auto visit = [&](unsigned functionIndex) {
+            if (!isVisited[functionIndex] && bodyIsKept(bir.functions[functionIndex])) {
+                isVisited[functionIndex] = true;
+                mayBeLoweredAgain.append(functionIndex);
+            }
+        };
+        for (unsigned i = 0; i < bir.functions.size(); ++i) {
+            if (bir.functions[i].isExported)
+                visit(i);
+        }
+        while (!mayBeLoweredAgain.isEmpty()) {
+            for (const BIR::Inst& inst : bir.functions[mayBeLoweredAgain.takeLast()].insts) {
+                if (inst.op != BIR::Op::Call && inst.op != BIR::Op::FuncAddr)
+                    continue;
+                enqueue(inst.a);
+                visit(inst.a);
+            }
+        }
+        compileEverythingQueued();
     }
 
     for (const BIR::Reloc& reloc : bir.data.relocs) {
@@ -351,16 +457,21 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     if (size_t constantBytes = roundDownToMultipleOf(pageSize(), static_cast<size_t>(bir.data.readOnlySize)))
         OSAllocator::protect(module->m_data, constantBytes, true, false);
 
-    for (uint32_t constructor : bir.constructors)
-        reinterpret_cast<void (*)()>(module->m_functionTable[constructor])();
-
     // The bodies that stay are the ones the optimizing JIT may still inline into a JavaScript caller.
     // One of those calls, rather than inlines, a function whose body is gone.
     for (BIR::Function& function : module->m_bir->functions) {
-        if (function.insts.size() > Options::maximumFFIInlineCInstructionCount())
+        if (!bodyIsKept(function))
             function.releaseBody();
     }
     module->m_bir->data.initialized = { };
+
+    // From here on the program's code runs, and what it does may point into the module.
+    {
+        Locker locker { s_loadedModulesLock };
+        loadedModules().append(module.copyRef());
+    }
+    for (uint32_t constructor : bir.constructors)
+        reinterpret_cast<void (*)()>(module->m_functionTable[constructor])();
 
     return module;
 #else
@@ -377,47 +488,14 @@ JSObject* CModule::createExportsObject(JSGlobalObject* globalObject)
 
     JSObject* result = constructEmptyObject(globalObject);
     for (const BIR::Export& entry : m_bir->exports) {
-        RefPtr<Signature> signature = Signature::tryCreate(entry.arguments.span(), entry.returnType);
-        if (!signature) {
-            throwTypeError(globalObject, scope, makeString("C function '"_s, entry.name, "' has a signature bun:ffi cannot call"_s));
-            return nullptr;
-        }
-        JSFFIFunction* function = createFunction(globalObject, entry.function, signature.releaseNonNull(), entry.name);
+        JSFFIFunction* function = JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), Ref { *entry.signature }, entrypoint(entry.function), entry.name);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        result->putDirect(vm, Identifier::fromString(vm, entry.name), function);
+        function->setCModule(*this, entry.function);
+        // A C function can be given any name (`int f(void) __asm__("7");`), one that reads as an index too.
+        result->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, entry.name), function);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;
-}
-
-std::optional<unsigned> CModule::findExportedFunction(StringView name) const
-{
-    for (unsigned i = 0; i < m_bir->functions.size(); ++i) {
-        if (m_bir->functions[i].isExported && m_bir->functions[i].name == name)
-            return i;
-    }
-    return std::nullopt;
-}
-
-JSFFIFunction* CModule::createFunction(JSGlobalObject* globalObject, unsigned functionIndex, Ref<Signature>&& signature, const String& name)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // The native call passes one machine argument per declared argument, so the declared
-    // argument count has to be the C function's.
-    const BIR::Signature& native = m_bir->signatures[m_bir->functions[functionIndex].signature];
-    if (!native.isScalar()) {
-        throwTypeError(globalObject, scope, makeString("C function '"_s, name, "' passes or returns a struct by value, or is variadic, so it cannot be called from JavaScript"_s));
-        return nullptr;
-    }
-    if (signature->argumentCount() != native.parameters.size()) {
-        throwTypeError(globalObject, scope, makeString("C function '"_s, name, "' takes "_s, native.parameters.size(), " arguments but "_s, signature->argumentCount(), " were declared"_s));
-        return nullptr;
-    }
-    JSFFIFunction* function = JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), WTF::move(signature), entrypoint(functionIndex), name);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    function->setCModule(*this, functionIndex);
-    return function;
 }
 
 } } // namespace JSC::FFI

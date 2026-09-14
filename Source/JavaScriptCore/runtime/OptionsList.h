@@ -86,13 +86,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maximumFFIInlineCInstructionCount, 200, Normal, "largest BIR function body the FTL inlines"_s) \
     v(OptionString, dumpCModuleFunction, nullptr, Normal, "print the B3 IR and machine code of the compiled C function with this name"_s) \
     v(Bool, writeCModulePerfMap, false, Normal, "append each compiled C function to /tmp/perf-<pid>.map so perf can name it"_s) \
-    v(Bool, useBIRPromoteStackSlots, false, Normal, "turn C locals whose address does not escape into B3 variables (loses to spilling in large functions)"_s) \
     v(Unsigned, maximumBIRInlineCalleeInstructionCount, 2000, Normal, "largest BIR callee inlined at a C call site"_s) \
     v(Unsigned, maximumBIRInlineGrowthPerCallee, 300, Normal, "most BIR instructions inlining one callee at all of its call sites may add to a module"_s) \
     v(Unsigned, maximumBIRInlineTrivialCalleeInstructionCount, 24, Normal, "a BIR callee this small is inlined at every C call site"_s) \
     v(Unsigned, maximumBIRInlineConstantArgumentCalleeInstructionCount, 120, Normal, "a BIR callee this small is inlined where it is called with a constant argument"_s) \
     v(Unsigned, birInlineHintGrowthMultiplier, 8, Normal, "how much more a BIR callee declared inline may grow the module by"_s) \
     v(Unsigned, maximumBIRInlinedInstructionsPerFunction, 4000, Normal, "total BIR instructions a C function may absorb by inlining"_s) \
+    v(Unsigned, maximumBIRAlwaysInlinedInstructionsPerFunction, 20000, Normal, "total BIR instructions a C function may absorb by inlining always_inline callees"_s) \
+    v(Unsigned, maximumBIRInlineCalleeFrameBytes, 1024, Normal, "a BIR callee whose locals in memory take more than this is not inlined at a C call site"_s) \
     v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \

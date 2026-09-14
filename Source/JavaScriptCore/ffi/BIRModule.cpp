@@ -28,7 +28,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#include <wtf/HashSet.h>
 #include <wtf/LEBDecoder.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -43,6 +42,8 @@ namespace {
 
 constexpr uint32_t parameterBlock = UINT32_MAX;
 constexpr uint64_t maxCount = 1u << 24;
+// What a function's slots, and what a call's by-value arguments, may add up to: frame offsets are 32-bit.
+constexpr uint64_t maxFrameBytes = 1u << 30;
 
 bool isInt(Type type) { return type == Type::I32 || type == Type::I64; }
 bool isFloat(Type type) { return type == Type::F32 || type == Type::F64; }
@@ -175,6 +176,8 @@ private:
             return false;
         if (arch > static_cast<uint8_t>(Arch::ARM64) || os > static_cast<uint8_t>(OS::FreeBSD) || pointerBytes != 8)
             return fail("unsupported target"_s);
+        if (reserved)
+            return fail("the reserved header byte is not zero"_s);
         m_module->arch = static_cast<Arch>(arch);
         m_module->os = static_cast<OS>(os);
 
@@ -189,15 +192,26 @@ private:
                 return false;
             if (resultCount > 4)
                 return fail("too many results"_s);
+            // As many as the target returns in registers: rax:rdx and xmm0:xmm1, x0:x1 and v0..v3, one on Win64.
+            unsigned integerResults = 0;
+            unsigned floatResults = 0;
             for (uint32_t j = 0; j < resultCount; ++j) {
                 Type result;
                 if (!type(result, false))
                     return false;
+                ++(isInt(result) ? integerResults : floatResults);
                 signature.results.append(result);
             }
+            bool isWindows = m_module->os == OS::Windows;
+            unsigned maxFloatResults = m_module->arch == Arch::ARM64 ? 4 : 2;
+            if (integerResults > 2 || floatResults > maxFloatResults || (isWindows && resultCount > 1))
+                return fail("more results than the target has result registers"_s);
             if (!u8(flags) || !count(parameterCount))
                 return false;
+            if (flags > 1)
+                return fail("unknown signature flags"_s);
             signature.isVariadic = flags & 1;
+            uint64_t byValueBytes = 0;
             for (uint32_t j = 0; j < parameterCount; ++j) {
                 Parameter parameter;
                 uint8_t kind;
@@ -210,21 +224,32 @@ private:
                 case ParamKind::Value:
                     if (!type(parameter.type, false))
                         return false;
+                    // Win64 passes a 128-bit vector by reference.
+                    if (isWindows && parameter.type == Type::V128)
+                        return fail("a vector cannot be passed by value on this target"_s);
                     break;
                 case ParamKind::ByValStack: {
                     uint8_t exhausts;
                     if (!varuint(parameter.size) || !varuint(parameter.alignment) || !u8(exhausts))
                         return false;
-                    if (!parameter.size || parameter.size > (1u << 20) || (parameter.size & 7))
+                    if (!parameter.size || parameter.size > (1u << 20))
                         return fail("bad by-value argument size"_s);
                     if (parameter.alignment != 8 && parameter.alignment != 16)
                         return fail("bad by-value argument alignment"_s);
                     if (exhausts > static_cast<uint8_t>(Exhausts::FloatRegisters))
                         return fail("bad exhausts"_s);
+                    // Win64 passes every aggregate that is not in a register by reference.
+                    if (isWindows)
+                        return fail("an aggregate cannot be passed in the stack arguments on this target"_s);
                     parameter.exhausts = static_cast<Exhausts>(exhausts);
+                    byValueBytes += parameter.size + parameter.alignment;
+                    if (byValueBytes > maxFrameBytes)
+                        return fail("by-value arguments are too large"_s);
                     break;
                 }
                 case ParamKind::IndirectResult:
+                    if (j)
+                        return fail("the indirect result must be the first parameter"_s);
                     break;
                 }
                 signature.parameters.append(parameter);
@@ -248,6 +273,8 @@ private:
             entry.kind = static_cast<ExternKind>(kind);
             if (entry.kind == ExternKind::Function && entry.signature >= signatureCount)
                 return fail("extern signature out of range"_s);
+            if (entry.kind == ExternKind::Data && entry.signature)
+                return fail("a data extern has no signature"_s);
             entry.name = CString(name);
             m_module->externs.append(WTF::move(entry));
         }
@@ -309,7 +336,11 @@ private:
                 return false;
             if (function.signature >= signatureCount)
                 return fail("function signature out of range"_s);
+            if (flags > 0x1f)
+                return fail("unknown function flags"_s);
             function.name = String::fromUTF8(name);
+            if (function.name.isNull())
+                return fail("function name is not UTF-8"_s);
             function.isExported = flags & 1;
             function.callsReturnsTwice = flags & 2;
             function.isAlwaysInline = flags & 4;
@@ -356,22 +387,32 @@ private:
             Export entry;
             std::span<const uint8_t> name;
             uint32_t argumentCount;
-            if (!str(name) || !varuint32(entry.function) || !ffiType(entry.returnType) || !count(argumentCount))
+            FFI::Type returnType;
+            if (!str(name) || !varuint32(entry.function) || !ffiType(returnType) || !count(argumentCount))
                 return false;
             if (entry.function >= functionCount)
                 return fail("export function out of range"_s);
+            // Only a function flagged as exported is sure to have code of its own.
+            if (!m_module->functions[entry.function].isExported)
+                return fail("export of a function that is not flagged as exported"_s);
             const Signature& signature = m_module->signatures[m_module->functions[entry.function].signature];
             if (!signature.isScalar())
                 return fail("exported function does not have a scalar signature"_s);
             if (argumentCount != signature.parameters.size())
                 return fail("export argument count does not match the function"_s);
             entry.name = String::fromUTF8(name);
+            if (entry.name.isNull())
+                return fail("export name is not UTF-8"_s);
+            Vector<FFI::Type> arguments;
             for (uint32_t j = 0; j < argumentCount; ++j) {
                 FFI::Type argument;
                 if (!ffiType(argument))
                     return false;
-                entry.arguments.append(argument);
+                arguments.append(argument);
             }
+            entry.signature = FFI::Signature::tryCreate(arguments.span(), returnType);
+            if (!entry.signature)
+                return fail("export has a signature JavaScript cannot call"_s);
             m_module->exports.append(WTF::move(entry));
         }
 
@@ -394,10 +435,10 @@ private:
                 if (!varuint32(function))
                     return false;
                 if (function >= functionCount)
-                    return fail("constructor function out of range"_s);
+                    return fail("constructor or destructor function out of range"_s);
                 const Signature& signature = m_module->signatures[m_module->functions[function].signature];
                 if (!signature.results.isEmpty() || !signature.parameters.isEmpty() || signature.isVariadic)
-                    return fail("a constructor must be void f(void)"_s);
+                    return fail("a constructor or destructor must be void f(void)"_s);
                 m_module->functions[function].isAddressTaken = true; // Called by the loader, not by a Call.
                 list->append(function);
             }
@@ -510,6 +551,9 @@ private:
                 return false;
             if (slot.size > (1u << 28) || !slot.alignment || (slot.alignment & (slot.alignment - 1)) || slot.alignment > 4096)
                 return fail("bad stack slot"_s);
+            function.frameBytes += roundUpToMultipleOf<16>(std::max<uint64_t>(slot.size, 1)) + slot.alignment;
+            if (function.frameBytes > maxFrameBytes)
+                return fail("stack frame is too large"_s);
             function.slots.append(slot);
         }
 
@@ -518,6 +562,9 @@ private:
             return false;
         if (!blockCount)
             return fail("function has no blocks"_s);
+        // A block is at least its instruction count and a terminator's opcode.
+        if (blockCount > (m_bytes.size() - m_offset) / 2)
+            return fail("unexpected end of input"_s);
         function.blocks.grow(blockCount);
 
         for (uint32_t blockNumber = 0; blockNumber < blockCount; ++blockNumber) {
@@ -670,8 +717,10 @@ private:
         case Op::VConvert:
             if (!u8(inst.aux) || !useTyped(inst.a, Type::V128))
                 return false;
-            if (inst.aux > static_cast<uint8_t>(VConvertKind::F64x2ToI64x2U))
+            if (inst.aux > static_cast<uint8_t>(VConvertKind::F64x2ToI32x4ZeroX86))
                 return fail("bad vector conversion"_s);
+            if (inst.aux >= static_cast<uint8_t>(VConvertKind::F32x4ToI32x4X86) && m_module->arch != Arch::X86_64)
+                return fail("an x86-64 vector conversion in a module for another target"_s);
             define(inst, Type::V128);
             return true;
         case Op::VAddSat:
@@ -939,16 +988,22 @@ private:
         }
         case Op::InlineAsm: {
             // extra: flags, nbytes, byte*, ninputs, (value, register)*, noutputs, (type, register)*, nclobbers, register*
+            if (m_module->arch != Arch::X86_64)
+                return fail("InlineAsm is x86-64 machine code"_s);
             auto& extra = m_function->extra;
             inst.extraOffset = static_cast<uint32_t>(extra.size());
-            bool isX86 = m_module->arch == Arch::X86_64;
             auto registerIsValid = [&](uint8_t reg, bool mustBeVector, bool mustBeInteger) {
-                bool isVector = isX86 ? (reg >= 16 && reg < 32) : (reg >= 32 && reg < 64);
-                bool isInteger = isX86 ? (reg < 16 && reg != 4 && reg != 5) : (reg < 31 && reg != 18 && reg != 29 && reg != 30);
+                bool isVector = reg >= 16 && reg < 32;
+                bool isInteger = reg < 16 && reg != 4 && reg != 5;
                 if (!isVector && !isInteger)
                     return false;
                 return !(mustBeVector && !isVector) && !(mustBeInteger && !isInteger);
             };
+            // One bit per register. A register holds one input and one output at most, and one the code is
+            // said to clobber holds neither.
+            uint32_t inputRegisters = 0;
+            uint32_t outputRegisters = 0;
+            uint32_t clobberedRegisters = 0;
             uint8_t flags;
             uint32_t byteCount, inputCount, outputCount, clobberCount;
             std::span<const uint8_t> code;
@@ -956,10 +1011,6 @@ private:
                 return false;
             if (flags > 1 || byteCount > 4096)
                 return fail("bad InlineAsm"_s);
-#if CPU(ARM64)
-            if (byteCount % 4)
-                return fail("InlineAsm code is not whole instructions"_s);
-#endif
             extra.append(flags);
             extra.append(byteCount);
             for (uint8_t byte : code)
@@ -976,6 +1027,9 @@ private:
                 bool isIntegerValue = type == Type::I32 || type == Type::I64;
                 if (!registerIsValid(reg, !isIntegerValue, isIntegerValue))
                     return fail("bad InlineAsm input register"_s);
+                if (inputRegisters & (1u << reg))
+                    return fail("two InlineAsm inputs in one register"_s);
+                inputRegisters |= 1u << reg;
                 extra.append(id);
                 extra.append(reg);
             }
@@ -991,6 +1045,9 @@ private:
                 bool isIntegerValue = static_cast<Type>(type) == Type::I32 || static_cast<Type>(type) == Type::I64;
                 if (!registerIsValid(reg, !isIntegerValue, isIntegerValue))
                     return fail("bad InlineAsm output register"_s);
+                if (outputRegisters & (1u << reg))
+                    return fail("two InlineAsm outputs in one register"_s);
+                outputRegisters |= 1u << reg;
                 if (static_cast<Type>(type) == Type::V128)
                     m_module->usesVectors = true;
                 extra.append(type);
@@ -1005,8 +1062,11 @@ private:
                     return false;
                 if (!registerIsValid(reg, false, false))
                     return fail("bad InlineAsm clobber"_s);
+                clobberedRegisters |= 1u << reg;
                 extra.append(reg);
             }
+            if (clobberedRegisters & (inputRegisters | outputRegisters))
+                return fail("an InlineAsm operand is in a clobbered register"_s);
             inst.extraCount = static_cast<uint32_t>(extra.size()) - inst.extraOffset;
             // Outputs are defined last: `define` numbers them after the inputs were checked against
             // earlier values only.
@@ -1136,7 +1196,7 @@ private:
                 return fail("switch on a float"_s);
             inst.extraOffset = static_cast<uint32_t>(m_function->extra.size());
             inst.extraCount = caseCount * 2;
-            HashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> seen;
+            Vector<int64_t> caseValues;
             for (uint32_t i = 0; i < caseCount; ++i) {
                 int64_t caseValue;
                 uint32_t target;
@@ -1144,13 +1204,13 @@ private:
                     return false;
                 if (a == Type::I32 && (caseValue < INT32_MIN || caseValue > INT32_MAX))
                     return fail("switch case out of range"_s);
-                if (caseValue == INT64_MAX || caseValue == INT64_MAX - 1)
-                    return fail("unsupported switch case value"_s);
-                if (!seen.add(caseValue).isNewEntry)
-                    return fail("duplicate switch case"_s);
+                caseValues.append(caseValue);
                 m_function->extra.append(caseValue);
                 m_function->extra.append(target);
             }
+            std::ranges::sort(caseValues);
+            if (std::ranges::adjacent_find(caseValues) != caseValues.end())
+                return fail("duplicate switch case"_s);
             return true;
         }
         case Op::Ret:

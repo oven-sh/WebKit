@@ -5059,13 +5059,16 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
 }
 
-// $vm.cModuleHost() -> [arch, os]: the target bytes a BIR module needs in its header to load here.
+// $vm.cModuleHost() -> [arch, os]: the target bytes a BIR module needs in its header to load here. null where none loads.
 JSC_DEFINE_HOST_FUNCTION(functionCModuleHost, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto [arch, os] = FFI::CModule::hostTarget();
+    auto host = FFI::CModule::hostTarget();
+    if (!host)
+        return JSValue::encode(jsNull());
+    auto [arch, os] = *host;
     JSArray* result = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
     result->putDirectIndex(globalObject, 0, jsNumber(arch));

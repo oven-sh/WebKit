@@ -35,16 +35,21 @@
 // (src/cc/bir.rs is the mirror of this file); CModule lowers it to B3.
 //
 // Encoding. Little-endian. varuint = unsigned LEB128, varint = signed LEB128,
-// str = varuint byte length + UTF-8 bytes, type = u8 (Type below).
+// str = varuint byte length + UTF-8 bytes, type = u8 (Type below). A count (anything written `n...`
+// below) is at most 2^24. A byte or bit described as reserved or not described is zero. The decoder
+// (BIRModule.cpp) refuses a module that breaks any rule stated here; "Limits" at the end lists the
+// ones that are sizes.
 //
 //   module:
 //     magic "BIR0"
 //     u8 arch (Arch), u8 os (OS), u8 pointerBytes (8), u8 reserved (0)
 //     varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
+//                                (no more results than the target returns in registers: two integers, and two
+//                                 floating-point or vector values on x86-64, four on AArch64; one result on Win64)
 //                       param:   u8 kind (ParamKind), then for Value: type;
-//                                for ByValStack: varuint size; varuint align; u8 exhausts (Exhausts);
-//                                for IndirectResult: nothing
-//     varuint nexterns; extern*: { str name; u8 kind (ExternKind); varuint sig }   (sig is 0 and unused for Data)
+//                                for ByValStack: varuint size; varuint align (8 or 16); u8 exhausts (Exhausts);
+//                                for IndirectResult: nothing (only as the first parameter)
+//     varuint nexterns; extern*: { str name; u8 kind (ExternKind); varuint sig }   (sig is 0 for Data)
 //     data:             { varuint size; varuint align; varuint readOnly; varuint ninit; u8[ninit];
 //                         varuint nrelocs; reloc*: { varuint offset; u8 kind (RelocKind); varuint index; varint addend } }
 //                       (the first readOnly bytes are what the program never writes: string literals, const objects. The
@@ -60,13 +65,16 @@
 //                                  varuint nslots; slot*: { varuint size; varuint align };   every decl precedes every body so a
 //                                  varuint nblocks; block*: { varuint ninsts; inst* } }      Call can name a later function)
 //     varuint nexports; export*: { str name; varuint func; u8 ffiRet; varuint nargs; u8 ffiArg* }
+//                                (func is flagged exported and its sig is all Value scalars with at most one scalar
+//                                 result; nargs is that sig's nparams and at most 32; any name, an empty one or one
+//                                 that reads as an array index too)
 //     varuint nlibraries; str*                                   (shared libraries to search for externs, in order,
 //                                                                 before the process itself: `#pragma comment(lib, "sqlite3")`)
 //     varuint nconstructors; varuint func*                       (`__attribute__((constructor))`: `void f(void)` functions the
 //                                                                 loader calls, in this order, once the module is ready to run)
 //     varuint ndestructors; varuint func*                        (`__attribute__((destructor))`, in the order they run. The loader
 //                                                                 does not call them; it hands them to whoever owns the process's
-//                                                                 exit, which must keep the module alive until then)
+//                                                                 exit. A loaded module is never unloaded, see CModule.h)
 //
 // data is one segment holding every global and string literal: the first ninit bytes are
 // initialized, the rest (up to size) is zero. A reloc writes an 8-byte absolute address at
@@ -84,17 +92,19 @@
 //     register of its class (integer or floating point), and the stack once those run out, the way
 //     the platform passes `long` and `double`. A small struct the ABI passes in registers is
 //     therefore 1 to 4 Value parameters; one returned in registers is 1 to 4 results.
-//   - ByValStack is `size` bytes copied into the stack argument area at `align` (rounded up to 8):
-//     the object itself lives in the caller's outgoing arguments (x86-64 SysV's MEMORY class; an
-//     AArch64 composite that no longer fits the registers). `exhausts` marks the register class
-//     that AArch64 closes to later arguments when that happens. At a call the operand is the
-//     address (i64) of the bytes to copy; in the callee the parameter's value is the address (i64)
-//     of its own copy.
+//   - ByValStack is an object of exactly `size` bytes (the C type's sizeof) copied into the stack
+//     argument area at a multiple of `align`, where it takes `size` rounded up to 8 bytes: the object
+//     itself lives in the caller's outgoing arguments (x86-64 SysV's MEMORY class; an AArch64
+//     composite that no longer fits the registers). Exactly `size` bytes are read from the source;
+//     what the bytes after them in the argument area hold is unspecified. `exhausts` marks the
+//     register class that AArch64 closes to later arguments when that happens. At a call the
+//     operand is the address (i64) of the bytes to copy; in the callee the parameter's value is the
+//     address (i64) of its own copy. Win64 has no such arguments.
 //   - IndirectResult is the i64 address the callee writes a memory-class result to. AArch64 passes
 //     it in x8; everywhere else it is an ordinary first integer argument, and the frontend uses a
 //     Value parameter for it instead.
 //   - A struct the ABI passes by reference (Win64, AArch64 above 16 bytes) is a Value i64 pointing
-//     at a copy the caller made.
+//     at a copy the caller made. So is a 128-bit vector on Win64, which has no Value v128 parameters.
 //
 // Values. A function's parameters are values 0..nparams-1 (ByValStack and IndirectResult are
 // i64). Every instruction that produces
@@ -133,9 +143,9 @@
 //              varuint ninputs, (v value, u8 register)*         (i32/i64 values in integer registers, f32/f64/v128 in vector ones)
 //              varuint noutputs, (u8 type, u8 register)*        (-> that many results, numbered like a call's)
 //              varuint nclobbers, u8 register*                  (the condition flags are always clobbered)
-//     Registers: x86-64 0..15 = rax rcx rdx rbx rsp rbp rsi rdi r8..r15 (rsp/rbp not allowed), 16..31 = xmm0..15;
-//                arm64 0..30 = x0..x30 (x18, x29, x30 not allowed), 32..63 = v0..v31. A register may be both an input
-//                and an output ("+r"). Inputs are read before any output is written only if the code does so.
+//     x86-64 only. Registers: 0..15 = rax rcx rdx rbx rsp rbp rsi rdi r8..r15 (rsp/rbp not allowed), 16..31 = xmm0..15.
+//                A register may be both an input and an output ("+r"), but holds one input and one output at most, and
+//                neither if it is clobbered. Inputs are read before any output is written only if the code does so.
 //   CpuId: v leaf(i32), v subleaf(i32) -> i32 eax, i32 ebx, i32 ecx, i32 edx    (x86-64 only; four results, like a call's)
 //   TlsAddr: varuint offset -> i64                            (address of tls[offset] in the calling thread's copy)
 //   LocalGet: varuint local | LocalSet: varuint local, v value
@@ -188,7 +198,7 @@
 //   VaStart: v va_list(i64)                                   (only in a function whose sig is variadic: initializes the
 //                                                              target ABI's va_list object at that address, see below)
 //   Jump: varuint block | Br: v cond(i32), varuint then, varuint else   (Br and Select take any non-zero cond as true)
-//   Switch: v value(i32|i64), varuint default, varuint ncases, { varint case; varuint block }*
+//   Switch: v value(i32|i64), varuint default, varuint ncases, { varint case; varuint block }*   (no case twice; any value of the type)
 //   Ret: v* (one per result of the function's sig, at least one) | RetVoid | Unreachable | Trap
 //                       (Unreachable: control never gets here; Trap: abort the process)
 //
@@ -200,6 +210,17 @@
 //                    x0..x7 end at gr_top, q0..q7 (16 bytes each) end at vr_top.
 //   AArch64 (Apple), Win64: char*, pointing at the first anonymous argument; every argument takes
 //                    an 8-byte slot.
+
+//
+// Limits. What is past one of these the frontend diagnoses in the source, or arranges differently (an
+// offset that does not fit is added to the address instead).
+//   data: size <= 4 GiB, align a power of two <= 4096.  tls: size <= 256 MiB, align a power of two <= 4096.
+//   A reloc's 8 bytes lie inside its segment; a Data (Tls) reloc's index is <= the segment's size.
+//   slot: size <= 256 MiB, align a power of two <= 4096; the slots of one function, each rounded up to 16 plus its
+//   alignment, <= 1 GiB.  StackAlloc: align a power of two <= 4096.
+//   ByValStack: 1 <= size <= 1 MiB; the ByValStack parameters of one sig, each plus its alignment, <= 1 GiB.
+//   Load, Store: offset fits in 32 bits signed.  ConstI32, and a Switch case on an i32: fits in 32 bits signed.
+//   InlineAsm: at most 4096 bytes of code, 16 inputs, 16 outputs, 64 clobbers.
 
 namespace JSC { namespace FFI { namespace BIR {
 
@@ -229,7 +250,8 @@ enum class MemKind : uint8_t { I8S = 0, I8U = 1, I16S = 2, I16U = 3, I32 = 4, I6
 enum class Lane : uint8_t { I8x16 = 0, I16x8 = 1, I32x4 = 2, I64x2 = 3, F32x4 = 4, F64x2 = 5 };
 
 // Lane-wise conversions. "Low"/"High" name which half of the source lanes is read; "Zero" means the
-// upper result lanes are zero. Float -> int truncates toward zero and saturates; NaN gives 0.
+// upper result lanes are zero. Float -> int truncates toward zero and saturates; NaN gives 0 (but see
+// the two x86-64 kinds at the end).
 enum class VConvertKind : uint8_t {
     I32x4ToF32x4S = 0, I32x4ToF32x4U = 1,
     F32x4ToI32x4S = 2, F32x4ToI32x4U = 3,
@@ -240,6 +262,9 @@ enum class VConvertKind : uint8_t {
     I16x8LowToI32x4S = 14, I16x8LowToI32x4U = 15, I16x8HighToI32x4S = 16, I16x8HighToI32x4U = 17,
     I32x4LowToI64x2S = 18, I32x4LowToI64x2U = 19, I32x4HighToI64x2S = 20, I32x4HighToI64x2U = 21,
     I64x2ToF64x2S = 22, I64x2ToF64x2U = 23, F64x2ToI64x2S = 24, F64x2ToI64x2U = 25,
+    // x86-64 only: what cvttps2dq and cvttpd2dq do (_mm_cvttps_epi32, _mm_cvttpd_epi32). Signed; a lane that
+    // does not fit in 32 bits, or is NaN, becomes 0x80000000.
+    F32x4ToI32x4X86 = 26, F64x2ToI32x4ZeroX86 = 27,
 };
 
 enum class MemOrder : uint8_t { Relaxed = 0, Acquire = 1, Release = 2, AcquireRelease = 3, SequentiallyConsistent = 4 };

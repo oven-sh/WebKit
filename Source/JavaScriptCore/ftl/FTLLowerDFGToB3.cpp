@@ -15536,7 +15536,8 @@ IGNORE_CLANG_WARNINGS_END
                 bool typesMatch = native.isScalar() && native.parameters.size() == directOperands.size() && FFI::BIRToB3::toB3(native.soleResultOrVoid()) == returnLType;
                 for (unsigned i = 0; typesMatch && i < directOperands.size(); ++i)
                     typesMatch = directOperands[i]->type() == FFI::BIRToB3::toB3(native.parameters[i].type);
-                if (typesMatch && candidate.hasBody && !candidate.isNeverInline && !candidate.movesStackPointer && !candidate.callsReturnsTwice && !candidate.usesFrameAddress && candidate.insts.size() <= Options::maximumFFIInlineCInstructionCount())
+                // A body larger than Options::maximumFFIInlineCInstructionCount() was released when the module loaded.
+                if (typesMatch && candidate.canBeInlined() && candidate.frameBytes <= Options::maximumBIRInlineCalleeFrameBytes())
                     inlinee = &candidate;
             }
             // A body with no calls cannot reach JS, so it needs no frame bookkeeping and cannot throw.
@@ -15545,7 +15546,6 @@ IGNORE_CLANG_WARNINGS_END
                 callPreflight();
                 m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
             }
-            LValue callee = m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target));
             LValue rawReturn;
             if (inlinee) {
                 FFI::g_ffiCompileCounts.ftlInlineC++;
@@ -15554,9 +15554,9 @@ IGNORE_CLANG_WARNINGS_END
                 lowering.setBlockFactory([&] { return m_out.newBlock(); });
                 auto inlined = lowering.lowerInline(ffiFunction->cModuleFunction(), m_out.m_block, directOperands.span(), m_out.origin());
                 m_out.appendTo(inlined.continuation);
-                rawReturn = inlined.result;
+                rawReturn = inlined.results.isEmpty() ? nullptr : inlined.results[0];
             } else
-                rawReturn = m_out.call(returnLType, callee, directOperands);
+                rawReturn = m_out.call(returnLType, m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target)), directOperands);
             // The result stays in a register: nothing reads the return slot on this path.
             switch (returnType) {
             case FFI::Type::Void:

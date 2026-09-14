@@ -70,10 +70,9 @@ public:
     void lowerFunction(unsigned functionIndex);
 
     // Emits the body of `functionIndex` starting at `block`, reading its parameters from
-    // `arguments`. Control continues in `continuation`; `result` is null for void functions.
+    // `arguments`. Control continues in `continuation`; `results` is empty for void functions.
     struct Inlined {
         B3::BasicBlock* continuation { nullptr };
-        B3::Value* result { nullptr }; // The first of `results`.
         Vector<B3::Value*, 1> results;
     };
     Inlined lowerInline(unsigned functionIndex, B3::BasicBlock* block, std::span<B3::Value* const> arguments, B3::Origin);
@@ -109,8 +108,9 @@ private:
     void emitVariadicEntry(const BIR::Signature&, B3::BasicBlock* entry);
     void emitVaStart(B3::Value* vaList);
     B3::Value* emitStackOperation(const BIR::Inst&);
-    B3::Value* emitVolatileAccess(const BIR::Inst&);
+    B3::Value* emitOpaqueAccess(BIR::MemKind, B3::Value* address, int32_t offset, B3::Value* stored);
     void emitInlineAssembly(const BIR::Function&, const BIR::Inst&);
+    B3::Value* emitMathFunction(const BIR::Function&, const BIR::Inst&, const BIR::Signature&);
     bool emitSmallMemoryCopy(B3::Value* destination, B3::Value* source, B3::Value* size);
     bool emitSmallMemoryFill(B3::Value* destination, B3::Value* byte, B3::Value* size);
     B3::Value* constant(B3::Type, int64_t);
@@ -146,8 +146,11 @@ private:
         unsigned namedArguments { 0 };
     };
     VariadicFrame m_variadicFrame;
+    static constexpr unsigned maximumInlineDepth = 64;
+    static constexpr uint64_t maximumFrameBytes = 1u << 30;
     unsigned m_inlinedInstructionBudget { 0 };
-    unsigned m_alwaysInlineInstructionBudget { 200000 };
+    unsigned m_alwaysInlineInstructionBudget { 0 };
+    uint64_t m_frameBytes { 0 }; // Of the function being lowered and everything inlined into it so far.
 };
 
 } // namespace FFI

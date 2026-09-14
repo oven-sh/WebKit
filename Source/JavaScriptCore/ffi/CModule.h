@@ -55,6 +55,14 @@ struct BIRLinkEnvironment;
 // A C translation unit loaded into the process: the decoded BIR, its data segment, and the
 // machine code B3 produced for every function. Immutable once created, so the DFG/FTL may read
 // it from a compiler thread.
+//
+// Lifetime. A module that finished loading is never unloaded: its code, data and libraries stay for as
+// long as the process lives, like a shared library the program was linked with. C hands out pointers
+// into itself that no reference count sees (an atexit or signal handler, a thread's start routine, a
+// callback given to a library, the address of a static object returned to JavaScript), and C code
+// assumes they stay good. tryCreate keeps the reference that makes this so; the references its callers
+// and the exported functions hold only matter for a module that failed to load, which is destroyed
+// before any of its code has run.
 class CModule final : public ThreadSafeRefCounted<CModule> {
     WTF_MAKE_TZONE_ALLOCATED(CModule);
     WTF_MAKE_NONCOPYABLE(CModule);
@@ -66,23 +74,17 @@ public:
 
     const BIR::Module& bir() const { return *m_bir; }
     void* entrypoint(unsigned functionIndex) const { return m_functionTable[functionIndex]; }
-    uint8_t* data() const { return m_data; }
     void* const* functionTable() const { return m_functionTable.span().data(); }
-    std::span<void* const> externAddresses() const { return m_externAddresses.span(); }
     // This thread's copy of the module's `_Thread_local` objects, created on first use.
     JS_EXPORT_PRIVATE static void* SYSV_ABI threadLocalBase(void* module);
-    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process.
-    JS_EXPORT_PRIVATE static std::pair<uint8_t, uint8_t> hostTarget();
+    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process; nothing
+    // where compiled C does not run.
+    JS_EXPORT_PRIVATE static std::optional<std::pair<uint8_t, uint8_t>> hostTarget();
     BIRLinkEnvironment linkEnvironment() const;
     uint64_t relocatedAddress(const BIR::Reloc&, uint8_t* threadLocalBlock) const;
 
-    // { exportName: JSFFIFunction }, with the JS-facing types the C declarations imply. Every
-    // function keeps this module alive.
+    // { exportName: JSFFIFunction }, with the JS-facing types the C declarations imply.
     JS_EXPORT_PRIVATE JSObject* createExportsObject(JSGlobalObject*);
-
-    // For an embedder whose caller declares the JS-facing types itself (bun:ffi's `symbols`).
-    JS_EXPORT_PRIVATE std::optional<unsigned> findExportedFunction(StringView name) const;
-    JS_EXPORT_PRIVATE JSFFIFunction* createFunction(JSGlobalObject*, unsigned functionIndex, Ref<Signature>&&, const String& name);
 
 private:
     CModule(std::unique_ptr<BIR::Module>&&);
@@ -94,7 +96,7 @@ private:
     Vector<void*> m_externAddresses;
     Vector<std::unique_ptr<Compilation>> m_compilations;
     uint64_t m_threadLocalKey { 0 }; // Never reused, unlike `this`.
-    Vector<void*> m_libraries; // dlopen handles for the BIR's `libraries`, kept for as long as the code is.
+    Vector<void*> m_libraries; // dlopen handles for the BIR's `libraries`.
 };
 
 } // namespace FFI
