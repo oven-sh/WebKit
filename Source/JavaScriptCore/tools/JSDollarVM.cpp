@@ -5089,9 +5089,12 @@ JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFra
     if (!view)
         return throwVMTypeError(globalObject, scope, "$vm.cModule: expected a typed array of BIR bytes"_s);
 
-    auto module = FFI::CModule::tryCreate(view->span(), [](const CString& name) -> void* {
+    auto module = FFI::CModule::tryCreate(view->span(), [](const CString& name, FFI::CModule::ExternScope scope) -> void* {
+        // This shell's own definition of one name, which the C library has too: where it is found says in what order
+        // the search went.
+        if (scope == FFI::CModule::ExternScope::Own)
+            return !strcmp(name.data(), "quick_exit") ? reinterpret_cast<void*>(+[](int) { }) : nullptr;
 #if OS(WINDOWS)
-        UNUSED_PARAM(name);
         return nullptr;
 #else
         return dlsym(RTLD_DEFAULT, name.data());

@@ -332,13 +332,16 @@ std::expected<Ref<CModule>, String> CModule::tryCreate(std::span<const uint8_t> 
     }
 
     for (const BIR::Extern& entry : bir.externs) {
-        void* address = nullptr;
+        // A library's own symbols are not all dlsym finds in it: it answers for what the library depends on as well,
+        // the C library among them, so what the embedder defines instead of the C library's is asked for first.
+        void* address = resolver(entry.name, ExternScope::Own);
         for (void* library : module->m_libraries) {
-            if ((address = symbolIn(library, entry.name.data())))
+            if (address)
                 break;
+            address = symbolIn(library, entry.name.data());
         }
         if (!address)
-            address = resolver(entry.name);
+            address = resolver(entry.name, ExternScope::Process);
         if (!address && !entry.isWeak)
             return std::unexpected<String>(makeString("undefined symbol '"_s, entry.name.span(), '\''));
         module->m_externAddresses.append(address);

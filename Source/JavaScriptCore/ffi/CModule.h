@@ -72,7 +72,12 @@ class CModule final : public ThreadSafeRefCounted<CModule> {
     WTF_MAKE_TZONE_ALLOCATED(CModule);
     WTF_MAKE_NONCOPYABLE(CModule);
 public:
-    using ExternResolver = Function<void*(const CString& name)>;
+    // What defines a name the module declares and does not define is looked for the way a linker would: what the
+    // embedder itself defines in place of the platform's (its own atexit, say: `Own`) comes first, as a program's own
+    // definitions come before its libraries'; then the libraries the module names, in order; then whatever the process
+    // has (`Process`). The resolver is asked for a name at most once for each, and answers null for what it has not.
+    enum class ExternScope : uint8_t { Own, Process };
+    using ExternResolver = Function<void*(const CString& name, ExternScope)>;
 
     // Decodes, resolves what the module names, compiles, and puts its data in place. None of the module's code runs.
     JS_EXPORT_PRIVATE static std::expected<Ref<CModule>, String> tryCreate(std::span<const uint8_t> bir, const ExternResolver&);
