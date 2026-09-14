@@ -35,7 +35,8 @@ class Procedure;
 // slot is one instruction away (or none, where the user is a memory access that can address the slot
 // directly), so computing it again for each user costs nothing, and keeps it out of a register between
 // uses, where it would be one more thing to spill and reload. Runs last, after the passes that would
-// merge the copies again. Does nothing unless Procedure::hasCodeFromC().
+// merge the copies again. Does nothing unless Procedure::hasCodeFromC()
+// (and Options::useB3RematerializeStackAddresses(), which is there to compare with).
 void rematerializeStackAddresses(Procedure&);
 
 } } // namespace JSC::B3

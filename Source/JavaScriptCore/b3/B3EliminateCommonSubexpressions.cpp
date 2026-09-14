@@ -616,7 +616,7 @@ private:
     bool isStoreToOtherBytes(MemoryValue* writer, MemoryValue* memory)
     {
 #if USE(BUN_JSC_ADDITIONS)
-        if (!m_proc.hasCodeFromC() || !writer || !writer->isStore() || writer->hasFence())
+        if (!m_proc.hasCodeFromC() || !Options::useB3DisjointOffsetAliasAnalysis() || !writer || !writer->isStore() || writer->hasFence())
             return false;
         if (writer->lastChild() != memory->lastChild()) {
             // Two different stack slots are two different objects.

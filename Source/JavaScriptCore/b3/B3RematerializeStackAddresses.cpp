@@ -39,7 +39,7 @@ namespace JSC { namespace B3 {
 
 void rematerializeStackAddresses(Procedure& proc)
 {
-    if (!proc.hasCodeFromC())
+    if (!proc.hasCodeFromC() || !Options::useB3RematerializeStackAddresses())
         return;
 
     PhaseScope phaseScope(proc, "rematerializeStackAddresses"_s);
