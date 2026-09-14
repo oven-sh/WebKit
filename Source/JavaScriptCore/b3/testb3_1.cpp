@@ -1403,6 +1403,16 @@ void run(const TestConfig* config)
     RUN(testFCCmpNegatedAndDouble(1.0, 2.0, 4.0, 3.0));  // !(true && false) = true
     RUN(testFCCmpNegatedAndDouble(2.0, 1.0, 4.0, 3.0));  // !(false && false) = true
 
+    RUN(testPureValueAfterForwardedLoadInLoop());
+    RUN(testCompareAndSwapIsNotMovedPastALoad());
+#if USE(BUN_JSC_ADDITIONS)
+    RUN(testLoadEliminationByAddress());
+    RUN(testLoadEliminationAcrossStackSlots());
+    RUN(testRematerializeStackAddresses());
+    RUN(testStackAddressInAUserThatLowersToALoop());
+    RUN(testAccessBelowAStackSlot());
+#endif
+
     RUN(testCCmpChainRollback(5, 8, 5, 5, 5, 10)); // in-bounds, expected 1
     RUN(testCCmpChainRollback(5, 8, 1, 2, 3, 4)); // inner expr non-zero, expected 0
     RUN(testCCmpChainRollback(5, 8, 5, 5, 5, 5)); // inner expr non-zero (both eq), expected 0

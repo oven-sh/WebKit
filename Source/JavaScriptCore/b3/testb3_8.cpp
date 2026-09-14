@@ -3173,6 +3173,301 @@ void testFCCmpNegatedAndDouble(double a, double b, double c, double d)
     CHECK_EQ(compileAndRun<int32_t>(proc, a, b, c, d), expected);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+
+namespace {
+
+unsigned countValues(Procedure& proc, B3::Opcode opcode)
+{
+    unsigned count = 0;
+    for (Value* value : proc.values())
+        count += value->opcode() == opcode;
+    return count;
+}
+
+// value = Load(pointer + firstOffset); <between>; return value + Load(pointer + firstOffset)
+// Returns how many loads are left after load elimination.
+unsigned loadsLeftAround(bool hasCodeFromC, const Function<void(Procedure&, BasicBlock*, Value* pointer)>& between)
+{
+    Procedure proc;
+    if (hasCodeFromC)
+        proc.setHasCodeFromC();
+    BasicBlock* root = proc.addBlock();
+    Value* pointer = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* first = root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), pointer, 8);
+    between(proc, root, pointer);
+    Value* second = root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), pointer, 8);
+    root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, Add, Origin(), first, second));
+    proc.resetReachability();
+    eliminateCommonSubexpressions(proc);
+    validate(proc);
+    return countValues(proc, Load);
+}
+
+} // anonymous namespace
+
+void testLoadEliminationByAddress()
+{
+    auto storeAt = [](int32_t offset, B3::Opcode opcode = Store) {
+        return [=](Procedure& proc, BasicBlock* block, Value* pointer) {
+            block->appendNew<MemoryValue>(proc, opcode, Origin(), block->appendNew<Const32Value>(proc, Origin(), 1), pointer, offset);
+        };
+    };
+    // The loaded bytes are [8, 12). Code lowered from C: a store through the same pointer that misses them
+    // leaves the first load good.
+    for (int32_t offset : { 0, 4, 12, 16, -4 })
+        CHECK_EQ(loadsLeftAround(true, storeAt(offset)), 1u);
+    CHECK_EQ(loadsLeftAround(true, storeAt(7, Store8)), 1u);
+    CHECK_EQ(loadsLeftAround(true, storeAt(12, Store8)), 1u);
+    CHECK_EQ(loadsLeftAround(true, storeAt(6, Store16)), 1u);
+    // One that touches any of them does not.
+    for (int32_t offset : { 5, 7, 9, 11 })
+        CHECK_EQ(loadsLeftAround(true, storeAt(offset)), 2u);
+    for (int32_t offset : { 8, 11 })
+        CHECK_EQ(loadsLeftAround(true, storeAt(offset, Store8)), 2u);
+    CHECK_EQ(loadsLeftAround(true, storeAt(7, Store16)), 2u);
+    CHECK_EQ(loadsLeftAround(true, storeAt(11, Store16)), 2u);
+    // Nor does a store through another pointer, a fenced store, an atomic, a fence, a call or a patchpoint.
+    CHECK_EQ(loadsLeftAround(true, [](Procedure& proc, BasicBlock* block, Value*) {
+        Value* other = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+        block->appendNew<MemoryValue>(proc, Store, Origin(), block->appendNew<Const32Value>(proc, Origin(), 1), other, 0);
+    }), 2u);
+    CHECK_EQ(loadsLeftAround(true, [](Procedure& proc, BasicBlock* block, Value* pointer) {
+        block->appendNew<MemoryValue>(proc, Store, Origin(), block->appendNew<Const32Value>(proc, Origin(), 1), pointer, 0, HeapRange::top(), HeapRange::top());
+    }), 2u);
+    CHECK_EQ(loadsLeftAround(true, [](Procedure& proc, BasicBlock* block, Value* pointer) {
+        block->appendNew<AtomicValue>(proc, AtomicXchgAdd, Origin(), Width32, block->appendNew<Const32Value>(proc, Origin(), 1), pointer, 0);
+    }), 2u);
+    CHECK_EQ(loadsLeftAround(true, [](Procedure& proc, BasicBlock* block, Value*) {
+        block->appendNew<FenceValue>(proc, Origin());
+    }), 2u);
+    CHECK_EQ(loadsLeftAround(true, [](Procedure& proc, BasicBlock* block, Value*) {
+        PatchpointValue* patchpoint = block->appendNew<PatchpointValue>(proc, Void, Origin());
+        patchpoint->effects = Effects::forCall();
+        patchpoint->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+    }), 2u);
+    // Everywhere else, only the abstract heaps say what a store leaves alone: these two have the same one.
+    for (int32_t offset : { 0, 4, 12, 16 })
+        CHECK_EQ(loadsLeftAround(false, storeAt(offset)), 2u);
+}
+
+void testLoadEliminationAcrossStackSlots()
+{
+    // store to slot A; load from slot B; store to slot A; load from slot B
+    auto loadsLeft = [](bool hasCodeFromC, bool sameSlot) {
+        Procedure proc;
+        if (hasCodeFromC)
+            proc.setHasCodeFromC();
+        BasicBlock* root = proc.addBlock();
+        Value* a = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(16));
+        Value* b = sameSlot ? a : root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(16));
+        Value* argument = root->appendNew<Value>(proc, Trunc, Origin(), root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0));
+        root->appendNew<MemoryValue>(proc, Store, Origin(), argument, b, 0);
+        Value* first = root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), b, 0);
+        root->appendNew<MemoryValue>(proc, Store, Origin(), first, a, 0);
+        Value* second = root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), b, 0);
+        root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, Add, Origin(), first, second));
+        proc.resetReachability();
+        eliminateCommonSubexpressions(proc);
+        validate(proc);
+        unsigned loads = countValues(proc, Load);
+        CHECK_EQ(compileAndRun<int32_t>(proc, 21), 42);
+        return loads;
+    };
+    // The first load is the stored value either way; the second is too when the store between them is to
+    // another slot, or is of the value the slot already holds.
+    CHECK_EQ(loadsLeft(true, false), 0u);
+    CHECK_EQ(loadsLeft(true, true), 0u);
+    CHECK_EQ(loadsLeft(false, false), 1u);
+}
+
+void testRematerializeStackAddresses()
+{
+    // long f(long x) { long a[24]; for each i: a[i] = x + i; escape(a); return sum of a[i]; }
+    auto build = [](Procedure& proc) {
+        BasicBlock* root = proc.addBlock();
+        Value* base = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(24 * 8));
+        Value* argument = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        for (int i = 0; i < 24; ++i) {
+            Value* element = root->appendNew<Value>(proc, Add, Origin(), argument, root->appendNew<Const64Value>(proc, Origin(), i));
+            root->appendNew<MemoryValue>(proc, Store, Origin(), element, base, i * 8);
+        }
+        // Something opaque that is handed the address, so the stores and loads stay.
+        PatchpointValue* escape = root->appendNew<PatchpointValue>(proc, Void, Origin());
+        escape->effects = Effects::forCall();
+        escape->append(base, ValueRep::SomeRegister);
+        escape->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+        Value* sum = root->appendNew<Const64Value>(proc, Origin(), 0);
+        for (int i = 0; i < 24; ++i)
+            sum = root->appendNew<Value>(proc, Add, Origin(), sum, root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), base, i * 8));
+        root->appendNewControlValue(proc, Return, Origin(), sum);
+    };
+    int64_t expected = 24 * 1000 + 23 * 24 / 2;
+    {
+        Procedure proc;
+        proc.setHasCodeFromC();
+        build(proc);
+        auto compilation = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*compilation, static_cast<int64_t>(1000)), expected);
+        // Every access addresses the slot itself; only the patchpoint needs the address in a register.
+        if (isX86() && Options::defaultB3OptLevel() == 2) {
+            unsigned addressComputations = 0;
+            checkDisassembly(*compilation, [&](const char* disassembly) {
+                // `lea -0xc0(%rbp), %rax`, as against `lea 0x3(%rdi), %rax`, which is an addition.
+                for (const char* cursor = disassembly; (cursor = strstr(cursor, "lea ")); ++cursor) {
+                    const char* endOfLine = strchr(cursor, '\n');
+                    const char* frameRelative = strstr(cursor, "(%rbp)");
+                    addressComputations += frameRelative && (!endOfLine || frameRelative < endOfLine);
+                }
+                return true;
+            }, "could not read the disassembly");
+            CHECK_EQ(addressComputations, 1u);
+        }
+    }
+    {
+        // The phase itself: every user gets a SlotBase of its own, right before it.
+        Procedure proc;
+        proc.setHasCodeFromC();
+        build(proc);
+        proc.resetReachability();
+        rematerializeStackAddresses(proc);
+        validate(proc);
+        CHECK_EQ(countValues(proc, SlotBase), 49u);
+        for (BasicBlock* block : proc) {
+            for (unsigned i = 0; i < block->size(); ++i) {
+                for (Value* child : block->at(i)->children()) {
+                    if (child->opcode() == SlotBase)
+                        CHECK(i && block->at(i - 1) == child);
+                }
+            }
+        }
+    }
+    {
+        // It leaves every other procedure as it is.
+        Procedure proc;
+        build(proc);
+        proc.resetReachability();
+        rematerializeStackAddresses(proc);
+        CHECK_EQ(countValues(proc, SlotBase), 1u);
+        CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(1000)), expected);
+    }
+}
+
+void testStackAddressInAUserThatLowersToALoop()
+{
+    // A compare-and-swap whose operands are a stack slot's address: on a target where it becomes a loop of
+    // its own blocks, the address has to be computed ahead of the loop.
+    for (bool useBranch : { false, true }) {
+        Procedure proc;
+        proc.setHasCodeFromC();
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* taken = proc.addBlock();
+        BasicBlock* notTaken = proc.addBlock();
+        Value* cell = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
+        Value* local = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
+        Value* zero = root->appendNew<Const64Value>(proc, Origin(), 0);
+        root->appendNew<MemoryValue>(proc, Store, Origin(), zero, cell, 0);
+        // cell was 0: it becomes &local, and the old value (0) comes back.
+        Value* old = root->appendNew<AtomicValue>(proc, AtomicStrongCAS, Origin(), Width64, zero, local, cell);
+        Value* stored = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), cell, 0);
+        Value* isLocal = root->appendNew<Value>(proc, Equal, Origin(), stored, local);
+        if (useBranch) {
+            root->appendNewControlValue(proc, Branch, Origin(), root->appendNew<Value>(proc, Equal, Origin(), old, zero), FrequentedBlock(taken), FrequentedBlock(notTaken));
+            taken->appendNewControlValue(proc, Return, Origin(), isLocal);
+            notTaken->appendNewControlValue(proc, Return, Origin(), notTaken->appendNew<Const32Value>(proc, Origin(), -1));
+        } else {
+            root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, BitAnd, Origin(), isLocal, root->appendNew<Value>(proc, Equal, Origin(), old, zero)));
+            taken->appendNewControlValue(proc, Oops, Origin());
+            notTaken->appendNewControlValue(proc, Oops, Origin());
+        }
+        CHECK_EQ(compileAndRun<int32_t>(proc), 1);
+    }
+}
+
+void testAccessBelowAStackSlot()
+{
+    // C may form any address from a local's; what it finds there is its business, and B3 compiles it.
+    Procedure proc;
+    proc.setHasCodeFromC();
+    BasicBlock* root = proc.addBlock();
+    Value* low = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
+    Value* high = root->appendNew<SlotBaseValue>(proc, Origin(), proc.addStackSlot(8));
+    root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const64Value>(proc, Origin(), 7), low, 0);
+    root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const64Value>(proc, Origin(), 7), high, 0);
+    Value* below = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), root->appendNew<Value>(proc, Add, Origin(), high, root->appendNew<Const64Value>(proc, Origin(), -8)), 0);
+    Value* belowFolded = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), low, -8);
+    // Whatever is there, the loads were emitted and ran.
+    root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, BitOr, Origin(), root->appendNew<Value>(proc, BitXor, Origin(), below, below), root->appendNew<Value>(proc, BitXor, Origin(), belowFolded, belowFolded)));
+    CHECK_EQ(compileAndRun<int64_t>(proc), 0);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
+
+void testCompareAndSwapIsNotMovedPastALoad()
+{
+    // old = CAS(cell: 0 -> 5); seen = *cell; return seen * (old == 0)
+    // The compare-and-swap can be emitted where its result is compared, but not if that is past the load.
+    for (bool useBranch : { false, true }) {
+        Procedure proc;
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* taken = proc.addBlock();
+        BasicBlock* notTaken = proc.addBlock();
+        Value* cell = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* zero = root->appendNew<Const64Value>(proc, Origin(), 0);
+        Value* old = root->appendNew<AtomicValue>(proc, AtomicStrongCAS, Origin(), Width64, zero, root->appendNew<Const64Value>(proc, Origin(), 5), cell);
+        Value* seen = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), cell, 0);
+        Value* swapped = root->appendNew<Value>(proc, Equal, Origin(), old, zero);
+        if (useBranch) {
+            root->appendNewControlValue(proc, Branch, Origin(), swapped, FrequentedBlock(taken), FrequentedBlock(notTaken));
+            taken->appendNewControlValue(proc, Return, Origin(), seen);
+            notTaken->appendNewControlValue(proc, Return, Origin(), notTaken->appendNew<Const64Value>(proc, Origin(), -1));
+        } else {
+            root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, Mul, Origin(), seen, root->appendNew<Value>(proc, ZExt32, Origin(), swapped)));
+            taken->appendNewControlValue(proc, Oops, Origin());
+            notTaken->appendNewControlValue(proc, Oops, Origin());
+        }
+        int64_t value = 0;
+        CHECK_EQ(compileAndRun<int64_t>(proc, &value), 5);
+        CHECK_EQ(value, 5);
+    }
+}
+
+void testPureValueAfterForwardedLoadInLoop()
+{
+    // In a loop: store a byte, load it back sign-extended, and sign-extend the stored value as well. Load
+    // elimination turns the load into a new SExt8 ahead of the one already there, and then sweeps the loop's
+    // blocks again: each of the two has to end up defined before it is used.
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* loop = proc.addBlock();
+    BasicBlock* done = proc.addBlock();
+    Value* pointer = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* limit = root->appendNew<Value>(proc, Trunc, Origin(), root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1));
+    Value* indexPhi = loop->appendNew<Value>(proc, Phi, Int32, Origin());
+    Value* sumPhi = loop->appendNew<Value>(proc, Phi, Int32, Origin());
+    Value* zero = root->appendNew<Const32Value>(proc, Origin(), 0);
+    root->appendNew<UpsilonValue>(proc, Origin(), zero, indexPhi);
+    root->appendNew<UpsilonValue>(proc, Origin(), zero, sumPhi);
+    root->appendNewControlValue(proc, Jump, Origin(), FrequentedBlock(loop));
+
+    loop->appendNew<MemoryValue>(proc, Store8, Origin(), indexPhi, pointer, 0);
+    Value* loaded = loop->appendNew<MemoryValue>(proc, Load8S, Origin(), pointer, 0);
+    Value* extended = loop->appendNew<Value>(proc, SExt8, Origin(), indexPhi);
+    Value* same = loop->appendNew<Value>(proc, Equal, Origin(), loaded, extended);
+    Value* nextSum = loop->appendNew<Value>(proc, Add, Origin(), sumPhi, same);
+    Value* nextIndex = loop->appendNew<Value>(proc, Add, Origin(), indexPhi, loop->appendNew<Const32Value>(proc, Origin(), 1));
+    loop->appendNew<UpsilonValue>(proc, Origin(), nextIndex, indexPhi);
+    loop->appendNew<UpsilonValue>(proc, Origin(), nextSum, sumPhi);
+    loop->appendNewControlValue(proc, Branch, Origin(), loop->appendNew<Value>(proc, LessThan, Origin(), nextIndex, limit), FrequentedBlock(loop), FrequentedBlock(done));
+    done->appendNewControlValue(proc, Return, Origin(), nextSum);
+
+    proc.resetReachability();
+    eliminateCommonSubexpressions(proc);
+    validate(proc);
+    uint8_t byte = 0;
+    CHECK_EQ(compileAndRun<int32_t>(proc, &byte, 300), 300);
+}
+
 #endif // ENABLE(B3_JIT)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

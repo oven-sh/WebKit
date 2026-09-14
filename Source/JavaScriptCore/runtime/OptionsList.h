@@ -604,8 +604,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxB3TailDupBlockSize, 3, Normal, nullptr) \
     v(Unsigned, maxB3TailDupBlockSuccessors, 3, Normal, nullptr) \
     v(Bool, useB3HoistLoopInvariantValues, true, Normal, nullptr) \
-    v(Bool, useB3DisjointOffsetAliasAnalysis, true, Normal, "B3 load elimination: a store through the same pointer at non-overlapping bytes is not a clobber"_s) \
-    v(Bool, useB3RematerializeStackAddresses, true, Normal, "compute the address of a stack slot again at each use instead of keeping it in a register"_s) \
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
     v(Bool, useB3EliminateWasmGCAllocations, true, Normal, "eliminate non-escaping wasm-GC struct allocations in B3"_s) \
     v(Bool, useB3ReduceStrengthFixpoint, false, Normal, "iterate B3 reduceStrength to a fixpoint instead of a single pass (for debugging)"_s) \

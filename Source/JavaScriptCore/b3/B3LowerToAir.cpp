@@ -434,23 +434,8 @@ private:
     // Notice that we did use tmp in the fall-back case at the end, because by then, we know for sure
     // that we want a tmp. But using tmpPromise in the tryThings() calls ensures that doing so
     // doesn't prevent us from trying loadPromise on the same value.
-    static bool lowersToSeveralBlocks(Value* value)
-    {
-        return value->as<AtomicValue>() || (value->opcode() == Select && value->type().isVector());
-    }
-
     Tmp tmp(Value* value)
     {
-        // The address of a stack slot is one instruction away. Computing it again for each user keeps
-        // it out of a register between uses, where it would become something to spill and reload.
-        // Not for a user whose lowering makes blocks of its own: what is appended while it is being lowered
-        // does not stay in front of the code that uses it.
-        if (value->opcode() == SlotBase && m_value && value != m_value && Options::useB3RematerializeStackAddresses() && !lowersToSeveralBlocks(m_value)) {
-            Tmp address = m_code.newTmp(GP);
-            append(pointerType() == Int64 ? Air::Lea64 : Air::Lea32, Arg::stack(value->as<SlotBaseValue>()->slot()), address);
-            return address;
-        }
-
         Tmp& tmp = m_valueToTmp[value];
         if (!tmp) {
             while (shouldCopyPropagate(value))
@@ -4471,7 +4456,7 @@ private:
             // This pattern is super useful on both x86 and ARM64, since the inversion of the CAS result
             // can be done with zero cost on x86 (just flip the set from E to NE) and it's a progression
             // on ARM64 (since STX returns 0 on success, so ordinarily we have to flip it).
-            if (right->isInt(1) && left->opcode() == AtomicWeakCAS && canBeInternal(left)) {
+            if (right->isInt(1) && left->opcode() == AtomicWeakCAS && canBeInternal(left) && !crossesInterference(left)) {
                 commitInternal(left);
                 appendCAS(left, true);
                 return;
@@ -5947,7 +5932,8 @@ private:
             if (m_value->child(0)->opcode() == AtomicStrongCAS
                 && m_value->child(0)->as<AtomicValue>()->isCanonicalWidth()
                 && m_value->child(0)->child(0) == m_value->child(1)
-                && canBeInternal(m_value->child(0))) {
+                && canBeInternal(m_value->child(0))
+                && !crossesInterference(m_value->child(0))) {
                 ASSERT(!m_locked.contains(m_value->child(0)->child(1)));
                 ASSERT(!m_locked.contains(m_value->child(1)));
                 
@@ -6589,7 +6575,11 @@ private:
                     }
                     break;
                 }
+                // The compare-and-swap is emitted where the branch is: not past anything between the two that reads
+                // or writes what it does.
                 case AtomicWeakCAS:
+                    if (crossesInterference(branchChild))
+                        break;
                     commitInternal(branchChild);
                     appendCAS(branchChild, false);
                     return;
@@ -6599,7 +6589,8 @@ private:
                     // FIXME: Teach this to match patterns that arise from subwidth CAS.
                     // https://bugs.webkit.org/show_bug.cgi?id=169250
                     if (branchChild->child(0)->isInt(0)
-                        && branchChild->as<AtomicValue>()->isCanonicalWidth()) {
+                        && branchChild->as<AtomicValue>()->isCanonicalWidth()
+                        && !crossesInterference(branchChild)) {
                         commitInternal(branchChild);
                         appendCAS(branchChild, true);
                         return;
@@ -6613,6 +6604,7 @@ private:
                     if (branchChild->child(0)->opcode() == AtomicStrongCAS
                         && branchChild->child(0)->as<AtomicValue>()->isCanonicalWidth()
                         && canBeInternal(branchChild->child(0))
+                        && !crossesInterference(branchChild->child(0))
                         && branchChild->child(0)->child(0) == branchChild->child(1)) {
                         commitInternal(branchChild);
                         commitInternal(branchChild->child(0));

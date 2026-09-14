@@ -386,6 +386,9 @@ public:
                 for (unsigned j = 0; j < loop.size(); ++j)
                     loopBlocks.add(loop.at(j));
             }
+            // A pure value is matched with one met before it, and the first sweep put new values ahead of ones
+            // it had already met: what it remembers is no longer in the order the blocks are in.
+            m_pureCSE.clear();
             performCSE(&loopBlocks);
         }
 
@@ -607,11 +610,13 @@ private:
         }
     }
 
-    // A store through the same pointer value at bytes that do not overlap, or into a different stack
-    // slot, cannot change what an earlier access saw, whatever their abstract heaps say.
-    static bool isStoreToOtherBytes(MemoryValue* writer, MemoryValue* memory)
+    // In a procedure lowered from C (Procedure::hasCodeFromC): a store through the same pointer value
+    // at bytes that do not overlap, or into a different stack slot, cannot change what an earlier access
+    // saw, whatever their abstract heaps say.
+    bool isStoreToOtherBytes(MemoryValue* writer, MemoryValue* memory)
     {
-        if (!writer || !writer->isStore() || writer->hasFence() || !Options::useB3DisjointOffsetAliasAnalysis())
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_proc.hasCodeFromC() || !writer || !writer->isStore() || writer->hasFence())
             return false;
         if (writer->lastChild() != memory->lastChild()) {
             // Two different stack slots are two different objects.
@@ -624,6 +629,11 @@ private:
         int64_t memoryBegin = memory->offset();
         int64_t memoryEnd = memoryBegin + static_cast<int64_t>(memory->accessByteSize());
         return writerEnd <= memoryBegin || memoryEnd <= writerBegin;
+#else
+        UNUSED_PARAM(writer);
+        UNUSED_PARAM(memory);
+        return false;
+#endif
     }
 
     void clobber(ImpureBlockData& data, HeapRange writes, MemoryValue* writer = nullptr)
