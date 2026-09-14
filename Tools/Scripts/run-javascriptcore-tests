@@ -441,6 +441,13 @@ GetOptions(
     'no-retry' => \$noRetry,
 );
 
+# Bun: --asan is webkitdirs.pm's too (determineASanIsEnabled() takes it out of @ARGV, and picks the ASan product directory
+# when there is no --root). Give it back and let webkitdirs take it now: what is left in @ARGV is checked below.
+if ($asanBuild) {
+    push(@ARGV, "--asan");
+    asanIsEnabled();
+}
+
 my $specificTestsSpecified = 0;
 if ($runTestMasm == DO_RUN
    || $runTestAir == DO_RUN

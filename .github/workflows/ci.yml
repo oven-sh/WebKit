@@ -1,11 +1,12 @@
 name: CI
 
-# Builds every lane of bun-webkit, publishes them as one GitHub release, and tests the lanes that are marked as tested.
+# Builds every lane of bun-webkit, tests the lanes that are marked as tested, and publishes them all as one GitHub
+# release when every lane built and every test passed.
 # A push to main and a pull request run exactly the same jobs; they differ in the commit that is built (env.REF), in
 # the name of the release (the `plan` job's `tag`), and in that a pull request gets a comment linking its release.
 #
-#   plan ──> image ──> build, build-tested ──> release
-#                           └────────> test
+#   plan ──> image ──> build ───────────────────> release
+#                  └──> build-tested ──> test ──┘
 #        ──> prune (main only)
 #
 # A lane is one <label>.tar.gz on the release. The lanes (which runner, which Dockerfile, which settings, tested or not)
