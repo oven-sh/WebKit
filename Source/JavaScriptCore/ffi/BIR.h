@@ -158,7 +158,13 @@
 //   FuncAddr: varuint func -> i64 | ExternAddr: varuint extern -> i64
 //   FrameAddress: -> i64                                       (`__builtin_frame_address(0)`: the frame pointer of the function as
 //                                                              written; [it] is the caller's frame pointer, [it + 8] the return address)
-//   InlineAsm: u8 flags (bit0 = has effects beyond its results: `volatile` or a "memory" clobber),
+//   InlineAsm: u8 flags (bit0 = has effects of its own, and is performed as often and in the order it is written:
+//                                  `volatile`, or no output operand. It may read and write anything.
+//                        bit1 = reads memory it is not given as a value: an "m" or "+m" operand, a "memory" clobber.
+//                        bit2 = writes memory: an "=m" or "+m" operand, a "memory" clobber.
+//                        With none of them the statement is a function of its inputs: it may be dropped, merged
+//                        with one like it and moved, past stores and out of loops. With bit1 it stays where the
+//                        memory has the value it had there; with bit2 it is kept, and nothing reads across it),
 //              varuint nbytes, u8[nbytes]                       (machine code the FRONTEND assembled, operands already in the
 //                                                               registers named below; it must fall out of its end)
 //              varuint ninputs, (v value, u8 register)*         (i32/i64 values in integer registers, f32/f64/v128 in vector ones)
@@ -216,7 +222,9 @@
 //   AtomicRmw: u8 op (AtomicOp), kind, order, v value, v addr -> the old value (zero-extended)
 //   AtomicCas: kind, u8 successOrder, u8 failureOrder, v expected, v desired, v addr -> the old value
 //                                                              (strong: it stored `desired` iff old == expected)
-//   Fence: order
+//   Fence: order                                               (order | 0x80: for the compiler only, `atomic_signal_fence`. No instruction;
+//                                                              no access to memory is moved across it, merged with one on its other
+//                                                              side or dropped for one there, unless the order is Relaxed)
 //
 //   StackAlloc: v nbytes(i64), varuint align -> i64            (alloca: released when the function returns, or by StackRestore)
 //   StackSave: -> i64 | StackRestore: v(i64)                   (the stack pointer; restoring releases every StackAlloc since the save)
@@ -276,6 +284,13 @@ enum class ExternKind : uint8_t { Function = 0, Data = 1 };
 constexpr uint8_t weakExtern = 0x80;
 
 constexpr uint8_t volatileAccess = 0x80; // Or'ed into the MemKind byte of a Load or Store.
+
+constexpr uint8_t compilerFence = 0x80; // Or'ed into the order byte of a Fence.
+
+// The bits of an InlineAsm's flags.
+constexpr uint8_t inlineAsmHasEffects = 1;
+constexpr uint8_t inlineAsmReadsMemory = 2;
+constexpr uint8_t inlineAsmWritesMemory = 4;
 
 enum class MemKind : uint8_t { I8S = 0, I8U = 1, I16S = 2, I16U = 3, I32 = 4, I64 = 5, F32 = 6, F64 = 7, V128 = 8 };
 

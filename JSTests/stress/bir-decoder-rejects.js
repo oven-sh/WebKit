@@ -393,6 +393,11 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     accepts("atomic load of kind I8S", pointerFunction([[["AtomicLoad", b(MEM.i8s), b(0), 0], ["RetVoid"]]]));
     rejects("memory order 5", pointerFunction([[["AtomicLoad", b(MEM.i32), b(5), 0], ["RetVoid"]]]), /bad memory order/);
     rejects("fence of order 5", pointerFunction([[["Fence", b(5)], ["RetVoid"]]]), /bad memory order/);
+    for (let order = 0; order < 5; order++)
+        accepts(`a fence of order ${order} for the compiler only`, pointerFunction([[["Fence", b(0x80 | order)], ["RetVoid"]]]));
+    rejects("a fence of order 5 for the compiler only", pointerFunction([[["Fence", b(0x85)], ["RetVoid"]]]), /bad memory order/);
+    rejects("a fence of order 0x41", pointerFunction([[["Fence", b(0x41)], ["RetVoid"]]]), /bad memory order/);
+    rejects("an atomic load of order 0x81", pointerFunction([[["AtomicLoad", b(MEM.i32), b(0x81), 0], ["RetVoid"]]]), /bad memory order/);
     rejects("atomic operation 6", pointerFunction([[["ConstI32", s(1)], ["AtomicRmw", b(6), b(MEM.i32), b(4), 1, 0], ["RetVoid"]]]), /bad atomic operation/);
     rejects("compare-and-swap of an i64 with i32 values", pointerFunction([[["ConstI32", s(1)], ["AtomicCas", b(MEM.i64), b(4), b(4), 1, 1, 0], ["RetVoid"]]]), /operand has the wrong type/);
 }
@@ -423,7 +428,10 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
         rejects("a double in an integer register", longAndDouble([[asm({ inputs: [[1, RAX]] }), ["RetVoid"]]]), /bad InlineAsm input register/);
         rejects("a vector output in an integer register", longAndDouble([[asm({ outputs: [[T.v128, RAX]] }), ["RetVoid"]]]), /bad InlineAsm output register/);
         rejects("an output of type void", longAndDouble([[asm({ outputs: [[T.void, RAX]] }), ["RetVoid"]]]), /bad InlineAsm output type/);
-        rejects("flags 2", longAndDouble([[asm({ flags: 2 }), ["RetVoid"]]]), /bad InlineAsm/);
+        for (let flags = 0; flags < 8; flags++)
+            accepts(`flags ${flags}`, longAndDouble([[asm({ flags }), ["RetVoid"]]]));
+        rejects("flags 8", longAndDouble([[asm({ flags: 8 }), ["RetVoid"]]]), /bad InlineAsm/);
+        rejects("flags 0x81", longAndDouble([[asm({ flags: 0x81 }), ["RetVoid"]]]), /bad InlineAsm/);
         accepts("4096 bytes of code", longAndDouble([[asm({ code: new Array(4096).fill(0x90) }), ["RetVoid"]]]));
         rejects("4097 bytes of code", longAndDouble([[asm({ code: new Array(4097).fill(0x90) }), ["RetVoid"]]]), /bad InlineAsm/);
         const registers = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];

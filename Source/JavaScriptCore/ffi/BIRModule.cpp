@@ -835,8 +835,18 @@ private:
             define(inst, valueType);
             return true;
         }
-        case Op::Fence:
-            return memoryOrder(inst, 0);
+        case Op::Fence: {
+            uint8_t raw;
+            if (!u8(raw))
+                return false;
+            // The order in imm, like every atomic's; whether the fence is for the compiler only in aux.
+            inst.aux = raw & compilerFence;
+            raw &= ~compilerFence;
+            if (raw > static_cast<uint8_t>(MemOrder::SequentiallyConsistent))
+                return fail("bad memory order"_s);
+            inst.imm = raw;
+            return true;
+        }
         case Op::Add:
         case Op::Sub:
         case Op::Mul:
@@ -1052,7 +1062,7 @@ private:
             std::span<const uint8_t> code;
             if (!u8(flags) || !count(byteCount) || !bytes(byteCount, code))
                 return false;
-            if (flags > 1 || byteCount > 4096)
+            if (flags > (inlineAsmHasEffects | inlineAsmReadsMemory | inlineAsmWritesMemory) || byteCount > 4096)
                 return fail("bad InlineAsm"_s);
             extra.append(flags);
             extra.append(byteCount);

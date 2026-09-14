@@ -991,12 +991,25 @@ Value* BIRToB3::emitAtomic(const BIR::Inst& inst)
         return old;
     }
     case Op::Fence:
+        if (order == BIR::MemOrder::Relaxed)
+            return nullptr;
+        if (inst.aux & BIR::compilerFence) {
+            // What the processor does is not its business (a signal handler runs on the thread it interrupts):
+            // no instruction, and nothing B3 knows about memory holds across it.
+            PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
+            patchpoint->effects = Effects::none();
+            patchpoint->effects.fence = true;
+            patchpoint->effects.reads = HeapRange::top();
+            patchpoint->effects.writes = HeapRange::top();
+            patchpoint->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+            return nullptr;
+        }
         // Only a sequentially consistent fence keeps an earlier store ahead of a later load, which is the one
         // reordering x86 does: the others are there a point the compiler moves no load across. On ARM64 each
         // is a dmb ish.
         if (order == BIR::MemOrder::SequentiallyConsistent)
             m_block->appendNew<FenceValue>(m_proc, m_origin);
-        else if (order != BIR::MemOrder::Relaxed)
+        else
             m_block->appendNew<FenceValue>(m_proc, m_origin, HeapRange(), HeapRange::top());
         return nullptr;
     default:
@@ -1107,7 +1120,7 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
     // that is left is to have the values there and to say what the code overwrites.
     auto extra = function.extra.span().subspan(inst.extraOffset, inst.extraCount);
     size_t cursor = 0;
-    bool hasEffects = extra[cursor++] & 1;
+    uint8_t flags = static_cast<uint8_t>(extra[cursor++]);
     size_t byteCount = extra[cursor++];
     Vector<uint8_t> code;
     for (size_t i = 0; i < byteCount; ++i)
@@ -1147,7 +1160,13 @@ void BIRToB3::emitInlineAssembly(const BIR::Function& function, const BIR::Inst&
 
     B3::Type type = outputTypes.isEmpty() ? B3::Type(Void) : outputTypes.size() == 1 ? outputTypes[0] : m_proc.addTuple(Vector<B3::Type>(outputTypes));
     PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, type, m_origin);
-    patchpoint->effects = hasEffects ? Effects::forCall() : Effects::none();
+    patchpoint->effects = Effects::none();
+    if (flags & BIR::inlineAsmHasEffects)
+        patchpoint->effects = Effects::forCall();
+    if (flags & BIR::inlineAsmReadsMemory)
+        patchpoint->effects.reads = HeapRange::top();
+    if (flags & BIR::inlineAsmWritesMemory)
+        patchpoint->effects.writes = HeapRange::top();
     patchpoint->effects.controlDependent = true;
     for (auto& [input, reg] : inputs)
         patchpoint->append(input, ValueRep::reg(reg));
