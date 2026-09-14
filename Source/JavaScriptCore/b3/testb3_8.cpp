@@ -3432,6 +3432,124 @@ void testAccessBelowAStackSlot()
     }
 }
 
+void testRegistersACallerInAnotherConventionExpectsKept()
+{
+    // Code whose callers follow a convention that keeps more registers than the JIT's own does (C on Windows:
+    // rsi, rdi and xmm6 to xmm15): the general-purpose ones are given to Air as more callee saves, which it saves
+    // like any other it uses, and the vector ones are pinned, which keeps every one of their 128 bits out of use.
+#if CPU(X86_64)
+    const GPRReg kept[] = { X86Registers::esi, X86Registers::edi };
+    const FPRReg pinned[] = { X86Registers::xmm6, X86Registers::xmm7, X86Registers::xmm8, X86Registers::xmm9, X86Registers::xmm10,
+        X86Registers::xmm11, X86Registers::xmm12, X86Registers::xmm13, X86Registers::xmm14, X86Registers::xmm15 };
+#elif CPU(ARM64)
+    const GPRReg kept[] = { ARM64Registers::x10, ARM64Registers::x11 };
+    const FPRReg pinned[] = { ARM64Registers::q16, ARM64Registers::q17, ARM64Registers::q18, ARM64Registers::q19, ARM64Registers::q20,
+        ARM64Registers::q21, ARM64Registers::q22, ARM64Registers::q23, ARM64Registers::q24, ARM64Registers::q25 };
+#else
+    return;
+#endif
+#if CPU(X86_64) || CPU(ARM64)
+    // double inner(<two arguments its caller keeps in the registers under test>, const double* in) { thirty doubles loaded, all of them live at once; the two registers overwritten; their sum }
+    constexpr unsigned count = 30;
+    Procedure inner;
+    {
+        RegisterSet additional;
+        for (GPRReg reg : kept)
+            additional.add(reg, IgnoreVectors);
+        inner.code().setAdditionalCalleeSaveRegisters(additional);
+        for (FPRReg reg : pinned)
+            inner.pinRegister(reg);
+        BasicBlock* root = inner.addBlock();
+        Value* in = root->appendNew<ArgumentRegValue>(inner, Origin(), GPRInfo::argumentGPR2);
+        Vector<Value*> loaded;
+        for (unsigned i = 0; i < count; ++i)
+            loaded.append(root->appendNew<MemoryValue>(inner, Load, Double, Origin(), in, static_cast<int32_t>(i * sizeof(double))));
+        PatchpointValue* overwrite = root->appendNew<PatchpointValue>(inner, Void, Origin());
+        overwrite->effects = Effects::forCall();
+        RegisterSet overwritten;
+        for (GPRReg reg : kept)
+            overwritten.add(reg, IgnoreVectors);
+        overwrite->clobberLate(overwritten);
+        // Every one of them is needed after it, in a register or a spill slot.
+        for (Value* value : loaded)
+            overwrite->append(value, ValueRep::ColdAny);
+        overwrite->setGenerator([kept](CCallHelpers& jit, const StackmapGenerationParams&) {
+            for (GPRReg reg : kept)
+                jit.move(CCallHelpers::TrustedImm64(0x0123456789abcdefll), reg);
+        });
+        Value* sum = loaded[0];
+        for (unsigned i = 1; i < count; ++i)
+            sum = root->appendNew<Value>(inner, Add, Origin(), sum, loaded[i]);
+        root->appendNewControlValue(inner, Return, Origin(), sum);
+    }
+    auto innerCode = compileProc(inner);
+
+    // long outer(const double* in, double* sum, uint64_t* found): the registers given values, inner called, what is in them after.
+    Procedure outer;
+    {
+        BasicBlock* root = outer.addBlock();
+        Value* in = root->appendNew<ArgumentRegValue>(outer, Origin(), GPRInfo::argumentGPR0);
+        Value* sum = root->appendNew<ArgumentRegValue>(outer, Origin(), GPRInfo::argumentGPR1);
+        Value* found = root->appendNew<ArgumentRegValue>(outer, Origin(), GPRInfo::argumentGPR2);
+        PatchpointValue* call = root->appendNew<PatchpointValue>(outer, Void, Origin());
+        call->effects = Effects::forCall();
+        call->append(in, ValueRep::reg(GPRInfo::argumentGPR2));
+        call->append(sum, ValueRep::reg(GPRInfo::nonArgGPR0));
+        call->append(found, ValueRep::reg(GPRInfo::nonArgGPR1));
+        RegisterSet everything = RegisterSet::allRegisters();
+        everything.exclude(RegisterSet::stackRegisters());
+        everything.exclude(RegisterSet::reservedHardwareRegisters());
+        call->clobberLate(everything);
+        void* target = innerCode->code().taggedPtr();
+        call->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams&) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            // This code's own callers expect callee saves kept too: nonArgGPR0 and nonArgGPR1 are not among them on
+            // either target, and they are what is needed after the call.
+            jit.pushPair(GPRInfo::nonArgGPR0, GPRInfo::nonArgGPR1);
+            for (unsigned i = 0; i < std::size(kept); ++i)
+                jit.move(CCallHelpers::TrustedImm64(0x1111111111111111ll * (i + 1)), kept[i]);
+            for (unsigned i = 0; i < std::size(pinned); ++i) {
+                jit.move(CCallHelpers::TrustedImm64(0x0101010101010101ll * (i + 1)), GPRInfo::nonArgGPR0);
+                jit.vectorSplatInt64(GPRInfo::nonArgGPR0, pinned[i]);
+            }
+            jit.move(CCallHelpers::TrustedImmPtr(target), GPRInfo::nonArgGPR0);
+            jit.call(GPRInfo::nonArgGPR0, JITCompilationPtrTag);
+            jit.popPair(GPRInfo::nonArgGPR0, GPRInfo::nonArgGPR1);
+            jit.storeDouble(FPRInfo::returnValueFPR, CCallHelpers::Address(GPRInfo::nonArgGPR0));
+            unsigned offset = 0;
+            for (GPRReg reg : kept) {
+                jit.store64(reg, CCallHelpers::Address(GPRInfo::nonArgGPR1, offset));
+                offset += 8;
+            }
+            for (FPRReg reg : pinned) {
+                jit.storeVector(reg, CCallHelpers::Address(GPRInfo::nonArgGPR1, offset));
+                offset += 16;
+            }
+        });
+        root->appendNewControlValue(outer, Return, Origin());
+    }
+    outer.setUsesSIMD();
+    auto outerCode = compileProc(outer);
+
+    double in[count];
+    double expected = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        in[i] = i + 0.5;
+        expected += in[i];
+    }
+    double sum = 0;
+    uint64_t found[std::size(kept) + 2 * std::size(pinned)] = { };
+    invoke<void>(*outerCode, in, &sum, found);
+    CHECK_EQ(sum, expected);
+    for (unsigned i = 0; i < std::size(kept); ++i)
+        CHECK_EQ(found[i], 0x1111111111111111ull * (i + 1));
+    for (unsigned i = 0; i < std::size(pinned); ++i) {
+        CHECK_EQ(found[std::size(kept) + 2 * i], 0x0101010101010101ull * (i + 1));
+        CHECK_EQ(found[std::size(kept) + 2 * i + 1], 0x0101010101010101ull * (i + 1));
+    }
+#endif
+}
+
 #endif // USE(BUN_JSC_ADDITIONS)
 
 void testCompareAndSwapIsNotMovedPastALoad()

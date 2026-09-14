@@ -1411,6 +1411,7 @@ void run(const TestConfig* config)
     RUN(testRematerializeStackAddresses());
     RUN(testStackAddressInAUserThatLowersToALoop());
     RUN(testAccessBelowAStackSlot());
+    RUN(testRegistersACallerInAnotherConventionExpectsKept());
 #endif
 
     RUN(testCCmpChainRollback(5, 8, 5, 5, 5, 10)); // in-bounds, expected 1

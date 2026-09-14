@@ -1527,6 +1527,7 @@ void testLoadEliminationAcrossStackSlots();
 void testRematerializeStackAddresses();
 void testStackAddressInAUserThatLowersToALoop();
 void testAccessBelowAStackSlot();
+void testRegistersACallerInAnotherConventionExpectsKept();
 #endif
 
 // SIMD XOR+rotate pattern matching
