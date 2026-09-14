@@ -53,6 +53,27 @@ function callVirt(x) { return slots.virt(x); }
 noInline(callVirt);
 
 const stop = { value: false };
+// Per worker, the number of 64-call batches it has completed. The conductor waits for every worker to start before
+// it relinks, and for every worker to move past that point before it stops them: a worker that never ran (a slow
+// thread start under load) is not a finding, one that stops making progress across the relinks is.
+const progress = new Int32Array(new SharedArrayBuffer(4 * THREADS));
+const PROGRESS_DEADLINE_SECONDS = 30;
+
+function waitForEveryWorker(predicate, what) {
+    const start = preciseTime();
+    for (;;) {
+        let all = true;
+        for (let slot = 0; slot < THREADS; ++slot) {
+            if (!predicate(slot, Atomics.load(progress, slot)))
+                all = false;
+        }
+        if (all)
+            return;
+        if (preciseTime() - start > PROGRESS_DEADLINE_SECONDS)
+            throw new Error("a worker made no progress " + what + " within " + PROGRESS_DEADLINE_SECONDS + " s");
+        sleepMs(1);
+    }
+}
 
 const workers = spawnN(THREADS, function (slot) {
     let calls = 0;
@@ -74,8 +95,10 @@ const workers = spawnN(THREADS, function (slot) {
         if (!(vid >= 100 && vid <= 100 + ROUNDS))
             throw new Error("virtual call decoded to invalid callee id " + vid);
         ++calls;
-        if (!(calls % 64))
+        if (!(calls % 64)) {
+            Atomics.store(progress, slot, calls / 64);
             sleepMs(0);
+        }
     }
     return calls;
 });
@@ -86,6 +109,11 @@ for (let i = 0; i < 20000; ++i) {
     callPoly(slots.poly[i % 3], 5);
     callVirt(3);
 }
+
+waitForEveryWorker((slot, batches) => batches > 0, "before the relinks");
+const batchesBeforeRelinks = [];
+for (let slot = 0; slot < THREADS; ++slot)
+    batchesBeforeRelinks.push(Atomics.load(progress, slot));
 
 for (let round = 1; round <= ROUNDS; ++round) {
     // Relink monomorphic: replace the callee closure (same executable).
@@ -105,6 +133,7 @@ for (let round = 1; round <= ROUNDS; ++round) {
     sleepMs(1);
 }
 
+waitForEveryWorker((slot, batches) => batches > batchesBeforeRelinks[slot], "across the relinks");
 stop.value = true;
 const calls = joinAll(workers);
 for (const c of calls)

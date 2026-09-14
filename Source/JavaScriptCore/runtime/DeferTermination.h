@@ -39,6 +39,7 @@ class DeferTermination {
 public:
     DeferTermination(VM& vm)
         : m_vm(vm)
+        , m_traps(vm.trapsForCurrentThread())
     {
         // FIX (stw-watchdog-timeout round, deferral family): deferral is a
         // property of the DEFERRING THREAD's stack — GIL-off the count lives
@@ -49,17 +50,19 @@ public:
         // deferTerminationSlow) and one thread's deferral masked
         // NeedTermination for every sibling. The dtor resolves the SAME
         // instance on the same thread (RAII stack scope). GIL-on / flag-off:
-        // trapsForCurrentThread() == vm.traps(), byte-identical.
-        m_vm.trapsForCurrentThread().deferTermination(deferAction);
+        // trapsForCurrentThread() == vm.traps(), byte-identical. Resolved once:
+        // the destructor runs on the same thread and needs the same instance.
+        m_traps.deferTermination(m_vm, deferAction);
     }
 
     ~DeferTermination()
     {
-        m_vm.trapsForCurrentThread().undoDeferTermination(deferAction);
+        m_traps.undoDeferTermination(m_vm, deferAction);
     }
 
 private:
     VM& m_vm;
+    VMTraps& m_traps;
 };
 
 using DeferTerminationForAWhile = DeferTermination<VMTraps::DeferAction::DeferForAWhile>;

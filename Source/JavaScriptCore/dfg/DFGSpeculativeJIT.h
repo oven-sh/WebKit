@@ -1391,6 +1391,11 @@ public:
         CCallHelpers::ConcurrentButterflyShape shape { CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage };
     };
     ThreadedButterflyPlan planThreadedButterflyAccess(Edge base);
+    // SPEC-jit §5.5 length updates (history §46): GIL off, a raise of a published butterfly's publicLength is a
+    // plain store only when the plan for the base elided the shared-write check (E2); otherwise it is the CAS-max
+    // (emitRaisePublicLength).
+    bool lengthRaiseUsesCAS(Edge base);
+    void emitRaisePublicLength(GPRReg storageGPR, GPRReg newLengthGPR, GPRReg scratchGPR);
     // R7/F7 ordering: ARM64 re-loads the structureID and makes the butterfly
     // load address-dependent on it (no-op x86-64); scratch clobbered.
     void emitButterflyLoadWithStructureDependency(GPRReg baseGPR, GPRReg destGPR, GPRReg scratchGPR);

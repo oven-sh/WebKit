@@ -428,6 +428,36 @@ JSC_DEFINE_JIT_OPERATION(operationReflectOwnKeysObject, JSArray*, (JSGlobalObjec
     OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include));
 }
 
+// Out of line so operationCreateThis's flag-off and GIL-on path compiles as upstream's does.
+static NEVER_INLINE JSObject* createThisFromAllocationProfileGILOff(VM& vm, JSGlobalObject* globalObject, JSObject* constructor, FunctionRareData* rareData, ObjectAllocationProfileWithPrototype* allocationProfile)
+{
+    // GIL-off, a racing FunctionRareData::clear() can null the profile between the
+    // ensure above and these reads, and an initializer can be mid-publish, so only a
+    // pair keyed to the live .prototype is used; otherwise allocate from that
+    // prototype directly, which is what the uncached path below computes for a
+    // function with a data .prototype.
+    // A mono-proto structure carries its prototype, so there is no pair to tear:
+    // a non-null structure read (dependency-ordered) is a complete, once-valid
+    // profile, and a .prototype store that happens-before this construct has
+    // already nulled it (clearAfterPrototypeStore). Only poly-proto needs the
+    // keyed pair check against the live .prototype (a property lookup).
+    JSObject* prototype = nullptr;
+    Structure* monoStructure = allocationProfile->structure();
+    if (monoStructure && !monoStructure->hasPolyProto()) [[likely]]
+        return constructEmptyObject(vm, monoStructure);
+    JSObject* expectedPrototype = uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject);
+    if (Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
+        JSObject* result = constructEmptyObject(vm, structure);
+        if (structure->hasPolyProto()) {
+            result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
+            prototype->didBecomePrototype(vm);
+            ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
+        }
+        return result;
+    }
+    return constructEmptyObject(globalObject, expectedPrototype);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationCreateThis, JSCell*, (JSGlobalObject* globalObject, JSObject* constructor, uint32_t inlineCapacity))
 {
     JSTHREADS_COUNT(createThis);
@@ -452,31 +482,8 @@ JSC_DEFINE_JIT_OPERATION(operationCreateThis, JSCell*, (JSGlobalObject* globalOb
                     prototype->didBecomePrototype(vm);
                     ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
                 }
-            } else {
-                // GIL-off, a racing FunctionRareData::clear() can null the profile between the
-                // ensure above and these reads, and an initializer can be mid-publish, so only a
-                // pair keyed to the live .prototype is used; otherwise allocate from that
-                // prototype directly, which is what the uncached path below computes for a
-                // function with a data .prototype.
-                // A mono-proto structure carries its prototype, so there is no pair to tear:
-                // a non-null structure read (dependency-ordered) is a complete, once-valid
-                // profile, and a .prototype store that happens-before this construct has
-                // already nulled it (clearAfterPrototypeStore). Only poly-proto needs the
-                // keyed pair check against the live .prototype (a property lookup).
-                JSObject* prototype = nullptr;
-                Structure* monoStructure = allocationProfile->structure();
-                if (monoStructure && !monoStructure->hasPolyProto()) [[likely]]
-                    result = constructEmptyObject(vm, monoStructure);
-                else if (JSObject* expectedPrototype = uncheckedDowncast<JSFunction>(constructor)->prototypeForConstruction(vm, globalObject); Structure* structure = rareData->objectAllocationStructureKeyedTo(expectedPrototype, prototype)) {
-                    result = constructEmptyObject(vm, structure);
-                    if (structure->hasPolyProto()) {
-                        result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
-                        prototype->didBecomePrototype(vm);
-                        ASSERT_WITH_MESSAGE(!hasIndexedProperties(result->indexingType()), "We rely on JSFinalObject not starting out with an indexing type otherwise we would potentially need to convert to slow put storage");
-                    }
-                } else
-                    result = constructEmptyObject(globalObject, expectedPrototype);
-            }
+            } else
+                result = createThisFromAllocationProfileGILOff(vm, globalObject, constructor, rareData, allocationProfile);
         }
         OPERATION_RETURN(scope, result);
     }
@@ -6699,7 +6706,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerReoptimizationNow, void, (Call
 #if ENABLE(FTL_JIT)
 static bool shouldTriggerFTLCompile(CodeBlock* codeBlock, JITCode* jitCode)
 {
-    if (codeBlock->baselineVersion()->m_didFailFTLCompilation) {
+    if (codeBlock->baselineVersion()->hasFailedFTLCompilation()) {
         CODEBLOCK_LOG_EVENT(codeBlock, "abortFTLCompile", ());
         dataLogLnIf(Options::verboseOSR(), "Deferring FTL-optimization of ", *codeBlock, " indefinitely because there was an FTL failure.");
         jitCode->dontOptimizeAnytimeSoon(codeBlock);

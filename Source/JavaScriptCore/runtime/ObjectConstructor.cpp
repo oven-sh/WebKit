@@ -353,11 +353,15 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
             // off, another thread can add to the target at the same time.
             if (!vm.gilOff() && objectCloneFast(vm, targetObject, asObject(callFrame->uncheckedArgument(1))))
                 startIndex = 2;
+            // AUDIT R9-19: GIL off another thread can delete from or transition a source while it is read; if it did,
+            // nothing has been written yet and the generic loop below copies property by property.
+            bool readsStillValid = true;
             for (unsigned i = startIndex; i < argsCount; ++i) {
                 JSValue sourceValue = callFrame->uncheckedArgument(i);
                 JSObject* source = asObject(sourceValue);
                 auto sourceStructure = source->structure();
                 structures.append(sourceStructure);
+                size_t firstValue = values.size();
                 sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
@@ -371,13 +375,19 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
 
                     return true;
                 });
+                if (vm.gilOff() && !dataPropertyReadsStillValid(source, sourceStructure->id(), values.data() + firstValue, values.size() - firstValue)) [[unlikely]] {
+                    readsStillValid = false;
+                    break;
+                }
             }
 
-            // Actually, assigning with empty object (option for example) is common. (`Object.assign(defaultOptions, passedOptions)` where `passedOptions` is empty object.)
-            if (!properties.isEmpty())
-                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            if (readsStillValid) [[likely]] {
+                // Actually, assigning with empty object (option for example) is common. (`Object.assign(defaultOptions, passedOptions)` where `passedOptions` is empty object.)
+                if (!properties.isEmpty())
+                    target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
 
-            return JSValue::encode(target);
+                return JSValue::encode(target);
+            }
         }
     }
 

@@ -1047,12 +1047,15 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
         if (this->structureID() != sourceID || taggedButterflyWord() != word)
             return false; // Moved at the allocation poll: RESTART (the allocation drops unreferenced).
         auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
-        if (idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) != sourceID.bits())
-            return false; // Lost the claim to a locked writer: RESTART, nothing written.
-        if (taggedButterflyWord() != word) {
-            idAtomic->store(sourceID.bits(), std::memory_order_seq_cst); // An SW flip / install landed before the claim: un-claim, RESTART.
-            return false;
-        }
+        if (g_jscConfig.gilOffProcess) {
+            if (idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) != sourceID.bits())
+                return false; // Lost the claim to a locked writer: RESTART, nothing written.
+            if (taggedButterflyWord() != word) {
+                idAtomic->store(sourceID.bits(), std::memory_order_seq_cst); // An SW flip / install landed before the claim: un-claim, RESTART.
+                return false;
+            }
+        } else
+            idAtomic->store(sourceID.nuke().bits(), std::memory_order_relaxed); // GIL on (OM E4-G): no other mutator is inside a window here.
         if (newButterfly) {
             if (offset != invalidOffset)
                 reinterpret_cast<Atomic<uint64_t>*>(newButterfly->propertyStorage() - (outOfLineButterflyIndex(offset) + 1))->store(JSValue::encode(value), std::memory_order_release); // private copy

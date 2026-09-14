@@ -32,7 +32,13 @@ builtin cell-INTERNAL state is NOT - §N rules it.
 - U0 config gate: GIL-off with {useVMLite=0 |
  useSharedAtomStringTable=0 | useSharedGCHeap=0} refused at
  option validation (forced useThreadGIL=1); runtime server
- designation = U0c's ctor CAS.
+ designation = U0c's ctor CAS. The activation checklist (this
+ gate, the unsafe-override refusal, the platform refusals and
+ the GIL-off forcings of LOL, Wasm and the FFI JIT paths) is
+ evaluated on a SETTLED option set: while Options::initialize
+ applies options one at a time (environment variables, the
+ embedder's customization callback) it waits for the final
+ validation of the batch (ninth round, history).
 - U0b multi-VM (heap I13 one-sticky assert KEPT, Heap.cpp:
  4124): GIL-off, exactly
  ONE VM/process - the m_gilOff VM (U0c) - may hold per-thread

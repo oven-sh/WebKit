@@ -6291,6 +6291,33 @@ private:
         return planThreadedButterflyAccessForStructures(list, kind);
     }
 
+    // SPEC-jit §5.5 length updates (history §46): GIL off, a raise of a published butterfly's publicLength is a plain
+    // store only when the plan for the base elided the shared-write check (E2); otherwise it is the CAS-max
+    // (raisePublicLength). Same rule as SpeculativeJIT::lengthRaiseUsesCAS.
+    bool lengthRaiseUsesCAS(Edge base)
+    {
+        if (!Options::useJSThreads() || !g_jscConfig.gilOffProcess)
+            return false;
+        return !planThreadedButterflyAccess(base, ThreadedButterflyAccessKind::Write).elideSharedWriteCheck;
+    }
+
+    // Raises storage's publicLength to at least newLength and never lowers it: the runtime's
+    // Butterfly::bumpPublicLengthToAtLeast.
+    void raisePublicLength(LValue storage, LValue newLength)
+    {
+        LBasicBlock loop = m_out.newBlock();
+        LBasicBlock tryCAS = m_out.newBlock();
+        LBasicBlock done = m_out.newBlock();
+        m_out.jump(loop);
+        LBasicBlock lastNext = m_out.appendTo(loop, tryCAS);
+        LValue current = m_out.load32(storage, m_heaps.Butterfly_publicLength);
+        m_out.branch(m_out.aboveOrEqual(current, newLength), unsure(done), unsure(tryCAS));
+        m_out.appendTo(tryCAS, done);
+        LValue observed = m_out.atomicStrongCAS(current, newLength, m_out.address(storage, m_heaps.Butterfly_publicLength), Width32);
+        m_out.branch(m_out.equal(observed, current), unsure(done), unsure(loop));
+        m_out.appendTo(done, lastNext);
+    }
+
     ThreadedButterflyPlan planThreadedButterflyAccessForStructureSet(const RegisteredStructureSet& set, ThreadedButterflyAccessKind kind)
     {
         Vector<Structure*, 8> list;
@@ -9064,6 +9091,9 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LValue base = lowCell(m_graph.varArgChild(m_node, 1));
         LValue storage = lowStorage(m_graph.varArgChild(m_node, 0));
+        // SPEC-jit §5.5 length updates (history §46): GIL off without the E2 elision, the fast paths raise the length
+        // with the CAS-max.
+        bool pushRaiseUsesCAS = lengthRaiseUsesCAS(m_graph.varArgChild(m_node, 1));
 
         unsigned elementOffset = 2;
         unsigned elementCount = m_node->numChildren() - elementOffset;
@@ -9103,7 +9133,10 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.store(
                     value, m_out.baseIndex(heap, storage, m_out.zeroExtPtr(prevLength)), storeType);
                 LValue newLength = m_out.add(prevLength, m_out.int32One);
-                m_out.store32(newLength, storage, m_heaps.Butterfly_publicLength);
+                if (pushRaiseUsesCAS)
+                    raisePublicLength(storage, newLength);
+                else
+                    m_out.store32(newLength, storage, m_heaps.Butterfly_publicLength);
 
                 ValueFromBlock fastResult = m_out.anchor(boxInt32(newLength));
                 m_out.jump(continuation);
@@ -9141,7 +9174,10 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(beyondVectorLength, rarely(slowPath), usually(fastPath));
 
             LBasicBlock lastNext = m_out.appendTo(fastPath, slowPath);
-            m_out.store32(newLength, storage, m_heaps.Butterfly_publicLength);
+            if (pushRaiseUsesCAS)
+                raisePublicLength(storage, newLength);
+            else
+                m_out.store32(newLength, storage, m_heaps.Butterfly_publicLength);
             ValueFromBlock fastBufferResult = m_out.anchor(m_out.baseIndex(storage, m_out.zeroExtPtr(prevLength), ScaleEight));
             m_out.jump(setup);
 
@@ -10115,6 +10151,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue base = lowCell(arrayEdge);
         LValue storage = lowStorage(storageEdge);
+        bool unshiftRaiseUsesCAS = lengthRaiseUsesCAS(arrayEdge); // SPEC-jit §5.5 length updates (history §46).
 
         bool isDouble = m_node->arrayMode().type() == Array::Double;
         IndexedAbstractHeap& heap = m_heaps.forArrayType(m_node->arrayMode().type());
@@ -10174,7 +10211,10 @@ IGNORE_CLANG_WARNINGS_END
             m_out.appendTo(writeFront, slowCase);
             m_out.store(value, ptr0, storeType);
             LValue newLength = m_out.add(prevLength, m_out.int32One);
-            m_out.store32(newLength, storage, m_heaps.Butterfly_publicLength);
+            if (unshiftRaiseUsesCAS)
+                raisePublicLength(storage, newLength);
+            else
+                m_out.store32(newLength, storage, m_heaps.Butterfly_publicLength);
             results.append(m_out.anchor(boxInt32(newLength)));
             m_out.jump(continuation);
 
@@ -11072,10 +11112,22 @@ IGNORE_CLANG_WARNINGS_END
         vmCall(Int64, operationArrayAllocationProfileSawConversionGILOff, m_vmValue, m_out.constIntPtr(profile), array);
         m_out.jump(continuation);
 
-        m_out.appendTo(continuation, lastNext);
-        // Re-load: the slow path may have just moved the recommendation off Double.
-        LValue typeHalf = m_out.bitAnd(m_out.load64(word), m_out.constInt64(0xffff000000000000ull));
-        m_out.store64(m_out.bitOr(typeHalf, array), word);
+        LBasicBlock storeReport = m_out.newBlock();
+        LBasicBlock reported = m_out.newBlock();
+        m_out.appendTo(continuation, storeReport);
+        // Re-load: the slow path may have just moved the recommendation off Double (and consumed the recorded array).
+        // Store only when no array is recorded, or for about one allocation in 32 of this thread: every thread
+        // allocating here would otherwise take the word's cache line on every allocation (OM history §32).
+        LValue reloaded = m_out.load64(word);
+        LValue nothingRecorded = m_out.isZero64(m_out.bitAnd(reloaded, m_out.constInt64((1ull << 48) - 1)));
+        LValue sampled = m_out.isZero64(m_out.bitAnd(array, m_out.constInt64(ArrayAllocationProfile::gilOffReportSampleMask)));
+        m_out.branch(m_out.bitOr(nothingRecorded, sampled), rarely(storeReport), usually(reported));
+
+        m_out.appendTo(storeReport, reported);
+        m_out.store64(m_out.bitOr(m_out.bitAnd(reloaded, m_out.constInt64(0xffff000000000000ull)), array), word);
+        m_out.jump(reported);
+
+        m_out.appendTo(reported, lastNext);
     }
 
     void compileNewArray()
@@ -26223,9 +26275,13 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.appendTo(holeCase, innerLastNext);
             }
 
-            m_out.store32(
-                m_out.add(index, m_out.int32One),
-                storage, m_heaps.Butterfly_publicLength);
+            if (lengthRaiseUsesCAS(m_graph.child(m_node, 0))) // SPEC-jit §5.5 length updates (history §46).
+                raisePublicLength(storage, m_out.add(index, m_out.int32One));
+            else {
+                m_out.store32(
+                    m_out.add(index, m_out.int32One),
+                    storage, m_heaps.Butterfly_publicLength);
+            }
 
             m_out.jump(performStore);
             m_out.appendTo(performStore, lastNext);

@@ -952,30 +952,6 @@ bool Heap::unprotect(JSValue k)
     return m_protectedValues.remove(k.asCell());
 }
 
-void Heap::pinRetiredCallLinkRecordCodeBlock(void* codeBlock)
-{
-    // See the declaration comment (SPEC-jit §5.8/§4.4 record-named CodeBlock
-    // identity). Flag-on only; callers guarantee codeBlock is the non-null
-    // codeBlockToTransfer of a record being PUBLISHED on this (server) heap
-    // (w16 amend: the pin is taken at publish, while the linking mutator
-    // provably holds the cell live, and spans the record's whole reachable
-    // lifetime — live, then retired until epoch expiry, or until the owning
-    // CallLinkInfo's destructor frees the record inline; both paths unpin
-    // through destroyUnreachableCallLinkRecord).
-    ASSERT(Options::useJSThreads());
-    ASSERT(codeBlock);
-    Locker locker { m_retiredCallLinkRecordCodeBlocksLock };
-    m_retiredCallLinkRecordCodeBlocks.add(codeBlock);
-}
-
-void Heap::unpinRetiredCallLinkRecordCodeBlock(void* codeBlock)
-{
-    ASSERT(Options::useJSThreads());
-    ASSERT(codeBlock);
-    Locker locker { m_retiredCallLinkRecordCodeBlocksLock };
-    m_retiredCallLinkRecordCodeBlocks.remove(codeBlock);
-}
-
 void Heap::addReference(JSCell* cell, ArrayBuffer* buffer)
 {
     if (m_arrayBuffers.addReference(cell, buffer)) {
@@ -5340,8 +5316,12 @@ void Heap::addCoreConstraints()
                 // (> largeCutoff Map storage / butterfly) with the same
                 // no-root profile would be freed by the sweep. Same witness,
                 // same retention, same trace closure.
+                // The witness is the allocated-since-last-marking bit, not isNewlyAllocated(): a Full collection's
+                // PreciseAllocation::flip() sets the latter for everything marked last cycle, and rooting those kept
+                // every ever-marked precise allocation alive for as long as two clients were attached (SPEC-heap
+                // history §34).
                 for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations()) {
-                    if (allocation->isNewlyAllocated() && !allocation->isMarked()) {
+                    if (allocation->isAllocatedSinceLastMarking() && !allocation->isMarked()) {
                         retainedBytes += allocation->cellSize();
                         visitor.appendJSCellOrAuxiliary(allocation->cell());
                     }
@@ -5407,29 +5387,6 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ProtectedValues);
                 for (auto& pair : m_protectedValues)
                     visitor.appendUnbarriered(pair.key);
-            }
-
-            if (Options::useJSThreads()) [[unlikely]] {
-                // SPEC-jit §5.8/§4.4: retired call-link records' named
-                // CodeBlocks (see pinRetiredCallLinkRecordCodeBlock). Each
-                // entry is marked only while codeBlockSet() still vouches for
-                // the address being a not-yet-dead CodeBlock cell: a pinned
-                // cell the GC already declared dead (removed at the end of
-                // the cycle that unmarked it) is skipped — pins retain, they
-                // never resurrect. A recycled slot re-added as a NEW
-                // CodeBlock over-marks a live cell, which is benign. Lock
-                // order: pin lock, then the codeBlockSet lock inside it;
-                // mutator pin/unpin take only the pin lock, so no inversion. This
-                // constraint re-runs to fixpoint (GreyedByExecution), so a
-                // record retired during this cycle's concurrent marking has
-                // its pin appended before the final fixpoint closes.
-                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
-                Locker pinLocker { m_retiredCallLinkRecordCodeBlocksLock };
-                Locker setLocker { m_codeBlocks->getLock() };
-                for (auto& pair : m_retiredCallLinkRecordCodeBlocks) {
-                    if (m_codeBlocks->contains(setLocker, pair.key))
-                        visitor.appendUnbarriered(static_cast<JSCell*>(pair.key));
-                }
             }
 
             if (Options::useSharedGCHeap()) [[unlikely]] {
@@ -6773,6 +6730,12 @@ static NEVER_INLINE void conductTIDRebiasUnderSharedStop(JSC::Heap& heap, const 
     RaceAmplifier::perturb(); // U-T12 D1R.5 stall point: post-fire, pre-Restamped flip.
 }
 
+// F8 conductor re-entry (SPEC-heap history §36): set on the conductor's own thread from its GSP store to its GSP
+// clear, so the destructors and weak finalizers it runs inside its window can take the API lock, whose gated access
+// acquire would otherwise wait for a GSP clear only this thread performs. Thread-local: no other thread reads it.
+static thread_local bool t_sharedGCConductorWindowOpen { false };
+static thread_local bool t_sharedGCConductorReenteredInWindow { false };
+
 void Heap::openSharedGCStopWindow(GCClient::Heap& conductorClient, SharedGCWindowOpen openKind) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     // SPEC-congc §3.1 WND-open (CG-1). Two arms:
@@ -6817,6 +6780,8 @@ void Heap::openSharedGCStopWindow(GCClient::Heap& conductorClient, SharedGCWindo
     // step-3 release), then the async VMM stop. Our own trap bit is harmless
     // (we do not run JS until resume).
     m_gcStopPending.store(true, std::memory_order_seq_cst);
+    t_sharedGCConductorWindowOpen = true;
+    t_sharedGCConductorReenteredInWindow = false;
     if (openKind == SharedGCWindowOpen::FirstWindow) {
         if (conductorClient.hasHeapAccess())
             conductorClient.releaseHeapAccess();
@@ -7074,6 +7039,13 @@ void Heap::closeSharedGCStopWindow(bool isFinalClose) WTF_IGNORES_THREAD_SAFETY_
 #endif
         }
     }
+
+    // F8 conductor re-entry: a non-final close hands the next window back access-released (the Reentry open asserts
+    // it); after the final close the conductor's re-acquire is the step-0 no-op.
+    if (!isFinalClose && t_sharedGCConductorReenteredInWindow && m_sharedGCConductorClient && m_sharedGCConductorClient->hasHeapAccess())
+        m_sharedGCConductorClient->releaseHeapAccess();
+    t_sharedGCConductorWindowOpen = false;
+    t_sharedGCConductorReenteredInWindow = false;
 
     {
         Locker locker { m_gcBarrierLock };
@@ -7359,6 +7331,23 @@ void Heap::reclaimSharedGCMemoryAtCycleEnd()
     // reaches here.
     RELEASE_ASSERT(isSharedServer());
     RELEASE_ASSERT(worldIsStoppedForAllClients());
+    // Ninth round (history §32): the weak-bearing blocks that every sweep running alongside mutators skips are swept
+    // here, inside the stop. Before, their dead cells were destroyed and their memory reclaimed only by a requested
+    // Full's slack sweep below, so a program that never asked for one kept them indefinitely.
+    // History §35: at most a budget of them per cycle end - a Full collection makes every block unswept again, and
+    // back-to-back Full cycles re-swept all of them each time - except when the collection was requested.
+    bool collectionWasRequested = m_currentRequest.scope.has_value();
+    unsigned weakBearingBudget = Options::sharedGCWeakBearingSweepBudget();
+    if (collectionWasRequested || !weakBearingBudget)
+        weakBearingBudget = std::numeric_limits<unsigned>::max();
+    unsigned weakBearingSwept = m_objectSpace.sweepWeakBearingBlocks(weakBearingBudget);
+    if (weakBearingSwept) {
+        m_weakBearingSweepCycles.store(m_weakBearingSweepCycles.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        m_weakBearingSweptBlocks.store(m_weakBearingSweptBlocks.load(std::memory_order_relaxed) + weakBearingSwept, std::memory_order_relaxed);
+        if (!collectionWasRequested && weakBearingSwept > m_weakBearingSweepMaxUnrequested.load(std::memory_order_relaxed))
+            m_weakBearingSweepMaxUnrequested.store(weakBearingSwept, std::memory_order_relaxed);
+    }
+    dataLogLnIf(Options::logGC() && weakBearingSwept, "[GC<", RawPointer(this), ">: swept ", weakBearingSwept, " weak-bearing blocks]");
     // Full cycles keep the sixth round's slack rule: when committed capacity
     // carries 50 % or more over the live size a Full collection just
     // measured, sweep synchronously (destructors run, so destructible and
@@ -8482,7 +8471,9 @@ void Heap::acquireHeapAccess()
         // client half of the Dekker pair with the conductor's seq_cst
         // GSP-store / access-state sample (acq/rel is insufficient; see
         // SPEC-heap.md §7 F8).
-        if (m_server.m_gcStopPending.load(std::memory_order_seq_cst)) [[unlikely]] {
+        // F8 conductor re-entry (history §36): the conductor inside its own window takes access (see
+        // t_sharedGCConductorWindowOpen); every other thread reverts.
+        if (m_server.m_gcStopPending.load(std::memory_order_seq_cst) && !t_sharedGCConductorWindowOpen) [[unlikely]] {
             // F8 step 3: mandatory revert — never enter the heap while a
             // stop is pending.
 #if ASSERT_ENABLED
@@ -8504,6 +8495,9 @@ void Heap::acquireHeapAccess()
             }
             continue; // Retry from step 1.
         }
+
+        if (t_sharedGCConductorWindowOpen) [[unlikely]]
+            t_sharedGCConductorReenteredInWindow = true;
 
         // UNGIL §A.3.2b(i) / ANNEX SB1 item 3 (U-T5): the §A.3 stop-word
         // poll, positioned AFTER the F8 step-1 seq_cst CAS and BESIDE the
@@ -8557,7 +8551,9 @@ void Heap::acquireHeapAccess()
         // target are exempt inside the helper; GC keep-parked stops are
         // carried by the GSP leg above. Mandatory F8 revert BEFORE the NVS
         // park (r9 F3), exactly like the §A.3 leg.
-        if (threadGranularGated && jsThreadsModeStopGatesCurrentThread(*serverVM)) [[unlikely]] {
+        // F8 conductor re-entry (history §36): a GC stop raises the VMM stop for every VM, so this leg would park the
+        // conductor inside its own window on the close only it performs.
+        if (threadGranularGated && !t_sharedGCConductorWindowOpen && jsThreadsModeStopGatesCurrentThread(*serverVM)) [[unlikely]] {
             uint8_t reverted = m_accessState.exchange(noAccessState, std::memory_order_seq_cst);
             ASSERT_UNUSED(reverted, reverted == hasAccessState);
             // F8/§10.4 composition (mc-safe-gcwait-vs-classa-stop, REAL

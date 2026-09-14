@@ -1004,3 +1004,199 @@ Measured this round and left, with the evidence a next round starts from:
   shared-write and segmented-word tests on every butterfly access) and the
   early-tier dwell above. Attributing it needs per-symbol instruction
   deltas on JIT code (the §6.5 method) test by test.
+
+### 6.10 Ninth round: parity by instruction count, configuration by configuration
+
+Method. Each gap was judged by instruction counts before any timing: `perf stat -e instructions:u` with the collector
+on the mutator and one marker (`--useConcurrentJIT=0 --useConcurrentGC=0 --numberOfGCMarkers=1`, so the counts are
+the mutator's work plus a deterministic collection), medians of three, per micro row (`Tools/threads/perf/rows`);
+then per-symbol samples at one per 5M instructions, three recordings per binary summed (at one per 1M the kernel
+throttled the sampling - 32 throttle events in one recording, sample totals that disagreed with perf stat by 20 % -
+and those tables were discarded); then annotated disassembly and gdb call counts for the functions that grew. Times
+come from the quiet pass (§1-§3), which is the verdict.
+
+**Flag off against `main`** (instructions; start of the round -> final tree): class-ctor-4 1.118 -> 1.083,
+array-int32-to-double-relabel 1.170 -> 1.121, regexp-exec 1.128 -> 1.075, map-set-get 1.097 -> 1.073,
+megamorphic-put-transition 1.130 -> 1.047, throw-catch 1.061 -> 1.045, json-stringify 1.049 -> 1.040, array-push-pop
+1.048 -> 1.048, astar-like-nodes 1.036 -> 1.027, startup 1.038 -> 1.026, json-parse 1.036 -> 1.015, the other eight
+rows 1.000-1.015. What moved them: ALWAYS_INLINE on upstream helpers the branch's flag-on arms had pushed over the
+inliner's threshold (`Butterfly::create*`, `JSObject::butterfly()`, `StructureTransitionTable::get`,
+`JSArray::createWithButterfly`), GIL-off arms out of line where the flag-on arm is cold (`operationCreateThis`,
+`WeakGCMap::get`), plain loads outside TSAN for `StringImpl::length()`/`hashAndFlags()` and the shared-atom latch,
+the config byte tested before `isSharedServer()`, `DeferTermination` resolving its per-thread traps once, a fresh
+string's cost and a fresh matches array's storage taken without the concurrent paths. What remains, from annotated
+disassembly: no extra calls and no new allocations in any row; one-byte mode tests inlined into C++ fast paths - 36
+instructions per `operationCreateThis` before `DeferTermination`'s change (now about 22), +103 per Map iteration and
++154 per RegExp exec before this round's changes (the tracer, trap-poll and exception gates of each operation, 2-3
+instructions each, are most of the rest). Tried and reverted, each measured: `pushInline`'s flag-on arms behind one
+call (flag off unchanged), `Structure::forEachProperty`'s GIL-off arm out of line with a hoisted JSON lane check
+(json-stringify 1.040 -> 1.047, worse), the locked catch-handler lookup out of line (unchanged), the shared-heap
+vector-sizing arm out of line (array-int32 -0.4 % flag off, +1.2 % GIL off: a trade), the megamorphic reallocating
+operation's flag-on arm out of line (flag off -0.3 %, GIL on +2.5 %: a trade). Not taken: moving the per-thread
+selectors' GIL-off arms (exception reads, the frame store) out of line - 1-3 instructions per check flag off against
+a call and a TLS load per check GIL off.
+
+**GIL on against flag off** (the same binary): the astar-like-nodes row's 3x was FTL handler-IC give-ups at sites that
+can catch in their own frame (SPEC-jit history §44: 0.613x its GIL-on instructions); class-ctor-4's 2.6x was mostly
+the claim CAS in the inline caches' transition handlers, gone GIL on (OM E4-G: 0.61x its GIL-on cycles; megamorphic
+0.86x, astar 0.86x, out-of-line-replace 0.90x); regexp-exec's excess was three out-of-line property writes into a
+fresh matches array (0.96x). Every row, start of the round (r9a) -> final tree (r9s), instructions, deterministic
+collector, medians of three (GIL on and GIL off force concurrent compilation, so their counts include the compiler
+threads' work; times, which are the verdict, are §1.2-§1.3):
+
+| row | flag off / main | GIL on / flag off | GIL off / GIL on |
+|---|---|---|---|
+| add-props-escaped | 1.015 -> 1.015 | 1.318 -> 1.316 | 1.093 -> 1.093 |
+| array-int32-to-double-relabel | 1.170 -> 1.121 | 1.901 -> 1.973 | 1.185 -> 1.162 |
+| array-push-pop | 1.048 -> 1.048 | 1.554 -> 1.553 | 1.049 -> 1.049 |
+| astar-like-nodes | 1.033 -> 1.024 | 3.000 -> 2.163 | 1.154 -> 1.591 |
+| startup (base) | 1.041 -> 1.025 | 1.079 -> 1.082 | 1.031 -> 1.033 |
+| class-ctor-4 | 1.118 -> 1.083 | 1.639 -> 1.537 | 1.869 -> 2.009 |
+| closure-calls | 1.001 -> 1.001 | 1.181 -> 1.246 | 1.243 -> 1.181 |
+| int-loop | 1.000 -> 1.000 | 1.487 -> 1.487 | 1.001 -> 1.020 |
+| json-parse | 1.036 -> 1.015 | 1.095 -> 1.091 | 1.097 -> 1.098 |
+| json-stringify | 1.049 -> 1.040 | 1.031 -> 1.031 | 1.178 -> 1.180 |
+| map-set-get | 1.097 -> 1.073 | 1.005 -> 1.004 | 1.265 -> 1.267 |
+| megamorphic-put-transition | 1.130 -> 1.047 | 1.402 -> 1.410 | 1.381 -> 1.428 |
+| obj-literal-5 | 1.004 -> 1.004 | 1.202 -> 1.204 | 1.037 -> 1.013 |
+| out-of-line-replace-poly | 1.002 -> 1.002 | 1.436 -> 1.425 | 1.049 -> 1.046 |
+| proto-method-calls | 1.001 -> 1.000 | 1.902 -> 1.904 | 1.148 -> 1.146 |
+| regexp-exec | 1.128 -> 1.075 | 1.063 -> 1.029 | 1.134 -> 1.147 |
+| string-concat | 1.012 -> 1.012 | 1.067 -> 1.065 | 1.127 -> 1.129 |
+| throw-catch | 1.061 -> 1.045 | 1.046 -> 1.045 | 1.074 -> 1.080 |
+| typed-array-sum | 1.000 -> 1.000 | 1.342 -> 1.340 | 1.093 -> 1.093 |
+
+Where a GIL-on ratio rose (array-int32-to-double, closure-calls) flag off fell under it; where GIL off / GIL on rose
+(class-ctor-4, astar-like-nodes, megamorphic) GIL on fell - E4-G and the handler-IC fix are GIL-on only, and GIL off's
+owner transitions still claim (their GIL-off counts did not move). The loop rows' GIL-on excess is the polling trap
+check the flag forces (time-neutral in earlier rounds against a polling baseline, §1.2).
+
+**Scaling** (§2): splay-like's four-thread loss was a shared cache line, not the collector: JIT cycles per unit of
+work +31 % at four threads with instructions per unit flat, 8.2 % of all cycles on the two loads of the GIL-off
+array-allocation report's word (JIT-dump attribution). Written only when it changes something (OM history §32):
+splay-like 3.11x -> 3.62x at four threads, raytrace-like 3.23x -> 3.37x, map-heavy 3.34x -> 3.38x (medians of 5 and 3
+at load 4-9). The eden-ratio option (A) and more in-stop markers (B) were measured against it and not adopted (SPEC-heap
+history §33).
+
+**Memory** (map-heavy, peak RSS polled from VmHWM every 0.1 s, max of 3 runs; times medians): flag off 176 MB / 1,441
+ms at one thread; GIL on 174 MB at one thread and 172 MB at four. GIL off it was 1,140 / 2,188 / 4,281 / 8,463 MB at 1 /
+2 / 4 / 8 threads, 2,884 ms at one thread. The first cause was a retention bug (AUDIT R9-21, SPEC-heap history §34):
+the window-liveness constraint took "newly allocated" as its witness for precise allocations, which a Full
+collection's flip sets for everything marked the cycle before, so every large `Map` storage or butterfly ever marked
+stayed alive while two clients were attached. Fixed: 352 MB and 1,448-1,484 ms at one thread - the serial time is flag
+off's again, the doubled time having been Full collections walking the retained cells - and 1,252-1,410 / 3,232-3,660 /
+7,360-7,702 MB with 1,668-1,817 / 1,855-1,925 / 2,709-2,794 ms at 2 / 4 / 8 threads (two runs each; the 8-thread time
+was 7,349 ms). The per-thread growth that remains is not retained past a Full collection after join (0.2 MB after one)
+but kept by the same leg's conservative witness - every precise allocation since the last marking, by any client -
+and its traced closure, which the retained-bytes rebase counts as live, raising the next cycle's allowance: with the
+same bytes in small `Map`s (ordinary blocks) the run peaks at 404 / 628 / 1,006 MB at 2 / 4 / 8 threads. LANDING-PLAN
+Open items has the options and the gates a change to that leg needs.
+
+**The cycle-end sweep of weak-bearing blocks** (R9-18, added this round): the micro rows sweep 0-2.1 such blocks a
+cycle GIL off, most of them once in the whole run, and the scaling workloads at most 10 - no cost there. Back-to-back
+Full cycles were the exception: a Full collection makes every block unswept again, and the JSC suite's
+continuous-collection lanes (`--collectContinuously`, generational collection off) re-swept about 800 blocks at each of
+about 20,000 cycle ends a minute; a progress-instrumented `delete-property-inline-cache.js` did 50 of its 1,000
+iterations in 20 s against 550 on the round's first build. Bounded to 32 blocks per unrequested cycle end (SPEC-heap
+history §35): the same run finishes all 1,000 iterations in 21.2 s (flag off 3.7 s), ahead of the round's first
+build too, whose heap grew because it never swept those blocks. map-heavy GIL off, the builds before and after the budget side by side
+(two runs each): 346 / 346 MB and 2,648 / 2,949 ms at one thread, 3,733 / 3,751 MB and 3,503 / 3,513 ms at four, 7,043 /
+6,690 MB and 5,492 / 5,560 ms at eight - unchanged.
+
+
+**R9-22's cost (length raises GIL off).** Instructions (`instructions:u`, median of 5), loops that do nothing but raise
+an array's length 3,000 x 1,000 times (`holefill.js`: `a[i] = i` into a fresh array, `push`, push-then-`pop`,
+push-then-`length = 0`); "fired" first writes one array of each shape from a second thread, so the original array
+structures' writeThreadLocal sets are fired and no DFG/FTL code can elide the shared-write check - the state of any
+GIL-off program that shares an array.
+
+| loop | configuration | r9u | r9w (routed to the runtime) | r9y (inline CAS-max) |
+|---|---|---|---|---|
+| hole, fired | GIL off | 157 M | 3.92x | 1.09x |
+| push, fired | GIL off | 159 M | 3.52x | 1.09x |
+| pop, fired | GIL off | 303 M | 3.45x | 1.06x |
+| push + setter, fired | GIL off | 173 M | 3.19x | 1.08x |
+| hole, `--useDFGJIT=0` | GIL off | 261 M | 3.57x | 1.11x |
+| push, `--useDFGJIT=0` | GIL off | 706 M | 1.00x | 1.02x |
+| hole / push / pop / setter, all tiers | GIL off | - | 1.01 / 1.01 / 0.99 / 0.91x | 0.99 / 0.94 / 0.98 / 0.98x |
+| same | GIL on | - | 0.99 / 0.98 / 0.99 / 0.99x | 0.98 / 0.96 / 0.98 / 0.99x |
+| hole / push, lower and all tiers | flag off | - | - | 0.98-1.005x |
+| array-push-0 / -1 / new-array-push | flag off | - | - | 0.999 / 1.000 / 0.93x |
+| string-heavy / splay-like / richards-like, 4 threads | GIL off | - | 0.99 / 1.02 / 1.00x | 1.00 / 1.00 / 0.96x |
+
+The residual (6-11 %) is the `lock cmpxchg` per raise on a loop that does nothing else; the benchmarks share no arrays
+across threads, so their code keeps the E2-elided plain store.
+
+### 6.11 Ninth round: the quiet pass on the final candidate (r9za)
+
+Linux x86-64, Release, the machine otherwise idle (load 2-4), 2026-09-11 18:30-19:09. JetStream 2 (36 tests), five
+runs per configuration, medians; the micro set (`Tools/threads/perf/run-micro.sh`), five runs; the scaling gate, five
+runs per cell. The round's start is r9d (`r8/perf-r9d`, 2026-09-09). Full tables: `r9/perf-r9za`.
+
+**JetStream totals** (median, five-run range):
+
+| configuration | round start (r9d) | r9za | target |
+|---|---|---|---|
+| `main` | 348.5 | 353.5 (351.6-354.4) | - |
+| flag off | 337.6 | 339.8 (336.8-347.0), 0.961 of main | 0.99 of main |
+| GIL on | 305.6 | 308.4 (306.7-310.1), 0.908 of flag off | 0.95 of flag off |
+| GIL off | 262.1 | 257.0 (254.6-260.0), 0.833 of GIL on | 0.90 of GIL on, no row below 0.80 |
+
+GIL off below 0.80 of GIL on: earley-boyer 0.604, ML 0.666, stanford-crypto-sha256 0.671, splay 0.678, gbemu 0.680,
+Basic 0.706, FlightPlanner 0.722, json-stringify-inspector 0.727, stanford-crypto-aes 0.761, OfflineAssembler 0.779.
+
+**Per test against the round's start, GIL off** (medians; rows whose five-run ranges do not overlap): fell -
+earley-boyer 752 -> 490 (0.65x), json-stringify-inspector 421 -> 360 (0.86x), delta-blue 885 -> 796 (0.90x), Air 445 ->
+404 (0.91x), json-parse-inspector 354 -> 337 (0.95x); rose - ML 49 -> 74 (1.50x), Basic 511 -> 584 (1.14x), regexp
+336 -> 379 (1.13x), hash-map 442 -> 469 (1.06x). Flag off and GIL on per test hold within their ranges. The falls were measured
+against the round's start taken on 09-09; interleaved in one session on the quiet machine (2026-09-11 19:11-19:52,
+every build of the round, five full runs each, builds rotated per round) they are gone:
+
+| build (GIL off, full suite) | total | earley-boyer | json-stringify-inspector | delta-blue | Air | json-parse-inspector |
+|---|---|---|---|---|---|---|
+| r9d (round start) | 260.5 (257-262) | 608 (536-760) | 399 (369-421) | 816 (773-828) | 416 (389-430) | 321 (320-348) |
+| r9h (R9-18's in-stop sweep) | 255.6 (252-258) | 535 (486-698) | 400 (356-410) | 788 (762-817) | 410 (328-429) | 320 (310-328) |
+| r9s | 256.3 (253-257) | 529 (477-694) | 396 (357-409) | 795 (772-811) | 405 (386-426) | 321 (284-326) |
+| r9t (R9-21) | 256.5 (252-261) | 589 (493-709) | 414 (360-434) | 785 (773-807) | 407 (385-416) | 331 (315-335) |
+| r9u (the sweep budget) | 258.0 (254-263) | 667 (557-735) | 395 (363-434) | 808 (792-827) | 416 (401-422) | 333 (325-342) |
+| r9y (R9-22) | 258.7 (256-262) | 545 (425-718) | 405 (363-405) | 808 (771-836) | 412 (408-425) | 322 (316-337) |
+| r9za (R9-23) | 257.9 (256-261) | 692 (521-723) | 393 (368-425) | 794 (784-822) | 418 (395-431) | 327 (305-338) |
+| GIL on: r9d / r9za | 305.3 / 309.1 | 792 / 819 | 506 / 514 | 950 / 950 | 471 / 456 | 374 / 362 |
+
+earley-boyer and stanford-crypto-sha256 are bimodal (sha256 GIL off 324-627 within one build). The one step is at r9h,
+R9-18's cycle-end sweep inside the stop (260.5 -> 255.6, ranges 257-262 against 252-258); r9u's per-stop budget brought
+it back to 258.0. GIL off's total against the round's start in the same session: 0.990x.
+
+**Micro set** (ms, medians; round start -> r9za):
+
+| benchmark | flag off / main | GIL on / flag off | GIL on / main-poll | GIL off / GIL on | GIL off ms |
+|---|---|---|---|---|---|
+| array-int32-to-double-relabel-200k | 1.11 -> 1.08 | 2.70 -> 2.72 | 3.00 -> 2.89 | 1.20 -> 1.19 | 22.7 -> 22.3 |
+| astar-like-nodes | 1.04 -> 1.06 | 3.51 -> 2.16 | 3.68 -> 2.26 | 1.22 -> 1.78 | 47.7 -> 43.5 |
+| class-ctor-4 | 1.09 -> 1.03 | 2.35 -> 1.47 | 2.55 -> 1.55 | 1.45 -> 2.33 | 126.8 -> 123.4 |
+| megamorphic-put-transition-1M | 1.11 -> 1.05 | 1.74 -> 1.40 | 1.81 -> 1.37 | 1.26 -> 1.60 | 61.0 -> 61.1 |
+| transitions-after-fire-2M | - | - | - | 1.01 -> 2.90 | 89.9 -> 90.2 |
+| regexp-exec-1M | 1.15 -> 1.01 | 1.23 -> 1.12 | 1.37 -> 1.15 | 1.13 -> 1.13 | 164.8 -> 147.5 |
+| json-parse-200k | 1.03 -> 1.04 | 1.16 -> 1.16 | 1.20 -> 1.22 | 1.19 -> 1.24 | 48.1 -> 49.1 |
+| json-stringify-200k | 1.01 -> 1.04 | 1.05 -> 1.05 | 1.06 -> 1.08 | 1.31 -> 1.29 | 36.3 -> 35.5 |
+| out-of-line-replace-poly-3M | 1.11 -> 1.07 | 1.13 -> 1.16 | 1.26 -> 1.22 | 1.06 -> 1.08 | 14.2 -> 14.3 |
+| throw-catch-200k | 1.04 -> 1.04 | 1.10 -> 1.08 | 1.14 -> 1.11 | 1.09 -> 1.10 | 108.7 -> 107.9 |
+| array-element-read | 1.00 -> 1.00 | 1.25 -> 1.25 | 1.00 -> 1.00 | 1.40 -> 1.40 | 95.1 -> 94.8 |
+| flat-butterfly-read / inline-property-read / int-loop-3e8 / proto-method-calls-20M | 1.00-1.03 | 1.98 / 1.97 / 1.67 / 1.76 | 1.00 / 1.00 / 1.00 / 0.78 | ~1.0 | unchanged |
+
+Every other row is within 1.03 (flag off / main) and 1.25 (GIL on / flag off, GIL off / GIL on). Where GIL off /
+GIL on rose, GIL off's own time did not (last column): GIL on got faster (the unclaimed transitions of E4-G, the
+handler IC at catch sites), GIL off keeps the claimed transitions.
+
+**Scaling gate** (speedup at 4 / 8 threads; T(1) against flag off):
+
+| workload | GIL off, round start | GIL off, r9za | GIL off T(1) vs flag off | GIL on T(1) vs flag off |
+|---|---|---|---|---|
+| splay-like | 3.14 / 5.21 | 3.57 / 5.74 | +30% | +7% |
+| string-heavy (bimodal) | 1.51 / 3.69 | 2.52 / 3.71 | +14% | +18% |
+| raytrace-like | 3.37 / 5.88 | 3.40 / 5.99 | -6% | +20% |
+| map-heavy | 3.23 / 5.17 | 2.94 / 4.41 | +77% (start +134%) | +20% |
+| richards-like | 1.08 / 1.48 | 1.20 / 1.87 | +88% | +174% |
+
+map-heavy's times both improved (T(1) 1,707 -> 1,410 ms, T(4) 2,115 -> 1,915 ms); the ratio fell because one thread
+gained more. GIL on does not scale (the GIL serializes the threads), as designed.

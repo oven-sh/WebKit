@@ -1203,8 +1203,8 @@ public:
     // Set once the embedder starts using JSGlobalObject::m_asyncContextData (its
     // first AsyncLocalStorage); never cleared. Until then no async context can have
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
-    bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
-    void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
+    bool isAsyncContextTrackingEnabled() const { return WTF::atomicLoad(const_cast<bool*>(&m_asyncContextTrackingEnabled), std::memory_order_relaxed); }
+    void setAsyncContextTrackingEnabled() { WTF::atomicStore(&m_asyncContextTrackingEnabled, true, std::memory_order_relaxed); }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return reinterpret_cast<bool*>(&m_mightBeExecutingTaintedCode); }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode.store(value, std::memory_order_relaxed); }
@@ -1633,7 +1633,7 @@ public:
 
     // While > 1, LLInt->Baseline and Baseline->DFG compile thresholds behave as if multiplied by this.
     // Mutator-only (tier-up slow paths). Set from Options::startupJITDeferralScale or by the embedder.
-    double startupJITDeferralScale() const { return m_startupJITDeferralScale; }
+    double startupJITDeferralScale() const { return WTF::atomicLoad(const_cast<double*>(&m_startupJITDeferralScale), std::memory_order_relaxed); } // read by every thread
     JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // <= 1 ends the window
 
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);

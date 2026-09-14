@@ -234,11 +234,11 @@ void CodeBlock::dumpAssumingJITType(PrintStream& out, JITType jitType) const
         out.print(" (DidTryToEnterInLoop)");
     if (ownerExecutable()->isInStrictContext())
         out.print(" (StrictMode)");
-    if (m_didFailJITCompilation)
+    if (hasFailedJITCompilation())
         out.print(" (JITFail)");
-    if (this->jitType() == JITType::BaselineJIT && m_didFailFTLCompilation)
+    if (this->jitType() == JITType::BaselineJIT && hasFailedFTLCompilation())
         out.print(" (FTLFail)");
-    if (this->jitType() == JITType::BaselineJIT && m_hasBeenCompiledWithFTL)
+    if (this->jitType() == JITType::BaselineJIT && hasBeenCompiledWithFTL())
         out.print(" (HadFTLReplacement)");
     out.print("]");
 }
@@ -336,6 +336,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_bytecodeCost(other.m_bytecodeCost)
     , m_scopeRegister(other.m_scopeRegister)
     , m_hash(other.m_hash)
+    , m_numberOfUnmaterializedFunctionExecutables(0) // CodeBlock::newReplacement() prepared `other`
     , m_unlinkedCode(other.vm(), this, other.m_unlinkedCode.get())
     , m_ownerExecutable(other.vm(), this, other.m_ownerExecutable.get())
     , m_vm(other.m_vm)
@@ -344,7 +345,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_constantRegisters(other.m_constantRegisters)
     , m_functionDecls(other.m_functionDecls)
     , m_functionExprs(other.m_functionExprs)
-    , m_numberOfUnmaterializedFunctionExecutables(other.m_numberOfUnmaterializedFunctionExecutables)
     , m_creationTime(ApproximateTime::now())
 #if ASSERT_ENABLED
     , m_magic(CODEBLOCK_MAGIC)
@@ -352,7 +352,8 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
 {
     ASSERT(heap()->isDeferred());
     ASSERT(m_scopeRegister.isLocal());
-    ASSERT(!m_numberOfUnmaterializedFunctionExecutables); // CodeBlock::newReplacement() prepared `other`
+    // CodeBlock::newReplacement() prepared `other`; GIL off its count may still lag a racing winner's published entry.
+    ASSERT(!WTF::atomicLoad(&other.m_numberOfUnmaterializedFunctionExecutables, std::memory_order_relaxed) || other.vm().gilOff());
 
     ASSERT(source().provider());
     constexpr bool allocateArgumentValueProfiles = false;
@@ -891,7 +892,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     // Nothing was deferred, so there is nothing for prepareLazyStateForConcurrentCompilation() to do.
     if (!Options::useThinChildExecutables() && !m_numberOfUnmaterializedFunctionExecutables)
-        m_isLazyStatePreparedForConcurrentCompilation = true;
+        setStateBit(IsLazyStatePreparedForConcurrentCompilation);
     return true;
 }
 
@@ -909,11 +910,28 @@ unsigned CodeBlock::firstLazilyMaterializedFunctionDecl() const
 
 FunctionExecutable* CodeBlock::materializeFunctionExecutable(WriteBarrier<FunctionExecutable>& slot, UnlinkedFunctionExecutable* unlinkedExecutable)
 {
-    ASSERT(!slot && m_numberOfUnmaterializedFunctionExecutables);
     RELEASE_ASSERT(!isCompilationThread()); // compiler threads only see blocks prepareLazyStateForConcurrentCompilation() completed
     VM& vm = this->vm();
+    bool gilOff = vm.gilOff();
+    if (gilOff) [[unlikely]] {
+        // SPEC-ungil history, ninth round: another thread may have published the entry since the caller's load.
+        if (FunctionExecutable* published = loadFunctionExecutableEntry(slot))
+            return published;
+    } else
+        ASSERT(!slot && m_numberOfUnmaterializedFunctionExecutables);
     ScriptExecutable* ownerExecutable = this->ownerExecutable();
     FunctionExecutable* executable = unlinkedExecutable->link(vm, ownerExecutable->topLevelExecutable(), ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+    if (gilOff) [[unlikely]] {
+        // One compare-and-swap publishes the entry. A thread that lost the race uses the winner's executable (its own
+        // is garbage), and only the winner runs the barrier and counts the entry.
+        static_assert(sizeof(WriteBarrier<FunctionExecutable>) == sizeof(FunctionExecutable*));
+        auto* entry = std::bit_cast<FunctionExecutable**>(&slot);
+        if (FunctionExecutable* winner = WTF::atomicCompareExchangeStrong(entry, static_cast<FunctionExecutable*>(nullptr), executable, std::memory_order_acq_rel))
+            return winner;
+        vm.writeBarrier(this, executable);
+        WTF::atomicExchangeSub(&m_numberOfUnmaterializedFunctionExecutables, 1u, std::memory_order_relaxed);
+        return executable;
+    }
     slot.set(vm, this, executable);
     m_numberOfUnmaterializedFunctionExecutables--;
     return executable;
@@ -932,13 +950,14 @@ FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
 
 void CodeBlock::ensureFunctionExecutablesMaterialized()
 {
-    if (!m_numberOfUnmaterializedFunctionExecutables) [[likely]]
+    if (!WTF::atomicLoad(&m_numberOfUnmaterializedFunctionExecutables, std::memory_order_relaxed)) [[likely]]
         return;
     for (unsigned i = firstLazilyMaterializedFunctionDecl(); i < m_functionDecls.size(); ++i)
         functionDecl(i);
     for (unsigned i = 0; i < m_functionExprs.size(); ++i)
         functionExpr(i);
-    ASSERT(!m_numberOfUnmaterializedFunctionExecutables);
+    // GIL off a racing winner may not have counted its entry yet; every entry is present either way.
+    ASSERT(!WTF::atomicLoad(&m_numberOfUnmaterializedFunctionExecutables, std::memory_order_relaxed) || vm().gilOff());
 }
 
 // ---- end lazy FunctionExecutables -----------------------------------------------------------------------------------
@@ -1585,7 +1604,7 @@ bool CodeBlock::agesByMutatorQuietness()
         return true;
 #if ENABLE(DFG_JIT)
     case JITType::DFGJIT:
-        return !Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->m_didFailFTLCompilation;
+        return !Options::useExecutionCountForCodeBlockAging() || !dfgJITData() || baselineVersion()->hasFailedFTLCompilation();
 #endif
     default:
         return false;
@@ -2532,9 +2551,11 @@ ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedFo
         return buffer;
 
     if (Options::useLazyCatchLiveness()) {
-        if (!metadata.m_hasExecutedWithoutBuffer) {
-            metadata.m_hasExecutedWithoutBuffer = true;
-            m_hasCatchThatExecutedWithoutBuffer = true;
+        // Relaxed: GIL off two threads can reach the same catch first; both set the same flag, and the buffer the
+        // flag asks for is created later by one thread under the CodeBlock's lock.
+        if (!WTF::atomicLoad(&metadata.m_hasExecutedWithoutBuffer, std::memory_order_relaxed)) {
+            WTF::atomicStore(&metadata.m_hasExecutedWithoutBuffer, true, std::memory_order_relaxed);
+            setStateBit(HasCatchThatExecutedWithoutBuffer);
         }
         return nullptr;
     }
@@ -2546,13 +2567,13 @@ bool CodeBlock::ensureCatchLivenessIsComputedForExecutedCatchesSlow()
 {
     ASSERT(!isCompilationThread());
     ASSERT(!JITCode::isOptimizingJIT(jitType()));
-    m_hasCatchThatExecutedWithoutBuffer = false;
+    clearStateBit(HasCatchThatExecutedWithoutBuffer);
     bool createdBuffer = false;
     for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
         BytecodeIndex bytecodeIndex(exceptionHandler(i).target);
         OpCatch op = instructions().at(bytecodeIndex)->as<OpCatch>(); // every handler targets an op_catch
         auto& metadata = op.metadata(this);
-        if (metadata.m_hasExecutedWithoutBuffer && !WTF::atomicLoad(&metadata.m_buffer, std::memory_order_relaxed)) {
+        if (WTF::atomicLoad(&metadata.m_hasExecutedWithoutBuffer, std::memory_order_relaxed) && !WTF::atomicLoad(&metadata.m_buffer, std::memory_order_relaxed)) {
             ensureCatchLivenessIsComputedForBytecodeIndexSlow(op, bytecodeIndex);
             createdBuffer = true;
         }
@@ -2592,6 +2613,15 @@ ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedFo
     // the compiler thread reads fully initialized data.
     WTF::storeStoreFence();
 
+    if (vm().gilOff()) [[unlikely]] {
+        // Two mutators can build a buffer for one catch at once (AUDIT R9-12): one compare-and-swap publishes a buffer;
+        // the loser frees its own and uses the winner's.
+        if (auto* winner = WTF::atomicCompareExchangeStrong(&op.metadata(this).m_buffer, static_cast<ValueProfileAndVirtualRegisterBuffer*>(nullptr), profiles, std::memory_order_acq_rel)) {
+            ValueProfileAndVirtualRegisterBuffer::destroy(profiles);
+            return winner;
+        }
+        return profiles;
+    }
     WTF::atomicStore(&op.metadata(this).m_buffer, profiles, std::memory_order_release); // THREADS: lock-free compiler/mutator readers load-acquire/relaxed this slot.
     return profiles;
 }
@@ -2738,8 +2768,7 @@ void CodeBlock::prepareLazyStateForConcurrentCompilationSlow()
     if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(ownerExecutable()))
         functionExecutable->unlinkedExecutable()->materializeDeferredScalarsIfNeeded(); // sourceCodeForTools() / dumpSource() from the compiler thread (bytecode profiler, verbose dumps)
     ASSERT(!vm.exceptionForInspection());
-    WTF::storeStoreFence();
-    m_isLazyStatePreparedForConcurrentCompilation = true;
+    setStateBit(IsLazyStatePreparedForConcurrentCompilation, std::memory_order_release);
 }
 
 void CodeBlock::collectProfiledCallees(Vector<std::pair<JSCell*, CodeSpecializationKind>, 16>& out)
@@ -2933,7 +2962,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // still-reachable optimized code, runs un-stopped exactly as today.
     auto doJettison = [&] {
 
-    RELEASE_ASSERT(!Options::useJSThreads() || reason == Profiler::JettisonDueToOldAge || JSThreadsSafepoint::worldIsStopped(vm));
+    RELEASE_ASSERT(!Options::useJSThreads() || JSThreadsSafepoint::worldIsStopped(vm) || (reason == Profiler::JettisonDueToOldAge && vm.heap.worldIsStopped()));
 
     m_isJettisoned = true;
 
@@ -3319,9 +3348,9 @@ unsigned CodeBlock::numberOfDFGCompiles()
 {
     ASSERT(JITCode::isBaselineCode(jitType()));
     if (Options::testTheFTL()) {
-        if (m_didFailFTLCompilation)
+        if (hasFailedFTLCompilation())
             return 1000000;
-        return (m_hasBeenCompiledWithFTL ? 1 : 0) + WTF::atomicLoad(&m_reoptimizationRetryCounter, std::memory_order_relaxed);
+        return (hasBeenCompiledWithFTL() ? 1 : 0) + WTF::atomicLoad(&m_reoptimizationRetryCounter, std::memory_order_relaxed);
     }
     CodeBlock* replacement = this->replacement();
     return ((replacement && JSC::JITCode::isOptimizingJIT(replacement->jitType())) ? 1 : 0) + WTF::atomicLoad(&m_reoptimizationRetryCounter, std::memory_order_relaxed);

@@ -330,7 +330,7 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
             return nullString();
         }
 
-        size_t sizeToReport = newImpl->cost();
+        size_t sizeToReport = newImpl->costOfUnpublished(); // fresh: no other thread can reach it
         uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
         resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), buffer, stackLimit);
         String resolvedString = function(newImpl.releaseNonNull());
@@ -354,7 +354,7 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
         return nullString();
     }
 
-    size_t sizeToReport = newImpl->cost();
+    size_t sizeToReport = newImpl->costOfUnpublished(); // fresh: no other thread can reach it
     uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
     resolveToBuffer(std::bit_cast<JSString*>(fiberBits & stringMask), fiber1(), fiber2(), buffer, stackLimit);
     String resolvedString = function(newImpl.releaseNonNull());

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#include "ArgList.h"
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
@@ -44,6 +45,7 @@
 #include "ThreadManager.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
+#include <wtf/ScopedLambda.h>
 #if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
 #endif
@@ -413,29 +415,75 @@ JSPromiseReaction* JSPromise::reactionHead(VM& vm)
 
 JSValue JSPromise::asyncStackTraceContext() const
 {
-    if (status() != Status::Pending)
-        return { };
-    switch (inlineReactionKind()) {
-    case InlineReactionKind::None: {
-        auto* head = uncheckedDowncast<JSPromiseReaction>(payloadCell());
-        return head ? JSPromiseReaction::tryGetContext(head) : JSValue();
-    }
-    case InlineReactionKind::InternalMicrotask: {
-        if (promiseReactionPacksGlobalContextAndIndex(inlineReactionMicrotask())) {
-            ASSERT(payloadCell());
-            return JSValue(payloadCell());
+    auto compute = [&]() -> JSValue {
+        if (status() != Status::Pending)
+            return { };
+        switch (inlineReactionKind()) {
+        case InlineReactionKind::None: {
+            auto* head = uncheckedDowncast<JSPromiseReaction>(payloadCell());
+            return head ? JSPromiseReaction::tryGetContext(head) : JSValue();
         }
-        return m_slot.get();
-    }
-    case InlineReactionKind::FulfillHandler:
-    case InlineReactionKind::RejectHandler:
+        case InlineReactionKind::InternalMicrotask: {
+            if (promiseReactionPacksGlobalContextAndIndex(inlineReactionMicrotask())) {
+                ASSERT(payloadCell());
+                return JSValue(payloadCell());
+            }
+            return m_slot.get();
+        }
+        case InlineReactionKind::FulfillHandler:
+        case InlineReactionKind::RejectHandler:
+            return { };
+        }
         return { };
+    };
+    if (vm().gilOff()) [[unlikely]] {
+        // The same reads under the cell lock that every GIL-off writer of the packed word, the slot and the chain holds
+        // (AUDIT R9-11).
+        Locker locker { const_cast<JSPromise*>(this)->cellLock() };
+        return compute();
     }
-    return { };
+    return compute();
 }
 
 #if USE(BUN_JSC_ADDITIONS)
 void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>& callback) const
+{
+    if (vm().gilOff()) [[unlikely]] {
+        // GIL off every writer of a shared promise's packed word, slot and chain holds its cell lock, and a settle
+        // reverses the chain in place after taking it out under that lock (AUDIT R9-11). Copy what is reported under
+        // the lock, root the copies before any safepoint, and call back outside it (the callback may allocate).
+        struct Entry {
+            InternalMicrotask task;
+            JSValue promise;
+            JSValue context;
+        };
+        Vector<Entry, 8> entries;
+        {
+            Locker locker { const_cast<JSPromise*>(this)->cellLock() };
+            if (status() != Status::Pending)
+                return;
+            forEachPendingReactionUnlocked(ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>([&](InternalMicrotask task, JSValue promise, JSValue context) {
+                entries.append({ task, promise, context });
+                return true;
+            }));
+        }
+        MarkedArgumentBuffer roots;
+        for (auto& entry : entries) {
+            roots.append(entry.promise);
+            roots.append(entry.context);
+        }
+        if (roots.hasOverflowed()) [[unlikely]]
+            return;
+        for (auto& entry : entries) {
+            if (!callback(entry.task, entry.promise, entry.context))
+                return;
+        }
+        return;
+    }
+    forEachPendingReactionUnlocked(callback);
+}
+
+void JSPromise::forEachPendingReactionUnlocked(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>& callback) const
 {
     ASSERT(status() == Status::Pending);
     switch (inlineReactionKind()) {

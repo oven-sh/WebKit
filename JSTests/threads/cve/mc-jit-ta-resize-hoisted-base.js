@@ -24,7 +24,7 @@ load("../harness.js", "caller relative");
 const MAX = 1 << 20;        // 1 MiB max for resizable buffers
 const SMALL = 1 << 12;
 const ROUNDS = 300;
-const gate = { go: 0, started: 0, stop: 0 };
+const gate = { go: 0, started: 0, stop: 0, sweptReaders: 0 };
 
 const READERS = 3;
 const box = { buf: null, view: null, epoch: 0 };
@@ -86,7 +86,8 @@ const readers = spawnN(READERS, which => {
             if (!(e instanceof TypeError))   // detached-view TypeError is fine
                 throw e;
         }
-        sweeps++;
+        if (!sweeps++)
+            Atomics.add(gate, "sweptReaders", 1);
     }
     return sweeps > 0 ? "swept" : "idle";
 });
@@ -130,6 +131,9 @@ for (let r = 0; r < ROUNDS; ++r) {
         box.view = new Uint32Array(box.buf);
 }
 
+// On a loaded machine a reader thread may not have been scheduled before the storm ends: stop only once every reader
+// has swept at least once (a reader that never runs is scheduling, not the property checked here).
+waitUntil(() => Atomics.load(gate, "sweptReaders") === READERS);
 Atomics.store(gate, "stop", 1);
 for (const r of readers)
     shouldBe(r.join(), "swept");

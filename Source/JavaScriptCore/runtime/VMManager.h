@@ -341,6 +341,10 @@ private:
     void resumeTheWorld() WTF_REQUIRES_LOCK(m_worldLock);
     void NODELETE incrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void decrementActiveVMs(VM&) WTF_REQUIRES_LOCK(m_worldLock);
+    // Flag on: a ring of the last counter transitions, printed with every VM's state when the stopped/blocked/active
+    // invariant breaks (AUDIT R9-20).
+    void recordCounterEvent(const char*, VM*) WTF_REQUIRES_LOCK(m_worldLock);
+    void dumpCountersForAssertion(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void handleVMExit(VM&) WTF_REQUIRES_LOCK(m_worldLock);
     void enterStopTheWorldParticipation(VM&, StopTheWorldEvent);
     bool allActiveVMsHaveReachedStoppingPoint() const WTF_REQUIRES_LOCK(m_worldLock)

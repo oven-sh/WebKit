@@ -54,7 +54,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         Base::finishCreation(vm);
 
-        if (vm.gilOff()) [[unlikely]] {
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
             Storage* storage = Helper::copyGILOff(globalObject, base);
             RETURN_IF_EXCEPTION(scope, void());
             if (storage)
@@ -102,7 +102,7 @@ public:
 
     ALWAYS_INLINE bool has(JSGlobalObject* globalObject, JSValue key)
     {
-        if (getVM(globalObject).gilOff()) [[unlikely]]
+        if (getVM(globalObject).gilOffWithProcessGate()) [[unlikely]]
             return hasGILOff(globalObject, key);
         if (m_storage) {
             auto result = Helper::find(globalObject, storageRef(), key);
@@ -116,7 +116,7 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (vm.gilOff()) [[unlikely]]
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
             RELEASE_AND_RETURN(scope, addGILOff(globalObject, key, value));
 
         materializeIfNeeded(globalObject);
@@ -129,7 +129,7 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (vm.gilOff()) [[unlikely]]
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
             RELEASE_AND_RETURN(scope, Helper::addNormalizedGILOff(globalObject, this, key, value, hash));
 
         materializeIfNeeded(globalObject);
@@ -140,7 +140,7 @@ public:
 
     ALWAYS_INLINE bool remove(JSGlobalObject* globalObject, JSValue key)
     {
-        if (getVM(globalObject).gilOff()) [[unlikely]]
+        if (getVM(globalObject).gilOffWithProcessGate()) [[unlikely]]
             return removeGILOff(globalObject, key);
         if (m_storage)
             return Helper::remove(globalObject, this, storageRef(), key);
@@ -148,7 +148,7 @@ public:
     }
     ALWAYS_INLINE bool removeNormalized(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     {
-        if (getVM(globalObject).gilOff()) [[unlikely]]
+        if (getVM(globalObject).gilOffWithProcessGate()) [[unlikely]]
             return Helper::removeNormalizedGILOff(globalObject, this, key, hash);
         if (m_storage)
             return Helper::removeNormalized(globalObject, this, storageRef(), key, hash);
@@ -166,7 +166,7 @@ public:
 
     ALWAYS_INLINE void clear(JSGlobalObject* globalObject)
     {
-        if (getVM(globalObject).gilOff()) [[unlikely]] {
+        if (getVM(globalObject).gilOffWithProcessGate()) [[unlikely]] {
             Helper::clearGILOff(globalObject, this);
             return;
         }
@@ -182,7 +182,7 @@ public:
         if (m_storage)
             return;
 
-        if (vm.gilOff()) [[unlikely]] {
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
             Helper::materializeGILOff(globalObject, this);
             return;
         }
@@ -302,7 +302,7 @@ public:
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key)
     {
-        if (getVM(globalObject).gilOff()) [[unlikely]]
+        if (getVM(globalObject).gilOffWithProcessGate()) [[unlikely]]
             return getUnnormalizedGILOff(globalObject, key);
         JSValue result = getImpl(globalObject, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
             return Helper::find(globalObject, storage, key);
@@ -311,7 +311,7 @@ public:
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     {
-        if (getVM(globalObject).gilOff()) [[unlikely]] {
+        if (getVM(globalObject).gilOffWithProcessGate()) [[unlikely]] {
             JSValue result = getGILOff(globalObject, key, hash);
             return result.isEmpty() ? jsUndefined() : result;
         }
@@ -333,7 +333,7 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (vm.gilOff()) [[unlikely]]
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
             RELEASE_AND_RETURN(scope, getOrInsertGILOff(globalObject, key, getValueFunctor));
 
         materializeIfNeeded(globalObject);

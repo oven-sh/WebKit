@@ -23,7 +23,8 @@ for (let i = 0; i < KEYS; ++i)
 Object.defineProperty(object, 0, { value: 0, writable: false, enumerable: true, configurable: true });
 $vm.toUncacheableDictionary(object);
 
-// A Debug build collects much more slowly, so it stops at a deadline.
+// A Debug build collects much more slowly, so it stops at a deadline, checked every 16 cycles: under continuous
+// collection one cycle can wait for a collection, and 1,024 of them took minutes on a loaded Debug build.
 const deadline = Date.now() + 20000;
 for (let n = 0; n < CYCLES; ++n) {
     const key = keys[n % KEYS];
@@ -31,6 +32,6 @@ for (let n = 0; n < CYCLES; ++n) {
     if (key in object)
         throw new Error("cycle " + n + ": " + key + " was not deleted");
     object[key] = n;
-    if (!(n & 1023) && Date.now() > deadline)
+    if (!(n & 15) && Date.now() > deadline)
         break;
 }

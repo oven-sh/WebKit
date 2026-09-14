@@ -301,7 +301,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     // concurrently (per-directory stripes); WeakRandom::getUint64() mutates
     // its state, so only that shape takes the lock. Flag-off and GIL-on
     // sweeps are serialized by the JSLock or the stop window.
-    const bool sweepsMayRunConcurrently = m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess;
+    const bool sweepsMayRunConcurrently = g_jscConfig.gilOffProcess && m_directory->heap().isSharedServer();
     uint64_t secret;
     if (sweepsMayRunConcurrently) [[unlikely]]
         secret = vm.heapRandomUint64Concurrent();
@@ -617,7 +617,7 @@ inline void MarkedBlock::Handle::setIsDestructible(bool value)
     // (a revert would strand a stale-true hint across the isEmpty directory-
     // bit clear and a later notifyNeedsDestruction would never run
     // JSString::destroy).
-    if (m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (g_jscConfig.gilOffProcess && m_directory->heap().isSharedServer()) [[unlikely]] {
         if (value && WTF::atomicLoad(&m_isDestructibleHint, std::memory_order_relaxed))
             return;
         Locker locker { m_directory->bitvectorLock() };

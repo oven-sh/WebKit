@@ -193,7 +193,7 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
         return atom;
     }
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::useFastCachedAtoms()) {
+    if (Options::useFastCachedAtoms() && !vm.gilOff()) { // GIL off: plain-store cache (AUDIT R9-5)
         uint32_t packed = characters[0] | characters[1] << 8 | characters[2] << 16;
         AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
         if (entry && entry->length() == 3 && entry->is8Bit()) [[likely]] {
@@ -3571,7 +3571,7 @@ static_assert(sizeof(CachedFunctionExecutableRareData) == sizeof(uint32_t));
 //   [call slot][construct slot][name][TDZ link][rare data]
 //   varint tail, hot part (read when the cell is created): flags, lexically scoped features, parameter count, start
 //     offset, function start, source length, body start column, [first line offset]
-//   varint tail, cold part (read on first call / introspection, UnlinkedFunctionExecutable::m_scalarsAreDeferred):
+//   varint tail, cold part (read on first call / introspection, UnlinkedFunctionExecutable::ScalarsAreDeferred):
 //     features, parameters start, function end, body end column, [line count]
 // A persistent payload (bun --compile) has no metadata row and only the slots it uses.
 class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable> {
@@ -4319,8 +4319,8 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
     // (features, ScriptExecutable::newCodeBlockFor) and compiler threads (parameterCount) need. Source positions cluster
     // around the function's start, so all but the first are deltas.
     writer.u32(flags);
-    writer.u8(static_cast<uint8_t>(executable.m_lexicallyScopedFeatures));
-    writer.u32(executable.m_features);
+    writer.u8(static_cast<uint8_t>(executable.lexicallyScopedFeatures()));
+    writer.u32(executable.features());
     writer.u32(executable.m_parameterCount);
     unsigned start = executable.m_startOffset;
     writer.u32(start);
@@ -4462,19 +4462,19 @@ auto CachedFunctionExecutable::view(const uint8_t* limit, ScalarsToView scalarsT
 
 void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
 {
-    ASSERT(m_nameIsDeferred && m_membersAreDeferred);
+    ASSERT(isDeferred(NameIsDeferred) && isDeferred(MembersAreDeferred));
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread() && Thread::currentSingleton().atomStringTable() == vm().atomStringTable());
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_members.pending().record->slotsView();
     self->m_ecmaName = v.name->decode(*m_members.pending().decoder);
-    WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
-    if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
+    self->clearDeferred(NameIsDeferred, std::memory_order_release); // tryGetEcmaNameConcurrently()
+    if (!v.tdz && !v.rareData && !isDeferred(ScalarsAreDeferred))
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
 
 String UnlinkedFunctionExecutable::ecmaNameWithoutGCSlow() const
 {
-    ASSERT(m_nameIsDeferred && m_membersAreDeferred);
+    ASSERT(isDeferred(NameIsDeferred) && isDeferred(MembersAreDeferred));
     ASSERT(!isCompilationThread()); // not synchronized with the mutator's materializeDeferredMembersSlow: use tryGetEcmaNameConcurrently()
     if (!vm().heap.currentThreadIsDoingGCWork()) {
         materializeDeferredNameSlow();
@@ -4487,7 +4487,7 @@ String UnlinkedFunctionExecutable::ecmaNameWithoutGCSlow() const
 
 void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
 {
-    ASSERT(m_scalarsAreDeferred && m_membersAreDeferred);
+    ASSERT(isDeferred(ScalarsAreDeferred) && isDeferred(MembersAreDeferred));
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread()); // the cold members share words with (mutator-only) flag bits
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_members.pending().record->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
@@ -4495,24 +4495,24 @@ void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
     self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
     self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
     self->m_lineCount = v.scalars.lineCount;
-    self->m_scalarsAreDeferred = false;
-    if (!m_nameIsDeferred && !v.tdz && !v.rareData)
+    self->clearDeferred(ScalarsAreDeferred);
+    if (!isDeferred(NameIsDeferred) && !v.tdz && !v.rareData)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
 
 void UnlinkedFunctionExecutable::materializeDeferredMembersSlow() const
 {
-    ASSERT(m_membersAreDeferred);
+    ASSERT(isDeferred(MembersAreDeferred));
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
     // The name and the cold scalars are read from the record this lets go of; either may finish the job itself.
-    if (m_scalarsAreDeferred) {
+    if (isDeferred(ScalarsAreDeferred)) {
         materializeDeferredScalarsSlow();
-        if (!m_membersAreDeferred)
+        if (!isDeferred(MembersAreDeferred))
             return;
     }
-    if (m_nameIsDeferred) {
+    if (isDeferred(NameIsDeferred)) {
         materializeDeferredNameSlow();
-        if (!m_membersAreDeferred)
+        if (!isDeferred(MembersAreDeferred))
             return;
     }
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
@@ -4560,8 +4560,8 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
         ASSERT(p + tail.size() == bytes() + sizeof(uint32_t) + tailSize(encoder, executable));
     }
     if (metadata) {
-        metadata->m_features = executable.m_features;
-        metadata->m_lexicallyScopedFeatures = executable.m_lexicallyScopedFeatures;
+        metadata->m_features = executable.features();
+        metadata->m_lexicallyScopedFeatures = executable.lexicallyScopedFeatures();
         metadata->m_hasCapturedVariables = executable.m_hasCapturedVariables;
     }
     if (rareData)
@@ -4593,8 +4593,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
     , m_isGeneratedFromCache(true)
     , m_isCached(false)
-    , m_features(0)
-    , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
+    , m_featureWord(packFeatureWord(0, NoLexicallyScopedFeatures))
     , m_hasCapturedVariables(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
@@ -4604,14 +4603,14 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     CachedFunctionExecutable::View v = cachedExecutable.view(nullptr, defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;
-    m_features = scalars.features;
-    m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
+    m_featureWord = packFeatureWord(scalars.features, scalars.lexicallyScopedFeatures);
     m_isClass = !!(v.header & CachedFunctionExecutable::IsClass);
     if (defer) {
         ASSERT(decoder.payloadContains(&cachedExecutable, cachedExecutable.view().tailEnd - std::bit_cast<const uint8_t*>(&cachedExecutable))); // including the cold tail read later
         m_members.defer(decoder, cachedExecutable);
-        m_scalarsAreDeferred = true;
-        m_nameIsDeferred = !!v.name;
+        setDeferred(ScalarsAreDeferred);
+        if (v.name)
+            setDeferred(NameIsDeferred);
         v.name = nullptr;
         v.tdz = nullptr;
         v.rareData = nullptr;

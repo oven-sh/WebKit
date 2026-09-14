@@ -1025,7 +1025,7 @@ void StructureTransitionTable::forEachTransition(const Functor& functor) const
     });
 }
 
-inline Structure* StructureTransitionTable::get(PointerKey rep, unsigned attributes, TransitionKind transitionKind) const
+ALWAYS_INLINE Structure* StructureTransitionTable::get(PointerKey rep, unsigned attributes, TransitionKind transitionKind) const
 {
     // Single snapshot of the table word (one load — upstream's plain code
     // loaded it twice via isUsingSingleSlot + trySingleTransition).

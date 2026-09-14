@@ -233,6 +233,8 @@ public:
     bool isDeferringTermination() const { return m_deferTerminationCount; }
     inline void deferTermination(DeferAction);
     inline void undoDeferTermination(DeferAction);
+    inline void deferTermination(VM&, DeferAction); // the VM is this instance's vm(), already at hand
+    inline void undoDeferTermination(VM&, DeferAction);
 
     inline void notifyGrabAllLocks();
 

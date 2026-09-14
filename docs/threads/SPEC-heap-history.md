@@ -1246,3 +1246,149 @@ just-ended cycle allocated into (a per-directory copy of the Eden set taken
 at the end of the collection); surplus is what is empty AND was not used.
 After: 0 shrinks in the steady phase, capacity settles at the churn set.
 
+
+### 30. Ninth landing round: a heap walk the rebase added (snapshot start)
+
+The new base materializes, before every heap snapshot, the SymbolTables a
+bytecode cache left pending (`HeapProfiler::setActiveHeapAnalyzer` ->
+`materializeLazySymbolTablesForHeapAnalysis`: a `HeapIterationScope` and a
+`forEachLiveCell` over `symbolTableSpace`), because the analyzer's
+variable-name edges need the entries and they cannot be faulted in from
+inside marking. The walk runs on the snapshotting mutator, outside any
+stop. On a shared heap that is the one thing §T8 forbids: the scope's
+`stopAllocating()` flushes the other clients' free lists out from under
+their lock-free fast paths (`MarkedSpace::willStartIterating`). Seen first
+as a rebase regression of the corpus: `w16-c1-prevent-collection.js` (eight
+threads allocate while the main thread takes snapshots) GIL off crashed in
+15 of 20 Release runs on the rebased tree (SIGSEGV in the allocator, or
+"finish using on a block that's not in use" with the block's bit vectors),
+0 of 10 on the eighth round's binary; TSAN names `FreeList::forEachInterval`
+in `stopAllocating` against `FreeList::allocateWithCellSize` on another
+thread.
+
+Rule: the walk runs through `Heap::runWithOtherClientsStopped` (inline when
+the heap is not shared, a JSThreads stop window around it otherwise). Its
+preconditions hold at the one call site: the snapshot builders hold the
+JSLock and a `PreventCollectionScope`, no cell, Structure or heap lock, and
+the walk neither allocates cells (`SymbolTable::materializeCachedEntries`
+decodes into malloc'd entries) nor calls into JS; the SymbolTable lock it
+takes is never held across a stop. The walk is skipped when
+`useLazySymbolTableConstants` is off (no table can be pending). Flag off and
+GIL on: unchanged (the heap is not a shared server). Cost GIL off: one stop
+per snapshot. Test: `gc-stress/heap-snapshot-while-threads-allocate-gil-off.js`
+(four threads allocate while the main thread takes twelve snapshots).
+
+### 31. Ninth landing round: destructors run on whichever thread sweeps (§10G)
+
+The eighth round's final Bun GIL-off pass hit Bun's debug assertion that a strong-handle slot was released off its VM's thread (a socket `Listener` finalized during `test/js/node/http`). The ninth round reproduced it deterministically GIL on: a script that creates six listeners with `data` per round, stops and drops them, and has a JS thread allocate until the heap collects aborts in 3 of 3 runs on the Bun debug build. The listeners' wrappers are lower-tier precise allocations, which the collection epilogue sweeps every cycle on whichever thread services it - the allocating JS thread. Nothing in SPEC-heap said which thread a destructor may run on.
+
+Options considered. (a) Confine the destruction of an embedder's subspaces to the owning thread: skip their blocks in non-owner sweeps. Rejected for now: the lower-tier precise cells are swept eagerly every cycle by design, weak-bearing blocks are only swept with the world stopped, and a directory whose owner stops allocating keeps dead cells (and the native resources they hold) for as long as the owner is idle. (b) A per-owner deferred-destruction queue inside JSC. Rejected: the sweep frees the cell's memory, so the queue would need to copy out whatever the owner's teardown reads, and only the embedder knows what that is. (c) State the contract (§10G) and let the embedder marshal thread-affine teardown. Chosen. JSC's side is the contract and a test that every destructor runs exactly once however the sweeps are spread over threads. Bun's side (kept in the Bun patch for this round): a generated class's destructor calls its native finalizer directly on the VM's thread and posts it to the VM's event loop from any other thread, and a strong-handle slot released on another thread of the VM is queued for the VM's thread. Flag off both are one extra load of the option.
+
+### 32. Ninth landing round: weak-bearing blocks were never swept GIL off (§10E third amendment)
+
+Found by the §10G test. GIL off, after 25 rounds in which the main thread created and dropped 2,000 destructible cells and a JS thread allocated and called `gc()`, 12,350 cells had never been destroyed after twenty more synchronous collections - exactly 494 per round, one 16 KB block of 32-byte cells - and a heap snapshot found none of them live. GIL on, and GIL off without the thread's `gc()` or without threads, every cell was destroyed. A dump of the directory's bits showed the lost blocks unswept, empty, destructible, not in use, and weak-bearing: each held the round's `Thread` wrapper, which a `Weak<>` names, so its WeakSet had a WeakBlock. The shared heap's weak-mutation protocol (review round 4) forbids sweeping a weak-bearing block while mutators run; the concurrent sweeps skip it and leave it to "the next world-stopped sweep", which in steady state was only the requested-Full slack sweep of §10E. Fix: `MarkedSpace::sweepWeakBearingBlocks`, called by the conductor at the start of `reclaimSharedGCMemoryAtCycleEnd`, sweeps the unswept, not-in-use, weak-bearing blocks of every directory with the world stopped. Flag off and GIL on: unchanged (not a shared server).
+
+### 33. Ninth landing round: the eden-to-old ratio against the k-nursery heap (considered, measured, not adopted)
+
+splay-like at four threads GIL off runs a Full after every eden: each eden that k allocating threads fill (the §10F
+allowance is k nurseries) leaves more than two thirds of a maximum heap sized for one nursery, and the upstream rule
+(`minEdenToOldGenerationRatio`, 1/3) then makes the next cycle Full. Implemented for measurement behind
+`sharedGCEdenRatioIncludesAllowance`: with k >= 2 allocating clients the ratio is taken against the maximum heap plus
+the cycle's extra nurseries, and the N-mutator floating-garbage trigger is bounded below by one nursery per client.
+Measured against the array-allocation-report fix (SPEC-objectmodel history §32, which the same investigation found and
+which alone took splay-like from 3.11x to 3.62x at four threads): with both, splay-like 3.48x and map-heavy 3.27x
+against 3.62x and 3.38x with the report fix alone; string-heavy rose (2.71x against 2.43x) but that workload is
+bimodal and three runs do not separate its modes. More memory by design (floating garbage between Fulls up to k
+nurseries) for a loss on two of four workloads: not adopted, and the option removed. Raising the number of in-stop
+markers with the allocating clients (`--numberOfGCMarkers=12/16`) matched the report fix alone on splay-like and was
+slower on raytrace-like: not adopted either.
+
+### 34. Ninth landing round: window-liveness retention kept every marked precise allocation alive (I12)
+
+Found measuring map-heavy's memory (phase 3.4): GIL off it peaked at 1.1 GB per allocating thread against 176 MB flag
+off and GIL on (1,140 / 2,188 / 4,281 / 8,463 MB at 1 / 2 / 4 / 8 threads). Under the shared heap with two or more
+clients - one spawned thread is enough, its parent stays attached while it waits in `join` - the window-liveness
+constraint's precise-allocation leg roots every precise allocation that is `isNewlyAllocated() && !isMarked()`, the
+witness for "allocated in the window by a parked client". `PreciseAllocation::flip()`, run at the start of every Full
+collection, sets `m_isNewlyAllocated |= isMarked()` and clears the mark (so that `isLive` holds for last cycle's
+survivors while the Full runs). Every precise allocation marked in the previous cycle therefore looked
+window-allocated to the constraint, which rooted and marked it, and the next Full's flip repeated it: a precise cell
+(a large `Map`/`Set` storage, a large butterfly) that was ever marked was never freed again while two clients were
+attached - against I12's "a dead cohort rides at most two Full collections". Direct measure: a worker allocating and
+dropping 64 KB arrays, `gcHeapSize()` after each `fullGC()`: 37.7, 75.2, 112.7, 150.2, 187.7, 225.2 MB (every byte
+retained); the same loop with small objects stays at 0.2 MB. The block leg is not affected (its witness is each
+parked client's current block, whose newly-allocated bits flip does not touch).
+
+Fix: the constraint's witness for precise allocations is a separate bit, set when the allocation is made and cleared
+by `MarkedSpace::endMarking` with `m_isNewlyAllocated`, which `flip()` does not set - the meaning the leg had in Eden
+collections, now in Full ones too. Only the shared heap with two or more clients runs the constraint (GIL off); flag
+off and GIL on are unchanged. Test: `gc-stress/precise-allocations-reclaimed-with-two-clients-gil-off.js` (the direct
+measure above: the heap must not grow by the round's allocation each round): 3 of 3 failed before (150 MB of growth
+over four rounds), 5 of 5 pass after. map-heavy GIL off at one thread: peak RSS 1,140 -> 352 MB, time 2,884 -> 1,448
+ms (flag off 1,441 ms) - the doubled serial time had been the Full collections walking the retained cells. With two or
+more threads each additional thread still adds about 1 GB - not retained past a Full collection after join, but kept
+by the leg's conservative witness (every precise allocation since the last marking, by any client, dead or alive)
+and a feedback loop in the retained-bytes rebase (LANDING-PLAN Open items has the options and the gates).
+
+### 35. Ninth landing round: the cycle-end sweep of weak-bearing blocks, bounded per stop (R9-18 amendment)
+
+R9-18 (§10E third amendment) sweeps, at the end of every conducted cycle, every unswept weak-bearing block. A Full
+collection makes every block unswept, so a program whose cycles come back to back re-sweeps all of them each time.
+Found in the JSC stress suite's continuous-collection lanes GIL off (`--collectContinuously` with generational
+collection off: every cycle Full, one requested as soon as the last ends): `delete-property-inline-cache.js` keeps about
+800 weak-bearing blocks (structures its inline caches name weakly), and each cycle end swept all of them - about 20,000
+cycles a minute. A progress-instrumented copy (elapsed time every 50 of its 1,000 iterations), four builds side by side:
+after about 20 s the round's first build (no sweep) had done 550 iterations, the first build with the sweep and the
+final candidate 50 each; flag off finishes all 1,000 in 3.7 s. The micro rows sweep 0-2.1 weak-bearing blocks a cycle,
+most of them once in the whole run, so ordinary programs did not show it.
+
+Rule: at most `sharedGCWeakBearingSweepBudget` blocks (default 32) per cycle end, resuming from a cursor across the
+directories and within each, so every block is reached within ceil(n / budget) cycle ends; a requested collection (a
+named scope) sweeps all, which keeps the destructor contract where a program asks for it (§10G's test calls `gc()`).
+Flag off and GIL on do not reach this path. Test: `gc-stress/weak-bearing-sweep-bounded-per-stop-gil-off.js`
+(`$vm.weakBearingSweepStats()`: the most blocks one unrequested cycle end swept must not exceed the budget, and GIL off
+the sweep must still run): with `--sharedGCWeakBearingSweepBudget=0` (the rule before) it fails - one cycle end swept 495 blocks, 1,980 in 4 cycle ends - and with the default it passes, at most 32 in one cycle end (128 in 4); it passes flag off and GIL on as well, where no
+cycle end sweeps (the heap is not shared). The progress-instrumented copy finishes all 1,000 iterations in 21.2 s GIL off (flag off 3.7 s), where the round's first build had done 550 and the build before the budget 50 at the 20 s mark. Run side by side with the build before the budget, it finished in 17.2 s while that build reached iteration 100 in
+1.3 s and no further in 20 minutes; `toctou-having-a-bad-time-new-array.js`, another file the suite could not finish,
+passed every configuration in 48 s on r9u. The two objectmodel tests with continuous collection (`dictionary-delete-collects-outside-cell-lock.js`,
+`sparse-define-collects-outside-cell-lock.js`), which had timed out in this round's Debug and TSAN lanes and were first
+read as load, were the same re-sweep: alone, Debug 126 s and TSanJIT 32 s on r9u against the 400 s cap on r9t beside
+it; both pass in r9u's Debug and TSAN lanes.
+
+### 36. Ninth landing round: the conductor's own access re-entry inside its stop window (F8; R9-23)
+
+Found by the final battery's Bun run GIL off (`test/js/web/fetch` with the keep-alive thread): the test process stopped
+using CPU, both of its JS threads parked. Their stacks (read from the process's memory; gdb could not unwind the ASAN
+build): the main thread in Bun's `Bun__JSValue__unprotect` -> `JSLockHolder` -> `JSLock::lock` ->
+`GCClient::Heap::acquireHeapAccess`, waiting on the stop-pending barrier condition; the keep-alive thread returning
+from `Atomics.wait` -> `~DropAllLocks` -> `acquireHeapAccess`, waiting on the same condition; no other thread in JSC.
+Both waited for GSP to clear, and nothing that could clear it was running.
+
+The conductor releases its own access when it opens its window (§10.3, F15 order: GSP, then the release) and
+re-acquires it only after the final close (§10.8). Inside the window it runs embedder code: destructors of the cells it
+sweeps (the epilogue's precise-allocation sweep, §10E's requested-Full sweep, and since §32 the cycle-end sweep of
+weak-bearing blocks, every cycle) and weak finalizers (§10G). An embedder destructor may take the VM's API lock, as it
+may on main - Bun's `Bun__JSValue__unprotect` does, for its assertions - and GIL off every `JSLock::lock`, recursive or
+not, runs the gated acquire (heap F8 step 0 makes it idempotent only while access is held). The conductor's
+acquire therefore took the F8 step-3 revert on its own GSP and waited for the §10.8 clear, which only it performs: a
+self-deadlock, and every other mutator parked behind the open window. The hazard is as old as the in-stop sweeps, but this round's fixes made it live. The Bun hang's destructor ran from
+the End phase's eager sweep of lower-tier precise allocations (`runEndPhase` -> `Subspace::destroy` ->
+`JSHTMLRewriterTransform::destroy` -> Bun's finalizer -> `Bun__JSValue__unprotect`, the main thread conducting), and
+before §34's fix (R9-21) a dead precise cell was never destroyed while two clients were attached - the keep-alive
+thread is the second - so the round's first Bun runs (r9b) never ran such a destructor inside the stop; §32's
+cycle-end sweep of weak-bearing blocks is the other in-stop route (the JSC reproduction goes through it).
+
+Fix (F8 amendment, "conductor re-entry"): while the conductor's own window is open - from its GSP store to its GSP
+clear, tracked by a thread-local flag on the conductor's thread, so no other thread reads conductor state - its own
+client's acquire skips the step-3 revert and the Mode-machine leg, and takes access. The Mode-machine leg matters: a GC
+stop raises the VMM stop for every VM, and while a thread that lost the election participates in it the leg gates fresh
+access. A first version exempted only the GSP leg, and the JSC reproduction then parked the conductor there instead
+(`reclaimSharedGCMemoryAtCycleEnd` -> `sweepWeakBearingBlocks` -> the probe's destructor -> `JSLockHolder` ->
+`acquireHeapAccess` -> `jsThreadsParkForModeStop`, the other `gc()` caller in `enterStopTheWorldParticipation`). The
+§A.3 leg already exempts its own stop's conductor and cannot be pending inside a GC window (GCL). A conductor that re-entered keeps access while the API lock is held
+recursively; a non-final close releases it (the Reentry open asserts the conductor access-released), and the final
+close's re-acquire is then the step-0 no-op. The contract (§10G) now says a destructor may take the VM's API lock.
+Test: `gc-stress/destructor-takes-api-lock-inside-stop-gil-off.js` (`$vm.createDestructionProbe(true)`: the probe's
+destructor takes a `JSLockHolder`): before (r9zb: the probe flag without the re-entry) 3 of 3 runs hang GIL off, stopped at 120 s; after (r9za) 5 of 5 pass in under a second GIL off; GIL on passes on both; the lock-free §10G test passes 3 of 3 on r9za. At the Bun level, `test/js/web/fetch` GIL off with the keep-alive thread hangs 4 of 4 runs
+on r9y and r9u (after `wasm-streaming.test.ts`, the stacks above) and completes 2 of 2 on r9za with the round
+start's counts (11,602 pass, 40 fail; r9b 1 of 1).

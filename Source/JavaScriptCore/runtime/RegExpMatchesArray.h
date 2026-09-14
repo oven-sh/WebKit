@@ -63,6 +63,16 @@ ALWAYS_INLINE JSArray* tryCreateUninitializedRegExpMatchesArray(ObjectInitializa
     return result;
 }
 
+// A matches array is fresh and not yet visible to another thread, so its butterfly is flat in every mode: its
+// out-of-line properties are written through the flat storage, not through locationForOffset's flag-on arm
+// (SPEC-objectmodel history §31).
+ALWAYS_INLINE void putDirectOffsetOfFreshArray(VM& vm, JSArray* array, PropertyStorage storage, PropertyOffset offset, JSValue value)
+{
+    ASSERT(!isInlineOffset(offset));
+    ASSERT(!array->mayBeSegmentedButterfly() && storage == array->outOfLineStorage());
+    storage[offsetInOutOfLineStorage(offset)].set(vm, array, value);
+}
+
 ALWAYS_INLINE JSArray* createRegExpMatchesArrayForPlainRegExp(VM& vm, JSGlobalObject* globalObject, JSString* input, const MatchResult& result, std::span<const int> subpatternResults, unsigned numSubpatterns)
 {
     Structure* matchStructure = globalObject->regExpMatchesArrayStructure();
@@ -75,9 +85,10 @@ ALWAYS_INLINE JSArray* createRegExpMatchesArrayForPlainRegExp(VM& vm, JSGlobalOb
     JSArray* array = tryCreateUninitializedRegExpMatchesArray(matchesArrayScope, &deferralContext, matchStructure, numSubpatterns + 1);
     RELEASE_ASSERT(array);
 
-    array->putDirectOffset(vm, RegExpMatchesArrayIndexPropertyOffset, jsNumber(result.start));
-    array->putDirectOffset(vm, RegExpMatchesArrayInputPropertyOffset, input);
-    array->putDirectOffset(vm, RegExpMatchesArrayGroupsPropertyOffset, jsUndefined());
+    PropertyStorage freshStorage = array->outOfLineStorage();
+    putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayIndexPropertyOffset, jsNumber(result.start));
+    putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayInputPropertyOffset, input);
+    putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayGroupsPropertyOffset, jsUndefined());
 
     // THREADS-INTEGRATE(objectmodel) §10.7 [assert-only]: fresh thread-private
     // array — flat by construction (the §9.6 stress hook exempts

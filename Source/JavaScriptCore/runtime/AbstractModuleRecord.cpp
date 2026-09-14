@@ -1192,6 +1192,11 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
 }
 
+static JSModuleNamespaceObject* loadNamespaceObjectAcquire(const WriteBarrier<JSModuleNamespaceObject>& slot)
+{
+    return WTF::atomicLoad(const_cast<JSModuleNamespaceObject**>(std::bit_cast<JSModuleNamespaceObject* const*>(&slot)), std::memory_order_acquire);
+}
+
 JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions)
 {
     VM& vm = globalObject->vm();
@@ -1203,7 +1208,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 #endif
 
     // https://tc39.es/ecma262/#sec-getmodulenamespace
-    if (phase == ModulePhase::Defer) {
+    if (vm.gilOff()) [[unlikely]] {
+        if (auto* existing = loadNamespaceObjectAcquire(phase == ModulePhase::Defer ? m_deferredNamespaceObject : m_moduleNamespaceObject))
+            return existing;
+    } else if (phase == ModulePhase::Defer) {
         if (m_deferredNamespaceObject)
             return m_deferredNamespaceObject.get();
     } else if (m_moduleNamespaceObject)
@@ -1335,6 +1343,26 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 
     auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (vm.gilOff()) [[unlikely]] {
+        // Several threads can build this record's namespace at once GIL off (a spawned thread reading an
+        // `export * as` binding, a top-level-await continuation). One object wins a compare-and-swap on the field and
+        // every thread returns it; only the winner writes the environment's *namespace* slot, after the field and
+        // outside any lock (the write can reach a safepoint). A reader that finds the field set but the slot still
+        // empty uses the field (JSModuleNamespaceObject::getOwnPropertySlotCommon). AUDIT R9-15.
+        auto& slot = phase == ModulePhase::Defer ? m_deferredNamespaceObject : m_moduleNamespaceObject;
+        if (auto* winner = WTF::atomicCompareExchangeStrong(const_cast<JSModuleNamespaceObject**>(std::bit_cast<JSModuleNamespaceObject* const*>(&slot)), static_cast<JSModuleNamespaceObject*>(nullptr), moduleNamespaceObject, std::memory_order_acq_rel))
+            return winner;
+        vm.writeBarrier(this, moduleNamespaceObject);
+        if (phase != ModulePhase::Defer && m_moduleEnvironment) {
+            bool putResult = false;
+            constexpr bool shouldThrowReadOnlyError = false;
+            constexpr bool ignoreReadOnlyErrors = true;
+            symbolTablePutTouchWatchpointSet(m_moduleEnvironment.get(), globalObject, vm.propertyNames->starNamespacePrivateName, moduleNamespaceObject, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        return moduleNamespaceObject;
+    }
 
     if (phase == ModulePhase::Defer) {
         m_deferredNamespaceObject.set(vm, this, moduleNamespaceObject);
