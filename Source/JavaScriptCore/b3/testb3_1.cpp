@@ -1404,6 +1404,7 @@ void run(const TestConfig* config)
     RUN(testFCCmpNegatedAndDouble(2.0, 1.0, 4.0, 3.0));  // !(false && false) = true
 
     RUN(testPureValueAfterForwardedLoadInLoop());
+    RUN(testMoveConstantsWithManyLargeAddends());
     RUN(testStoreOfTheAddressItIsStoredAt());
     RUN(testCompareAndSwapIsNotMovedPastALoad());
 #if USE(BUN_JSC_ADDITIONS)

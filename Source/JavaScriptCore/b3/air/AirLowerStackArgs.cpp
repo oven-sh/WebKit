@@ -257,7 +257,9 @@ void lowerStackArgs(Code& code)
                             // What is passed to a call goes where the callee will look for it: above the stack
                             // pointer as it is now, which is no longer a fixed distance from the frame pointer.
                             Arg fromSP = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), arg.offset());
-                            if (inst.admitsExtendedOffsetAddr(arg) || fromSP.isValidForm(Move, width)) {
+                            // A patchpoint only names where its stack argument is, for whoever asks: the store that
+                            // put it there is an instruction of its own, ahead of it. Any offset will do for that.
+                            if (inst.kind.opcode == Patch || inst.admitsExtendedOffsetAddr(arg) || fromSP.isValidForm(Move, width)) {
                                 arg = fromSP;
                                 break;
                             }

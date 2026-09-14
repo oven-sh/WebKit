@@ -59,9 +59,9 @@ for (const SIZE of [200, 264, 512, 4096, 16384, 1 << 20]) {
         }
     }
 }
-// Many plain arguments make as much, without a structure.
-{
-    const WORDS = 300;
+// Many plain arguments make as much, without a structure. 33 of them on the stack are the first to get the room made;
+// the 4096th is the first an ARM64 store cannot reach from the stack pointer with its own offset (4095 * 8 bytes).
+for (const WORDS of [12, 40, 41, 300, 4000, 4102, 4103, 4104, 4200, 9000]) {
     const callee = new Block(WORDS);
     let sum = 0;
     for (let i = 1; i < WORDS; i++)

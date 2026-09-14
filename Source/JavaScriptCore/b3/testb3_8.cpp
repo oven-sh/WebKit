@@ -3726,6 +3726,64 @@ void testStoreOfTheAddressItIsStoredAt()
     }
 }
 
+void testMoveConstantsWithManyLargeAddends()
+{
+    // Tens of thousands of additions of constants no instruction can hold (on ARM64 that is every offset past a
+    // store's reach, once it is made an address): moveConstants looks, for each, for the constant or its negation
+    // among the ones already placed, and what that takes grows with their number, not with its square. Some of the
+    // constants here are each other's negations, in the same block and in a dominating one, which is what it looks for.
+    auto constantAt = [](unsigned i) -> int64_t {
+        int64_t magnitude = (1ll << 40) + static_cast<int64_t>(i / 3) * 0x10001;
+        return i % 3 == 1 ? -magnitude : magnitude;
+    };
+    auto build = [&](Procedure& proc, unsigned count) -> uint64_t {
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* next = proc.addBlock();
+        Value* x = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        Value* out = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+        uint64_t expected = 0;
+        Value* sum = root->appendNew<Const64Value>(proc, Origin(), 0);
+        for (unsigned i = 0; i < count; ++i) {
+            BasicBlock* block = i < count / 2 ? root : next;
+            if (i == count / 2) {
+                root->appendNew<MemoryValue>(proc, Store, Origin(), sum, out, 0);
+                root->appendNewControlValue(proc, Jump, Origin(), FrequentedBlock(next));
+                sum = next->appendNew<MemoryValue>(proc, Load, Int64, Origin(), out, 0);
+            }
+            Value* constant = block->appendNew<Const64Value>(proc, Origin(), constantAt(i));
+            Value* term = i % 3 == 2
+                ? block->appendNew<Value>(proc, Sub, Origin(), x, constant)
+                : block->appendNew<Value>(proc, Add, Origin(), x, constant);
+            expected += i % 3 == 2 ? 7 - static_cast<uint64_t>(constantAt(i)) : 7 + static_cast<uint64_t>(constantAt(i));
+            // Each term goes through memory, so that it is computed as written.
+            block->appendNew<MemoryValue>(proc, Store, Origin(), term, out, 8);
+            sum = block->appendNew<Value>(proc, Add, Origin(), sum, block->appendNew<MemoryValue>(proc, Load, Int64, Origin(), out, 8));
+        }
+        next->appendNewControlValue(proc, Return, Origin(), sum);
+        return expected;
+    };
+    {
+        // The phase by itself, on many.
+        Procedure proc;
+        build(proc, 240000);
+        proc.resetReachability();
+        MonotonicTime before = MonotonicTime::now();
+        moveConstants(proc);
+        Seconds took = MonotonicTime::now() - before;
+        validate(proc);
+        // A fraction of a second, where going through the constants placed so far for each one took a quarter of a minute.
+        CHECK(took < 6_s);
+    }
+    {
+        // All of it, on fewer (every constant is placed at the top of its block: that many of them at once in
+        // registers and spill slots are not what this is about), and run.
+        Procedure proc;
+        uint64_t expected = build(proc, 3000);
+        uint64_t memory[2] = { };
+        CHECK_EQ(compileAndRun<uint64_t>(proc, 7, memory), expected);
+    }
+}
+
 void testPureValueAfterForwardedLoadInLoop()
 {
     // In a loop: store a byte, load it back sign-extended, and sign-extend the stored value as well. Load
