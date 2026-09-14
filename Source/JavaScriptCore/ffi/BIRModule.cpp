@@ -240,6 +240,12 @@ private:
                 parameter.kind = static_cast<ParamKind>(kind);
                 switch (parameter.kind) {
                 case ParamKind::Value:
+                    // An i32 whose C type is narrower says so here, and nowhere else: its value is an i32 like any other.
+                    if (m_offset < m_bytes.size() && (m_bytes[m_offset] == narrowParameterI8 || m_bytes[m_offset] == narrowParameterI16)) {
+                        parameter.type = Type::I32;
+                        parameter.narrowBytes = m_bytes[m_offset++] == narrowParameterI8 ? 1 : 2;
+                        break;
+                    }
                     if (!type(parameter.type, false))
                         return false;
                     // Win64 passes a 128-bit vector by reference.

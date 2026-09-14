@@ -127,6 +127,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if USE(BUN_JSC_ADDITIONS)
 #include "BunFFI.h"
+#include "BIRToB3.h"
 #include "CModule.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
@@ -2322,6 +2323,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionCModule);
 static JSC_DECLARE_HOST_FUNCTION(functionCModuleHost);
+static JSC_DECLARE_HOST_FUNCTION(functionCModuleArgumentLayout);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
 static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
@@ -5078,6 +5080,48 @@ JSC_DEFINE_HOST_FUNCTION(functionCModuleHost, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(result);
 }
 
+// $vm.cModuleArgumentLayout(birBytes, signatureIndex, [anonymous argument types]) -> where a call in a module for that
+// target (any target: the module is decoded, not loaded) passes each argument. See BIRToB3::argumentLayoutForTesting.
+JSC_DEFINE_HOST_FUNCTION(functionCModuleArgumentLayout, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ENABLE(B3_JIT)
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
+    if (!view)
+        return throwVMTypeError(globalObject, scope, "$vm.cModuleArgumentLayout: expected a typed array of BIR bytes"_s);
+    auto decoded = FFI::BIR::Module::decode(view->span());
+    if (!decoded)
+        return throwVMTypeError(globalObject, scope, decoded.error());
+    uint32_t signatureIndex = callFrame->argument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (signatureIndex >= decoded.value()->signatures.size())
+        return throwVMTypeError(globalObject, scope, "$vm.cModuleArgumentLayout: no such signature"_s);
+    Vector<FFI::BIR::Type> anonymous;
+    if (auto* array = dynamicDowncast<JSArray>(callFrame->argument(2))) {
+        for (unsigned i = 0; i < array->length(); ++i) {
+            uint32_t type = array->getIndex(globalObject, i).toUInt32(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!type || type > static_cast<uint32_t>(FFI::BIR::Type::V128))
+                return throwVMTypeError(globalObject, scope, "$vm.cModuleArgumentLayout: bad type"_s);
+            anonymous.append(static_cast<FFI::BIR::Type>(type));
+        }
+    }
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned index = 0;
+    for (const String& where : FFI::BIRToB3::argumentLayoutForTesting(*decoded.value(), signatureIndex, anonymous.span())) {
+        result->putDirectIndex(globalObject, index++, jsString(vm, where));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+#else
+    return throwVMTypeError(globalObject, scope, "compiling C requires the FTL JIT backend"_s);
+#endif
+}
+
 // $vm.cModule(birBytes) -> { exportName: function }. Externs resolve through dlsym; the constructors have run.
 JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -5868,6 +5912,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "cModule"_s, functionCModule, 1);
     addFunction(vm, allowIfNotFuzz, "cModuleHost"_s, functionCModuleHost, 0);
+    addFunction(vm, allowIfNotFuzz, "cModuleArgumentLayout"_s, functionCModuleArgumentLayout, 3);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);

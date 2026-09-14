@@ -89,6 +89,11 @@ public:
 
     static B3::Type toB3(BIR::Type);
 
+    // Where a call of the module's target passes each parameter of the signature, and each of `anonymous` after them:
+    // "gpr 0", "fpr 1", "x8", "stack 16 2" (offset, bytes), "bytes 32 24" (a by-value aggregate: offset, size); then
+    // "total 48" for the stack the call takes. For tests: the target need not be this machine's.
+    JS_EXPORT_PRIVATE static Vector<String> argumentLayoutForTesting(const BIR::Module&, unsigned signatureIndex, std::span<const BIR::Type> anonymous);
+
 private:
     struct ReturnTarget {
         B3::BasicBlock* continuation { nullptr };

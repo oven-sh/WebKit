@@ -48,6 +48,7 @@ constexpr uint32_t noValue = UINT32_MAX;
 struct Parameter {
     ParamKind kind { ParamKind::Value };
     Type type { Type::I64 }; // The type of the parameter's value: ByValStack and IndirectResult are addresses.
+    uint8_t narrowBytes { 0 }; // Value only: 1 or 2 when the value is an i32 and the C type that many bytes; otherwise 0.
     uint64_t size { 0 }; // ByValStack only.
     uint64_t alignment { 8 }; // ByValStack only.
     Exhausts exhausts { Exhausts::Nothing }; // ByValStack only.

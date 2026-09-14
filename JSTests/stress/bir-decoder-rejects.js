@@ -107,6 +107,18 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
 
     const taking = params => body({ ret: T.void, params }, [[["RetVoid"]]]);
     rejects("a void parameter", taking([T.void]), /bad type/);
+    // 6 and 7 in place of a Value parameter's type: an i32 whose C type is one or two bytes wide. Nowhere else.
+    accepts("a parameter one byte wide and one two", taking([T.i8, T.i16, T.i32, T.i8]));
+    eq(accepts("a narrow parameter is an i32", body({ ret: T.i32, params: [T.i16, T.i8] }, [[["Add", 0, 1], ["Ret", 2]]], { module: { exports: [{ name: "f", func: 0, ret: FFI.i32, args: [FFI.i16, FFI.i8] }] } })).f(300, 5), 305, "a narrow parameter's value");
+    rejects("a narrow parameter used as an i64", body({ ret: T.i64, params: [T.i8] }, [[["Ret", 0]]]), /operand has the wrong type/);
+    rejects("parameter type 8", taking([8]), /bad type/);
+    rejects("a result one byte wide", body({ ret: [6], params: [] }, [[["ConstI32", s(1)], ["Ret", 0]]]), /bad type/);
+    rejects("a local two bytes wide", body({ ret: T.void, params: [] }, [[["RetVoid"]]], { locals: [7] }), /bad type/);
+    rejects("a conversion to a type one byte wide", body({ ret: T.void, params: [T.f64] }, [[["FToS", b(6), 0], ["RetVoid"]]]), /bad float-to-int conversion|bad type/);
+    accepts("a call that passes narrow arguments", { sigs: [{ ret: T.void, params: [T.i8, T.i16] }, { ret: T.void, params: [T.i32] }],
+        funcs: [{ name: "callee", sig: 0, noinline: true, blocks: [[["RetVoid"]]] }, { name: "f", sig: 1, exported: true, blocks: [[["Call", 0, 2, 0, 0], ["RetVoid"]]] }] });
+    rejects("an i64 passed for a narrow parameter", { sigs: [{ ret: T.void, params: [T.i8] }, { ret: T.void, params: [T.i64] }],
+        funcs: [{ name: "callee", sig: 0, noinline: true, blocks: [[["RetVoid"]]] }, { name: "f", sig: 1, exported: true, blocks: [[["Call", 0, 1, 0], ["RetVoid"]]] }] }, /call argument has the wrong type/);
     rejects("parameter kind 3", taking([{ kind: 3 }]), /bad parameter kind/);
     if (isWindows) {
         rejects("an aggregate in the stack arguments on Win64", taking([{ byval: 24 }]), /cannot be passed in the stack arguments/);

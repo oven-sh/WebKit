@@ -84,12 +84,13 @@ void* cFunctionPointer(Function* function)
     return tagCFunction<void*, OperationPtrTag>(function);
 }
 
-// Where the host C ABI puts each argument of a call. Used from both sides: a caller stores to
+// Where a target's C ABI puts each argument of a call. Used from both sides: a caller stores to
 // [sp + stackOffset], a callee finds the same bytes at [fp + 16 + stackOffset].
 struct ArgumentLocation {
-    enum class Kind : uint8_t { GPR, FPR, Stack, StackBytes } kind { Kind::GPR };
-    Reg reg;
+    enum class Kind : uint8_t { GPR, FPR, IndirectResultRegister, Stack, StackBytes } kind { Kind::GPR };
+    unsigned registerIndex { 0 }; // Among the target's integer (GPR) or floating-point (FPR) argument registers.
     unsigned stackOffset { 0 };
+    unsigned stackBytes { 0 }; // Stack: how much of the stack is the argument's. Fewer than its value has, for a narrow one where they are packed.
 };
 
 struct ArgumentLayout {
@@ -100,9 +101,122 @@ struct ArgumentLayout {
     unsigned namedStackBytes { 0 };
 };
 
-#if CPU(ARM64)
-constexpr GPRReg indirectResultGPR = ARM64Registers::x8;
-#endif
+// What of a target's convention decides where arguments go. It is a function of the target, not of the machine
+// this runs on, so that what a module for another target would get can be looked at (BIRToB3::argumentLayoutForTesting).
+struct ArgumentConvention {
+    NativeCC cc { NativeCC::SysV64 };
+    // Apple's AArch64: an argument that goes on the stack takes its own size there, at its own alignment, where every
+    // other convention gives it 8 bytes; and what a variadic function's parameters do not name all goes on the stack,
+    // in 8-byte slots.
+    bool isApple { false };
+
+    static ArgumentConvention of(BIR::Arch arch, BIR::OS os)
+    {
+        if (arch == BIR::Arch::ARM64)
+            return { NativeCC::AAPCS64, os == BIR::OS::Darwin };
+        return { os == BIR::OS::Windows ? NativeCC::Win64 : NativeCC::SysV64, false };
+    }
+};
+
+// `anonymous` are the types of the arguments a variadic call passes after the named ones.
+ArgumentLayout layoutArguments(ArgumentConvention convention, const BIR::Signature& signature, std::span<const B3::Type> anonymous = { })
+{
+    NativeCC cc = convention.cc;
+    unsigned gprCount = integerArgumentRegisterCount(cc);
+    unsigned fprCount = floatArgumentRegisterCount(cc);
+    unsigned gprIndex = 0;
+    unsigned fprIndex = 0;
+    unsigned nextStackOffset = shadowStackBytes(cc);
+    ArgumentLayout layout;
+
+    // `size` is what the argument's C type takes; `valueSize` what its value does (4 for a char: it is an i32).
+    auto placeScalar = [&](unsigned position, bool isFloatingPoint, unsigned size, unsigned valueSize, bool isNamed) {
+        ArgumentLocation location;
+        location.stackBytes = valueSize;
+        if (cc == NativeCC::Win64) {
+            if (position < 4) {
+                location.kind = isFloatingPoint ? ArgumentLocation::Kind::FPR : ArgumentLocation::Kind::GPR;
+                location.registerIndex = position;
+            } else {
+                location.kind = ArgumentLocation::Kind::Stack;
+                location.stackOffset = position * 8;
+                nextStackOffset = location.stackOffset + 8;
+            }
+            return location;
+        }
+        if (convention.isApple && !isNamed) {
+            location.kind = ArgumentLocation::Kind::Stack;
+            nextStackOffset = roundUpToMultipleOf<8>(nextStackOffset);
+            location.stackOffset = nextStackOffset;
+            nextStackOffset += 8;
+            return location;
+        }
+        if (isFloatingPoint && fprIndex < fprCount) {
+            location.kind = ArgumentLocation::Kind::FPR;
+            location.registerIndex = fprIndex++;
+        } else if (!isFloatingPoint && gprIndex < gprCount) {
+            location.kind = ArgumentLocation::Kind::GPR;
+            location.registerIndex = gprIndex++;
+        } else {
+            location.kind = ArgumentLocation::Kind::Stack;
+            unsigned slot = size == 16 ? 16 : convention.isApple ? size : 8;
+            if (convention.isApple)
+                location.stackBytes = size;
+            nextStackOffset = roundUpToMultipleOf(slot, nextStackOffset);
+            location.stackOffset = nextStackOffset;
+            nextStackOffset += slot;
+        }
+        return location;
+    };
+
+    unsigned position = 0;
+    for (const BIR::Parameter& parameter : signature.parameters) {
+        switch (parameter.kind) {
+        case BIR::ParamKind::Value: {
+            bool isFloatingPoint = parameter.type == BIR::Type::F32 || parameter.type == BIR::Type::F64 || parameter.type == BIR::Type::V128;
+            unsigned valueSize = parameter.type == BIR::Type::V128 ? 16 : (parameter.type == BIR::Type::I32 || parameter.type == BIR::Type::F32) ? 4 : 8;
+            layout.locations.append(placeScalar(position, isFloatingPoint, parameter.narrowBytes ? parameter.narrowBytes : valueSize, valueSize, true));
+            break;
+        }
+        case BIR::ParamKind::IndirectResult: {
+            if (cc == NativeCC::AAPCS64) {
+                ArgumentLocation location;
+                location.kind = ArgumentLocation::Kind::IndirectResultRegister;
+                layout.locations.append(location);
+                --position; // x8 is not one of the argument positions.
+            } else
+                layout.locations.append(placeScalar(position, false, 8, 8, true));
+            break;
+        }
+        case BIR::ParamKind::ByValStack: {
+            ArgumentLocation location;
+            location.kind = ArgumentLocation::Kind::StackBytes;
+            nextStackOffset = roundUpToMultipleOf(static_cast<unsigned>(parameter.alignment), nextStackOffset);
+            location.stackOffset = nextStackOffset;
+            location.stackBytes = static_cast<unsigned>(parameter.size);
+            nextStackOffset += roundUpToMultipleOf<8>(static_cast<unsigned>(parameter.size));
+            if (parameter.exhausts == BIR::Exhausts::IntegerRegisters)
+                gprIndex = gprCount;
+            else if (parameter.exhausts == BIR::Exhausts::FloatRegisters)
+                fprIndex = fprCount;
+            layout.locations.append(location);
+            break;
+        }
+        }
+        ++position;
+    }
+    layout.namedGPRs = gprIndex;
+    layout.namedFPRs = fprIndex;
+    layout.namedStackBytes = nextStackOffset - shadowStackBytes(cc);
+
+    for (B3::Type type : anonymous) {
+        unsigned valueSize = type.isVector() ? 16 : (type == Int32 || type == Float) ? 4 : 8;
+        layout.locations.append(placeScalar(position, type.isFloat() || type.isVector(), type.isVector() ? 16 : 8, valueSize, false));
+        ++position;
+    }
+    layout.stackBytes = roundUpToMultipleOf<16>(nextStackOffset);
+    return layout;
+}
 
 std::span<const FPRReg> floatResultRegisters()
 {
@@ -120,105 +234,26 @@ std::span<const GPRReg> integerResultRegisters()
     return registers;
 }
 
-// `anonymous` are the types of the arguments a variadic call passes after the named ones.
-ArgumentLayout layoutArguments(const BIR::Signature& signature, std::span<const B3::Type> anonymous = { })
+// The register an argument of this machine's own convention is in.
+Reg registerOf(const ArgumentLocation& location)
 {
     constexpr NativeCC cc = hostNativeCC();
-    auto gprs = integerArgumentRegisters(cc);
-    auto fprs = floatArgumentRegisters(cc);
-    unsigned gprIndex = 0;
-    unsigned fprIndex = 0;
-    unsigned nextStackOffset = shadowStackBytes(cc);
-    ArgumentLayout layout;
-
-    auto placeScalar = [&](unsigned position, bool isFloatingPoint, unsigned size, bool isNamed) {
-        ArgumentLocation location;
-        if (cc == NativeCC::Win64) {
-            if (position < 4) {
-                location.kind = isFloatingPoint ? ArgumentLocation::Kind::FPR : ArgumentLocation::Kind::GPR;
-                location.reg = isFloatingPoint ? Reg(fprs[position]) : Reg(gprs[position]);
-            } else {
-                location.kind = ArgumentLocation::Kind::Stack;
-                location.stackOffset = position * 8;
-                nextStackOffset = location.stackOffset + 8;
-            }
-            return location;
-        }
-#if OS(DARWIN) && CPU(ARM64)
-        // Apple's arm64 ABI passes every anonymous argument on the stack in 8-byte slots.
-        if (!isNamed) {
-            location.kind = ArgumentLocation::Kind::Stack;
-            nextStackOffset = roundUpToMultipleOf<8>(nextStackOffset);
-            location.stackOffset = nextStackOffset;
-            nextStackOffset += 8;
-            return location;
-        }
-#else
-        UNUSED_PARAM(isNamed);
-#endif
-        if (isFloatingPoint && fprIndex < fprs.size()) {
-            location.kind = ArgumentLocation::Kind::FPR;
-            location.reg = fprs[fprIndex++];
-        } else if (!isFloatingPoint && gprIndex < gprs.size()) {
-            location.kind = ArgumentLocation::Kind::GPR;
-            location.reg = gprs[gprIndex++];
-        } else {
-            location.kind = ArgumentLocation::Kind::Stack;
-            unsigned slot = size == 16 ? 16 : stackPackingForNativeCC(cc) == StackPacking::Natural ? size : 8;
-            nextStackOffset = roundUpToMultipleOf(slot, nextStackOffset);
-            location.stackOffset = nextStackOffset;
-            nextStackOffset += slot;
-        }
-        return location;
-    };
-
-    unsigned position = 0;
-    for (const BIR::Parameter& parameter : signature.parameters) {
-        switch (parameter.kind) {
-        case BIR::ParamKind::Value: {
-            bool isFloatingPoint = parameter.type == BIR::Type::F32 || parameter.type == BIR::Type::F64 || parameter.type == BIR::Type::V128;
-            unsigned size = parameter.type == BIR::Type::V128 ? 16 : (parameter.type == BIR::Type::I32 || parameter.type == BIR::Type::F32) ? 4 : 8;
-            layout.locations.append(placeScalar(position, isFloatingPoint, size, true));
-            break;
-        }
-        case BIR::ParamKind::IndirectResult: {
+    switch (location.kind) {
+    case ArgumentLocation::Kind::GPR:
+        return integerArgumentRegisters(cc)[location.registerIndex];
+    case ArgumentLocation::Kind::FPR:
+        return floatArgumentRegisters(cc)[location.registerIndex];
+    case ArgumentLocation::Kind::IndirectResultRegister:
 #if CPU(ARM64)
-            ArgumentLocation location;
-            location.kind = ArgumentLocation::Kind::GPR;
-            location.reg = indirectResultGPR;
-            layout.locations.append(location);
-            --position; // x8 is not one of the argument positions.
+        return ARM64Registers::x8;
 #else
-            layout.locations.append(placeScalar(position, false, 8, true));
+        break;
 #endif
-            break;
-        }
-        case BIR::ParamKind::ByValStack: {
-            ArgumentLocation location;
-            location.kind = ArgumentLocation::Kind::StackBytes;
-            nextStackOffset = roundUpToMultipleOf(static_cast<unsigned>(parameter.alignment), nextStackOffset);
-            location.stackOffset = nextStackOffset;
-            nextStackOffset += roundUpToMultipleOf<8>(static_cast<unsigned>(parameter.size));
-            if (parameter.exhausts == BIR::Exhausts::IntegerRegisters)
-                gprIndex = gprs.size();
-            else if (parameter.exhausts == BIR::Exhausts::FloatRegisters)
-                fprIndex = fprs.size();
-            layout.locations.append(location);
-            break;
-        }
-        }
-        ++position;
+    case ArgumentLocation::Kind::Stack:
+    case ArgumentLocation::Kind::StackBytes:
+        break;
     }
-    layout.namedGPRs = gprIndex;
-    layout.namedFPRs = fprIndex;
-    layout.namedStackBytes = nextStackOffset - shadowStackBytes(cc);
-
-    for (B3::Type type : anonymous) {
-        layout.locations.append(placeScalar(position, type.isFloat() || type.isVector(), type.isVector() ? 16 : 8, false));
-        ++position;
-    }
-    layout.stackBytes = roundUpToMultipleOf<16>(nextStackOffset);
-    return layout;
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 constexpr unsigned savedFrameAndReturnAddressBytes = 2 * sizeof(void*);
@@ -381,29 +416,33 @@ void BIRToB3::lowerFunction(unsigned functionIndex)
             framePointer = entry->appendNew<Value>(m_proc, FramePointer, m_origin);
         return static_cast<int32_t>(savedFrameAndReturnAddressBytes + stackOffset);
     };
-    ArgumentLayout layout = layoutArguments(signature);
+    ArgumentLayout layout = layoutArguments(ArgumentConvention::of(m_module.arch, m_module.os), signature);
     for (unsigned i = 0; i < layout.locations.size(); ++i) {
         B3::Type type = toB3(signature.parameters[i].type);
         const ArgumentLocation& location = layout.locations[i];
         Value* argument = nullptr;
         switch (location.kind) {
         case ArgumentLocation::Kind::GPR:
-            argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, location.reg.gpr());
+        case ArgumentLocation::Kind::IndirectResultRegister:
+            argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, registerOf(location).gpr());
             if (type == Int32)
                 argument = entry->appendNew<Value>(m_proc, B3::Trunc, m_origin, argument);
             break;
         case ArgumentLocation::Kind::FPR:
             if (type == V128) {
-                argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, location.reg.fpr(), ArgumentRegValue::UsesVectorArgs);
+                argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, registerOf(location).fpr(), ArgumentRegValue::UsesVectorArgs);
                 break;
             }
-            argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, location.reg.fpr());
+            argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, registerOf(location).fpr());
             if (type == Float)
                 argument = entry->appendNew<Value>(m_proc, B3::Trunc, m_origin, argument);
             break;
         case ArgumentLocation::Kind::Stack: {
             int32_t offset = stackArgumentAddress(location.stackOffset);
-            argument = entry->appendNew<MemoryValue>(m_proc, Load, type, m_origin, framePointer, offset);
+            // The bytes that are the argument's, and no others: where arguments are packed the next ones are another's.
+            // What is above them in the value is zero; the code that uses a narrow parameter extends it as its type says.
+            B3::Opcode opcode = location.stackBytes == 1 ? Load8Z : location.stackBytes == 2 ? Load16Z : Load;
+            argument = entry->appendNew<MemoryValue>(m_proc, opcode, type, m_origin, framePointer, offset);
             break;
         }
         case ArgumentLocation::Kind::StackBytes: {
@@ -418,6 +457,36 @@ void BIRToB3::lowerFunction(unsigned functionIndex)
     if (signature.isVariadic)
         emitVariadicEntry(signature, entry);
     emitBody(function, entry, arguments.span(), nullptr);
+}
+
+Vector<String> BIRToB3::argumentLayoutForTesting(const BIR::Module& module, unsigned signatureIndex, std::span<const BIR::Type> anonymous)
+{
+    Vector<B3::Type> anonymousTypes;
+    for (BIR::Type type : anonymous)
+        anonymousTypes.append(toB3(type));
+    ArgumentLayout layout = layoutArguments(ArgumentConvention::of(module.arch, module.os), module.signatures[signatureIndex], anonymousTypes.span());
+    Vector<String> result;
+    for (const ArgumentLocation& location : layout.locations) {
+        switch (location.kind) {
+        case ArgumentLocation::Kind::GPR:
+            result.append(makeString("gpr "_s, location.registerIndex));
+            break;
+        case ArgumentLocation::Kind::FPR:
+            result.append(makeString("fpr "_s, location.registerIndex));
+            break;
+        case ArgumentLocation::Kind::IndirectResultRegister:
+            result.append("x8"_s);
+            break;
+        case ArgumentLocation::Kind::Stack:
+            result.append(makeString("stack "_s, location.stackOffset, ' ', location.stackBytes));
+            break;
+        case ArgumentLocation::Kind::StackBytes:
+            result.append(makeString("bytes "_s, location.stackOffset, ' ', location.stackBytes));
+            break;
+        }
+    }
+    result.append(makeString("total "_s, layout.stackBytes));
+    return result;
 }
 
 bool BIRToB3::canBeLoweredIntoJavaScript(const BIR::Function& function)
@@ -567,7 +636,7 @@ void BIRToB3::emitVariadicEntry(const BIR::Signature& signature, BasicBlock* ent
     auto gprs = integerArgumentRegisters(cc);
     auto fprs = floatArgumentRegisters(cc);
 
-    ArgumentLayout layout = layoutArguments(signature);
+    ArgumentLayout layout = layoutArguments(ArgumentConvention::of(m_module.arch, m_module.os), signature);
     VariadicFrame frame;
     frame.namedArguments = signature.parameters.size();
     frame.namedGPRs = layout.namedGPRs;
@@ -1423,7 +1492,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     Vector<B3::Type> anonymousTypes;
     for (size_t i = fixedCount; i < arguments.size(); ++i)
         anonymousTypes.append(arguments[i]->type());
-    ArgumentLayout layout = layoutArguments(signature, anonymousTypes.span());
+    ArgumentLayout layout = layoutArguments(ArgumentConvention::of(m_module.arch, m_module.os), signature, anonymousTypes.span());
 
     Vector<B3::Type> resultTypes;
     for (BIR::Type result : signature.results)
@@ -1444,32 +1513,47 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     // the stack pointer down, and gives it back after. (Not in a procedure of JavaScript's, whose frame is laid
     // out by the FTL's rules.)
     constexpr unsigned maximumArgumentBytesInTheFrame = 256;
-    Value* argumentArea = nullptr;
-    if (!m_blockFactory && layout.stackBytes > maximumArgumentBytesInTheFrame) {
+    bool makesRoomAtTheCall = !m_blockFactory && layout.stackBytes > maximumArgumentBytesInTheFrame;
+    if (makesRoomAtTheCall) {
         m_proc.code().setHasDynamicStackAllocation();
-        PatchpointValue* open = m_block->appendNew<PatchpointValue>(m_proc, Int64, m_origin);
+        // Air counts a stack argument toward the part of the frame that is there for them, by its offset. Not these.
+        m_proc.code().setMaximumCallArgAreaSizeInBytes(maximumArgumentBytesInTheFrame);
+        PatchpointValue* open = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
         open->effects = Effects::forCall();
         open->clobber(RegisterSet::macroClobberedGPRs());
         unsigned bytes = layout.stackBytes;
-        open->resultConstraints = { ValueRep::SomeEarlyRegister };
-        open->numGPScratchRegisters = 1;
+        open->numGPScratchRegisters = 2;
         open->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            GPRReg result = params[0].gpr();
-            jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(bytes)), CCallHelpers::stackPointerRegister, result);
+            GPRReg bottom = params.gpScratch(0);
+            jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(bytes)), CCallHelpers::stackPointerRegister, bottom);
 #if CPU(X86_64)
             if (bytes >= stackProbeInterval)
-                probeStackDownTo(jit, result, params.gpScratch(0));
+                probeStackDownTo(jit, bottom, params.gpScratch(1));
 #endif
-            jit.move(result, CCallHelpers::stackPointerRegister);
+            jit.move(bottom, CCallHelpers::stackPointerRegister);
         });
-        argumentArea = open;
     }
-    auto passOnTheStack = [&](Value* value, unsigned stackOffset) {
-        if (argumentArea)
-            m_block->appendNew<MemoryValue>(m_proc, B3::Store, m_origin, value, argumentArea, static_cast<int32_t>(stackOffset));
-        else
+    // `stackBytes` is how much of the stack is the argument's. Where stack arguments are packed a narrow one is the
+    // byte or two it is, which a stack argument of the call patchpoint (a whole value, stored as such) cannot say:
+    // it is stored to where it goes, which is from the stack pointer, by code of its own.
+    auto passOnTheStack = [&](Value* value, unsigned stackOffset, unsigned stackBytes = 8) {
+        if (stackBytes >= 4) {
             children.append({ value, ValueRep::stackArgument(static_cast<int32_t>(stackOffset)) });
+            return;
+        }
+        PatchpointValue* store = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
+        store->effects = Effects::forCall();
+        store->append(value, ValueRep::SomeRegister);
+        store->clobber(RegisterSet::macroClobberedGPRs());
+        store->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            CCallHelpers::Address address(CCallHelpers::stackPointerRegister, static_cast<int32_t>(stackOffset));
+            if (stackBytes == 1)
+                jit.store8(params[0].gpr(), address);
+            else
+                jit.store16(params[0].gpr(), address);
+        });
     };
 
     struct ByValCopy {
@@ -1516,10 +1600,11 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
         const ArgumentLocation& location = layout.locations[i];
         switch (location.kind) {
         case ArgumentLocation::Kind::GPR:
-            children.append({ argument, ValueRep::reg(location.reg) });
+        case ArgumentLocation::Kind::IndirectResultRegister:
+            children.append({ argument, ValueRep::reg(registerOf(location)) });
             break;
         case ArgumentLocation::Kind::FPR:
-            children.append({ argument, ValueRep::reg(location.reg) });
+            children.append({ argument, ValueRep::reg(registerOf(location)) });
             ++usedVectorRegisters;
             if (cc == NativeCC::Win64 && signature.isVariadic) {
                 Value* bits = argument->type() == Float
@@ -1529,7 +1614,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
             }
             break;
         case ArgumentLocation::Kind::Stack:
-            passOnTheStack(argument, location.stackOffset);
+            passOnTheStack(argument, location.stackOffset, location.stackBytes);
             break;
         case ArgumentLocation::Kind::StackBytes: {
             unsigned size = static_cast<unsigned>(signature.parameters[i].size);
@@ -1546,7 +1631,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     // A larger aggregate is copied into the outgoing arguments by code of its own, just ahead of the call:
     // nothing between there and the call writes that part of the stack. Each copy needs its source in a
     // register only while it runs, so a call can pass any number of them.
-    if (!argumentArea)
+    if (!makesRoomAtTheCall)
         m_proc.requestCallArgAreaSizeInBytes(layout.stackBytes);
     for (const ByValCopy& copy : copies) {
         PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
@@ -1616,7 +1701,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
 #endif
         jit.call(calleeGPR, OperationPtrTag);
     });
-    if (argumentArea) {
+    if (makesRoomAtTheCall) {
         PatchpointValue* close = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
         close->effects = Effects::forCall();
         close->clobber(RegisterSet::macroClobberedGPRs());

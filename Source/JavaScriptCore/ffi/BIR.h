@@ -47,7 +47,13 @@
 //     varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
 //                                (no more results than the target returns in registers: two integers, and two
 //                                 floating-point or vector values on x86-64, four on AArch64; one result on Win64)
-//                       param:   u8 kind (ParamKind), then for Value: type;
+//                       param:   u8 kind (ParamKind), then for Value: type, or 6 (an i32 whose C type is one byte wide:
+//                                char, _Bool) or 7 (two bytes: short). The parameter's value is an i32 either way, held as
+//                                every i32 argument is: the low 8 or 16 bits are the argument, and whoever reads it extends
+//                                them as its type says (the frontend does, in the callee and after a call; the loader gives
+//                                the callee zeros above them when it loads them from the stack). What 6 and 7 add is where a
+//                                stack argument goes on a target that packs them (Apple's AArch64): it takes 1 or 2 bytes at
+//                                a multiple of that, where an i32 takes 4. Everywhere else it takes 8 like any argument;
 //                                for ByValStack: varuint size; varuint align (8 or 16); u8 exhausts (Exhausts);
 //                                for IndirectResult: nothing (only as the first parameter)
 //     varuint nexterns; extern*: { str name; u8 kind (ExternKind); varuint sig }   (sig is 0 for Data)
@@ -282,6 +288,10 @@ constexpr uint8_t weakExtern = 0x80;
 constexpr uint8_t volatileAccess = 0x80; // Or'ed into the MemKind byte of a Load or Store.
 
 constexpr uint8_t compilerFence = 0x80; // Or'ed into the order byte of a Fence.
+
+// In place of a Value parameter's type: an i32 whose C type is 1 or 2 bytes wide.
+constexpr uint8_t narrowParameterI8 = 6;
+constexpr uint8_t narrowParameterI16 = 7;
 
 // The bits of an InlineAsm's flags.
 constexpr uint8_t inlineAsmHasEffects = 1;

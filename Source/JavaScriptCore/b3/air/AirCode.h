@@ -175,6 +175,11 @@ public:
     // says cannot lead there; so no two spill slots share their bytes, whatever liveness says.
     bool hasCallThatReturnsTwice() const { return m_hasCallThatReturnsTwice; }
     void setHasCallThatReturnsTwice() { m_hasCallThatReturnsTwice = true; }
+
+    // The most the frame sets aside for outgoing arguments. A CallArg past it is the business of the code that
+    // uses it, which moved the stack pointer down to make the room (and set hasDynamicStackAllocation).
+    unsigned maximumCallArgAreaSizeInBytes() const { return m_maximumCallArgAreaSize; }
+    void setMaximumCallArgAreaSizeInBytes(unsigned size) { m_maximumCallArgAreaSize = size; }
 #endif
 
     // You can call this before code generation to force a minimum call arg area size.
@@ -425,6 +430,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_hasDynamicStackAllocation { false };
     bool m_hasCallThatReturnsTwice { false };
+    unsigned m_maximumCallArgAreaSize { std::numeric_limits<unsigned>::max() };
 #endif
     bool m_preserveB3Origins { true };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;

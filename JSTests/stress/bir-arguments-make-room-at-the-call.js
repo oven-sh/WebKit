@@ -79,4 +79,26 @@ for (const SIZE of [200, 264, 512, 4096, 16384, 1 << 20]) {
     })).caller;
     eq(many(1000), BigInt(WORDS * 1000 + (WORDS * (WORDS - 1)) / 2), `${WORDS} integer arguments`);
 }
+// A hundred thousand of them: what it takes to compile grows with the number of arguments, not with its square.
+{
+    const WORDS = 100000;
+    const caller = new Block(1);
+    const words = [];
+    for (let i = 0; i < WORDS; i++)
+        words.push(caller.def("ConstI64", s(i)));
+    words[WORDS - 1] = caller.def("Add", 0, caller.def("ConstI64", s(5)));
+    caller.run("Ret", caller.def("Call", 0, WORDS, ...words));
+    const bytes = assemble({
+        sigs: [{ ret: T.i64, params: new Array(WORDS).fill(T.i64) }, { ret: T.i64, params: [T.i64] }],
+        funcs: [{ name: "callee", sig: 0, noinline: true, blocks: [[["Add", 1, WORDS - 1], ["Ret", WORDS]]] }, { name: "caller", sig: 1, exported: true, blocks: [caller.insts] }],
+        exports: [{ name: "caller", func: 1, ret: FFI.i64, args: [FFI.i64] }],
+    });
+    const before = Date.now();
+    const many = $vm.cModule(bytes).caller;
+    const took = Date.now() - before;
+    eq(many(1000), 1006n, `${WORDS} integer arguments`);
+    // It takes a fraction of a second. A minute was what the square came to.
+    if (took > 15000)
+        throw new Error(`a call with ${WORDS} arguments took ${took} ms to compile`);
+}
 print("arguments make room at the call ok");

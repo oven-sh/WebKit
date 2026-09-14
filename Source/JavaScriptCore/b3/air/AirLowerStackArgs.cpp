@@ -47,7 +47,11 @@ void lowerStackArgs(Code& code)
             for (Arg& arg : inst.args()) {
                 if (arg.isCallArg()) {
                     ASSERT(arg.offset() >= 0);
+#if USE(BUN_JSC_ADDITIONS)
+                    code.requestCallArgAreaSizeInBytes(std::min<unsigned>(arg.offset() + conservativeCallArgBytes, code.maximumCallArgAreaSizeInBytes()));
+#else
                     code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
+#endif
                 }
             }
         }
