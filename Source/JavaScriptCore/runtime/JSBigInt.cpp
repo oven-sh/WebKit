@@ -3099,8 +3099,10 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         // A long divisor makes each quotient digit a long row, so the termination check is per row.
         if (interrupt) {
             interrupt->addWork(n);
+            // U still holds rows j..0 unreduced, up to j + n + 1 digits, so it is not a remainder
+            // yet and does not fit R. Q and R stay unfinished, as after every interrupted step.
             if (interrupt->interrupted())
-                break;
+                return { q, r };
         }
         // D3.
         // Estimate the current iteration's quotient digit (see Knuth for details).
