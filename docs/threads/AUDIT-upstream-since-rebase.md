@@ -1458,6 +1458,150 @@ two threads touched different builtins first (fixed: takes the lock;
 `VM::addSourceProviderCache` asserts it), and `JSGlobalObject::ffiContext()`'s
 lazy `unique_ptr` (fixed: CAS publication).
 
+## 8. The two later rebase ranges (ninth round)
+
+The branch was rebased twice more after this file's first range: in the
+eighth round onto `2e2aa2290fac` (368 upstream commits) and in the ninth onto
+`dfd696443b9b` (four more). This section is the reading of both ranges,
+`491b5cc236e9..dfd696443b9b`, 84 of whose commits touch
+Source/JavaScriptCore or Source/WTF. The eighth round found the known-atom
+bit of that range with the amplifier, not by reading; this is the reading.
+
+Method: one reader per hazard class the branch's protocols cover - (1) new
+per-cell or per-object mutable header and flag bits written after
+publication, (2) JIT fast paths (LLInt, Baseline, inline caches, DFG, FTL,
+and the runtime C++ that mirrors them) that load two fields of one cell and
+assume no writer in between, (3) new caches and memos, in particular keyed on
+Structure or StructureID, (4) new watchpoint sets and fire sites, (5) new
+places that patch code or publish executable state - plus one reader over the
+four commits of the ninth rebase in every class. Each reported site was
+re-read at HEAD before it is listed. Two rows (R9-2, R9-7) were found first
+by the rebased tree's own corpus run and then by the readers.
+
+Classes 1, 2 and 4 found nothing in the upstream code outside the ninth
+rebase's `dfd696443b9b`: no upstream commit in the range adds a bit to the
+JSCell header, TypeInfo, Structure, JSString or StringImpl (the known-atom
+bit came in with the eighth rebase's base, whose reader rule is in
+SPEC-ungil history), and every JIT fast path the range adds or changes that
+reads two fields of one cell either goes through the branch's helpers or is
+gated off GIL off (checked: the DFG/FTL inline `toLowerCase`/`toUpperCase`,
+`DateInstance`'s packed breakdown, the re-landed pair loads of `new_object`
+and `put_to_scope` metadata, the megamorphic store fill, `put_by_id`'s
+narrower lock, `branchIfNotAtomStringImpl`). The new mutable state is almost
+all in `dfd696443b9b`'s lazily materialized bytecode-cache and link-time
+state, written upstream for one mutator; with the GIL on that still holds
+(none of it calls JS or hands the GIL over), with the GIL off it does not.
+
+| Row | Site (HEAD) | Upstream | Affects | Risk | Ruling |
+|---|---|---|---|---|---|
+| R9-1 | `UnlinkedFunctionExecutable` thin children: `materializeDeferred{Name,Members,Scalars}Slow` (CachedTypes.cpp), `DeferredMembers::settle` | dfd696443b9b (`useThinChildExecutables`) | GIL off | confirmed-race, memory-unsafe | fixed (decoded eagerly GIL off) |
+| R9-2 | `HeapProfiler` `materializeLazySymbolTablesForHeapAnalysis`: a heap walk on the snapshotting mutator | dfd696443b9b (`useLazySymbolTableConstants`) | GIL off | confirmed (corpus crash) | fixed |
+| R9-3 | `Decoder` (one per payload): non-atomic reference count, `m_atomsByOrdinal`, `m_offsetToPtrMap` used from paths under different locks | dfd696443b9b | GIL off | confirmed-race, memory-unsafe | fixed (eager GIL off; thread-safe counts) |
+| R9-4 | `SymbolTable::cloneScopePart` reads the pending entries without the table's lock; lazy constants materialized under only the table's lock | dfd696443b9b (`useLazySymbolTableConstants`) | GIL off | confirmed (read), likely (writer) | fixed (eager GIL off) |
+| R9-5 | `VM::ensureCachedBytecodeThreeCharacterAtoms` and its entry fill | dfd696443b9b (`useFastCachedAtoms`) | GIL off | confirmed-race | fixed (bypassed GIL off) |
+| R9-6 | `DecoderStringTable::atomFor` overwriting a slot `jsStringFor` set to a cell | dfd696443b9b | GIL off | likely | fixed (eager GIL off) |
+| R9-7 | `CodeBlock` lazy FunctionExecutables: entry, `link()`, plain store, plain counter | dfd696443b9b (`useLazyFunctionExecutables`) | GIL off | confirmed (Debug corpus, TSAN) | fixed |
+| R9-8 | `AbstractModuleRecord::materializePrelinkedEntries` sets its flag before the maps are filled; the per-import resolution memo | dfd696443b9b (`usePrelinkedModuleInfo`) | GIL off | confirmed-race | fixed (eager GIL off) |
+| R9-9 | `PrelinkedModuleGraph` is `RefCounted`, deref'd from sweeping threads | dfd696443b9b | GIL off | likely | fixed (thread-safe count) |
+| R9-10 | `CodeBlock` prepared and catch-buffer bits: two bit-fields of one byte written by several mutators | dfd696443b9b (`useLazyCatchLiveness`) | GIL off | confirmed (lost update, performance only) | fixed in the rebase |
+| R9-11 | `JSPromise::forEachPendingReaction` loads the packed kind/flags/cell word three times | ed0763a0e51f | GIL off | needs-trace | fixed (walk copied under the cell lock) |
+| R9-12 | `ensureCatchLivenessIsComputedForExecutedCatchesSlow`: two mutators build a buffer for one catch | dfd696443b9b | GIL off | confirmed (a leaked buffer) | fixed (CAS publication) |
+| R9-13 | the OldAge exemption of `CodeBlock::jettison`'s stop assertion now covers optimizing code | 983055f83674 and the aging series | none today | hardening | fixed |
+| R9-14 | `VM::m_startupJITDeferralScale`, `VM::m_asyncContextTrackingEnabled`: plain words read by every thread | dfd696443b9b, ed0763a0e51f | GIL off | hygiene (TSAN) | fixed |
+| R9-15 | module loader: unlocked prelinked readers of `m_loadedModules`, the removed-record `BitVector`, the graph's identifier cache, `getModuleNamespace`'s check-then-store | dfd696443b9b and older | GIL off | traced (namespace publication: real race) | fixed (published once by compare-and-swap - a first version under the record's cell lock held it across a trap check, Debug assertion; the other structures are unreachable concurrently or dead GIL off) |
+| R9-16 | `UnlinkedFunctionExecutable` and `CodeBlock` field layout | dfd696443b9b | all | build (static size assertions) | repacked in the rebase |
+| R9-17 | `CallLinkInfo::forEachDependentCell` from `CodeBlock::collectProfiledCallees` (the global inlining planner) reads the mode, then `m_callee`, while GIL off another thread relinks the site | 5bcd90bdee79, dfd696443b9b | GIL off | confirmed (Debug corpus) | fixed (unvalidated read, sentinel filtered) |
+| R9-18 | GIL off, weak-bearing blocks were never swept: every sweep that runs alongside mutators skips a block with a weak set (the sweeper, the allocator's own sweep, the steal), and nothing swept them with the world stopped, so destructible cells in them were never destroyed (found by this round's destructor-contract test; branch code) | branch | GIL off | confirmed (`gc-stress/destructors-run-once-on-any-thread.js`: 12,350 of 50,000 destructible cells never destroyed) | fixed (the conductor sweeps them at every cycle's end inside the stop; SPEC-heap §10E third amendment: 0 never destroyed, at most 10 blocks a cycle on the scaling workloads); amended: at most 32 per unrequested cycle end, all at a requested one - back-to-back Full cycles re-swept every weak-bearing block each time (SPEC-heap history §35) |
+| R9-19 | The fast data-property copies (`globalFuncCloneObject`, `copyDataProperties`, `Object.assign`, the clone arms) store what they read from a source another thread is deleting from: an empty value (found by this round's amplifier on a CVE test; branch code, not in the rebase range) | branch | GIL off | confirmed (Debug assert) | fixed (post-read structure and empty-value check, generic path otherwise; SPEC-objectmodel history §30) |
+| R9-20 | `VMManager` Mode-machine counters under the shared GC's stop (`StopReason::GC`): Bun GIL off with Workers and the keep-alive thread aborted with `RELEASE_ASSERT(m_numberOfStoppedVMs + m_numberOfBlockedVMs <= m_numberOfActiveVMs)`. Not the new base's `VMBlockingScope` (unreachable under useJSThreads: the SharedArrayBuffer wait takes the per-wait-node path first; gdb: 0 blocked counts in 146 stop windows) - a stopped count that outlives its stop epoch (`resumeTheWorld` leaves `m_numberOfStoppedVMs` to be decremented lazily, and the next stop recounts only entered VMs), with three candidate escapes: a representative that arrived outside any `VMEntryScope`, a sibling's exit decrementing the VM, a VM destroyed during a stop | the new base's STW series and the branch's §A.3.8 | GIL off (Bun Workers) | confirmed on the r9b and r9e trees under load (Bun `worker_threads`: 1 of 3, 1 of 5 runs); 0 of 28 later runs (the final tree's Bun, and 8 with the r9e Bun at lower load); not in the jsc shell (seven repros) | open: the counters' transition ring and dump ship to name the escape when it recurs; fix design in LANDING-PLAN Open items |
+| R9-21 | The window-liveness constraint's precise-allocation leg (`Heap`, shared heap with two or more clients) took `isNewlyAllocated() && !isMarked()` as its witness, which a Full collection's `PreciseAllocation::flip()` sets for everything marked in the previous cycle: every precise allocation ever marked stayed alive while two clients were attached (found measuring map-heavy's memory; branch code) | branch | GIL off | confirmed (map-heavy 1.1 GB per allocating thread against 176 MB flag off; a worker's dropped 64 KB arrays all retained) | fixed (a witness bit flip does not set; SPEC-heap history §34) |
+| R9-22 | Generated code (LLInt, Baseline IC, DFG, FTL) updated a published butterfly's public length with a plain store on hole stores, push, pop, shift, unshift and the length setter; GIL off a racing thread's CAS-max bump was lowered and its element hidden (found by the end-of-round amplifier campaign; branch code, older than the round) | branch | GIL off | confirmed (i03-n3 second half: 11 of 8,000 amplified runs on the final candidate, 2 of 8,000 on the round's first build; the element present after raising the length) | fixed (GIL off without the E2 elision every length raise is the CAS-max, inline in every tier and in `JSArray::pushInline`'s owner leg; lowers stay plain as in the runtime; the hole stays profiled; SPEC-jit §5.5, history §46): new test 5 of 5 runs fail -> 5 of 5 pass; in-bounds warm-up reproduction 947 of 1,500 rounds -> 0; i03-n3 amplified 11 of 8,000 -> 0; cost 1.06-1.09x instructions on length-raising loops once the sets have fired, none unfired or flag off |
+| R9-23 | The shared GC's conductor runs destructors and weak finalizers inside its own stop window with its heap access released (the End phase's eager sweep of lower-tier precise allocations, the requested-Full sweep, the cycle-end sweep of weak-bearing blocks; R9-21 and R9-18 made dead cells' destructors actually run there with two clients attached); an embedder destructor that takes the VM's API lock (Bun's `Bun__JSValue__unprotect` -> `JSLockHolder`) re-ran the gated access acquire, saw the conductor's own stop pending and waited for its clear, which only the conductor performs: a self-deadlock with every other mutator parked behind it (found by the final battery's Bun GIL-off run of `test/js/web/fetch`; branch code, made reachable by R9-21 and R9-18) | branch | GIL off | confirmed (both JS threads in `GCClient::Heap::acquireHeapAccess`'s stop-pending wait, no conductor running; SPEC-heap history §36) | fixed (F8 conductor re-entry on the stop-pending and Mode-machine legs; §10G allows the API lock in destructors; SPEC-heap history §36): the new test hangs 3 of 3 before, passes 5 of 5 after; Bun `test/js/web/fetch` GIL off hangs 4 of 4 on r9y/r9u, completes 2 of 2 on r9za |
+
+Rulings for R9-1, R9-3 to R9-6, R9-8, R9-9 and R9-11 to R9-14 are in SPEC-ungil
+history, ninth round. R9-1 measured with a two-process driver (the first
+process writes a persistent bytecode cache of 300 functions and classes, the
+second loads it and six threads first-touch `name`, `toString()` and a call on
+the same ones): GIL off 40 of 40 runs crashed on the rebased tree (a
+`RELEASE_ASSERT` in `CachedCompactTDZEnvironmentMapHandle::decode` under
+`materializeDeferredMembersSlow`, from a spawned thread's class `toString()`),
+0 of 40 with the deferral off GIL off.
+
+R9-1. Two threads that use the same function decoded from a bytecode cache
+(`f.name`, `f.toString()`, a stack trace, bytecode generation) both see a
+member deferred; the first `settle()`s the union from Pending to Live and
+the second then reads `pending()` out of the Live bytes and destroys them
+again (a Decoder reference dropped twice, a leaked RareData), while both
+assign `m_ecmaName`. Only compiler and GC threads have a concurrent reader
+(`tryGetEcmaNameConcurrently`, acquire), which is sound.
+
+R9-2. `setActiveHeapAnalyzer` walked `symbolTableSpace` under a
+`HeapIterationScope` on the calling mutator. On a shared heap its
+`stopAllocating()` flushes other clients' free lists from under them
+(MarkedSpace.cpp states it is not legal from a mutator while other clients
+run). `w16-c1-prevent-collection.js` GIL off crashed in 15 of 20 runs on
+the rebased tree. Fixed: the walk runs through
+`Heap::runWithOtherClientsStopped`, and not at all when no table can be
+pending (SPEC-heap history §30).
+
+R9-3. One `Decoder` serves a payload's eager decode (under the compilation
+lock), lazy SymbolTable entries (under that table's lock) and thin children
+(no lock); two threads first-touching two functions of one module grow
+`m_atomsByOrdinal` under each other or corrupt the maps, and the reference
+count - taken during materialization, dropped by destructors on sweeping
+threads - loses updates. The earlier row VM-12 rested on "every decode holds
+the compilation lock", which the lazy paths broke.
+
+R9-4. `cloneScopePart` (link of a CodeBlock for another global object, under
+the compilation lock) reads `m_cachedEntries`, `m_cachedEntriesDecoder` and
+`m_map` of the unlinked table without its `m_lock` while another thread
+materializes that table under it.
+
+R9-5, R9-6. The three-character atom cache is created without the creation
+lock its two-character sibling has GIL off, and an entry's eviction
+(`exchange`, then `deref`) races a reader returning the old entry; a lazy
+`atomFor` can overwrite a slot that `jsStringFor` had set to a cell, which
+the table's GC visit then marks as one.
+
+R9-7. Several threads running an outer function's first `new_func` at once
+each linked an executable, stored it with a plain `WriteBarrier::set` and
+decremented the plain count of missing entries: two executables for one
+declaration, a counter that wraps or stays above zero, and an unordered
+publication of a fresh cell (TSAN: `InferredValue` of a FunctionExecutable
+read by a thread that did not construct it). The rebased Debug corpus
+asserted in four tests. Fixed: one compare-and-swap publishes the entry,
+only its winner counts it (SPEC-ungil history, ninth round).
+
+R9-8, R9-9. A prelinked module record sets `m_prelinkedEntriesMaterialized`
+before it fills the import, export and star-export maps, so a spawned
+thread's namespace access (records loaded on the main thread are reachable
+from spawned threads, although `import()` is refused there) can iterate a map
+being filled; the resolution memo is allocated and written without a lock.
+Bun uses prelinked graphs for standalone executables.
+
+R9-11. The walker loads the inline reaction kind, then the payload cell, then
+the async-context flag; a `then()` on another thread installing the first
+reaction between the loads makes it downcast the task cell to a reaction.
+Whether the module loader's walk can meet a promise another thread attaches
+to needs a trace; one snapshot of the packed word removes the question.
+
+R9-13. All OldAge jettisons still come from the stopped end phase, so nothing
+is wrong today; the assertion should require the stop for OldAge too.
+
+Readers' checked-and-safe rows (one line each in the readers' notes, not
+repeated): lazy ExpressionInfo (decoded under the block's lock, fenced
+publication), lazy RegExp pattern construction (under the cell lock, atomic
+character-class publication), `UnlinkedMetadataTable::m_is32Bit` (decided in
+`link()` under the link lock), `m_isClass` (written before publication),
+`ScriptFetchParameters` singletons (`call_once`, thread-safe counts), the
+CodeBlock aging lease and counter snapshot (written by the collector under
+the block's lock), the IC stub routine watchpoint keys (reconciled at GC
+end), the FTL exit stub vector (appends under the exit-generation lock,
+published through the concurrent-readers pointer), the megamorphic epoch
+bumps (after the publish on every GIL-off arm), the new
+`symbolTablePutTouchWatchpointSet` fire sites (the lock is dropped before
+the fire).
+
 ## What this audit did not check
 
 - Nothing was built or run. No test was written. TSAN was not run.

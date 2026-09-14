@@ -155,6 +155,17 @@ struct StringStats {
 // fast path can read the latch inline (relaxed load) without pulling the
 // table header into this very hot header.
 WTF_EXPORT_PRIVATE extern std::atomic<bool> g_sharedAtomStringTableEnabled;
+// The latch as a plain byte load outside TSAN (the relaxed atomic load is the same single load, but the atomic costs a
+// compare against 1 and blocks merging; the latch's soundness argument is in deref()). Relaxed atomic under TSAN.
+static_assert(sizeof(std::atomic<bool>) == sizeof(bool));
+ALWAYS_INLINE bool sharedAtomStringTableEnabledRacy()
+{
+#if TSAN_ENABLED
+    return g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed);
+#else
+    return *std::bit_cast<const bool*>(&g_sharedAtomStringTableEnabled);
+#endif
+}
 
 class STRING_IMPL_ALIGNMENT StringImplShape  {
     WTF_MAKE_NONCOPYABLE(StringImplShape);
@@ -190,7 +201,16 @@ protected:
     // thread and the mutators keep the legacy load/modify/store.
     mutable std::atomic<unsigned> m_hashAndFlags;
 
-    unsigned hashAndFlags() const { return m_hashAndFlags.load(std::memory_order_relaxed); }
+    // Relaxed atomic under TSAN only: elsewhere a plain load, as upstream's, so the compiler may merge repeated reads
+    // (the length and 8-bit bits never change; hash bits are set idempotently; a stale isAtom is allowed either way).
+    unsigned hashAndFlags() const
+    {
+#if TSAN_ENABLED
+        return m_hashAndFlags.load(std::memory_order_relaxed);
+#else
+        return *std::bit_cast<const unsigned*>(&m_hashAndFlags);
+#endif
+    }
 };
 
 // JIT'd code reads m_hashAndFlags as a plain 32-bit load at
@@ -350,7 +370,7 @@ public:
     // const_cast (rather than making the field mutable) keeps the constexpr
     // ConstructWithConstExpr constructors able to read m_length at compile
     // time; the load never writes, so static/rodata instances are fine.
-    unsigned length() const { return WTF::atomicLoad(const_cast<unsigned*>(&m_length), std::memory_order_relaxed); }
+    unsigned length() const { return racyLoad(m_length); } // plain outside TSAN, as upstream's
     static constexpr ptrdiff_t lengthMemoryOffset() { return OBJECT_OFFSETOF(StringImpl, m_length); }
     bool isEmpty() const { return !length(); }
 
@@ -361,6 +381,7 @@ public:
     template<typename CharacterType> std::span<const CharacterType> span() const LIFETIME_BOUND;
 
     size_t cost() const;
+    size_t costOfUnpublished() const;
     size_t costDuringGC();
 
     WTF_EXPORT_PRIVATE size_t NODELETE sizeInBytes() const;
@@ -1245,6 +1266,21 @@ inline Ref<StringImpl> StringImpl::adopt(Vector<CharacterType, inlineCapacity, O
         return create(vector.span());
 }
 
+// cost() of a string this thread has just created and no other thread can reach yet (no substring buffer): the
+// reported-cost bit is set with the plain store in every mode.
+inline size_t StringImpl::costOfUnpublished() const
+{
+    ASSERT(bufferOwnership() != BufferSubstring);
+    unsigned flags = hashAndFlags();
+    if (flags & s_hashFlagDidReportCost)
+        return 0;
+    m_hashAndFlags.store(flags | s_hashFlagDidReportCost, std::memory_order_relaxed);
+    size_t result = length();
+    if (!(flags & s_hashFlag8BitBuffer))
+        result <<= 1;
+    return result;
+}
+
 inline size_t StringImpl::cost() const
 {
     // For substrings, return the cost of the base string.
@@ -1263,7 +1299,7 @@ inline size_t StringImpl::cost() const
     // racing pair may both report the cost (benign), but neither can drop a
     // concurrently published flag bit. Legacy mode: the string is owned by
     // this thread and the plain store is the pre-atomic path.
-    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]]
+    if (sharedAtomStringTableEnabledRacy()) [[unlikely]]
         m_hashAndFlags.fetch_or(s_hashFlagDidReportCost, std::memory_order_relaxed);
     else
         m_hashAndFlags.store(flags | s_hashFlagDidReportCost, std::memory_order_relaxed);
@@ -1298,7 +1334,7 @@ inline void StringImpl::setIsAtom(bool isAtom)
     // (e.g. setIsAtom(true) under a shard lock while another thread lazily
     // publishes the hash via setHash()). Legacy mode: the string is owned by
     // this thread and the plain store is the pre-atomic path.
-    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]] {
+    if (sharedAtomStringTableEnabledRacy()) [[unlikely]] {
         if (isAtom)
             m_hashAndFlags.fetch_or(s_hashFlagStringKindIsAtom, std::memory_order_relaxed);
         else
@@ -1335,7 +1371,7 @@ inline void StringImpl::setHash(unsigned hash) const
     // thread and the plain store is the pre-atomic path. Store hash with
     // flags in low bits.
     unsigned old = hashAndFlags();
-    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]]
+    if (sharedAtomStringTableEnabledRacy()) [[unlikely]]
         old = m_hashAndFlags.fetch_or(hash, std::memory_order_relaxed);
     else
         m_hashAndFlags.store(old | hash, std::memory_order_relaxed);
@@ -1395,7 +1431,7 @@ inline void StringImpl::deref()
     // forbids this load from reading a stale 'false'; threads created after
     // the latch get the edge from thread creation itself. Full argument: F4
     // comment at sharedAtomStringTableEnabled() in SharedAtomStringTable.h.
-    if (g_sharedAtomStringTableEnabled.load(std::memory_order_relaxed)) [[unlikely]] {
+    if (sharedAtomStringTableEnabledRacy()) [[unlikely]] {
         // Shared-atom-table mode (SPEC-vmstate §4.4.3 / F3): the release
         // decrement plus the acquire fence on the zero transition order every
         // other thread's prior accesses to this string before its destruction

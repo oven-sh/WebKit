@@ -34,6 +34,7 @@
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <optional>
@@ -222,7 +223,7 @@ protected:
     Offset m_offset;
 };
 
-class Decoder : public RefCounted<Decoder> {
+class Decoder : public ThreadSafeRefCounted<Decoder> {
     WTF_MAKE_NONCOPYABLE(Decoder);
 
 public:

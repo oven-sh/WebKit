@@ -29,7 +29,7 @@
 
 #include "Identifier.h"
 #include "ScriptFetchParameters.h"
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -51,7 +51,7 @@ class VM;
 //   (noModule = none); sids < stringCount, or starDefaultSid / starNamespaceSid. Imports are sorted by
 //   (localHash, localSid), exports by (exportHash, exportSid); hash = StringImpl::hash() of the name (24 bits), and an
 //   entry whose name is a sentinel carries hash 0xffffffff so it sorts last.
-class PrelinkedModuleGraph final : public RefCounted<PrelinkedModuleGraph> {
+class PrelinkedModuleGraph final : public ThreadSafeRefCounted<PrelinkedModuleGraph> {
     WTF_MAKE_NONCOPYABLE(PrelinkedModuleGraph);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PrelinkedModuleGraph);
 public:

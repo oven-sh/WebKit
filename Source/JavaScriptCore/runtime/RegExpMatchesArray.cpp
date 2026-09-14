@@ -96,9 +96,10 @@ JSArray* createRegExpMatchesArrayWithGroupsOrIndices(VM& vm, JSGlobalObject* glo
     Structure* matchStructure = createIndices ? globalObject->regExpMatchesArrayWithIndicesStructure() : globalObject->regExpMatchesArrayStructure();
 
     auto setProperties = [&] () {
-        array->putDirectOffset(vm, RegExpMatchesArrayIndexPropertyOffset, jsNumber(result.start));
-        array->putDirectOffset(vm, RegExpMatchesArrayInputPropertyOffset, input);
-        array->putDirectOffset(vm, RegExpMatchesArrayGroupsPropertyOffset, hasNamedCaptures ? groups : jsUndefined());
+        PropertyStorage freshStorage = array->outOfLineStorage();
+        putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayIndexPropertyOffset, jsNumber(result.start));
+        putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayInputPropertyOffset, input);
+        putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayGroupsPropertyOffset, hasNamedCaptures ? groups : jsUndefined());
 
         ASSERT(!array->mayBeSegmentedButterfly()); // THREADS-INTEGRATE(objectmodel) §10.7 [assert-only]: fresh private array
     ASSERT(!array->butterfly()->indexingHeader()->preCapacity(matchStructure));
@@ -107,7 +108,7 @@ JSArray* createRegExpMatchesArrayWithGroupsOrIndices(VM& vm, JSGlobalObject* glo
         gcSafeZeroMemory(static_cast<JSValue*>(array->butterfly()->base(0, capacity)), (capacity - size) * sizeof(JSValue));
 
         if (createIndices) {
-            array->putDirectOffset(vm, RegExpMatchesArrayIndicesPropertyOffset, indicesArray);
+            putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayIndicesPropertyOffset, indicesArray);
 
             Structure* indicesStructure = globalObject->regExpMatchesIndicesArrayStructure();
 
@@ -267,9 +268,10 @@ JSArray* createRegExpMatchesArrayForPlainRegExpHavingABadTime(VM& vm, JSGlobalOb
     JSArray* array = JSArray::tryCreateUninitializedRestricted(matchesArrayScope, &deferralContext, matchStructure, numSubpatterns + 1);
     RELEASE_ASSERT(array);
 
-    array->putDirectOffset(vm, RegExpMatchesArrayIndexPropertyOffset, jsNumber(result.start));
-    array->putDirectOffset(vm, RegExpMatchesArrayInputPropertyOffset, input);
-    array->putDirectOffset(vm, RegExpMatchesArrayGroupsPropertyOffset, jsUndefined());
+    PropertyStorage freshStorage = array->outOfLineStorage();
+    putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayIndexPropertyOffset, jsNumber(result.start));
+    putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayInputPropertyOffset, input);
+    putDirectOffsetOfFreshArray(vm, array, freshStorage, RegExpMatchesArrayGroupsPropertyOffset, jsUndefined());
 
     ASSERT(!array->mayBeSegmentedButterfly()); // THREADS-INTEGRATE(objectmodel) §10.7 [assert-only]: fresh private array
     ASSERT(!array->butterfly()->indexingHeader()->preCapacity(matchStructure));

@@ -218,10 +218,11 @@ public:
     // then read-then-plain-store the length; the loser's smaller store could
     // REGRESS publicLength and hide the winner's element (I21 "no lost
     // properties"; i03-t5-racing-growers part (a)). A CAS-max loop makes the
-    // bump monotone. Owner-exclusive (t, 0) words keep the plain
-    // setPublicLength store; deliberate truncation (setLength/shrink) also
-    // stays a plain store - shrink-vs-grow is program-order racy by SAB
-    // semantics.
+    // bump monotone. GIL off the owner of a (t, 0) word raises with it too
+    // (SPEC-jit §5.5, ninth round: once the set has fired a foreign writer
+    // flips SW lock-free and raises the length itself); GIL on the owner keeps
+    // the plain store. Deliberate truncation (setLength/shrink) stays a plain
+    // store - shrink-vs-grow is program-order racy by SAB semantics.
     //
     // AB17f (I21 publication ordering): the successful CAS is a RELEASE so
     // the dense element store program-order before it (the
@@ -236,16 +237,18 @@ public:
     // benign outcome is a spurious hole => generic-path fallback, same
     // class as the IT-8 reader-side residual (ScriptExecutable.cpp).
     // TSO-sound; ARM64 reader-side acquire is chartered with IT-8.
-    void bumpPublicLengthToAtLeast(uint32_t newLength)
+    // Returns whether this call raised the length (the store was into a hole, for the array profile).
+    bool bumpPublicLengthToAtLeast(uint32_t newLength)
     {
         uint32_t* location = reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(this) + offsetOfPublicLength());
         uint32_t current = WTF::atomicLoad(location, std::memory_order_relaxed);
         while (current < newLength) {
             uint32_t observed = WTF::atomicCompareExchangeStrong(location, current, newLength, std::memory_order_release);
             if (observed == current)
-                return;
+                return true;
             current = observed;
         }
+        return false;
     }
 
     template<typename T>
@@ -418,6 +421,9 @@ ALWAYS_INLINE void butterflyConcurrentStore(T* location, T value)
 // staleness rules, but the bulk memcpy/memset must be word-wise atomics to be
 // defined and TSAN-visible. Production builds keep memcpy/memset. Regions must
 // be 8-byte aligned multiples of 8.
+// The flag-on arm below, out of line so that flag off every caller inlines only the memcpy (the GC-safe copy is large).
+JS_EXPORT_PRIVATE void butterflyConcurrentCopyWordsSlow(void* dst, const void* src, size_t bytes);
+
 ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size_t bytes)
 {
 #if TSAN_ENABLED
@@ -432,7 +438,7 @@ ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size
     // lands before the SW publication), and a torn lane would be a torn
     // JSValue. Flag-off: today's memcpy.
     if (Options::useJSThreads()) [[unlikely]]
-        gcSafeMemcpy(static_cast<uint64_t*>(dst), static_cast<const uint64_t*>(src), bytes);
+        butterflyConcurrentCopyWordsSlow(dst, src, bytes);
     else
         memcpy(dst, src, bytes);
 #endif

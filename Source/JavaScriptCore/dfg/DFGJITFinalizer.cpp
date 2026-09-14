@@ -105,7 +105,7 @@ bool JITFinalizer::finalize()
         vm.m_perBytecodeProfiler->addCompilation(codeBlock, *m_plan.compilation());
 
     if (!m_plan.willTryToTierUp())
-        codeBlock->baselineVersion()->m_didFailFTLCompilation = true;
+        codeBlock->baselineVersion()->setFailedFTLCompilation();
 
     // The codeBlock is now responsible for keeping many things alive (e.g. frozen values)
     // that were previously kept alive by the plan.

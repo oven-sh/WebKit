@@ -89,6 +89,8 @@ public:
     void NODELETE flip();
     
     bool isNewlyAllocated() const { return m_isNewlyAllocated; }
+    bool isAllocatedSinceLastMarking() const { return m_isAllocatedSinceLastMarking; }
+    void clearAllocatedSinceLastMarking() { m_isAllocatedSinceLastMarking = false; }
     ALWAYS_INLINE bool isMarked() { return m_isMarked.load(std::memory_order_relaxed); }
     ALWAYS_INLINE bool isMarked(HeapCell*) { return isMarked(); }
     ALWAYS_INLINE bool isMarked(HeapCell*, Dependency) { return isMarked(); }
@@ -175,6 +177,9 @@ private:
     size_t m_cellSize;
     bool m_isNewlyAllocated : 1;
     bool m_hasValidCell : 1;
+    // The window-liveness constraint's witness (Heap, SPEC-heap history §34): set when the allocation is made and
+    // cleared by MarkedSpace::endMarking, like m_isNewlyAllocated, but never set by flip().
+    bool m_isAllocatedSinceLastMarking : 1;
     // Worst case adjustment needed would be halfAlignment + portionOfObjectThatMustFitInCacheLine
     // which is 8 + 16 -> 24 bytes i.e. will fit in 5 bits. If we need more bits in the future, we
     // can also encode this number of uintptr_t words to save 3 bits.

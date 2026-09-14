@@ -148,6 +148,11 @@ for ((i = 1; i <= RUNS; i++)); do
         # First non-crashing run establishes the reference.
         REF_STATUS="$STATUS"
         cp "$OUT" "$REF_OUT"
+        # A failing reference is a finding in itself: every later run that fails the same way compares equal to it,
+        # and the campaign would otherwise report a test that always fails as clean.
+        if [[ "$STATUS" -ne 0 ]]; then
+            KIND="REFERENCE FAILED (exit $STATUS)"
+        fi
     elif [[ -z "$KIND" ]]; then
         if [[ "$STATUS" -ne "$REF_STATUS" ]]; then
             KIND="DIVERGENCE (exit $STATUS vs reference $REF_STATUS)"

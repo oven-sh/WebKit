@@ -1,4 +1,5 @@
 //@ requireOptions("--useJSThreads=1", "--useDollarVM=1")
+//@ threadsNoAmplify
 // The shared heap's "mutator should be fenced" flag must follow marking on x86
 // (raised by beginMarking, lowered by endMarking), not be raised at the moment
 // the heap becomes shared: a raised flag sends every JIT write barrier through
@@ -24,9 +25,12 @@ function run() {
 // fixed two warm-up runs measured 5x under a parallel test load, Debug).
 let prev = run();
 for (let i = 0; i < 12; ++i) { const t = run(); const stable = t > prev * 0.8 && t < prev * 1.25; prev = t; if (stable) break; }
-const before = Math.min(run(), run());
+// The best of five on each side: the loop does not allocate, so "before" stays before the first collection, and a
+// loaded machine (the ninth round saw 1.7x in the parallel corpus) rarely slows all five runs of one side.
+const best = () => Math.min(run(), run(), run(), run(), run());
+const before = best();
 fullGC();
-const after = Math.min(run(), run());
+const after = best();
 if (typeof AMPLIFY_VERBOSE !== "undefined") print("put loop before first GC " + (before * 1e3).toFixed(1) + " ms, after " + (after * 1e3).toFixed(1) + " ms");
 if (before > after * 1.6) throw new Error("write barriers before the first collection are " + (before / after).toFixed(1) + "x slower (fence raised while idle?)");
 print("PASS");

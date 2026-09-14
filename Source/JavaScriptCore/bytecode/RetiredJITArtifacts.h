@@ -111,45 +111,11 @@ public:
     // at epoch expiry.
     static void retire(VM&, std::unique_ptr<RetiredCallback>&&);
 
-    // Pin a §5.8 call-link record's named CodeBlock as a validated GC root on
-    // the epoch heap. Called by the publishRecord paths BEFORE the record
-    // becomes reachable, while the caller still provably holds the cell live
-    // (it is mid-link, on the publishing mutator's stack/registers), so the
-    // marking constraint keeps the cell continuously marked from the first
-    // cycle the pin is visible — the cell can never become unmarked, never
-    // leaves codeBlockSet, and the validation arm never has to skip it.
-    //
-    // Rationale (w16 follow-up jit-null-metadatatable-counter-bump, AMENDED):
-    // a dispatcher loads r = m_record and stores r->codeBlockToTransfer into
-    // the callee frame; until that store lands, the named CodeBlock CELL is
-    // reachable only through the record, which the conservative scan does not
-    // trace through. The original retire-time-only pin left two arms open,
-    // and the crash family reproduced on it (callee-frame CodeBlock with a
-    // null baseline-only field, e.g. m_argumentValueProfiles at +0xa0 or the
-    // jitData tier-up counter at +0x28):
-    //  (1) LIVE records had no pin at all — nothing kept a still-published
-    //      record's named cell alive against a marking cycle that the
-    //      dispatch window straddles (DataIC spills / DirectCallLinkInfo
-    //      carry no comparand whose conservative liveness could stand in);
-    //  (2) records retired on GC-internal paths (visitWeak ->
-    //      unlinkOrUpgrade -> clearRecord with the cell already unmarked)
-    //      pinned too late: the cell left codeBlockSet at the end of that
-    //      same cycle, so the validation arm skipped the pin forever
-    //      ("retention, never resurrection") and the slot was recycled.
-    // Pinning at publish closes both: the pin spans the record's whole
-    // reachable lifetime (live, then retired until epoch expiry).
-    // Returns the heap holding the pin; the caller stamps it into the record
-    // (CallLinkRecord::pinHeap) so whoever frees the record — the epoch holder
-    // or the owning CallLinkInfo's destructor — unpins on that same heap.
-    // No-op (returns null) for null codeBlockToTransfer (virtual/host records).
-    static JSC::Heap* pinPublishedCallLinkRecordCodeBlock(VM&, CodeBlock*);
-
     // Retire a replaced/unlinked §5.8 call-link record (the sole owner of the
-    // record pointer after the m_record exchange). Takes over the record's
-    // publish-time pin (see pinPublishedCallLinkRecordCodeBlock above): the
-    // callback's destructor unpins at epoch expiry. See
-    // Heap::pinRetiredCallLinkRecordCodeBlock for the marking/validation
-    // contract. No-op for null records.
+    // record pointer after the m_record exchange); it is freed at epoch expiry.
+    // Its codeBlockToTransfer is not retained (SPEC-jit history §43: the End
+    // phase clears every record naming a dead CodeBlock, and no straggler holds
+    // a record across a stop). No-op for null records.
     static void retireCallLinkRecord(VM&, CallLinkRecord*);
 };
 

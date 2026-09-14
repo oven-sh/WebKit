@@ -1754,3 +1754,92 @@ forged pointer read, found only by the amplifier weeks later (cf. the seventh
 round's withdrawn P3). It is recorded here as the designed next step for the
 Double family, to be landed on its own with its own audit table and TSAN /
 amplifier campaign, not folded into a round whose changes are already broad.
+
+## §30. Ninth landing round: the fast data-property copies wrote an empty value GIL off (AUDIT R9-19)
+
+`cve/mc-val-multislot-clone.js` had asserted in Debug corpus runs since the eighth round ("ASSERTION FAILED: value" in
+`JSObject::validatePutOwnDataProperty`), rarely enough to pass as noise; under the ninth round's amplifier it asserted
+in 3 of the first 7 GIL-off Debug runs. The stack: `globalFuncCloneObject` (the `{...o}` clone builtin) ->
+`putOwnDataPropertyBatching` -> `putOwnDataProperty` with an empty `JSValue`. The fast copies - that builtin, the
+`copyDataProperties` builtin behind rest destructuring, and `Object.assign` with one or several sources - validate the
+source's structure once, then read every slot the structure lists and store the values into the target in one batch.
+GIL off another thread can delete from the source during the reads; a slot the delete clears reads empty (and a slot
+reused by a later add would read another property's value), and the batch stored what it read. The structure-cloning
+arms (`tryCreateObjectViaCloning`, `objectCloneFast`) have the same shape with a bulk copy.
+
+Rule (GIL off; flag off and GIL on no other thread can change the source during a copy): a consumer that reads several
+slots under one structure validation re-checks, after its reads and a load-load fence, that the source still has the
+structure it validated and that no value it read is empty; if either fails it copies property by property through the
+generic path, which reads each property on its own. Nothing is written to the target before the check. The clone arm
+checks the clone's slots and drops the clone; `copyDataProperties` no longer takes the bulk-clone arm GIL off. A value
+read before a delete and checked against the pre-delete structure is a copy linearized before the delete, which the
+staleness model allows; D1's `undefined` for a quarantined slot remains possible on the generic path.
+Tests: `shared-objects/data-property-copies-vs-delete-gil-off.js` (spread, rest destructuring, `Object.assign` with
+one and two sources, against two threads adding and deleting) and the CVE test above.
+
+## §31. Ninth landing round: a fresh matches array is written through its flat storage
+
+Annex §Q routes every flag-on out-of-line access through `locationForOffset`, whose flag-on arm decodes the tagged
+butterfly word (`locationForOutOfLineOffsetConcurrent`: an out-of-line call, the regime test and the segmented
+dispatch). A RegExp matches array is created by the executing thread and filled before it is returned: no other thread
+can reach it, its butterfly is flat by construction (the existing assertion, THREADS-INTEGRATE §10.7), and a flat
+butterfly is what `outOfLineStorage()` requires. Its three out-of-line properties (index, input, groups; indices when
+requested) are therefore written through the flat storage directly, in every mode, with the same write barrier
+(`putDirectOffsetOfFreshArray`). Flag off the code is the same as before (`locationForOffset`'s flag-off arm is that
+access). Measured GIL on: the three calls were ~111 of the 127 extra instructions per `exec` against flag off. This
+applies only to objects no other thread can yet reach; published objects keep §Q's dispatch.
+
+## §32. Ninth landing round: the GIL-off allocation report is written only when it changes something (T4-P, amended)
+
+T4-P (a) made every DFG/FTL allocation from a Double-recommending profile store its array into the profile's
+last-array word, and read the previously recorded array's indexing type first. The word lives in the `op_new_array`
+metadata of a CodeBlock that every thread runs, so with N threads allocating from one site each allocation took the
+word's cache line away from the other cores and read an array header another core had just written. Measured on
+splay-like at four threads, GIL off (JIT-dump attribution, `perf record -k 1` + `perf inject --jit`): the load of the
+word and the load of the recorded array's indexing byte took 4.6 % and 3.5 % of all user cycles, and JIT code ran
+31 % more cycles per unit of work than at one thread with the same instructions per unit.
+
+Amendment. The report keeps its check (a recorded array that has left Double still takes the slow path, which folds
+it into the profile and clears the pointer half), but stores the new array only when the pointer half is empty -
+nothing recorded, or the slow path just consumed the recorded array - or when the new array's address has bits
+[4, 9) clear. A thread allocates one size class sequentially, so the latter holds for about one allocation in 32 per
+thread: each thread still records a recent array of its own every few dozen allocations. In the steady state the
+word and the recorded array's header are only read, and the line stays shared. The word is advisory and racy by
+design (SPEC-ungil §5.7); the change only delays when a conversion is seen, by at most the sampling period per
+allocating thread plus the life of one recorded array. Flag off and GIL on emit no report (unchanged).
+Test: `objectmodel/double-allocation-profile-feedback-threads-gil-off.js` (four threads allocate from one
+FTL-compiled Double literal site, then their arrays start being converted; the site must demote within a bounded
+number of conversions) and the existing T4-P tests.
+
+## §33. Ninth landing round: GIL on, owner transitions in the inline caches do not claim (E4-G, rev 19)
+
+E4-C (r17) made every owner transition in the inline caches and the megamorphic probe claim the StructureID lane
+with a `lock cmpxchg` (S -> nuked(S)) before storing, so that the owner's unlocked window excludes foreign cell-locked
+writers once the source's thread-local sets are dead. GIL on no foreign writer can be inside its window at the same
+time: a mutator runs only while it holds the GIL, the GIL is handed over only inside blocking primitives (Thread.join,
+Condition.wait, Atomics.wait, contended Lock.hold, the notify and thread-completion yields, C-API and debugger lock
+drops), and none of those is reachable from inside a window - locked sections never park or release the GIL (O2;
+cell-lock contention parks without releasing it), the IC and megamorphic windows are straight-line code whose only
+allocation comes before the commit, and the C++ legs run AssertNoGC from the re-read to the publish. Concurrent
+readers (the marker, compiler threads) never needed the claim: flag off a non-reallocating transition is value then
+StructureID, and the owner predicate still guarantees a flat or absent, SW=0 word, which is the flag-off
+representation plus a tag the marker masks. The claim cost class-ctor-4 GIL on most of its 2.6x against flag off
+(the cycles sat on the instruction after the `lock cmpxchg`).
+
+E4-G: GIL on (gilOffProcess latched false before any code generation), the inline caches and the megamorphic probe keep
+the PreciseAllocation exclusion and the owner predicate and skip the claim: non-reallocating, value then store fence
+then S'; (re)allocating, a plain store of nuked(S), a store fence, the tagged word, a fence, S' - the order the marker
+reads (nuked ID, then word, then ID again; without the first fence an ARM64 marker could see the new word under the
+old ID and size the old storage, leaving the new butterfly unmarked). The C++ E4-C leg (`tryPutDirectTransitionConcurrent`, the megamorphic
+reallocating operation's path) stores nuked(S) instead of claiming it GIL on, after the re-read that follows its
+allocation and inside its AssertNoGC window, and keeps `casButterfly` for the growth publication (I17). A GIL-off process keeps the claimed forms for
+every VM. Tests: `objectmodel/gil-on-unclaimed-transitions-across-handoffs.js` (a second thread hands the GIL back and
+forth through every blocking primitive while both threads add properties to one pool of objects whose shapes' sets
+have fired; every value is checked) and the existing claim-first tests, which run in all modes.
+
+## §34. Ninth landing round: I21 in generated code (length updates, AUDIT R9-22)
+
+I21 held for the C++ writers of a flat butterfly's length (the CAS-max of i03-t5) but not for generated code: a JIT
+hole store, push or pop wrote the length with a plain store, lowering a racing thread's CAS-max bump GIL off and hiding
+its element. SPEC-jit §5.5's length-update rule and history §46 have the sites and the fix.
+

@@ -28,6 +28,11 @@ let rareSerial = 0, rare = null;
 function nextRare() { if ((rareSerial++ & 31) === 0) { rare = { a: 2 }; rare["b" + rareSerial] = 3; } return rare; }
 let sum = 0;
 for (let i = 0; i < 200000; ++i) sum += f(common, i); // tier up on the common shape
+// The flag forces concurrent compilation, which on a loaded machine can finish after the loop above: keep warming
+// until f's optimized code exists, or the rare-shape calls below run in the Baseline tier and exit nowhere.
+for (const deadline = preciseTime() + 30; !numberOfDFGCompiles(f) && preciseTime() < deadline;) {
+    for (let i = 0; i < 10000; ++i) sum += f(common, i);
+}
 
 const counter = (name) => $vm.jsThreadsCounter(name) || 0;
 const opsBefore = counter("osrExitDFGOperation") + counter("osrExitFTLOperation");

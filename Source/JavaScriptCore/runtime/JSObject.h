@@ -869,7 +869,7 @@ public:
         return const_cast<JSObject*>(this)->butterfly();
     }
 
-    Butterfly* butterfly() LIFETIME_BOUND
+    ALWAYS_INLINE Butterfly* butterfly() LIFETIME_BOUND
     {
         // Access m_butterfly field of JSObjectWithButterfly regardless of whether this object is a derived class of JSObjectWithButterfly.
         // This is safe as atom of GC heap allocation is 16 bytes, thus the butterfly field, offset from 8 byte, is always accessible.
@@ -1623,7 +1623,7 @@ public:
     // SPEC-objectmodel §9.5: same mask-on-load + flatness CONTRACT as
     // JSObject::butterfly() (see comment there). Flag-off, identity (I22).
     const Butterfly* butterfly() const LIFETIME_BOUND { return const_cast<JSObjectWithButterfly*>(this)->butterfly(); }
-    Butterfly* butterfly() LIFETIME_BOUND
+    ALWAYS_INLINE Butterfly* butterfly() LIFETIME_BOUND
     {
         if (Options::useJSThreads()) [[unlikely]] {
             uint64_t word = taggedButterflyWord();
@@ -1677,7 +1677,7 @@ public:
     template<typename Visitor> void markAuxiliaryAndVisitOutOfLineProperties(Visitor&, Butterfly*, Structure*, PropertyOffset maxOffset);
 
 protected:
-    JSObjectWithButterfly(VM& vm, Structure* structure, Butterfly* butterfly = nullptr)
+    ALWAYS_INLINE JSObjectWithButterfly(VM& vm, Structure* structure, Butterfly* butterfly = nullptr)
         : JSObject(vm, structure)
         , m_butterfly(butterfly, WriteBarrierEarlyInit)
     {

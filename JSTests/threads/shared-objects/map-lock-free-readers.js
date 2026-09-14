@@ -1,5 +1,6 @@
 //@ requireOptions("--useJSThreads=1", "--useDollarVM=1")
 //@ threadsRequireGILOff
+//@ threadsNoAmplify
 // GIL off, Map/Set has/get/size are validated lock-free reads (a seqlock on the
 // owner, bumped by every writer under the table lock; SPEC-runtime Map/Set):
 // readers no longer serialize on the table's cell lock. Checks (1) torn-read
@@ -64,9 +65,20 @@ for (const r of results) if (!String(r).startsWith("ok")) throw new Error("torn 
     const big = new Map(); for (let i = 0; i < 4096; ++i) { big.set(i, i * 2); big.set("k" + i, i); }
     const probe = []; for (let i = 0; i < 64; ++i) probe.push("k" + i);
     function work() { let s = 0; for (let r = 0; r < 150; ++r) for (let i = 0; i < 4096; ++i) { s += big.get(i); if (big.has(probe[i & 63])) s++; } return s; }
-    let t0 = preciseTime(); const one = work(); const tOne = preciseTime() - t0;
-    t0 = preciseTime(); const ths = [new Thread(work), new Thread(work), new Thread(work)]; const again = work(); for (const t of ths) if (t.join() !== one) throw new Error("sum mismatch"); const tFour = preciseTime() - t0;
-    if (again !== one) throw new Error("sum mismatch");
+    function measure() {
+        let t0 = preciseTime(); const one = work(); const tOne = preciseTime() - t0;
+        t0 = preciseTime(); const ths = [new Thread(work), new Thread(work), new Thread(work)]; const again = work(); for (const t of ths) if (t.join() !== one) throw new Error("sum mismatch"); const tFour = preciseTime() - t0;
+        if (again !== one) throw new Error("sum mismatch");
+        return [tOne, tFour];
+    }
+    // Up to three attempts: a loaded machine can leave four threads without four cores for a moment (the ninth
+    // round saw 3.2x in the parallel corpus); serialized reads (10x before the seqlock) fail every attempt.
+    let tOne, tFour;
+    for (let attempt = 0; attempt < 3; ++attempt) {
+        [tOne, tFour] = measure();
+        if (tFour <= tOne * 3)
+            break;
+    }
     if (typeof AMPLIFY_VERBOSE !== "undefined") print("one reader " + (tOne * 1e3).toFixed(1) + " ms, four readers " + (tFour * 1e3).toFixed(1) + " ms");
     if (tFour > tOne * 3) throw new Error("four readers of one Map took " + (tFour / tOne).toFixed(1) + "x one reader (serialized reads?)");
 }

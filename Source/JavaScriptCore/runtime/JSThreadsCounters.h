@@ -136,7 +136,7 @@ struct JSThreadsCounters {
     JS_EXPORT_PRIVATE static JSThreadsCounters& singleton();
     JS_EXPORT_PRIVATE static void dump();
     JS_EXPORT_PRIVATE static void registerDumpAtExit();
-    static bool enabled() { return Options::reportJSThreadsCounters() || Options::countJSThreadsCounters(); }
+    static bool enabled() { return Options::reportJSThreadsCounters() | Options::countJSThreadsCounters(); } // one branch at each counted site
 };
 
 #define JSTHREADS_COUNT(name) do { \

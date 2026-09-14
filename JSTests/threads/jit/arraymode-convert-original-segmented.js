@@ -39,6 +39,12 @@ for (var i = 0; i < 300; i++)
 var value = { tag: "stored" };
 for (var i = 0; i < 60000; i++)
     store(shared, value);
+// The flag forces concurrent compilation whatever --useConcurrentJIT says, and on a loaded machine the DFG code can
+// arrive after the loop above: keep storing until it exists.
+for (var deadline = preciseTime() + 30; !numberOfDFGCompiles(store) && preciseTime() < deadline;) {
+    for (var i = 0; i < 1000; i++)
+        store(shared, value);
+}
 
 check(shared[0] === value, "shared[0] lost the store");
 check(shared.length === 68, "shared.length changed: " + shared.length);

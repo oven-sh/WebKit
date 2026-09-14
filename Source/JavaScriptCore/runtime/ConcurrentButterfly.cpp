@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ConcurrentButterfly.h"
 
+#include "GCMemoryOperations.h"
+
 // ConcurrentButterfly.cpp - runtime slow paths of the shared-memory-threads
 // object model (SPEC-objectmodel.md, frozen rev 14). This translation unit
 // owns (Task 5):
@@ -2166,6 +2168,11 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
 // foreign-tagged flat (winnerTID, 0): callers must re-dispatch on the fresh
 // tag (the §3 probes at every flat fast path do) before treating the storage
 // as their own.
+void butterflyConcurrentCopyWordsSlow(void* dst, const void* src, size_t bytes)
+{
+    gcSafeMemcpy(static_cast<uint64_t*>(dst), static_cast<const uint64_t*>(src), bytes);
+}
+
 void materializeCopyOnWriteButterflyConcurrent(VM& vm, JSObjectWithButterfly* object)
 {
     RELEASE_ASSERT(Options::useJSThreads());

@@ -72,14 +72,17 @@ for (const useAll of [false, true]) {
 // ---- Wake counts are per-condition, not global ----
 {
     const condB = new Condition();
-    const box = { ready: 0, onB: -1, onA: -1 };
+    const box = { ready: 0, parking: 0, onB: -1, onA: -1 };
     const w = new Thread(() => {
+        // As above: GIL off, taking the lock before main parks would let main skip wait() (onA would be 0).
+        while (!Atomics.load(box, "parking")) { }
         lock.hold(() => { box.ready = 1; });
         box.onB = condB.notifyAll(); // nobody waits on condB
         box.onA = cond.notifyAll();
         return "ok";
     });
     lock.hold(() => {
+        Atomics.store(box, "parking", 1);
         while (!box.ready)
             cond.wait(lock);
     });

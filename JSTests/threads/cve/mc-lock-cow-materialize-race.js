@@ -39,6 +39,8 @@ const foreign = new Thread(() => {
     let seen = 0;
     while (Atomics.load(gate, "stop") === 0) {
         const r = Atomics.load(gate, "round");
+        if (r > ROUNDS)
+            break; // The main thread's final wake-up: it may land before this thread sees "stop".
         if (r === seen) {
             Atomics.wait(gate, "round", seen, 1);
             continue;
