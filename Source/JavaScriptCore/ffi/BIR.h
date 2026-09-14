@@ -141,6 +141,12 @@
 //   SToF UToF: type result(f32|f64), v(i32|i64)
 //   FToS FToU: type result(i32|i64), v(f32|f64)               (C semantics: out of range is undefined)
 //   FPromote: v(f32) -> f64 | FDemote: v(f64) -> f32
+//   FMin FMax: v a, v b (both f32 or both f64) -> same type     (IEEE 754-2019 minimum and maximum, what AArch64's FMIN and FMAX
+//                                                              and WebAssembly's f32.min do: a quiet NaN when either operand is
+//                                                              a NaN, of no particular sign or payload; -0 is less than +0.
+//                                                              The other rule, x86's MINSS `a < b ? a : b` and MAXSS `a > b ? a : b`,
+//                                                              which give b when either is a NaN and when both are zeros, is
+//                                                              Select(Lt(a, b), a, b) and Select(Gt(a, b), a, b))
 //   Bitcast: type result, v                                   (i32<->f32, i64<->f64)
 //   Load: u8 kind (MemKind), v addr, varint offset            (I8*/I16*/I32 -> i32, I64 -> i64, F32, F64, V128)
 //                                                              (kind | 0x80 on a Load or Store: volatile. It is performed exactly as
@@ -178,7 +184,11 @@
 //   VReplace: lane, u8 index, v vec, v scalar -> v128
 //   VAdd VSub VMul: lane, v a, v b -> v128
 //   VDiv VRem: lane, signed, v a, v b -> v128                  (VRem: integer lanes only)
-//   VMin VMax: lane, signed, v a, v b -> v128                  (float lanes: like fmin/fmax on non-NaN input)
+//   VMin VMax: lane, signed, v a, v b -> v128                  (float lanes: VMin is `b < a ? b : a` and VMax `a < b ? b : a`, so
+//                                                              a's lane when either is a NaN and when the two are equal, zeros of
+//                                                              either sign included. x86's MINPS(x, y), `x < y ? x : y`, is
+//                                                              VMin(y, x), and MAXPS(x, y) is VMax(y, x))
+//   VFMin VFMax: lane (F32x4|F64x2), v a, v b -> v128          (FMin and FMax of each lane: AArch64's vector FMIN and FMAX)
 //   VNeg VAbs: lane, v -> v128 | VSqrt: lane (F32x4|F64x2), v -> v128
 //   VAnd VOr VXor: v a, v b -> v128 | VNot: v -> v128
 //   VShl VShrS VShrU: lane (integer), v vec, v amount(i32) -> v128   (every lane shifted by amount mod lane width)
@@ -336,6 +346,8 @@ enum class AtomicOp : uint8_t { Add = 0, Sub = 1, And = 2, Or = 3, Xor = 4, Exch
     macro(FPromote, 0x39) \
     macro(FDemote, 0x3a) \
     macro(Bitcast, 0x3b) \
+    macro(FMin, 0x3c) \
+    macro(FMax, 0x3d) \
     macro(Load, 0x40) \
     macro(Store, 0x41) \
     macro(SlotAddr, 0x42) \
@@ -397,6 +409,8 @@ enum class AtomicOp : uint8_t { Add = 0, Sub = 1, And = 2, Or = 3, Xor = 4, Exch
     macro(VNarrow, 0x94) \
     macro(VDot, 0x95) \
     macro(VSwizzle, 0x96) \
+    macro(VFMin, 0x97) \
+    macro(VFMax, 0x98) \
     macro(AtomicLoad, 0xa0) \
     macro(AtomicStore, 0xa1) \
     macro(AtomicRmw, 0xa2) \

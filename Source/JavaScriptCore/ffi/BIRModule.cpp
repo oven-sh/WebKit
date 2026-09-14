@@ -684,6 +684,12 @@ private:
                 return false;
             define(inst, Type::V128);
             return true;
+        case Op::VFMin:
+        case Op::VFMax:
+            if (!lane(inst, false, true) || !useTyped(inst.a, Type::V128) || !useTyped(inst.b, Type::V128))
+                return false;
+            define(inst, Type::V128);
+            return true;
         case Op::VNeg:
         case Op::VAbs:
         case Op::VSqrt:
@@ -867,6 +873,14 @@ private:
                 return false;
             if (a != b || !isInt(a))
                 return fail("MulHigh operands must be the same integer type"_s);
+            define(inst, a);
+            return true;
+        case Op::FMin:
+        case Op::FMax:
+            if (!use(inst.a, a) || !use(inst.b, b))
+                return false;
+            if (a != b || !isFloat(a))
+                return fail("FMin and FMax operands must be the same floating-point type"_s);
             define(inst, a);
             return true;
         case Op::Clz:

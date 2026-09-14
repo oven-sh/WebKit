@@ -88,7 +88,8 @@ add({
             ["VSplat", b(LANE.i8x16), 7], ["VNarrow", b(LANE.i16x8), b(0), 6, 8], ["VBitmask", b(LANE.i8x16), 9], ["Store", b(MEM.i32), 10, 0, s(16)],
             ["RetVoid"],
         ]] },
-        { name: "vadd", sig: 1, blocks: [[["VAdd", b(LANE.f32x4), 0, 1], ["VSqrt", b(LANE.f32x4), 2], ["Ret", 3]]] },
+        { name: "vadd", sig: 1, blocks: [[["VAdd", b(LANE.f32x4), 0, 1], ["VSqrt", b(LANE.f32x4), 2], ["VFMin", b(LANE.f32x4), 3, 0], ["VFMax", b(LANE.f64x2), 4, 1],
+            ["VExtract", b(LANE.f64x2), b(0), b(1), 5], ["FMin", 6, 6], ["FMax", 7, 6], ["VReplace", b(LANE.f64x2), b(0), 5, 8], ["Ret", 9]]] },
         { name: "atomics", sig: 2, exported: true, blocks: [[
             ["AtomicLoad", b(MEM.i32), b(0), 0], ["AtomicLoad", b(MEM.i8s), b(1), 0], ["AtomicStore", b(MEM.i32), b(2), 1, 0], ["AtomicStore", b(MEM.i16u), b(0), 1, 0],
             ["AtomicRmw", b(0), b(MEM.i32), b(4), 1, 0], ["AtomicCas", b(MEM.i32), b(4), b(0), 2, 1, 0], ["Fence", b(1)], ["Fence", b(4)],

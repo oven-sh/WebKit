@@ -806,6 +806,10 @@ Value* BIRToB3::emitVectorOperation(const BIR::Function& function, const BIR::In
         }
         return simd(isMin ? VectorMin : VectorMax, V128, b3Lane, signMode, a, b());
     }
+    case Op::VFMin:
+        return simd(VectorMin, V128, b3Lane, SIMDSignMode::None, a, b());
+    case Op::VFMax:
+        return simd(VectorMax, V128, b3Lane, SIMDSignMode::None, a, b());
     case Op::VNeg:
         return simd(VectorNeg, V128, b3Lane, SIMDSignMode::None, a);
     case Op::VAbs:
@@ -1643,6 +1647,8 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
     case Op::VNarrow:
     case Op::VDot:
     case Op::VSwizzle:
+    case Op::VFMin:
+    case Op::VFMax:
         define(emitVectorOperation(function, inst));
         return;
     case Op::AtomicLoad:
@@ -1690,6 +1696,10 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
         return binary(B3::MulHigh);
     case Op::UMulHigh:
         return binary(B3::UMulHigh);
+    case Op::FMin:
+        return binary(B3::FMin);
+    case Op::FMax:
+        return binary(B3::FMax);
     case Op::Clz:
     case Op::Ctz:
     case Op::Popcnt:

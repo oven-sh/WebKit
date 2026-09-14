@@ -262,6 +262,9 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     rejects("UDiv of doubles", voidFunction([[["ConstF64", { f64: 1 }], ["UDiv", 0, 0], ["RetVoid"]]]), /integer operation on a float/);
     rejects("shift of a double", voidFunction([[["ConstF64", { f64: 1 }], ["ConstI32", s(1)], ["Shl", 0, 1], ["RetVoid"]]]), /shift of a float/);
     rejects("unsigned compare of doubles", voidFunction([[["ConstF64", { f64: 1 }], ["ULt", 0, 0], ["RetVoid"]]]), /unsigned compare of a float/);
+    rejects("FMin of integers", intFunction([[["FMin", 0, 0], ["Ret", 1]]]), /FMin and FMax operands must be the same floating-point type/);
+    rejects("FMax of a float and a double", voidFunction([[["ConstF64", { f64: 1 }], ["FDemote", 0], ["FMax", 0, 1], ["RetVoid"]]]), /FMin and FMax operands must be the same floating-point type/);
+    accepts("FMin of doubles and FMax of floats", voidFunction([[["ConstF64", { f64: 1 }], ["FDemote", 0], ["FMin", 0, 0], ["FMax", 1, 1], ["RetVoid"]]]));
     rejects("i32 to i32 bitcast", intFunction([[["Bitcast", b(T.i32), 0], ["Ret", 1]]]), /bad bitcast/);
     rejects("select with arms of two types", intFunction([[["ConstI64", s(1)], ["Select", 0, 0, 1], ["Ret", 0]]]), /select arms differ in type/);
     rejects("local out of range", intFunction([[["LocalGet", 0], ["Ret", 0]]]), /local out of range/);
@@ -313,6 +316,9 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     const vectorFunction = blocks => body({ ret: T.void, params: [T.v128] }, blocks);
     rejects("lane 6", vectorFunction([[["VAdd", b(6), 0, 0], ["RetVoid"]]]), /bad lane/);
     rejects("VRem of float lanes", vectorFunction([[["VRem", b(LANE.f32x4), b(1), 0, 0], ["RetVoid"]]]), /not defined for this lane shape/);
+    rejects("VFMin of integer lanes", vectorFunction([[["VFMin", b(LANE.i32x4), 0, 0], ["RetVoid"]]]), /not defined for this lane shape/);
+    rejects("VFMax of lane 6", vectorFunction([[["VFMax", b(6), 0, 0], ["RetVoid"]]]), /bad lane/);
+    accepts("VFMin and VFMax of both float lane shapes", vectorFunction([[["VFMin", b(LANE.f32x4), 0, 0], ["VFMax", b(LANE.f64x2), 0, 1], ["RetVoid"]]]));
     rejects("VSqrt of integer lanes", vectorFunction([[["VSqrt", b(LANE.i32x4), 0], ["RetVoid"]]]), /not defined for this lane shape/);
     rejects("signedness 2", vectorFunction([[["VMin", b(LANE.i32x4), b(2), 0, 0], ["RetVoid"]]]), /bad signedness/);
     accepts("lane 3 of four", vectorFunction([[["VExtract", b(LANE.i32x4), b(0), b(3), 0], ["RetVoid"]]]));
