@@ -3639,6 +3639,39 @@ void testCompareAndSwapIsNotMovedPastALoad()
     }
 }
 
+void testStoreOfTheAddressItIsStoredAt()
+{
+    // *p = p (or the low half of it, or p + 120), and p + 120 wanted next: where a store can also add to its base
+    // register (ARM64's pre- and post-indexed forms), it is not used when the register it would write back is the
+    // one it stores.
+    enum class Stored { Pointer, LowHalf, Copy, NextPointer };
+    for (Stored stored : { Stored::Pointer, Stored::LowHalf, Stored::Copy, Stored::NextPointer }) {
+        for (bool storeAtNext : { false, true }) {
+            Procedure proc;
+            BasicBlock* root = proc.addBlock();
+            Value* pointer = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+            Value* copy = root->appendNew<Value>(proc, Opaque, Origin(), pointer);
+            Value* lowHalf = root->appendNew<Value>(proc, Trunc, Origin(), pointer);
+            // The addition comes right before the store: that is the shape the lowering looks for.
+            Value* next = root->appendNew<Value>(proc, Add, Origin(), pointer, root->appendNew<Const64Value>(proc, Origin(), 120));
+            Value* value = stored == Stored::Pointer ? pointer : stored == Stored::LowHalf ? lowHalf : stored == Stored::Copy ? copy : next;
+            root->appendNew<MemoryValue>(proc, Store, Origin(), value, pointer, storeAtNext ? 120 : 0);
+            root->appendNewControlValue(proc, Return, Origin(), next);
+
+            uint64_t memory[32];
+            for (uint64_t& word : memory)
+                word = 0xa5a5a5a5a5a5a5a5ull;
+            uint64_t address = reinterpret_cast<uint64_t>(memory);
+            CHECK_EQ(compileAndRun<uint64_t>(proc, memory), address + 120);
+            uint64_t expected = stored == Stored::NextPointer ? address + 120 : address;
+            if (stored == Stored::LowHalf)
+                expected = (expected & 0xffffffffull) | 0xa5a5a5a500000000ull;
+            for (unsigned i = 0; i < 32; ++i)
+                CHECK_EQ(memory[i], i == (storeAtNext ? 15u : 0u) ? expected : 0xa5a5a5a5a5a5a5a5ull);
+        }
+    }
+}
+
 void testPureValueAfterForwardedLoadInLoop()
 {
     // In a loop: store a byte, load it back sign-extended, and sign-extend the stored value as well. Load

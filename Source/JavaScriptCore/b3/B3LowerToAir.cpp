@@ -4871,7 +4871,13 @@ private:
                     return false;
                 // The written-back register would be a copy of the stored one, and the two coalesce: a store
                 // that writes back its own source register is UNPREDICTABLE, and Apple's cores trap on it.
-                if (value == base1 || value == address)
+                // What is compared is what tmp() gives a register to: a Trunc of the base is the base's.
+                auto registerHolder = [&](Value* candidate) {
+                    while (shouldCopyPropagate(candidate))
+                        candidate = candidate->child(0);
+                    return candidate;
+                };
+                if (registerHolder(value) == registerHolder(base1) || registerHolder(value) == address)
                     return false;
                 intptr_t offset = address->child(1)->asIntPtr();
                 Value::OffsetType smallOffset = static_cast<Value::OffsetType>(offset);

@@ -1520,6 +1520,7 @@ void testFCCmpGreaterEqualOrDouble(double, double, double, double);
 void testFCCmpNaN(double, double, double, double);
 void testFCCmpNegatedAndDouble(double, double, double, double);
 void testPureValueAfterForwardedLoadInLoop();
+void testStoreOfTheAddressItIsStoredAt();
 void testCompareAndSwapIsNotMovedPastALoad();
 #if USE(BUN_JSC_ADDITIONS)
 void testLoadEliminationByAddress();
