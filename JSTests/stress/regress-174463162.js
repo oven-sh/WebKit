@@ -1,4 +1,4 @@
-// Bun: the helper below scribbles proto's header while main() still holds proto, so a collection before the script ends
+// The helper below scribbles proto's header while main() still holds proto, so a collection before the script ends
 // marks a cell with no Structure. Only the two modes that pass --collectContinuously=true collect that early.
 //@ $skipModes << "ftl-eager-no-cjit".to_sym
 //@ $skipModes << "no-cjit-collect-continuously".to_sym
