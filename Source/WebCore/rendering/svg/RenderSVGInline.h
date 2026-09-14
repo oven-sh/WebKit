@@ -70,6 +70,9 @@ private:
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const final;
     const RenderElement* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const final;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const final;
+#if PLATFORM(IOS_FAMILY)
+    void absoluteQuadsForSelection(Vector<FloatQuad>&) const final;
+#endif
 
     std::unique_ptr<LegacyInlineFlowBox> createInlineFlowBox() final;
 

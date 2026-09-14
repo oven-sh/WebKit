@@ -888,7 +888,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
                 ASSERT(customSetter);
                 // FIXME: We should only be caching these if we're not an uncacheable dictionary:
                 // https://bugs.webkit.org/show_bug.cgi?id=215347
-                slot.setCustomAccessor(obj, customSetter);
+                slot.setCustomAccessor(obj, customSetter, offset);
                 scope.release();
                 customSetter(obj->realm(), JSValue::encode(slot.thisValue()), JSValue::encode(value), propertyName);
                 return true;
@@ -898,7 +898,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
                     if (customSetter) {
                         // FIXME: We should only be caching these if we're not an uncacheable dictionary:
                         // https://bugs.webkit.org/show_bug.cgi?id=215347
-                        slot.setCustomValue(obj, customSetter);
+                        slot.setCustomValue(obj, customSetter, offset);
                         RELEASE_AND_RETURN(scope, customSetter(obj->realm(), JSValue::encode(obj), JSValue::encode(value), propertyName));
                     }
                     // Avoid PutModePut because it fails for non-extensible structures.
@@ -3805,7 +3805,9 @@ bool JSObject::increaseVectorLength(VM& vm, unsigned newLength)
     unsigned vectorLength = storage->vectorLength();
     unsigned availableVectorLength = storage->availableVectorLength(structure(), vectorLength); 
     if (availableVectorLength >= newLength) {
-        gcSafeZeroMemory(storage->m_vector + vectorLength, (availableVectorLength - vectorLength) * sizeof(JSValue));
+        // The cell was already big enough for the desired length!
+        for (unsigned i = vectorLength; i < availableVectorLength; ++i)
+            storage->m_vector[i].clear();
         WTF::storeStoreFence();
         storage->setVectorLength(availableVectorLength);
         return true;

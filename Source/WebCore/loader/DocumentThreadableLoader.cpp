@@ -643,7 +643,7 @@ void DocumentThreadableLoader::loadRequest(ResourceRequest&& request, SecurityCh
     if (!frame)
         return;
 
-    if (MixedContentChecker::shouldBlockRequest(*frame, requestURL))
+    if (MixedContentChecker::shouldBlockRequest(*frame, requestURL, MixedContentChecker::IsUpgradable::No, request.targetAddressSpace()))
         return;
 
     RefPtr<SharedBuffer> data;
@@ -671,7 +671,7 @@ void DocumentThreadableLoader::loadRequest(ResourceRequest&& request, SecurityCh
         return;
     }
 
-    if (!shouldPerformSecurityChecks()) {
+    if (!shouldPerformSecurityChecks() || LegacySchemeRegistry::schemeIsHandledBySchemeHandler(requestURL.protocol())) {
         // FIXME: FrameLoader::loadSynchronously() does not tell us whether a redirect happened or not, so we guess by comparing the
         // request and response URLs. This isn't a perfect test though, since a server can serve a redirect to the same URL that was
         // requested. Also comparing the request and response URLs as strings will fail if the requestURL still has its credentials.

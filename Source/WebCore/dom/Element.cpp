@@ -1850,8 +1850,10 @@ int Element::scrollWidth()
         return 0;
     }
 
-    if (CheckedPtr renderer = renderBox())
-        return Style::unapplyingZoom<int>(renderer->scrollWidth(), *renderer);
+    if (CheckedPtr renderer = renderBox()) {
+        auto scrollWidth = LayoutUnit { renderer->scrollWidth() };
+        return convertToNonSubpixelValue(Style::unapplyingZoom<LayoutUnit>(scrollWidth, *renderer).toDouble());
+    }
     return 0;
 }
 
@@ -1868,8 +1870,10 @@ int Element::scrollHeight()
         return 0;
     }
 
-    if (CheckedPtr renderer = renderBox())
-        return Style::unapplyingZoom<int>(renderer->scrollHeight(), *renderer);
+    if (CheckedPtr renderer = renderBox()) {
+        auto scrollHeight = LayoutUnit { renderer->scrollHeight() };
+        return convertToNonSubpixelValue(Style::unapplyingZoom<LayoutUnit>(scrollHeight, *renderer).toDouble());
+    }
     return 0;
 }
 
@@ -2472,7 +2476,7 @@ void Element::attributeChanged(const QualifiedName& name, const AtomString& oldV
         }
         break;
     case AttributeNames::accesskeyAttr:
-        document().invalidateAccessKeyCache();
+        protect(document())->invalidateAccessKeyCache();
         break;
     case AttributeNames::dirAttr:
         dirAttributeChanged(newValue);

@@ -33,40 +33,51 @@
 
 namespace WebKit {
 
-// FIXME: Remove this once rdar://186141869 is fixed.
-class SWIFT_NONCOPYABLE JavaScriptArgumentsBridge {
+#if defined(HAVE_NEW_CODABLE) && HAVE_NEW_CODABLE
+
+// FIXME: Remove this once rdar://185497624 is fixed.
+class JavaScriptEvaluationOwnedResult {
 public:
-    JavaScriptArgumentsBridge() = default;
+    explicit JavaScriptEvaluationOwnedResult(JavaScriptEvaluationResult&& result)
+        : m_result(WTF::move(result)) { }
 
-    explicit JavaScriptArgumentsBridge(size_t capacity)
-        : m_arguments(std::in_place)
-    {
-        m_arguments->reserveInitialCapacity(capacity);
-    }
+    JavaScriptEvaluationOwnedResult(const JavaScriptEvaluationOwnedResult&) = delete;
+    JavaScriptEvaluationOwnedResult& operator=(const JavaScriptEvaluationOwnedResult&) = delete;
+    JavaScriptEvaluationOwnedResult(JavaScriptEvaluationOwnedResult&&) = default;
+    JavaScriptEvaluationOwnedResult& operator=(JavaScriptEvaluationOwnedResult&&) = default;
 
-    JavaScriptArgumentsBridge(const JavaScriptArgumentsBridge&) = delete;
-    JavaScriptArgumentsBridge& operator=(const JavaScriptArgumentsBridge&) = delete;
-
-    JavaScriptArgumentsBridge(JavaScriptArgumentsBridge&&) = default;
-    JavaScriptArgumentsBridge& operator=(JavaScriptArgumentsBridge&&) = default;
-
-    void append(String&& key, JavaScriptEvaluationResult&& value)
-    {
-        m_arguments->constructAndAppend(WTF::move(key), WTF::move(value));
-    }
-
-    std::optional<Vector<std::pair<String, JavaScriptEvaluationResult>>> consume()
-    {
-        return std::exchange(m_arguments, std::nullopt);
-    }
+    using const_iterator = JavaScriptEvaluationResult::Map::const_iterator;
+    const_iterator begin() const { return m_result.map().begin(); }
+    const_iterator end() const { return m_result.map().end(); }
 
 private:
-    std::optional<Vector<std::pair<String, JavaScriptEvaluationResult>>> m_arguments;
+    JavaScriptEvaluationResult m_result;
 };
+
+#endif
 
 }
 
 namespace WebKit::CxxInteropSupport {
+
+// FIXME: Generalize this once rdar://186426517 is fixed.
+template<typename Alternative>
+inline Alternative alternativeForVariant(const JavaScriptEvaluationResult::Value& value)
+{
+    return std::get<Alternative>(value);
+}
+
+// FIXME: Remove this once rdar://186426517 is fixed.
+template<typename Alternative>
+inline size_t alternativeIndexForJavaScriptEvaluationResultValue()
+{
+    return WTF::alternativeIndexV<Alternative, JavaScriptEvaluationResult::Value>;
+}
+
+inline uint64_t jsObjectIDRawValue(const JSObjectID& id)
+{
+    return id.toUInt64();
+}
 
 inline RunJavaScriptResult::value_type takeValue(RunJavaScriptResult&& expected)
 {

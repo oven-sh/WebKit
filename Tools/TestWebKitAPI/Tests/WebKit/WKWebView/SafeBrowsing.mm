@@ -512,7 +512,7 @@ TEST(SafeBrowsing, MissingFramework)
 
 TEST(SafeBrowsing, HangTimeout)
 {
-    DelayedLookupContext.delayDuration = 1000_s;
+    DelayedLookupContext.delayDuration = 1000;
     TestWebKitAPI::HTTPServer server({
         { "/test"_s, { "test"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -533,7 +533,7 @@ TEST(SafeBrowsing, HangTimeout)
 
 TEST(SafeBrowsing, PostResponse)
 {
-    DelayedLookupContext.delayDuration = 25_ms;
+    DelayedLookupContext.delayDuration = 0.025;
     TestWebKitAPI::HTTPServer server({
         { "/test"_s, { "test"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -555,7 +555,7 @@ TEST(SafeBrowsing, PostResponse)
 
 TEST(SafeBrowsing, PostResponseIframe)
 {
-    DelayedLookupContext.delayDuration = 25_ms;
+    DelayedLookupContext.delayDuration = 0.025;
     ClassMethodSwizzler swizzler(getSSBLookupContextClassSingleton(), @selector(sharedLookupContext), [DelayedLookupContext methodForSelector:@selector(sharedLookupContext)]);
 
     RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
@@ -611,7 +611,7 @@ TEST(SafeBrowsing, PreresponseSafeBrowsingWarning)
 
 TEST(SafeBrowsing, PostResponseServerSideRedirect)
 {
-    DelayedLookupContext.delayDuration = 2_ms;
+    DelayedLookupContext.delayDuration = 0.002;
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { 301, { { "Location"_s, "/redirectTarget"_s } } } },
         { "/redirectTarget"_s, { "hi"_s } },
@@ -706,7 +706,7 @@ TEST(SafeBrowsing, MultipleRedirectsLastPhishing)
 
 TEST(SafeBrowsing, PostResponseInjectedBundleSkipsDecidePolicyForResponse)
 {
-    DelayedLookupContext.delayDuration = 25_ms;
+    DelayedLookupContext.delayDuration = 0.025;
     TestWebKitAPI::HTTPServer server({
         { "/test"_s, { "test"_s } },
     });
@@ -728,7 +728,7 @@ TEST(SafeBrowsing, PostResponseInjectedBundleSkipsDecidePolicyForResponse)
 
 TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwapWithSkippedResponse)
 {
-    DelayedLookupContext.delayDuration = 5_ms;
+    DelayedLookupContext.delayDuration = 0.005;
 
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { "source"_s } },
@@ -766,7 +766,7 @@ TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwapWithSkippedResponse)
 
 TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwapWithSkippedResponseSlowLookup)
 {
-    DelayedLookupContext.delayDuration = 100_ms;
+    DelayedLookupContext.delayDuration = 0.1;
 
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { "source"_s } },
@@ -803,7 +803,7 @@ TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwapWithSkippedResponseSlowLookup
 
 TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwap)
 {
-    DelayedLookupContext.delayDuration = 5_ms;
+    DelayedLookupContext.delayDuration = 0.005;
 
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { "source"_s } },
@@ -841,7 +841,7 @@ TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwap)
 
 TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwapSlowLookup)
 {
-    DelayedLookupContext.delayDuration = 100_ms;
+    DelayedLookupContext.delayDuration = 0.1;
 
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { "source"_s } },
@@ -879,7 +879,7 @@ TEST(SafeBrowsing, WarningShownAfterCOOPProcessSwapSlowLookup)
 
 TEST(SafeBrowsing, WarningShownWhenLookupCompletesBeforeResponse)
 {
-    DelayedLookupContext.delayDuration = 5_ms;
+    DelayedLookupContext.delayDuration = 0.005;
     RetainPtr handler = adoptNS([[TestURLSchemeHandler alloc] init]);
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     [configuration setURLSchemeHandler:handler.get() forURLScheme:@"sb"];
@@ -908,7 +908,7 @@ TEST(SafeBrowsing, WarningShownWhenLookupCompletesBeforeResponse)
 
 TEST(SafeBrowsing, WarningShownAfterRedirectWithLateResult)
 {
-    DelayedLookupContext.delayDuration = 5_ms;
+    DelayedLookupContext.delayDuration = 0.005;
     RetainPtr handler = adoptNS([[TestURLSchemeHandler alloc] init]);
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     [configuration setURLSchemeHandler:handler.get() forURLScheme:@"sb"];
@@ -944,7 +944,7 @@ TEST(SafeBrowsing, WarningShownAfterRedirectWithLateResult)
 
 TEST(SafeBrowsing, PostTimeout)
 {
-    DelayedLookupContext.delayDuration = 100_ms;
+    DelayedLookupContext.delayDuration = 0.1;
     TestWebKitAPI::HTTPServer server({
         { "/test"_s, { "test"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1027,7 +1027,7 @@ TEST(SafeBrowsing, ModalShownImmediatelyWhenNoCheck)
 
 TEST(SafeBrowsing, ModalDeferredDuringCheck)
 {
-    DelayedLookupContext.delayDuration = 1000_ms;
+    DelayedLookupContext.delayDuration = 1;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "<html><body><script>alert('deferred')</script><h1>Test</h1></body></html>"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1067,7 +1067,7 @@ TEST(SafeBrowsing, ModalDeferredDuringCheck)
 
 TEST(SafeBrowsing, DeferredModalShownWhenProceedingThroughWarning)
 {
-    DelayedLookupContext.delayDuration = 1000_ms;
+    DelayedLookupContext.delayDuration = 1;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "<html><body onload='alert(\"proceed test\")'><h1>Test</h1></body></html>"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1111,7 +1111,7 @@ TEST(SafeBrowsing, DeferredModalShownWhenProceedingThroughWarning)
 
 TEST(SafeBrowsing, DeferredModalSuppressedWhenGoingBack)
 {
-    DelayedLookupContext.delayDuration = 1000_ms;
+    DelayedLookupContext.delayDuration = 1;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "<html><body onload='alert(\"should not show\")'><h1>Phishing</h1></body></html>"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1156,7 +1156,7 @@ TEST(SafeBrowsing, DeferredModalSuppressedWhenGoingBack)
 
 TEST(SafeBrowsing, MultipleDeferredModalsShownInOrder)
 {
-    DelayedLookupContext.delayDuration = 1000_ms;
+    DelayedLookupContext.delayDuration = 1;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "<html><body onload='test()'><script>function test() { alert('first'); alert('second'); alert('third'); }</script></body></html>"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1203,7 +1203,7 @@ TEST(SafeBrowsing, MultipleDeferredModalsShownInOrder)
 
 TEST(SafeBrowsing, DeferredModalsClearedOnNavigation)
 {
-    DelayedLookupContext.delayDuration = 1000_ms;
+    DelayedLookupContext.delayDuration = 1;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "<html><body onload='alert(\"deferred\")'><h1>Test</h1></body></html>"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1273,7 +1273,7 @@ TEST(SafeBrowsing, ModalShownWhenCheckCompletesClean)
 
 TEST(SafeBrowsing, AllModalTypesProperlyDeferred)
 {
-    DelayedLookupContext.delayDuration = 1000_ms;
+    DelayedLookupContext.delayDuration = 1;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "<html><body onload='test()'><script>function test() { alert('test alert'); confirm('test confirm'); prompt('test prompt', 'default'); }</script></body></html>"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1422,7 +1422,7 @@ TEST(SafeBrowsing, SetTimeoutNavigationFromWarningPage)
 
 TEST(SafeBrowsing, DownloadDeferredAndBlockedBySafeBrowsing)
 {
-    DelayedLookupContext.delayDuration = 50_ms;
+    DelayedLookupContext.delayDuration = 0.05;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "download-content"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1456,7 +1456,7 @@ TEST(SafeBrowsing, DownloadDeferredAndBlockedBySafeBrowsingPostTimeout)
 {
     // Use a delay longer than the ~250ms listener timeout to verify the deferral
     // waits for the actual Safe Browsing result, not just the timeout.
-    DelayedLookupContext.delayDuration = 500_ms;
+    DelayedLookupContext.delayDuration = 0.5;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "download-content"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1488,7 +1488,7 @@ TEST(SafeBrowsing, DownloadDeferredAndBlockedBySafeBrowsingPostTimeout)
 
 TEST(SafeBrowsing, CleanDownloadProceedsAfterSafeBrowsingCheck)
 {
-    DelayedLookupContext.delayDuration = 50_ms;
+    DelayedLookupContext.delayDuration = 0.05;
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { "download-content"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);
@@ -1518,7 +1518,7 @@ TEST(SafeBrowsing, CleanDownloadProceedsAfterSafeBrowsingCheck)
 
 TEST(SafeBrowsing, SubframeDownloadBlockedBySafeBrowsing)
 {
-    DelayedLookupContext.delayDuration = 50_ms;
+    DelayedLookupContext.delayDuration = 0.05;
     TestWebKitAPI::HTTPServer server({
         { "/safe"_s, { "<html><body><iframe src='https://evil.com/malicious'></iframe></body></html>"_s } },
         { "/malicious"_s, { "download-content"_s } },
@@ -1567,7 +1567,7 @@ TEST(SafeBrowsing, SubframeDownloadBlockedBySafeBrowsing)
 
 TEST(SafeBrowsing, NavigationActionDownloadDeferredBySafeBrowsing)
 {
-    DelayedLookupContext.delayDuration = 50_ms;
+    DelayedLookupContext.delayDuration = 0.05;
     TestWebKitAPI::HTTPServer server({
         { "/malicious"_s, { "content"_s } },
     }, TestWebKitAPI::HTTPServer::Protocol::HttpsProxy);

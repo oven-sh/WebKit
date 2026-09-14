@@ -141,7 +141,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
         bcp47.append("und-Zsye");
     auto typeface = fontManager().matchFamilyStyleCharacter(nullptr, { }, bcp47.mutableSpan().data(), bcp47.size(), baseCharacter);
 #else
-    auto typeface = m_skiaSystemFallbackFontCache.fontForCharacterCluster(isEmoji ? "und-Zsye"_s : description.computedLocale(), stringView);
+    auto typeface = m_skiaSystemFallbackFontCache.fontForCharacterCluster(isEmoji ? "und-Zsye"_s : description.usedLocale(), stringView);
 #endif
     if (!typeface)
         return nullptr;

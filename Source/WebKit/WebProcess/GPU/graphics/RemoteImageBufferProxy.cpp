@@ -123,9 +123,14 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteImageBufferProxyFlusher);
 
 }
 
-RemoteImageBufferProxy::RemoteImageBufferProxy(Parameters parameters, const ImageBufferBackend::Info& info, RemoteRenderingBackendProxy& renderingBackend)
-    : ImageBuffer(parameters, info, { }, nullptr)
-    , m_context(ImageBuffer::colorSpace(), ImageBuffer::renderingMode() , { { }, ImageBuffer::logicalSize() }, ImageBuffer::baseTransform(), renderingBackend)
+Ref<RemoteImageBufferProxy> RemoteImageBufferProxy::createForSerializedBuffer(const ImageBuffer::Parameters& parameters, std::unique_ptr<ImageBufferBackend>&& backend, RemoteRenderingBackendProxy& renderingBackend)
+{
+    return adoptRef(*new RemoteImageBufferProxy(parameters, WTF::move(backend), renderingBackend));
+}
+
+RemoteImageBufferProxy::RemoteImageBufferProxy(Parameters parameters, std::unique_ptr<ImageBufferBackend>&& backend, RemoteRenderingBackendProxy& renderingBackend)
+    : ImageBuffer(parameters, { }, WTF::move(backend))
+    , m_context({ { }, ImageBuffer::logicalSize() }, ImageBuffer::baseTransform(), ImageBuffer::colorSpace(), ImageBuffer::renderingMode(), renderingBackend)
     , m_renderingBackend(renderingBackend)
 {
     m_context.setClient(*this);
@@ -196,85 +201,78 @@ void RemoteImageBufferProxy::backingStoreWillChange()
     prepareForBackingStoreChange();
 }
 
-void RemoteImageBufferProxy::didCreateBackend(std::optional<ImageBufferBackendHandle> backendHandle)
+void RemoteImageBufferProxy::didFailToCreateBackend()
 {
-    ASSERT(!m_backend);
-    // This should match RemoteImageBufferProxy::create<>() call site and RemoteImageBuffer::create<>() call site.
-    // FIXME: this will be removed and backend be constructed in the contructor.
-    std::unique_ptr<ImageBufferBackend> backend;
-    auto backendParameters = this->backendParameters(parameters());
-
-    switch (renderingMode()) {
-    case RenderingMode::Accelerated:
-#if HAVE(IOSURFACE)
-        if (backendHandle && std::holds_alternative<MachSendRight>(*backendHandle)) {
-            if (RemoteRenderingBackendProxy::canMapRemoteImageBufferBackendBackingStore())
-                backend = ImageBufferShareableMappedIOSurfaceBackend::create(backendParameters, WTF::move(*backendHandle));
-            else
-                backend = ImageBufferRemoteIOSurfaceBackend::create(backendParameters, WTF::move(*backendHandle));
-        }
-#endif
-        [[fallthrough]];
-
-    case RenderingMode::Unaccelerated:
-        if (backendHandle && std::holds_alternative<ShareableBitmap::Handle>(*backendHandle)) {
-            m_backendInfo = ImageBuffer::populateBackendInfo<ImageBufferShareableBitmapBackend>(backendParameters);
-            auto handle = std::get<ShareableBitmap::Handle>(WTF::move(*backendHandle));
-            handle.takeOwnershipOfMemory(MemoryLedger::Graphics);
-            backend = ImageBufferShareableBitmapBackend::create(backendParameters, WTF::move(handle));
-        }
-        break;
-
-    case RenderingMode::PDFDocument:
-        backend = ImageBufferRemotePDFDocumentBackend::create(backendParameters);
-        break;
-
-    case RenderingMode::DisplayList:
-        ASSERT(renderingPurpose() == RenderingPurpose::Snapshot);
-        backend = ImageBufferRemoteDisplayListBackend::create(backendParameters);
-        break;
+    m_context.abandon();
+    if (RefPtr renderingBackend = m_renderingBackend.get()) {
+        m_renderingBackend = nullptr;
+        renderingBackend->releaseImageBuffer(*this);
     }
-
-    if (!backend) {
-        m_context.abandon();
-        if (RefPtr renderingBackend = m_renderingBackend.get()) {
-            m_renderingBackend = nullptr;
-            renderingBackend->releaseImageBuffer(*this);
-        }
-        return;
-    }
-    setBackend(WTF::move(backend));
 }
 
-ImageBufferBackend* RemoteImageBufferProxy::ensureBackend() const
+// The backing store of a backend this process cannot map lives in the GPU process,
+// which hands out its handle on request. Everything else was built in the constructor.
+void RemoteImageBufferProxy::ensureBackendHandle() const
 {
-    if (m_backend)
-        return m_backend.get();
+    auto* backend = ImageBuffer::backend();
+    if (!backend || backend->canMapBackingStore())
+        return;
+    auto* sharing = dynamicDowncast<ImageBufferBackendHandleSharing>(backend->toBackendSharing());
+    if (!sharing || sharing->hasBackendHandle())
+        return;
+    // The handle describes the backing store the GPU process is drawing into, so let
+    // it see the buffered draws before it answers.
+    sendPendingDrawsIfNecessary();
+    auto sendResult = sendSync(Messages::RemoteImageBuffer::GetBackendHandle());
+    if (!sendResult.succeeded())
+        return;
+    auto [handle] = sendResult.takeReply();
+    if (!handle)
+        return;
+    sharing->setBackendHandle(WTF::move(*handle));
+}
 
-    RefPtr connection = this->connection();
-    if (!connection)
-        return nullptr;
+std::optional<ImageBufferBackendHandle> RemoteImageBufferProxy::takeBackendHandleForSerialization()
+{
+    auto* backend = ImageBuffer::backend();
+    if (!backend || !backend->canMapBackingStore())
+        return std::nullopt;
+    auto* sharing = dynamicDowncast<ImageBufferBackendHandleSharing>(backend->toBackendSharing());
+    if (!sharing)
+        return std::nullopt;
+    return sharing->takeBackendHandle();
+}
 
-    auto error = connection->waitForAndDispatchImmediately<Messages::RemoteImageBufferProxy::DidCreateBackend>(m_renderingResourceIdentifier);
-    if (error == IPC::Error::NoError)
-        return m_backend.get();
+ImageBufferBackendSharing* RemoteImageBufferProxy::toBackendSharing()
+{
+    ensureBackendHandle();
+    return ImageBuffer::toBackendSharing();
+}
 
-    RefPtr renderingBackend = m_renderingBackend.get();
-    if (!renderingBackend) [[unlikely]] {
-        RELEASE_LOG(RemoteLayerBuffers, "[renderingBackend was deleted] RemoteImageBufferProxy::ensureBackendCreated - waitForAndDispatchImmediately returned error: %" PUBLIC_LOG_STRING,
-            IPC::errorAsString(error).characters());
-        return nullptr;
-    }
+std::optional<ImageBufferBackendHandle> RemoteImageBufferProxy::createBackingStoreHandleForGPUProcess() const
+{
+    // Only backing store this process allocated travels to the GPU process.
+    auto* backend = ImageBuffer::backend();
+    if (!backend || !backend->canMapBackingStore())
+        return std::nullopt;
+    auto* sharing = dynamicDowncast<ImageBufferBackendHandleSharing>(backend->toBackendSharing());
+    if (!sharing)
+        return std::nullopt;
+    return sharing->createBackendHandle();
+}
 
-    RELEASE_LOG(RemoteLayerBuffers, "[renderingBackend=%" PRIu64 "] RemoteImageBufferProxy::ensureBackendCreated - waitForAndDispatchImmediately returned error: %" PUBLIC_LOG_STRING,
-        renderingBackend->renderingBackendIdentifier().toUInt64(), IPC::errorAsString(error).characters());
-    didBecomeUnresponsive();
-    return nullptr;
+std::optional<RenderingMode> RemoteImageBufferProxy::getEffectiveRenderingModeForTesting() const
+{
+    auto sendResult = sendSync(Messages::RemoteImageBuffer::GetEffectiveRenderingModeForTesting());
+    if (!sendResult.succeeded())
+        return std::nullopt;
+    auto [renderingMode] = sendResult.takeReply();
+    return renderingMode;
 }
 
 RefPtr<NativeImage> RemoteImageBufferProxy::copyNativeImage() const
 {
-    auto* backend = ensureBackend();
+    auto* backend = ImageBuffer::backend();
     if (!backend)
         return nullptr;
     if (backend->canMapBackingStore()) {
@@ -295,7 +293,7 @@ RefPtr<NativeImage> RemoteImageBufferProxy::copyNativeImage() const
 
 RefPtr<NativeImage> RemoteImageBufferProxy::createNativeImageReference() const
 {
-    auto* backend = ensureBackend();
+    auto* backend = ImageBuffer::backend();
     if (!backend)
         return { };
     if (backend->canMapBackingStore()) {
@@ -344,7 +342,7 @@ RefPtr<NativeImage> RemoteImageBufferProxy::filteredNativeImage(Filter& filter)
 
 RefPtr<PixelBuffer> RemoteImageBufferProxy::getPixelBuffer(const PixelBufferFormat& destinationFormat, const IntRect& sourceRect, const ImageBufferAllocator& allocator) const
 {
-    auto* backend = ensureBackend();
+    auto* backend = ImageBuffer::backend();
     if (!backend)
         return { };
     // getPixelBuffer observes the buffer's pixels (the non-mappable branch
@@ -369,10 +367,15 @@ void RemoteImageBufferProxy::disconnect()
 {
     m_context.consumeHasDrawn();
     m_context.disconnect();
-    if (m_backend)
-        prepareForBackingStoreChange();
+    prepareForBackingStoreChange();
     m_pendingFlush = nullptr;
-    m_backend = nullptr;
+    // The backend stays: it is where this buffer's properties come from, and a backing
+    // store this process allocated outlives the GPU process. A handle to a GPU process
+    // backing store does not, so drop it and ask again if it is needed.
+    if (auto* backend = ImageBuffer::backend(); backend && !backend->canMapBackingStore()) {
+        if (auto* sharing = dynamicDowncast<ImageBufferBackendHandleSharing>(backend->toBackendSharing()))
+            sharing->clearBackendHandle();
+    }
 }
 
 bool RemoteImageBufferProxy::isValid() const
@@ -387,7 +390,7 @@ GraphicsContext& RemoteImageBufferProxy::context() const
 
 void RemoteImageBufferProxy::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
 {
-    auto* backend = ensureBackend();
+    auto* backend = ImageBuffer::backend();
     if (!backend)
         return;
     if (backend->canMapBackingStore()) {
@@ -488,7 +491,7 @@ void RemoteImageBufferProxy::prepareForBackingStoreChange()
 {
     // If the backing store is mapped in the process and the changes happen in the other
     // process, we need to prepare for the backing store change before we let the change happen.
-    if (auto* backend = ensureBackend())
+    if (auto* backend = ImageBuffer::backend())
         backend->ensureNativeImagesHaveCopiedBackingStore();
 }
 
@@ -505,9 +508,6 @@ std::unique_ptr<SerializedImageBuffer> RemoteImageBufferProxy::sinkIntoSerialize
 
     prepareForBackingStoreChange();
 
-    if (!ensureBackend())
-        return nullptr;
-
     std::unique_ptr result = renderingBackend->moveToSerializedBuffer(*this);
 
     disconnect();
@@ -517,16 +517,46 @@ std::unique_ptr<SerializedImageBuffer> RemoteImageBufferProxy::sinkIntoSerialize
     return ret;
 }
 
-RemoteSerializedImageBufferProxy::RemoteSerializedImageBufferProxy(WebCore::ImageBuffer::Parameters parameters, const WebCore::ImageBufferBackend::Info& info, RemoteRenderingBackendProxy& backend)
+RemoteSerializedImageBufferProxy::RemoteSerializedImageBufferProxy(WebCore::ImageBuffer::Parameters parameters, WebCore::RenderingMode renderingMode, size_t memoryCost, std::optional<ImageBufferBackendHandle>&& backendHandle, RemoteRenderingBackendProxy& backend)
     : m_parameters(parameters)
-    , m_info(info)
+    , m_renderingMode(renderingMode)
+    , m_memoryCost(memoryCost)
+    , m_backendHandle(WTF::move(backendHandle))
     , m_connection(nullptr/*backend.connection()*/)
 {
 }
 
+static std::optional<ImageBufferBackendHandle> copyBackendHandle(const std::optional<ImageBufferBackendHandle>& handle)
+{
+    if (!handle)
+        return std::nullopt;
+    return WTF::switchOn(*handle,
+        [](const ShareableBitmap::Handle& bitmapHandle) -> std::optional<ImageBufferBackendHandle> {
+            return ImageBufferBackendHandle { ShareableBitmap::Handle { bitmapHandle } };
+        }
+#if PLATFORM(COCOA)
+        , [](const MachSendRight& sendRight) -> std::optional<ImageBufferBackendHandle> {
+            return ImageBufferBackendHandle { MachSendRight { sendRight } };
+        }
+#endif
+#if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
+        , [](const WebCore::DynamicContentScalingDisplayList&) -> std::optional<ImageBufferBackendHandle> {
+            return std::nullopt;
+        }
+#endif
+    );
+}
+
+std::unique_ptr<WebCore::SerializedImageBuffer> RemoteSerializedImageBufferProxy::clone() const
+{
+    return std::unique_ptr<WebCore::SerializedImageBuffer>(new RemoteSerializedImageBufferProxy(m_parameters, m_renderingMode, m_memoryCost, copyBackendHandle(m_backendHandle), m_connection));
+}
+
 RefPtr<ImageBuffer> RemoteSerializedImageBufferProxy::sinkIntoImageBuffer(std::unique_ptr<RemoteSerializedImageBufferProxy> buffer, RemoteRenderingBackendProxy& renderingBackend)
 {
-    Ref result = renderingBackend.moveToImageBuffer(*buffer);
+    RefPtr result = renderingBackend.moveToImageBuffer(*buffer);
+    if (!result)
+        return nullptr;
     buffer->m_connection = nullptr;
     return result;
 }

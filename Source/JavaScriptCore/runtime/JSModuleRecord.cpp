@@ -33,6 +33,7 @@
 #include "JSCInlines.h"
 #include "JSGeneratorFunction.h"
 #include "JSMicrotask.h"
+#include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
@@ -40,25 +41,26 @@
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
 
 const ClassInfo JSModuleRecord::s_info = { "ModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleRecord) };
 
-JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
+JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
 {
-    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, features);
+    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleLoader, moduleKey, sourceCode, features);
     instance->finishCreation(globalObject, vm);
     return instance;
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSModuleRecord* JSModuleRecord::createPrelinked(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, Ref<PrelinkedModuleGraph>&& graph, uint32_t moduleIndex)
+JSModuleRecord* JSModuleRecord::createPrelinked(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, Ref<PrelinkedModuleGraph>&& graph, uint32_t moduleIndex)
 {
     const PrelinkedModuleGraph::Module& module = graph->module(moduleIndex);
     CodeFeatures features = (module.flags & PrelinkedModuleGraph::Module::HasImportMeta) ? ImportMetaFeature : NoFeatures;
-    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, features);
+    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleLoader, moduleKey, sourceCode, features);
     instance->finishCreation(globalObject, vm);
     instance->initializePrelinked(vm, WTF::move(graph), moduleIndex);
     if (!Options::usePrelinkedModuleInfo()) [[unlikely]]
@@ -67,8 +69,8 @@ JSModuleRecord* JSModuleRecord::createPrelinked(JSGlobalObject* globalObject, VM
 }
 #endif
 
-JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
-    : Base(vm, structure, moduleKey, SourceProviderSourceType::Module)
+JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
+    : Base(vm, structure, moduleLoader, moduleKey, SourceProviderSourceType::Module)
     , m_sourceCode(sourceCode)
     , m_features(features)
 {
@@ -135,6 +137,19 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
         return { };
     }
 
+    // Every module this one imports from has its environment now. Filling the import
+    // slots here rather than on first use (JSModuleEnvironment::fillImportSlot) keeps
+    // optimized code shared with other records from meeting an empty slot per record.
+    JSModuleEnvironment* environment = moduleEnvironment();
+    for (unsigned i = 0, count = importSlotCount(); i < count; ++i) {
+        if (environment->importSlot(i))
+            continue;
+        Resolution resolution = resolveImport(globalObject, importSlotNames()[i]);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (resolution.type == Resolution::Type::Resolved)
+            environment->importSlot(i).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
+    }
+
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, { });
@@ -168,7 +183,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         ASSERT(capability == nullptr);
         // 9.b. Push moduleContext onto the execution context stack; moduleContext is now the running execution context.
         // 9.c. Let result be Completion(Evaluation of module.[[ECMAScriptCode]]).
-        globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         // 9.d. Suspend moduleContext and remove it from the execution context stack.
         // 9.e. Resume the context that is now on the top of the execution context stack as the running execution context.
         // 9.f. If result is an abrupt completion, then
@@ -180,10 +195,82 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         ASSERT(capability != nullptr);
         // 10.b. Perform AsyncBlockStart(capability, module.[[ECMAScriptCode]], moduleContext).
         asyncCapability(vm, capability);
-        JSValue result = globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        JSValue result = moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         asyncModuleResolveEvaluation(globalObject, vm, scope, this, result);
     }
     // 11. Return unused.
+}
+
+const Vector<Identifier>& JSModuleRecord::importSlotNames()
+{
+    if (!m_importSlotNames) {
+        Vector<Identifier> names;
+#if USE(BUN_JSC_ADDITIONS)
+        if (importEntriesArePrelinked()) {
+            for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
+                if (!import.isNamespace())
+                    names.append(prelinkedGraph()->identifier(import.localSid));
+            }
+        } else
+#endif
+        {
+            for (const auto& entry : importEntries().values()) {
+                if (entry.type != ImportEntryType::Namespace)
+                    names.append(entry.localName);
+            }
+        }
+        std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
+        m_importSlotNames = WTF::move(names);
+    }
+    return *m_importSlotNames;
+}
+
+unsigned JSModuleRecord::importSlotIndex(UniquedStringImpl* localName)
+{
+    const Vector<Identifier>& names = importSlotNames();
+    auto iterator = std::lower_bound(names.begin(), names.end(), localName, [](const Identifier& name, UniquedStringImpl* localName) { return codePointCompare(StringView(name.string()), StringView(*localName)) < 0; });
+    RELEASE_ASSERT(iterator != names.end() && iterator->impl() == localName);
+    return iterator - names.begin();
+}
+
+JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject, unsigned index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Resolution resolution = resolveImport(globalObject, importSlotNames()[index]);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(resolution.type == Resolution::Type::Resolved);
+    JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironment();
+    moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
+    return environment;
+}
+
+std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importedBindings(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ModuleProgramExecutable::ImportedBindings bindings;
+    for (const Identifier& localName : importSlotNames()) {
+        Resolution resolution = resolveImport(globalObject, localName);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (resolution.type != Resolution::Type::Resolved)
+            continue;
+        if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
+            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0 });
+            continue;
+        }
+        JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
+        if (!environment)
+            return std::nullopt;
+        SymbolTable* symbolTable = environment->symbolTable();
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        auto iterator = symbolTable->find(locker, resolution.localName.impl());
+        RELEASE_ASSERT(iterator != symbolTable->end(locker));
+        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset() });
+    }
+    return bindings;
 }
 
 ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* globalObject)
@@ -195,11 +282,41 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode());
+    // Linked module code embeds, for each imported binding, its ScopeOffset in the
+    // exporting module's environment, which that module's source text determines, and
+    // for variables of the loader's module scope, their offsets in its lexical
+    // environments. So records in one global object for the same module key (URL) and
+    // source text whose imports resolve to the same sources and names, and whose
+    // loaders' module scopes have the same symbol tables, share the executable:
+    // CodeBlocks, JIT code and the function declarations' executables. A record for
+    // which these differ links its own, which later records are then compared against.
+    std::optional<ModuleProgramExecutable::ImportedBindings> bindings = importedBindings(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    Vector<SymbolTable*> moduleScopeSymbolTables;
+    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next())
+        moduleScopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(moduleScope)->symbolTable());
+    // Keyed by the module key's impl and the module scope's symbol table, so loaders with
+    // different module scopes each keep their entry: a live entry whose key died and was
+    // reused for another module fails the URL / source comparison and is replaced.
+    auto& executables = globalObject->moduleProgramExecutables();
+    JSGlobalObject::ModuleProgramExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
+    if (bindings) {
+        ModuleProgramExecutable* shared = executables.get(key);
+        // (An executable whose code was deleted, ScriptExecutable::clearCode, has nothing to
+        // share and no symbol table to instantiate an environment from.)
+        if (shared && shared->unlinkedCodeBlock() && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+            && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
+            m_moduleProgramExecutable.set(vm, this, shared);
+            return shared;
+        }
+    }
+
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings), moduleScopeSymbolTables);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
-
-    RELEASE_AND_RETURN(scope, executable);
+    if (executable->importedBindings())
+        executables.set(key, Weak<ModuleProgramExecutable>(executable));
+    return executable;
 }
 
 } // namespace JSC

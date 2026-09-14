@@ -305,6 +305,25 @@ WGPUPowerPreference ConvertToBackingContext::convertToBacking(PowerPreference po
     }
 }
 
+WGPUColorSpace ConvertToBackingContext::convertToBacking(PredefinedColorSpace colorSpace)
+{
+    switch (colorSpace) {
+    case PredefinedColorSpace::SRGB:
+        return WGPUColorSpace::SRGB;
+    case PredefinedColorSpace::SRGBLinear:
+        return WGPUColorSpace::SRGBLinear;
+#if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
+    case PredefinedColorSpace::DisplayP3:
+        return WGPUColorSpace::DisplayP3;
+    case PredefinedColorSpace::DisplayP3Linear:
+        return WGPUColorSpace::DisplayP3Linear;
+#endif
+    }
+
+    ASSERT_NOT_REACHED();
+    return WGPUColorSpace::SRGB;
+}
+
 WGPUPrimitiveTopology ConvertToBackingContext::convertToBacking(PrimitiveTopology primitiveTopology)
 {
     switch (primitiveTopology) {

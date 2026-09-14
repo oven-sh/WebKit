@@ -59,7 +59,7 @@ public:
     TextSpacingTrim textSpacingTrim() const { return m_textSpacingTrim; }
     TextAutospace textAutospace() const { return m_textAutospace; }
     UScriptCode script() const { return static_cast<UScriptCode>(m_script); }
-    const AtomString& computedLocale() const { return m_locale; } // This is what you should be using for things like text shaping and font fallback
+    const AtomString& usedLocale() const { return m_usedLocale; } // This is what you should be using for things like text shaping and font fallback
     const AtomString& specifiedLocale() const { return m_specifiedLocale; } // This is what you should be using for web-exposed things like -webkit-locale
 
     FontOrientation orientation() const { return static_cast<FontOrientation>(m_orientation); }
@@ -165,7 +165,7 @@ private:
     FontVariantAlternates m_variantAlternates;
     FontPalette m_fontPalette;
     FontSizeAdjust m_sizeAdjust;
-    AtomString m_locale;
+    AtomString m_usedLocale;
     AtomString m_specifiedLocale;
 
     FontSelectionRequest m_fontSelectionRequest;

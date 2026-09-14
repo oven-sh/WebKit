@@ -91,7 +91,7 @@ bool checkModuleSyntax(JSGlobalObject* globalObject, const SourceCode& source, P
         return false;
 
     PrivateName privateName(PrivateName::Description, "EntrypointModule"_s);
-    ModuleAnalyzer moduleAnalyzer(globalObject, Identifier::fromUid(privateName), source, moduleProgramNode->features());
+    ModuleAnalyzer moduleAnalyzer(globalObject, globalObject->moduleLoader(), Identifier::fromUid(privateName), source, moduleProgramNode->features());
     return !!moduleAnalyzer.analyze(*moduleProgramNode);
 }
 

@@ -62,6 +62,7 @@ public:
     WEBCORE_EXPORT bool NODELETE isDescendantOf(const Frame* ancestor) const;
 
     bool containsRemoteFrame() const;
+    bool containsLocalFrame() const;
     WEBCORE_EXPORT bool hasRemoteFrameAncestor() const;
     
     WEBCORE_EXPORT Frame* NODELETE traverseNext(const Frame* stayWithin = nullptr) const;
@@ -88,7 +89,7 @@ public:
     WEBCORE_EXPORT Frame& NODELETE top() const;
     unsigned NODELETE depth() const;
 
-    bool hasRemoteFrameDescendant() const;
+    WEBCORE_EXPORT bool hasRemoteFrameDescendant() const;
 
     WEBCORE_EXPORT RefPtr<Frame> scopedChild(unsigned index) const;
     WEBCORE_EXPORT RefPtr<Frame> scopedChildByUniqueName(const AtomString&) const;

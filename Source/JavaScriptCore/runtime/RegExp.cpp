@@ -188,10 +188,27 @@ void RegExp::finishCreation(VM& vm)
         return;
     }
 
+    updateMetadataFromPattern(pattern);
+
+    unsigned offsetVectorSize = offsetVectorBaseForNamedCaptures();
+    if (hasNamedCaptures())
+        offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
+    m_ovector = FixedVector<int>(offsetVectorSize);
+}
+
+void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
+{
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;
 
     m_numSubpatterns = pattern.m_numSubpatterns;
+#if USE(BUN_JSC_ADDITIONS)
+    // The compile paths call this again for a RegExp whose RareData finishCreation already built (the callers
+    // RELEASE_ASSERT that the pattern parsed to the same subpattern count). Replacing it would free a RareData
+    // the concurrent marker may be reading in visitChildren and drop m_cachedGroupsStructureID.
+    if (m_rareData)
+        return;
+#endif
     if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty()) {
         auto rareData = makeUnique<RareData>();
         rareData->m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
@@ -203,11 +220,6 @@ void RegExp::finishCreation(VM& vm)
         WTF::storeStoreFence();
         m_rareData = WTF::move(rareData);
     }
-
-    unsigned offsetVectorSize = offsetVectorBaseForNamedCaptures();
-    if (hasNamedCaptures())
-        offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
-    m_ovector = FixedVector<int>(offsetVectorSize);
 }
 
 void RegExp::destroy(JSCell* cell)
@@ -315,9 +327,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         return;
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
-
-    m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    updateMetadataFromPattern(pattern);
 
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
     if (!m_regExpBytecode) {
@@ -336,9 +346,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         return;
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
-
-    m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    updateMetadataFromPattern(pattern);
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
@@ -357,6 +365,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
+            m_minimumSize = pattern.m_body->m_minimumSize;
             return;
         }
     }
@@ -373,6 +382,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         m_state = ParseError;
         return;
     }
+    m_minimumSize = pattern.m_body->m_minimumSize;
 }
 
 const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPosition position)
@@ -424,9 +434,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         return;
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
-
-    m_atom = WTF::move(pattern.m_atom);
-    m_specificPattern = pattern.m_specificPattern;
+    updateMetadataFromPattern(pattern);
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
@@ -445,6 +453,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
+            m_minimumSize = pattern.m_body->m_minimumSize;
             return;
         }
     }
@@ -470,6 +479,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_state = ParseError;
         return;
     }
+    m_minimumSize = bytecodePattern.m_body->m_minimumSize;
 }
 
 MatchResult RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset)
@@ -497,6 +507,7 @@ void RegExp::deleteCode()
     if (!hasCode())
         return;
     m_state = NotCompiled;
+    m_minimumSize = 0;
     m_atom = String();
     m_specificPattern = Yarr::SpecificPattern::None;
 #if ENABLE(YARR_JIT)
@@ -505,6 +516,18 @@ void RegExp::deleteCode()
 #endif
     m_regExpBytecode = nullptr;
 }
+
+#if ENABLE(YARR_JIT)
+Yarr::YarrCodeBlock& RegExp::ensureRegExpJITCode()
+{
+    if (!m_regExpJITCode) {
+        auto result = makeUnique<Yarr::YarrCodeBlock>(this);
+        WTF::storeStoreFence();
+        m_regExpJITCode = WTF::move(result);
+    }
+    return *m_regExpJITCode.get();
+}
+#endif
 
 #if ENABLE(YARR_JIT_DEBUG)
 void RegExp::matchCompareWithInterpreter(StringView s, int startOffset, int* offsetVector, int jitResult)

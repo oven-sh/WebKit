@@ -41,3 +41,4 @@ struct _WebKitNavigationAction {
 };
 
 WebKitNavigationAction* webkitNavigationActionCreate(Ref<API::NavigationAction>&&);
+RefPtr<API::NavigationAction> webkitNavigationActionGetAction(WebKitNavigationAction*);

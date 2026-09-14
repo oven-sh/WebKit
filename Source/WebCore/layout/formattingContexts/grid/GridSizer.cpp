@@ -50,32 +50,38 @@ static Vector<LayoutUnit> rowSizesForFirstIterationColumnSizing(const TrackSizin
 {
     return rowTrackSizingFunctionsList.map([&gridContainerInnerInlineSize](const TrackSizingFunctions& trackSizingFunctions) {
         return WTF::switchOn(trackSizingFunctions.max,
-            [&](const Style::GridTrackBreadthLength::Fixed& fixedValue) {
-                return Style::evaluate<LayoutUnit>(fixedValue, trackSizingFunctions.zoom);
+            [&](const Style::GridTrackBreadth& maxTrackSizingFunction) {
+                return WTF::switchOn(maxTrackSizingFunction,
+                    [&](const Style::GridTrackBreadthLength::Fixed& fixedValue) {
+                        return Style::evaluate<LayoutUnit>(fixedValue, trackSizingFunctions.zoom);
+                    },
+                    [&](const Style::GridTrackBreadthLength::Percentage& percentageValue) {
+                        ASSERT_WITH_MESSAGE(gridContainerInnerInlineSize, "The formatting context should have transformed this track size to auto");
+                        return Style::evaluate<LayoutUnit>(percentageValue, *gridContainerInnerInlineSize);
+                    },
+                    [&](const Style::GridTrackBreadth::Calc calculatedValue) -> LayoutUnit {
+                        ASSERT_WITH_MESSAGE(gridContainerInnerInlineSize, "The formatting context should have transformed this track size to auto");
+                        return Style::evaluate<LayoutUnit>(calculatedValue, *gridContainerInnerInlineSize, trackSizingFunctions.zoom);
+                    },
+                    [](const CSS::Keyword::MinContent&) -> LayoutUnit {
+                        return LayoutUnit::max();
+                    },
+                    [](const CSS::Keyword::MaxContent&) {
+                        return LayoutUnit::max();
+                    },
+                    [](const CSS::Keyword::Auto&) -> LayoutUnit {
+                        return LayoutUnit::max();
+                    },
+                    [](const Style::GridTrackBreadth::Flex&) -> LayoutUnit {
+                        return LayoutUnit::max();
+                    },
+                    [](const auto&) -> LayoutUnit {
+                        ASSERT_NOT_IMPLEMENTED_YET();
+                        return { };
+                    });
             },
-            [&](const Style::GridTrackBreadthLength::Percentage& percentageValue) {
-                ASSERT_WITH_MESSAGE(gridContainerInnerInlineSize, "The formatting context should have transformed this track size to auto");
-                return Style::evaluate<LayoutUnit>(percentageValue, *gridContainerInnerInlineSize);
-            },
-            [&](const Style::GridTrackBreadth::Calc calculatedValue) -> LayoutUnit {
-                ASSERT_WITH_MESSAGE(gridContainerInnerInlineSize, "The formatting context should have transformed this track size to auto");
-                return Style::evaluate<LayoutUnit>(calculatedValue, *gridContainerInnerInlineSize, trackSizingFunctions.zoom);
-            },
-            [](const CSS::Keyword::MinContent&) -> LayoutUnit {
+            [](const Style::GridTrackSize::FitContent&) -> LayoutUnit {
                 return LayoutUnit::max();
-            },
-            [](const CSS::Keyword::MaxContent&) {
-                return LayoutUnit::max();
-            },
-            [](const CSS::Keyword::Auto&) -> LayoutUnit {
-                return LayoutUnit::max();
-            },
-            [](const Style::GridTrackBreadth::Flex&) -> LayoutUnit {
-                return LayoutUnit::max();
-            },
-            [](const auto&) -> LayoutUnit {
-                ASSERT_NOT_IMPLEMENTED_YET();
-                return { };
             });
     });
 }

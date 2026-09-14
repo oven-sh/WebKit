@@ -31,7 +31,7 @@
 
 namespace WebCore {
 
-std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
+std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const ImageBufferParameters& parameters, const ImageBufferCreationContext&)
 {
     return std::unique_ptr<ImageBufferDisplayListBackend>(new ImageBufferDisplayListBackend(parameters, ControlFactory::singleton()));
 }
@@ -39,14 +39,14 @@ std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::cr
 
 std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const FloatSize& size, float resolutionScale, const ColorSpace& colorSpace, PixelFormat pixelFormat, RenderingPurpose purpose, ControlFactory& controlFactory)
 {
-    Parameters parameters { ImageBuffer::calculateBackendSize(size, resolutionScale), resolutionScale, colorSpace, { pixelFormat }, purpose };
+    ImageBufferParameters parameters { size, resolutionScale, colorSpace, { pixelFormat }, purpose };
     return std::unique_ptr<ImageBufferDisplayListBackend>(new ImageBufferDisplayListBackend(parameters, controlFactory));
 }
 
-ImageBufferDisplayListBackend::ImageBufferDisplayListBackend(const Parameters& parameters, ControlFactory& controlFactory)
+ImageBufferDisplayListBackend::ImageBufferDisplayListBackend(const ImageBufferParameters& parameters, ControlFactory& controlFactory)
     : ImageBufferBackend(parameters)
     , m_controlFactory(controlFactory)
-    , m_drawingContext(parameters.backendSize)
+    , m_drawingContext(FloatRect { { }, parameters.backendSize() })
 {
 }
 

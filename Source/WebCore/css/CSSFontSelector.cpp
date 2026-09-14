@@ -342,7 +342,7 @@ void CSSFontSelector::fontCacheInvalidated()
 
 std::optional<AtomString> CSSFontSelector::resolveGenericFamily(const FontDescription& fontDescription, const AtomString& familyName)
 {
-    auto platformResult = FontDescription::platformResolveGenericFamily(fontDescription.script(), fontDescription.computedLocale(), familyName);
+    auto platformResult = FontDescription::platformResolveGenericFamily(fontDescription.script(), fontDescription.usedLocale(), familyName);
     if (!platformResult.isNull())
         return platformResult;
 
@@ -364,12 +364,12 @@ std::optional<AtomString> CSSFontSelector::resolveGenericFamily(const FontDescri
 const FontPaletteValues& CSSFontSelector::lookupFontPaletteValues(const AtomString& familyName, const FontDescription& fontDescription) const
 {
     static NeverDestroyed<FontPaletteValues> emptyFontPaletteValues;
-    if (fontDescription.fontPalette().type != FontPalette::Type::Custom)
+
+    auto paletteName = fontDescription.fontPalette().ident();
+    if (!paletteName)
         return emptyFontPaletteValues.get();
 
-    const AtomString paletteName = fontDescription.fontPalette().identifier;
-
-    auto iterator = m_paletteMap.find(std::make_pair(familyName, paletteName));
+    auto iterator = m_paletteMap.find(std::make_pair(familyName, *paletteName));
     if (iterator == m_paletteMap.end())
         return emptyFontPaletteValues.get();
 

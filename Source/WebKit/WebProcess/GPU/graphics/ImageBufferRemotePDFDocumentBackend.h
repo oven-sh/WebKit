@@ -25,28 +25,38 @@
 
 #pragma once
 
-#include <WebCore/NullImageBufferBackend.h>
+#include <WebCore/ImageBufferBackend.h>
+#include <WebCore/NullGraphicsContext.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebKit {
 
-class ImageBufferRemotePDFDocumentBackend final : public WebCore::NullImageBufferBackend {
+class ImageBufferRemotePDFDocumentBackend final : public WebCore::ImageBufferBackend {
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferRemotePDFDocumentBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferRemotePDFDocumentBackend);
 public:
     static unsigned NODELETE calculateBytesPerRow(const WebCore::IntSize& backendSize);
-    static size_t NODELETE calculateMemoryCost(const Parameters&);
 
-    static std::unique_ptr<ImageBufferRemotePDFDocumentBackend> create(const Parameters&);
+    static std::unique_ptr<ImageBufferRemotePDFDocumentBackend> create(const WebCore::ImageBufferParameters&);
 
-    virtual ~ImageBufferRemotePDFDocumentBackend();
+    ~ImageBufferRemotePDFDocumentBackend();
 
-    static constexpr WebCore::RenderingMode renderingMode = WebCore::RenderingMode::PDFDocument;
+    WebCore::RenderingMode renderingMode() const final { return WebCore::RenderingMode::PDFDocument; }
+    size_t memoryCost() const final { return WebCore::ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size())); }
 
 private:
-    using WebCore::NullImageBufferBackend::NullImageBufferBackend;
+    using WebCore::ImageBufferBackend::ImageBufferBackend;
 
+    WebCore::NullGraphicsContext& context() final { return m_context; }
+    RefPtr<WebCore::NativeImage> copyNativeImage() final { return nullptr; }
+    RefPtr<WebCore::NativeImage> createNativeImageReference() final { return nullptr; }
+    void getPixelBuffer(const WebCore::IntRect&, WebCore::PixelBuffer&) final;
+    void putPixelBuffer(const WebCore::PixelBufferSourceView&, const WebCore::IntRect&, const WebCore::IntPoint&, WebCore::AlphaPremultiplication) final { }
+    bool canMapBackingStore() const final { return false; }
+    unsigned bytesPerRow() const final { return 0; }
     String debugDescription() const final;
+
+    WebCore::NullGraphicsContext m_context;
 };
 
 } // namespace WebKit

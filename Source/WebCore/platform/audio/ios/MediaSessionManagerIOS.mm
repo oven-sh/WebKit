@@ -31,7 +31,9 @@
 #import "Logging.h"
 #import "MediaPlaybackTargetCocoa.h"
 #import "MediaPlayer.h"
+#import "MediaStrategy.h"
 #import "PlatformMediaSession.h"
+#import "PlatformStrategies.h"
 #import "SystemMemory.h"
 #import "WebCoreThreadRun.h"
 #import <wtf/MainThread.h>
@@ -102,10 +104,6 @@ bool MediaSessionManageriOS::isMonitoringWirelessTargets() const
 
 void MediaSessionManageriOS::configureWirelessTargetMonitoring()
 {
-#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
-    ensureMediaDeviceRouteControllerMonitoring();
-#endif
-
 #if !PLATFORM(WATCHOS)
     bool requiresMonitoring = anyOfSessions([] (auto& session) {
         return session.requiresPlaybackTargetRouteMonitoring();
@@ -128,19 +126,35 @@ void MediaSessionManageriOS::configureWirelessTargetMonitoring()
 #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
 void MediaSessionManageriOS::ensureMediaDeviceRouteControllerMonitoring()
 {
+    if (!hasPlatformStrategies() || !platformStrategies()->mediaStrategy()->wirelessPlaybackMediaPlayerEnabled())
+        return;
+
     protect(MediaSessionHelper::sharedHelper())->ensureMediaDeviceRouteControllerMonitoring();
 }
 #endif
 
-void MediaSessionManageriOS::sessionDidCompleteAdmission(PlatformMediaSessionInterface& session)
+void MediaSessionManageriOS::applyActiveVideoRouteToSession(PlatformMediaSessionInterface& session)
 {
-    MediaSessionManagerCocoa::sessionDidCompleteAdmission(session);
-
     auto playbackTargetSupportsAirPlayVideo = MediaSessionHelper::sharedHelper().activeVideoRouteSupportsAirPlayVideo();
     ALWAYS_LOG(LOGIDENTIFIER, "Playback Target Supports AirPlay Video = ", playbackTargetSupportsAirPlayVideo);
     if (RefPtr target = MediaSessionHelper::sharedHelper().playbackTarget(); target && playbackTargetSupportsAirPlayVideo)
         session.setPlaybackTarget(*target);
     session.setShouldPlayToPlaybackTarget(playbackTargetSupportsAirPlayVideo);
+}
+
+void MediaSessionManageriOS::sessionDidCompleteAdmission(PlatformMediaSessionInterface& session)
+{
+    MediaSessionManagerCocoa::sessionDidCompleteAdmission(session);
+
+    applyActiveVideoRouteToSession(session);
+}
+
+void MediaSessionManageriOS::activeNowPlayingSessionChanged(PlatformMediaSessionInterface* session)
+{
+    MediaSessionManagerCocoa::activeNowPlayingSessionChanged(session);
+
+    if (session)
+        applyActiveVideoRouteToSession(*session);
 }
 
 void MediaSessionManageriOS::sessionWillEndPlayback(PlatformMediaSessionInterface& session, DelayCallingUpdateNowPlaying delayCallingUpdateNowPlaying)

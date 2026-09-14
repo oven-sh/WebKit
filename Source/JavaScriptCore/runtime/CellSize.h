@@ -62,7 +62,7 @@ inline size_t cellSize(JSCell* cell)
         }
         case ModuleEnvironmentType: {
             auto* env = uncheckedDowncast<JSModuleEnvironment>(cell);
-            return JSModuleEnvironment::allocationSize(env->symbolTable());
+            return JSModuleEnvironment::allocationSize(env->symbolTable(), env->importSlotCount());
         }
         default:
             RELEASE_ASSERT_NOT_REACHED();

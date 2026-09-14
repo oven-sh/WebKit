@@ -38,6 +38,7 @@
 #include "ImageBufferPlatformBackend.h"
 #include "ImageUtilities.h"
 #include "MIMETypeRegistry.h"
+#include "NullImageBufferBackend.h"
 #include "ProcessCapabilities.h"
 #include "TransparencyLayerContextSwitcher.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -119,27 +120,27 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
     return nullptr;
 }
 
-ImageBuffer::ImageBuffer(Parameters parameters, const ImageBufferBackend::Info& backendInfo, const WebCore::ImageBufferCreationContext&, std::unique_ptr<ImageBufferBackend>&& backend, RenderingResourceIdentifier renderingResourceIdentifier)
+ImageBuffer::ImageBuffer(Parameters parameters, const WebCore::ImageBufferCreationContext&, std::unique_ptr<ImageBufferBackend>&& backend, RenderingResourceIdentifier renderingResourceIdentifier)
     : m_parameters(WTF::move(parameters))
-    , m_backendInfo(backendInfo)
     , m_backend(WTF::move(backend))
     , m_renderingResourceIdentifier(renderingResourceIdentifier)
 {
+    ASSERT(m_backend);
 }
 
 ImageBuffer::~ImageBuffer() = default;
 
-IntSize ImageBuffer::calculateBackendSize(FloatSize logicalSize, float resolutionScale)
+IntSize calculateImageBufferBackendSize(FloatSize logicalSize, float resolutionScale)
 {
-    FloatSize scaledSize = { ceilf(resolutionScale * logicalSize.width()), ceilf(resolutionScale * logicalSize.height()) };
+    FloatSize scaledSize { ceilf(resolutionScale * logicalSize.width()), ceilf(resolutionScale * logicalSize.height()) };
     if (scaledSize.isEmpty() || !scaledSize.isExpressibleAsIntSize())
         return { };
     return IntSize { scaledSize };
 }
 
-ImageBufferBackendParameters ImageBuffer::backendParameters(const ImageBufferParameters& parameters)
+IntSize ImageBuffer::calculateBackendSize(FloatSize logicalSize, float resolutionScale)
 {
-    return { calculateBackendSize(parameters.logicalSize, parameters.resolutionScale), parameters.resolutionScale, parameters.colorSpace, parameters.bufferFormat, parameters.purpose };
+    return calculateImageBufferBackendSize(logicalSize, resolutionScale);
 }
 
 bool ImageBuffer::sizeNeedsClamping(const FloatSize& size)
@@ -175,7 +176,7 @@ public:
 
     size_t memoryCost() const final
     {
-        return m_buffer->memoryCost();
+        return protect(m_buffer)->memoryCost();
     }
 
     std::unique_ptr<SerializedImageBuffer> clone() const final
@@ -298,7 +299,7 @@ void ImageBuffer::flushDrawingContext()
     // The direct backend context flush is not part of ImageBuffer abstraction semantics,
     // rather implementation detail of the ImageBufferBackends that need separate management
     // of their context lifetime for purposes of drawing from the image buffer.
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->flushContext();
 }
 
@@ -311,26 +312,26 @@ bool ImageBuffer::flushDrawingContextAsync()
 
 void ImageBuffer::submitDrawingCommands()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->submitDrawingCommands();
 }
 
 void ImageBuffer::replaceFontsWithRebuildData()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->replaceFontsWithRebuildData();
 }
 
 void ImageBuffer::rebuildFonts()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->rebuildFonts();
 }
 
 void ImageBuffer::prepareForDisplay()
 {
     flushDrawingContextAsync();
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->prepareForDisplay();
 }
 
@@ -345,19 +346,26 @@ void ImageBuffer::setBackend(std::unique_ptr<ImageBufferBackend>&& backend)
 
 IntSize ImageBuffer::backendSize() const
 {
-    return calculateBackendSize(m_parameters.logicalSize, m_parameters.resolutionScale);
+    return m_parameters.backendSize();
+}
+
+std::optional<RenderingMode> ImageBuffer::getEffectiveRenderingModeForTesting() const
+{
+    if (!m_backend || is<NullImageBufferBackend>(*m_backend))
+        return std::nullopt;
+    return renderingMode();
 }
 
 RefPtr<NativeImage> ImageBuffer::copyNativeImage() const
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->copyNativeImage();
     return nullptr;
 }
 
 RefPtr<NativeImage> ImageBuffer::createNativeImageReference() const
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->createNativeImageReference();
     return nullptr;
 }
@@ -369,7 +377,7 @@ bool ImageBuffer::isRemoteImageBufferProxy() const
 
 RefPtr<NativeImage> ImageBuffer::sinkIntoNativeImage()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->sinkIntoNativeImage();
     return nullptr;
 }
@@ -392,7 +400,7 @@ RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter)
 {
     ASSERT(!filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext));
 
-    auto* backend = ensureBackend();
+    auto* backend = m_backend.get();
     if (!backend)
         return nullptr;
 
@@ -445,7 +453,7 @@ SkSurface* ImageBuffer::surface() const
 #if USE(CAIRO)
 RefPtr<cairo_surface_t> ImageBuffer::createCairoSurface()
 {
-    auto* backend = ensureBackend();
+    auto* backend = m_backend.get();
     if (!backend)
         return nullptr;
 
@@ -464,7 +472,7 @@ RefPtr<cairo_surface_t> ImageBuffer::createCairoSurface()
 
 RefPtr<GraphicsLayerContentsDisplayDelegate> ImageBuffer::layerContentsDisplayDelegate()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->layerContentsDisplayDelegate();
     return nullptr;
 }
@@ -478,27 +486,42 @@ RefPtr<NativeImage> ImageBuffer::sinkIntoNativeImage(RefPtr<ImageBuffer> source)
 
 void ImageBuffer::convertToLuminanceMask()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->convertToLuminanceMask();
 }
 
 void ImageBuffer::transformToColorSpace(const ColorSpace& newColorSpace)
 {
-    if (auto* backend = ensureBackend()) {
+    if (auto* backend = m_backend.get()) {
         backend->transformToColorSpace(newColorSpace);
         m_parameters.colorSpace = newColorSpace;
     }
 }
 
+bool ImageBuffer::supportedPixelBufferFormats(PixelFormat pixelFormat)
+{
+    switch (pixelFormat) {
+    case PixelFormat::RGBA8:
+    case PixelFormat::BGRA8:
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    case PixelFormat::RGBA16F:
+#endif
+        return true;
+    default:
+        break;
+    }
+    return false;
+}
+
 RefPtr<PixelBuffer> ImageBuffer::getPixelBuffer(const PixelBufferFormat& destinationFormat, const IntRect& sourceRect, const ImageBufferAllocator& allocator) const
 {
-    ASSERT(PixelBuffer::supportedPixelFormat(destinationFormat.pixelFormat));
+    ASSERT(supportedPixelBufferFormats(destinationFormat.pixelFormat));
     auto sourceRectScaled = sourceRect;
     sourceRectScaled.scale(resolutionScale());
     auto destination = allocator.createPixelBuffer(destinationFormat, sourceRectScaled.size());
     if (!destination)
         return nullptr;
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->getPixelBuffer(sourceRectScaled, *destination);
     else
         destination->zeroFill();
@@ -508,7 +531,7 @@ RefPtr<PixelBuffer> ImageBuffer::getPixelBuffer(const PixelBufferFormat& destina
 void ImageBuffer::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const IntRect& sourceRect, const IntPoint& destinationPoint, AlphaPremultiplication destinationFormat)
 {
     ASSERT(resolutionScale() == 1);
-    auto* backend = ensureBackend();
+    auto* backend = m_backend.get();
     if (!backend)
         return;
     auto sourceRectScaled = sourceRect;
@@ -520,7 +543,7 @@ void ImageBuffer::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const
 
 RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->sinkIntoPDFDocument();
     return nullptr;
 }
@@ -534,20 +557,20 @@ RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument(RefPtr<ImageBuffer> source
 
 bool ImageBuffer::isInUse() const
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->isInUse();
     return false;
 }
 
 void ImageBuffer::releaseGraphicsContext()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->releaseGraphicsContext();
 }
 
 bool ImageBuffer::setVolatile()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->setVolatile();
 
     return true; // Just claim we succeedded.
@@ -556,7 +579,7 @@ bool ImageBuffer::setVolatile()
 SetNonVolatileResult ImageBuffer::setNonVolatile()
 {
     auto result = SetNonVolatileResult::Valid;
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         result = backend->setNonVolatile();
 
     if (m_hasForcedPurgeForTesting) {
@@ -569,14 +592,14 @@ SetNonVolatileResult ImageBuffer::setNonVolatile()
 
 VolatilityState ImageBuffer::volatilityState() const
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->volatilityState();
     return VolatilityState::NonVolatile;
 }
 
 void ImageBuffer::setVolatilityState(VolatilityState volatilityState)
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->setVolatilityState(volatilityState);
 }
 
@@ -591,7 +614,7 @@ void ImageBuffer::setVolatileAndPurgeForTesting()
 
 std::unique_ptr<ThreadSafeImageBufferFlusher> ImageBuffer::createFlusher()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->createFlusher();
     return nullptr;
 }
@@ -603,7 +626,7 @@ unsigned ImageBuffer::backendGeneration() const
 
 ImageBufferBackendSharing* ImageBuffer::toBackendSharing()
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         return backend->toBackendSharing();
     return nullptr;
 }
@@ -617,7 +640,7 @@ std::optional<DynamicContentScalingDisplayList> ImageBuffer::dynamicContentScali
 
 void ImageBuffer::transferToNewContext(const ImageBufferCreationContext& context)
 {
-    if (auto* backend = ensureBackend())
+    if (auto* backend = m_backend.get())
         backend->transferToNewContext(context);
 }
 

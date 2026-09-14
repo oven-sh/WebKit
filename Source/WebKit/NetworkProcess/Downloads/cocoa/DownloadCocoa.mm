@@ -28,6 +28,7 @@
 
 #import "DownloadProxyMessages.h"
 #import "Logging.h"
+#import "MessageSenderInlines.h"
 #import "NetworkSessionCocoa.h"
 #import "WKDownloadProgress.h"
 #import <pal/spi/cf/CFNetworkSPI.h>

@@ -1173,6 +1173,7 @@ void run(const TestConfig* config)
     RUN(testWasmAddress());
     RUN(testWasmAddressZeroExtendScaledIndex());
     RUN(testWasmAddressZeroExtend32BitShiftWraps());
+    RUN(testWasmAddressScaledIndexWithLockedShlChild());
     RUN(testWasmAddressWithOffset());
     
     RUN(testFastTLSLoad());

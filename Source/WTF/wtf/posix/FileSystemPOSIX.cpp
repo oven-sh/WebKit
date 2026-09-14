@@ -109,7 +109,7 @@ std::optional<WallTime> fileCreationTime(const String& path)
 #elif OS(DARWIN) || OS(OPENBSD) || OS(NETBSD) || OS(FREEBSD) || OS(HAIKU)
     struct stat fileInfo;
 
-    if (stat(fsRep.data(), &fileInfo) == -1)
+    if (statFile(fsRep.spanIncludingNullTerminator(), fileInfo) == -1)
         return std::nullopt;
 
     return WallTime::fromRawSeconds(fileInfo.st_birthtime);
@@ -203,7 +203,7 @@ std::optional<int32_t> getFileDeviceId(const String& path)
         return std::nullopt;
 
     struct stat fileStat;
-    if (stat(fsFile.data(), &fileStat) == -1)
+    if (statFile(fsFile.spanIncludingNullTerminator(), fileStat) == -1)
         return std::nullopt;
 
     return fileStat.st_dev;

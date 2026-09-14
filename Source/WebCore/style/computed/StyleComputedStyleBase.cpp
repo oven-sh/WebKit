@@ -56,11 +56,11 @@
 namespace WebCore {
 namespace Style {
 
-static_assert(PublicPseudoIDBits == allPublicPseudoElementTypes.size());
-static_assert(!(static_cast<unsigned>(maxTextTransformValue) >> TextTransformBits));
+static_assert(ComputedStyleBase::PublicPseudoIDBits == allPublicPseudoElementTypes.size());
+static_assert(!(static_cast<unsigned>(maxTextTransformValue) >> ComputedStyleBase::TextTransformBits));
 
 // Value zero is used to indicate no pseudo-element.
-static_assert(!((std::to_underlying(PseudoElementType::HighestEnumValue) + 1) >> PseudoElementTypeBits));
+static_assert(!((std::to_underlying(PseudoElementType::HighestEnumValue) + 1) >> ComputedStyleBase::PseudoElementTypeBits));
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ComputedStyleBase);
 
@@ -77,8 +77,6 @@ bool ComputedStyleBase::effectiveInertOutOfLine() const
     return effectiveInert();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 // MARK: - Text Autosizing
 
 AutosizeStatus ComputedStyleBase::autosizeStatus() const
@@ -90,8 +88,6 @@ void ComputedStyleBase::setAutosizeStatus(AutosizeStatus autosizeStatus)
 {
     m_inheritedFlags.autosizeStatus = autosizeStatus.fields().toRaw();
 }
-
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 // MARK: - Pseudo element/style
 
@@ -273,39 +269,27 @@ float ComputedStyleBase::usedFontSize() const
     return fontDescription().usedSize();
 }
 
-const LineHeight& ComputedStyleBase::specifiedLineHeight() const
+const LineHeight& ComputedStyleBase::textAutosizingAdjustedLineHeight() const
 {
-#if ENABLE(TEXT_AUTOSIZING)
-    return m_inheritedData->specifiedLineHeight;
-#else
-    return m_inheritedData->lineHeight;
-#endif
+    return m_inheritedData->textAutosizingAdjustedLineHeight;
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
-void ComputedStyleBase::setSpecifiedLineHeight(LineHeight&& lineHeight)
+void ComputedStyleBase::setTextAutosizingAdjustedLineHeight(LineHeight&& lineHeight)
 {
-    SET_VAR(m_inheritedData, specifiedLineHeight, WTF::move(lineHeight));
+    SET_VAR(m_inheritedData, textAutosizingAdjustedLineHeight, WTF::move(lineHeight));
 }
 
-#endif
-
-void ComputedStyleBase::setSpecifiedLineHeightFromAnimation(LineHeight&& lineHeight)
+void ComputedStyleBase::setLineHeightFromAnimation(LineHeight&& lineHeight)
 {
-#if ENABLE(TEXT_AUTOSIZING)
-    bool specifiedLineHeightChanged = m_inheritedData->specifiedLineHeight != lineHeight;
     bool lineHeightChanged = m_inheritedData->lineHeight != lineHeight;
-    if (specifiedLineHeightChanged || lineHeightChanged) {
+    bool textAutosizingAdjustedLineHeightChanged = m_inheritedData->textAutosizingAdjustedLineHeight != lineHeight;
+    if (lineHeightChanged || textAutosizingAdjustedLineHeightChanged) {
         auto& access = m_inheritedData.access();
-        if (specifiedLineHeightChanged)
-            access.specifiedLineHeight = lineHeight;
         if (lineHeightChanged)
-            access.lineHeight = WTF::move(lineHeight);
+            access.lineHeight = lineHeight;
+        if (textAutosizingAdjustedLineHeightChanged)
+            access.textAutosizingAdjustedLineHeight = WTF::move(lineHeight);
     }
-#else
-    SET_VAR(m_inheritedData, lineHeight, WTF::move(lineHeight));
-#endif
 }
 
 void ComputedStyleBase::setLetterSpacingFromAnimation(LetterSpacing&& value)
@@ -467,6 +451,7 @@ void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const
     LOG_IF_DIFFERENT_WITH_CAST(PositionType, position);
     LOG_IF_DIFFERENT_WITH_CAST(UnicodeBidi, unicodeBidi);
     LOG_IF_DIFFERENT_WITH_CAST(Float, floating);
+    LOG_IF_DIFFERENT_WITH_CAST(BoxSizing, boxSizing);
 
     LOG_IF_DIFFERENT(usesViewportUnits);
     LOG_IF_DIFFERENT(isContainerDependent);
@@ -500,6 +485,8 @@ void ComputedStyleBase::InheritedFlags::dumpDifferences(TextStream& ts, const In
     LOG_IF_DIFFERENT_WITH_FROM_RAW(TextTransform, textTransform);
     LOG_IF_DIFFERENT_WITH_FROM_RAW(TextDecorationLine, textDecorationLineInEffect);
 
+    LOG_IF_DIFFERENT_WITH_CAST(bool, isZoomed);
+
     LOG_IF_DIFFERENT_WITH_CAST(PointerEvents, pointerEvents);
     LOG_IF_DIFFERENT_WITH_CAST(Visibility, visibility);
     LOG_IF_DIFFERENT_WITH_CAST(CursorType, cursorType);
@@ -512,15 +499,14 @@ void ComputedStyleBase::InheritedFlags::dumpDifferences(TextStream& ts, const In
     LOG_IF_DIFFERENT_WITH_CAST(EmptyCell, emptyCells);
     LOG_IF_DIFFERENT_WITH_CAST(BorderCollapse, borderCollapse);
     LOG_IF_DIFFERENT_WITH_CAST(CaptionSide, captionSide);
+
     LOG_IF_DIFFERENT_WITH_CAST(BoxDirection, boxDirection);
     LOG_IF_DIFFERENT_WITH_CAST(Order, rtlOrdering);
+
     LOG_IF_DIFFERENT_WITH_CAST(bool, hasExplicitlySetColor);
     LOG_IF_DIFFERENT_WITH_CAST(PrintColorAdjust, printColorAdjust);
     LOG_IF_DIFFERENT_WITH_CAST(InsideLink, insideLink);
-
-#if ENABLE(TEXT_AUTOSIZING)
     LOG_IF_DIFFERENT_WITH_CAST(unsigned, autosizeStatus);
-#endif
 }
 #endif
 

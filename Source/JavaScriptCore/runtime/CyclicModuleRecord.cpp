@@ -52,8 +52,8 @@ namespace JSC {
 
 const ClassInfo CyclicModuleRecord::s_info = { "CyclicModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CyclicModuleRecord) };
 
-CyclicModuleRecord::CyclicModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, SourceProviderSourceType sourceType)
-    : Base(vm, structure, moduleKey, sourceType)
+CyclicModuleRecord::CyclicModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, SourceProviderSourceType sourceType)
+    : Base(vm, structure, moduleLoader, moduleKey, sourceType)
 {
 }
 
@@ -81,7 +81,7 @@ static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedM
     using ResolutionKind = PrelinkedModuleGraph::ResolutionKind;
     using Resolution = AbstractModuleRecord::Resolution;
     auto sameModule = [&] {
-        AbstractModuleRecord* byIndex = globalObject->moduleLoader()->prelinkedRecordForResolution(resolvedModule);
+        AbstractModuleRecord* byIndex = actual.moduleRecord ? actual.moduleRecord->moduleLoader()->prelinkedRecordForResolution(resolvedModule) : nullptr;
         return actual.moduleRecord && actual.moduleRecord->prelinkedGraph() == &graph && actual.moduleRecord->prelinkedIndex() == resolvedModule
             && (!byIndex || byIndex == actual.moduleRecord);
     };
@@ -227,7 +227,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
-        env = JSModuleEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsTDZValue(), this);
+        env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
@@ -487,8 +487,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             }
             // 24.a.iii. If d is either a FunctionDeclaration, a GeneratorDeclaration, an AsyncFunctionDeclaration, or an AsyncGeneratorDeclaration, then
             // 24.a.iii.1. Let fo be InstantiateFunctionObject of d with arguments env and privateEnv.
-            auto* executable = unlinkedFunctionExecutable->link(vm, moduleProgramExecutable, moduleProgramExecutable->source());
-            RETURN_IF_EXCEPTION(scope, void());
+            FunctionExecutable* executable = moduleProgramExecutable->functionDeclaration(vm, i);
             SourceParseMode parseMode = executable->parseMode();
             JSFunction* function = nullptr;
             if (isAsyncGeneratorWrapperParseMode(parseMode))
@@ -508,7 +507,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     }
 
     if (jsModule->features() & ImportMetaFeature) {
-        JSObject* metaProperties = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
+        JSObject* metaProperties = moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
         RETURN_IF_EXCEPTION(scope, void());
         bool putResult = false;
         symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().metaPrivateName(), metaProperties, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);

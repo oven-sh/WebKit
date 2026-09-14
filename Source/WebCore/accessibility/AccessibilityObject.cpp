@@ -106,7 +106,7 @@
 #include "RenderLayer.h"
 #include "RenderLayerInlines.h"
 #include "RenderListItem.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderText.h"
 #include "RenderTextControl.h"
@@ -2635,7 +2635,17 @@ void AccessibilityObject::updateChildrenIfNecessary()
     if (!childrenInitialized()) {
         // Enable the cache in case we end up adding a lot of children, we don't want to recompute axIsIgnored each time.
         AXAttributeCacheScope enableCache(axObjectCache());
+
+        // setIsIgnoredFromParentDataForChild() derives each child's data from ours when we have any.
+        // Compute and set it now so each child doesn't repeat unnecessary work.
+        bool didSetIsIgnoredFromParentData = m_isIgnoredFromParentData.isNull();
+        if (didSetIsIgnoredFromParentData)
+            setIsIgnoredFromParentData(computeIsIgnoredFromParentData());
+
         addChildren();
+
+        if (didSetIsIgnoredFromParentData)
+            clearIsIgnoredFromParentData();
     }
 }
 
@@ -4293,14 +4303,24 @@ std::optional<InputType::Type> AccessibilityObject::inputType() const
 
 bool AccessibilityObject::isARIAHidden() const
 {
-    if (isFocused())
-        return false;
-
     if (shouldIgnoreARIAHidden())
         return false;
 
     RefPtr node = this->node();
     RefPtr element = dynamicDowncast<Element>(node);
+
+    // Check whether aria-hidden="true" is specified before doing anything else. Every remaining condition
+    // below can only turn a true result into false, so the vast majority of objects, which don't
+    // specify aria-hidden at all, can bail out here without paying for the focus and tag name checks.
+    bool isHiddenByAssignedSlot = false;
+    if (RefPtr assignedSlot = node ? node->assignedSlot() : nullptr)
+        isHiddenByAssignedSlot = equalLettersIgnoringASCIICase(assignedSlot->attributeWithDefaultARIA(aria_hiddenAttr), "true"_s);
+    if (!isHiddenByAssignedSlot && !(element && equalLettersIgnoringASCIICase(element->attributeWithDefaultARIA(aria_hiddenAttr), "true"_s)))
+        return false;
+
+    if (isFocused())
+        return false;
+
     AtomString tag = element ? element->localName() : nullAtom();
     // https://github.com/w3c/aria/pull/1880
     // To prevent authors from hiding all content from assistive technology users, do not respect
@@ -4309,11 +4329,7 @@ bool AccessibilityObject::isARIAHidden() const
     if (bodyTag->hasLocalName(tag) || htmlTag->hasLocalName(tag) || (SVGNames::svgTag->hasLocalName(tag) && !element->parentNode()))
         return false;
 
-    if (RefPtr assignedSlot = node ? node->assignedSlot() : nullptr) {
-        if (equalLettersIgnoringASCIICase(assignedSlot->attributeWithDefaultARIA(aria_hiddenAttr), "true"_s))
-            return true;
-    }
-    return element && equalLettersIgnoringASCIICase(element->attributeWithDefaultARIA(aria_hiddenAttr), "true"_s);
+    return true;
 }
 
 bool AccessibilityObject::isShowingValidationMessage() const
@@ -4632,6 +4648,33 @@ bool AccessibilityObject::ariaRoleHasPresentationalChildren() const
     }
 }
 
+AccessibilityIsIgnoredFromParentData AccessibilityObject::computeIsIgnoredFromParentData()
+{
+    AccessibilityIsIgnoredFromParentData result = AccessibilityIsIgnoredFromParentData(this);
+
+    if (isARIAHidden())
+        result.isAXHidden = true;
+
+    bool ignoreARIAHidden = isFocused();
+    for (RefPtr object = parentObject(); object; object = object->parentObject()) {
+        if (!result.isAXHidden && !ignoreARIAHidden && object->isARIAHidden())
+            result.isAXHidden = true;
+
+        if (!result.isPresentationalChildOfAriaRole && object->ariaRoleHasPresentationalChildren())
+            result.isPresentationalChildOfAriaRole = true;
+
+        if (!result.isDescendantOfBarrenParent && !object->canHaveChildren())
+            result.isDescendantOfBarrenParent = true;
+
+        if (result.isAXHidden && result.isPresentationalChildOfAriaRole && result.isDescendantOfBarrenParent) {
+            // Every field is set, and none of them can be un-set by an ancestor further up.
+            break;
+        }
+    }
+
+    return result;
+}
+
 void AccessibilityObject::setIsIgnoredFromParentDataForChild(AccessibilityObject& child)
 {
     AccessibilityIsIgnoredFromParentData result = AccessibilityIsIgnoredFromParentData(this);
@@ -4640,20 +4683,8 @@ void AccessibilityObject::setIsIgnoredFromParentDataForChild(AccessibilityObject
         result.isPresentationalChildOfAriaRole = m_isIgnoredFromParentData.isPresentationalChildOfAriaRole || ariaRoleHasPresentationalChildren();
         result.isDescendantOfBarrenParent = m_isIgnoredFromParentData.isDescendantOfBarrenParent || !canHaveChildren();
     } else {
-        if (child.isARIAHidden())
-            result.isAXHidden = true;
-
-        bool ignoreARIAHidden = child.isFocused();
-        for (auto* object = child.parentObject(); object; object = object->parentObject()) {
-            if (!result.isAXHidden && !ignoreARIAHidden && object->isARIAHidden())
-                result.isAXHidden = true;
-
-            if (!result.isPresentationalChildOfAriaRole && object->ariaRoleHasPresentationalChildren())
-                result.isPresentationalChildOfAriaRole = true;
-
-            if (!result.isDescendantOfBarrenParent && !object->canHaveChildren())
-                result.isDescendantOfBarrenParent = true;
-        }
+        // We have nothing to inherit from, so |child| has to compute its own data.
+        result = child.computeIsIgnoredFromParentData();
     }
 
     child.setIsIgnoredFromParentData(result);

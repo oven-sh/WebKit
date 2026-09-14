@@ -35,7 +35,7 @@ if (window.accessibilityController) {
         select.press();
         output += await expectAsync("select.isExpanded", "true");
 
-        window.menu = findBaseSelectMenu(select);
+        window.menu = await waitForBaseSelectMenu(select, 3);
         output += expect("menu.role.toLowerCase().includes('menu')", "true");
 
         // Press an unselected option (Apple). This simulates VoiceOver activating a menu item.

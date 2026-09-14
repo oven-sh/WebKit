@@ -33,12 +33,17 @@
 
 namespace WebCore {
 
-std::unique_ptr<NullImageBufferBackend> NullImageBufferBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
+std::unique_ptr<NullImageBufferBackend> NullImageBufferBackend::create(const ImageBufferParameters& parameters, const ImageBufferCreationContext&)
 {
     return std::unique_ptr<NullImageBufferBackend> { new NullImageBufferBackend { parameters } };
 }
 
 NullImageBufferBackend::~NullImageBufferBackend() = default;
+
+size_t NullImageBufferBackend::memoryCost() const
+{
+    return 0;
+}
 
 NullGraphicsContext& NullImageBufferBackend::context()
 {
@@ -67,6 +72,11 @@ void NullImageBufferBackend::putPixelBuffer(const PixelBufferSourceView&, const 
 unsigned NullImageBufferBackend::bytesPerRow() const
 {
     return 0;
+}
+
+bool NullImageBufferBackend::isNullImageBufferBackend() const
+{
+    return true;
 }
 
 bool NullImageBufferBackend::canMapBackingStore() const

@@ -59,9 +59,7 @@ public:
     WebkitBorderSpacing borderVerticalSpacing;
 
     LineHeight lineHeight;
-#if ENABLE(TEXT_AUTOSIZING)
-    LineHeight specifiedLineHeight;
-#endif
+    LineHeight textAutosizingAdjustedLineHeight;
 
     DataRef<FontData> fontData;
     WebCore::Color color;

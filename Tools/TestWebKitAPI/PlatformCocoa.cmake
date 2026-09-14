@@ -54,6 +54,11 @@ set(TESTWEBKITAPI_SWIFT_FLAGS
     "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -I${CMAKE_BINARY_DIR}>"
 )
 
+if (CMAKE_Swift_COMPILER_TARGET)
+    list(APPEND TESTWEBKITAPI_SWIFT_FLAGS
+        "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-clang-target ${CMAKE_Swift_COMPILER_TARGET}>")
+endif ()
+
 foreach (_f IN LISTS _test_swift_cc_flags)
     list(APPEND TESTWEBKITAPI_SWIFT_FLAGS "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc ${_f}>")
 endforeach ()
@@ -175,6 +180,7 @@ list(APPEND TestWebCore_SOURCES
     Tests/WebCore/cocoa/CoreMediaUtilities.mm
     Tests/WebCore/cocoa/GraphicsContextCGTests.mm
     Tests/WebCore/cocoa/H264UtilitiesCocoaTests.mm
+    Tests/WebCore/cocoa/IOSurfacePoolTests.cpp
     Tests/WebCore/cocoa/IOSurfaceTests.mm
     Tests/WebCore/cocoa/ImageRotationSessionVT.cpp
     Tests/WebCore/cocoa/MediaPlayerPrivateAVFoundationObjCTests.mm
@@ -254,6 +260,7 @@ list(APPEND TestWebKit_SOURCES
     Helpers/WebCoreTestUtilities.cpp
 
     Helpers/cocoa/HTTPServer.mm
+    Helpers/cocoa/PDFTestHelpers.swift
     Helpers/cocoa/TestCocoaImageAndCocoaColor.mm
     Helpers/cocoa/TestElementFullscreenDelegate.mm
     Helpers/cocoa/TestNSBundleExtras.m

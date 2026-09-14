@@ -228,7 +228,7 @@ static WebCore::Node* firstNodeAfter(const WebCore::BoundaryPoint& point)
 {  
     RenderObject* renderer = core(self)->renderer();
     if (is<RenderText>(renderer))
-        return downcast<RenderText>(*renderer).style().computedLineHeight();
+        return downcast<RenderText>(*renderer).style().usedLineHeight();
     
     return CGFLOAT_MAX;
 }

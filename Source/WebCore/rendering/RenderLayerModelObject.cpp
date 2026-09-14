@@ -428,7 +428,7 @@ void RenderLayerModelObject::mapLocalToSVGContainer(const RenderLayerModelObject
     if (ancestorContainer == this)
         return;
 
-    ASSERT(!view().frameView().layoutContext().isPaintOffsetCacheEnabled());
+    ASSERT(ancestorContainer || !view().frameView().layoutContext().isPaintOffsetCacheEnabled());
 
     bool ancestorSkipped;
     auto* container = this->container(ancestorContainer, ancestorSkipped);
@@ -872,6 +872,8 @@ void RenderLayerModelObject::updateTransformAndRepaintForSVGAfterAttributeChange
             if (CheckedPtr svgAncestor = dynamicDowncast<RenderLayerModelObject>(ancestor.get())) {
                 svgAncestor->invalidateCachedSVGTransformDependentBoundingBoxes();
                 svgAncestor->invalidateCachedVisualOverflowRect();
+                if (svgAncestor->hasLayer())
+                    svgAncestor->layer()->setNeedsPositionUpdate();
             }
             if (ancestor->isRenderSVGRoot())
                 break;

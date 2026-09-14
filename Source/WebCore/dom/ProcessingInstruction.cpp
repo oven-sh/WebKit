@@ -34,7 +34,6 @@
 #include "FrameLoader.h"
 #include "LocalFrame.h"
 #include "MediaQueryParser.h"
-#include "MediaQueryParserContext.h"
 #include "NodeDocument.h"
 #include "NodeInlines.h"
 #include "SerializedNode.h"
@@ -225,7 +224,7 @@ void ProcessingInstruction::setCSSStyleSheet(const String& href, const URL& base
     // We don't need the cross-origin security check here because we are
     // getting the sheet text in "strict" mode. This enforces a valid CSS MIME
     // type.
-    parseStyleSheet(sheet->sheetText());
+    parseStyleSheet(sheet->sheetText().value_or(nullString()));
 }
 
 #if ENABLE(XSLT)

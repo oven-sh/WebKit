@@ -794,7 +794,7 @@ size_t WebGLRenderingContextBase::ReadSurfaceBuffer::memoryCost() const
     size_t cost = 0;
     if (RefPtr image = this->image)
         cost += image->sizeInBytes();
-    if (buffer)
+    if (RefPtr buffer = this->buffer)
         cost += buffer->memoryCost();
     return cost;
 }

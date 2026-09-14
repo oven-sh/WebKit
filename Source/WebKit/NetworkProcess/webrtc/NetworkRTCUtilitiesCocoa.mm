@@ -113,6 +113,20 @@ std::optional<uint32_t> trafficClassFromDSCP(webrtc::DiffServCodePoint dscpValue
     return { };
 }
 
+nw_ip_version_t ipVersionFromFamily(int family)
+{
+    switch (family) {
+    case AF_INET:
+        return nw_ip_version_4;
+    case AF_INET6:
+        return nw_ip_version_6;
+    case AF_UNSPEC:
+        return nw_ip_version_any;
+    }
+    ASSERT_NOT_REACHED();
+    return nw_ip_version_any;
+}
+
 } // namespace WebKit
 
 #endif // USE(LIBWEBRTC)

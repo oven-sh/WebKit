@@ -233,7 +233,7 @@ static CGFloat NODELETE mapWidth(FontSelectionValue width)
 SystemFontDatabaseCoreText::CascadeListParameters SystemFontDatabaseCoreText::systemFontParameters(const FontDescription& description, const AtomString& familyName, SystemFontKind systemFontKind, AllowUserInstalledFonts allowUserInstalledFonts)
 {
     CascadeListParameters result;
-    result.locale = description.computedLocale();
+    result.locale = description.usedLocale();
     result.size = description.usedSize();
     result.italic = isItalic(description.fontStyleSlope());
     result.allowUserInstalledFonts = allowUserInstalledFonts;

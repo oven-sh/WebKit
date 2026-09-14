@@ -103,7 +103,7 @@
 #import "_WKWebViewTextInputNotifications.h"
 #import <Carbon/Carbon.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import <WebCore/AXObjectCache.h>
+#import <WebCore/AXObjectTypes.h>
 #import <WebCore/ActivityState.h>
 #import <WebCore/AttributedString.h>
 #import <WebCore/CGWindowUtilities.h>
@@ -201,6 +201,7 @@
 
 #import "AppKitSoftLink.h"
 #import <pal/cocoa/RevealSoftLink.h>
+#import <pal/cocoa/ScreenTimeSoftLink.h>
 #import <pal/cocoa/TranslationUIServicesSoftLink.h>
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
 #import <pal/cocoa/WritingToolsUISoftLink.h>
@@ -1113,17 +1114,17 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     if ([textStyle isSelectedForSegment:0] != _textIsBold) {
         _textIsBold = !_textIsBold;
-        _webViewImpl->page().executeEditCommand("ToggleBold"_s, emptyString());
+        protect(_webViewImpl->page())->executeEditCommand("ToggleBold"_s, emptyString());
     }
 
     if ([textStyle isSelectedForSegment:1] != _textIsItalic) {
         _textIsItalic = !_textIsItalic;
-        _webViewImpl->page().executeEditCommand("ToggleItalic"_s, emptyString());
+        protect(_webViewImpl->page())->executeEditCommand("ToggleItalic"_s, emptyString());
     }
 
     if ([textStyle isSelectedForSegment:2] != _textIsUnderlined) {
         _textIsUnderlined = !_textIsUnderlined;
-        _webViewImpl->page().executeEditCommand("ToggleUnderline"_s, emptyString());
+        protect(_webViewImpl->page())->executeEditCommand("ToggleUnderline"_s, emptyString());
     }
 }
 
@@ -1181,7 +1182,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return;
 
     _textColor = self.colorPickerItem.color;
-    _webViewImpl->page().executeEditCommand("ForeColor"_s, WebCore::serializationForHTML(WebCore::colorFromCocoaColor(_textColor.get())));
+    protect(_webViewImpl->page())->executeEditCommand("ForeColor"_s, WebCore::serializationForHTML(WebCore::colorFromCocoaColor(_textColor.get())));
 }
 
 - (NSViewController *)textListViewController
@@ -2066,7 +2067,7 @@ void WebViewImpl::updateWindowAndViewFrames()
         }
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        if (WebCore::AXObjectCache::accessibilityEnabled())
+        if (!WebCore::isAccessibilityModeOff(WebProcessProxy::accessibilityModeForWebContent()))
             accessibilityPosition = [[weakThis->m_view.get() accessibilityAttributeValue:NSAccessibilityPositionAttribute] pointValue];
 ALLOW_DEPRECATED_DECLARATIONS_END
 
@@ -4302,20 +4303,22 @@ id WebViewImpl::accessibilityHitTest(CGPoint)
 
 void WebViewImpl::enableAccessibilityIfNecessary(NSString *attribute)
 {
-#if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
     // The attributes NSAccessibilityParentAttribute and NSAccessibilityPositionAttribute do not require AX initialization in the WebContent process.
     if (![attribute isEqualToString:NSAccessibilityParentAttribute] && ![attribute isEqualToString:NSAccessibilityPositionAttribute]) {
+#if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
+        // Bring the accessibility server up before any web process is told accessibility is on.
         Ref processPool = m_page->configuration().processPool();
         processPool->initializeAccessibilityIfNecessary();
-    }
 #endif
+        WebProcessProxy::setAccessibilityModeForWebContent(WebCore::AccessibilityMode::MainThread);
+    }
 
-    if (WebCore::AXObjectCache::accessibilityEnabled())
+    if (m_didUpdateFramesForAccessibility)
         return;
+    m_didUpdateFramesForAccessibility = true;
 
-    // After enabling accessibility update the window frame on the web process so that the
-    // correct accessibility position is transmitted (when AX is off, that position is not calculated).
-    WebCore::AXObjectCache::enableAccessibility();
+    // Update the window frame on the web process so that the correct accessibility position is
+    // transmitted (when AX is off, that position is not calculated).
     updateWindowAndViewFrames();
 }
 

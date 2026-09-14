@@ -45,6 +45,9 @@ public:
     virtual std::optional<WebCore::DynamicContentScalingDisplayList> dynamicContentScalingDisplayList() { return std::nullopt; }
 #endif
 
+    // True once a backend that stands in for a backing store in another process has
+    // been given its handle.
+    virtual bool hasBackendHandle() const { return true; }
     virtual void setBackendHandle(ImageBufferBackendHandle&&) { }
     virtual void clearBackendHandle() { }
 

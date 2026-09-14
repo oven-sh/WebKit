@@ -58,6 +58,30 @@ static void testCompilation(const String& wgsl, Checks&&... checks)
     performChecks(std::get<String>(generationResult), std::forward<Checks>(checks)...);
 }
 
+template<typename... Checks>
+static void testCompilationForAppleGPUFamily(unsigned appleGPUFamily, const String& wgsl, Checks&&... checks)
+{
+    auto staticCheckResult = staticCheck(wgsl);
+    EXPECT_TRUE(std::holds_alternative<WGSL::SuccessfulCheck>(staticCheckResult));
+    auto& successfulCheck = std::get<WGSL::SuccessfulCheck>(staticCheckResult);
+
+    auto maybePrepareResult = prepare(successfulCheck);
+    EXPECT_TRUE(std::holds_alternative<WGSL::PrepareResult>(maybePrepareResult));
+    auto& prepareResult = std::get<WGSL::PrepareResult>(maybePrepareResult);
+
+    auto generationResult = generate(successfulCheck, prepareResult, WGSL::DeviceState { .appleGPUFamily = appleGPUFamily });
+    EXPECT_TRUE(std::holds_alternative<String>(generationResult));
+    auto msl = std::get<String>(generationResult);
+
+    auto metalCompilationResult = metalCompile(msl, appleGPUFamily);
+    EXPECT_TRUE(std::holds_alternative<id<MTLLibrary>>(metalCompilationResult));
+
+    auto library = std::get<id<MTLLibrary>>(metalCompilationResult);
+    EXPECT_TRUE(library != nil);
+
+    performChecks(std::get<String>(generationResult), std::forward<Checks>(checks)...);
+}
+
 static void expectPrepareError(const String& wgsl, const String& errorMessage)
 {
     auto staticCheckResult = staticCheck(wgsl);
@@ -381,6 +405,31 @@ TEST_F(WGSLMetalCompilationTests, GlobalOrdering)
 TEST_F(WGSLMetalCompilationTests, GlobalSameBinding)
 {
     testCompilation(file("global-same-binding.wgsl"_s));
+}
+
+TEST_F(WGSLMetalCompilationTests, InlineLargeAggregateReturns)
+{
+    auto shader = makeString(
+        "struct Big { v : array<vec4<u32>, 8> }"
+        "struct Small { v : array<vec4<u32>, 2> }"
+        "@group(0) @binding(0) var<storage, read> input : array<Big>;"
+        "@group(0) @binding(1) var<storage, read_write> output : array<Big>;"
+        "fn combineBig(a : Big, b : Big) -> Big { var r = a; for (var i = 0u; i < 8u; i++) { r.v[i] += b.v[i]; } return r; }"
+        "fn combineSmall(a : Small, b : Small) -> Small { var r = a; for (var i = 0u; i < 2u; i++) { r.v[i] += b.v[i]; } return r; }"
+        "fn sumBig(a : Big) -> u32 { var r = 0u; for (var i = 0u; i < 8u; i++) { r += a.v[i].x; } return r; }"_s,
+        fn("var acc = input[0];"
+            "var small = Small(array<vec4<u32>, 2>(input[0].v[0], input[0].v[1]));"
+            "for (var i = 1u; i < 4u; i++) { acc = combineBig(acc, input[i]); small = combineSmall(small, small); }"
+            "acc.v[0].x += sumBig(acc) + small.v[0].x;"
+            "output[0] = acc;"_s));
+
+    testCompilationForAppleGPUFamily(8, shader,
+        checkNotLiteral("__attribute__((always_inline)) type0 function0"_s));
+
+    testCompilationForAppleGPUFamily(9, shader,
+        checkLiteral("__attribute__((always_inline)) type0 function0"_s),
+        checkNotLiteral("__attribute__((always_inline)) type1 function1"_s),
+        checkNotLiteral("__attribute__((always_inline)) unsigned function2"_s));
 }
 
 TEST_F(WGSLMetalCompilationTests, GlobalUsedByCallee)

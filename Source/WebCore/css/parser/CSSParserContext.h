@@ -80,6 +80,7 @@ struct CSSParserContext {
     bool cssRandomItemFunctionEnabled : 1 { false };
     bool cssRubyDisplayTypesEnabled : 1 { false };
     bool cssTreeCountingFunctionsEnabled : 1 { false };
+    bool cssCalcSizeFunctionEnabled : 1 { false };
     bool cssURLModifiersEnabled : 1 { false };
     bool cssURLIntegrityModifierEnabled : 1 { false };
     bool cssAxisRelativePositionKeywordsEnabled : 1 { false };
@@ -97,6 +98,7 @@ struct CSSParserContext {
     bool cssIdentFunctionEnabled : 1 { false };
     bool cssIfFunctionEnabled : 1 { false };
     bool cssInheritFunctionEnabled : 1 { false };
+    bool cssFontPaletteMixFunctionEnabled : 1 { false };
 
     // Enabled only for the legacy <font face> attribute: allows a numeric token within a family
     // name (e.g. "Bodoni 72"). Regular CSS font-family parsing stays strict.

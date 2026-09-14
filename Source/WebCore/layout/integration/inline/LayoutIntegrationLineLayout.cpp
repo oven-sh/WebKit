@@ -63,7 +63,7 @@
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
 #include "RenderListItem.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "SVGTextFragment.h"
@@ -486,7 +486,7 @@ static inline std::optional<Layout::BlockLayoutState::LineGrid> lineGrid(const R
         }
 
         auto columnWidth = lineGrid->style().fontCascade().primaryFont().maxCharWidth();
-        auto rowHeight = LayoutUnit::fromFloatCeil(lineGrid->style().computedLineHeight());
+        auto rowHeight = LayoutUnit::fromFloatCeil(lineGrid->style().usedLineHeight());
         auto topRowOffset = lineGrid->borderAndPaddingBefore();
 
         std::optional<LayoutSize> paginationOrigin;
@@ -546,27 +546,39 @@ void LineLayout::setExcludedMarkerPositions(const ExcludedMarkerList& excludedMa
 
     auto lineBoxLogicalRect = firstContentfulLine->lineBoxLogicalRect();
     auto isLeftToRight = flow().writingMode().isLogicalLeftInlineStart();
-    // How far the line start sits inwards from our content box start, which is what caps how far to the logical left
-    // (right in a right to left inline direction) a nesting list item's marker may go. An intruding float is the usual
-    // reason for it to be non zero.
-    auto lineStartInset = isLeftToRight ? lineBoxLogicalRect.x() : flow().contentBoxLogicalWidth() - lineBoxLogicalRect.maxX();
+    // text-indent is a margin on the line box, not content the marker hangs off.
+    ASSERT(m_inlineContentConstraints);
+    auto textIndent = Layout::InlineFormattingUtils::computedTextIndentForFirstLine(rootLayoutBox(), m_inlineContentConstraints->horizontal().logicalWidth);
+    auto lineStartEdge = [&] {
+        auto edge = isLeftToRight ? lineBoxLogicalRect.x() : lineBoxLogicalRect.maxX();
+        edge += isLeftToRight ? -textIndent : textIndent;
+        // A float of this formatting context took room from the line, but the marker hangs off where the line would
+        // have started without it. One intruding from earlier content moves the marker with the line instead
+        // (webkit.org/b/166528).
+        for (auto& floatItem : m_blockFormattingState.placedFloats().list()) {
+            if (!floatItem.isInFormattingContextOf(rootLayoutBox()))
+                continue;
+            auto floatRect = floatItem.absoluteRectWithMargin();
+            if (floatRect.bottom() <= lineBoxLogicalRect.y() || floatRect.top() >= lineBoxLogicalRect.maxY())
+                continue;
+            edge += isLeftToRight ? -floatRect.width() : floatRect.width();
+        }
+        return edge;
+    }();
+
+    auto contentBoxStartEdge = isLeftToRight ? 0.f : flow().contentBoxLogicalWidth().toFloat();
+    auto isLineStartConstrainedByFloat = lineStartEdge != contentBoxStartEdge;
     for (auto& marker : excludedMarkers) {
-        // Vertical: baseline aligned, with the ascent the inline formatting context would have given it.
-        auto markerAscent = [&]() -> float {
+        auto markerLogicalTop = [&]() -> float {
             if (firstContentfulLine->baselineType() == FontBaseline::Ideographic)
-                return flow().style().metricsOfPrimaryFont().ascent(FontBaseline::Ideographic);
-            // An image marker's baseline is its margin box bottom (it has no block axis margins), a text driven one behaves as text and sits on the font baseline.
-            return marker->isImage() ? marker->logicalHeight().toFloat() : marker->style().metricsOfPrimaryFont().ascent(FontBaseline::Alphabetic);
+                return lineBoxLogicalRect.y() + (lineBoxLogicalRect.height() - marker->logicalHeight().toFloat()) / 2;
+            auto markerAscent = marker->isImage() ? marker->logicalHeight().toFloat() : marker->style().metricsOfPrimaryFont().ascent(FontBaseline::Alphabetic);
+            return lineBoxLogicalRect.y() + firstContentfulLine->baseline() - markerAscent;
         }();
-        // Horizontal: just outside the line's inline start edge, which is the line's logical right in a right to left
-        // inline direction (the marker's start margin is what holds the gap, hence negative).
-        auto markerLogicalLeft = [&]() -> float {
-            if (isLeftToRight)
-                return lineBoxLogicalRect.x() + marker->marginStart();
-            return lineBoxLogicalRect.maxX() - marker->marginStart() - marker->logicalWidth();
-        }();
-        auto topLeft = FloatPoint { markerLogicalLeft, lineBoxLogicalRect.y() + firstContentfulLine->baseline() - markerAscent };
-        marker->setExcludedPosition({ flow(), topLeft, lineStartInset });
+        auto markerMarginStart = marker->marginStart(flow().writingMode()).toFloat();
+        auto markerLogicalLeft = isLeftToRight ? lineStartEdge + markerMarginStart : lineStartEdge - markerMarginStart - marker->logicalWidth().toFloat();
+        auto topLeft = FloatPoint { markerLogicalLeft, markerLogicalTop };
+        marker->setExcludedPosition({ flow(), topLeft, isLineStartConstrainedByFloat });
     }
 }
 
@@ -1071,7 +1083,7 @@ static float baselineForEmptyContent(const RenderBlockFlow& rootRenderer)
     auto& fontMetrics = rootRenderer.style().metricsOfPrimaryFont();
     auto ascent = fontMetrics.ascent();
     auto descent = fontMetrics.descent();
-    auto baseline = ascent + (rootLayoutBox->firstLineStyle().computedLineHeight() - (ascent + descent)) / 2;
+    auto baseline = ascent + (rootLayoutBox->firstLineStyle().usedLineHeight() - (ascent + descent)) / 2;
     return rootRenderer.borderAndPaddingBefore() + baseline;
 }
 
@@ -1535,6 +1547,14 @@ void LineLayout::shiftLinesByInBlockDirection(LayoutUnit blockShift)
     auto& displayContent = m_inlineContent->displayContent();
     for (size_t lineIndex = 0; lineIndex < displayContent.lines.size(); ++lineIndex)
         displayContent.moveLineInBlockDirection(lineIndex, blockShift);
+
+    // An excluded marker is on one of these lines without being part of the content that moves with them, so the
+    // position it was given has to move too (see RenderListItem::placeExcludedMarker).
+    if (CheckedPtr marker = RenderListItem::excludedMarkerAnchoredTo(flow())) {
+        auto excludedPosition = *marker->excludedPosition();
+        excludedPosition.topLeft.move(0, blockShift.toFloat());
+        marker->setExcludedPosition(excludedPosition);
+    }
 
     auto deltaX = isHorizontalWritingMode ? 0_lu : blockShift;
     auto deltaY = isHorizontalWritingMode ? blockShift : 0_lu;

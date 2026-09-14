@@ -51,27 +51,38 @@ class RemoteImageBufferProxy final : public WebCore::ImageBuffer {
     WTF_MAKE_TZONE_ALLOCATED(RemoteImageBufferProxy);
     friend class RemoteSerializedImageBufferProxy;
 public:
-    template<typename BackendType>
-    static RefPtr<RemoteImageBufferProxy> create(const WebCore::FloatSize& size, float resolutionScale, const WebCore::ColorSpace& colorSpace, WebCore::ImageBufferFormat bufferFormat, WebCore::RenderingPurpose purpose, RemoteRenderingBackendProxy& remoteRenderingBackendProxy)
+    template<typename BackendType, typename... Args>
+    static RefPtr<RemoteImageBufferProxy> create(const WebCore::ImageBuffer::Parameters& parameters, RemoteRenderingBackendProxy& remoteRenderingBackendProxy, Args&&... backendArgs)
     {
-        Parameters parameters { size, resolutionScale, colorSpace, bufferFormat, purpose };
-        auto backendParameters = ImageBuffer::backendParameters(parameters);
-        if (BackendType::calculateSafeBackendSize(backendParameters).isEmpty())
+        if (BackendType::calculateSafeBackendSize(parameters).isEmpty())
             return nullptr;
-        auto info = populateBackendInfo<BackendType>(backendParameters);
-        return adoptRef(new RemoteImageBufferProxy(parameters, info, remoteRenderingBackendProxy));
+        std::unique_ptr<WebCore::ImageBufferBackend> backend = BackendType::create(parameters, std::forward<Args>(backendArgs)...);
+        if (!backend)
+            return nullptr;
+        return adoptRef(new RemoteImageBufferProxy(parameters, WTF::move(backend), remoteRenderingBackendProxy));
     }
-    static Ref<RemoteImageBufferProxy> create(const WebCore::ImageBuffer::Parameters& parameters, const WebCore::ImageBufferBackend::Info& info, RemoteRenderingBackendProxy& renderingBackend)
-    {
-        return adoptRef(*new RemoteImageBufferProxy(parameters, info, renderingBackend));
-    }
+
+    // Used when re-materialising a serialized buffer. The GPU process keeps the
+    // existing ImageBuffer, so the backend is built from what the serialized buffer
+    // carried: the backing store this process allocated, or nothing at all.
+    static Ref<RemoteImageBufferProxy> createForSerializedBuffer(const WebCore::ImageBuffer::Parameters&, std::unique_ptr<WebCore::ImageBufferBackend>&&, RemoteRenderingBackendProxy&);
 
     ~RemoteImageBufferProxy();
     bool NODELETE isValid() const;
 
     void disconnect();
 
-    WebCore::ImageBufferBackend* ensureBackend() const final;
+    // Non-null iff this process allocated the backing store, in which case the handle
+    // is passed to the GPU process with CreateImageBuffer.
+    std::optional<ImageBufferBackendHandle> createBackingStoreHandleForGPUProcess() const;
+
+    // Reaching for the sharing interface means someone is about to take the backend
+    // handle, so ask the GPU process for it if the backing store is theirs.
+    WebCore::ImageBufferBackendSharing* toBackendSharing() final;
+
+    // The backing store this process allocated travels with the serialized buffer;
+    // for anything else the GPU process is asked for the handle after unserializing.
+    std::optional<ImageBufferBackendHandle> takeBackendHandleForSerialization();
 
     void backingStoreWillChange();
     std::unique_ptr<WebCore::SerializedImageBuffer> sinkIntoSerializedImageBuffer() final;
@@ -79,7 +90,7 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
     // Messages
-    void didCreateBackend(std::optional<ImageBufferBackendHandle>);
+    void didFailToCreateBackend();
 
     RemoteGraphicsContextIdentifier contextIdentifier() const { return m_context.identifier(); }
 
@@ -89,7 +100,7 @@ public:
     // the GPU process sees the up-to-date contents.
     void sendPendingDrawsIfNecessary() const { m_context.sendPendingDrawsIfNecessary(); }
 private:
-    RemoteImageBufferProxy(Parameters, const WebCore::ImageBufferBackend::Info&, RemoteRenderingBackendProxy&);
+    RemoteImageBufferProxy(Parameters, std::unique_ptr<WebCore::ImageBufferBackend>&&, RemoteRenderingBackendProxy&);
 
     RefPtr<WebCore::NativeImage> copyNativeImage() const final;
     RefPtr<WebCore::NativeImage> createNativeImageReference() const final;
@@ -113,12 +124,17 @@ private:
     std::unique_ptr<WebCore::ThreadSafeImageBufferFlusher> createFlusher() final;
 
     void prepareForBackingStoreChange();
+    std::optional<WebCore::RenderingMode> getEffectiveRenderingModeForTesting() const final;
 
     void NODELETE assertDispatcherIsCurrent() const;
     template<typename T> void send(T&& message) const;
     template<typename T> auto sendSync(T&& message) const;
     RefPtr<IPC::StreamClientConnection> connection() const;
     void didBecomeUnresponsive() const;
+
+    // Fetches the backing store handle from the GPU process, for a backend that
+    // stands in for a backing store this process cannot map.
+    void ensureBackendHandle() const;
 
     RefPtr<RemoteImageBufferProxyFlushFence> m_pendingFlush;
     mutable RemoteGraphicsContextProxy m_context;
@@ -133,25 +149,27 @@ public:
 
     static RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<RemoteSerializedImageBufferProxy>, RemoteRenderingBackendProxy&);
 
-    RemoteSerializedImageBufferProxy(WebCore::ImageBuffer::Parameters, const WebCore::ImageBufferBackend::Info&, RemoteRenderingBackendProxy&);
+    RemoteSerializedImageBufferProxy(WebCore::ImageBuffer::Parameters, WebCore::RenderingMode, size_t memoryCost, std::optional<ImageBufferBackendHandle>&&, RemoteRenderingBackendProxy&);
 
     size_t memoryCost() const final
     {
-        return m_info.memoryCost;
+        return m_memoryCost;
     }
 
     const WebCore::ImageBuffer::Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
-    const WebCore::ImageBufferBackend::Info& info() const LIFETIME_BOUND { return m_info; }
+    WebCore::RenderingMode renderingMode() const { return m_renderingMode; }
+    // Non-null only for a backing store this process allocated, which is handed to
+    // the re-materialised buffer as-is.
+    std::optional<ImageBufferBackendHandle> takeBackendHandle() { return std::exchange(m_backendHandle, std::nullopt); }
 
-    std::unique_ptr<WebCore::SerializedImageBuffer> clone() const final
-    {
-        return std::unique_ptr<WebCore::SerializedImageBuffer>(new RemoteSerializedImageBufferProxy(m_parameters, m_info, m_connection));
-    }
+    std::unique_ptr<WebCore::SerializedImageBuffer> clone() const final;
 
 private:
-    RemoteSerializedImageBufferProxy(const WebCore::ImageBuffer::Parameters& parameters, const WebCore::ImageBufferBackend::Info& info, const RefPtr<IPC::Connection>& connection)
+    RemoteSerializedImageBufferProxy(const WebCore::ImageBuffer::Parameters& parameters, WebCore::RenderingMode renderingMode, size_t memoryCost, std::optional<ImageBufferBackendHandle>&& backendHandle, const RefPtr<IPC::Connection>& connection)
         : m_parameters(parameters)
-        , m_info(info)
+        , m_renderingMode(renderingMode)
+        , m_memoryCost(memoryCost)
+        , m_backendHandle(WTF::move(backendHandle))
         , m_connection(connection)
     {
     }
@@ -165,7 +183,9 @@ private:
     bool isRemoteSerializedImageBufferProxy() const final { return true; }
 
     const WebCore::ImageBuffer::Parameters m_parameters;
-    const WebCore::ImageBufferBackend::Info m_info;
+    const WebCore::RenderingMode m_renderingMode;
+    const size_t m_memoryCost;
+    std::optional<ImageBufferBackendHandle> m_backendHandle;
     RefPtr<IPC::Connection> m_connection;
 };
 

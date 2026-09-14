@@ -190,10 +190,8 @@ RenderBlockFlow::MarginInfo::MarginInfo(bool canCollapseWithChildren, bool canCo
 
 RenderBlockFlow::RenderBlockFlow(Type type, Element& element, Style::ComputedStyle&& style, OptionSet<BlockFlowFlag> flags)
     : RenderBlock(type, element, WTF::move(style), { }, flags)
-#if ENABLE(TEXT_AUTOSIZING)
     , m_widthForTextAutosizing(-1)
     , m_lineCountForTextAutosizing(NOT_SET)
-#endif
 {
     ASSERT(isRenderBlockFlow());
     setChildrenInline(true);
@@ -201,10 +199,8 @@ RenderBlockFlow::RenderBlockFlow(Type type, Element& element, Style::ComputedSty
 
 RenderBlockFlow::RenderBlockFlow(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<BlockFlowFlag> flags)
     : RenderBlock(type, document, WTF::move(style), { }, flags)
-#if ENABLE(TEXT_AUTOSIZING)
     , m_widthForTextAutosizing(-1)
     , m_lineCountForTextAutosizing(NOT_SET)
-#endif
 {
     ASSERT(isRenderBlockFlow());
     setChildrenInline(true);
@@ -1132,6 +1128,8 @@ void RenderBlockFlow::computeAndSetLineLayoutPath()
 
 void RenderBlockFlow::layoutInlineChildren(RelayoutChildren relayoutChildren, LayoutUnit previousHeight, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom)
 {
+    layoutExcludedChildren(relayoutChildren);
+
     computeAndSetLineLayoutPath();
 
     if (lineLayoutPath() == InlinePath)
@@ -3505,7 +3503,7 @@ static float lineHeightForEmptyContent(auto& style)
     auto& fontMetrics = style.metricsOfPrimaryFont();
     auto ascent = fontMetrics.ascent();
     auto fontHeight = fontMetrics.height();
-    return ascent + (style.computedLineHeight() - fontHeight) / 2.f;
+    return ascent + (style.usedLineHeight() - fontHeight) / 2.f;
 }
 
 std::optional<LayoutUnit> RenderBlockFlow::firstLineBaseline() const
@@ -4309,8 +4307,9 @@ RenderBlockFlow::InlineContentStatus RenderBlockFlow::markInlineContentDirtyForL
         auto isInFlowBlockLevelElement = box && box->isBlockLevelBox() && box->isInFlow();
         hasInFlowBlockLevelElement |= isInFlowBlockLevelElement;
         hasDirtyInFlowBlockLevelElement |= (isInFlowBlockLevelElement && box->needsLayout());
-        auto childNeedsLayout = relayoutChildren == RelayoutChildren::Yes || (box && box->hasRelativeDimensions() && !box->isBlockLevelBox());
-        auto childNeedsIntrinsicWidthComputation = relayoutChildren == RelayoutChildren::Yes && box && box->shouldInvalidateContentWidths();
+        auto childNeedsLayout = !renderer.isExcludedFromNormalLayout() && (relayoutChildren == RelayoutChildren::Yes || (box && box->hasRelativeDimensions() && !box->isBlockLevelBox()));
+        auto childNeedsIntrinsicWidthComputation = !renderer.isExcludedFromNormalLayout() && relayoutChildren == RelayoutChildren::Yes && box && box->shouldInvalidateContentWidths();
+
         if (childNeedsLayout)
             renderer.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
         if (childNeedsIntrinsicWidthComputation)
@@ -4571,8 +4570,6 @@ void RenderBlockFlow::materializeRareBlockFlowData()
     m_rareBlockFlowData = makeUnique<RenderBlockFlowRareData>(*this);
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 static inline bool isVisibleRenderText(const RenderObject& renderer)
 {
     auto* renderText = dynamicDowncast<RenderText>(renderer);
@@ -4692,8 +4689,6 @@ void RenderBlockFlow::adjustFontSizes(float size, float visibleWidth)
         descendant = RenderObjectTraversal::nextSkippingChildren(text, this);
     }
 }
-
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 void RenderBlockFlow::layoutExcludedChildren(RelayoutChildren relayoutChildren)
 {
@@ -5453,7 +5448,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
         }
 
         // Ignore spaces after a list marker.
-        if (child->isRenderListMarker())
+        if (child->isRenderListOutsideMarker())
             stripFrontSpaces = true;
 
         isPrevChildInlineFlow = !child->isRenderText() && child->isRenderInline();

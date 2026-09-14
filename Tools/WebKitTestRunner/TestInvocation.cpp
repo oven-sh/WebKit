@@ -284,6 +284,36 @@ void TestInvocation::forceRepaintDoneCallback(WKErrorRef error, void* context)
     TestController::singleton().notifyDone();
 }
 
+#if PLATFORM(GTK) || PLATFORM(WPE)
+void TestInvocation::presentationUpdateDoneCallback(WKErrorRef error, void* context)
+{
+    if (error)
+        return;
+
+    auto* testInvocation = static_cast<TestInvocation*>(context);
+    RELEASE_ASSERT(TestController::singleton().isCurrentInvocation(testInvocation));
+
+    testInvocation->m_gotPresentationUpdate = true;
+    TestController::singleton().notifyDone();
+}
+
+void TestInvocation::waitForPresentationUpdate()
+{
+    // Tests that use testRunner.dontForceRepaint(), still need the frame reflecting the last
+    // rendering update to reach the view before capturing. Since the coordinated graphics ports
+    // composite/hand-over buffers asynchronously, we need an explicit wait here to capture
+    // the correct frame.
+    m_gotPresentationUpdate = false;
+    WKPageCallAfterNextPresentationUpdate(TestController::singleton().mainWebView()->page(), this, TestInvocation::presentationUpdateDoneCallback);
+    TestController::singleton().runUntil(m_gotPresentationUpdate, m_timeout);
+}
+#else
+void TestInvocation::waitForPresentationUpdate()
+{
+    // Cocoa ports synchronize with the window server in PlatformWebView::windowSnapshotImage().
+}
+#endif
+
 void TestInvocation::dumpResourceLoadStatisticsIfNecessary()
 {
     if (m_shouldDumpResourceLoadStatistics)
@@ -325,7 +355,8 @@ void TestInvocation::dumpResults()
                 m_gotRepaint = false;
                 WKPageForceRepaint(TestController::singleton().mainWebView()->page(), this, TestInvocation::forceRepaintDoneCallback);
                 TestController::singleton().runUntil(m_gotRepaint, TestController::noTimeout);
-            }
+            } else
+                waitForPresentationUpdate();
             dumpPixelsAndCompareWithExpected(SnapshotResultType::WebView, m_repaintRects.get());
         }
     }

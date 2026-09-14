@@ -1999,6 +1999,229 @@ static void testTextListMarkers(AccessibilityTest* test, gconstpointer)
     g_assert_cmpstr(text.get(), ==, "1. ");
 }
 
+static void testTextForRangeSimple(AccessibilityTest* test, gconstpointer)
+{
+    test->showInWindow(800, 600);
+    test->loadHtml(
+        "<html>"
+        "  <body>"
+        "    <p id='content'>This is a test.</p>Hello world.<br><font color='#00cc00'>This sentence is green.</font><br>This one is not."
+        "  </body>"
+        "</html>",
+        nullptr);
+    test->waitUntilLoadFinished();
+
+    auto testApp = test->findTestApplication();
+    g_assert_true(ATSPI_IS_ACCESSIBLE(testApp.get()));
+
+    auto documentWeb = test->findDocumentWeb(testApp.get());
+    g_assert_true(ATSPI_IS_ACCESSIBLE(documentWeb.get()));
+    g_assert_cmpint(atspi_accessible_get_child_count(documentWeb.get(), nullptr), ==, 2);
+
+    GRefPtr<AtspiAccessible> p = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(p.get()));
+    g_assert_cmpint(atspi_accessible_get_role(p.get(), nullptr), ==, ATSPI_ROLE_PARAGRAPH);
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(p.get()), nullptr), ==, 15);
+    GUniquePtr<char> text(atspi_text_get_text(ATSPI_TEXT(p.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "This is a test.");
+    text.reset(atspi_text_get_text(ATSPI_TEXT(p.get()), 0, 4, nullptr));
+    g_assert_cmpstr(text.get(), ==, "This");
+
+    GRefPtr<AtspiAccessible> block = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 1, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(block.get()));
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(block.get()), nullptr), ==, 53);
+    text.reset(atspi_text_get_text(ATSPI_TEXT(block.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "Hello world.\nThis sentence is green.\nThis one is not.");
+    text.reset(atspi_text_get_text(ATSPI_TEXT(block.get()), 0, 12, nullptr));
+    g_assert_cmpstr(text.get(), ==, "Hello world.");
+    text.reset(atspi_text_get_text(ATSPI_TEXT(block.get()), 13, 36, nullptr));
+    g_assert_cmpstr(text.get(), ==, "This sentence is green.");
+}
+
+static void testTextForRangeEmbeddedObjects(AccessibilityTest* test, gconstpointer)
+{
+    test->showInWindow(800, 600);
+    test->loadHtml(
+        "<html>"
+        "  <body>"
+        "    <p>Choose: <input type='checkbox' value='foo'/>foo <input type='checkbox' value='bar'/>bar (pick one)</p>"
+        "    <p>Choose: <select name='foo'><option>bar</option><option>baz</option></select> (pick one)</p>"
+        "    <p><input type='button' name='foobarbutton' value='foobar'/></p>"
+        "  </body>"
+        "</html>",
+        nullptr);
+    test->waitUntilLoadFinished();
+
+    auto testApp = test->findTestApplication();
+    g_assert_true(ATSPI_IS_ACCESSIBLE(testApp.get()));
+
+    auto documentWeb = test->findDocumentWeb(testApp.get());
+    g_assert_true(ATSPI_IS_ACCESSIBLE(documentWeb.get()));
+    g_assert_cmpint(atspi_accessible_get_child_count(documentWeb.get(), nullptr), ==, 3);
+
+    GRefPtr<AtspiAccessible> p = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(p.get()));
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(p.get()), nullptr), ==, 28);
+    GUniquePtr<char> text(atspi_text_get_text(ATSPI_TEXT(p.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "Choose: \357\277\274foo \357\277\274bar (pick one)");
+    g_assert_cmpint(atspi_accessible_get_child_count(p.get(), nullptr), ==, 2);
+
+    p = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 1, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(p.get()));
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(p.get()), nullptr), ==, 20);
+    text.reset(atspi_text_get_text(ATSPI_TEXT(p.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "Choose: \357\277\274 (pick one)");
+    g_assert_cmpint(atspi_accessible_get_child_count(p.get(), nullptr), ==, 1);
+
+    p = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 2, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(p.get()));
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(p.get()), nullptr), ==, 1);
+    text.reset(atspi_text_get_text(ATSPI_TEXT(p.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "\357\277\274");
+    g_assert_cmpint(atspi_accessible_get_child_count(p.get(), nullptr), ==, 1);
+}
+
+static void testTextForRangeHeading(AccessibilityTest* test, gconstpointer)
+{
+    test->showInWindow(800, 600);
+    test->loadHtml(
+        "<html>"
+        "  <body>"
+        "    <h1>A text header</h1>"
+        "    <h4><span style='display:block;'>Block span in a heading</span><span>Inline span in a heading</span></h4>"
+        "  </body>"
+        "</html>",
+        nullptr);
+    test->waitUntilLoadFinished();
+
+    auto testApp = test->findTestApplication();
+    g_assert_true(ATSPI_IS_ACCESSIBLE(testApp.get()));
+
+    auto documentWeb = test->findDocumentWeb(testApp.get());
+    g_assert_true(ATSPI_IS_ACCESSIBLE(documentWeb.get()));
+    g_assert_cmpint(atspi_accessible_get_child_count(documentWeb.get(), nullptr), ==, 2);
+
+    GRefPtr<AtspiAccessible> heading1 = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(heading1.get()));
+    g_assert_cmpint(atspi_accessible_get_role(heading1.get(), nullptr), ==, ATSPI_ROLE_HEADING);
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(heading1.get()), nullptr), ==, 13);
+    GUniquePtr<char> text(atspi_text_get_text(ATSPI_TEXT(heading1.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "A text header");
+    text.reset(atspi_text_get_text(ATSPI_TEXT(heading1.get()), 2, 6, nullptr));
+    g_assert_cmpstr(text.get(), ==, "text");
+
+    GRefPtr<AtspiAccessible> heading2 = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 1, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(heading2.get()));
+    g_assert_cmpint(atspi_accessible_get_role(heading2.get(), nullptr), ==, ATSPI_ROLE_HEADING);
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(heading2.get()), nullptr), ==, 48);
+    text.reset(atspi_text_get_text(ATSPI_TEXT(heading2.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "Block span in a heading\nInline span in a heading");
+}
+
+static void testTextForRangeListItem(AccessibilityTest* test, gconstpointer)
+{
+    test->showInWindow(800, 600);
+    test->loadHtml(
+        "<html>"
+        "  <body>"
+        "    <ol>"
+        "      <li>A list item</li>"
+        "      <li><span style='display:block;'>Block span in a list item</span><span>Inline span in a list item</span></li>"
+        "    </ol>"
+        "  </body>"
+        "</html>",
+        nullptr);
+    test->waitUntilLoadFinished();
+
+    auto testApp = test->findTestApplication();
+    g_assert_true(ATSPI_IS_ACCESSIBLE(testApp.get()));
+
+    auto documentWeb = test->findDocumentWeb(testApp.get());
+    g_assert_true(ATSPI_IS_ACCESSIBLE(documentWeb.get()));
+    g_assert_cmpint(atspi_accessible_get_child_count(documentWeb.get(), nullptr), ==, 1);
+
+    GRefPtr<AtspiAccessible> list = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_ACCESSIBLE(list.get()));
+    g_assert_cmpint(atspi_accessible_get_role(list.get(), nullptr), ==, ATSPI_ROLE_LIST);
+    g_assert_cmpint(atspi_accessible_get_child_count(list.get(), nullptr), ==, 2);
+
+    GRefPtr<AtspiAccessible> listItem1 = adoptGRef(atspi_accessible_get_child_at_index(list.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(listItem1.get()));
+    g_assert_cmpint(atspi_accessible_get_role(listItem1.get(), nullptr), ==, ATSPI_ROLE_LIST_ITEM);
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(listItem1.get()), nullptr), ==, 12);
+    GUniquePtr<char> text(atspi_text_get_text(ATSPI_TEXT(listItem1.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "\357\277\274A list item");
+
+    GRefPtr<AtspiAccessible> marker = adoptGRef(atspi_accessible_get_child_at_index(listItem1.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(marker.get()));
+    text.reset(atspi_text_get_text(ATSPI_TEXT(marker.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "1. ");
+
+    GRefPtr<AtspiAccessible> listItem2 = adoptGRef(atspi_accessible_get_child_at_index(list.get(), 1, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(listItem2.get()));
+    g_assert_cmpint(atspi_accessible_get_role(listItem2.get(), nullptr), ==, ATSPI_ROLE_LIST_ITEM);
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(listItem2.get()), nullptr), ==, 53);
+    text.reset(atspi_text_get_text(ATSPI_TEXT(listItem2.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "\357\277\274Block span in a list item\nInline span in a list item");
+
+    marker = adoptGRef(atspi_accessible_get_child_at_index(listItem2.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TEXT(marker.get()));
+    text.reset(atspi_text_get_text(ATSPI_TEXT(marker.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "2. ");
+}
+
+static void testTextForRangeTableCell(AccessibilityTest* test, gconstpointer)
+{
+    test->showInWindow(800, 600);
+    test->loadHtml(
+        "<html>"
+        "  <body>"
+        "    <table border='1'>"
+        "      <tr>"
+        "        <td>a table cell</td>"
+        "        <td></td>"
+        "        <td><span style='display:block;'>Block span in a table cell</span><span>Inline span in a table cell</span></td>"
+        "      </tr>"
+        "      <tr><td>x</td><td>y</td><td>z</td></tr>"
+        "    </table>"
+        "  </body>"
+        "</html>",
+        nullptr);
+    test->waitUntilLoadFinished();
+
+    auto testApp = test->findTestApplication();
+    g_assert_true(ATSPI_IS_ACCESSIBLE(testApp.get()));
+
+    auto documentWeb = test->findDocumentWeb(testApp.get());
+    g_assert_true(ATSPI_IS_ACCESSIBLE(documentWeb.get()));
+    g_assert_cmpint(atspi_accessible_get_child_count(documentWeb.get(), nullptr), ==, 1);
+
+    GRefPtr<AtspiAccessible> table = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 0, nullptr));
+    g_assert_true(ATSPI_IS_TABLE(table.get()));
+    g_assert_cmpint(atspi_accessible_get_role(table.get(), nullptr), ==, ATSPI_ROLE_TABLE);
+
+    GRefPtr<AtspiAccessible> cell1 = adoptGRef(atspi_table_get_accessible_at(ATSPI_TABLE(table.get()), 0, 0, nullptr));
+    g_assert_true(ATSPI_IS_TABLE_CELL(cell1.get()));
+    g_assert_true(ATSPI_IS_TEXT(cell1.get()));
+    GUniquePtr<char> text(atspi_text_get_text(ATSPI_TEXT(cell1.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "a table cell");
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(cell1.get()), nullptr), ==, 12);
+
+    GRefPtr<AtspiAccessible> cell2 = adoptGRef(atspi_table_get_accessible_at(ATSPI_TABLE(table.get()), 0, 1, nullptr));
+    g_assert_true(ATSPI_IS_TABLE_CELL(cell2.get()));
+    g_assert_true(ATSPI_IS_TEXT(cell2.get()));
+    text.reset(atspi_text_get_text(ATSPI_TEXT(cell2.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "");
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(cell2.get()), nullptr), ==, 0);
+
+    GRefPtr<AtspiAccessible> cell3 = adoptGRef(atspi_table_get_accessible_at(ATSPI_TABLE(table.get()), 0, 2, nullptr));
+    g_assert_true(ATSPI_IS_TABLE_CELL(cell3.get()));
+    g_assert_true(ATSPI_IS_TEXT(cell3.get()));
+    text.reset(atspi_text_get_text(ATSPI_TEXT(cell3.get()), 0, -1, nullptr));
+    g_assert_cmpstr(text.get(), ==, "Block span in a table cell\nInline span in a table cell");
+    g_assert_cmpint(atspi_text_get_character_count(ATSPI_TEXT(cell3.get()), nullptr), ==, 54);
+}
+
 static void testValueBasic(AccessibilityTest* test, gconstpointer)
 {
     test->showInWindow(800, 600);
@@ -2104,7 +2327,7 @@ static void testHyperlinkBasic(AccessibilityTest* test, gconstpointer)
     g_assert_cmpstr(uri.get(), ==, "");
     g_assert_true(atspi_hyperlink_get_object(ATSPI_HYPERLINK(link.get()), 0, nullptr) == div.get());
 
-    auto p = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 2, nullptr));
+    GRefPtr<AtspiAccessible> p = adoptGRef(atspi_accessible_get_child_at_index(documentWeb.get(), 2, nullptr));
     g_assert_true(ATSPI_IS_ACCESSIBLE(p.get()));
     g_assert_cmpint(atspi_accessible_get_child_count(p.get(), nullptr), ==, 2);
     auto button1 = adoptGRef(atspi_accessible_get_child_at_index(p.get(), 0, nullptr));
@@ -3444,6 +3667,11 @@ void beforeAll()
     AccessibilityTest::add("WebKitAccessibility", "text/state-changed", testTextStateChanged);
     AccessibilityTest::add("WebKitAccessibility", "text/replaced-objects", testTextReplacedObjects);
     AccessibilityTest::add("WebKitAccessibility", "text/list-markers", testTextListMarkers);
+    AccessibilityTest::add("WebKitAccessibility", "text/for-range-simple", testTextForRangeSimple);
+    AccessibilityTest::add("WebKitAccessibility", "text/for-range-embedded-objects", testTextForRangeEmbeddedObjects);
+    AccessibilityTest::add("WebKitAccessibility", "text/for-range-heading", testTextForRangeHeading);
+    AccessibilityTest::add("WebKitAccessibility", "text/for-range-list-item", testTextForRangeListItem);
+    AccessibilityTest::add("WebKitAccessibility", "text/for-range-table-cell", testTextForRangeTableCell);
     AccessibilityTest::add("WebKitAccessibility", "value/basic", testValueBasic);
     AccessibilityTest::add("WebKitAccessibility", "hyperlink/basic", testHyperlinkBasic);
     AccessibilityTest::add("WebKitAccessibility", "hypertext/basic", testHypertextBasic);

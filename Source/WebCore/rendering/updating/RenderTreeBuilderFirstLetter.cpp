@@ -67,7 +67,7 @@ static std::optional<Style::ComputedStyle> styleForFirstLetter(const RenderEleme
         // Mathematically we can't rely on font-size, since font().height() doesn't necessarily match. For reliability, the best approach is simply to
         // compare the final measured cap-heights of the two fonts in order to get to the closest possible value.
         firstLetterStyle.setLineBoxContain({ Style::WebkitLineBoxContainValue::InitialLetter });
-        int lineHeight = paragraph->style().computedLineHeight();
+        int lineHeight = paragraph->style().usedLineHeight();
 
         // Set the font to be one line too big and then ratchet back to get to a precise fit. We can't just set the desired font size based off font height metrics
         // because many fonts bake ascent into the font metrics. Therefore we have to look at actual measured cap height values in order to know when we have a good fit.

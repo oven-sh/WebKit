@@ -27,11 +27,21 @@
 #include "DMABufBuffer.h"
 
 #if USE(GBM)
+#include "BitmapTexturePool.h"
 #include "CoordinatedPlatformLayerBuffer.h"
 #include "GBMVersioning.h"
-#include "GLDisplay.h"
+#include "GLContext.h"
+#include "GLFence.h"
+#include "PlatformDisplay.h"
 #include <atomic>
 #include <drm_fourcc.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/gpu/ganesh/GrYUVABackendTextures.h>
+#include <skia/gpu/ganesh/SkImageGanesh.h>
+#include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
+#include <skia/private/chromium/GrPromiseImageTexture.h>
+#include <skia/private/chromium/SkImageChromium.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #if USE(LIBEPOXY)
 #include <epoxy/egl.h>
@@ -61,11 +71,6 @@ DMABufBuffer::DMABufBuffer(uint64_t id, Attributes&& attributes)
 }
 
 DMABufBuffer::~DMABufBuffer() = default;
-
-void DMABufBuffer::setBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&& buffer)
-{
-    m_buffer = WTF::move(buffer);
-}
 
 std::optional<DMABufBuffer::Attributes> DMABufBuffer::takeAttributes()
 {
@@ -176,6 +181,363 @@ std::optional<Vector<EGLint>> DMABufBuffer::buildEGLImageAttributes(const Attrib
         return static_cast<EGLint>(value);
     });
 }
+
+#if USE(TEXTURE_MAPPER)
+void DMABufBuffer::setBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&& buffer)
+{
+    m_buffer = WTF::move(buffer);
+}
+
+#else
+
+static bool formatIsYUV(uint32_t fourcc)
+{
+    switch (fourcc) {
+    case DRM_FORMAT_YUV420:
+    case DRM_FORMAT_YVU420:
+    case DRM_FORMAT_NV12:
+    case DRM_FORMAT_NV21:
+    case DRM_FORMAT_YUV444:
+    case DRM_FORMAT_YUV411:
+    case DRM_FORMAT_YUV422:
+    case DRM_FORMAT_AYUV:
+    case DRM_FORMAT_P010:
+        return true;
+    }
+
+    return false;
+}
+
+struct YUVPlaneInfo {
+    uint32_t fourcc;
+    unsigned glFormat;
+    IntSize subsampling;
+};
+
+static const HashMap<uint32_t, Vector<YUVPlaneInfo>>& yuvFormatPlaneInfo()
+{
+    static NeverDestroyed<HashMap<uint32_t, Vector<YUVPlaneInfo>>> yuvFormatsMap = [] {
+        HashMap<uint32_t, Vector<YUVPlaneInfo>> map;
+        // 1 plane formats.
+        map.set(DRM_FORMAT_AYUV, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_ABGR8888, GL_RGBA8, { 1, 1 } },
+        });
+
+        // 2 plane formats.
+        map.set(DRM_FORMAT_NV12, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_GR88, GL_RG8, { 2, 2 } },
+        });
+        map.set(DRM_FORMAT_NV21, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_GR88, GL_RG8, { 2, 2 } },
+        });
+        map.set(DRM_FORMAT_P010, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R16, GL_R16, { 1, 1 } },
+            { DRM_FORMAT_GR1616, GL_RG16, { 2, 2 } },
+        });
+
+        // 3 plane formats.
+        map.set(DRM_FORMAT_YUV420, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 2, 2 } },
+            { DRM_FORMAT_R8, GL_R8, { 2, 2 } },
+        });
+        map.set(DRM_FORMAT_YVU420, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 2, 2 } },
+            { DRM_FORMAT_R8, GL_R8, { 2, 2 } },
+        });
+        map.set(DRM_FORMAT_YUV444, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+        });
+        map.set(DRM_FORMAT_YUV411, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 4, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 4, 1 } },
+        });
+        map.set(DRM_FORMAT_YUV422, Vector<YUVPlaneInfo> {
+            { DRM_FORMAT_R8, GL_R8, { 1, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 2, 1 } },
+            { DRM_FORMAT_R8, GL_R8, { 2, 1 } },
+        });
+        return map;
+    }();
+    return yuvFormatsMap;
+}
+
+bool DMABufBuffer::importIfNeeded()
+{
+    if (!m_importedTextures.isEmpty())
+        return true;
+
+    auto& display = PlatformDisplay::sharedDisplay();
+    auto importPlane = [&](const Attributes& planeAttributes, unsigned glFormat) {
+        auto eglImage = createEGLImage(display.glDisplay(), planeAttributes);
+        if (!eglImage)
+            return false;
+
+        Ref texture = BitmapTexturePool::singleton().createTextureForImage(eglImage, planeAttributes.size, { });
+        m_importedTextures.append(texture);
+        display.destroyEGLImage(eglImage);
+
+        GrGLTextureInfo externalTexture;
+        externalTexture.fTarget = GL_TEXTURE_2D;
+        externalTexture.fID = texture->id();
+        externalTexture.fFormat = glFormat;
+        m_importedBackendTextures.append(GrBackendTextures::MakeGL(texture->size().width(), texture->size().height(), skgpu::Mipmapped::kNo, externalTexture));
+        return true;
+    };
+
+    if (formatIsYUV(m_attributes.fourcc.value)) {
+        const auto& iter = yuvFormatPlaneInfo().find(m_attributes.fourcc.value);
+        if (iter == yuvFormatPlaneInfo().end())
+            return false;
+
+        const auto& planeInfo = iter->value;
+        for (unsigned i = 0; i < planeInfo.size(); ++i) {
+            const auto& plane = planeInfo[i];
+            IntSize planeSize { m_attributes.size.width() / plane.subsampling.width(), m_attributes.size.height() / plane.subsampling.height() };
+            auto planeFds = Vector<UnixFileDescriptor>::from(m_attributes.fds[i].borrow());
+            Attributes planeAttributes { planeSize, plane.fourcc, WTF::move(planeFds), { m_attributes.offsets[i] }, { m_attributes.strides[i] }, m_attributes.modifier };
+            if (!importPlane(planeAttributes, plane.glFormat)) {
+                LOG_ERROR("Failed to import DMA-BUF YUV buffer: could not create an EGL image for plane %u", i);
+                m_importedTextures.clear();
+                m_importedBackendTextures.clear();
+                return false;
+            }
+        }
+    } else {
+        if (!importPlane(m_attributes, GL_RGBA8)) {
+            LOG_ERROR("Failed to import DMA-BUF YUV buffer: could not create an EGL image");
+            m_importedTextures.clear();
+            m_importedBackendTextures.clear();
+            return false;
+        }
+    }
+
+    return true;
+}
+
+const GrBackendTexture& DMABufBuffer::backendTexture(size_t planeIndex) const
+{
+    RELEASE_ASSERT(planeIndex < m_importedBackendTextures.size());
+    return m_importedBackendTextures[planeIndex];
+}
+
+SkYUVAInfo DMABufBuffer::yuvaInfo() const
+{
+    auto planeConfig = SkYUVAInfo::PlaneConfig::kUnknown;
+    auto subsampling = SkYUVAInfo::Subsampling::kUnknown;
+    switch (m_attributes.fourcc.value) {
+    case DRM_FORMAT_AYUV:
+        planeConfig = SkYUVAInfo::PlaneConfig::kYUVA;
+        subsampling = SkYUVAInfo::Subsampling::k444;
+        break;
+    case DRM_FORMAT_NV21:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_VU;
+        subsampling = SkYUVAInfo::Subsampling::k420;
+        break;
+    case DRM_FORMAT_NV12:
+    case DRM_FORMAT_P010:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_UV;
+        subsampling = SkYUVAInfo::Subsampling::k420;
+        break;
+    case DRM_FORMAT_YUV420:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_U_V;
+        subsampling = SkYUVAInfo::Subsampling::k420;
+        break;
+    case DRM_FORMAT_YVU420:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_V_U;
+        subsampling = SkYUVAInfo::Subsampling::k420;
+        break;
+    case DRM_FORMAT_YUV444:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_U_V;
+        subsampling = SkYUVAInfo::Subsampling::k444;
+        break;
+    case DRM_FORMAT_YUV411:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_U_V;
+        subsampling = SkYUVAInfo::Subsampling::k411;
+        break;
+    case DRM_FORMAT_YUV422:
+        planeConfig = SkYUVAInfo::PlaneConfig::kY_U_V;
+        subsampling = SkYUVAInfo::Subsampling::k422;
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    SkYUVColorSpace yuvaColorSpace = [&] {
+        switch (m_colorSpace.value_or(DMABufBuffer::ColorSpace::Bt601)) {
+        case DMABufBuffer::ColorSpace::Bt601:
+            return kRec601_Limited_SkYUVColorSpace;
+        case DMABufBuffer::ColorSpace::Bt709:
+            return kRec709_Full_SkYUVColorSpace;
+        case DMABufBuffer::ColorSpace::Bt2020:
+            return kBT2020_8bit_Full_SkYUVColorSpace;
+        case DMABufBuffer::ColorSpace::Smpte240M:
+            return kSMPTE240_Full_SkYUVColorSpace;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }();
+
+    return SkYUVAInfo(SkISize::Make(m_attributes.size.width(), m_attributes.size.height()), planeConfig, subsampling, yuvaColorSpace);
+}
+
+sk_sp<SkColorSpace> DMABufBuffer::skiaColorSpace() const
+{
+    switch (m_transferFunction.value_or(DMABufBuffer::TransferFunction::Bt709)) {
+    case DMABufBuffer::TransferFunction::Bt709:
+        return SkColorSpace::MakeRGB(SkNamedTransferFn::kRec709, SkNamedGamut::kSRGB);
+    case DMABufBuffer::TransferFunction::Pq:
+        return SkColorSpace::MakeRGB(SkNamedTransferFn::kPQ, SkNamedGamut::kRec2020);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+sk_sp<SkImage> DMABufBuffer::createImage(SkColorType colorType, SkAlphaType alphaType, GrSurfaceOrigin origin)
+{
+    if (!importIfNeeded())
+        return nullptr;
+
+    auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
+    ASSERT(grContext);
+
+    if (!formatIsYUV(m_attributes.fourcc.value)) {
+        ref();
+        return SkImages::BorrowTextureFrom(grContext, backendTexture(0), origin, colorType, alphaType, SkColorSpace::MakeSRGB(), +[](void* userData) {
+            static_cast<DMABufBuffer*>(userData)->deref();
+        }, this);
+    }
+
+    SkYUVAInfo info = yuvaInfo();
+    GrYUVABackendTextures yuvaBackendTextures(info, m_importedBackendTextures.span().data(), origin);
+    if (!yuvaBackendTextures.isValid()) {
+        LOG_ERROR("Failed to create Skia image for DMA-BUF YUV video buffer: invalid backend texture information");
+        return nullptr;
+    }
+
+    ref();
+    return SkImages::TextureFromYUVATextures(grContext, yuvaBackendTextures, skiaColorSpace(), +[](void* userData) {
+        static_cast<DMABufBuffer*>(userData)->deref();
+    }, this);
+}
+
+class PromiseDMABufImageContext final : public ThreadSafeRefCounted<PromiseDMABufImageContext> {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(PromiseDMABufImageContext);
+public:
+    static Ref<PromiseDMABufImageContext> create(Ref<DMABufBuffer>&& buffer, std::unique_ptr<GLFence>&& glFence, WTF::UnixFileDescriptor&& fenceFD)
+    {
+        return adoptRef(*new PromiseDMABufImageContext(WTF::move(buffer), WTF::move(glFence), WTF::move(fenceFD)));
+    }
+
+    ~PromiseDMABufImageContext() = default;
+
+    sk_sp<GrPromiseImageTexture> promiseImageTexture(size_t planeIndex)
+    {
+        auto& display = PlatformDisplay::sharedDisplay();
+        auto* glContext = display.skiaGLContext();
+        if (!glContext || !glContext->makeContextCurrent())
+            return nullptr;
+
+        if (auto glFence = WTF::move(m_fence))
+            glFence->serverWait();
+        else if (m_fenceFD) {
+            if (auto glFence = GLFence::importFD(display.glDisplay(), WTF::move(m_fenceFD)))
+                glFence->serverWait();
+        }
+
+        if (!m_dmabuf->importIfNeeded())
+            return nullptr;
+
+        return GrPromiseImageTexture::Make(m_dmabuf->backendTexture(planeIndex));
+    }
+
+private:
+    PromiseDMABufImageContext(Ref<DMABufBuffer>&& buffer, std::unique_ptr<GLFence>&& glFence, WTF::UnixFileDescriptor&& fenceFD)
+        : m_dmabuf(WTF::move(buffer))
+        , m_fence(WTF::move(glFence))
+        , m_fenceFD(WTF::move(fenceFD))
+    {
+    }
+
+    const Ref<DMABufBuffer> m_dmabuf;
+    std::unique_ptr<GLFence> m_fence;
+    WTF::UnixFileDescriptor m_fenceFD;
+};
+
+struct PromiseDMABufYUVPlaneContext {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(PromiseDMABufYUVPlaneContext);
+
+    PromiseDMABufYUVPlaneContext(Ref<PromiseDMABufImageContext>&& dmabufContext, size_t planeIndex)
+        : context(WTF::move(dmabufContext))
+        , index(planeIndex)
+    {
+    }
+
+    Ref<PromiseDMABufImageContext> context;
+    size_t index { 0 };
+};
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(PromiseDMABufYUVPlaneContext);
+
+sk_sp<SkImage> DMABufBuffer::createPromiseImage(const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext, SkColorType colorType, SkAlphaType alphaType, GrSurfaceOrigin origin, std::unique_ptr<GLFence>&& glFence, WTF::UnixFileDescriptor&& fenceFD)
+{
+    ASSERT(threadSafeGrContext);
+
+    if (!formatIsYUV(m_attributes.fourcc.value)) {
+        Ref context = PromiseDMABufImageContext::create(Ref { *this }, WTF::move(glFence), WTF::move(fenceFD));
+
+        auto backendFormat = threadSafeGrContext->defaultBackendFormat(colorType, GrRenderable::kYes);
+        ASSERT(backendFormat.isValid());
+
+        return SkImages::PromiseTextureFrom(threadSafeGrContext, backendFormat, SkISize::Make(m_attributes.size.width(), m_attributes.size.height()), skgpu::Mipmapped::kNo,
+            origin, colorType, alphaType, SkColorSpace::MakeSRGB(),
+            +[](void* userData) -> sk_sp<GrPromiseImageTexture> {
+                auto& context = *static_cast<PromiseDMABufImageContext*>(userData);
+                return context.promiseImageTexture(0);
+            },
+            +[](void* userData) {
+                Ref context = adoptRef(*static_cast<PromiseDMABufImageContext*>(userData));
+            }, &context.leakRef());
+    }
+
+    const auto& iter = yuvFormatPlaneInfo().find(m_attributes.fourcc.value);
+    if (iter == yuvFormatPlaneInfo().end()) {
+        LOG_ERROR("Failed to create Skia image for DMA-BUF YUV buffer: unknown plane configuration");
+        return nullptr;
+    }
+
+    Ref context = PromiseDMABufImageContext::create(Ref { *this }, WTF::move(glFence), WTF::move(fenceFD));
+    const auto& planeInfo = iter->value;
+    std::array<GrBackendFormat, 4> backendFormats;
+    for (unsigned i = 0; i < planeInfo.size(); ++i)
+        backendFormats[i] = GrBackendFormats::MakeGL(planeInfo[i].glFormat, GL_TEXTURE_2D);
+
+
+    SkYUVAInfo info = yuvaInfo();
+    GrYUVABackendTextureInfo yuvaBackendTexturesInfo(info, backendFormats.data(), skgpu::Mipmapped::kNo, origin);
+    if (!yuvaBackendTexturesInfo.isValid()) {
+        LOG_ERROR("Failed to create Skia image for DMA-BUF YUV video buffer: invalid backend texture information");
+        return nullptr;
+    }
+
+    std::array<PromiseDMABufYUVPlaneContext*, 4> planeContexts;
+    for (unsigned i = 0; i < planeInfo.size(); ++i)
+        planeContexts[i] = makeUnique<PromiseDMABufYUVPlaneContext>(context.copyRef(), i).release();
+
+    return SkImages::PromiseTextureFromYUVA(threadSafeGrContext, yuvaBackendTexturesInfo, skiaColorSpace(),
+        +[](void* userData) -> sk_sp<GrPromiseImageTexture> {
+            auto& planeContext = *static_cast<PromiseDMABufYUVPlaneContext*>(userData);
+            return planeContext.context->promiseImageTexture(planeContext.index);
+        },
+        +[](void* userData) {
+            std::unique_ptr<PromiseDMABufYUVPlaneContext> planeContext(static_cast<PromiseDMABufYUVPlaneContext*>(userData));
+        }, reinterpret_cast<void**>(planeContexts.data()));
+}
+#endif
 
 } // namespace WebCore
 

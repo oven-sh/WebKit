@@ -108,12 +108,13 @@ class SetBuildSummary(buildstep.BuildStep, AddToLogMixin):
     @defer.inlineCallbacks
     def run(self):
         build_summary = self.getProperty('build_summary', 'build successful')
-        yield self._addToLog('stdio', f'Setting build summary as: {build_summary}')
-        previous_build_summary = self.getProperty('build_summary', '')
-        if self.FAILURE_MSG_IN_STRESS_MODE in previous_build_summary:
+        if self.build.results in (CANCELLED, RETRY):
+            build_summary = f'Build was interrupted ({Results[self.build.results]})'
+        elif self.FAILURE_MSG_IN_STRESS_MODE in build_summary:
             self.build.results = FAILURE
-        elif self.getProperty('force_build_success', False) or any(s in previous_build_summary for s in self.SUCCESS_MSGS):
+        elif self.getProperty('force_build_success', False) or any(s in build_summary for s in self.SUCCESS_MSGS):
             self.build.results = SUCCESS
+        yield self._addToLog('stdio', f'Setting build summary as: {build_summary}')
         self.build.buildFinished([build_summary], self.build.results)
         return defer.returnValue(SUCCESS)
 

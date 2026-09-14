@@ -76,14 +76,11 @@ Ref<WebImage> WebImage::create(std::optional<ParametersAndHandle>&& parametersAn
     auto [parameters, handle] = WTF::move(*parametersAndHandle);
 
     // FIXME: These should be abstracted as a encodable image buffer handle.
-    auto backendParameters = ImageBuffer::backendParameters(parameters);
-    auto backend = ImageBufferShareableBitmapBackend::create(backendParameters, WTF::move(handle));
+    auto backend = ImageBufferShareableBitmapBackend::create(parameters, WTF::move(handle));
     if (!backend)
         return createEmpty();
-    
-    auto info = ImageBuffer::populateBackendInfo<ImageBufferShareableBitmapBackend>(backendParameters);
 
-    auto buffer = ImageBuffer::create(WTF::move(parameters), info, { }, WTF::move(backend));
+    auto buffer = ImageBuffer::create(WTF::move(parameters), { }, WTF::move(backend));
     if (!buffer)
         return createEmpty();
 

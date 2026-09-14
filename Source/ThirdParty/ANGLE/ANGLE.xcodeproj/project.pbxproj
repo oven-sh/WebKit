@@ -4255,6 +4255,7 @@
 		9A52410FA1BA330D34A3ADFF /* es3fFboMultisampleTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3fFboMultisampleTests.cpp; sourceTree = "<group>"; };
 		9A88429697ABDF1EC21B4543 /* tcuArray.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tcuArray.cpp; sourceTree = "<group>"; };
 		9AAC4ECCA32E1B0E69088C70 /* RenderDoc.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RenderDoc.cpp; sourceTree = "<group>"; };
+		9ABB69D12DB34FEE98808E65 /* MemoryTagging.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MemoryTagging.h; sourceTree = "<group>"; };
 		9AC94DA182932A9320995C8A /* es3fBufferCopyTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3fBufferCopyTests.cpp; sourceTree = "<group>"; };
 		9AD24527B66C75E38881DA93 /* es3fShaderStateQueryTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3fShaderStateQueryTests.cpp; sourceTree = "<group>"; };
 		9B0B496F838E74E5262E344D /* rsgShader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = rsgShader.cpp; sourceTree = "<group>"; };
@@ -5907,6 +5908,7 @@
 				5C1DBBE81B0436EC00235552 /* MemoryBuffer.cpp */,
 				5C1DBBE91B0436EC00235552 /* MemoryBuffer.h */,
 				7BFAF8D52DE6EDE400327F7F /* MemoryBuffer_unittest.cpp */,
+				9ABB69D12DB34FEE98808E65 /* MemoryTagging.h */,
 				5C1DBBEB1B0436EC00235552 /* Optional.h */,
 				7BFAF8D62DE6EDE400327F7F /* Optional_unittest.cpp */,
 				5C55D7112282747600B5BA2C /* PackedEGLEnums_autogen.cpp */,

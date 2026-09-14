@@ -16,6 +16,7 @@ set(libangle_common_headers
     "src/common/FixedQueue.h"
     "src/common/FixedVector.h"
     "src/common/MemoryBuffer.h"
+    "src/common/MemoryTagging.h"
     "src/common/Optional.h"
     "src/common/PackedEGLEnums_autogen.h"
     "src/common/PackedEnums.h"

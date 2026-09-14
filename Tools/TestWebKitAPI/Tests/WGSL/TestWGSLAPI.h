@@ -140,19 +140,19 @@ inline Variant<WGSL::PrepareResult, WGSL::Error> prepare(const WGSL::SuccessfulC
     return WGSL::prepare(shaderModule, pipelineLayouts);
 }
 
-inline Variant<String, WGSL::Error> generate(const WGSL::SuccessfulCheck& staticCheckResult, WGSL::PrepareResult& prepareResult)
+inline Variant<String, WGSL::Error> generate(const WGSL::SuccessfulCheck& staticCheckResult, WGSL::PrepareResult& prepareResult, WGSL::DeviceState&& deviceState = { })
 {
     auto& shaderModule = staticCheckResult.ast;
     HashMap<String, WGSL::ConstantValue> constantValues;
-    return WGSL::generate(shaderModule, prepareResult, constantValues, { });
+    return WGSL::generate(shaderModule, prepareResult, constantValues, WTF::move(deviceState));
 }
 
 #ifdef __OBJC__
-inline Variant<id<MTLLibrary>, NSError *> metalCompile(const String& msl)
+inline Variant<id<MTLLibrary>, NSError *> metalCompile(const String& msl, unsigned appleGPUFamily = 8)
 {
     auto device = MTLCreateSystemDefaultDevice();
     auto options = [MTLCompileOptions new];
-    options.preprocessorMacros = @{ @"__wgslMetalAppleGPUFamily" : [NSString stringWithFormat:@"%u", 8] };
+    options.preprocessorMacros = @{ @"__wgslMetalAppleGPUFamily" : [NSString stringWithFormat:@"%u", appleGPUFamily] };
     NSError *error = nil;
     RetainPtr library = [device newLibraryWithSource:msl.createNSString().get() options:options error:&error];
     if (error != nil)

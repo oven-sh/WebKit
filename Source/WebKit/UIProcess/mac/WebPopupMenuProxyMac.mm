@@ -227,7 +227,7 @@ void WebPopupMenuProxyMac::hidePopupMenu()
 
 void WebPopupMenuProxyMac::cancelTracking()
 {
-    [protect(menu()) cancelTracking];
+    [protect(menu()) cancelTrackingWithoutAnimation];
     m_wasCanceled = true;
 }
 

@@ -30,7 +30,9 @@
 #include "OperationResult.h"
 #include <climits>
 #include <cmath>
+#include <limits>
 #include <optional>
+#include <wtf/MathExtras.h>
 
 namespace JSC {
 
@@ -86,11 +88,7 @@ inline bool isNegativeZero(double value)
 //
 // The operation can be described as round towards zero, then select the 32 or 64 least
 // bits of the resulting value in 2s-complement representation.
-enum ToIntMode {
-    Generic,
-    Int32AfterSensibleConversionAttempt,
-};
-template<class Int, ToIntMode Mode = Generic>
+template<class Int>
 ALWAYS_INLINE Int toIntImpl(double number)
 {
     static_assert(std::is_same_v<Int, int32_t> || std::is_same_v<Int, int64_t>);
@@ -135,47 +133,36 @@ ALWAYS_INLINE Int toIntImpl(double number)
     // and exponent bits from the floatingpoint representation); mask these out.
     // Note that missingOne should be held as UInt since ((1 << intBitsMinusOne) - 1) causes
     // Int overflow.
-    if constexpr (Mode == ToIntMode::Int32AfterSensibleConversionAttempt) {
-        static_assert(intBitsMinusOne == 31);
-        if (exp == intBitsMinusOne) {
-            // This is an optimization for when toInt32() is called in the slow path
-            // of a JIT operation. Currently, this optimization is only applicable for
-            // x86 ports. This optimization offers 5% performance improvement in
-            // kraken-crypto-pbkdf2.
-            //
-            // On x86, the fast path does a sensible double-to-int32 conversion, by
-            // first attempting to truncate the double value to int32 using the
-            // cvttsd2si_rr instruction. According to Intel's manual, cvttsd2si performs
-            // the following truncate operation:
-            //
-            //     If src = NaN, +-Inf, or |(src)rz| > 0x7fffffff and (src)rz != 0x80000000,
-            //     then the result becomes 0x80000000. Otherwise, the operation succeeds.
-            //
-            // Note that the ()rz notation means rounding towards zero.
-            // We'll call the slow case function only when the above cvttsd2si fails. The
-            // JIT code checks for fast path failure by checking if result == 0x80000000.
-            // Hence, the slow path will only see the following possible set of numbers:
-            //
-            //     NaN, +-Inf, or |(src)rz| > 0x7fffffff.
-            //
-            // As a result, the exp of the double is always >= 31. We can take advantage
-            // of this by specifically checking for (exp == 31) and give the compiler a
-            // chance to constant fold the operations below.
-            const constexpr UInt missingOne = static_cast<UInt>(1U) << intBitsMinusOne;
-            result &= missingOne - 1;
-            result += missingOne;
-        }
-    } else {
-        if (exp < static_cast<int32_t>(intBits)) {
-            const UInt missingOne = static_cast<UInt>(1U) << exp;
-            result &= missingOne - 1;
-            result += missingOne;
-        }
+    if (exp < static_cast<int32_t>(intBits)) {
+        const UInt missingOne = static_cast<UInt>(1U) << exp;
+        result &= missingOne - 1;
+        result += missingOne;
     }
 
     // If the input value was negative (we could test either 'number' or 'bits',
     // but testing 'bits' is likely faster) invert the result appropriately.
     return static_cast<int64_t>(bits) < 0 ? -static_cast<Int>(result) : static_cast<Int>(result);
+}
+
+// ToInt32 for the inputs an x86_64 cvttsd2siq fast path rejects, which are exactly the ones
+// it maps to INT64_MIN: NaN, the infinities, and every |number| >= 2^63. Their exponent is at
+// least 63, so unlike toIntImpl this needs no rounding towards zero, and no restore of the
+// implicit leading mantissa bit, which at 2^63 or above cannot reach the low 32 bits.
+ALWAYS_INLINE int32_t toInt32AfterFailedTruncation(double number)
+{
+    uint64_t bits = std::bit_cast<uint64_t>(number);
+    int32_t exp = (static_cast<int32_t>(bits >> 52) & 0x7ff) - 0x3ff;
+    ASSERT(exp >= 63);
+
+    // Past a shift of 31 every mantissa bit weighs 2^32 or more, so nothing survives ToInt32.
+    // NaN and the infinities exit here too, on their all-ones exponent field. The unsigned
+    // comparison keeps a shift count out of range away from the shift below.
+    int32_t shift = exp - 52;
+    if (static_cast<uint32_t>(shift) > 31)
+        return 0;
+
+    uint32_t magnitude = static_cast<uint32_t>(bits << shift);
+    return static_cast<int64_t>(bits) < 0 ? -static_cast<int32_t>(magnitude) : static_cast<int32_t>(magnitude);
 }
 
 ALWAYS_INLINE int32_t toInt32(double number)
@@ -184,6 +171,14 @@ ALWAYS_INLINE int32_t toInt32(double number)
     int32_t result = 0;
     __asm__ ("fjcvtzs %w0, %d1" : "=r" (result) : "w" (number) : "cc");
     return result;
+#elif CPU(X86_64)
+    // ToInt32 is the low 32 bits of a truncation toward zero, which cvttsd2siq computes
+    // exactly for every |number| < 2^63. It reports NaN, the infinities, and everything
+    // of larger magnitude as INT64_MIN.
+    int64_t truncated = truncateDoubleToInt64(number);
+    if (truncated != std::numeric_limits<int64_t>::min()) [[likely]]
+        return static_cast<int32_t>(truncated);
+    return toInt32AfterFailedTruncation(number);
 #else
     return toIntImpl<int32_t>(number);
 #endif

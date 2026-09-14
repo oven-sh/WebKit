@@ -883,6 +883,487 @@ TEST(WKWebExtensionAPIDeclarativeNetRequest, RedirectRuleWithEnhancedSecurity)
     runRedirectRule(true);
 }
 
+TEST(WKWebExtensionAPIDeclarativeNetRequest, HighPriorityStaticRedirectFavoredOverLowPrioritySessionRedirect)
+{
+    auto *correctPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyPass()",
+        @"</script>"
+    ]);
+
+    auto *incorrectPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyFail('Low-priority session redirect should not win over high-priority static redirect')",
+        @"</script>"
+    ]);
+
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body></body>"_s } },
+        { "/correct"_s, { { { "Content-Type"_s, "text/html"_s } }, correctPageScript } },
+        { "/incorrect"_s, { { { "Content-Type"_s, "text/html"_s } }, incorrectPageScript } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    auto *correctRedirectURL = server.request("/correct"_s).URL.absoluteString;
+    auto *incorrectRedirectURL = server.request("/incorrect"_s).URL.absoluteString;
+
+    auto *rules = @[ @{
+        @"id": @1,
+        @"priority": @200,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": correctRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    } ];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1",
+
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module", @"persistent": @NO },
+
+        @"permissions": @[ @"declarativeNetRequestWithHostAccess" ],
+        @"host_permissions": @[ @"*://localhost/*" ],
+
+        @"declarative_net_request": @{
+            @"rule_resources": @[ @{
+                @"id": @"redirectRule",
+                @"enabled": @YES,
+                @"path": @"rules.json"
+            } ]
+        }
+    };
+
+    auto *addSessionRuleScript = [NSString stringWithFormat:@"await browser.declarativeNetRequest.updateSessionRules({ addRules: [{ id: 2, priority: 1, action: { type: 'redirect', redirect: { url: '%@' } }, condition: { urlFilter: 'localhost', resourceTypes: ['main_frame'] } }] })", incorrectRedirectURL];
+
+    auto *backgroundScript = Util::constructScript(@[
+        addSessionRuleScript,
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"rules.json": rules
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIDeclarativeNetRequest, HighestPriorityRedirectWinsRegardlessOfDeclarationOrder)
+{
+    auto *correctPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyPass()",
+        @"</script>"
+    ]);
+
+    auto *incorrectPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyFail('Low-priority redirect should not win over high-priority redirect declared later')",
+        @"</script>"
+    ]);
+
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body></body>"_s } },
+        { "/correct"_s, { { { "Content-Type"_s, "text/html"_s } }, correctPageScript } },
+        { "/incorrect"_s, { { { "Content-Type"_s, "text/html"_s } }, incorrectPageScript } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    auto *correctRedirectURL = server.request("/correct"_s).URL.absoluteString;
+    auto *incorrectRedirectURL = server.request("/incorrect"_s).URL.absoluteString;
+
+    auto *rules = @[ @{
+        @"id": @1,
+        @"priority": @1,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": incorrectRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    }, @{
+        @"id": @2,
+        @"priority": @100,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": correctRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    } ];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1",
+
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module", @"persistent": @NO },
+
+        @"permissions": @[ @"declarativeNetRequestWithHostAccess" ],
+        @"host_permissions": @[ @"*://localhost/*" ],
+
+        @"declarative_net_request": @{
+            @"rule_resources": @[ @{
+                @"id": @"redirectRule",
+                @"enabled": @YES,
+                @"path": @"rules.json"
+            } ]
+        }
+    };
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"rules.json": rules
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIDeclarativeNetRequest, HigherPriorityNoOpRedirectSuppressesLowerPriorityRedirect)
+{
+    auto *correctPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyPass()",
+        @"</script>"
+    ]);
+
+    auto *incorrectPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyFail('Lower-priority redirect should not apply when a higher-priority no-op redirect matches')",
+        @"</script>"
+    ]);
+
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, correctPageScript } },
+        { "/incorrect"_s, { { { "Content-Type"_s, "text/html"_s } }, incorrectPageScript } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    auto *noOpRedirectURL = urlRequest.URL.absoluteString;
+    auto *incorrectRedirectURL = server.request("/incorrect"_s).URL.absoluteString;
+
+    auto *rules = @[ @{
+        @"id": @1,
+        @"priority": @2,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": noOpRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    }, @{
+        @"id": @2,
+        @"priority": @1,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": incorrectRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    } ];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1",
+
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module", @"persistent": @NO },
+
+        @"permissions": @[ @"declarativeNetRequestWithHostAccess" ],
+        @"host_permissions": @[ @"*://localhost/*" ],
+
+        @"declarative_net_request": @{
+            @"rule_resources": @[ @{
+                @"id": @"redirectRule",
+                @"enabled": @YES,
+                @"path": @"rules.json"
+            } ]
+        }
+    };
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"rules.json": rules
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIDeclarativeNetRequest, LowerPriorityRedirectDoesNotComposeOntoWinner)
+{
+    auto *correctPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyPass()",
+        @"</script>"
+    ]);
+
+    auto *noRedirectPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyFail('No redirect fired')",
+        @"</script>"
+    ]);
+
+    auto *composedPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyFail('Lower-priority transform should not compose onto the winning redirect')",
+        @"</script>"
+    ]);
+
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, noRedirectPageScript } },
+        { "/winner"_s, { { { "Content-Type"_s, "text/html"_s } }, correctPageScript } },
+        { "/winner?b=2"_s, { { { "Content-Type"_s, "text/html"_s } }, composedPageScript } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    auto *winnerRedirectURL = server.request("/winner"_s).URL.absoluteString;
+
+    auto *rules = @[ @{
+        @"id": @1,
+        @"priority": @2,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": winnerRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    }, @{
+        @"id": @2,
+        @"priority": @1,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"transform": @{
+                    @"queryTransform": @{
+                        @"addOrReplaceParams": @[ @{ @"key": @"b", @"value": @"2" } ]
+                    }
+                }
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    } ];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1",
+
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module", @"persistent": @NO },
+
+        @"permissions": @[ @"declarativeNetRequestWithHostAccess" ],
+        @"host_permissions": @[ @"*://localhost/*" ],
+
+        @"declarative_net_request": @{
+            @"rule_resources": @[ @{
+                @"id": @"redirectRule",
+                @"enabled": @YES,
+                @"path": @"rules.json"
+            } ]
+        }
+    };
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"rules.json": rules
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIDeclarativeNetRequest, LastDeclaredRedirectWinsAmongEqualPriority)
+{
+    auto *correctPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyPass()",
+        @"</script>"
+    ]);
+
+    auto *incorrectPageScript = Util::constructScript(@[
+        @"<script>",
+        @"  browser.test.notifyFail('First-declared redirect should not win over a later-declared redirect of equal priority')",
+        @"</script>"
+    ]);
+
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body></body>"_s } },
+        { "/correct"_s, { { { "Content-Type"_s, "text/html"_s } }, correctPageScript } },
+        { "/incorrect"_s, { { { "Content-Type"_s, "text/html"_s } }, incorrectPageScript } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    auto *correctRedirectURL = server.request("/correct"_s).URL.absoluteString;
+    auto *incorrectRedirectURL = server.request("/incorrect"_s).URL.absoluteString;
+
+    auto *rules = @[ @{
+        @"id": @1,
+        @"priority": @10,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": incorrectRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    }, @{
+        @"id": @2,
+        @"priority": @10,
+
+        @"action": @{
+            @"type": @"redirect",
+            @"redirect": @{
+                @"url": correctRedirectURL
+            }
+        },
+
+        @"condition": @{
+            @"urlFilter": @"localhost",
+            @"resourceTypes": @[ @"main_frame" ]
+        }
+    } ];
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1",
+
+        @"background": @{ @"scripts": @[ @"background.js" ], @"type": @"module", @"persistent": @NO },
+
+        @"permissions": @[ @"declarativeNetRequestWithHostAccess" ],
+        @"host_permissions": @[ @"*://localhost/*" ],
+
+        @"declarative_net_request": @{
+            @"rule_resources": @[ @{
+                @"id": @"redirectRule",
+                @"enabled": @YES,
+                @"path": @"rules.json"
+            } ]
+        }
+    };
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"rules.json": rules
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
 TEST(WKWebExtensionAPIDeclarativeNetRequest, RedirectRuleWithoutHostAccessPermission)
 {
     auto *pageScript = Util::constructScript(@[

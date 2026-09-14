@@ -56,7 +56,7 @@ using namespace WebCore;
 
 class WebStorageSessionProvider : public WebCore::StorageSessionProvider {
     // NetworkStorageSessions are accessed only in the NetworkProcess.
-    WebCore::NetworkStorageSession* storageSession() const final { return nullptr; }
+    WebCore::CookieStorageSession* storageSession() const final { return nullptr; }
 };
 
 WebCookieJar::WebCookieJar()
@@ -279,7 +279,7 @@ void WebCookieJar::remoteCookiesEnabled(const Document& document, CompletionHand
     protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::CookiesEnabled(document.firstPartyForCookies(), cookieURL, frameID, page->identifier(), page->webPageProxyIdentifier()), WTF::move(completionHandler));
 }
 
-std::pair<String, WebCore::SecureCookiesAccessed> WebCookieJar::cookieRequestHeaderFieldValue(const URL&, const WebCore::SameSiteInfo&, const URL&, std::optional<FrameIdentifier>, std::optional<PageIdentifier>, WebCore::IncludeSecureCookies) const
+std::pair<String, WebCore::SecureCookiesAccessed> WebCookieJar::cookieRequestHeaderFieldValue(const URL&, const WebCore::SameSiteInfo&, const URL&, WebCore::IncludeSecureCookies) const
 {
     // Unreachable in WebKit2: only Web Inspector's WebSocket handshake reporting calls this, and both channels discard it.
     ASSERT_NOT_REACHED();
@@ -394,10 +394,11 @@ void WebCookieJar::addChangeListenerWithAccess(const URL& url, const URL& firstP
             return;
     }
 
-    auto completionHandler = [protectedThis = Ref { *this }, this, host, listener = WeakPtr { listener }] (bool listenerAdded)  {
+    auto completionHandler = [protectedThis = Ref { *this }, this, host, weakListener = WeakPtr { listener }] (bool listenerAdded)  {
         if (!listenerAdded)
             return;
 
+        RefPtr listener = weakListener;
         if (!listener)
             return;
 

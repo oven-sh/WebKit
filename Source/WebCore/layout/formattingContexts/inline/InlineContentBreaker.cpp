@@ -475,7 +475,7 @@ static std::optional<size_t> firstHyphenPosition(StringView content, const Style
     auto candidatePosition = std::min(contentLength, contentLength - limitAfterValue(style) + 1);
     auto firstHyphenLocation = std::optional<size_t> { };
     while (true) {
-        auto hyphenIndex = lastHyphenLocation(content, candidatePosition, Style::toPlatform(style.computedLocale()));
+        auto hyphenIndex = lastHyphenLocation(content, candidatePosition, Style::toPlatform(style.usedLocale()));
         if (!hyphenIndex || hyphenIndex < limitBefore)
             return firstHyphenLocation;
         if (hyphenIndex >= candidatePosition) {
@@ -494,7 +494,7 @@ static std::optional<size_t> lastHyphenPosition(StringView content, const Style:
     if (!hasEnoughContentForHyphenation(contentLength, style))
         return { };
 
-    if (auto hyphenIndex = lastHyphenLocation(content, std::min(contentLength, contentLength - limitAfterValue(style) + 1), Style::toPlatform(style.computedLocale())))
+    if (auto hyphenIndex = lastHyphenLocation(content, std::min(contentLength, contentLength - limitAfterValue(style) + 1), Style::toPlatform(style.usedLocale())))
         return hyphenIndex >= limitBeforeValue(style) ? std::make_optional(hyphenIndex) : std::nullopt;
     return { };
 }
@@ -508,7 +508,7 @@ static std::optional<size_t> hyphenPositionBefore(StringView content, const Styl
     if (beforePosition < limitBeforeValue(style) || !hasEnoughContentForHyphenation(contentLength, style))
         return { };
 
-    if (auto hyphenIndex = lastHyphenLocation(content, std::min(beforePosition, contentLength - limitAfterValue(style)) + 1, Style::toPlatform(style.computedLocale())))
+    if (auto hyphenIndex = lastHyphenLocation(content, std::min(beforePosition, contentLength - limitAfterValue(style)) + 1, Style::toPlatform(style.usedLocale())))
         return hyphenIndex >= limitBeforeValue(style) ? std::make_optional(hyphenIndex) : std::nullopt;
     return { };
 }

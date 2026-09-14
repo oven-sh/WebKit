@@ -59,7 +59,7 @@ UNTRUSTED_WRAPPER = "IPC::Untrusted"
 # test_validation_procedures_are_confined below.
 VALIDATION_PROCEDURE_HEADERS = {
     "Platform/IPC/Untrusted.h",
-    "UIProcess/FirstPartyAuthority.h",
+    "UIProcess/ValidationProcedures.h",
 }
 
 # Text that declares a validation procedure, and so may only appear in the headers above.

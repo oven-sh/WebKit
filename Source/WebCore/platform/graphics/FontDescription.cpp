@@ -39,7 +39,7 @@ namespace WebCore {
 
 FontDescription::FontDescription()
     : m_variantAlternates(FontVariantAlternates::Normal())
-    , m_fontPalette({ FontPalette::Type::Normal, nullAtom() })
+    , m_fontPalette(FontPalette::Keyword::Normal)
     , m_fontSelectionRequest { normalWeightValue(), normalWidthValue(), std::nullopt }
     , m_orientation(std::to_underlying(FontOrientation::Horizontal))
     , m_nonCJKGlyphOrientation(std::to_underlying(NonCJKGlyphOrientation::Mixed))
@@ -108,7 +108,7 @@ void FontDescription::setSpecifiedLocale(const AtomString& locale)
     ASSERT(isMainThread());
     m_specifiedLocale = locale;
     m_script = localeToScriptCode(m_specifiedLocale);
-    m_locale = m_script == USCRIPT_HAN ? specializedChineseLocale() : m_specifiedLocale;
+    m_usedLocale = m_script == USCRIPT_HAN ? specializedChineseLocale() : m_specifiedLocale;
 }
 
 #if !PLATFORM(COCOA)

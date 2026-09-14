@@ -34,6 +34,7 @@
 #include "WebGPUMapMode.h"
 #include "WebGPUOrigin2D.h"
 #include "WebGPUOrigin3D.h"
+#include "WebGPUPredefinedColorSpace.h"
 #include "WebGPUShaderStage.h"
 #include "WebGPUTextureUsage.h"
 #include <WebGPU/WebGPU.h>
@@ -123,6 +124,7 @@ public:
     WGPUIndexFormat convertToBacking(IndexFormat);
     WGPULoadOp convertToBacking(LoadOp);
     WGPUPowerPreference convertToBacking(PowerPreference);
+    WGPUColorSpace NODELETE convertToBacking(PredefinedColorSpace);
     WGPUPrimitiveTopology convertToBacking(PrimitiveTopology);
     WGPUQueryType convertToBacking(QueryType);
     WGPUSamplerBindingType convertToBacking(SamplerBindingType);

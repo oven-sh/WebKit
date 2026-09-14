@@ -26,7 +26,9 @@
 #include "config.h"
 #include "ImageBufferRemotePDFDocumentBackend.h"
 
+#include <WebCore/PixelBuffer.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -39,19 +41,17 @@ unsigned ImageBufferRemotePDFDocumentBackend::calculateBytesPerRow(const IntSize
     return CheckedUint32(backendSize.width()) * 4;
 }
 
-size_t ImageBufferRemotePDFDocumentBackend::calculateMemoryCost(const Parameters& parameters)
-{
-    // FIXME: This is fairly meaningless, because we don't actually have a bitmap, and
-    // should really be based on the PDF document size.
-    return ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters.backendSize));
-}
-
-std::unique_ptr<ImageBufferRemotePDFDocumentBackend> ImageBufferRemotePDFDocumentBackend::create(const Parameters& parameters)
+std::unique_ptr<ImageBufferRemotePDFDocumentBackend> ImageBufferRemotePDFDocumentBackend::create(const WebCore::ImageBufferParameters& parameters)
 {
     return std::unique_ptr<ImageBufferRemotePDFDocumentBackend> { new ImageBufferRemotePDFDocumentBackend { parameters } };
 }
 
 ImageBufferRemotePDFDocumentBackend::~ImageBufferRemotePDFDocumentBackend() = default;
+
+void ImageBufferRemotePDFDocumentBackend::getPixelBuffer(const IntRect&, PixelBuffer& destination)
+{
+    destination.zeroFill();
+}
 
 String ImageBufferRemotePDFDocumentBackend::debugDescription() const
 {
@@ -60,4 +60,4 @@ String ImageBufferRemotePDFDocumentBackend::debugDescription() const
     return stream.release();
 }
 
-} // namespace WebCore
+} // namespace WebKit

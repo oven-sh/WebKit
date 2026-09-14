@@ -79,6 +79,10 @@ using namespace WebKit;
     if (outErrorStrings)
         *outErrorStrings = [errorStrings copy];
 
+    [allValidatedRules enumerateObjectsUsingBlock:^(_WKWebExtensionDeclarativeNetRequestRule *rule, NSUInteger index, BOOL *stop) {
+        rule.declarationOrder = index;
+    }];
+
     allValidatedRules = [allValidatedRules sortedArrayUsingComparator:^NSComparisonResult(_WKWebExtensionDeclarativeNetRequestRule *a, _WKWebExtensionDeclarativeNetRequestRule *b) {
         return [a compare:b];
     }].mutableCopy;

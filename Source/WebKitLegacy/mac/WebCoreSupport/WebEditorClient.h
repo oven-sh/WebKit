@@ -187,7 +187,7 @@ private:
 #if PLATFORM(MAC)
     void requestCandidatesForSelection(const WebCore::VisibleSelection&) final;
     void handleRequestedCandidates(NSInteger, NSArray<NSTextCheckingResult *> *);
-    void handleAcceptedCandidateWithSoftSpaces(WebCore::TextCheckingResult) final;
+    void handleAcceptedCandidateWithSoftSpaces(const WebCore::TextCheckingResult&) final;
 #endif
 
     void registerUndoOrRedoStep(WebCore::UndoStep&, bool isRedo);

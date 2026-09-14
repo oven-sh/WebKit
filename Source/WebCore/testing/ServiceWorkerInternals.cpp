@@ -226,10 +226,10 @@ String ServiceWorkerInternals::effectiveRenderingModeOfNewlyCreatedAcceleratedCa
     RefPtr imageBuffer = ImageBuffer::create({ 100, 100 }, RenderingMode::Accelerated, RenderingPurpose::Canvas, 1, ColorSpace::SRGB(), PixelFormat::BGRA8, graphicsClient);
     if (!imageBuffer)
         return "none"_s;
-    imageBuffer->ensureBackendCreated();
-    if (!imageBuffer->hasBackend())
+    auto renderingMode = imageBuffer->getEffectiveRenderingModeForTesting();
+    if (!renderingMode)
         return "none"_s;
-    if (imageBuffer->renderingMode() != RenderingMode::Accelerated)
+    if (*renderingMode != RenderingMode::Accelerated)
         return "unaccelerated"_s;
     return imageBuffer->isRemoteImageBufferProxy() ? "remote"_s : "local-iosurface"_s;
 }

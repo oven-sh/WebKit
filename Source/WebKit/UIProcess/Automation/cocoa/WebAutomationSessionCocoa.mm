@@ -126,25 +126,38 @@ std::optional<unichar> WebAutomationSession::charCodeForVirtualKey(Inspector::Pr
         // According to the internet its functionality is similar to 'Escape'.
     case Inspector::Protocol::Automation::VirtualKey::Escape:
         return 0x1B;
+    // The '*Right' variants use the numeric keypad's keyCodes so that the DOM reports code=Numpad*,
+    // but they still produce the navigation character rather than the digit, so that the DOM 'key'
+    // matches the primary key ("ArrowLeft", "Home", ...) as the WebDriver key table requires.
     case Inspector::Protocol::Automation::VirtualKey::PageUp:
+    case Inspector::Protocol::Automation::VirtualKey::PageUpRight:
         return NSPageUpFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::PageDown:
+    case Inspector::Protocol::Automation::VirtualKey::PageDownRight:
         return NSPageDownFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::End:
+    case Inspector::Protocol::Automation::VirtualKey::EndRight:
         return NSEndFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::Home:
+    case Inspector::Protocol::Automation::VirtualKey::HomeRight:
         return NSHomeFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::LeftArrow:
+    case Inspector::Protocol::Automation::VirtualKey::LeftArrowRight:
         return NSLeftArrowFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::UpArrow:
+    case Inspector::Protocol::Automation::VirtualKey::UpArrowRight:
         return NSUpArrowFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::RightArrow:
+    case Inspector::Protocol::Automation::VirtualKey::RightArrowRight:
         return NSRightArrowFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::DownArrow:
+    case Inspector::Protocol::Automation::VirtualKey::DownArrowRight:
         return NSDownArrowFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::Insert:
+    case Inspector::Protocol::Automation::VirtualKey::InsertRight:
         return NSInsertFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::Delete:
+    case Inspector::Protocol::Automation::VirtualKey::DeleteRight:
         return NSDeleteFunctionKey;
     case Inspector::Protocol::Automation::VirtualKey::Space:
         return ' ';
@@ -181,8 +194,9 @@ std::optional<unichar> WebAutomationSession::charCodeForVirtualKey(Inspector::Pr
     case Inspector::Protocol::Automation::VirtualKey::NumberPadSubtract:
         return '-';
     case Inspector::Protocol::Automation::VirtualKey::NumberPadSeparator:
-        // The 'Separator' key is only present on a few international keyboards.
-        // It is usually mapped to the same character as Decimal ('.' or ',').
+        // The 'Separator' key is only present on a few international keyboards, where it is the
+        // keypad's comma. It is distinct from Decimal, which is the keypad's period.
+        return ',';
     case Inspector::Protocol::Automation::VirtualKey::NumberPadDecimal:
         return '.';
     case Inspector::Protocol::Automation::VirtualKey::NumberPadDivide:
