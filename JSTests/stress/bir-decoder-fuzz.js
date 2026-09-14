@@ -136,8 +136,13 @@ const interesting = [0, 1, 2, 3, 4, 5, 8, 16, 0x3f, 0x40, 0x7f, 0x80, 0x81, 0xfe
 let loaded = 0, refused = 0;
 for (let iteration = 0; iteration < 6000; iteration++) {
     const bytes = Array.from(corpus[random(corpus.length)]);
+    // A module is decoded by the rules of the target it names, and only then compared with this machine: one
+    // in three goes through another target's.
+    if (!random(3)) {
+        bytes[4] = random(2);
+        bytes[5] = random(3);
+    }
     for (let edits = 1 + random(3); edits--;) {
-        // Past the header: a module for another target is refused before anything else is looked at.
         const position = 8 + random(bytes.length - 8);
         switch (random(6)) {
         case 0: bytes[position] = interesting[random(interesting.length)]; break;

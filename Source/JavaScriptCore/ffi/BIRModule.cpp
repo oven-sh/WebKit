@@ -190,7 +190,7 @@ private:
         uint8_t arch, os, pointerBytes, reserved;
         if (!u8(arch) || !u8(os) || !u8(pointerBytes) || !u8(reserved))
             return false;
-        if (arch > static_cast<uint8_t>(Arch::ARM64) || os > static_cast<uint8_t>(OS::FreeBSD) || pointerBytes != 8)
+        if (arch > static_cast<uint8_t>(Arch::ARM64) || os > static_cast<uint8_t>(OS::Windows) || pointerBytes != 8)
             return fail("unsupported target"_s);
         if (reserved)
             return fail("the reserved header byte is not zero"_s);
@@ -538,6 +538,11 @@ private:
                 return false;
             if (i < fixedCount && actual != signature.parameters[i].type)
                 return fail("call argument has the wrong type"_s);
+            // Win64 passes a vector by reference, to a variadic function too. Apple's AArch64 passes what the named
+            // parameters do not cover in 8-byte pieces: the frontend writes a vector as two of them.
+            bool anonymousArgumentsAreScalars = m_module->os == OS::Windows || (m_module->os == OS::Darwin && m_module->arch == Arch::ARM64);
+            if (i >= fixedCount && actual == Type::V128 && anonymousArgumentsAreScalars)
+                return fail("a vector cannot be one of the anonymous arguments of a variadic call on this target"_s);
             m_function->extra.append(id);
         }
         for (Type result : signature.results)
@@ -749,10 +754,8 @@ private:
         case Op::VConvert:
             if (!u8(inst.aux) || !useTyped(inst.a, Type::V128))
                 return false;
-            if (inst.aux > static_cast<uint8_t>(VConvertKind::F64x2ToI32x4ZeroX86))
+            if (inst.aux > static_cast<uint8_t>(VConvertKind::F64x2ToI64x2U))
                 return fail("bad vector conversion"_s);
-            if (inst.aux >= static_cast<uint8_t>(VConvertKind::F32x4ToI32x4X86) && m_module->arch != Arch::X86_64)
-                return fail("an x86-64 vector conversion in a module for another target"_s);
             define(inst, Type::V128);
             return true;
         case Op::VAddSat:

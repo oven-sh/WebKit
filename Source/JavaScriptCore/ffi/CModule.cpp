@@ -211,7 +211,7 @@ CModule::CModule(std::unique_ptr<BIR::Module>&& bir)
 
 std::optional<std::pair<uint8_t, uint8_t>> CModule::hostTarget()
 {
-#if (CPU(X86_64) && (OS(DARWIN) || OS(WINDOWS) || OS(FREEBSD) || OS(LINUX))) || (CPU(ARM64) && (OS(DARWIN) || OS(FREEBSD) || OS(LINUX)))
+#if (CPU(X86_64) && (OS(DARWIN) || OS(WINDOWS) || OS(LINUX))) || (CPU(ARM64) && (OS(DARWIN) || OS(LINUX)))
 #if CPU(X86_64)
     constexpr BIR::Arch arch = BIR::Arch::X86_64;
 #else
@@ -221,8 +221,6 @@ std::optional<std::pair<uint8_t, uint8_t>> CModule::hostTarget()
     constexpr BIR::OS os = BIR::OS::Darwin;
 #elif OS(WINDOWS)
     constexpr BIR::OS os = BIR::OS::Windows;
-#elif OS(FREEBSD)
-    constexpr BIR::OS os = BIR::OS::FreeBSD;
 #else
     constexpr BIR::OS os = BIR::OS::Linux;
 #endif

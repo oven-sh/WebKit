@@ -30,6 +30,16 @@ function accepts(what, module) {
     cases++;
     try { return $vm.cModule(bytesOf(module)); } catch (e) { throw new Error(`${what}: refused with ${e}`); }
 }
+// The decoder goes by the target the module says it is for, and only then does the loader compare that with the
+// machine: a module for another target that decodes is refused by the loader, one that does not by the decoder.
+const X86_64 = 0, ARM64 = 1, LINUX = 0, DARWIN = 1, WINDOWS = 2;
+const targets = [[X86_64, LINUX], [ARM64, LINUX], [X86_64, DARWIN], [ARM64, DARWIN], [X86_64, WINDOWS]];
+function forTarget(targetArch, targetOS, module) { const bytes = new Uint8Array(bytesOf(module)); bytes[4] = targetArch; bytes[5] = targetOS; return bytes; }
+function decodes(what, targetArch, targetOS, module) {
+    if (targetArch === arch && targetOS === os)
+        return void accepts(what, forTarget(targetArch, targetOS, module));
+    rejects(what, forTarget(targetArch, targetOS, module), /^BIR module was compiled for a different target$/, "");
+}
 
 const intToInt = { ret: T.i32, params: [T.i32] };
 const identity = (name = "f", more = {}) => ({ name, sig: 0, exported: true, blocks: [[["Ret", 0]]], ...more });
@@ -51,6 +61,7 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     const patched = (offset, value) => { const copy = new Uint8Array(good); copy[offset] = value; return copy; };
     rejects("magic", patched(3, 0x31), /bad magic/);
     rejects("arch 2", patched(4, 2), /unsupported target/);
+    rejects("os 3", patched(5, 3), /unsupported target/);
     rejects("os 4", patched(5, 4), /unsupported target/);
     rejects("4-byte pointers", patched(6, 4), /unsupported target/);
     rejects("reserved byte", patched(7, 1), /reserved header byte/);
@@ -368,11 +379,10 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     rejects("lane 16 of sixteen replaced", vectorFunction([[["ConstI32", s(1)], ["VReplace", b(LANE.i8x16), b(16), 0, 1], ["RetVoid"]]]), /lane index out of range/);
     accepts("shuffle index 31", vectorFunction([[["VShuffle", 0, 0, { bytes: new Array(16).fill(31) }], ["RetVoid"]]]));
     rejects("shuffle index 32", vectorFunction([[["VShuffle", 0, 0, { bytes: [...new Array(15).fill(0), 32] }], ["RetVoid"]]]), /shuffle index out of range/);
-    rejects("vector conversion 28", vectorFunction([[["VConvert", b(28), 0], ["RetVoid"]]]), /bad vector conversion/);
-    if (isX86)
-        accepts("the x86-64 vector conversions", vectorFunction([[["VConvert", b(26), 0], ["VConvert", b(27), 0], ["RetVoid"]]]));
-    else
-        rejects("an x86-64 vector conversion elsewhere", vectorFunction([[["VConvert", b(26), 0], ["RetVoid"]]]), /x86-64 vector conversion/);
+    accepts("vector conversion 25", vectorFunction([[["VConvert", b(25), 0], ["RetVoid"]]]));
+    rejects("vector conversion 26", vectorFunction([[["VConvert", b(26), 0], ["RetVoid"]]]), /bad vector conversion/);
+    rejects("vector conversion 255", vectorFunction([[["VConvert", b(255), 0], ["RetVoid"]]]), /bad vector conversion/);
+    rejects("vector conversion of a scalar", body({ ret: T.void, params: [T.f64] }, [[["VConvert", b(0), 0], ["RetVoid"]]]), /operand has the wrong type/);
     rejects("VNarrow of 8-bit lanes", vectorFunction([[["VNarrow", b(LANE.i8x16), b(1), 0, 0], ["RetVoid"]]]), /not defined for this lane shape/);
     rejects("VExtMul into 8-bit lanes", vectorFunction([[["VExtMul", b(LANE.i8x16), b(1), b(0), 0, 0], ["RetVoid"]]]), /bad VExtMul/);
     rejects("scalar Add of vectors", vectorFunction([[["Add", 0, 0], ["RetVoid"]]]), /scalar operation on a vector/);
@@ -422,6 +432,164 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
         accepts("64 clobbers", longAndDouble([[asm({ clobbers: new Array(64).fill(RCX) }), ["RetVoid"]]]));
         rejects("65 clobbers", longAndDouble([[asm({ clobbers: new Array(65).fill(RCX) }), ["RetVoid"]]]), /bad InlineAsm clobber count/);
     }
+}
+
+// What each target has and has not, whichever machine this is.
+{
+    const returning = (ret, values) => body({ ret, params: [] }, [[...values, ["Ret", ...values.map((_, i) => i)]]]);
+    const taking = params => body({ ret: T.void, params }, [[["RetVoid"]]]);
+    const i64 = ["ConstI64", s(1)], f64 = ["ConstF64", { f64: 1 }], f32 = ["ConstF32", { bytes: [0, 0, 128, 63] }];
+    const nop = ["InlineAsm", b(0), 1, b(0x90), 0, 0, 0];
+    // void callee(void*, ...); void f(void* p) { callee(p, <`before` integers>, *(vector*)p); }
+    const anonymousVector = before => {
+        const block = new Block(1);
+        const vector = block.def("Load", b(MEM.v128), 0, s(0));
+        const word = block.def("ConstI64", s(1));
+        block.run("Call", 0, 2 + before, 0, ...new Array(before).fill(word), vector);
+        block.run("RetVoid");
+        return {
+            sigs: [{ ret: T.void, params: [T.i64], variadic: true }, { ret: T.void, params: [T.i64] }],
+            funcs: [{ name: "callee", sig: 0, noinline: true, blocks: [[["RetVoid"]]] }, { name: "f", sig: 1, exported: true, blocks: [block.insts] }],
+        };
+    };
+    const anonymousScalars = () => {
+        const block = new Block(1);
+        block.run("Call", 0, 3, 0, block.def("ConstF64", { f64: 1 }), block.def("ConstI64", s(1)));
+        block.run("RetVoid");
+        return {
+            sigs: [{ ret: T.void, params: [T.i64], variadic: true }, { ret: T.void, params: [T.i64] }],
+            funcs: [{ name: "callee", sig: 0, noinline: true, blocks: [[["RetVoid"]]] }, { name: "f", sig: 1, exported: true, blocks: [block.insts] }],
+        };
+    };
+    for (const [targetArch, targetOS] of targets) {
+        const name = `${["x86-64", "arm64"][targetArch]} ${["linux", "darwin", "windows"][targetOS]}`;
+        const refused = (what, module, pattern) => rejects(`${name}: ${what}`, forTarget(targetArch, targetOS, module), pattern);
+        const decoded = (what, module) => decodes(`${name}: ${what}`, targetArch, targetOS, module);
+        decoded("nothing special", taking([T.i32, T.f64, T.i64]));
+        decoded("anonymous integer and floating-point arguments", anonymousScalars());
+        if (targetOS === WINDOWS) {
+            refused("a vector by value", taking([T.v128]), /a vector cannot be passed by value on this target/);
+            refused("an aggregate in the stack arguments", taking([{ byval: 24 }]), /an aggregate cannot be passed in the stack arguments on this target/);
+            refused("two results", returning([T.i64, T.i64], [i64, i64]), /more results than the target has result registers/);
+            refused("an integer and a floating-point result", returning([T.i64, T.f64], [i64, f64]), /more results than the target has result registers/);
+            decoded("one result", returning([T.f64], [f64]));
+        } else {
+            decoded("a vector by value", taking([T.v128]));
+            decoded("an aggregate in the stack arguments", taking([{ byval: 24 }]));
+            decoded("two integer and two floating-point results", returning([T.i64, T.i64, T.f64, T.f64], [i64, i64, f64, f64]));
+        }
+        if (targetOS === WINDOWS || (targetOS === DARWIN && targetArch === ARM64)) {
+            for (const before of [0, 1, 4, 9])
+                refused(`an anonymous vector argument after ${before} others`, anonymousVector(before), /a vector cannot be one of the anonymous arguments of a variadic call on this target/);
+        } else
+            decoded("an anonymous vector argument", anonymousVector(2));
+        if (targetArch === ARM64) {
+            if (targetOS !== WINDOWS)
+                decoded("four float results", returning([T.f32, T.f32, T.f32, T.f32], [f32, f32, f32, f32]));
+            refused("inline assembly", body({ ret: T.void, params: [] }, [[nop, ["RetVoid"]]]), /InlineAsm is x86-64 machine code/);
+            refused("cpuid", body({ ret: T.void, params: [T.i32] }, [[["CpuId", 0, 0], ["RetVoid"]]]), /CpuId is an x86-64 instruction/);
+        } else {
+            if (targetOS !== WINDOWS)
+                refused("three double results", returning([T.f64, T.f64, T.f64], [f64, f64, f64]), /more results than the target has result registers/);
+            decoded("inline assembly", body({ ret: T.void, params: [] }, [[nop, ["RetVoid"]]]));
+            decoded("cpuid", body({ ret: T.void, params: [T.i32] }, [[["CpuId", 0, 0], ["RetVoid"]]]));
+        }
+    }
+    rejects("arm64 windows", forTarget(ARM64, WINDOWS, taking([T.i32])), /./, "");
+}
+
+// Operands of the wrong kind, for the operations whose rule is their own.
+{
+    // value ids: 0 f64, 1 i32, 2 i64, 3 v128, 4 f32
+    const mixed = blocks => body({ ret: T.void, params: [T.f64, T.i32, T.i64, T.v128, T.f32] }, blocks);
+    const refused = (what, inst, pattern) => rejects(what, mixed([[inst, ["RetVoid"]]]), pattern);
+    const accepted = (what, inst) => accepts(what, mixed([[inst, ["RetVoid"]]]));
+    for (const op of ["RotL", "RotR"]) {
+        refused(`${op} of a double`, [op, 0, 1], /rotate of a non-integer/);
+        refused(`${op} of a vector`, [op, 3, 1], /rotate of a non-integer/);
+        refused(`${op} by an i64`, [op, 2, 2], /operand has the wrong type/);
+        accepted(`${op} of an i64 by an i32`, [op, 2, 1]);
+    }
+    for (const op of ["MulHigh", "UMulHigh"]) {
+        refused(`${op} of doubles`, [op, 0, 0], /MulHigh operands must be the same integer type/);
+        refused(`${op} of an i32 and an i64`, [op, 1, 2], /MulHigh operands must be the same integer type/);
+        refused(`${op} of vectors`, [op, 3, 3], /MulHigh operands must be the same integer type/);
+        accepted(`${op} of two i32`, [op, 1, 1]);
+    }
+    for (const op of ["Clz", "Ctz", "Popcnt", "Bswap"]) {
+        refused(`${op} of a double`, [op, 0], /bit operation on a float/);
+        refused(`${op} of a float`, [op, 4], /bit operation on a float/);
+        refused(`${op} of a vector`, [op, 3], /bit operation on a float/);
+        accepted(`${op} of an i64`, [op, 2]);
+    }
+    for (const op of ["Eq", "Ne", "Lt", "Le", "Gt", "Ge", "ULt", "ULe", "UGt", "UGe"]) {
+        refused(`${op} of an i32 and an i64`, [op, 1, 2], /compare operands differ in type/);
+        refused(`${op} of a float and a double`, [op, 4, 0], /compare operands differ in type/);
+        refused(`${op} of vectors`, [op, 3, 3], /scalar operation on a vector/);
+    }
+    refused("Neg of a vector", ["Neg", 3], /scalar operation on a vector/);
+    for (const op of ["Sub", "Mul", "Div", "And", "Xor"])
+        refused(`${op} of vectors`, [op, 3, 3], /scalar operation on a vector/);
+    for (const op of ["SToF", "UToF"]) {
+        refused(`${op} to an i32`, [op, b(T.i32), 1], /bad int-to-float conversion/);
+        refused(`${op} to a vector`, [op, b(T.v128), 1], /bad int-to-float conversion/);
+        refused(`${op} of a double`, [op, b(T.f64), 0], /bad int-to-float conversion/);
+        refused(`${op} of a vector`, [op, b(T.f32), 3], /bad int-to-float conversion/);
+        accepted(`${op} of an i64 to a float`, [op, b(T.f32), 2]);
+    }
+    for (const op of ["FToS", "FToU"]) {
+        refused(`${op} to a double`, [op, b(T.f64), 0], /bad float-to-int conversion/);
+        refused(`${op} to a vector`, [op, b(T.v128), 0], /bad float-to-int conversion/);
+        refused(`${op} of an i32`, [op, b(T.i32), 1], /bad float-to-int conversion/);
+        refused(`${op} of a vector`, [op, b(T.i32), 3], /bad float-to-int conversion/);
+        accepted(`${op} of a float to an i64`, [op, b(T.i64), 4]);
+    }
+    rejects("LocalSet of a local there is none of", mixed([[["LocalSet", 0, 1], ["RetVoid"]]]), /local out of range/);
+    rejects("LocalSet of local 1 of 1", body({ ret: T.void, params: [T.i32] }, [[["LocalSet", 1, 0], ["RetVoid"]]], { locals: [T.i32] }), /local out of range/);
+    rejects("LocalGet of local 1 of 1", body({ ret: T.void, params: [T.i32] }, [[["LocalGet", 1], ["RetVoid"]]], { locals: [T.i32] }), /local out of range/);
+    rejects("LocalSet of an i64 into an i32", body({ ret: T.void, params: [T.i64] }, [[["LocalSet", 0, 0], ["RetVoid"]]], { locals: [T.i32] }), /wrong type/);
+    refused("VExtMul of half 2", ["VExtMul", b(LANE.i16x8), b(0), b(2), 3, 3], /bad VExtMul/);
+    refused("VExtMul into float lanes", ["VExtMul", b(LANE.f32x4), b(0), b(0), 3, 3], /bad VExtMul|not defined for this lane shape/);
+    refused("VAvgU of 32-bit lanes", ["VAvgU", b(LANE.i32x4), 3, 3], /not defined for this lane shape/);
+    refused("VAddSat of 32-bit lanes", ["VAddSat", b(LANE.i32x4), b(0), 3, 3], /not defined for this lane shape/);
+    refused("VSubSat of 64-bit lanes", ["VSubSat", b(LANE.i64x2), b(0), 3, 3], /not defined for this lane shape/);
+    refused("VShl of float lanes", ["VShl", b(LANE.f32x4), 3, 1], /not defined for this lane shape/);
+    refused("VShrU of double lanes", ["VShrU", b(LANE.f64x2), 3, 1], /not defined for this lane shape/);
+    refused("VBitmask of double lanes", ["VBitmask", b(LANE.f64x2), 3], /not defined for this lane shape/);
+    refused("VAllTrue of float lanes", ["VAllTrue", b(LANE.f32x4), 3], /not defined for this lane shape/);
+    refused("VNarrow of 64-bit lanes", ["VNarrow", b(LANE.i64x2), b(0), 3, 3], /not defined for this lane shape/);
+}
+
+// Numbers as they are written: a count is at most 2^24, an index fits in 32 bits, a varuint in 64.
+{
+    const header = write => { const w = new W(); w.raw([0x42, 0x49, 0x52, 0x30]).u8(arch).u8(os).u8(8).u8(0); write(w); return w.bytes(); };
+    rejects("2^24 + 1 signatures", header(w => w.uv(2 ** 24 + 1)), /count too large/);
+    rejects("2^32 - 2 signatures", header(w => w.uv(2 ** 32 - 2)), /count too large/);
+    rejects("2^32 - 1 signatures", header(w => w.uv(2 ** 32 - 1)), /index too large/);
+    rejects("2^32 signatures", header(w => w.uv(2 ** 32)), /index too large/);
+    rejects("2^64 - 1 signatures", header(w => w.uv(2n ** 64n - 1n)), /index too large/);
+    rejects("2^24 signatures that are not there", header(w => w.uv(2 ** 24)), /bad varuint|unexpected end of input/);
+    rejects("2^24 + 1 results", header(w => w.uv(1).uv(2 ** 24 + 1)), /count too large/);
+    rejects("2^24 + 1 parameters", header(w => w.uv(1).uv(0).u8(0).uv(2 ** 24 + 1)), /count too large/);
+    rejects("2^24 + 1 externs", header(w => w.uv(0).uv(2 ** 24 + 1)), /count too large/);
+    rejects("an extern with a name of 2^24 + 1 bytes", header(w => w.uv(0).uv(1).uv(2 ** 24 + 1)), /count too large/);
+    rejects("2^24 + 1 relocations", header(w => w.uv(0).uv(0).uv(8).uv(8).uv(0).uv(0).uv(0).uv(2 ** 24 + 1)), /count too large/);
+    rejects("a count written in eleven bytes", header(w => w.raw([0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00])), /bad varuint/);
+    rejects("a count of ten bytes with bits past the sixty-fourth", header(w => w.raw([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02])), /bad varuint/);
+    rejects("no signatures, written in two bytes, and nothing after", header(w => w.raw([0x80, 0x00])), /bad varuint|unexpected end of input/);
+    rejects("an extern whose signature is 2^32 - 1", header(w => w.uv(0).uv(1).str("x").u8(0).uv(2 ** 32 - 1)), /index too large/);
+    rejects("an extern whose signature is 2^32", header(w => w.uv(0).uv(1).str("x").u8(0).uv(2 ** 32)), /index too large/);
+    rejects("an extern whose signature is 2^32 - 2", header(w => w.uv(0).uv(1).str("x").u8(0).uv(2 ** 32 - 2)), /extern signature out of range/);
+    rejects("value 2^32 - 1", voidFunction([[["Neg", 2 ** 32 - 1], ["RetVoid"]]]), /index too large/);
+    rejects("value 2^32 - 2", voidFunction([[["Neg", 2 ** 32 - 2], ["RetVoid"]]]), /use of an undefined value/);
+    rejects("a call with 2^24 + 1 arguments", { sigs: [{ ret: T.void, params: [], variadic: true }], funcs: [{ name: "f", sig: 0, exported: true, blocks: [[["Call", 0, 2 ** 24 + 1], ["RetVoid"]]] }] }, /count too large/);
+    rejects("a switch with 2^24 + 1 cases", body({ ret: T.void, params: [T.i32] }, [[["Switch", 0, 0, 2 ** 24 + 1]]]), /count too large/);
+    rejects("a block of 2^24 + 1 instructions", voidFunction([{ length: 2 ** 24 + 1, [Symbol.iterator]: function* () { yield ["RetVoid"]; } }]), /count too large/);
+    rejects("a constant written in eleven bytes", voidFunction([[["ConstI64", { bytes: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00] }], ["RetVoid"]]]), /bad varint/);
+    rejects("a constant of ten bytes with bits past the sixty-fourth", voidFunction([[["ConstI64", { bytes: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02] }], ["RetVoid"]]]), /bad varint/);
+    accepts("the least i64", voidFunction([[["ConstI64", s(-(2n ** 63n))], ["RetVoid"]]]));
+    accepts("the greatest i64", voidFunction([[["ConstI64", s(2n ** 63n - 1n)], ["RetVoid"]]]));
+    accepts("a constant written with a byte of padding", voidFunction([[["ConstI64", { bytes: [0x81, 0x00] }], ["RetVoid"]]]));
 }
 
 // Exports, libraries, constructors and destructors.

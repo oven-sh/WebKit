@@ -728,24 +728,6 @@ Value* BIRToB3::emitVectorConversion(BIR::VConvertKind kind, Value* value)
         }
         return result;
     }
-    case K::F32x4ToI32x4X86:
-    case K::F64x2ToI32x4ZeroX86: {
-#if CPU(X86_64)
-        // cvttps2dq and cvttpd2dq as they are: a lane that does not fit, or is NaN, becomes 0x80000000.
-        PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, V128, m_origin);
-        patchpoint->append(value, ValueRep::SomeRegister);
-        patchpoint->effects = Effects::none();
-        patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
-            if (kind == K::F32x4ToI32x4X86)
-                jit.m_assembler.vcvttps2dq_rr(params[1].fpr(), params[0].fpr());
-            else
-                jit.m_assembler.vcvttpd2dq_rr(params[1].fpr(), params[0].fpr());
-        });
-        return patchpoint;
-#else
-        break; // The decoder refuses these in a module for any other target.
-#endif
-    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

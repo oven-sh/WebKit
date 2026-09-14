@@ -72,8 +72,9 @@
 //                                 that reads as an array index too)
 //     varuint nlibraries; str*                                   (shared libraries to search for externs, in order,
 //                                                                 before the process itself: `#pragma comment(lib, "sqlite3")`)
-//     varuint nconstructors; varuint func*                       (`__attribute__((constructor))`: `void f(void)` functions the
-//                                                                 loader calls, in this order, once the module is ready to run)
+//     varuint nconstructors; varuint func*                       (`__attribute__((constructor))`: `void f(void)` functions, in the
+//                                                                 order they run: once, before anything else of the module's does.
+//                                                                 Loading the module does not call them: CModule::runConstructors does)
 //     varuint ndestructors; varuint func*                        (`__attribute__((destructor))`, in the order they run. The loader
 //                                                                 does not call them; it hands them to whoever owns the process's
 //                                                                 exit. A loaded module is never unloaded, see CModule.h)
@@ -84,7 +85,8 @@
 // loaded the whole pages of the constant part cannot be written, and the writable part does not share a
 // page with it on any system: when there is a writable part (readOnly < size), readOnly is a multiple
 // of 16384 (dataPage below), the largest page size there is to run on. With no writable part readOnly
-// is size, whatever that is; with no constant part it is 0.
+// is size, whatever that is; with no constant part it is 0. The loader puts the segment at the start of a page, which
+// is more than any `align` asks for: align records what the objects in the segment need.
 //   Each part's content is given separately, and only as far as it is not zero: the constant part starts as
 // the constantBytes bytes given followed by zeros (constantBytes <= readOnly), the writable part as the
 // writableBytes bytes given followed by zeros (writableBytes <= size - readOnly). Neither run holds the
@@ -257,7 +259,7 @@ constexpr uint8_t magic[4] = { 'B', 'I', 'R', '0' };
 constexpr uint64_t dataPage = 16384;
 
 enum class Arch : uint8_t { X86_64 = 0, ARM64 = 1 };
-enum class OS : uint8_t { Linux = 0, Darwin = 1, Windows = 2, FreeBSD = 3 };
+enum class OS : uint8_t { Linux = 0, Darwin = 1, Windows = 2 };
 
 enum class Type : uint8_t { Void = 0, I32 = 1, I64 = 2, F32 = 3, F64 = 4, V128 = 5 };
 
@@ -280,8 +282,7 @@ enum class MemKind : uint8_t { I8S = 0, I8U = 1, I16S = 2, I16U = 3, I32 = 4, I6
 enum class Lane : uint8_t { I8x16 = 0, I16x8 = 1, I32x4 = 2, I64x2 = 3, F32x4 = 4, F64x2 = 5 };
 
 // Lane-wise conversions. "Low"/"High" name which half of the source lanes is read; "Zero" means the
-// upper result lanes are zero. Float -> int truncates toward zero and saturates; NaN gives 0 (but see
-// the two x86-64 kinds at the end).
+// upper result lanes are zero. Float -> int truncates toward zero and saturates; NaN gives 0.
 enum class VConvertKind : uint8_t {
     I32x4ToF32x4S = 0, I32x4ToF32x4U = 1,
     F32x4ToI32x4S = 2, F32x4ToI32x4U = 3,
@@ -292,9 +293,6 @@ enum class VConvertKind : uint8_t {
     I16x8LowToI32x4S = 14, I16x8LowToI32x4U = 15, I16x8HighToI32x4S = 16, I16x8HighToI32x4U = 17,
     I32x4LowToI64x2S = 18, I32x4LowToI64x2U = 19, I32x4HighToI64x2S = 20, I32x4HighToI64x2U = 21,
     I64x2ToF64x2S = 22, I64x2ToF64x2U = 23, F64x2ToI64x2S = 24, F64x2ToI64x2U = 25,
-    // x86-64 only: what cvttps2dq and cvttpd2dq do (_mm_cvttps_epi32, _mm_cvttpd_epi32). Signed; a lane that
-    // does not fit in 32 bits, or is NaN, becomes 0x80000000.
-    F32x4ToI32x4X86 = 26, F64x2ToI32x4ZeroX86 = 27,
 };
 
 enum class MemOrder : uint8_t { Relaxed = 0, Acquire = 1, Release = 2, AcquireRelease = 3, SequentiallyConsistent = 4 };
