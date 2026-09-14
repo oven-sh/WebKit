@@ -84,6 +84,7 @@
 #include "StackFrame.h"
 #include "StackVisitor.h"
 #include "StrictEvalActivation.h"
+#include "Symbol.h"
 #include "TopExceptionScope.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
@@ -943,12 +944,19 @@ static void sanitizeRemoteFunctionException(VM& vm, JSRemoteFunction* remoteFunc
 
     // Avoid user-observable ToString()
     String exceptionString;
-    if (exceptionValue.isPrimitive())
+    if (exceptionValue.isSymbol())
+        exceptionString = asSymbol(exceptionValue)->tryGetDescriptiveString().value_or(String());
+    else if (exceptionValue.isPrimitive())
         exceptionString = exceptionValue.toWTFString(globalObject);
     else if (exceptionValue.asCell()->inherits<ErrorInstance>())
         exceptionString = static_cast<ErrorInstance*>(exceptionValue.asCell())->sanitizedMessageString(globalObject);
 
-    EXCEPTION_ASSERT(!scope.exception()); // We must not have entered JS at this point
+    if (scope.exception()) [[unlikely]] {
+        // Nothing above runs user code, but the conversion itself can throw: an Error whose message
+        // is a Symbol, or out of memory while resolving a rope. Drop that and throw the bare TypeError.
+        exceptionString = String();
+        TRY_CLEAR_EXCEPTION(scope, void());
+    }
 
     if (exceptionString.length()) {
         throwVMTypeError(globalObject, scope, exceptionString);

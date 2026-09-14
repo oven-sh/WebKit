@@ -31,6 +31,7 @@
 #include "JSGlobalObject.h"
 #include "SourceCode.h"
 #include "StackFrame.h"
+#include "Symbol.h"
 #include "TopExceptionScope.h"
 #include <wtf/text/MakeString.h>
 
@@ -285,29 +286,36 @@ JSObject* createTypeErrorCopy(JSGlobalObject* globalObject, JSValue error)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    String errorString = "Error encountered during evaluation"_s;
 
-    if (error.isPrimitive()) {
-        errorString = error.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-    } else if (error.isObject()) {
-        auto structure = error.asCell()->structure();
-        if (!structure->isProxy()) {
+    // The copy stands in for an error that must not escape as it is: another realm's, or a cached
+    // module fetch error. So describe |error| without running any of its code (no getters, no
+    // toString()), and if describing it fails, fall back to the generic message rather than let
+    // that failure escape in its place.
+    JSValue messageValue = error;
+    if (error.isObject()) {
+        messageValue = JSValue();
+        if (!error.asCell()->structure()->isProxy()) {
             auto slot = PropertySlot(error, PropertySlot::InternalMethodType::GetOwnProperty);
             bool found = error.getOwnPropertySlot(globalObject, vm.propertyNames->message, slot);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (found) {
-                if (slot.isValue()) {
-                    JSValue message = slot.getValue(globalObject, vm.propertyNames->message);
-                    RETURN_IF_EXCEPTION(scope, { });
-                    errorString = message.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, { });
-                }
-            }
+            if (!scope.exception() && found && slot.isValue())
+                messageValue = slot.getValue(globalObject, vm.propertyNames->message);
         }
     }
 
-    return createTypeError(globalObject, errorString);
+    String message;
+    if (error.isSymbol())
+        message = asSymbol(error)->tryGetDescriptiveString().value_or(String());
+    else if (messageValue && messageValue.isPrimitive() && !messageValue.isSymbol())
+        message = messageValue.toWTFString(globalObject);
+
+    if (scope.exception()) [[unlikely]] {
+        message = String();
+        TRY_CLEAR_EXCEPTION(scope, nullptr);
+    }
+
+    if (message.isEmpty())
+        message = "Error encountered during evaluation"_s;
+    return createTypeError(globalObject, message);
 }
 
 String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
