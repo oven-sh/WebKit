@@ -69,16 +69,19 @@ public:
     // host C ABI.
     void lowerFunction(unsigned functionIndex);
 
-    // Emits the body of `functionIndex` starting at `block`, reading its parameters from
-    // `arguments`. Control continues in `continuation`; `results` is empty for void functions.
+    // Whether the FTL may put the function's body in a procedure of JavaScript's instead of calling it.
+    // Everything that saves registers around JavaScript's slow paths and calls keeps 64 bits of each, so a
+    // body with a 128-bit value in it is not one of them.
+    static bool canBeLoweredIntoJavaScript(const BIR::Function&);
+
+    // Emits the body of `functionIndex` into a procedure of JavaScript's starting at `block`, reading its
+    // parameters from `arguments`. `blockFactory` makes the blocks: the FTL keeps its own block order.
+    // Control continues in `continuation`; `results` is empty for void functions.
     struct Inlined {
         B3::BasicBlock* continuation { nullptr };
         Vector<B3::Value*, 1> results;
     };
-    Inlined lowerInline(unsigned functionIndex, B3::BasicBlock* block, std::span<B3::Value* const> arguments, B3::Origin);
-
-    // Lets a client that keeps its own block order (the FTL) create the blocks.
-    void setBlockFactory(Function<B3::BasicBlock*()>&& factory) { m_blockFactory = WTF::move(factory); }
+    Inlined lowerIntoJavaScript(unsigned functionIndex, B3::BasicBlock* block, std::span<B3::Value* const> arguments, B3::Origin, Function<B3::BasicBlock*()>&& blockFactory);
 
     // Functions whose entry the emitted code reads from the function table (a call that was
     // not inlined, or FuncAddr). They need machine code of their own.
@@ -92,6 +95,7 @@ private:
         Vector<B3::Variable*, 1> results;
     };
 
+    Inlined lowerInline(unsigned functionIndex, B3::BasicBlock* block, std::span<B3::Value* const> arguments, B3::Origin);
     void emitBody(const BIR::Function&, B3::BasicBlock* entry, std::span<B3::Value* const> arguments, const ReturnTarget*);
     void emitInst(const BIR::Function&, const BIR::Inst&);
     Vector<B3::Value*, 1> emitCall(const BIR::Function&, const BIR::Inst&, const BIR::Signature&, B3::Value* target);
@@ -121,7 +125,7 @@ private:
     const BIRLinkEnvironment& m_environment;
     B3::Procedure& m_proc;
     B3::Origin m_origin;
-    Function<B3::BasicBlock*()> m_blockFactory;
+    Function<B3::BasicBlock*()> m_blockFactory; // Set when the procedure is JavaScript's.
 
     B3::BasicBlock* m_block { nullptr };
 

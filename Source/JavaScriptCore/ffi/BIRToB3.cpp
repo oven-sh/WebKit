@@ -243,6 +243,8 @@ bool BIRToB3::shouldInlineCallee(unsigned functionIndex, bool hasConstantArgumen
     // A variadic body reads its own frame (VaStart), so it must keep one.
     if (!callee.canBeInlined() || m_module.signatures[callee.signature].isVariadic)
         return false;
+    if (m_blockFactory && !canBeLoweredIntoJavaScript(callee))
+        return false;
     if (m_inlineStack.contains(functionIndex))
         return false;
     // Each level of inlining is a level of recursion in this lowering.
@@ -383,17 +385,25 @@ void BIRToB3::lowerFunction(unsigned functionIndex)
     emitBody(function, entry, arguments.span(), nullptr);
 }
 
+bool BIRToB3::canBeLoweredIntoJavaScript(const BIR::Function& function)
+{
+    return function.canBeInlined() && !function.usesVectors;
+}
+
+BIRToB3::Inlined BIRToB3::lowerIntoJavaScript(unsigned functionIndex, BasicBlock* block, std::span<Value* const> arguments, Origin origin, Function<BasicBlock*()>&& blockFactory)
+{
+    m_blockFactory = WTF::move(blockFactory);
+    return lowerInline(functionIndex, block, arguments, origin);
+}
+
 BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block, std::span<Value* const> arguments, Origin origin)
 {
     const BIR::Function& function = m_module.functions[functionIndex];
     const BIR::Signature& signature = m_module.signatures[function.signature];
     RELEASE_ASSERT(arguments.size() == signature.parameters.size());
     m_origin = origin;
+    RELEASE_ASSERT(!m_blockFactory || canBeLoweredIntoJavaScript(function));
     m_proc.setHasCodeFromC();
-    // A procedure that says it has no 128-bit values keeps only the low halves of the vector registers the
-    // platform's convention preserves across the calls it makes.
-    if (m_module.usesVectors)
-        m_proc.setUsesSIMD();
     if (m_inlineStack.isEmpty())
         m_inlineStack.append(functionIndex);
 
@@ -1512,7 +1522,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, patchpointType, m_origin);
     patchpoint->effects = Effects::forCall();
     patchpoint->clobberEarly(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(m_module.usesVectors ? RegisterSet::allRegisters() : RegisterSet::allScalarRegisters()));
+    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(m_proc.usesSIMD() ? RegisterSet::allRegisters() : RegisterSet::allScalarRegisters()));
     {
         unsigned nextGPR = 0;
         unsigned nextFPR = 0;

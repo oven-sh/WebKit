@@ -601,6 +601,8 @@ private:
             }
         }
         function.valueCount = static_cast<uint32_t>(m_valueTypes.size());
+        // Every use of 128 bits is of a value defined here: the parameters are the first of them.
+        function.usesVectors = m_valueTypes.contains(Type::V128) || function.locals.contains(Type::V128) || signature.results.contains(Type::V128);
         return true;
     }
 

@@ -160,6 +160,7 @@ struct Function {
     bool hasCalls { false }; // Call, CallExtern or CallIndirect: may re-enter JS.
     bool movesStackPointer { false }; // StackAlloc or StackRestore.
     bool hasBody { true }; // False once compiled, for a function too large to ever be inlined again.
+    bool usesVectors { false }; // A parameter, result, local or value of it is a v128.
 
     // Whether the body can run in a caller's frame instead of one of its own. One that moves the stack
     // pointer relies on its own return to release what it allocated. One that calls setjmp can be re-entered

@@ -15537,7 +15537,7 @@ IGNORE_CLANG_WARNINGS_END
                 for (unsigned i = 0; typesMatch && i < directOperands.size(); ++i)
                     typesMatch = directOperands[i]->type() == FFI::BIRToB3::toB3(native.parameters[i].type);
                 // A body larger than Options::maximumFFIInlineCInstructionCount() was released when the module loaded.
-                if (typesMatch && candidate.canBeInlined() && candidate.frameBytes <= Options::maximumBIRInlineCalleeFrameBytes())
+                if (typesMatch && FFI::BIRToB3::canBeLoweredIntoJavaScript(candidate) && candidate.frameBytes <= Options::maximumBIRInlineCalleeFrameBytes())
                     inlinee = &candidate;
             }
             // A body with no calls cannot reach JS, so it needs no frame bookkeeping and cannot throw.
@@ -15551,8 +15551,7 @@ IGNORE_CLANG_WARNINGS_END
                 FFI::g_ffiCompileCounts.ftlInlineC++;
                 FFI::BIRLinkEnvironment environment = cModule->linkEnvironment();
                 FFI::BIRToB3 lowering(cModule->bir(), environment, m_proc);
-                lowering.setBlockFactory([&] { return m_out.newBlock(); });
-                auto inlined = lowering.lowerInline(ffiFunction->cModuleFunction(), m_out.m_block, directOperands.span(), m_out.origin());
+                auto inlined = lowering.lowerIntoJavaScript(ffiFunction->cModuleFunction(), m_out.m_block, directOperands.span(), m_out.origin(), [&] { return m_out.newBlock(); });
                 m_out.appendTo(inlined.continuation);
                 rawReturn = inlined.results.isEmpty() ? nullptr : inlined.results[0];
             } else
@@ -15580,7 +15579,7 @@ IGNORE_CLANG_WARNINGS_END
                 direct64Result = m_out.zeroExt(rawReturn, Int64);
                 break;
             case FFI::Type::Bool:
-                directInt32Result = m_out.zeroExt(m_out.notEqual(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), m_out.int32Zero), Int32);
+                directInt32Result = m_out.notEqual(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), m_out.int32Zero);
                 break;
             case FFI::Type::Float:
                 directDoubleResult = m_out.floatToDouble(rawReturn);
