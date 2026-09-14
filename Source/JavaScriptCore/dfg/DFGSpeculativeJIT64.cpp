@@ -1018,17 +1018,16 @@ void SpeculativeJIT::emitCall(Node* node)
                 nativeFunction = uncheckedDowncast<NativeExecutable>(executable)->function();
         }
 
-        if (nativeFunction && !vm().isDebuggerHookInjected()) {
+        // A tail call must not run the thunk from this CodeBlock's own code. The tail call
+        // destroys this frame, so the conservative stack scan no longer finds this CodeBlock and
+        // cannot keep it alive (CodeBlockSet::m_currentlyExecuting). A jettison plus a collection
+        // inside the host function then frees the code the host call returns into. A linked direct
+        // tail call jumps to the executable's host call thunk, which lives as long as the VM, and
+        // that thunk returns to our caller.
+        if (nativeFunction && !isTail && !vm().isDebuggerHookInjected()) {
             auto emitCallTarget = [&]() {
                 emitFunctionPrologue();
                 emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
-                if (isTail) {
-                    // The tail call's frame shuffle took this CodeBlock off the stack, and the host function returns into
-                    // this code: a collection it triggers must still find the CodeBlock. The conservative scan keeps alive
-                    // any CodeBlock whose pointer is on the stack; the epilogue below drops the slot.
-                    subPtr(TrustedImm32(stackAlignmentBytes()), stackPointerRegister);
-                    storePtr(CCallHelpers::TrustedImmPtr(m_graph.m_codeBlock), Address(stackPointerRegister));
-                }
                 storePtr(GPRInfo::callFrameRegister, &vm().topCallFrame);
                 if (calleeScope)
                     move(CCallHelpers::TrustedImmPtr(calleeScope), GPRInfo::argumentGPR0);
@@ -1046,15 +1045,6 @@ void SpeculativeJIT::emitCall(Node* node)
                 branchTestPtr(NonZero, GPRInfo::regT2).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
                 emitFunctionEpilogue();
             };
-
-            if (isTail) {
-                emitStoreCallSiteIndex(callSite);
-                CallFrameShuffler(*this, shuffleData).prepareForTailCall();
-                emitCallTarget();
-                ret();
-                useChildren(node);
-                return;
-            }
 
             auto done = jump();
             auto callTarget = label();
