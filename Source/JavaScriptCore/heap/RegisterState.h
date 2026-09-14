@@ -58,6 +58,7 @@ struct RegisterState {
 #elif CPU(X86_64)
 struct RegisterState {
     uint64_t rbx;
+    uint64_t rbp; // An ordinary callee-save in code compiled without frame pointers.
     uint64_t r12;
     uint64_t r13;
     uint64_t r14;
@@ -70,6 +71,7 @@ struct RegisterState {
 #define ALLOCATE_AND_GET_REGISTER_STATE(registers) \
     RegisterState registers; \
     SAVE_REG(rbx, registers.rbx); \
+    SAVE_REG(rbp, registers.rbp); \
     SAVE_REG(r12, registers.r12); \
     SAVE_REG(r13, registers.r13); \
     SAVE_REG(r14, registers.r14); \
@@ -113,6 +115,7 @@ struct RegisterState {
     uint64_t x26;
     uint64_t x27;
     uint64_t x28;
+    uint64_t x29; // An ordinary callee-save in code compiled without frame pointers.
 };
 
 #define SAVE_REG(regname, where) \
@@ -129,7 +132,8 @@ struct RegisterState {
     SAVE_REG(x25, registers.x25); \
     SAVE_REG(x26, registers.x26); \
     SAVE_REG(x27, registers.x27); \
-    SAVE_REG(x28, registers.x28)
+    SAVE_REG(x28, registers.x28); \
+    SAVE_REG(x29, registers.x29)
 
 #elif CPU(MIPS)
 struct RegisterState {
