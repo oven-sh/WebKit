@@ -1,3 +1,7 @@
+// ASan's fake stack (detect_stack_use_after_return, on by default on Linux) moves ConstExprInterpreter's
+// MarkedArgumentBuffer, a stack local, off the stack the collector scans, and its first 16 arrays are collected.
+//@ skip if $asan
+
 // This module is built with the WasmModuleBuilder GC DSL. It declares:
 //   - array $arr (mutable i32)
 //   - struct $s with 100 fields, each a (ref $arr)

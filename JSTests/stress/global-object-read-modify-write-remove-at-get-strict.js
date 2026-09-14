@@ -26,4 +26,4 @@ shouldThrow(() => {
 
     x += 42;
     `);
-}, `ReferenceError: Can't find variable: x`);
+}, `ReferenceError: x is not defined`);

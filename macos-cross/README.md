@@ -1,7 +1,7 @@
 # macos-cross
 
 Support files for cross-compiling JavaScriptCore for macOS on a Linux
-builder (`Dockerfile.macos` / `macos-cross-release.sh`).
+builder (`Dockerfile.macos`, built by `.github/scripts/lanes.mjs`).
 
 The only piece of the JSCOnly build that cannot run unmodified on a Linux
 host is `mig`, the Mach Interface Generator. `Source/WTF/wtf/

@@ -1,9 +1,10 @@
 description(
-"This test checks that a string conversion of an object that reaches itself throws a RangeError rather than silently substituting the empty string."
+"This test checks that a string conversion of an object that reaches itself throws a RangeError, except for an array, where the repeat visit is the empty string."
 );
 
-// Array (elements)
-shouldThrow("var array = []; array[0] = array; array + ''");
+// Array (elements). Bun keeps StringRecursionChecker for arrays: the repeat visit is the empty string, as in V8 and
+// SpiderMonkey. Error and RegExp below have no such guard and overflow the stack, as upstream's do.
+shouldBe("var array = []; array[0] = array; array + ''", "''");
 
 // Error (name, message)
 shouldThrow("var error = new Error; error.name = error; error.message = error; error + ''");
