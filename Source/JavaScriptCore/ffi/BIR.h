@@ -38,7 +38,7 @@
 // str = varuint byte length + UTF-8 bytes, type = u8 (Type below).
 //
 //   module:
-//     magic "BIR" and a zero byte
+//     magic "BIR0"
 //     u8 arch (Arch), u8 os (OS), u8 pointerBytes (8), u8 reserved (0)
 //     varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
 //                       param:   u8 kind (ParamKind), then for Value: type;
@@ -203,7 +203,7 @@
 
 namespace JSC { namespace FFI { namespace BIR {
 
-constexpr uint8_t magic[4] = { 'B', 'I', 'R', 0 };
+constexpr uint8_t magic[4] = { 'B', 'I', 'R', '0' };
 
 enum class Arch : uint8_t { X86_64 = 0, ARM64 = 1 };
 enum class OS : uint8_t { Linux = 0, Darwin = 1, Windows = 2, FreeBSD = 3 };
