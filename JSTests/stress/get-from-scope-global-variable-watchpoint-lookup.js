@@ -33,7 +33,7 @@ noInline(readAll);
 noInline(writeVar);
 noInline(writeLet);
 
-for (let i = 0; i < 20000; ++i) {
+for (let i = 0; i < testLoopCount * 2; ++i) {
     shouldBe(readVar(), 10);
     shouldBe(readLet(), 20);
     shouldBe(readConst(), 30);
@@ -53,7 +53,7 @@ shouldBe(readNeverWritten(), "written");
 lateLet = 1.5;
 shouldBe(readLate(), 1.5);
 
-for (let i = 0; i < 20000; ++i) {
+for (let i = 0; i < testLoopCount * 2; ++i) {
     writeVar(i);
     writeLet(i + 1);
     shouldBe(readVar(), i);
@@ -66,13 +66,13 @@ function readLater() { return typeof declaredLater === "undefined" ? -1 : declar
 function readLaterLexical() { try { return declaredLaterLexical; } catch (e) { return e instanceof ReferenceError ? -1 : -2; } }
 noInline(readLater);
 noInline(readLaterLexical);
-for (let i = 0; i < 20000; ++i) {
+for (let i = 0; i < testLoopCount * 2; ++i) {
     shouldBe(readLater(), -1);
     shouldBe(readLaterLexical(), -1);
 }
 (0, eval)("var declaredLater = 5;");
 loadString("let declaredLaterLexical = 6;");
-for (let i = 0; i < 20000; ++i) {
+for (let i = 0; i < testLoopCount * 2; ++i) {
     shouldBe(readLater(), 5);
     shouldBe(readLaterLexical(), 6);
 }
@@ -84,10 +84,10 @@ shouldBe(readLaterLexical(), 8);
 this.shadowed = 1;
 function readShadowed() { return shadowed; }
 noInline(readShadowed);
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(readShadowed(), 1);
 loadString("let shadowed = 2;");
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(readShadowed(), 2);
 loadString("shadowed = 3;");
 shouldBe(readShadowed(), 3);

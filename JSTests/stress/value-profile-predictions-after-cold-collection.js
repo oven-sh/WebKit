@@ -32,7 +32,7 @@ for (let i = 3; i < 30; ++i) {
         edenGC();
 }
 fullGC();
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(work(make(i), 1), expected(i));
 
 // Every executed op of work() had something to say by the time it was compiled: no exits, one compile.
@@ -52,7 +52,7 @@ shouldBe(dying(1), 2);
 shouldBe(dying(2), 4);
 fullGC();
 edenGC();
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(dying(i), 2 * i);
 if ($vm.useDFGJIT() && !jscOptions().collectContinuously) {
     shouldBe(numberOfDFGCompiles(dying) <= 1, true);

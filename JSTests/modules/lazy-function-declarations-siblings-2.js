@@ -15,7 +15,7 @@ for (let i = 0; i < 2000; ++i) {
     shouldBe(b.callG(i), i + 2);
     shouldBe(b.typeofF(), "function");
 }
-for (let i = 0; i < 100000; ++i) {
+for (let i = 0; i < testLoopCount * 10; ++i) {
     shouldBe(a.callG(i) + b.callG(i), 2 * i + 3);
     shouldBe(a.readF() !== b.readF(), true);
 }

@@ -126,7 +126,7 @@ for (let i = 0; i < 200; ++i)
     shouldBe(tailMany(i), i * 2);
 for (let i = 0; i < 3; ++i)
     shouldThrow(() => tailNonFunction({ }), (e) => e instanceof TypeError && String(e).includes("o.notThere"));
-shouldBe(tailLoop(100000, 0), 100000);
+shouldBe(tailLoop(testLoopCount * 10, 0), testLoopCount * 10);
 
 // Construct: once, twice, many, derived classes.
 function Box(v) { this.v = v; }
@@ -207,14 +207,14 @@ function sparse(mode, x) {
     return x;
 }
 noInline(sparse);
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(sparse(0, i), i);
 shouldBe(sparse(1, 1), 2);
 shouldBe(sparse(2, 1), 3);
 shouldBe(sparse(3, 1), 6);
 shouldBe(sparse(4, 1), 1);
 shouldBe(sparse(5, 1), 2);
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(sparse(1 + (i % 5), 1) > 0, true);
 
 // A loop tiers up in the middle of the first execution of the function.
@@ -225,7 +225,7 @@ function hotLoop(n) {
     result += add2(0);
     return result;
 }
-shouldBe(hotLoop(100000), 100002);
+shouldBe(hotLoop(testLoopCount * 10), testLoopCount * 10 + 2);
 
 // Iteration protocols call through the same kind of site.
 function iterate(iterable) { let s = 0; for (let v of iterable) s += v; return s; }
