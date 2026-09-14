@@ -250,6 +250,9 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
+    static uint8_t currentUseEpoch(VM&);
+    template<Yarr::MatchFrom> void noteUse(VM&);
+
 #if ENABLE(YARR_JIT_DEBUG)
     void matchCompareWithInterpreter(StringView, int startOffset, int* offsetVector, int jitResult);
 #endif
