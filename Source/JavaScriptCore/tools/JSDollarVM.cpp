@@ -53,7 +53,9 @@
 #include "InterpreterInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
+#include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
 #include "JSGlobalProxyInlines.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
@@ -2251,6 +2253,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache);
 static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
@@ -3989,6 +3992,23 @@ JSC_DEFINE_HOST_FUNCTION(functionShrinkFootprintWhenIdle, (JSGlobalObject* globa
         mode.add(VM::ShrinkFootprint::KeepCodeInUse);
     vm->shrinkFootprintWhenIdle(mode);
     return JSValue::encode(jsUndefined());
+}
+
+// isGeneratorBodyCodeInBytecodeCache(generator): whether the unlinked code of the function that a generator or an async
+// generator resumes in has been returned to the bytecode cache it was decoded from; undefined for anything else. (The
+// object behind an async function's activation cannot be reached from script.)
+JSC_DEFINE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSValue next = jsUndefined();
+    if (auto* generator = dynamicDowncast<JSGenerator>(callFrame->argument(0)))
+        next = generator->internalField(JSGenerator::Field::Next).get();
+    else if (auto* asyncGenerator = dynamicDowncast<JSAsyncGenerator>(callFrame->argument(0)))
+        next = asyncGenerator->internalField(JSAsyncGenerator::Field::Next).get();
+    auto* function = dynamicDowncast<JSFunction>(next);
+    if (!function || function->isHostOrBuiltinFunction())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(function->jsExecutable()->unlinkedExecutable()->isCached()));
 }
 
 // returnCodeToBytecodeCacheWhenIdle(onlyWithoutLinkedCode = false): Heap::deleteAllUnlinkedCodeBlocks for the code that can
@@ -5864,6 +5884,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
     addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
     addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "isGeneratorBodyCodeInBytecodeCache"_s, functionIsGeneratorBodyCodeInBytecodeCache, 1);
     addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
     addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
 
