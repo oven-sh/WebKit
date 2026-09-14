@@ -55,6 +55,11 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 # <sysroot>/usr/include/fortify. This container has them as a dependency of clang; a sysroot has no clang, and without
 # them the define does nothing (musl has no fortify of its own) and the aarch64 lanes lose the checks the x86_64 ones have.
 #
+# The clang configuration file: Alpine gives clang its default flags in /etc/clang21/<triple>.cfg, which clang reads for
+# the triple it compiles for. The clang package installs the container's own (-fstack-clash-protection); the aarch64
+# package installs the same file under the aarch64 triple, and here nothing does, so it is copied: the aarch64 lanes
+# then get every default the x86_64 ones get, whatever Alpine puts there.
+#
 # The musl and the fortify-headers an artifact is built against must be the container's own: checked here.
 # ───────────────────────────────────────────────────────────────────────────
 ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
@@ -74,6 +79,8 @@ RUN set -eu; \
     [ -n "$container" ] || { echo "error: this container has no fortify-headers" >&2; exit 1; }; \
     [ "$container" = "$sysroot" ] || { echo "error: the aarch64 sysroot's fortify-headers is not the container's" >&2; exit 1; }; \
     test -f "$SYSROOT_AARCH64/usr/include/fortify/string.h"; \
+    test -s /etc/clang21/x86_64-alpine-linux-musl.cfg; \
+    cp /etc/clang21/x86_64-alpine-linux-musl.cfg /etc/clang21/aarch64-alpine-linux-musl.cfg; \
     test -f "$SYSROOT_AARCH64/usr/lib/libc.so"; \
     test -f "$SYSROOT_AARCH64/usr/lib/libstdc++.a"; \
     ls -d "$SYSROOT_AARCH64"/usr/lib/gcc/aarch64-alpine-linux-musl/*/crtbegin.o
@@ -87,6 +94,10 @@ RUN set -eu; \
     printf '#include <string.h>\n#include <stdint.h>\nuint64_t load(const void* p) { uint64_t v; memcpy(&v, p, 8); return v; }\n' > /tmp/f.cpp; \
     env -u CXXFLAGS -u LDFLAGS ${CXX} -Os -S -o - /tmp/f.cpp | grep -q 'ud2' || { echo "error: memcpy is not fortified in this container" >&2; exit 1; }; \
     env -u CXXFLAGS -u LDFLAGS ${CXX} --target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64} -I=/usr/include -Os -S -o - /tmp/f.cpp | grep -q 'brk' || { echo "error: memcpy is not fortified for aarch64" >&2; exit 1; }; \
+    native=$(env -u CXXFLAGS -u LDFLAGS ${CXX} -'###' -c /tmp/f.cpp 2>&1 | grep -o -- '"-f[a-z-]*protect[a-z-]*"' | sort -u | tr '\n' ' '); \
+    cross=$(env -u CXXFLAGS -u LDFLAGS ${CXX} --target=aarch64-alpine-linux-musl --sysroot=${SYSROOT_AARCH64} -'###' -c /tmp/f.cpp 2>&1 | grep -o -- '"-f[a-z-]*protect[a-z-]*"' | sort -u | tr '\n' ' '); \
+    echo "protection flags clang passes itself: x86_64 [$native] aarch64 [$cross]"; \
+    [ -n "$native" ] && [ "$native" = "$cross" ] || { echo "error: clang's own protection flags differ between the two targets" >&2; exit 1; }; \
     rm /tmp/t.cpp /tmp/t /tmp/f.cpp
 
 # ICU's sources (/icu.tgz, which the lanes build from) and its tools for this container. ICU runs those while it
