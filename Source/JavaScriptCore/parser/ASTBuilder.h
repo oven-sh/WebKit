@@ -189,9 +189,12 @@ public:
         setExceptionLocation(node, start, divot, end);
         return node;
     }
-    ExpressionNode* createNewTargetExpr(const JSTokenLocation location)
+    // usesNewTargetOfThisCode is false for a class field initializer or a class static block that
+    // the parser parses in place. Their new.target is not the new.target of the code that this builds.
+    ExpressionNode* createNewTargetExpr(const JSTokenLocation location, bool usesNewTargetOfThisCode)
     {
-        usesNewTarget();
+        if (usesNewTargetOfThisCode)
+            usesNewTarget();
         return new (m_parserArena) NewTargetNode(location);
     }
     ExpressionNode* createImportMetaExpr(const JSTokenLocation& location, ExpressionNode* expr) { return new (m_parserArena) ImportMetaNode(location, expr); }
