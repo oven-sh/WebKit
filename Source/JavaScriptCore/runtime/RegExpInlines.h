@@ -102,6 +102,7 @@ ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    m_lastUseEpoch = static_cast<uint8_t>(vm.heap.objectSpace().markingVersion());
     if (hasCodeFor(charSize))
         return;
 
@@ -261,6 +262,7 @@ ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
 
 ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    m_lastUseEpoch = static_cast<uint8_t>(vm.heap.objectSpace().markingVersion());
     if (hasMatchOnlyCodeFor(charSize))
         return;
 
