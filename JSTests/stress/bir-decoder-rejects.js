@@ -173,6 +173,14 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
     const PART = 16384;
     rejects("a constant part longer than the data", withData({ size: 8, readOnly: 16 }), /bad data segment size/);
     rejects("data over 4 GiB", withData({ size: 2 ** 32 + 1 }), /bad data segment size/);
+    // Exactly 4 GiB is within the format. Whether this machine has the address space for it is the loader's to say.
+    {
+        cases++;
+        let error = null;
+        try { $vm.cModule(assemble(withData({ size: 2 ** 32 }))); } catch (e) { error = e; }
+        if (error && error.message !== "out of memory for the module's data")
+            throw new Error(`data of 4 GiB: refused with ${error}`);
+    }
     // The two runs of bytes: each as long as its part at most, and all there.
     accepts("as many initialized bytes as data", withData({ size: 3, init: [1, 2, 3] }));
     rejects("one more initialized byte than data", withData({ size: 2, init: [1, 2, 3] }), /more initialized data than the writable part/);
