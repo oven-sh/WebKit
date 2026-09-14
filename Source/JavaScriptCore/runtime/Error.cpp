@@ -253,6 +253,11 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
     // enough that if we're wrong in such corner cases, it's not the end of the world.
     if (ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error)) {
 #if USE(BUN_JSC_ADDITIONS)
+        // A host that formats the stack itself (VM::onComputeErrorInfo; Bun) reads the parser's position from these
+        // fields, maps it through its source maps and hands back the line to report: what it computed stands. It is
+        // only asked when the stack has a frame.
+        bool hostComputes = (vm.onComputeErrorInfoJSValue() || vm.onComputeErrorInfo())
+            && !errorInstance->hasMaterializedErrorInfo() && errorInstance->stackTrace() && !errorInstance->stackTrace()->isEmpty();
 
         if (line != -1) {
             errorInstance->setLine(line);
@@ -267,17 +272,27 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         errorInstance->materializeErrorInfoIfNeeded(vm);
 
 #if USE(BUN_JSC_ADDITIONS)
-        return errorInstance;
+        if (hostComputes)
+            return errorInstance;
 #endif
     }
+
+    // Without such a host, materializing takes line and sourceURL from the top frame of the stack (the caller of eval or
+    // load, not the code that failed to parse), and sets neither when the stack has no frame, so the parser's go on
+    // afterwards, as upstream. The properties stay DontEnum, as ErrorInstance makes them.
+#if USE(BUN_JSC_ADDITIONS)
+    constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+#else
+    constexpr unsigned attributes = 0;
+#endif
 
     // FIXME: This does not modify the column property, which confusingly continues to reflect
     // the column at which the exception was thrown.
     // https://bugs.webkit.org/show_bug.cgi?id=176673
     if (line != -1)
-        error->putDirect(vm, vm.propertyNames->line, jsNumber(line));
+        error->putDirect(vm, vm.propertyNames->line, jsNumber(line), attributes);
     if (!sourceURL.isNull())
-        error->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, sourceURL));
+        error->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, sourceURL), attributes);
     return error;
 }
 

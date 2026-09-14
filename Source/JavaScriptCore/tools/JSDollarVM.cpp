@@ -3292,7 +3292,13 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateGlobalObject, (JSGlobalObject* globalObje
     JSValue prototype = jsNull();
     if (JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0)))
         prototype = object;
-    return JSValue::encode(JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, prototype)));
+    JSGlobalObject* newGlobalObject = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, prototype));
+#if defined(BUN_JSDOLLARVM_FORCE)
+    // The library omits $vm in this configuration, so JSGlobalObject::init() did not install it.
+    if (Options::useDollarVM())
+        newGlobalObject->exposeDollarVM(vm);
+#endif
+    return JSValue::encode(newGlobalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCreateProxy, (JSGlobalObject* globalObject, CallFrame* callFrame))

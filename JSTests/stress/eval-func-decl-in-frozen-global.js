@@ -44,5 +44,5 @@ Object.freeze(this);
   }
   assert(this.hasOwnProperty("boo"), false);
   assert(error, false);
-  assertThrow(() => boo, 'ReferenceError: Can\'t find variable: boo');
+  assertThrow(() => boo, 'ReferenceError: boo is not defined');
 }

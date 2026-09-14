@@ -83,6 +83,14 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     if (!codeBlock->hasExpressionInfo() || message.isNull())
         return message;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A private builtin (one of JSC's own, whose source has no URL) has expression info only when assertions are on
+    // (BytecodeGenerator::emitExpressionInfo), for the positions. Its source text stays out of the message in every
+    // build, so that a message does not depend on the build and does not name the builtin's internals.
+    if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); executable && executable->isPrivateBuiltinFunction())
+        return message;
+#endif
+
     auto info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
     int expressionStart = info.divot - info.startOffset;
     int expressionStop = info.divot + info.endOffset;

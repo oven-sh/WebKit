@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Arity ladders that straddle every register->stack boundary of the
 // supported ABIs, plus the interleaved ffi_mix_* fixtures. Each mix returns

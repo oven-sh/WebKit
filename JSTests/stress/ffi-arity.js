@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Arity handling (SPEC sections 3, 8.1, 8.2, 10.2): missing JS arguments are
 // undefined (per-type undefined rules), extra arguments are ignored, and

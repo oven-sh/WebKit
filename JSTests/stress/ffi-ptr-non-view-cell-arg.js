@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // Pointer-family arguments that are cells but not typed array views (ArrayBuffer, BigInt, strings,
 // objects with a `ptr` property) must take the generic conversion path in every tier. The FTL
 // inline path used to load JSArrayBufferView::m_mode from the argument before checking that it

@@ -72,8 +72,10 @@ for (const fn of [Map, Set, WeakMap, WeakRef, DataView, Promise, Symbol, Object.
 }
 
 // Everything reachable from the global object that is a native function prints one line.
+// (`visit` is a const, not a function declaration: a declaration at the top level of a script is a property of the global
+// object, so the walk would reach it, and its own source contains the text it looks for.)
 const seen = new Set();
-function visit(object, path, depth) {
+const visit = function (object, path, depth) {
     if (object === null || (typeof object !== "object" && typeof object !== "function") || seen.has(object) || depth > 3)
         return;
     seen.add(object);
@@ -105,5 +107,5 @@ function visit(object, path, depth) {
         if (descriptor.set)
             visit(descriptor.set, `${path}.${name}[set]`, depth + 1);
     }
-}
+};
 visit(globalThis, "globalThis", 0);

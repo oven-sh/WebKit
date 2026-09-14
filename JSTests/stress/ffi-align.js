@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Stack-alignment probes (SPEC section 11.1): each fixture performs an
 // aligned 16-byte vector access on a 16-byte-aligned local, which faults if

@@ -2,7 +2,7 @@
 10
 20
 20
-ReferenceError: Can't find variable: hello2
+ReferenceError: hello2 is not defined
 SyntaxError: Unexpected escaped characters in keyword token: 'fals\u0065'
 SyntaxError: Unexpected escaped characters in keyword token: 'fals\u0065'
 SyntaxError: Unexpected escaped characters in keyword token: 'tru\u0065'

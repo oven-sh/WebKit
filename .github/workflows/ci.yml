@@ -1,0 +1,549 @@
+name: CI
+
+# Builds every lane of bun-webkit, publishes them as one GitHub release, and tests the lanes that are marked as tested.
+# A push to main and a pull request run exactly the same jobs; they differ in the commit that is built (env.REF), in
+# the name of the release (the `plan` job's `tag`), and in that a pull request gets a comment linking its release.
+#
+#   plan ──> image ──> build, build-tested ──> release
+#                           └────────> test
+#        ──> prune (main only)
+#
+# A lane is one <label>.tar.gz on the release. The lanes (which runner, which Dockerfile, which settings, tested or not)
+# are defined in .github/scripts/lanes.mjs and nowhere else. `plan` turns them into the matrices of the jobs below, and
+# `lanes.mjs build <label>` is how a lane is built, here and by hand.
+#
+# A lane is built by a Dockerfile: a `base` stage that is the toolchain (compilers, SDKs, sysroots; the same for every
+# lane of a platform and architecture) and stages on top that build ICU and WebKit with the lane's settings. The
+# toolchains are images in ghcr.io, tagged with a hash of what goes into them. `plan` looks which are there; `image`
+# builds the ones that are not, which is only after a change to a Dockerfile's `base` stage (otherwise it is skipped),
+# and the lanes start from them.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+concurrency:
+  # A newer commit on a pull request replaces the build of the older one. Other builds never cancel each other.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The commit that is built. For a pull request that is its head, not the merge commit.
+  REF: ${{ github.event.pull_request.head.sha || github.sha }}
+  PR: ${{ github.event.pull_request.number }}
+
+jobs:
+  plan:
+    name: Plan
+    # Not for a pull request from a fork: its token cannot publish anything, so all it would do is occupy every large
+    # runner for an hour and fail at the upload. Everything below needs this job, so nothing else runs either. Push the
+    # branch to this repository to build it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      # The release the lanes are published as.
+      tag: ${{ steps.plan.outputs.tag }}
+      # Matrices ({"include": [lane, ...]}) of the lanes that are only built, of the lanes that are also tested, and
+      # of the test job; and the labels of all lanes.
+      build: ${{ steps.plan.outputs.build }}
+      build_tested: ${{ steps.plan.outputs.build_tested }}
+      test: ${{ steps.plan.outputs.test }}
+      labels: ${{ steps.plan.outputs.labels }}
+      # Matrix of the toolchain images those lanes start from that are not in the registry yet, and whether there are
+      # any. Normally there are none: an image is only missing after a change to a Dockerfile's `base` stage.
+      images: ${{ steps.plan.outputs.images }}
+      build_images: ${{ steps.plan.outputs.build_images }}
+      # The tags of all of them.
+      image_tags: ${{ steps.plan.outputs.image_tags }}
+      # The draft release the lanes upload to.
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      # The files at the root (the Dockerfiles among them) come with any sparse checkout.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+          sparse-checkout: |
+            .github/scripts
+            macos-cross
+            icu
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A pull request is built from its head, with its head's lanes.mjs and Dockerfiles, by this workflow file,
+          # which comes from the merge with main.
+          [ -f .github/scripts/lanes.mjs ] || { echo "::error::This branch predates .github/scripts/lanes.mjs, which builds the lanes. Merge main into it (or rebase it onto main)."; exit 1; }
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ -n "$PR" ]; then tag=autobuild-preview-pr-$PR-${REF:0:8}; else tag=autobuild-$REF; fi
+          echo "building $REF as $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          node .github/scripts/lanes.mjs
+          node .github/scripts/lanes.mjs plan >> "$GITHUB_OUTPUT"
+      # The release exists, as a draft, before any lane starts: each lane uploads its tarball straight onto it and the
+      # `release` job publishes it once every asset is there (or deletes it if anything failed). A draft has no tag and
+      # is invisible to anyone without push access, so a half-built release is never downloadable. Last, so that a
+      # plan that fails leaves no draft behind.
+      - name: Create the draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          TARGET: ${{ env.REF }}
+          PRERELEASE: ${{ github.ref != 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+          # A release for this tag can exist from an earlier run. Published (this is a re-run of a run that succeeded):
+          # keep it, the build jobs overwrite its assets. Draft (a run that was cancelled before it could clean up, or
+          # a run against the same tag still in flight): replace it, so that nothing stale is published under this run.
+          if existing=$(gh release view "$TAG" --json databaseId,isDraft 2>/dev/null); then
+            id=$(jq -r .databaseId <<< "$existing")
+            if [ "$(jq -r .isDraft <<< "$existing")" = false ]; then
+              echo "release $TAG is already published (id $id), reusing it"
+              echo "release_id=$id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "replacing stale draft of $TAG (id $id)"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          fi
+          # The tag is created when the draft is published, so it is pinned to the built commit here.
+          created=$(gh api -X POST "repos/$GH_REPO/releases" \
+            -f tag_name="$TAG" -f name="$TAG" -f target_commitish="$TARGET" \
+            -F draft=true -F prerelease="$PRERELEASE" -F generate_release_notes=true \
+            --jq '"\(.id) \(.html_url)"')
+          echo "created draft $created"
+          echo "release_id=${created%% *}" >> "$GITHUB_OUTPUT"
+
+  # Builds the toolchain images `plan` found missing from ghcr.io, which is only after a change to a Dockerfile's `base`
+  # stage: on any other run this job is skipped and the lanes start right away. Pushing takes `packages: write`. The
+  # lanes need these images: a leg that cannot build or push its image fails, and no lane starts.
+  image:
+    name: image ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.build_images == 'true'
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.images) }}
+    timeout-minutes: 60
+    steps:
+      # A standard runner has little free disk, and a toolchain image is several GB of layers.
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+          sparse-checkout: |
+            .github/scripts
+            macos-cross
+            icu
+      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
+        with:
+          install: true
+      - name: Build and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          node .github/scripts/lanes.mjs image "$NAME" --push
+
+  # Old toolchain images go away, but not at once. A push to main deletes the versions that main's lanes do not use,
+  # that are more than KEEP_DAYS old, and that are not one of the two newest of a toolchain main has: so not the images a
+  # pull request built recently (a change to a toolchain can be iterated on before it is merged), and not the image
+  # main used until this push, which earlier runs still in flight and branches not yet rebased are pulling. If an image
+  # a branch still wants has been deleted, `plan` finds it missing on that branch's next run and `image` builds it
+  # again. Not on a re-run: an old run knows an old set of images.
+  prune:
+    name: Prune toolchain images
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    permissions:
+      packages: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete what main does not use and is old
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: /orgs/${{ github.repository_owner }}/packages/container/bun-webkit-build-env
+          KEEP: ${{ needs.plan.outputs.image_tags }}
+          KEEP_DAYS: 14
+        run: |
+          set -euo pipefail
+          gh api --paginate "$PACKAGE/versions?per_page=100" |
+            jq -rs --argjson keep "$KEEP" --argjson days "$KEEP_DAYS" '
+              add
+              | map(.metadata.container.tags as $tags | {id, updated_at, $tags, toolchain: (($tags[0] // "") | sub("-[0-9a-f]{16}$"; ""))})
+              | ($keep | map(sub("-[0-9a-f]{16}$"; ""))) as $toolchains
+              | group_by(.toolchain)
+              | map(sort_by(.updated_at) | reverse | if (.[0].toolchain as $name | $toolchains | index($name)) then .[2:] else . end)
+              | add // []
+              | .[]
+              | select(any(.tags[]; . as $tag | $keep | index($tag)) | not)
+              | select(now - (.updated_at | fromdateiso8601) > $days * 86400)
+              | "\(.id)\t\(.updated_at)\t\(.tags | join(","))"' > delete.tsv
+          echo "keeping: $(jq -r 'join(" ")' <<< "$KEEP"), the two newest of each of those toolchains, and anything less than $KEEP_DAYS days old"
+          while IFS=$'\t' read -r id updated tags; do
+            echo "deleting $id (${tags:-untagged}, pushed $updated)"
+            gh api -X DELETE "$PACKAGE/versions/$id" || echo "::warning::could not delete package version $id"
+          done < delete.tsv
+
+  # `build` and `build-tested` are one job in two halves: the same steps, over the lanes `test` does not wait for and
+  # the lanes it does. `needs:` names a job, never one leg of its matrix, so the lanes that are tested have to be a job
+  # of their own for `test` to start when they are done rather than when all 42 are.
+  build:
+    name: ${{ matrix.label }}
+    needs: &build_needs
+      - plan
+      - image
+    # `image` is skipped when there was nothing for it to build.
+    if: &images_are_there ${{ !cancelled() && needs.plan.result == 'success' && (needs.image.result == 'success' || needs.image.result == 'skipped') }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One lane's failure shouldn't cancel the others.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build) }}
+    timeout-minutes: 90
+    steps: &build_steps
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !LayoutTests/
+            !JSTests/
+            !PerformanceTests/
+            !Websites/
+            !ManualTests/
+            !WebDriverTests/
+      - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
+        with:
+          install: true
+      # The lane is built into bun-webkit/ inside Docker, and that is packaged as bun-webkit.tar.gz.
+      - name: Build
+        env:
+          LABEL: ${{ matrix.label }}
+          PACKAGE_OS: ${{ matrix.package_os }}
+          PACKAGE_CPU: ${{ matrix.package_cpu }}
+          BUILD_REF: ${{ env.REF }}
+          REPOSITORY: ${{ github.repository }}
+          IMAGE: ${{ matrix.image }}
+          TEST: ${{ matrix.test }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # `plan` made the draft this lane uploads to. It is gone if this is a re-run of only the jobs that failed,
+          # after `release` deleted it: better to find out now than after the build.
+          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that plan creates it again."; exit 1; }
+          rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
+          # Starting from the lane's toolchain image, which is in the registry: `plan` found it there or `image` put it.
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE"
+          cd "$RUNNER_TEMP"
+          echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
+          echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
+          rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          tar -czf bun-webkit.tar.gz bun-webkit
+          # What `test` runs.
+          if [ "$TEST" = true ]; then tar -cf jsc-shell.tar bun-webkit/bin; fi
+          rm -rf bun-webkit
+      - name: Upload the jsc shell for the tests
+        if: matrix.test
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jsc-shell-${{ matrix.label }}
+          path: ${{ runner.temp }}/jsc-shell.tar
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          LABEL: ${{ matrix.label }}
+          DIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
+          for attempt in 1 2 3 4 5; do
+            gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
+            echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
+          done
+          exit 1
+
+  build-tested:
+    name: ${{ matrix.label }}
+    needs: *build_needs
+    if: *images_are_there
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build_tested) }}
+    timeout-minutes: 90
+    steps: *build_steps
+
+  # JavaScriptCore's own test suites (JSTests/, LayoutTests/js, the PerformanceTests collections), run by
+  # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on a
+  # runner of the architecture it was built for. Which lanes are tested, and why those, is in lanes.mjs.
+  #
+  # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
+  # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
+  # the job fails.
+  test:
+    name: Test ${{ matrix.label }}
+    # It runs the branch's code, and only needs to check it out: the jsc shell is an artifact of this run.
+    permissions:
+      contents: read
+    needs:
+      - plan
+      - build-tested
+    # Also when one of the tested lanes failed to build: the ones that did build are still tested, and the leg of the
+    # one that did not fails at its download. Not when they were never built.
+    if: ${{ !cancelled() && (needs.build-tested.result == 'success' || needs.build-tested.result == 'failure') }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.test) }}
+    # The macOS and Windows lanes are tested on GitHub's standard runners, which have 3 or 4 cores.
+    timeout-minutes: ${{ matrix.quick && 300 || 90 }}
+    env:
+      QUICK: ${{ matrix.quick }}
+      LABEL: ${{ matrix.label }}
+    defaults:
+      run:
+        # Also on Windows (Git for Windows' bash).
+        shell: bash
+    steps:
+      # autocrlf: a test that compares Function.prototype.toString() with a template literal (which has \n whatever the
+      # file has) needs the files as they are in the repository, not with Windows' \r\n.
+      - name: Allow long paths, keep line endings
+        if: runner.os == 'Windows'
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
+      # The tests live in JSTests/, PerformanceTests/ and a few corners of LayoutTests/: js + fast/regex
+      # (LayoutTests/jsc-layout-tests.yaml) and the web-platform-tests for wasm with their harness (JSTests/wasm.yaml).
+      # The rest of LayoutTests/ is several GB that nothing here reads. A collection that points somewhere that is
+      # not checked out fails run-jsc-stress-tests at once, in `realpath`.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/Websites/
+            !/ManualTests/
+            !/WebDriverTests/
+            !/Source/ThirdParty/
+            !/LayoutTests/*
+            /LayoutTests/jsc-layout-tests.yaml
+            /LayoutTests/resources/
+            /LayoutTests/js/
+            /LayoutTests/fast/regex/
+            /LayoutTests/imported/w3c/web-platform-tests/wasm/
+            /LayoutTests/imported/w3c/web-platform-tests/resources/
+      - name: Install what the test runner needs
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          missing=()
+          for tool in perl ruby python3 make jq; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+          if [ ${#missing[@]} -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          fi
+      # The jsc shell the lane was built with, as `build-tested` kept it: not from the draft release, which `release`
+      # deletes as soon as any lane fails.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        id: download
+        with:
+          name: jsc-shell-${{ matrix.label }}
+          path: ${{ runner.temp }}
+      - name: Unpack the jsc shell
+        run: |
+          set -euo pipefail
+          # From inside the directory: GNU tar takes the C: of a Windows path for a host name.
+          cd "$RUNNER_TEMP"
+          tar -xf jsc-shell.tar
+          ls -la bun-webkit/bin
+      # testFFI and the JavaScriptCore tests each run whatever the other did, and either failing fails the job.
+      - name: testFFI
+        if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
+        env: &test_env
+          # detect_leaks=0: LeakSanitizer reports the shell's deliberate exit-time leaks and turns every exit code into 1.
+          # allocator_may_return_null=1: tests that provoke out-of-memory expect a JS exception, not an ASAN abort.
+          # allow_user_segv_handler=1: on Linux under ASan, JSC turns its wasm fault signal handler off, and wasm shared
+          # memory with it, unless this (or handle_segv=0) is in ASAN_OPTIONS (Options.cpp).
+          ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1:allow_user_segv_handler=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          # The jsc shell aborts when its footprint passes this. --memory-limited defaults it to 600MB, which ASAN's
+          # overhead (shadow, redzones, quarantine) takes ordinary tests past.
+          JSCTEST_memoryLimit: 4294967296
+        run: |
+          "$RUNNER_TEMP/bun-webkit/bin/testFFI"
+      - name: run-javascriptcore-tests
+        if: *have_jsc
+        env: *test_env
+        run: |
+          # Not -e, which the shell is started with: the tests failing must not end the script at the pipeline below,
+          # before jsc-failures.log is written. The status is passed on at the end.
+          set +e -uo pipefail
+          root="$RUNNER_TEMP/bun-webkit"
+          results="$RUNNER_TEMP/jsc-results.json"
+          platform=()
+          case "$RUNNER_OS" in
+            Linux) echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory" ;;
+            macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
+            Windows)
+              echo "$NUMBER_OF_PROCESSORS cores"
+              # As upstream's Windows bots run it: Windows' own perl (not Git for Windows' msys one), test scripts
+              # written as ruby rather than sh, run by the ruby runner rather than make.
+              export PATH="/c/Strawberry/perl/bin:$PATH"
+              root=$(cygpath -m "$root")
+              results=$(cygpath -m "$results")
+              platform=(--test-writer=ruby --ruby-runner)
+              # The driver takes the architecture from perl, which on windows-11-arm says x86_64; run-jsc-stress-tests
+              # picks modes and skips by it, so name the one jsc.exe was built for.
+              case "$LABEL" in *-arm64*) platform+=(--architecture arm64) ;; *) platform+=(--architecture x86_64) ;; esac
+              ;;
+          esac
+          # --quick on the small runners: see lanes.mjs.
+          if [ "$QUICK" = true ]; then platform+=(--quick); fi
+          # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
+          # by the release Dockerfiles, hence the --no-test*.
+          # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
+          # --no-fail-fast: run everything, report every failure.
+          perl Tools/Scripts/run-javascriptcore-tests \
+            --no-build --root="$root" --release --jsc-only ${platform[@]+"${platform[@]}"} \
+            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
+            --no-fail-fast --memory-limited \
+            --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
+              # The full output (a line per test run, plus what each test prints) is jsc-tests.log in the artifact; it
+              # is far more than the log viewer shows. Shown here: what the runner prints before the first test, every
+              # failure as it happens, how far along the run is, and the results of the runner from where they begin.
+              # Nothing else: the tests run in parallel into one pipe, so what they print arrives cut up mid-line and
+              # cannot be told apart by what it looks like.
+              results { print; next }
+              /^\*\* The following JSC stress test failures/ || /^Results for JSC / { results = 1; print; fflush(); next }
+              /^Running / { started = 1; if (++ran % 5000 == 0) { print ran " test runs started, " failed + 0 " failed"; fflush() } next }
+              /^FAIL: / { failed++; print; fflush(); next }
+              !started { print; fflush(); next }
+              { last[n++ % 40] = $0 }
+              END {
+                if (results) exit
+                # The runner died before its results (an exception of its own, say): what it said last is the clue.
+                print "run-jsc-stress-tests ended without printing results. The last lines of its output:"
+                for (i = (n > 40 ? n - 40 : 0); i < n; i++) print last[i % 40]
+              }'
+          status=${PIPESTATUS[0]}
+          echo "run-javascriptcore-tests exited with $status"
+          # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
+          # log that is needed to fix a test.
+          awk '
+            FNR == NR { if ($0 ~ /^FAIL: /) { name = $2; failing[name] = 1; order[++n] = name } next }
+            { i = index($0, ": "); if (i > 0) { name = substr($0, 1, i - 1); if (name in failing) out[name] = out[name] substr($0, i + 2) "\n" } }
+            END { for (k = 1; k <= n; k++) { print "=== " order[k]; printf "%s\n", out[order[k]] } }
+          ' "$RUNNER_TEMP/jsc-tests.log" "$RUNNER_TEMP/jsc-tests.log" > "$RUNNER_TEMP/jsc-failures.log" || true
+          exit "$status"
+      - name: Summary
+        if: always()
+        env:
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/jsc-results.json"
+          [ -f "$results" ] || { echo "no results file"; exit 0; }
+          {
+            echo "### JavaScriptCore tests: $LABEL"
+            echo
+            echo "$(jq '.stressTestFailures // [] | length' "$results") failing runs, in $(jq '[(.stressTestFailures // [])[] | sub("\\.js\\..*$"; ".js")] | unique | length' "$results") test files."
+            echo
+            echo "<details><summary>Failing test files</summary>"
+            echo
+            echo '```'
+            jq -r '[(.stressTestFailures // [])[] | sub("\\.js\\..*$"; ".js")] | group_by(.) | .[] | "\(length)\t\(.[0])"' "$results"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jsc-test-results-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/jsc-results.json
+            ${{ runner.temp }}/jsc-failures.log
+            ${{ runner.temp }}/jsc-tests.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: release
+    # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
+    # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - plan
+      - build
+      - build-tested
+    steps:
+      # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
+      - name: Publish or delete the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+          NEEDS: ${{ toJSON(needs) }}
+          LABELS: ${{ needs.plan.outputs.labels }}
+        run: |
+          set -euo pipefail
+          ok=true
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          if [ -n "$failed" ]; then
+            echo "jobs that did not succeed:"; echo "$failed"; ok=false
+          else
+            jq -r '.[]' <<< "$LABELS" | sort > expected.txt
+            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
+            missing=$(comm -23 expected.txt uploaded.txt)
+            if [ -n "$missing" ]; then
+              echo "assets missing from $TAG:"; echo "$missing"; ok=false
+            fi
+          fi
+          if [ "$ok" = true ]; then
+            url=$(gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false --jq .html_url)
+            echo "published $TAG with $(wc -l < uploaded.txt) assets: $url"
+            # A pull request gets a comment linking its release, edited in place by the next build.
+            [ -z "$PR" ] || gh pr comment "$PR" --edit-last --create-if-none --body "Preview build of ${REF:0:8}: [\`$TAG\`]($url)" || echo "::warning::could not comment on #$PR"
+            exit 0
+          fi
+          # Only the draft this run created is deleted: not a published release (a re-run of a run that succeeded),
+          # and not a draft that a newer run for the same tag has replaced.
+          if [ -n "$RELEASE_ID" ] && [ "$(gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .draft 2>/dev/null || echo missing)" = true ]; then
+            gh api -X DELETE "repos/$GH_REPO/releases/$RELEASE_ID"
+            echo "deleted draft $TAG (id $RELEASE_ID)"
+          fi
+          exit 1

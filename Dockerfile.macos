@@ -1,9 +1,8 @@
 # Cross-compiles JavaScriptCore (PORT=JSCOnly) for macOS on a Linux host:
 # clang --target=<arch>-apple-macosx against a pinned macOS SDK, linked with
-# ld64.lld. Produces the same bun-webkit tarball layout as mac-release.bash
-# does on a real Mac, plus LTO variants the native lanes don't build.
+# ld64.lld.
 #
-# Differences from the native macOS build:
+# Differences from a build on a Mac:
 #   - The linker is ld64.lld instead of Apple's ld (required: there is no
 #     Apple ld for Linux). Only executables (LLIntOffsetsExtractor, jsc) are
 #     linked; the shipped artifacts are static archives.
@@ -32,10 +31,9 @@ ARG MARCH_FLAG="-mcpu=apple-m1"
 ARG LLVM_VERSION="21"
 ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
-# Matches the native macOS lane's CMAKE_C_FLAGS (build-reusable.yml) plus -g
-# from mac-release.bash. Cross-only additions live in the build stage.
+# What every variant is compiled with. Cross-only additions live in the build stage.
 ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
-# Per-variant extras (the native lanes' matrix.cpp_flags), e.g.
+# Per-variant extras (CPP_FLAGS in .github/scripts/lanes.mjs), e.g.
 # -D_LIBCXX_ENABLE_ASSERTIONS=1 for Debug.
 ARG CPP_FLAGS=""
 ARG ENABLE_MALLOC_HEAP_BREAKDOWN="OFF"
@@ -48,6 +46,7 @@ ARG ENABLE_MALLOC_HEAP_BREAKDOWN="OFF"
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
+ARG USE_SYSTEM_MALLOC="OFF"
 ARG COMPILER_RT_DARWIN_TAG="compiler-rt-darwin-21.1.8"
 ARG COMPILER_RT_DARWIN_SHA256="f9bab8191d63873682ec69492d06cfdf0807a7335c4e9b188ef013b3cc3c9dbc"
 
@@ -143,7 +142,7 @@ RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/
 # against the minimal mach type stubs in macos-cross/. See
 # macos-cross/README.md for why this is sound.
 # ───────────────────────────────────────────────────────────────────────────
-FROM base AS build_mig
+# Part of `base`: it is the same for every lane.
 ARG BOOTSTRAP_CMDS_TAG
 COPY macos-cross/ /macos-cross/
 RUN git clone --depth=1 --branch ${BOOTSTRAP_CMDS_TAG} \
@@ -158,7 +157,8 @@ RUN git clone --depth=1 --branch ${BOOTSTRAP_CMDS_TAG} \
        error.c global.c header.c mig.c routine.c server.c statement.c \
        string.c type.c user.c utils.c lexxer.c parser.c && \
     install -m 0755 /macos-cross/mig /usr/local/bin/mig && \
-    migcom -version
+    migcom -version && \
+    rm -rf /bootstrap_cmds
 
 # ───────────────────────────────────────────────────────────────────────────
 # WebKit (JSCOnly)
@@ -176,8 +176,8 @@ ARG ENABLE_MALLOC_HEAP_BREAKDOWN
 ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
+ARG USE_SYSTEM_MALLOC
 
-COPY --from=build_mig /usr/local/bin/mig /usr/local/bin/migcom /usr/local/bin/
 COPY . /webkit
 WORKDIR /webkit
 
@@ -194,6 +194,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export MIGCOM="$(which migcom)" && \
     export ENABLE_ASSERTS="AUTO" && \
     if [ -n "${ENABLE_SANITIZERS}" ]; then export ENABLE_ASSERTS="ON"; fi && \
+    export SANITIZER_RPATH=$(if [ -n "${ENABLE_SANITIZERS}" ]; then echo "-Wl,-rpath,@executable_path"; fi) && \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} $G ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
     export CXXFLAGS="${CROSS} -nostdinc++ -isystem ${MACOS_SDK}/usr/include/c++/v1 ${DEFAULT_CFLAGS} $G ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
@@ -216,6 +217,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DUSE_BUN_EVENT_LOOP=ON \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
+    -DUSE_SYSTEM_MALLOC="$USE_SYSTEM_MALLOC" \
     -DENABLE_FTL_JIT=ON \
     -DENABLE_API_TESTS=OFF \
     -DENABLE_MALLOC_HEAP_BREAKDOWN=${ENABLE_MALLOC_HEAP_BREAKDOWN} \
@@ -224,7 +226,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
     -DENABLE_REMOTE_INSPECTOR=ON \
-    -DCMAKE_EXE_LINKER_FLAGS="${CROSS} --ld-path=$(which ld64.lld) -mlinker-version=705" \
+    -DCMAKE_EXE_LINKER_FLAGS="${CROSS} --ld-path=$(which ld64.lld) -mlinker-version=705 ${SANITIZER_RPATH}" \
     -DCMAKE_C_FLAGS="$CFLAGS" \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -G Ninja \
@@ -250,6 +252,11 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -rL /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
     cp -L /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
+    # The sanitizer runtime is a dylib the executables name as @rpath/libclang_rt.asan_osx_dynamic.dylib, and the rpath
+    # clang adds is this container's resource directory. So it ships next to them, and @executable_path is an rpath.
+    if [ -n "${ENABLE_SANITIZERS}" ]; then \
+      cp "$($CC -print-resource-dir)/lib/darwin/libclang_rt.asan_osx_dynamic.dylib" /output/bin/; \
+    fi && \
     test -z "$(find /output/include -type l -print -quit)" || { echo "ERROR: dangling symlinks in /output/include"; find /output/include -type l | head; exit 1; }
 
 FROM scratch AS artifact

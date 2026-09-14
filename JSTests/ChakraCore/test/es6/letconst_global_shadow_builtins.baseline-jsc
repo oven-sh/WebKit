@@ -11,9 +11,7 @@ delicious
 ReferenceError: Cannot access 'JSON' before initialization.
 ReferenceError: Cannot access 'JSON' before initialization.
 [object JSON]
-function stringify() {
-    [native code]
-}
+function stringify() { [native code] }
 undefined
 [object Object]
 undefined

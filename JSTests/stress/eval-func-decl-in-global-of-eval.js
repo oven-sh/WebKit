@@ -31,7 +31,7 @@ function bar() {
 
 for (var i = 0; i < testLoopCount; i++){
     assertThrow(() => bar(), "SyntaxError: Can't create duplicate variable in eval: 'f'");
-    assertThrow(() => f, "ReferenceError: Can't find variable: f");
+    assertThrow(() => f, "ReferenceError: f is not defined");
 }
 
 function baz() {
@@ -47,7 +47,7 @@ function baz() {
 
 for (var i = 0; i < testLoopCount; i++){
     baz();
-    assertThrow(() => l, "ReferenceError: Can't find variable: l");
+    assertThrow(() => l, "ReferenceError: l is not defined");
 }
 
 function foobar() {
@@ -58,11 +58,11 @@ function foobar() {
         assert(typeof g, 'number');
         assert(value, 30);
     }
-    assertThrow(() => g, "ReferenceError: Can't find variable: g");
+    assertThrow(() => g, "ReferenceError: g is not defined");
 }
 
 foobar();
-assertThrow(() => g, "ReferenceError: Can't find variable: g");
+assertThrow(() => g, "ReferenceError: g is not defined");
 
 (function() {
     try {
@@ -73,8 +73,8 @@ assertThrow(() => g, "ReferenceError: Can't find variable: g");
     }
 
     assert(error.toString(), "SyntaxError: Can't create duplicate variable in eval: 'b'");
-    assertThrow(() => a, "ReferenceError: Can't find variable: a");
-    assertThrow(() => b, "ReferenceError: Can't find variable: b");
+    assertThrow(() => a, "ReferenceError: a is not defined");
+    assertThrow(() => b, "ReferenceError: b is not defined");
 })();
 
 (function() {
@@ -86,9 +86,9 @@ assertThrow(() => g, "ReferenceError: Can't find variable: g");
     }
 
     assert(error.toString(), "SyntaxError: Can't create duplicate variable in eval: 'x1'");
-    assertThrow(() => x1, "ReferenceError: Can't find variable: x1");
-    assertThrow(() => x2, "ReferenceError: Can't find variable: x2");
-    assertThrow(() => x3, "ReferenceError: Can't find variable: x3");
+    assertThrow(() => x1, "ReferenceError: x1 is not defined");
+    assertThrow(() => x2, "ReferenceError: x2 is not defined");
+    assertThrow(() => x3, "ReferenceError: x3 is not defined");
 })();
 
 (function() {
@@ -101,7 +101,7 @@ assertThrow(() => g, "ReferenceError: Can't find variable: g");
     }
 
     assert(error.toString(), "SyntaxError: Can't create duplicate variable in eval: 'x2'");
-    assertThrow(() => x1, "ReferenceError: Can't find variable: x1");
-    assertThrow(() => x2, "ReferenceError: Can't find variable: x2");
+    assertThrow(() => x1, "ReferenceError: x1 is not defined");
+    assertThrow(() => x2, "ReferenceError: x2 is not defined");
     assert(x3, undefined);
 })();

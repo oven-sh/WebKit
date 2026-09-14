@@ -47,12 +47,12 @@ PASS equivalent({nest:[{a}]}.nest[0], {nest: [{a:a}]}.nest[0]) is true
 PASS equivalent([{nest:[{a}]}][0].nest[0], [{nest: [{a:a}]}][0].nest[0]) is true
 PASS equivalent({a,b,t,x,f,nul,un,fun,foo,bar}, {a:a, b:b, t:t, x:x, f:f, nul:null, un:un, fun:fun, foo:foo, bar:bar}) is true
 PASS equivalent({eval}, {eval: eval}) is true
-PASS ({noSuchIdentifier}) threw exception ReferenceError: Can't find variable: noSuchIdentifier.
-PASS ({a,noSuchIdentifier}) threw exception ReferenceError: Can't find variable: noSuchIdentifier.
-PASS ({noSuchIdentifier,a}) threw exception ReferenceError: Can't find variable: noSuchIdentifier.
-PASS ({a,b,noSuchIdentifier}) threw exception ReferenceError: Can't find variable: noSuchIdentifier.
-PASS ({get}) threw exception ReferenceError: Can't find variable: get.
-PASS ({set}) threw exception ReferenceError: Can't find variable: set.
+PASS ({noSuchIdentifier}) threw exception ReferenceError: noSuchIdentifier is not defined.
+PASS ({a,noSuchIdentifier}) threw exception ReferenceError: noSuchIdentifier is not defined.
+PASS ({noSuchIdentifier,a}) threw exception ReferenceError: noSuchIdentifier is not defined.
+PASS ({a,b,noSuchIdentifier}) threw exception ReferenceError: noSuchIdentifier is not defined.
+PASS ({get}) threw exception ReferenceError: get is not defined.
+PASS ({set}) threw exception ReferenceError: set is not defined.
 PASS equivalent({get}, {get: 1}) is true
 PASS equivalent({set}, {set: 2}) is true
 PASS ({get x(){ return true; }}).x is true
@@ -102,10 +102,10 @@ PASS ({void}) threw exception SyntaxError: Cannot use the keyword 'void' as a sh
 PASS ({while}) threw exception SyntaxError: Cannot use the keyword 'while' as a shorthand property name..
 PASS ({with}) threw exception SyntaxError: Cannot use the keyword 'with' as a shorthand property name..
 Contextual Keywords
-PASS ({let}) threw exception ReferenceError: Can't find variable: let.
-PASS ({async}) threw exception ReferenceError: Can't find variable: async.
-PASS ({yield}) threw exception ReferenceError: Can't find variable: yield.
-PASS ({await}) threw exception ReferenceError: Can't find variable: await.
+PASS ({let}) threw exception ReferenceError: let is not defined.
+PASS ({async}) threw exception ReferenceError: async is not defined.
+PASS ({yield}) threw exception ReferenceError: yield is not defined.
+PASS ({await}) threw exception ReferenceError: await is not defined.
 PASS "use strict"; ({let}) } threw exception SyntaxError: Cannot use 'let' as a shorthand property name in strict mode..
 PASS function* generator() { ({yield}) } threw exception SyntaxError: Cannot use 'yield' as a shorthand property name in a generator function..
 PASS async function func() { ({await}) } threw exception SyntaxError: Cannot use 'await' as a shorthand property name in an async function..

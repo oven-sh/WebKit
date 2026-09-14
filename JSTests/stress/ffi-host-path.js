@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--useFFIICStub=0", "--useFFICallInDFG=0")
+//@ requireOptions("--useDollarVM=1", "--useFFIICStub=0", "--useFFICallInDFG=0", "--useExecutableAllocationFuzz=false")
 
 // FFI-SPEC-GAP: SPEC section 11.4 describes the host-path-vs-tiers
 // differential as "a single file"; this companion file (row T also owns

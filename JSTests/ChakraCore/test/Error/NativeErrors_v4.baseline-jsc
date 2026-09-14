@@ -53,6 +53,6 @@ global code@NativeErrors.js:73:5
 toString()     = URIError
 
 RegExpError
-ReferenceError: Can't find variable: RegExpError
+ReferenceError: RegExpError is not defined
 ConversionError
-ReferenceError: Can't find variable: ConversionError
+ReferenceError: ConversionError is not defined
