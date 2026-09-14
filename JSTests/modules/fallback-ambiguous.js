@@ -9,5 +9,5 @@
 import { shouldBe } from "./resources/assert.js"
 
 import('./fallback-ambiguous/main.js').then($vm.abort, function (error) {
-    shouldBe(String(error), `SyntaxError: Indirectly exported binding name 'A' cannot be resolved due to ambiguous multiple bindings.`);
+    shouldBe(String(error), `SyntaxError: Cannot export 'A' multiple times in './D.js'`);
 }).catch($vm.abort);

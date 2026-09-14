@@ -13,11 +13,18 @@ function shouldBe(actual, expected) {
         throw new Error("expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual));
 }
 
+// A time-zone change takes effect the next time the VM is entered, so each check runs in its own task.
 $vm.setHostTimeZone("Etc/UTC");
-shouldBe(currentTimeZone(), "UTC"); // primes the impl cache
+setTimeout(() => {
+    shouldBe(currentTimeZone(), "UTC"); // primes the impl cache
 
-$vm.setHostTimeZone("America/Anchorage");
-shouldBe(currentTimeZone(), "America/Anchorage");
+    $vm.setHostTimeZone("America/Anchorage");
+    setTimeout(() => {
+        shouldBe(currentTimeZone(), "America/Anchorage");
 
-$vm.setHostTimeZone("Asia/Tokyo");
-shouldBe(currentTimeZone(), "Asia/Tokyo");
+        $vm.setHostTimeZone("Asia/Tokyo");
+        setTimeout(() => {
+            shouldBe(currentTimeZone(), "Asia/Tokyo");
+        }, 0);
+    }, 0);
+}, 0);

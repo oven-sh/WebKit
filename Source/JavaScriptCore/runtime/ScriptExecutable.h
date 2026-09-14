@@ -152,6 +152,18 @@ protected:
     static void visitCodeBlockEdge(Visitor&, CodeBlock*);
     void jettisonCodeBlockEdgeIfDead(VM&, WriteBarrier<CodeBlock>&);
 
+    // The body of a generator or an async function, and a module with a top-level await, keep their registers in a
+    // generator frame while they are suspended, and only code that was generated the same way finds them there again:
+    // once such a body has run, its code is always generated the way it was then, whatever the realm asks for by now.
+    OptionSet<CodeGenerationMode> codeGenerationModeForResumableBody(OptionSet<CodeGenerationMode> current)
+    {
+        if (m_codeForGeneratorBodyWasGenerated)
+            return m_codeGenerationModeForGeneratorBody;
+        m_codeGenerationModeForGeneratorBody = current;
+        return current;
+    }
+    void pinCodeGenerationModeForResumableBody() { m_codeForGeneratorBodyWasGenerated = true; }
+
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };
     bool m_didTryToEnterInLoop { false };

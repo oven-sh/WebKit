@@ -682,10 +682,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                         metadata.m_watchpointSet = iter->value.watchpointSet();
                     }
                     // Generator and async function bodies can resume on a new CodeBlock after the
-                    // original is cleared (e.g. by deleteAllCode). The new CodeBlock's constant pool
-                    // holds a fresh SymbolTable clone, but the suspended activation still references
-                    // the original. Firing the metadata WatchpointSet via touch() at runtime would
-                    // notify watchers of the wrong SymbolTable. Pre-invalidate here so DFG treats
+                    // original is cleared (e.g. by deleteAllCode). setConstantRegisters gives the new
+                    // CodeBlock the clone that the suspended activation's environments were made from
+                    // whenever it still describes the scope; when it does not, those environments keep a
+                    // SymbolTable that this CodeBlock's puts do not notify. Pre-invalidate here so DFG treats
                     // these captured variables as non-constant, matching ClosureVar semantics.
                     if (metadata.m_watchpointSet
                         && ownerExecutable->isFunctionExecutable()
@@ -1187,6 +1187,19 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
             moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
     }
 #endif
+    // An activation of a generator, an async function or a module body can outlive this code: while it is suspended its
+    // CodeBlock can be jettisoned and the unlinked code it was linked from thrown away, and it then resumes in a CodeBlock
+    // linked from code that was generated or decoded again, whose SymbolTable constants are new objects. The environments
+    // it made before came from the clones of the old ones, and closures over those are compiled against those clones'
+    // inferences (DFG::ByteCodeParser folds a closure's scope under SymbolTable::singleton()), so the environments it
+    // makes from here on have to come from the same clones, or nothing would ever tell that code about them.
+    JSCell* resumableCodeOwner = nullptr;
+    if (m_unlinkedCode->codeType() == ModuleCode) {
+        if (uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->isAsync())
+            resumableCodeOwner = ownerExecutable();
+    } else if (m_unlinkedCode->codeType() == FunctionCode && isGeneratorOrAsyncFunctionBodyParseMode(m_unlinkedCode->parseMode()))
+        resumableCodeOwner = uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable();
+
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();
         SourceCodeRepresentation representation = constantsSourceCodeRepresentation[i];
@@ -1213,15 +1226,42 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                         // If we didn't then we could jettison a compilation because that constant changed
                         // but invalidate the clone. Then the next compilation would see the original
                         // watchpoint intact and assume the value is still the original constant.
-                        SymbolTable* clone = globalObject->symbolTableCache().get(symbolTable);
-                        if (!clone) {
-                            // For non-builtin code, link the clone's singleton watchpoint to the master
-                            // SymbolTable held inside the UnlinkedCodeBlock so that all per-realm clones
-                            // share one InferredValue. This avoids re-firing the singleton watchpoint
-                            // independently in every realm (e.g. on navigation) for the same code.
-                            auto propagateCloneInvalidationToOriginal = m_unlinkedCode->isBuiltinFunction() ? SymbolTable::PropagateCloneInvalidationToOriginal::No : SymbolTable::PropagateCloneInvalidationToOriginal::Yes;
-                            clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
-                            globalObject->symbolTableCache().set(symbolTable, clone);
+                        //
+                        // For non-builtin code, link the clone's singleton watchpoint to the master
+                        // SymbolTable held inside the UnlinkedCodeBlock so that all per-realm clones
+                        // share one InferredValue. This avoids re-firing the singleton watchpoint
+                        // independently in every realm (e.g. on navigation) for the same code.
+                        auto propagateCloneInvalidationToOriginal = m_unlinkedCode->isBuiltinFunction() ? SymbolTable::PropagateCloneInvalidationToOriginal::No : SymbolTable::PropagateCloneInvalidationToOriginal::Yes;
+                        SymbolTable* clone = nullptr;
+                        if (resumableCodeOwner) {
+                            // Found by whose code this is, not by the constant, which is another object by now if the
+                            // code was generated again.
+                            JSGlobalObject::ResumableCodeSymbolTableKey key { resumableCodeOwner, static_cast<unsigned>(i) };
+                            // The scope has older environments if an older clone is still around: a new clone must not
+                            // take the first one made from it for the only one there is.
+                            bool scopeHasOlderEnvironments = false;
+                            clone = globalObject->resumableCodeSymbolTableClones().get(key);
+                            if (clone && clone->clonedFrom() != symbolTable) {
+                                if (clone->isCloneOfScopePartOf(*symbolTable))
+                                    clone->adoptOriginal(vm, *symbolTable);
+                                else {
+                                    clone->invalidateInferencesOfAbandonedClone(vm);
+                                    scopeHasOlderEnvironments = true;
+                                    clone = nullptr;
+                                }
+                            }
+                            if (!clone) {
+                                clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                                if (scopeHasOlderEnvironments)
+                                    clone->singleton().invalidate(vm, StringFireDetail("The scope has environments that were made from another SymbolTable"));
+                                globalObject->resumableCodeSymbolTableClones().set(key, clone);
+                            }
+                        } else {
+                            clone = globalObject->symbolTableCache().get(symbolTable);
+                            if (!clone) {
+                                clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                                globalObject->symbolTableCache().set(symbolTable, clone);
+                            }
                         }
                         if (wasCompiledWithDebuggingOpcodes())
                             clone->collectDebuggerInfo(this);
