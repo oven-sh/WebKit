@@ -81,7 +81,7 @@ public:
 
     // Set when target() is a function B3 compiled from C: the module holds its IR, so the FTL
     // can inline the body instead of calling it.
-    FFI::CModule* cModule() const { return m_cModule.get(); }
+    FFI::CModule* cModule() const { return m_cModule; }
     unsigned cModuleFunction() const { return m_cModuleFunction; }
     JS_EXPORT_PRIVATE void setCModule(FFI::CModule&, unsigned functionIndex);
 
@@ -93,7 +93,7 @@ private:
     RefPtr<JITCode> m_icCode; // Keeps the IC entry stub alive; null when no stub.
     WriteBarrier<JSObject> m_owner; // Optional; keeps the owner (e.g. library handle object) alive.
     const FFI::CallHooks* m_hooks; // Optional, static lifetime; non-null => host path only.
-    RefPtr<FFI::CModule> m_cModule; // Owns target()'s code when it was compiled from C.
+    FFI::CModule* m_cModule { nullptr }; // A loaded module: there for as long as the process is (see CModule.h).
     unsigned m_cModuleFunction { 0 };
 };
 

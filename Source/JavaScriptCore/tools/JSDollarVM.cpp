@@ -5078,7 +5078,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCModuleHost, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(result);
 }
 
-// $vm.cModule(cirBytes) -> { exportName: function }. Externs resolve through dlsym.
+// $vm.cModule(birBytes) -> { exportName: function }. Externs resolve through dlsym; the constructors have run.
 JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5099,6 +5099,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFra
     });
     if (!module)
         return throwVMTypeError(globalObject, scope, module.error());
+    module.value()->runConstructors();
     RELEASE_AND_RETURN(scope, JSValue::encode(module.value()->createExportsObject(globalObject)));
 }
 

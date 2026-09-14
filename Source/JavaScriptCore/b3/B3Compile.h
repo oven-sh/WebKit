@@ -31,6 +31,8 @@
 
 #include "B3Common.h"
 #include "JITCompilation.h"
+#include <optional>
+#include <wtf/text/CString.h>
 
 namespace JSC {
 
@@ -49,8 +51,10 @@ class Procedure;
 // If this API feels too high-level, you can use B3::generate() directly.
 
 JS_EXPORT_PRIVATE Compilation compile(Procedure&);
-// The same, for code that has a name of its own to show in perf and gdb (see Options::useJITDump).
-JS_EXPORT_PRIVATE Compilation compile(Procedure&, CString&& name);
+// The same for code that stays for as long as the process does, so that running out of executable memory is
+// something its producer reports: nothing when there is no room for the code. `name` is what perf and gdb are
+// told it is called (see Options::useJITDump).
+JS_EXPORT_PRIVATE std::optional<Compilation> tryCompile(Procedure&, CString&& name);
 
 } } // namespace JSC::B3
 

@@ -38,11 +38,6 @@ namespace JSC { namespace B3 {
 
 Compilation compile(Procedure& proc)
 {
-    return compile(proc, CString());
-}
-
-Compilation compile(Procedure& proc, CString&& name)
-{
     CompilerTimingScope timingScope("Total B3+Air"_s, "compile"_s);
     
     prepareForGeneration(proc);
@@ -50,8 +45,22 @@ Compilation compile(Procedure& proc, CString&& name)
     CCallHelpers jit;
     generate(proc, jit);
     LinkBuffer linkBuffer(jit, nullptr);
-    if (!name.isNull())
-        linkBuffer.setNameForJITDump(WTF::move(name));
+
+    return Compilation(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
+}
+
+std::optional<Compilation> tryCompile(Procedure& proc, CString&& name)
+{
+    CompilerTimingScope timingScope("Total B3+Air"_s, "compile"_s);
+
+    prepareForGeneration(proc);
+
+    CCallHelpers jit;
+    generate(proc, jit);
+    LinkBuffer linkBuffer(jit, nullptr, LinkBuffer::Profile::Uncategorized, JITCompilationCanFail);
+    if (linkBuffer.didFailToAllocate())
+        return std::nullopt;
+    linkBuffer.setNameForJITDump(WTF::move(name));
 
     return Compilation(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
 }

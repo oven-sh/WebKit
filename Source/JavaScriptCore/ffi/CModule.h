@@ -36,6 +36,7 @@
 #include <span>
 #include <expected>
 #include <wtf/Function.h>
+#include <wtf/RecursiveLockAdapter.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -53,8 +54,12 @@ namespace FFI {
 struct BIRLinkEnvironment;
 
 // A C translation unit loaded into the process: the decoded BIR, its data segment, and the
-// machine code B3 produced for every function. Immutable once created, so the DFG/FTL may read
-// it from a compiler thread.
+// machine code B3 produced for every function.
+//
+// Immutable once tryCreate has returned it (runConstructors changes one flag, under a lock), so any number of
+// threads may use one module at once: the DFG/FTL read it from compiler threads, and each VM that imports it
+// (a Worker's, say) calls createExportsObject on its own thread. Nothing in it is a lazily filled cache. Its
+// strings are not handed to a VM: WTF::String's reference count is not atomic, so each VM gets a copy.
 //
 // Lifetime. A module that finished loading is never unloaded: its code, data and libraries stay for as
 // long as the process lives, like a shared library the program was linked with. C hands out pointers
@@ -69,25 +74,32 @@ class CModule final : public ThreadSafeRefCounted<CModule> {
 public:
     using ExternResolver = Function<void*(const CString& name)>;
 
+    // Decodes, resolves what the module names, compiles, and puts its data in place. None of the module's code runs.
     JS_EXPORT_PRIVATE static std::expected<Ref<CModule>, String> tryCreate(std::span<const uint8_t> bir, const ExternResolver&);
     JS_EXPORT_PRIVATE ~CModule();
+
+    // Calls the module's constructors (bir().constructors, in that order) the first time it is called; after that it
+    // does nothing. A caller on another thread while they run waits for them; one from inside a constructor returns.
+    // Whoever runs the destructors (bir().destructors; each is entrypoint(index), a `void (*)()`) arranges that
+    // before calling this, so that what a constructor registers with atexit runs before them, as in a program of its own.
+    JS_EXPORT_PRIVATE void runConstructors();
 
     const BIR::Module& bir() const { return *m_bir; }
     void* entrypoint(unsigned functionIndex) const { return m_functionTable[functionIndex]; }
     void* const* functionTable() const { return m_functionTable.span().data(); }
     // This thread's copy of the module's `_Thread_local` objects, created on first use.
     JS_EXPORT_PRIVATE static void* SYSV_ABI threadLocalBase(void* module);
-    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process; nothing
-    // where compiled C does not run.
+    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process; nothing where the
+    // lowering has no calling convention for the platform. Which of these an embedder supports is its to say.
     JS_EXPORT_PRIVATE static std::optional<std::pair<uint8_t, uint8_t>> hostTarget();
     BIRLinkEnvironment linkEnvironment() const;
-    uint64_t relocatedAddress(const BIR::Reloc&, uint8_t* threadLocalBlock) const;
 
     // { exportName: JSFFIFunction }, with the JS-facing types the C declarations imply.
     JS_EXPORT_PRIVATE JSObject* createExportsObject(JSGlobalObject*);
 
 private:
     CModule(std::unique_ptr<BIR::Module>&&);
+    uint64_t relocatedAddress(const BIR::Reloc&, uint8_t* threadLocalBlock) const;
 
     std::unique_ptr<BIR::Module> m_bir;
     uint8_t* m_data { nullptr };
@@ -97,6 +109,8 @@ private:
     Vector<std::unique_ptr<Compilation>> m_compilations;
     uint64_t m_threadLocalKey { 0 }; // Never reused, unlike `this`.
     Vector<void*> m_libraries; // dlopen handles for the BIR's `libraries`.
+    WTF::RecursiveLock m_constructorsLock;
+    bool m_didRunConstructors { false }; // Under m_constructorsLock.
 };
 
 } // namespace FFI
