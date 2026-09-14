@@ -106,7 +106,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
     }
 
     auto access = [sp, callFrame]<typename V>(auto* arr, int i) -> V* {
-        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(sp)), "](", RawHex(reinterpret_cast<V*>(arr)[i / sizeof(V)]), ")");
+        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (&reinterpret_cast<uint8_t*>(arr)[i / static_cast<int>(sizeof(uint8_t))] - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (&reinterpret_cast<uint8_t*>(arr)[i / static_cast<int>(sizeof(uint8_t))] - reinterpret_cast<uint8_t*>(sp)), "](", RawHex(reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))]), ")");
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
 
@@ -166,7 +166,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
     const RTT& signature = callee->rtt();
 
     auto access = [sp, callFrame]<typename V>(auto* arr, int i) -> V* {
-        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (&reinterpret_cast<uint8_t*>(arr)[i / sizeof(uint8_t)] - reinterpret_cast<uint8_t*>(sp)), "](", reinterpret_cast<V*>(arr)[i / sizeof(V)], ")");
+        dataLogLnIf(WasmOperationsInternal::verbose, "fp[", (&reinterpret_cast<uint8_t*>(arr)[i / static_cast<int>(sizeof(uint8_t))] - reinterpret_cast<uint8_t*>(callFrame)), "] sp[", (&reinterpret_cast<uint8_t*>(arr)[i / static_cast<int>(sizeof(uint8_t))] - reinterpret_cast<uint8_t*>(sp)), "](", reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))], ")");
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
 

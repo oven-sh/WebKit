@@ -529,6 +529,12 @@ sub determineNativeArchitecture($)
         }
     }
     chomp $output if defined $output;
+    # Bun: Windows has no uname. An x64 perl on Windows on ARM sees AMD64 in PROCESSOR_ARCHITECTURE and the machine's own
+    # in PROCESSOR_ARCHITEW6432.
+    if (not defined $output and isWindows()) {
+        my $processor = $ENV{PROCESSOR_ARCHITEW6432} // $ENV{PROCESSOR_ARCHITECTURE} // "";
+        $output = "arm64" if $processor =~ /^ARM64$/i;
+    }
     $output = "x86_64" if (not defined $output);
 
     # FIXME: Remove this when <rdar://problem/64208532> is resolved
