@@ -38,7 +38,7 @@
 // str = varuint byte length + UTF-8 bytes, type = u8 (Type below).
 //
 //   module:
-//     magic "BIR7"
+//     magic "BIR" and a zero byte
 //     u8 arch (Arch), u8 os (OS), u8 pointerBytes (8), u8 reserved (0)
 //     varuint nsigs;    sig*:    { varuint nrets (0..4); type*; u8 flags (bit0 = variadic); varuint nparams; param* }
 //                       param:   u8 kind (ParamKind), then for Value: type;
@@ -48,8 +48,8 @@
 //     data:             { varuint size; varuint align; varuint readOnly; varuint ninit; u8[ninit];
 //                         varuint nrelocs; reloc*: { varuint offset; u8 kind (RelocKind); varuint index; varint addend } }
 //                       (the first readOnly bytes are what the program never writes: string literals, const objects. The
-//                        whole pages among them cannot be written once the module is loaded, so what follows them starts
-//                        on a multiple of 16384 when both parts exist)
+//                        whole pages among them cannot be written once the module is loaded, so that part is padded to a
+//                        multiple of 16384, the largest page size there is to run on, and readOnly includes the padding)
 //     tls:              { varuint size; varuint align; varuint ninit; u8[ninit];    (the image every thread's copy starts from)
 //                         varuint nrelocs; reloc* }                                  (as in data; applied to each copy as it is created.
 //                                                                                     kind Tls: the address of that same copy + index)
@@ -203,7 +203,7 @@
 
 namespace JSC { namespace FFI { namespace BIR {
 
-constexpr uint8_t magic[4] = { 'B', 'I', 'R', '7' };
+constexpr uint8_t magic[4] = { 'B', 'I', 'R', 0 };
 
 enum class Arch : uint8_t { X86_64 = 0, ARM64 = 1 };
 enum class OS : uint8_t { Linux = 0, Darwin = 1, Windows = 2, FreeBSD = 3 };

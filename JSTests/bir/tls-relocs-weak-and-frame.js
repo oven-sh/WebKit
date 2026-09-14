@@ -28,4 +28,4 @@ eq(m.through_q(), 5, "thread-local pointer initialized with the address of anoth
 eq(m.q_points_into_this_copy(), 1, "and it points into this thread's copy");
 eq(m.weak_address(), null, "an undefined weak symbol is null");
 for (let i = 0; i < 1e5; i++) { eq(m.frame_links_up(), 1, "frame pointer chain"); if (!m.return_address()) throw new Error("no return address"); }
-print("bir6 ok");
+print("tls relocations, weak externs, frame and return address ok");
