@@ -1,3 +1,11 @@
+// TODO(bun): with eager tiering and --collectContinuously=true together this segfaults in JIT code now and then, called
+// from llint_op_call at the top level of the script: 13 of 320 runs with the ftl-eager options on a loaded machine, 0 of
+// 320 with either ingredient alone, and upstream's own jsc (ccdcb8a026c0) 19 of 640. Not found why. These are the
+// default modes that have both.
+//@ $skipModes << "dfg-eager".to_sym
+//@ $skipModes << "dfg-eager-no-cjit-validate".to_sym
+//@ $skipModes << "ftl-eager".to_sym
+//@ $skipModes << "ftl-eager-no-cjit".to_sym
 //@ requireOptions("--useShadowRealm=1")
 
 function summarizeElement(element) {
