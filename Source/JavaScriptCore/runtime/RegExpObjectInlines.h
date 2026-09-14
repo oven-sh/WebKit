@@ -146,6 +146,12 @@ ALWAYS_INLINE JSObject* RegExpObject::literalAsReceiver(JSGlobalObject* globalOb
     return literalAsReceiverSlow(globalObject, codeBlock, regExp, forTest, cachedObject);
 }
 
+inline RegExpObject* RegExpObject::copyOfSharedLiteral(VM& vm)
+{
+    ASSERT(isSharedLiteral());
+    return create(vm, realm()->regExpStructure(), regExp());
+}
+
 ALWAYS_INLINE bool RegExpObject::isSymbolReplaceFastAndNonObservable()
 {
     JSGlobalObject* globalObject = this->realm();

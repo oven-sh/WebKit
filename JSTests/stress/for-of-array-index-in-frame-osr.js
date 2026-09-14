@@ -27,34 +27,45 @@ const originalNext = ArrayIteratorPrototype.next;
 
 function makeLong(n, f) { let a = []; for (let i = 0; i < n; i++) a.push(f(i)); return a; }
 
+// Lengths of the long arrays and numbers of calls, as multiples of testLoopCount.
+const sumLength = 32 * testLoopCount; // a multiple of 4
+const joinLength = 10 * testLoopCount;
+const growLength = 10 * testLoopCount;
+const findLength = 20 * testLoopCount;
+const lateLength = 40 * testLoopCount; // a multiple of 8
+const calls = 10 * testLoopCount; // even
+
 // 1. One call, a long loop: enters the optimizing tiers in the middle of the loop.
 function sumLong(array) { let s = 0; for (let x of array) s += x; return s; }
 noInline(sumLong);
-shouldBe(sumLong(makeLong(300000, i => i & 3)), 450000);
-shouldBe(sumLong(makeLong(300000, i => i & 3)), 450000);
+shouldBe(sumLong(makeLong(sumLength, i => i & 3)), sumLength / 4 * 6);
+shouldBe(sumLong(makeLong(sumLength, i => i & 3)), sumLength / 4 * 6);
 
 // 2. The element type changes half way: exit to the lower tiers in the middle of the loop, continue from the right index.
 function joinLong(array) { let s = 0; let strings = 0; for (let x of array) { if (typeof x === "string") strings++; else s += x; } return s + ":" + strings; }
 noInline(joinLong);
-for (let i = 0; i < 5; i++)
-    shouldBe(joinLong(makeLong(100000, i => 1)), "100000:0");
-shouldBe(joinLong(makeLong(100000, i => i === 70000 ? "s" : 1)), "99999:1");
-shouldBe(joinLong(makeLong(100000, i => i > 50000 ? 1.5 : 1)), "124999.5:0");
-shouldBe(joinLong(makeLong(100000, i => i === 99999 ? {} : 1)), "99999[object Object]:0");
+{
+    let ones = makeLong(joinLength, i => 1);
+    for (let i = 0; i < 5; i++)
+        shouldBe(joinLong(ones), joinLength + ":0");
+}
+shouldBe(joinLong(makeLong(joinLength, i => i === Math.floor(joinLength * 7 / 10) ? "s" : 1)), (joinLength - 1) + ":1");
+shouldBe(joinLong(makeLong(joinLength, i => i > joinLength / 2 ? 1.5 : 1)), (joinLength * 1.25 - 0.5) + ":0");
+shouldBe(joinLong(makeLong(joinLength, i => i === joinLength - 1 ? {} : 1)), (joinLength - 1) + "[object Object]:0");
 
 // 3. The array changes shape in the middle of a long loop.
-function growWhileLooping(array) { let n = 0; for (let x of array) { n++; if (n === 50000) { array.push("tail"); array[10] = 0.5; } if (n === 60000) array.length = 70000; } return n; }
+function growWhileLooping(array, growAt, cutAt, newLength) { let n = 0; for (let x of array) { n++; if (n === growAt) { array.push("tail"); array[10] = 0.5; } if (n === cutAt) array.length = newLength; } return n; }
 noInline(growWhileLooping);
 for (let i = 0; i < 4; i++)
-    shouldBe(growWhileLooping(makeLong(100000, i => i)), 70000);
+    shouldBe(growWhileLooping(makeLong(growLength, i => i), growLength / 2, Math.floor(growLength * 6 / 10), Math.floor(growLength * 7 / 10)), Math.floor(growLength * 7 / 10));
 
 // 4. break / return out of a loop that has been running optimized code for a while.
 function findLong(array, what) { for (let x of array) { if (x === what) return x; } return -1; }
 noInline(findLong);
 {
-    let array = makeLong(200000, i => i);
-    shouldBe(findLong(array, 199999), 199999);
-    shouldBe(findLong(array, 150000), 150000);
+    let array = makeLong(findLength, i => i);
+    shouldBe(findLong(array, findLength - 1), findLength - 1);
+    shouldBe(findLong(array, Math.floor(findLength * 3 / 4)), Math.floor(findLength * 3 / 4));
     shouldBe(findLong(array, -5), -1);
 }
 
@@ -64,13 +75,13 @@ function first3([a, b, c]) { return a + b + c; }
 noInline(swap); noInline(first3);
 {
     let p = [1, 2];
-    for (let i = 0; i < 100000; i++)
+    for (let i = 0; i < calls; i++)
         p = swap(p);
     shouldBe(p.join(), "1,2");
     let t = 0;
-    for (let i = 0; i < 100000; i++)
+    for (let i = 0; i < calls; i++)
         t += first3([1, 2, 3, 4]);
-    shouldBe(t, 600000);
+    shouldBe(t, 6 * calls);
     shouldBe(String(first3([1, 2])), "NaN");
     shouldBe(first3("abc"), "abc");
     shouldBe(first3(new Set([1, 2, 3])), 6);
@@ -91,29 +102,33 @@ function lateReturn(array, installAt, breakAt) {
     return n;
 }
 noInline(lateReturn);
-shouldBe(lateReturn(makeLong(400000, i => i), 10, 399990), 399990);
-shouldBe(log.join("|"), '[object Array Iterator] {"value":399991,"done":false}');
+function closedAfter(index) { return '[object Array Iterator] {"value":' + (index + 1) + ',"done":false}'; }
+shouldBe(lateReturn(makeLong(lateLength, i => i), 10, lateLength - 10), lateLength - 10);
+shouldBe(log.join("|"), closedAfter(lateLength - 10));
 log = [];
 
 // Now every close is observable. The same functions still give the same answers, and do not get stuck recompiling.
-for (let i = 0; i < 3; i++)
-    shouldBe(lateReturn(makeLong(200000, i => i), -1, 150000), 150000);
-shouldBe(log.join("|"), '[object Array Iterator] {"value":150001,"done":false}|[object Array Iterator] {"value":150001,"done":false}|[object Array Iterator] {"value":150001,"done":false}');
+{
+    let array = makeLong(lateLength / 2, i => i);
+    for (let i = 0; i < 3; i++)
+        shouldBe(lateReturn(array, -1, lateLength / 8 * 3), lateLength / 8 * 3);
+}
+shouldBe(log.join("|"), [closedAfter(lateLength / 8 * 3), closedAfter(lateLength / 8 * 3), closedAfter(lateLength / 8 * 3)].join("|"));
 log = [];
-shouldBe(sumLong(makeLong(300000, i => i & 3)), 450000);
-shouldBe(findLong(makeLong(200000, i => i), 1234), 1234);
-shouldBe(log.join("|"), '[object Array Iterator] {"value":1235,"done":false}');
+shouldBe(sumLong(makeLong(sumLength, i => i & 3)), sumLength / 4 * 6);
+shouldBe(findLong(makeLong(findLength, i => i), Math.floor(testLoopCount / 8)), Math.floor(testLoopCount / 8));
+shouldBe(log.join("|"), closedAfter(Math.floor(testLoopCount / 8)));
 log = [];
 {
     let p = [1, 2, 3];
-    for (let i = 0; i < 20000; i++)
+    for (let i = 0; i < 2 * testLoopCount; i++)
         p = swap(p);
     shouldBe(p.join(), "1,2");
-    shouldBe(log.length, 20000);
+    shouldBe(log.length, 2 * testLoopCount);
     log = [];
 }
 delete ArrayIteratorPrototype.return;
-for (let i = 0; i < 20000; i++)
+for (let i = 0; i < 2 * testLoopCount; i++)
     swap([1, 2, 3]);
 shouldBe(log.length, 0);
 

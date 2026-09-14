@@ -91,7 +91,8 @@ function arrowWithRest(...args) {
     return f(args[0]);
 }
 
-for (var i = 0; i < 2000; i++) {
+// (Two evals and a with in every round.)
+for (var i = 0; i < Math.min(testLoopCount, 2500); i++) {
     shouldBe(sloppySimple([1, , 3]), "1,d,3,true");
     shouldBe(sloppySimple([1, 2, 3]), "1,2,3,false");
     shouldBe(sloppySimpleLoop([1, 2, 3]), "1,2,3|true");

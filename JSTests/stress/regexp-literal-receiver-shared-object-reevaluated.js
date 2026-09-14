@@ -21,7 +21,7 @@ function nest(depth, replace) {
 }
 noInline(nest);
 
-for (let i = 0; i < 3000; i++)
+for (let i = 0; i < testLoopCount; i++)
     shouldBe(nest(3, false), true);
 shouldBe(nest(3, true), true);
 // 4 waiting calls + the 3 evaluations made after the replacement.

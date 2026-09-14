@@ -41,7 +41,7 @@ noInline(optionalForms);
 function* inGenerator(s) { return /^[a-z]+$/.test(yield s); }
 async function inAsync(s) { return /^[a-z]+$/.test(await s); }
 
-for (let i = 0; i < 400; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(probe(3), true);
     shouldBe(optionalForms("abc"), "true,true,true,a,0");
     shouldBe(optionalForms("xyz"), "false,false,false,,");
@@ -72,9 +72,39 @@ for (let r of leaked) {
     r.own = true;
 }
 let before = leaked.length;
-for (let i = 0; i < 100; i++)
+for (let i = 0; i < testLoopCount; i++)
     shouldBe(probe(1), true);
 shouldBe(leaked.length > before, true);
 shouldBe(new Set(leaked).size, leaked.length);
 shouldBe(leaked.slice(before).every(r => r.lastIndex === 0 && !("own" in r)), true);
 RegExp.prototype.exec = originalExec;
+
+// The same with probe() kept out of the DFG: all four calls go through the builtin, whatever tiers there are. In a realm of its
+// own, where literals are still shared.
+{
+    let other = createGlobalObject();
+    other.eval(`
+        var originalExec = RegExp.prototype.exec;
+        var leaked = [];
+        var replace = false;
+        ${probe}
+    `);
+    noInline(other.probe);
+    noDFG(other.probe);
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(other.probe(3), true);
+    shouldBe(other.leaked.length, 0);
+    other.replace = true;
+    shouldBe(other.probe(3), true);
+    other.replace = false;
+    shouldBe(other.leaked.length, 4);
+    shouldBe(new Set(other.leaked).size, 4, "one object per evaluation");
+    shouldBe(other.leaked.every(r => r instanceof other.RegExp && r.lastIndex === 0 && r.source === "^[a-z]+$" && Object.getOwnPropertyNames(r).join() === "lastIndex"), true);
+    for (let r of other.leaked)
+        r.lastIndex = 3;
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(other.probe(1), true);
+    shouldBe(other.leaked.length, 4 + 2 * testLoopCount);
+    shouldBe(new Set(other.leaked).size, other.leaked.length);
+    shouldBe(other.leaked.slice(4).every(r => r.lastIndex === 0), true);
+}

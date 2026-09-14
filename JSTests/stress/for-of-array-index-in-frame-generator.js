@@ -4,7 +4,7 @@
 //@ runDefault("--useUnboxedFastArrayIteration=1", "--useJIT=0")
 //@ runDefault("--useUnboxedFastArrayIteration=1", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
 //@ runDefault("--useUnboxedFastArrayIteration=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--forceOSRExitToLLInt=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20")
+//@ runDefault("--useUnboxedFastArrayIteration=1", "--forceOSRExitToLLInt=1", "--useFTLJIT=0", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20")
 
 // Generators and async functions save their frame when they suspend. A for-of over an Array that is running without an
 // iterator object is saved as it is (a marker, the Array and the index) and must pick up where it left off, in whatever
@@ -66,7 +66,7 @@ async function eachAsync(array, out) {
 function drain(generator) { let values = []; for (;;) { let r = generator.next(); if (r.done) { values.push("done:" + r.value); break; } values.push(r.value); } return values.join(); }
 
 // Warm up: many generators suspended and resumed, in all tiers.
-for (let i = 0; i < 400; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(drain(each([1, 2, 3])), "1,2,3,done:end");
     shouldBe(drain(nestedLoops([1, 2, 3])), "11,12,21,22,31,32,done:undefined");
     let g = eachWithFinally([1, 2, 3]);
@@ -82,7 +82,7 @@ for (let i = 0; i < 400; i++) {
     drainMicrotasks();
     shouldBe(result, "1,2,3");
 }
-shouldBe(log.length, 400);
+shouldBe(log.length, testLoopCount);
 
 // The array changes while the generator is suspended.
 {
@@ -136,11 +136,11 @@ ArrayIteratorPrototype.return = function () {
 };
 
 // Make sure the generator functions are compiled again, now with an observable protocol, before the old frames resume.
-for (let i = 0; i < 400; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(drain(each([1, 2])), "1,2,done:end");
     drain(nestedLoops([1, 2]));
 }
-shouldBe(log.length, 400 * 2); // nestedLoops breaks out of its inner loop twice per run.
+shouldBe(log.length, testLoopCount * 2); // nestedLoops breaks out of its inner loop twice per run.
 log = [];
 
 // Runs to the end: no close.

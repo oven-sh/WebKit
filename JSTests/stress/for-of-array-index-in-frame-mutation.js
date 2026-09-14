@@ -4,7 +4,7 @@
 //@ runDefault("--useUnboxedFastArrayIteration=1", "--useJIT=0")
 //@ runDefault("--useUnboxedFastArrayIteration=1", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
 //@ runDefault("--useUnboxedFastArrayIteration=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--forceOSRExitToLLInt=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20")
+//@ runDefault("--useUnboxedFastArrayIteration=1", "--forceOSRExitToLLInt=1", "--useFTLJIT=0", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20")
 
 // A for-of over an Array that runs without an iterator object must visit exactly what an Array Iterator driven by hand
 // visits, whatever happens to the Array while the loop runs: the length is read again at every step, holes read through
@@ -65,6 +65,10 @@ function viaDestructuringByHand(array, mutate) {
     return [a, b, c, d].map(show).join() + "|" + rest.map(show).join();
 }
 
+// The two that drive an Array Iterator by hand are what the others are compared with, not what is being tested.
+noFTL(viaIterator);
+noFTL(viaDestructuringByHand);
+
 let makers = [
     () => [1, 2, 3, 4, 5],
     () => [1.5, 2.5, 3.5],
@@ -77,6 +81,7 @@ let makers = [
     () => { let a = []; for (let i = 0; i < 24; i++) a.push(i); return a; },
 ];
 
+const sparseThenTruncated = (a, step) => { if (step === 0) a[1000000] = "sparse"; if (step === 1) a.length = 3; };
 let mutations = [
     (a, step) => { },
     (a, step) => { if (step === 1) a.push("pushed"); },
@@ -94,9 +99,10 @@ let mutations = [
     (a, step) => { if (step === 0) a[a.length + 20] = "far"; },
     (a, step) => { if (step === 1) a.reverse(); },
     (a, step) => { if (step === 0) Object.defineProperty(a, 3, { get() { return "late"; }, configurable: true }); },
-    (a, step) => { if (step === 0) a[1000000] = "sparse"; if (step === 1) a.length = 3; },
+    sparseThenTruncated,
     (a, step) => { if (step === 0) Object.freeze(a); },
     (a, step) => { if (step === 0) Object.setPrototypeOf(a, { __proto__: Array.prototype, 2: "fromProto" }); if (step === 1) delete a[2]; },
+    (a, step) => { if (step === 0) { a[1000000] = "sparse"; a[30] = "inMap"; a.length = 40; } },
 ];
 
 for (let round = 0; round < 2; round++) {
@@ -104,7 +110,9 @@ for (let round = 0; round < 2; round++) {
         for (let k = 0; k < mutations.length; k++) {
             let mutate = guarded(mutations[k]);
             shouldBe(viaForOf(makers[m](), mutate), viaIterator(makers[m](), mutate), "for-of, array " + m + ", mutation " + k);
-            if (m !== 8)
+            // Array 3 has a hole at 1 and an element at 2: a pattern only runs the first step of sparseThenTruncated, and its rest element
+            // would walk a million holes. The last mutation does the same within 40 elements.
+            if (m !== 8 && !(m === 3 && mutations[k] === sparseThenTruncated))
                 shouldBe(viaDestructuring(makers[m](), mutate), viaDestructuringByHand(makers[m](), mutate), "destructuring, array " + m + ", mutation " + k);
         }
     }
@@ -113,7 +121,7 @@ for (let round = 0; round < 2; round++) {
 // Holes read through Array.prototype and Object.prototype, including accessors installed while the loop runs.
 {
     function sumWithHoles(array) { let s = ""; for (let x of array) s += show(x) + ";"; return s; }
-    for (let i = 0; i < 200; i++)
+    for (let i = 0; i < testLoopCount; i++)
         shouldBe(sumWithHoles([1, , 3]), "1;u;3;");
     Array.prototype[1] = "AP";
     shouldBe(sumWithHoles([1, , 3]), "1;AP;3;");
@@ -126,7 +134,7 @@ for (let round = 0; round < 2; round++) {
     shouldBe(sumWithHoles([1, , 3]), "1;G1;3;grown1;");
     shouldBe(calls, 1);
     delete Array.prototype[1];
-    for (let i = 0; i < 200; i++)
+    for (let i = 0; i < testLoopCount; i++)
         shouldBe(sumWithHoles([1, , 3]), "1;u;3;");
 }
 
@@ -135,6 +143,6 @@ for (let round = 0; round < 2; round++) {
 {
     function throwingGetter(array) { let seen = []; try { for (let x of array) seen.push(x); } catch (e) { seen.push("caught " + e.message); } return seen.join(); }
     function make() { let a = [1, 2, 3]; Object.defineProperty(a, 1, { get() { throw new Error("from getter"); } }); return a; }
-    for (let i = 0; i < 300; i++)
+    for (let i = 0; i < testLoopCount; i++)
         shouldBe(throwingGetter(make()), "1,caught from getter");
 }

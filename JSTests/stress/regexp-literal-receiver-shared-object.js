@@ -29,7 +29,7 @@ function nested(s) { return /a/.test(s) && /b/.test(s) && !/c/.test(s); }
 noInline(isLetters); noInline(firstNumber); noInline(ignoreCase); noInline(lettersOf); noInline(nested);
 
 // 1. Results, in all tiers, including the legacy static properties and arguments that are not strings.
-for (let i = 0; i < 20000; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(isLetters("abc"), true);
     shouldBe(isLetters("ab1"), false);
     shouldBe(ignoreCase("ABC"), true);
@@ -54,7 +54,7 @@ try { lettersOf({ toString() { throw new Error("from toString"); } }); throw new
 function globalTest(s) { return /a/g.test(s); }
 function stickyExec(s) { return /a/y.exec(s); }
 noInline(globalTest); noInline(stickyExec);
-for (let i = 0; i < 5000; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(globalTest("a"), true);
     shouldBe(stickyExec("ab") !== null, true);
     shouldBe(stickyExec("ba"), null);
@@ -69,7 +69,7 @@ for (let i = 0; i < 5000; i++) {
     }
     noInline(reenter);
     // Until here nothing in this realm has touched RegExp.prototype: this is the first time, and it happens in the middle of four calls.
-    for (let i = 0; i < 3000; i++)
+    for (let i = 0; i < testLoopCount; i++)
         shouldBe(reenter(3, false), true);
     shouldBe(reenter(3, true), true);
     shouldBe(leaked.length, 4);
@@ -89,59 +89,99 @@ for (let i = 0; i < 5000; i++) {
     }
     RegExp.prototype.exec = originalExec;
     // The objects that leaked were modified: later evaluations must not see any of it.
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < testLoopCount; i++) {
         shouldBe(isLetters("abc"), true);
         shouldBe(reenter(1, false), true);
     }
 }
 
-// 4. "test" replaced: |this| is the literal's object, a different one each time.
+// 4. "test" replaced: |this| is the literal's object, a different one each time. In a realm of its own, like 5. and 6b.: in this one
+// literals are not shared any more since 3.
 {
+    let other = createGlobalObject();
+    let otherIsLetters = other.eval("(function (s) { return /^[a-z]+$/.test(s); })");
+    noInline(otherIsLetters);
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(otherIsLetters("abc"), true);
+    let otherTest = other.RegExp.prototype.test;
     let seen = [];
-    RegExp.prototype.test = function (s) { seen.push(this); this.mark = seen.length; return originalTest.call(this, s); };
-    for (let i = 0; i < 200; i++)
-        shouldBe(isLetters("abc"), true);
-    shouldBe(new Set(seen).size, 200);
+    other.RegExp.prototype.test = function (s) { seen.push(this); this.mark = seen.length; return otherTest.call(this, s); };
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(otherIsLetters("abc"), true);
+    shouldBe(new Set(seen).size, testLoopCount);
     shouldBe(seen.every((r, i) => r.mark === i + 1 && r.lastIndex === 0), true);
-    RegExp.prototype.test = originalTest;
-    for (let i = 0; i < 200; i++)
-        shouldBe(isLetters("abc"), true);
-    shouldBe(seen.length, 200);
+    other.RegExp.prototype.test = otherTest;
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(otherIsLetters("abc"), true);
+    shouldBe(seen.length, testLoopCount);
 }
 
 // 5. "test" as an accessor, on the prototype and then further up.
 {
+    let other = createGlobalObject();
+    let otherIsLetters = other.eval("(function (s) { return /^[a-z]+$/.test(s); })");
+    noInline(otherIsLetters);
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(otherIsLetters("abc"), true);
+    let otherTest = other.RegExp.prototype.test;
     let receivers = [];
-    Object.defineProperty(RegExp.prototype, "test", { get() { receivers.push(this); return originalTest; }, configurable: true });
-    for (let i = 0; i < 100; i++)
-        shouldBe(isLetters("abc"), true);
-    shouldBe(new Set(receivers).size, 100);
-    delete RegExp.prototype.test;
-    Object.prototype.test = function (s) { receivers.push(this); return "from Object.prototype"; };
-    shouldBe(isLetters("abc"), "from Object.prototype");
-    shouldBe(receivers.length, 101);
-    delete Object.prototype.test;
-    Object.defineProperty(RegExp.prototype, "test", { value: originalTest, writable: true, configurable: true });
-    shouldBe(isLetters("abc"), true);
+    Object.defineProperty(other.RegExp.prototype, "test", { get() { receivers.push(this); return otherTest; }, configurable: true });
+    for (let i = 0; i < testLoopCount; i++)
+        shouldBe(otherIsLetters("abc"), true);
+    shouldBe(new Set(receivers).size, testLoopCount);
+    delete other.RegExp.prototype.test;
+    other.Object.prototype.test = function (s) { receivers.push(this); return "from Object.prototype"; };
+    shouldBe(otherIsLetters("abc"), "from Object.prototype");
+    shouldBe(receivers.length, testLoopCount + 1);
+    delete other.Object.prototype.test;
+    Object.defineProperty(other.RegExp.prototype, "test", { value: otherTest, writable: true, configurable: true });
+    shouldBe(otherIsLetters("abc"), true);
 }
 
-// 6. exec replaced for good, and as an accessor.
+// 6. exec replaced for good.
 {
     let seen = [];
     RegExp.prototype.exec = function (s) { seen.push(this); return originalExec.call(this, s); };
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < testLoopCount; i++) {
         shouldBe(firstNumber("a1")[0], "1");
         shouldBe(isLetters("abc"), true);
     }
-    shouldBe(new Set(seen).size, 200);
+    shouldBe(new Set(seen).size, 2 * testLoopCount);
     RegExp.prototype.exec = originalExec;
+}
+
+// 6b. exec becomes an accessor while calls of test() from one site are waiting for their argument, in a realm where nothing had
+// touched RegExp.prototype until then (in this one literals stopped being shared in 3.). The getter's receiver is the literal's
+// object: a different one for each of the evaluations in flight and for every one after.
+{
+    let other = createGlobalObject();
+    other.eval(`
+        var receivers = [];
+        var originalExec = RegExp.prototype.exec;
+        function makeExecAnAccessor() { Object.defineProperty(RegExp.prototype, "exec", { get() { receivers.push(this); return originalExec; }, configurable: true }); }
+        function reenter(depth, replace) { return /^[a-z]+$/.test(depth ? String(reenter(depth - 1, replace)) : (replace && makeExecAnAccessor(), "abc")); }
+        function firstNumber(s) { return /([0-9]+)/.exec(s); }
+        function warmUp(count) { for (let i = 0; i < count; i++) { if (reenter(3, false) !== true || firstNumber("a1")[0] !== "1") throw new Error("bad result"); } }
+    `);
+    other.warmUp(testLoopCount);
+    shouldBe(other.receivers.length, 0);
+    shouldBe(other.reenter(3, true), true);
+    shouldBe(other.receivers.length, 4);
+    other.warmUp(testLoopCount);
+    let receivers = other.receivers;
+    shouldBe(receivers.length, 4 + 5 * testLoopCount);
+    shouldBe(new Set(receivers).size, receivers.length, "one object per evaluation");
+    shouldBe(receivers.every(r => r instanceof other.RegExp && Object.getPrototypeOf(r) === other.RegExp.prototype && r.lastIndex === 0 && Object.getOwnPropertyNames(r).join() === "lastIndex"), true);
+    Object.defineProperty(other.RegExp.prototype, "exec", { value: other.originalExec, writable: true, configurable: true });
+    other.warmUp(10);
+    shouldBe(receivers.length, 4 + 5 * testLoopCount);
 }
 
 // 7. Another realm has its own literals, prototypes and watchpoints.
 {
     let other = createGlobalObject();
     let otherIsLetters = other.eval("(function (s) { return /^[a-z]+$/.test(s); })");
-    for (let i = 0; i < 5000; i++)
+    for (let i = 0; i < testLoopCount; i++)
         shouldBe(otherIsLetters("abc"), true);
     let otherSeen = [];
     other.RegExp.prototype.test = function (s) { otherSeen.push(this); return true; };

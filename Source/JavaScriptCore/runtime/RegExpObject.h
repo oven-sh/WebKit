@@ -127,12 +127,8 @@ public:
         object->m_regExpAndFlags |= sharedLiteralFlag;
         return object;
     }
-    // What evaluating the literal would have made: a new object in its initial state, which a shared one is always in.
-    RegExpObject* copyOfSharedLiteral(VM& vm)
-    {
-        ASSERT(isSharedLiteral());
-        return create(vm, structure(), regExp());
-    }
+    // What evaluating the literal would have made: a new object with the realm's RegExp structure, in its initial state.
+    inline RegExpObject* copyOfSharedLiteral(VM&);
 
     bool test(JSGlobalObject* globalObject, JSString* string) { return !!match(globalObject, string); }
     bool testInline(JSGlobalObject* globalObject, JSString* string) { return !!matchInline(globalObject, string); }

@@ -22,7 +22,7 @@ function pair(array) { let [a, b] = array; return a + "," + b; }
 noInline(firstTwo); noInline(pair);
 
 let foreign = other.eval("[10, 20, 30]");
-for (let i = 0; i < 3000; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(firstTwo([1, 2, 3]), "1,2");
     shouldBe(firstTwo(foreign), "10,20");
     shouldBe(pair([1, 2, 3]), "1,2");
@@ -34,7 +34,7 @@ shouldBe(log.length, 0);
 other.eval(`
     Object.prototype.return = function () { log.push("other return " + Object.prototype.toString.call(this)); return {}; };
 `);
-for (let i = 0; i < 3000; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(firstTwo([1, 2, 3]), "1,2");
     shouldBe(pair([1, 2, 3]), "1,2");
 }
@@ -48,7 +48,7 @@ other.eval(`
     delete Object.prototype.return;
     Array.prototype[Symbol.iterator] = function () { log.push("other iterator"); let i = 0; let self = this; return { next() { return i < self.length ? { value: self[i++] * 2, done: false } : { value: undefined, done: true }; } }; };
 `);
-for (let i = 0; i < 100; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     shouldBe(firstTwo([1, 2, 3]), "1,2");
     shouldBe(pair([1, 2, 3]), "1,2");
 }
@@ -60,7 +60,7 @@ log.length = 0;
 
 // A function of the other realm looping over this realm's Array uses its own realm's protocol state.
 let otherFirstTwo = other.eval("(function (array) { let seen = []; for (let x of array) { seen.push(x); if (seen.length === 2) break; } return seen.join(); })");
-for (let i = 0; i < 3000; i++)
+for (let i = 0; i < testLoopCount; i++)
     shouldBe(otherFirstTwo([1, 2, 3]), "1,2");
 shouldBe(log.length, 0);
 
@@ -73,7 +73,7 @@ let fresh = createGlobalObject();
 fresh.log = log;
 let freshFirstTwo = fresh.eval("(function (array) { let seen = []; for (let x of array) { seen.push(x); if (seen.length === 2) break; } return seen.join(); })");
 let freshArray = fresh.eval("[5, 6, 7]");
-for (let i = 0; i < 3000; i++)
+for (let i = 0; i < testLoopCount; i++)
     shouldBe(freshFirstTwo(freshArray), "5,6");
 shouldBe(log.length, 0);
 delete Object.prototype.return;
