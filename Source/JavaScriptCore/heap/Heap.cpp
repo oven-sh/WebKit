@@ -57,8 +57,12 @@
 #include "IsoInlinedHeapCellTypeInlines.h"
 #include "JITStubRoutineSet.h"
 #include "JITWorklistInlines.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGenerator.h"
 #include "JSFinalizationRegistry.h"
+#include "JSFunctionInlines.h"
 #include "JSFunctionWithFields.h"
+#include "JSGenerator.h"
 #include "JSIterator.h"
 #include "JSMicrotaskDispatcher.h"
 #include "JSModuleLoader.h"
@@ -1223,10 +1227,38 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
     HeapIterationScope heapIterationScope(*this);
 #if USE(BUN_JSC_ADDITIONS)
     if (returnsCodeToCache) {
+        // A generator or an async function that is suspended resumes in the code it is suspended in: its CodeBlock may have
+        // been jettisoned for old age, so nothing links against that code now, but it is about to be linked again, and
+        // decoding it again first would only hand the resumed activation new copies of everything it already has.
+        // Suspended, or not started yet: the state is a resume point (not negative). One that is running has a CodeBlock,
+        // and one that has finished is Completed, or for an async function, which never gets there, still Executing.
+        UncheckedKeyHashSet<UnlinkedFunctionExecutable*> suspended;
+        auto addIfSuspended = [&] (JSValue state, JSValue next) {
+            if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
+                return;
+            auto* function = dynamicDowncast<JSFunction>(next);
+            if (!function || function->isHostOrBuiltinFunction())
+                return;
+            suspended.add(function->jsExecutable()->unlinkedExecutable());
+        };
+        auto addSuspendedIn = [&]<typename GeneratorType>(IsoSubspace* space) {
+            if (!space)
+                return;
+            space->forEachLiveCell([&] (HeapCell* cell, HeapCell::Kind) {
+                auto* generator = static_cast<GeneratorType*>(cell);
+                addIfSuspended(generator->internalField(GeneratorType::Field::State).get(), generator->internalField(GeneratorType::Field::Next).get());
+            });
+        };
+        addSuspendedIn.template operator()<JSGenerator>(m_generatorSpace.get());
+        addSuspendedIn.template operator()<JSAsyncGenerator>(m_asyncGeneratorSpace.get());
+        addSuspendedIn.template operator()<JSAsyncFunctionGenerator>(m_asyncFunctionGeneratorSpace.get());
+
         // Executables decoded from a cache are not in the set below; it only tracks the ones holding generated code.
         unlinkedFunctionExecutableSpaceAndSet.space.forEachLiveCell(
             [&] (HeapCell* cell, HeapCell::Kind) {
-                static_cast<UnlinkedFunctionExecutable*>(cell)->returnCodeToCache(vm, linkedAgainst);
+                auto* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                if (!suspended.contains(executable))
+                    executable->returnCodeToCache(vm, linkedAgainst);
             });
     }
 #endif
