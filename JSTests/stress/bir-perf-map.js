@@ -5,6 +5,11 @@
 // With Options::writeCModulePerfMap, every C function that gets machine code gets a line in /tmp/perf-<pid>.map, the
 // file perf reads to name code that is in no image: "<start> <size> C:<name>", in hex.
 load("./resources/bir-assembler.js", "caller relative");
+// The file is what Linux's perf reads; nothing writes one anywhere else.
+if ($vm.cModuleHost()[1] !== 0) {
+    print("perf map skipped: not Linux");
+    quit();
+}
 
 function eq(a, b, what) { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); }
 const s = n => ({ s: n });
