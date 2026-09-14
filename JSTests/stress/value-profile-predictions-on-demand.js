@@ -29,7 +29,7 @@ function onlyCall(n) {
     }
     return text + sum;
 }
-shouldBe(typeof onlyCall(200000), "string");
+shouldBe(typeof onlyCall(testLoopCount * 20), "string");
 
 // A callee that ran once gets called from code that is already hot, and its results change type.
 function coldCallee(x) { return x.value; }
@@ -40,10 +40,10 @@ function hotCaller(o, callCold) {
     return result;
 }
 noInline(hotCaller);
-for (let i = 0; i < 50000; ++i)
+for (let i = 0; i < testLoopCount * 5; ++i)
     shouldBe(hotCaller({ value: i }, false), i);
 shouldBe(hotCaller({ value: "string" }, true), "string");
-for (let i = 0; i < 50000; ++i)
+for (let i = 0; i < testLoopCount * 5; ++i)
     shouldBe(hotCaller({ value: i + 0.5 }, true), i + 0.5);
 
 // Argument profiles: the first calls pass integers, later ones doubles, strings and objects.
@@ -51,9 +51,9 @@ function takesArguments(a, b, c) { return a + b + c; }
 noInline(takesArguments);
 shouldBe(takesArguments(1, 2, 3), 6);
 shouldBe(takesArguments(1, 2, 3), 6);
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(takesArguments(i, 1, 2), i + 3);
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount * 2; ++i)
     shouldBe(takesArguments(i + 0.5, 1, 2), i + 3.5);
 shouldBe(takesArguments("a", "b", "c"), "abc");
 shouldBe(takesArguments({ valueOf() { return 1; } }, 2, 3), 6);

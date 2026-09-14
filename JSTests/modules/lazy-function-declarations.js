@@ -115,21 +115,23 @@ shouldBe(tla.awaited, 42);
 shouldBe(tla.afterAwait(), 43);
 
 // Tier up while some functions are still uninstantiated, and instantiate them from optimized code.
+const hotCalls = testLoopCount * 20;
+const firstRead = hotCalls - 10;
 function hot(i) {
-    if (i === 199990)
+    if (i === firstRead)
         return lib.neverRead() + reexport.neverRead();
     return plain(i, 1) + callsPrivate(i);
 }
 noInline(hot);
 let sum = 0;
-for (let i = 0; i < 200000; ++i) {
+for (let i = 0; i < hotCalls; ++i) {
     let result = hot(i);
     if (typeof result === "number")
         sum += result;
     else
         shouldBe(result, "neverReadneverRead");
 }
-shouldBe(sum, 3 * (199999 * 200000 / 2) + 2 * 200000 - (3 * 199990 + 2));
+shouldBe(sum, 3 * ((hotCalls - 1) * hotCalls / 2) + 2 * hotCalls - (3 * firstRead + 2));
 
 if (lazy)
     shouldBe($vm.uninstantiatedFunctionDeclarations(lib) < 10, true);

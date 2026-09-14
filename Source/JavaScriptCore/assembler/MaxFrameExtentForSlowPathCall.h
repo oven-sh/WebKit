@@ -75,8 +75,9 @@ static constexpr size_t stackBytesClearedForCallSlowPath = 256;
 static_assert(!(stackBytesClearedForCallSlowPath % 64), "the LLInt clears it 64 bytes at a time");
 
 // For the first thing such a slow path does after sanitizeStackForVM(): its frame must not reach below what its thunk cleared.
-// (The thunk's frame ends at the callee's frame, less maxFrameExtentForSlowPathCall.)
-#if ASSERT_ENABLED
+// (The thunk's frame ends at the callee's frame, less maxFrameExtentForSlowPathCall.) Not with the C loop, whose frames are
+// in the CLoopStack and not on the stack this function runs on, and whose call slow paths clear nothing.
+#if ASSERT_ENABLED && !ENABLE(C_LOOP)
 #define ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame) \
     ASSERT(std::bit_cast<uintptr_t>(currentStackPointer()) + maxFrameExtentForSlowPathCall + stackBytesClearedForCallSlowPath >= std::bit_cast<uintptr_t>(calleeFrame))
 #else
