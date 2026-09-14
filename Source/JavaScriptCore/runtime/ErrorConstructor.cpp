@@ -85,6 +85,8 @@ bool ErrorConstructor::put(JSCell* cell, JSGlobalObject* globalObject, PropertyN
     ErrorConstructor* thisObject = uncheckedDowncast<ErrorConstructor>(cell);
 
     if (propertyName == vm.propertyNames->stackTraceLimit) {
+        // A cached store writes the property without calling put(), so the global object's limit would go stale.
+        slot.disableCaching();
         if (value.isNumber()) {
             double effectiveLimit = value.asNumber();
             effectiveLimit = std::max(0., effectiveLimit);
