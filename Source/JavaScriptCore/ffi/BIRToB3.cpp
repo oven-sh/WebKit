@@ -1898,14 +1898,18 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
     }
     case Op::CallExtern: {
         const BIR::Signature& signature = m_module.signatures[m_module.externs[inst.a].signature];
-        // The C library's own copy and fill, by their reserved names, with a size known here.
-        if (inst.extraCount == 3 && signature.isScalar() && signature.results.size() == 1 && signature.results[0] == BIR::Type::I64) {
+        // The C library's own copy and fill, by their reserved names, with a size known here. A name is only a
+        // name: it is the library's function when it is declared the way the library declares it, and a function
+        // to call like any other when it is not.
+        if (inst.extraCount == 3 && signature.isScalar() && signature.results.size() == 1 && signature.results[0] == BIR::Type::I64
+            && signature.parameters[0].type == BIR::Type::I64 && signature.parameters[2].type == BIR::Type::I64) {
             auto name = m_module.externs[inst.a].name.span();
             auto is = [&](ASCIILiteral literal) { return equalSpans(name, literal.span()); };
             auto argument = [&](unsigned i) { return value(static_cast<uint32_t>(function.extra[inst.extraOffset + i])); };
-            bool isCopy = is("memcpy"_s) || is("memmove"_s);
-            if ((isCopy && argument(1)->type() == Int64 && argument(2)->type() == Int64 && emitSmallMemoryCopy(argument(0), argument(1), argument(2)))
-                || (is("memset"_s) && argument(1)->type() == Int32 && argument(2)->type() == Int64 && emitSmallMemoryFill(argument(0), argument(1), argument(2)))) {
+            bool isCopy = signature.parameters[1].type == BIR::Type::I64 && (is("memcpy"_s) || is("memmove"_s));
+            bool isFill = signature.parameters[1].type == BIR::Type::I32 && is("memset"_s);
+            if ((isCopy && emitSmallMemoryCopy(argument(0), argument(1), argument(2)))
+                || (isFill && emitSmallMemoryFill(argument(0), argument(1), argument(2)))) {
                 define(argument(0));
                 return;
             }
