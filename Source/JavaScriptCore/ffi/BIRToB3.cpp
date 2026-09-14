@@ -263,7 +263,7 @@ bool BIRToB3::shouldInlineCallee(unsigned functionIndex, bool hasConstantArgumen
     // The callee's locals become the caller's for as long as the caller runs. Nothing here knows when two
     // of them are never live together, so they do not share room: a buffer in a helper called on a rare
     // path would be part of every activation of a recursive caller.
-    if (callee.frameBytes > Options::maximumBIRInlineCalleeFrameBytes())
+    if (callee.frameBytes + m_module.signatures[callee.signature].byValueBytes > Options::maximumBIRInlineCalleeFrameBytes())
         return false;
     // About what passing arguments, calling, and a prologue and epilogue come to: inlining something
     // this small shrinks the caller no matter how many callers there are.
@@ -1293,7 +1293,10 @@ Value* BIRToB3::emitStackOperation(const BIR::Inst& inst)
         patchpoint->effects = Effects::forCall();
         patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
         patchpoint->append(bytes, ValueRep::SomeRegister);
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            // An immediate the instruction cannot hold goes through the macro assembler's own register.
+            AllowMacroScratchRegisterUsage allowScratch(jit);
             GPRReg result = params[0].gpr();
             jit.move(stackPointer, result);
             jit.subPtr(params[1].gpr(), result);
@@ -1406,6 +1409,34 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     Vector<std::pair<Value*, ValueRep>> children;
     children.append({ target, ValueRep::reg(calleeGPR) });
 
+    // The arguments that go on the stack go to the bottom of the frame, a part of it that is there for the
+    // largest call the function makes, for as long as the function runs. For a call that passes a lot (a large
+    // aggregate by value, mostly) that would make every activation of the function that much larger, a recursive
+    // one's too, for a call it may make once in a thousand: such a call gets its room when it is made, by moving
+    // the stack pointer down, and gives it back after. (Not in a procedure of JavaScript's, whose frame is laid
+    // out by the FTL's rules.)
+    constexpr unsigned maximumArgumentBytesInTheFrame = 256;
+    Value* argumentArea = nullptr;
+    if (!m_blockFactory && layout.stackBytes > maximumArgumentBytesInTheFrame) {
+        m_proc.code().setHasDynamicStackAllocation();
+        PatchpointValue* open = m_block->appendNew<PatchpointValue>(m_proc, Int64, m_origin);
+        open->effects = Effects::forCall();
+        open->clobber(RegisterSet::macroClobberedGPRs());
+        unsigned bytes = layout.stackBytes;
+        open->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            jit.subPtr(CCallHelpers::TrustedImm32(bytes), CCallHelpers::stackPointerRegister);
+            jit.move(CCallHelpers::stackPointerRegister, params[0].gpr());
+        });
+        argumentArea = open;
+    }
+    auto passOnTheStack = [&](Value* value, unsigned stackOffset) {
+        if (argumentArea)
+            m_block->appendNew<MemoryValue>(m_proc, B3::Store, m_origin, value, argumentArea, static_cast<int32_t>(stackOffset));
+        else
+            children.append({ value, ValueRep::stackArgument(static_cast<int32_t>(stackOffset)) });
+    };
+
     struct ByValCopy {
         Value* source;
         unsigned size;
@@ -1421,7 +1452,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
         unsigned offset = 0;
         for (; size - offset >= 8; offset += 8) {
             Value* piece = m_block->appendNew<MemoryValue>(m_proc, B3::Load, Int64, m_origin, source, static_cast<int32_t>(offset));
-            children.append({ piece, ValueRep::stackArgument(static_cast<int32_t>(stackOffset + offset)) });
+            passOnTheStack(piece, stackOffset + offset);
         }
         if (offset == size)
             return;
@@ -1442,7 +1473,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
             add(Load16Z, 2);
         if (size - offset >= 1)
             add(Load8Z, 1);
-        children.append({ tail, ValueRep::stackArgument(static_cast<int32_t>(stackOffset + tailBase)) });
+        passOnTheStack(tail, stackOffset + tailBase);
     };
     unsigned usedVectorRegisters = 0;
     for (unsigned i = 0; i < arguments.size(); ++i) {
@@ -1463,7 +1494,7 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
             }
             break;
         case ArgumentLocation::Kind::Stack:
-            children.append({ argument, ValueRep::stackArgument(static_cast<int32_t>(location.stackOffset)) });
+            passOnTheStack(argument, location.stackOffset);
             break;
         case ArgumentLocation::Kind::StackBytes: {
             unsigned size = static_cast<unsigned>(signature.parameters[i].size);
@@ -1480,7 +1511,8 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     // A larger aggregate is copied into the outgoing arguments by code of its own, just ahead of the call:
     // nothing between there and the call writes that part of the stack. Each copy needs its source in a
     // register only while it runs, so a call can pass any number of them.
-    m_proc.requestCallArgAreaSizeInBytes(layout.stackBytes);
+    if (!argumentArea)
+        m_proc.requestCallArgAreaSizeInBytes(layout.stackBytes);
     for (const ByValCopy& copy : copies) {
         PatchpointValue* patchpoint = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
         patchpoint->effects = Effects::forCall();
@@ -1549,6 +1581,16 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
 #endif
         jit.call(calleeGPR, OperationPtrTag);
     });
+    if (argumentArea) {
+        PatchpointValue* close = m_block->appendNew<PatchpointValue>(m_proc, Void, m_origin);
+        close->effects = Effects::forCall();
+        close->clobber(RegisterSet::macroClobberedGPRs());
+        unsigned bytes = layout.stackBytes;
+        close->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams&) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            jit.addPtr(CCallHelpers::TrustedImm32(bytes), CCallHelpers::stackPointerRegister);
+        });
+    }
 
     Vector<Value*, 1> results;
     if (resultTypes.size() == 1)
