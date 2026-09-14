@@ -168,7 +168,8 @@
 //              varuint ninputs, (v value, u8 register)*         (i32/i64 values in integer registers, f32/f64/v128 in vector ones)
 //              varuint noutputs, (u8 type, u8 register)*        (-> that many results, numbered like a call's)
 //              varuint nclobbers, u8 register*                  (the condition flags are always clobbered)
-//     x86-64 only. Registers: 0..15 = rax rcx rdx rbx rsp rbp rsi rdi r8..r15 (rsp/rbp not allowed), 16..31 = xmm0..15.
+//     x86-64 only. Registers: 0..15 = rax rcx rdx rbx rsp rbp rsi rdi r8..r15 (rsp/rbp not allowed), 16..31 = xmm0..15
+//                (on Windows 16..21 = xmm0..5: the ten above are kept across calls there, and are not for the statement).
 //                A register may be both an input and an output ("+r"), but holds one input and one output at most, and
 //                neither if it is clobbered. Inputs are read before any output is written only if the code does so.
 //   CpuId: v leaf(i32), v subleaf(i32) -> i32 eax, i32 ebx, i32 ecx, i32 edx    (x86-64 only; four results, like a call's)

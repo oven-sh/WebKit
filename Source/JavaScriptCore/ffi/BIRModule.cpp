@@ -1045,8 +1045,11 @@ private:
                 return fail("InlineAsm is x86-64 machine code"_s);
             auto& extra = m_function->extra;
             inst.extraOffset = static_cast<uint32_t>(extra.size());
+            // Win64 callers expect xmm6 to xmm15 kept, all 128 bits of them, which the loader does by leaving them
+            // alone (CModule.cpp): the statement cannot have them, as operands or to overwrite.
+            unsigned vectorRegisterLimit = m_module->os == OS::Windows ? 16 + 6 : 32;
             auto registerIsValid = [&](uint8_t reg, bool mustBeVector, bool mustBeInteger) {
-                bool isVector = reg >= 16 && reg < 32;
+                bool isVector = reg >= 16 && reg < vectorRegisterLimit;
                 bool isInteger = reg < 16 && reg != 4 && reg != 5;
                 if (!isVector && !isInteger)
                     return false;

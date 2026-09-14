@@ -500,6 +500,19 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
             if (targetOS !== WINDOWS)
                 refused("three double results", returning([T.f64, T.f64, T.f64], [f64, f64, f64]), /more results than the target has result registers/);
             decoded("inline assembly", body({ ret: T.void, params: [] }, [[nop, ["RetVoid"]]]));
+            // xmm0..15 are registers 16..31. Win64 callers expect xmm6 and up kept, so there they are not the statement's.
+            const withVectorRegister = (reg, how) => body({ ret: T.void, params: [T.f64] }, [[
+                ["InlineAsm", b(0), 1, b(0x90), ...(how === "input" ? [1, 0, b(reg)] : [0]), ...(how === "output" ? [1, b(T.f64), b(reg)] : [0]), ...(how === "clobber" ? [1, b(reg)] : [0])],
+                ["RetVoid"]]]);
+            for (const how of ["input", "output", "clobber"]) {
+                decoded(`xmm5 as an ${how} of inline assembly`, withVectorRegister(21, how));
+                for (const reg of [22, 27, 31]) {
+                    if (targetOS === WINDOWS)
+                        refused(`xmm${reg - 16} as an ${how} of inline assembly`, withVectorRegister(reg, how), /bad InlineAsm (input register|output register|clobber)/);
+                    else
+                        decoded(`xmm${reg - 16} as an ${how} of inline assembly`, withVectorRegister(reg, how));
+                }
+            }
             decoded("cpuid", body({ ret: T.void, params: [T.i32] }, [[["CpuId", 0, 0], ["RetVoid"]]]));
         }
     }

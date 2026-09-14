@@ -223,6 +223,25 @@ ArgumentLayout layoutArguments(const BIR::Signature& signature, std::span<const 
 
 constexpr unsigned savedFrameAndReturnAddressBytes = 2 * sizeof(void*);
 
+// A thread's stack is there a page at a time, the next one made when the page below the last is touched (Windows
+// commits it that way, behind a guard page; elsewhere a guard page is what is below the last). Code that moves the
+// stack pointer by a page or more touches every page on the way, from the top down, before it uses the new one, as
+// the code of the platform's own compilers does (__chkstk, -fstack-clash-protection): it never reaches past a page
+// nothing has touched. `target` holds the address the stack pointer is about to move down to.
+constexpr unsigned stackProbeInterval = 4096;
+#if CPU(X86_64)
+void probeStackDownTo(CCallHelpers& jit, GPRReg target, GPRReg scratch)
+{
+    jit.move(CCallHelpers::stackPointerRegister, scratch);
+    CCallHelpers::Label next = jit.label();
+    jit.subPtr(CCallHelpers::TrustedImm32(stackProbeInterval), scratch);
+    CCallHelpers::Jump done = jit.branchPtr(CCallHelpers::Below, scratch, target);
+    jit.m_assembler.testl_i32m(0, 0, scratch);
+    jit.jump().linkTo(next, &jit);
+    done.link(&jit);
+}
+#endif
+
 } // anonymous namespace
 
 
@@ -337,6 +356,21 @@ void BIRToB3::lowerFunction(unsigned functionIndex)
     // Such a function is never inlined (canBeInlined), so only a procedure of its own has the call.
     if (function.callsReturnsTwice)
         m_proc.code().setHasCallThatReturnsTwice();
+#if CPU(X86_64)
+    // Air's own prologue, which also touches the pages of a frame of a page or more. Neither register holds
+    // anything on the way in: r10 is where a call keeps the callee's address, r11 the macro assembler's own.
+    m_proc.code().setPrologueForEntrypoint(0, createSharedTask<Air::PrologueGeneratorFunction>([](CCallHelpers& jit, Air::Code& code) {
+        jit.emitFunctionPrologue();
+        if (code.frameSize()) {
+            if (code.frameSize() >= stackProbeInterval) {
+                jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(code.frameSize())), CCallHelpers::stackPointerRegister, X86Registers::r10);
+                probeStackDownTo(jit, X86Registers::r10, X86Registers::r11);
+            }
+            jit.subPtr(CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
+        }
+        jit.emitSave(code.calleeSaveRegisterAtOffsetList());
+    }));
+#endif
 
     BasicBlock* entry = m_proc.addBlock();
     m_block = entry;
@@ -1284,6 +1318,7 @@ Value* BIRToB3::emitStackOperation(const BIR::Inst& inst)
         patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
         patchpoint->append(bytes, ValueRep::SomeRegister);
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->numGPScratchRegisters = 1;
         patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
             // An immediate the instruction cannot hold goes through the macro assembler's own register.
             AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -1291,6 +1326,9 @@ Value* BIRToB3::emitStackOperation(const BIR::Inst& inst)
             jit.move(stackPointer, result);
             jit.subPtr(params[1].gpr(), result);
             jit.andPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(-alignment)), result);
+#if CPU(X86_64)
+            probeStackDownTo(jit, result, params.gpScratch(0));
+#endif
             jit.move(result, stackPointer);
             jit.addPtr(CCallHelpers::TrustedImm32(params.code().callArgAreaSizeInBytes()), result);
         });
@@ -1413,10 +1451,17 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
         open->effects = Effects::forCall();
         open->clobber(RegisterSet::macroClobberedGPRs());
         unsigned bytes = layout.stackBytes;
+        open->resultConstraints = { ValueRep::SomeEarlyRegister };
+        open->numGPScratchRegisters = 1;
         open->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.subPtr(CCallHelpers::TrustedImm32(bytes), CCallHelpers::stackPointerRegister);
-            jit.move(CCallHelpers::stackPointerRegister, params[0].gpr());
+            GPRReg result = params[0].gpr();
+            jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(bytes)), CCallHelpers::stackPointerRegister, result);
+#if CPU(X86_64)
+            if (bytes >= stackProbeInterval)
+                probeStackDownTo(jit, result, params.gpScratch(0));
+#endif
+            jit.move(result, CCallHelpers::stackPointerRegister);
         });
         argumentArea = open;
     }
