@@ -40,7 +40,7 @@ class RemoteSnapshotRecorderProxy : public RemoteGraphicsContextProxy {
     WTF_MAKE_TZONE_ALLOCATED(RemoteSnapshotRecorderProxy);
 
 public:
-    RemoteSnapshotRecorderProxy(RemoteRenderingBackendProxy&);
+    RemoteSnapshotRecorderProxy(const WebCore::FloatRect& initialClip, RemoteRenderingBackendProxy&);
     RemoteSnapshotRecorderIdentifier identifier() const { return RemoteSnapshotRecorderIdentifier { RemoteGraphicsContextProxy::identifier().toUInt64() }; }
 
     void drawSnapshotFrame(WebCore::FrameIdentifier);

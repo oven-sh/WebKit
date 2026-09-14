@@ -27,6 +27,7 @@
 #include <wtf/PrintStream.h>
 
 #include <inttypes.h>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -102,15 +103,43 @@ void printInternal(PrintStream& out, StringView string)
     printExpectedCStringHelper(out, "StringView", string.tryGetUTF8());
 }
 
-void printInternal(PrintStream& out, const CString& string)
+// The stream's bytes are read back as UTF-8, so only ASCII and UTF-8 can be written through
+// unchanged. This mirrors CStringWithEncoding::legacyCStringPointer(), which is offered for those
+// two encodings and withheld from Latin-1 for the same reason.
+template<typename CharacterType>
+static void printCStringSpan(PrintStream& out, std::span<const CharacterType> characters)
 {
-    if (out.truncatesLongStrings() && string.length() > stringLengthThresholdToTriggerTruncation) [[unlikely]] {
-        size_t lengthNotPrinted = string.length() - stringLengthToTruncateToForPrinting;
-        auto subString = makeString(string.span().first(stringLengthToTruncateToForPrinting), "...["_s, lengthNotPrinted, " characters not shown]"_s);
-        printInternal(out, subString.utf8().data());
+    if (out.truncatesLongStrings() && characters.size() > stringLengthThresholdToTriggerTruncation) [[unlikely]] {
+        size_t lengthNotPrinted = characters.size() - stringLengthToTruncateToForPrinting;
+        auto subString = makeString(characters.first(stringLengthToTruncateToForPrinting), "...["_s, lengthNotPrinted, " characters not shown]"_s);
+        printInternal(out, subString);
         return;
     }
-    printInternal(out, string.data());
+
+    if constexpr (std::same_as<CharacterType, Latin1Character>) {
+        if (!charactersAreAllASCII(characters)) [[unlikely]] {
+            printExpectedCStringHelper(out, "Latin1CString", String { characters }.tryGetUTF8());
+            return;
+        }
+    }
+    // The span is the contents of a null-terminated CString buffer, so this is safe and, as before,
+    // stops at an embedded null rather than writing one into the stream.
+    printInternal(out, byteCast<char>(characters).data());
+}
+
+void printInternal(PrintStream& out, const UTF8CString& string)
+{
+    printCStringSpan(out, string.span());
+}
+
+void printInternal(PrintStream& out, const Latin1CString& string)
+{
+    printCStringSpan(out, string.span());
+}
+
+void printInternal(PrintStream& out, const ASCIICString& string)
+{
+    printCStringSpan(out, string.span());
 }
 
 void printInternal(PrintStream& out, const String& string)

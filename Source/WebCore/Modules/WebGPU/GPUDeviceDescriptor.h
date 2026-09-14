@@ -40,17 +40,26 @@ namespace WebCore {
 struct GPUDeviceDescriptor : public GPUObjectDescriptorBase {
     WebGPU::DeviceDescriptor convertToBacking() const
     {
+        // An entry whose value is explicitly undefined requests nothing, so drop it rather than
+        // letting the backing layer reject it as an unsupported limit.
+        Vector<KeyValuePair<String, uint64_t>> specifiedLimits;
+        specifiedLimits.reserveInitialCapacity(requiredLimits.size());
+        for (auto& requiredLimit : requiredLimits) {
+            if (auto* value = std::get_if<uint64_t>(&requiredLimit.value))
+                specifiedLimits.append({ requiredLimit.key, *value });
+        }
+
         return {
             { label },
             requiredFeatures.map([](const auto& requiredFeature) {
                 return WebCore::convertToBacking(requiredFeature);
             }),
-            requiredLimits,
+            WTF::move(specifiedLimits),
         };
     }
 
     Vector<GPUFeatureName> requiredFeatures;
-    Vector<KeyValuePair<String, uint64_t>> requiredLimits;
+    Vector<KeyValuePair<String, Variant<uint64_t, std::monostate>>> requiredLimits;
     GPUQueueDescriptor defaultQueue;
 };
 

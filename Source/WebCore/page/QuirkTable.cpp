@@ -25,9 +25,11 @@
 
 #include "config.h"
 #include "QuirkTable.h"
+#include "QuirkBehaviors.h"
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <span>
 #include <utility>
 
@@ -44,10 +46,67 @@ static constexpr std::array naverHostsWithoutSimulatedMouseEvents { "tv.naver.co
 static constexpr std::array youTubeEmbedDomains { "youtube.com"_s, "youtube-nocookie.com"_s };
 static constexpr std::array claudeDomains { "claude.ai"_s, "claude.com"_s };
 
+static constexpr auto bestBuyLanguageScript = "Object.defineProperty(navigator,'language',{get:function(){return'en-US'}});Object.defineProperty(navigator,'languages',{get:function(){return['en-US','en']}});"_s;
+
+static constexpr auto chromeUserAgentScript = "(function() { let userAgent = navigator.userAgent; Object.defineProperty(navigator, 'userAgent', { get: () => { return userAgent + ' Chrome/130.0.0.0 Android/15.0'; }, configurable: true }); })();"_s;
+
+static constexpr auto iHeartListenCookieScript = "document.cookie = 'app=listen:60; path=/; domain=.iheart.com';"_s;
+
+static constexpr auto inVideoChromeObjectScript = "if(!window.chrome)window.chrome={};"_s;
+
+static constexpr auto webExUndefinedTouchScript = "Object.defineProperty(window, 'Touch', { get: () => undefined });"_s;
+
+static constexpr auto nbaSeekBarFixScript = R"js(if (!window.__nbaSeekFix) {
+    window.__nbaSeekFix = true;
+    document.addEventListener('touchmove', function({ target, touches }) {
+        if (!target?.getAttribute
+            || target.getAttribute('data-id') !== 'video-player:scrub-bar:controls'
+            || !touches?.[0])
+            return;
+        const touch = touches[0];
+        const rect = target.getBoundingClientRect();
+        const event = new MouseEvent('mousemove', {
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            screenX: touch.screenX,
+            screenY: touch.screenY,
+            bubbles: true,
+            cancelable: true
+        });
+        Object.defineProperty(event, 'offsetX', { value: touch.clientX - rect.left, configurable: true });
+        Object.defineProperty(event, 'offsetY', { value: touch.clientY - rect.top, configurable: true });
+        target.dispatchEvent(event);
+    }, false);
+})js"_s;
+
+static constexpr auto ceacBeforeUnloadFixScript = R"js((function() {
+    if (window.__ceacBeforeUnloadFix) return;
+    window.__ceacBeforeUnloadFix = true;
+    var origAEL = window.addEventListener;
+    window.addEventListener = function(type, fn, opts) {
+        if (type === 'beforeunload') {
+            return origAEL.call(this, type, function(e) {
+                var ae = document.activeElement;
+                if (ae && ae.tagName === 'INPUT') {
+                    var t = (ae.type || '').toLowerCase();
+                    if (t === 'radio' || t === 'checkbox' || t === 'submit' || t === 'button')
+                        return;
+                }
+                if (typeof fn === 'function') fn.call(this, e);
+            }, opts);
+        }
+        return origAEL.apply(this, arguments);
+    };
+})();)js"_s;
+
 namespace SiteSpecificQuirks {
 using namespace QuirkBehaviors;
 using namespace URLRefinement;
 using namespace BuildCondition;
+
+static constexpr auto anyclipPlayerScriptURL = URLMatch::host("player.anyclip.com"_s).when(lastPathComponentEndsWith("lre.js"_s));
+static constexpr auto ceacBrowserCloseScriptURL = URLMatch::anyURL().when(lastPathComponentIs("CheckBrowserClose.js"_s));
+static constexpr auto webExPushDownloadScriptURL = URLMatch::anyURL().when(lastPathComponentStartsWith("pushdownload."_s));
 
 static constexpr Quirk fullTable[] = {
     // 365scores.com rdar://116491386
@@ -113,9 +172,8 @@ static constexpr Quirk fullTable[] = {
     // bestbuy.com rdar://136235936
     { .match = URLMatch::domain("bestbuy.com"_s),
         .behaviors = {
-            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk,
-        },
-        .site = QuirkSite::BestBuy },
+            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(bestBuyLanguageScript)),
+        } },
 
     // billpaysite.com rdar://141328971
     { .match = URLMatch::hostOrSubdomainOf("billpaysite.com"_s),
@@ -154,9 +212,8 @@ static constexpr Quirk fullTable[] = {
             // ceac.state.gov https://bugs.webkit.org/show_bug.cgi?id=193478
             needsFormControlToBeMouseFocusableQuirk,
             // ceac.state.gov https://bugs.webkit.org/show_bug.cgi?id=311383
-            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk,
-        },
-        .site = QuirkSite::CEAC },
+            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(ceacBeforeUnloadFixScript)).when(ceacBrowserCloseScriptURL),
+        } },
 
     // secure.chase.com rdar://126715227
     { .match = URLMatch::host("secure.chase.com"_s),
@@ -206,11 +263,11 @@ static constexpr Quirk fullTable[] = {
         .behaviors = { shouldDisableDOMAudioSession } },
 
     { .match = URLMatch::domain("dictionary.com"_s),
-        .behaviors = { needsAnchorToBeMouseFocusableQuirk },
-        .site = QuirkSite::Dictionary },
+        .behaviors = { needsAnchorToBeMouseFocusableQuirk } },
 
+    // player.anyclip.com rdar://138789765
     { .match = URLMatch::domain("dictionary.com"_s),
-        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk },
+        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(chromeUserAgentScript)).when(anyclipPlayerScriptURL) },
         .isAvailable = iOSFamily },
 
     // digitaltrends.com rdar://121014613
@@ -295,6 +352,11 @@ static constexpr Quirk fullTable[] = {
         },
         .site = QuirkSite::GoogleProperty },
 
+    // google.com https://bugs.webkit.org/show_bug.cgi?id=323851 rdar://181740296
+    { .match = URLMatch::anyTopLevelDomain("google"_s).when(pathIs("/search"_s)),
+        .behaviors = { needsAnchorToBeMouseFocusableQuirk },
+        .site = QuirkSite::GoogleSearch },
+
     { .match = URLMatch::anyTopLevelDomain("google"_s).when(pathStartsWith("/maps/"_s)),
         .behaviors = {
             // maps.google.com rdar://152194074
@@ -335,7 +397,7 @@ static constexpr Quirk fullTable[] = {
         .behaviors = { needsGoogleTranslateScrollingQuirk } },
 
     { .match = URLMatch::host("translate.google.com"_s),
-        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk },
+        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(chromeUserAgentScript)) },
         .isAvailable = iOSFamily },
 
     // sites.google.com rdar://58653069
@@ -381,9 +443,8 @@ static constexpr Quirk fullTable[] = {
 
     { .match = URLMatch::domain("iheart.com"_s),
         .behaviors = {
-            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk,
-        },
-        .site = QuirkSite::IHeart },
+            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(iHeartListenCookieScript)),
+        } },
 
     { .match = URLMatch::domain("imdb.com"_s),
         .behaviors = {
@@ -412,9 +473,8 @@ static constexpr Quirk fullTable[] = {
     // invideo.io rdar://171741842 https://webkit.org/b/311602
     { .match = URLMatch::domain("invideo.io"_s),
         .behaviors = {
-            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk,
-        },
-        .site = QuirkSite::InVideo },
+            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(inVideoChromeObjectScript)),
+        } },
 
     { .match = URLMatch::domain("linkedin.com"_s),
         .site = QuirkSite::LinkedIn },
@@ -493,7 +553,7 @@ static constexpr Quirk fullTable[] = {
     // rdar://147429596
     { .match = URLMatch::domain("nba.com"_s),
         .behaviors = {
-            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk,
+            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(nbaSeekBarFixScript)),
         },
         .site = QuirkSite::NBA,
         .isAvailable = iOSFamily },
@@ -648,11 +708,11 @@ static constexpr Quirk fullTable[] = {
         .behaviors = { isMicrosoftTeamsRedirectURLQuirk } },
 
     { .match = URLMatch::domain("thesaurus.com"_s),
-        .behaviors = { needsAnchorToBeMouseFocusableQuirk },
-        .site = QuirkSite::Thesaurus },
+        .behaviors = { needsAnchorToBeMouseFocusableQuirk } },
 
+    // player.anyclip.com rdar://138789765
     { .match = URLMatch::domain("thesaurus.com"_s),
-        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk },
+        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(chromeUserAgentScript)).when(anyclipPlayerScriptURL) },
         .isAvailable = iOSFamily },
 
     { .match = URLMatch::domain("tiktok.com"_s),
@@ -722,11 +782,10 @@ static constexpr Quirk fullTable[] = {
 
     { .match = URLMatch::domain("webex.com"_s),
         .behaviors = {
-            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk,
+            needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(webExUndefinedTouchScript)).when(webExPushDownloadScriptURL),
             // webex.com rdar://143715630
             needsWebExScrollabilityQuirk,
         },
-        .site = QuirkSite::WebEx,
         .isAvailable = iOSFamily && desktopContentModeQuirks },
 
     // weebly.com rdar://48003980
@@ -868,6 +927,30 @@ static constexpr Quirk fullTable[] = {
         } },
 };
 
+consteval bool everyQuirkHasValidParameters()
+{
+    for (auto& quirk : fullTable) {
+        for (auto& behavior : quirk.behaviors.span()) {
+            auto parametersNeeded = behavior.quirkParametersNeeded;
+            if (parametersNeeded.isEmpty()) {
+                if (behavior.parameters)
+                    return false;
+                continue;
+            }
+
+            if (!behavior.parameters)
+                return false;
+
+            if (parametersNeeded.contains(QuirkParametersNeeded::NeedsScript) && behavior.parameters->script.isEmpty())
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static_assert(everyQuirkHasValidParameters(), "A quirk in fullTable declares QuirkParametersNeeded but does not supply them, or supplies parameters it does not declare");
+
 consteval bool shouldEmit(const Quirk& quirk)
 {
     if (!quirk.isAvailable)
@@ -931,7 +1014,7 @@ bool QuirkURLMatch::matches(const URLMatchContext& topContext, const URLMatchCon
 
 void Quirk::apply(QuirksData& quirksData) const
 {
-    quirksData.enableQuirks(behaviors.span());
+    quirksData.applyTableRow(behaviors.span());
 
     if (site)
         quirksData.addSite(*site);

@@ -115,7 +115,7 @@ std::expected<UTF8CString, UTF8ConversionError> StringView::tryGetUTF8(Conversio
     return StringImpl::utf8ForCharacters(span16(), mode);
 }
 
-CString StringView::utf8(ConversionMode mode) const
+UTF8CString StringView::utf8(ConversionMode mode) const
 {
     auto expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);

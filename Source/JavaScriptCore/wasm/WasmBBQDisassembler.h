@@ -64,7 +64,7 @@ private:
     void dumpHeader(PrintStream&, LinkBuffer&);
 
     struct DumpedOp {
-        CString disassembly;
+        UTF8CString disassembly;
     };
     Vector<DumpedOp> dumpVectorForInstructions(LinkBuffer&, const char* prefix, Vector<std::tuple<MacroAssembler::Label, OpcodeOrigin>>& labels, MacroAssembler::Label endLabel);
 

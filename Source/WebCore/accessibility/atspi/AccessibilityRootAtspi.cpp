@@ -186,19 +186,19 @@ GVariant* AccessibilityRootAtspi::applicationReference() const
 {
     if (m_parentUniqueName.isNull())
         return AccessibilityAtspi::singleton().nullReference();
-    return g_variant_new("(so)", m_parentUniqueName.utf8().data(), "/org/a11y/atspi/accessible/root");
+    return g_variant_new("(so)", m_parentUniqueName.utf8().legacyCStringPointer(), "/org/a11y/atspi/accessible/root");
 }
 
 GVariant* AccessibilityRootAtspi::reference() const
 {
-    return g_variant_new("(so)", AccessibilityAtspi::singleton().uniqueName(), m_path.utf8().data());
+    return g_variant_new("(so)", AccessibilityAtspi::singleton().uniqueName(), m_path.utf8().legacyCStringPointer());
 }
 
 GVariant* AccessibilityRootAtspi::parentReference() const
 {
     if (m_parentUniqueName.isNull())
         return AccessibilityAtspi::singleton().nullReference();
-    return g_variant_new("(so)", m_parentUniqueName.utf8().data(), m_parentPath.utf8().data());
+    return g_variant_new("(so)", m_parentUniqueName.utf8().legacyCStringPointer(), m_parentPath.utf8().legacyCStringPointer());
 }
 
 AccessibilityObjectAtspi* AccessibilityRootAtspi::child() const
@@ -235,7 +235,7 @@ void AccessibilityRootAtspi::childRemoved(AccessibilityObjectAtspi& child)
 
 void AccessibilityRootAtspi::serialize(GVariantBuilder* builder) const
 {
-    g_variant_builder_add(builder, "(so)", AccessibilityAtspi::singleton().uniqueName(), m_path.utf8().data());
+    g_variant_builder_add(builder, "(so)", AccessibilityAtspi::singleton().uniqueName(), m_path.utf8().legacyCStringPointer());
     g_variant_builder_add(builder, "@(so)", applicationReference());
     g_variant_builder_add(builder, "@(so)", parentReference());
 

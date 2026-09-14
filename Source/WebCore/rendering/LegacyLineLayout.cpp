@@ -45,6 +45,7 @@
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
 #include "RenderObjectInlines.h"
+#include "RenderSVGInline.h"
 #include "RenderSVGText.h"
 #include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
@@ -99,7 +100,7 @@ bool LegacyLineLayout::shouldSkipCreatingRunsForObject(RenderObject& object)
     auto& renderElement = downcast<RenderElement>(object);
     if (renderElement.isFloating())
         return true;
-    if (renderElement.isOutOfFlowPositioned() && !renderElement.style().originalDisplay().isInlineType() && !renderElement.container()->isRenderInline())
+    if (renderElement.isOutOfFlowPositioned() && !renderElement.style().originalDisplay().isInlineType() && !renderElement.container()->isInlineBox())
         return true;
     return false;
 }
@@ -176,8 +177,8 @@ LegacyInlineBox* LegacyLineLayout::createInlineBoxForRenderer(RenderObject* rend
     if (auto* textRenderer = dynamicDowncast<RenderSVGInlineText>(*renderer))
         return textRenderer->createInlineTextBox();
 
-    if (auto* renderInline = dynamicDowncast<RenderInline>(*renderer))
-        return renderInline->createAndAppendInlineFlowBox();
+    if (auto* renderSVGInline = dynamicDowncast<RenderSVGInline>(*renderer))
+        return renderSVGInline->createAndAppendInlineFlowBox();
 
     ASSERT_NOT_REACHED();
     return nullptr;
@@ -187,8 +188,8 @@ static inline void dirtyLineBoxesForRenderer(RenderObject& renderer)
 {
     if (CheckedPtr renderText = dynamicDowncast<RenderSVGInlineText>(renderer))
         renderText->deleteLegacyLineBoxes();
-    else if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(renderer))
-        renderInline->deleteLegacyLineBoxes();
+    else if (CheckedPtr renderSVGInline = dynamicDowncast<RenderSVGInline>(renderer))
+        renderSVGInline->deleteLegacyLineBoxes();
 }
 
 static bool NODELETE parentIsConstructedOrHaveNext(LegacyInlineFlowBox* parentBox)
@@ -209,7 +210,7 @@ LegacyInlineFlowBox* LegacyLineLayout::createLineBoxes(RenderObject* obj, const 
     LegacyInlineFlowBox* parentBox = nullptr;
     LegacyInlineFlowBox* result = nullptr;
     do {
-        RenderInline* inlineFlow = obj != &m_flow ? &downcast<RenderInline>(*obj) : nullptr;
+        RenderSVGInline* inlineFlow = obj != &m_flow ? &downcast<RenderSVGInline>(*obj) : nullptr;
 
         // Get the last box we made for this render object.
         parentBox = inlineFlow ? inlineFlow->lastLegacyInlineBox() : downcast<RenderBlockFlow>(*obj).legacyRootBox();

@@ -422,6 +422,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/fetch/FetchRequestMode.h
     Modules/fetch/FetchResponse.h
     Modules/fetch/IPAddressSpace.h
+    Modules/fetch/LocalNetworkAccess.h
     Modules/fetch/RequestPriority.h
 
     Modules/filesystem/FileSystemDirectoryHandle.h
@@ -1412,6 +1413,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/ProgressEvent.h
     dom/PseudoElement.h
     dom/QualifiedName.h
+    dom/QuotaExceededError.h
+    dom/QuotaExceededErrorOptions.h
     dom/RadioButtonGroups.h
     dom/Range.h
     dom/RangeBoundaryPoint.h
@@ -2070,6 +2073,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/NavigatorBase.h
     page/NavigatorLoginStatus.h
     page/NavigatorUAData.h
+    page/NetworkLoadPolicy.h
     page/OriginAccessPatterns.h
     page/Page.h
     page/PageColorSampler.h
@@ -2536,6 +2540,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/FloatSize.h
     platform/graphics/FloatSizeHash.h
     platform/graphics/Font.h
+    platform/graphics/FontBase.h
     platform/graphics/FontBaseline.h
     platform/graphics/FontCache.h
     platform/graphics/FontCascade.h
@@ -3139,6 +3144,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/line/TrailingObjects.h
 
     rendering/shapes/LayoutShape.h
+    rendering/shapes/PathLayoutShape.h
     rendering/shapes/PolygonLayoutShape.h
     rendering/shapes/ShapeInterval.h
     rendering/shapes/ShapeOutsideInfo.h

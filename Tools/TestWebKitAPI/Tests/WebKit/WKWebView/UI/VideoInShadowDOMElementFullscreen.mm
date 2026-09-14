@@ -30,6 +30,7 @@
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/cocoa/TestElementFullscreenDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
+#import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WebKit.h>

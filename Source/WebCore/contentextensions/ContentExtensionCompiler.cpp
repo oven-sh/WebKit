@@ -42,7 +42,6 @@
 #include "URLFilterParser.h"
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/DataLog.h>
-#include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebCore::ContentExtensions {
@@ -330,9 +329,7 @@ std::error_code compileRuleList(ContentExtensionCompilationClient& client, Strin
             status = URLFilterParser::Ok;
         }
         if (status != URLFilterParser::Ok) {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            dataLogF("Error while parsing %s: %s\n", trigger.urlFilter.utf8().data(), URLFilterParser::statusString(status).characters());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            dataLogLn("Error while parsing "_s, trigger.urlFilter, ": "_s, URLFilterParser::statusString(status));
             return ContentExtensionError::JSONInvalidRegex;
         }
 
@@ -349,9 +346,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                     status = URLFilterParser::Ok;
                 }
                 if (status != URLFilterParser::Ok) {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                    dataLogF("Error while parsing %s: %s\n", condition.utf8().data(), URLFilterParser::statusString(status).characters());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+                    dataLogLn("Error while parsing "_s, condition, ": "_s, URLFilterParser::statusString(status));
                     return ContentExtensionError::JSONInvalidRegex;
                 }
                 break;
@@ -363,9 +358,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                     status = URLFilterParser::Ok;
                 }
                 if (status != URLFilterParser::Ok) {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-                    dataLogF("Error while parsing %s: %s\n", condition.utf8().data(), URLFilterParser::statusString(status).characters());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+                    dataLogLn("Error while parsing "_s, condition, ": "_s, URLFilterParser::statusString(status));
                     return ContentExtensionError::JSONInvalidRegex;
                 }
                 break;

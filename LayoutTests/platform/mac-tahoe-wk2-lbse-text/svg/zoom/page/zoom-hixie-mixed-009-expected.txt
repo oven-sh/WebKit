@@ -11,7 +11,7 @@ layer at (0,0) size 800x435
       RenderBlock {div} at (0,233.31) size 576x172.80 [color=#000080] [bgcolor=#EEEEEE]
         RenderText {#text} at (0,0) size 344x166
           text run at (0,0) width 344: "TEST"
-layer at (12,55) size 576x173 backgroundClip at (12,55) size 576x172.80 clip at (12,55) size 576x172.80 scrollWidth 480 scrollHeight 144
+layer at (12,55) size 576x173 backgroundClip at (12,55) size 576x172.80 clip at (12,55) size 576x172.80
   RenderSVGRoot {svg} at (0,0) size 576x172.80
     RenderSVGViewportContainer at (0,0) size 576x172.80
       RenderSVGRect {rect} at (0,0) size 60x12 [fill={[type=SOLID] [color=#EEEEEE]}] [x=0.00] [y=0.00] [width=60.00] [height=12.00]

@@ -128,6 +128,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     , m_workerType(params.workerType)
     , m_credentials(params.credentials)
     , m_agentClusterID(params.agentClusterID)
+    , m_networkLoadPolicy(params.networkLoadPolicy)
 {
     {
         Locker locker { allWorkerGlobalScopeIdentifiersLock };

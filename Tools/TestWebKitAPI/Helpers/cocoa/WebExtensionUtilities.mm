@@ -31,6 +31,7 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#import "Helpers/cocoa/TestCocoaImageUtilities.h"
 #import "Helpers/cocoa/TestWebExtensionsDelegate.h"
 #import "Helpers/cocoa/WebExtensionUtilities.h"
 #import <WebKit/WKPreferencesPrivate.h>
@@ -44,19 +45,37 @@
 #import <wtf/darwin/DispatchExtras.h>
 
 @interface TestWebExtensionManager () <WKWebExtensionControllerDelegatePrivate>
+- (id)_takeTestMessage:(NSString *)message;
+- (void)_recordFailureWithMessage:(NSString *)message sourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber;
+- (nullable NSError *)_collectedFailuresError;
 @end
+
+static NSError *managerError(NSString *description)
+{
+    return [NSError errorWithDomain:@"TestWebExtensionManager" code:1 userInfo:@{ NSLocalizedDescriptionKey: description }];
+}
 
 @implementation TestWebExtensionManager {
     bool _done;
     bool _receivedMessage;
     bool _runningTestFromQueue;
     NSMutableDictionary *_messages;
-    NSMutableArray *_windows;
+    NSMutableArray<TestWebExtensionWindow *> *_windows;
+    void (^_doneHandler)(NSError *);
+    NSMutableArray<NSString *> *_collectedFailures;
+    NSString *_pendingTestMessage;
+    void (^_pendingTestMessageHandler)(NSError *);
 }
 
 - (instancetype)initForExtension:(WKWebExtension *)extension
 {
     return [self initForExtension:extension extensionControllerConfiguration:nil];
+}
+
+- (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(NSDictionary<NSString *, id> *)resources
+{
+    RetainPtr extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources]);
+    return [self initForExtension:extension.get()];
 }
 
 - (instancetype)initForExtension:(WKWebExtension *)extension extensionControllerConfiguration:(WKWebExtensionControllerConfiguration *)configuration
@@ -259,18 +278,28 @@
     [_context _sendTestFinishedWithArgument:argument];
 }
 
+- (NSArray<TestWebExtensionWindow *> *)windows
+{
+    // Copied so that a caller enumerating the result can open or close windows while it does.
+    return [_windows copy];
+}
+
 - (void)load
 {
     NSError *error;
-    EXPECT_TRUE([_controller loadExtensionContext:_context error:&error]);
-    EXPECT_NULL(error);
+    if ([_controller loadExtensionContext:_context error:&error] && !error)
+        return;
+
+    [self _recordFailureWithMessage:error.description ?: @"Failed to load the extension context." sourceURL:@(__FILE__) lineNumber:__LINE__];
 }
 
 - (void)unload
 {
     NSError *error;
-    EXPECT_TRUE([_controller unloadExtensionContext:_context error:&error]);
-    EXPECT_NULL(error);
+    if ([_controller unloadExtensionContext:_context error:&error] && !error)
+        return;
+
+    [self _recordFailureWithMessage:error.description ?: @"Failed to unload the extension context." sourceURL:@(__FILE__) lineNumber:__LINE__];
 }
 
 - (void)run
@@ -307,18 +336,7 @@
 
 - (id)runUntilTestMessage:(NSString *)message
 {
-    id (^processMessage)(void) = ^id {
-        NSMutableArray *messagesArray = self->_messages[message];
-        if (!messagesArray.count)
-            return nil;
-
-        id argument = messagesArray.firstObject;
-        [messagesArray removeObjectAtIndex:0];
-
-        return argument;
-    };
-
-    if (id result = processMessage())
+    if (id result = [self _takeTestMessage:message])
         return result;
 
     while (true) {
@@ -326,9 +344,55 @@
 
         TestWebKitAPI::Util::run(&_receivedMessage);
 
-        if (id result = processMessage())
+        if (id result = [self _takeTestMessage:message])
             return result;
     }
+}
+
+- (void)runWithCompletionHandler:(void (^)(NSError *))completionHandler
+{
+    if (_done) {
+        _done = false;
+        completionHandler([self _collectedFailuresError]);
+        return;
+    }
+
+    _doneHandler = [completionHandler copy];
+}
+
+- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(NSError *))completionHandler
+{
+    if ([self _takeTestMessage:message]) {
+        completionHandler([self _collectedFailuresError]);
+        return;
+    }
+
+    _pendingTestMessage = [message copy];
+    _pendingTestMessageHandler = [completionHandler copy];
+}
+
+- (void)loadAndRunWithCompletionHandler:(void (^)(NSError *))completionHandler
+{
+    [self load];
+
+    if (NSError *error = [self _collectedFailuresError]) {
+        completionHandler(error);
+        return;
+    }
+
+    [self runWithCompletionHandler:completionHandler];
+}
+
+- (id)_takeTestMessage:(NSString *)message
+{
+    NSMutableArray *messagesArray = _messages[message];
+    if (!messagesArray.count)
+        return nil;
+
+    id argument = messagesArray.firstObject;
+    [messagesArray removeObjectAtIndex:0];
+
+    return argument;
 }
 
 - (void)loadAndRun
@@ -339,7 +403,60 @@
 
 - (void)done
 {
+    // Hand the completion to whoever is waiting for it. With nobody waiting, latch it instead, so
+    // that a -runWithCompletionHandler: that arrives afterwards does not wait for a second one.
+    if (auto handler = _doneHandler) {
+        _doneHandler = nil;
+        handler([self _collectedFailuresError]);
+        return;
+    }
+
+    if (auto handler = _pendingTestMessageHandler) {
+        auto *message = _pendingTestMessage;
+        _pendingTestMessageHandler = nil;
+        _pendingTestMessage = nil;
+
+        handler([self _collectedFailuresError] ?: managerError([NSString stringWithFormat:@"The extension finished without sending the test message \"%@\".", message]));
+        return;
+    }
+
     _done = true;
+}
+
+- (void)_recordFailureWithMessage:(NSString *)message sourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
+{
+    if (_collectsFailures) {
+        if (!_collectedFailures)
+            _collectedFailures = [NSMutableArray array];
+
+        [_collectedFailures addObject:[NSString stringWithFormat:@"%@\n  at %@:%u", message, sourceURL, lineNumber]];
+        return;
+    }
+
+    ::testing::internal::AssertHelper(::testing::TestPartResult::kNonFatalFailure, sourceURL.UTF8String, lineNumber, message.UTF8String) = ::testing::Message();
+}
+
+- (NSError *)_collectedFailuresError
+{
+    if (!_collectedFailures.count)
+        return nil;
+
+    auto *description = [_collectedFailures componentsJoinedByString:@"\n"];
+    [_collectedFailures removeAllObjects];
+
+    return managerError(description);
+}
+
+- (BOOL)checkCollectedFailuresWithError:(NSError **)error
+{
+    NSError *failure = [self _collectedFailuresError];
+    if (!failure)
+        return YES;
+
+    if (error)
+        *error = failure;
+
+    return NO;
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestAssertionResult:(BOOL)result withMessage:(NSString *)message andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
@@ -350,7 +467,7 @@
     if (!message.length)
         message = @"Assertion failed with no message.";
 
-    ::testing::internal::AssertHelper(::testing::TestPartResult::kNonFatalFailure, sourceURL.UTF8String, lineNumber, message.UTF8String) = ::testing::Message();
+    [self _recordFailureWithMessage:message sourceURL:sourceURL lineNumber:lineNumber];
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestEqualityResult:(BOOL)result expectedValue:(NSString *)expectedValue actualValue:(NSString *)actualValue withMessage:(NSString *)message andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
@@ -360,6 +477,11 @@
 
     if (!message.length)
         message = @"Expected equality of these values";
+
+    if (_collectsFailures) {
+        [self _recordFailureWithMessage:[NSString stringWithFormat:@"%@:\n  Actual: %@\nExpected: %@", message, actualValue, expectedValue] sourceURL:sourceURL lineNumber:lineNumber];
+        return;
+    }
 
     ::testing::internal::AssertHelper(::testing::TestPartResult::kNonFatalFailure, sourceURL.UTF8String, lineNumber, "") = ::testing::Message()
         << message.UTF8String << ":\n"
@@ -386,6 +508,17 @@
     }
 
     [messagesArray addObject:argument ?: NSNull.null];
+
+    if (!_pendingTestMessageHandler)
+        return;
+
+    if (![self _takeTestMessage:_pendingTestMessage])
+        return;
+
+    auto handler = _pendingTestMessageHandler;
+    _pendingTestMessageHandler = nil;
+    _pendingTestMessage = nil;
+    handler([self _collectedFailuresError]);
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestAddedWithName:(NSString *)testName andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
@@ -411,15 +544,16 @@
         return;
     }
 
-    _done = true;
+    // Record the failure before signalling, so that an async waiter cannot resume and finish the
+    // test before the failure has been attributed to it.
+    if (!result) {
+        if (!message.length)
+            message = @"Test failed with no message.";
 
-    if (result)
-        return;
+        [self _recordFailureWithMessage:message sourceURL:sourceURL lineNumber:lineNumber];
+    }
 
-    if (!message.length)
-        message = @"Test failed with no message.";
-
-    ::testing::internal::AssertHelper(::testing::TestPartResult::kNonFatalFailure, sourceURL.UTF8String, lineNumber, message.UTF8String) = ::testing::Message();
+    [self done];
 }
 
 @end
@@ -1041,44 +1175,15 @@ void loadAndRunExtension(NSDictionary *manifest, NSDictionary *resources, WKWebE
 NSData *makePNGData(CGSize size, SEL colorSelector)
 {
 #if USE(APPKIT)
-    RetainPtr image = adoptNS([[NSImage alloc] initWithSize:size]);
-
-    [image lockFocus];
-
-    [[NSColor performSelector:colorSelector] setFill];
-    NSRectFill(NSMakeRect(0, 0, size.width, size.height));
-
-    [image unlockFocus];
-
-    auto cgImageRef = [image CGImageForProposedRect:NULL context:nil hints:nil];
-    RetainPtr newImageRep = adoptNS([[NSBitmapImageRep alloc] initWithCGImage:cgImageRef]);
-    newImageRep.get().size = size;
-
-    return [newImageRep representationUsingType:NSBitmapImageFileTypePNG properties:@{ }];
+    return [TestCocoaImageUtilities pngDataWithSize:size color:[NSColor performSelector:colorSelector]];
 #else
-    UIGraphicsBeginImageContextWithOptions(size, NO, 1.0);
-
-    [[UIColor performSelector:colorSelector] setFill];
-    UIRectFill(CGRectMake(0, 0, size.width, size.height));
-
-    auto *image = UIGraphicsGetImageFromCurrentImageContext();
-
-    UIGraphicsEndImageContext();
-
-    return UIImagePNGRepresentation(image);
+    return [TestCocoaImageUtilities pngDataWithSize:size color:[UIColor performSelector:colorSelector]];
 #endif
 }
 
 void performWithAppearance(Appearance appearance, void (^block)(void))
 {
-#if USE(APPKIT)
-    auto *appearanceName = appearance == Appearance::Dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
-    [[NSAppearance appearanceNamed:appearanceName] performAsCurrentDrawingAppearance:block];
-#else
-    auto *traitCollection = appearance == Appearance::Dark ? [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleDark]
-        : [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleLight];
-    [traitCollection performAsCurrentTraitCollection:block];
-#endif
+    [TestCocoaImageUtilities performWithDarkAppearance:appearance == Appearance::Dark block:block];
 }
 
 } // namespace Util

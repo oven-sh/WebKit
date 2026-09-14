@@ -263,7 +263,7 @@ static inline void dumpTextBoxes(Vector<InlineIterator::SVGTextBoxIterator>& box
             SVGTextFragment& fragment = fragments.at(i);
             String fragmentString(characters + fragment.characterOffset, fragment.length);
             fprintf(stderr, "    -> Fragment %d, x=%.2f, y=%.2f, width=%.2f, height=%.2f, characterOffset=%d, length=%d, characters='%s'\n"
-                          , i, fragment.x, fragment.y, fragment.width, fragment.height, fragment.characterOffset, fragment.length, fragmentString.utf8().data());
+                          , i, fragment.x, fragment.y, fragment.width, fragment.height, fragment.characterOffset, fragment.length, fragmentString.utf8().legacyCStringPointer());
         }
     }
 }

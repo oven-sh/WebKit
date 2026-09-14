@@ -243,7 +243,7 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
         });
     }
 
-    if (toCString(NodeFlagsDump(node->flags())) != "<empty>"_s)
+    if (toUTF8CString(NodeFlagsDump(node->flags())) != "<empty>"_s)
         out.print(comma, NodeFlagsDump(node->flags()));
     if (node->prediction())
         out.print(comma, SpeculationDump(node->prediction()));
@@ -569,7 +569,7 @@ void Graph::dumpBlockHeader(PrintStream& out, const char* prefixStr, BasicBlock*
                 continue;
 
             out.print(" D@", phiNode->index(), "<", phiNode->operand(), ",", phiNode->refCount());
-            if (toCString(NodeFlagsDump(phiNode->flags())) != "<empty>"_s)
+            if (toUTF8CString(NodeFlagsDump(phiNode->flags())) != "<empty>"_s)
                 out.print(", ", NodeFlagsDump(phiNode->flags()));
             out.print(">->(");
             if (phiNode->child1()) {
@@ -694,7 +694,7 @@ void Graph::dump(PrintStream& out, DumpContext* context)
     if (!myContext.isEmpty()) {
         StringPrintStream prefixStr;
         prefixStr.print(prefix);
-        myContext.dump(out, prefixStr.toCString().data());
+        myContext.dump(out, prefixStr.toUTF8CString().legacyCStringPointer());
         out.print("\n");
     }
 }
@@ -1836,11 +1836,11 @@ void Graph::assertIsRegistered(Structure* structure)
     if (m_plan.watchpoints().isRegisteredNotWatched(structure))
         return;
 
-    DFG_CRASH(*this, nullptr, toCString("Structure ", pointerDump(structure), " is watchable but isn't being watched.").data());
+    DFG_CRASH(*this, nullptr, toUTF8CString("Structure ", pointerDump(structure), " is watchable but isn't being watched.").legacyCStringPointer());
 }
 
 static void logDFGAssertionFailure(
-    Graph& graph, const CString& whileText, const char* file, int line, const char* function,
+    Graph& graph, const UTF8CString& whileText, const char* file, int line, const char* function,
     const char* assertion)
 {
     startCrashing();
@@ -1867,13 +1867,13 @@ void Graph::logAssertionFailure(
 void Graph::logAssertionFailure(
     Node* node, const char* file, int line, const char* function, const char* assertion)
 {
-    logDFGAssertionFailure(*this, toCString("While handling node ", node, "\n\n"), file, line, function, assertion);
+    logDFGAssertionFailure(*this, toUTF8CString("While handling node ", node, "\n\n"), file, line, function, assertion);
 }
 
 void Graph::logAssertionFailure(
     BasicBlock* block, const char* file, int line, const char* function, const char* assertion)
 {
-    logDFGAssertionFailure(*this, toCString("While handling block ", pointerDump(block), "\n\n"), file, line, function, assertion);
+    logDFGAssertionFailure(*this, toUTF8CString("While handling block ", pointerDump(block), "\n\n"), file, line, function, assertion);
 }
 
 CPSCFG& Graph::ensureCPSCFG()

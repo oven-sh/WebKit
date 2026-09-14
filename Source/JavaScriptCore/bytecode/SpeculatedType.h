@@ -600,7 +600,7 @@ SpeculatedType NODELETE typeOfDoubleBinaryOp(SpeculatedType, SpeculatedType);
 SpeculatedType NODELETE typeOfDoubleUnaryOp(SpeculatedType);
 
 // This is mostly for debugging so we can fill profiles from strings.
-SpeculatedType speculationFromString(const char*);
+SpeculatedType speculationFromString(StringView);
 
 bool NODELETE isProvenValidTypeForIndexingShapeStorage(IndexingType, SpeculatedType);
 IndexingType NODELETE leastUpperBoundOfIndexingTypeAndTypeForSpeculation(IndexingType, SpeculatedType);

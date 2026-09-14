@@ -292,6 +292,8 @@ public:
     }
     bool hasFeature(const String& featureName) const { return m_configuration.supportedFeatures.contains(featureName); }
 
+    using OverrideValidator = Function<std::optional<Error>(const HashMap<String, ConstantValue>&)>;
+
     template<typename Validator>
     void addOverrideValidation(Validator&& validator)
     {
@@ -349,7 +351,7 @@ private:
     std::optional<CallGraph> m_callGraph;
     Vector<std::function<void()>> m_replacements;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_pipelineOverrideIds;
-    Vector<Function<std::optional<Error>(const HashMap<String, ConstantValue>&)>> m_overrideValidations;
+    Vector<OverrideValidator> m_overrideValidations;
     HashMap<String, OverloadedDeclaration> m_overloadedOperations;
     Vector<AST::Variable*> m_overrides;
 };

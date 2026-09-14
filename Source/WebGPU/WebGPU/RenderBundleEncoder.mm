@@ -461,14 +461,14 @@ RenderBundleEncoder::FinalizeRenderCommand RenderBundleEncoder::draw(uint32_t ve
     if (!executePreDrawCommands(vertexCount == 1, false, firstInstance, instanceCount))
         return finalizeRenderCommand();
     if (id<MTLIndirectRenderCommand> icbCommand = currentRenderCommand()) {
-        if (!m_makeSubmitInvalid)
+        if (!m_makeSubmitInvalid && vertexCount && instanceCount)
             [icbCommand drawPrimitives:m_primitiveType vertexStart:firstVertex vertexCount:vertexCount instanceCount:instanceCount baseInstance:firstInstance];
     } else {
         if (!runVertexBufferValidation(vertexCount, instanceCount, firstVertex, firstInstance))
             return finalizeRenderCommand();
-        if (!vertexCount || !instanceCount)
-            return finalizeRenderCommand();
 
+        // A draw with a zero vertex or instance count still has to be validated, so record it like
+        // any other draw and skip only the encoded command when it is replayed.
         recordCommand([vertexCount, instanceCount, firstVertex, firstInstance, protectedThis = protect(*this)] {
             protectedThis->draw(vertexCount, instanceCount, firstVertex, firstInstance);
             return true;
@@ -725,7 +725,7 @@ RenderBundleEncoder::FinalizeRenderCommand RenderBundleEncoder::drawIndexed(uint
                 [renderPassEncoder->renderCommandEncoder() drawIndexedPrimitives:m_primitiveType indexType:m_indexType indexBuffer:indexBuffer indexBufferOffset:0 indirectBuffer:indirectBuffer indirectBufferOffset:indirectBufferOffset];
         } else if (useIndirectCall != RenderPassEncoder::IndexCall::Skip) {
             auto checkedAddition = checkedSum<size_t>(indexBufferOffsetInBytes, indexCountTimesSizeInBytes);
-            if (!checkedAddition.hasOverflowed() && checkedAddition.value() <= indexBuffer.length && !m_makeSubmitInvalid)
+            if (!checkedAddition.hasOverflowed() && checkedAddition.value() <= indexBuffer.length && !m_makeSubmitInvalid && indexCount && instanceCount)
                 [icbCommand drawIndexedPrimitives:m_primitiveType indexCount:indexCount indexType:m_indexType indexBuffer:indexBuffer indexBufferOffset:indexBufferOffsetInBytes instanceCount:instanceCount baseVertex:baseVertex baseInstance:firstInstance];
         }
     } else {
@@ -743,9 +743,11 @@ RenderBundleEncoder::FinalizeRenderCommand RenderBundleEncoder::drawIndexed(uint
         if (!runIndexBufferValidation(firstInstance, instanceCount))
             return finalizeRenderCommand();
 
-        if (!indexCount || !instanceCount || !indexBuffer || m_indexBuffer->isDestroyed())
+        if (!indexBuffer || m_indexBuffer->isDestroyed())
             return finalizeRenderCommand();
 
+        // A draw with a zero index or instance count still has to be validated, so record it like
+        // any other draw and skip only the encoded command when it is replayed.
         recordCommand([indexCount, instanceCount, firstIndex, baseVertex, firstInstance, protectedThis = protect(*this)] {
             protectedThis->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
             return true;

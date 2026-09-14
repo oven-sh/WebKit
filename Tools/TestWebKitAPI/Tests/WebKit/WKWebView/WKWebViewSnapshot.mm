@@ -1039,6 +1039,46 @@ TEST(WKWebView, RemoteSnapshotWithContentsRect)
 
     TestWebKitAPI::Util::run(&isDone);
 }
+
+TEST(WKWebView, RemoteSnapshotSVGImageClipping)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    enableRemoteSnapshotting(configuration.get());
+
+    CGFloat viewWidth = 200;
+    CGFloat viewHeight = 200;
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, viewWidth, viewHeight) configuration:configuration.get()]);
+
+    [webView synchronouslyLoadHTMLString:@"<style> body { margin: 0; } </style><body><img src=\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><rect width='100%' height='100%' fill='green'/></svg>\"></body>"];
+
+    RetainPtr snapshotConfiguration = adoptNS([[WKSnapshotConfiguration alloc] init]);
+    [snapshotConfiguration setRect:NSMakeRect(0, 0, viewWidth, viewHeight)];
+    [snapshotConfiguration setSnapshotWidth:@(viewWidth)];
+
+    isDone = false;
+    [webView takeSnapshotWithConfiguration:snapshotConfiguration.get() completionHandler:^(Util::PlatformImage *snapshotImage, NSError *error) {
+        EXPECT_NULL(error);
+
+        EXPECT_EQ(viewWidth, snapshotImage.size.width);
+
+        auto cgImage = Util::convertToCGImage(snapshotImage);
+        RetainPtr colorSpace = adoptCF(CGColorSpaceCreateDeviceRGB());
+
+        uint8_t *rgba = (unsigned char *)calloc(viewWidth * viewHeight * 4, sizeof(unsigned char));
+        RetainPtr context = adoptCF(CGBitmapContextCreate(rgba, viewWidth, viewHeight, 8, 4 * viewWidth, colorSpace.get(), static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) | static_cast<uint32_t>(kCGBitmapByteOrder32Big)));
+        CGContextDrawImage(context.get(), CGRectMake(0, 0, viewWidth, viewHeight), cgImage.get());
+
+        NSInteger pixelIndex = getPixelIndex(50, 50, viewWidth);
+        EXPECT_EQ(0, rgba[pixelIndex]);
+        EXPECT_EQ(128, rgba[pixelIndex + 1]);
+        EXPECT_EQ(0, rgba[pixelIndex + 2]);
+
+        free(rgba);
+        isDone = true;
+    }];
+
+    TestWebKitAPI::Util::run(&isDone);
+}
 #endif
 
 } // namespace TestWebKitAPI

@@ -226,7 +226,7 @@ const gchar* const* webkit_file_chooser_request_get_mime_types(WebKitFileChooser
         String mimeTypeString = webMimeType->string();
         if (mimeTypeString.isEmpty())
             continue;
-        g_ptr_array_add(request->priv->mimeTypes.get(), g_strdup(mimeTypeString.utf8().data()));
+        g_ptr_array_add(request->priv->mimeTypes.get(), g_strdup(mimeTypeString.utf8().legacyCStringPointer()));
     }
     g_ptr_array_add(request->priv->mimeTypes.get(), 0);
 
@@ -273,7 +273,7 @@ GtkFileFilter* webkit_file_chooser_request_get_mime_types_filter(WebKitFileChoos
         String mimeTypeString = webMimeType->string();
         if (mimeTypeString.isEmpty())
             continue;
-        gtk_file_filter_add_mime_type(request->priv->filter.get(), mimeTypeString.utf8().data());
+        gtk_file_filter_add_mime_type(request->priv->filter.get(), mimeTypeString.utf8().legacyCStringPointer());
     }
 
     return request->priv->filter.get();
@@ -367,8 +367,8 @@ const gchar* const* webkit_file_chooser_request_get_selected_files(WebKitFileCho
         RefPtr webFileName = downcast<API::String>(selectedFileNames->at(i));
         if (webFileName->stringView().isEmpty())
             continue;
-        CString filename = FileSystem::fileSystemRepresentation(webFileName->string());
-        g_ptr_array_add(request->priv->selectedFiles.get(), g_strdup(filename.data()));
+        auto filename = FileSystem::fileSystemRepresentation(webFileName->string());
+        g_ptr_array_add(request->priv->selectedFiles.get(), g_strdup(filename.legacyCStringPointer()));
     }
     g_ptr_array_add(request->priv->selectedFiles.get(), 0);
 

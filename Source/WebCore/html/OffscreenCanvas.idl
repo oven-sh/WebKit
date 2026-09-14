@@ -69,8 +69,7 @@ typedef (Element or CanvasElementImage) CanvasElementImageSource;
     [EnabledBySetting=HTMLInCanvasEnabled, RaisesException] DOMMatrix getElementTransform(CanvasElementImageSource source, DOMMatrix drawTransform);
 
     [CallWith=CurrentGlobalObject] OffscreenRenderingContext? getContext(OffscreenRenderingContextType contextType, any... arguments);
-    // FIXME: `transferToImageBitmap` should not return a nullable type.
-    ImageBitmap? transferToImageBitmap();
+    ImageBitmap transferToImageBitmap();
     Promise<Blob> convertToBlob(optional ImageEncodeOptions options = {});
 
     // FIXME: Add support for `oncontextlost`.

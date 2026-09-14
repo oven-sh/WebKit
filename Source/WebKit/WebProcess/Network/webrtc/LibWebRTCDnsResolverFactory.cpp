@@ -38,7 +38,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCDnsResolverFactory);
 
 std::unique_ptr<webrtc::AsyncDnsResolverInterface> LibWebRTCDnsResolverFactory::CreateAndResolve(const webrtc::SocketAddress& address, absl::AnyInvocable<void()> callback)
 {
-    auto resolver = protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver();
+    auto resolver = protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver(m_contextIdentifier);
     resolver->start(address, [callback = WTF::move(callback)] () mutable {
         callback();
     });
@@ -47,7 +47,7 @@ std::unique_ptr<webrtc::AsyncDnsResolverInterface> LibWebRTCDnsResolverFactory::
 
 std::unique_ptr<webrtc::AsyncDnsResolverInterface> LibWebRTCDnsResolverFactory::CreateAndResolve(const webrtc::SocketAddress& address, int /* family */, absl::AnyInvocable<void()> callback)
 {
-    auto resolver = protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver();
+    auto resolver = protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver(m_contextIdentifier);
     // FIXME: Make use of family.
     resolver->start(address, [callback = WTF::move(callback)] () mutable {
         callback();
@@ -57,7 +57,7 @@ std::unique_ptr<webrtc::AsyncDnsResolverInterface> LibWebRTCDnsResolverFactory::
 
 std::unique_ptr<webrtc::AsyncDnsResolverInterface> LibWebRTCDnsResolverFactory::Create()
 {
-    return protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver();
+    return protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver(m_contextIdentifier);
 }
 
 void LibWebRTCDnsResolverFactory::Resolver::Start(const webrtc::SocketAddress& address, absl::AnyInvocable<void()> callback)

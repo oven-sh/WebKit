@@ -40,6 +40,7 @@
 #import <wtf/text/StringHash.h>
 
 OBJC_CLASS NSURLRequest;
+OBJC_CLASS HTTPServerBridge;
 
 namespace TestWebKitAPI {
 
@@ -120,6 +121,7 @@ private:
 
     Ref<RequestData> m_requestData;
     RetainPtr<nw_listener_t> m_listener;
+    RetainPtr<HTTPServerBridge> m_serverBridge;
     Protocol m_protocol { Protocol::Http };
 } SWIFT_NAME(__CxxHTTPServer);
 

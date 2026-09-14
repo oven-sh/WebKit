@@ -40,6 +40,7 @@
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
 #include "GPUConnectionToWebProcess.h"
+#include "RemoteVideoFrameObjectHeap.h"
 #include <WebCore/MediaPlayer.h>
 #include <WebCore/VideoFrame.h>
 #endif
@@ -69,12 +70,19 @@ static void keepAliveUntilSubmittedWorkDone(WebCore::WebGPU::Queue& backing, Ref
 #endif
 }
 
-RemoteQueue::RemoteQueue(WebCore::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
+RemoteQueue::RemoteQueue([[maybe_unused]] GPUConnectionToWebProcess& gpuConnectionToWebProcess, WebCore::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(queue)
     , m_objectHeap(objectHeap)
     , m_streamConnection(WTF::move(streamConnection))
     , m_gpu(gpu)
     , m_identifier(identifier)
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+    // A frame shipped across by RemoteQueueProxy is usually a reference into the video frame object
+    // heap rather than pixels, because a media player hosted in this process hands the web process a
+    // proxy. Reading one needs the heap it names, exactly as RemoteDevice needs it to import an
+    // external texture, and the web process' identity attributes any buffer read out of shared memory.
+    , m_sharedVideoFrameReader(&gpuConnectionToWebProcess.videoFrameObjectHeap(), gpuConnectionToWebProcess.webProcessIdentity())
+#endif
 {
     protect(m_streamConnection)->startReceivingMessages(*this, Messages::RemoteQueue::messageReceiverName(), m_identifier.toUInt64());
 }

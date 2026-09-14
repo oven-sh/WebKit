@@ -32,7 +32,7 @@
 
 namespace JSC { namespace Profiler {
 
-CompiledBytecode::CompiledBytecode(const OriginStack& origin, const CString& description)
+CompiledBytecode::CompiledBytecode(const OriginStack& origin, const UTF8CString& description)
     : m_origin(origin)
     , m_description(description)
 {

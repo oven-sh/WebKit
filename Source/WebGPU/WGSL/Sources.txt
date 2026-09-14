@@ -30,6 +30,7 @@ CompilationScope.cpp
 ConstantValue.cpp
 Constraints.cpp
 EntryPointRewriter.cpp
+EvaluationOrderRewriter.cpp
 GlobalSorting.cpp
 GlobalVariableRewriter.cpp
 IOValidator.cpp

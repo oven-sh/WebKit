@@ -1207,6 +1207,8 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/ProcessingInstruction.idl
     dom/ProgressEvent.idl
     dom/PromiseRejectionEvent.idl
+    dom/QuotaExceededError.idl
+    dom/QuotaExceededErrorOptions.idl
     dom/Range.idl
     dom/ReducerCallback.idl
     dom/RequestAnimationFrameCallback.idl
@@ -1837,6 +1839,7 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/WebGPU/GPUDeviceDescriptor.idl
     Modules/WebGPU/GPUDeviceLostInfo.idl
     Modules/WebGPU/GPUDeviceLostReason.idl
+    Modules/WebGPU/GPUError.idl
     Modules/WebGPU/GPUErrorFilter.idl
     Modules/WebGPU/GPUExtent3DDict.idl
     Modules/WebGPU/GPUExternalTexture.idl
@@ -2574,7 +2577,9 @@ if (USE_LIBWEBRTC)
         "${WEBCORE_DIR}/platform/libwebrtc"
         "${WEBCORE_DIR}/platform/mediastream/libwebrtc"
     )
-    list(APPEND WebCore_LIBRARIES webrtc)
+    if (NOT APPLE)
+        list(APPEND WebCore_LIBRARIES webrtc)
+    endif ()
     list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
         "platform/SourcesLibWebRTC.txt"
     )
@@ -3318,6 +3323,18 @@ endif ()
 set_target_properties(WebCore PROPERTIES LINKER_LANGUAGE CXX)
 
 if (APPLE)
+    if (USE_LIBWEBRTC)
+        target_link_options(WebCore PRIVATE
+            "LINKER:-weak_library,$<TARGET_FILE:webrtc>")
+        add_dependencies(WebCore webrtc)
+    endif ()
+
+    if (TARGET ANGLE-shared)
+        # ANGLE arrives through the ANGLE::* interface targets, so override the
+        # link feature rather than the link itself.
+        set_property(TARGET WebCore PROPERTY LINK_LIBRARY_OVERRIDE_ANGLE-shared WEAK_LIBRARY)
+    endif ()
+
     # Use target_link_options with LINKER: so CMake translates these for
     # whichever linker driver is used (clang or swiftc).
     target_link_options(WebCore PRIVATE
@@ -3371,6 +3388,14 @@ if (ENABLE_WEBCORE_TEST_SUPPORT)
 
     WEBKIT_LIBRARY(WebCoreTestSupport)
     set_target_properties(WebCoreTestSupport PROPERTIES LINKER_LANGUAGE CXX)
+
+    if (APPLE AND USE_LIBWEBRTC)
+        # testing/MockLibWebRTCPeerConnection.cpp subclasses webrtc interfaces, so
+        # whoever links this library resolves those symbols from libwebrtc.dylib.
+        target_link_options(WebCoreTestSupport INTERFACE
+            "LINKER:-weak_library,$<TARGET_FILE:webrtc>")
+        add_dependencies(WebCoreTestSupport webrtc)
+    endif ()
 endif ()
 
 if (${WebCore_LIBRARY_TYPE} MATCHES "SHARED")

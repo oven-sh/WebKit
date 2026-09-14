@@ -517,6 +517,13 @@ CONSTANT_FUNCTION(Add)
     }
 
     return constantBinaryOperation<Constraints::Number>(arguments, [&]<typename T>(T left, T right) -> ConstantResult {
+        if constexpr (std::is_same_v<T, int64_t>) {
+            // i32 and u32 wrap on overflow, but AbstractInt has no width to wrap to.
+            T result;
+            if (__builtin_add_overflow(left, right, &result)) [[unlikely]]
+                return makeUnexpected("addition overflow"_s);
+            return { { result } };
+        }
         auto result = static_cast<T>(left + right);
         if constexpr (std::is_floating_point_v<T> || std::is_same_v<T, half>) {
             if (!std::isfinite(static_cast<double>(result)))
@@ -547,6 +554,13 @@ CONSTANT_FUNCTION(Minus)
     }
 
     return constantBinaryOperation<Constraints::Number>(arguments, [&]<typename T>(T left, T right) -> ConstantResult {
+        if constexpr (std::is_same_v<T, int64_t>) {
+            // i32 and u32 wrap on overflow, but AbstractInt has no width to wrap to.
+            T result;
+            if (__builtin_sub_overflow(left, right, &result)) [[unlikely]]
+                return makeUnexpected("subtraction overflow"_s);
+            return { { result } };
+        }
         auto result = static_cast<T>(left - right);
         if constexpr (std::is_floating_point_v<T> || std::is_same_v<T, half>) {
             if (!std::isfinite(static_cast<double>(result)))
@@ -628,6 +642,13 @@ CONSTANT_FUNCTION(Multiply)
     }
 
     return constantBinaryOperation<Constraints::Number>(arguments, [&]<typename T>(T left, T right) -> ConstantResult {
+        if constexpr (std::is_same_v<T, int64_t>) {
+            // i32 and u32 wrap on overflow, but AbstractInt has no width to wrap to.
+            T result;
+            if (__builtin_mul_overflow(left, right, &result)) [[unlikely]]
+                return makeUnexpected("multiply overflow"_s);
+            return { { result } };
+        }
         auto result = static_cast<T>(left * right);
         if constexpr (std::is_floating_point_v<T> || std::is_same_v<T, half>) {
             if (!std::isfinite(static_cast<double>(result)))
@@ -724,8 +745,19 @@ CONSTANT_FUNCTION(BitwiseShiftLeft)
     ASSERT(arguments.size() == 2);
     const auto& shift = [&]<typename T>(T left, uint32_t right) -> ConstantResult {
         constexpr auto bitSize = sizeof(T) * 8;
-        if (right >= bitSize)
-            return makeUnexpected(makeString("shift left value must be less than the bit width of the shifted value, which is "_s, bitSize));
+        if constexpr (std::is_same_v<T, int64_t>) {
+            // https://www.w3.org/TR/WGSL/#bit-expr
+            // An abstract-int shift left is defined as e1 * 2^e2, so the only rule is that the
+            // result has to be representable. Zero shifted by any amount at all is still zero.
+            if (right >= bitSize) {
+                if (left)
+                    return makeUnexpected("shift left overflows"_s);
+                return { left };
+            }
+        } else {
+            if (right >= bitSize)
+                return makeUnexpected(makeString("shift left value must be less than the bit width of the shifted value, which is "_s, bitSize));
+        }
 
         if constexpr (std::is_unsigned_v<T>) {
             uint64_t mask = -1ull << (bitSize - right);
@@ -967,10 +999,30 @@ CONSTANT_FUNCTION(Cross)
         auto v1 = std::get<T>(rhs.elements[1]);
         auto v2 = std::get<T>(rhs.elements[2]);
 
+        // Each product has to be representable in T on its own, so it is rounded back to T before
+        // being subtracted: half arithmetic promotes to float, which would otherwise hide a product
+        // that overflows f16 behind a difference that does not.
+        auto product = [](T left, T right) -> std::optional<T> {
+            auto result = static_cast<T>(left * right);
+            if (!std::isfinite(static_cast<double>(result)))
+                return std::nullopt;
+            return result;
+        };
+
+        std::array<std::optional<T>, 6> products {
+            product(u1, v2), product(u2, v1),
+            product(u2, v0), product(u0, v2),
+            product(u0, v1), product(u1, v0),
+        };
+        for (auto& value : products) {
+            if (!value) [[unlikely]]
+                return makeUnexpected("cross overflow"_s);
+        }
+
         ConstantVector result(3);
-        result.elements[0] = static_cast<T>(u1 * v2 - u2 * v1);
-        result.elements[1] = static_cast<T>(u2 * v0 - u0 * v2);
-        result.elements[2] = static_cast<T>(u0 * v1 - u1 * v0);
+        result.elements[0] = static_cast<T>(*products[0] - *products[1]);
+        result.elements[1] = static_cast<T>(*products[2] - *products[3]);
+        result.elements[2] = static_cast<T>(*products[4] - *products[5]);
         return { { result } };
     };
 
@@ -1107,6 +1159,18 @@ CONSTANT_FUNCTION(Length)
 UNARY_OPERATION(Exp, Float, WRAP_STD(exp));
 UNARY_OPERATION(Exp2, Float, WRAP_STD(exp2));
 
+// https://www.w3.org/TR/WGSL/#extractBits-builtin
+// https://www.w3.org/TR/WGSL/#insertBits-builtin
+// offset + count must be at most the bit width of the operand. The sum is taken in 64 bits so that
+// two in-range u32 values cannot wrap past the limit.
+static std::optional<String> validateBitOffsetAndCount(uint64_t offset, uint64_t count)
+{
+    constexpr uint64_t bitWidth = 32;
+    if (offset + count > bitWidth)
+        return { makeString("the sum of offset ("_s, String::number(offset), ") and count ("_s, String::number(count), ") must be at most the bit width of the operand, which is "_s, String::number(bitWidth)) };
+    return std::nullopt;
+}
+
 CONSTANT_FUNCTION(ExtractBits)
 {
     // We can't use a TERNARY_OPERATION here since the arguments might not all have the same type
@@ -1115,6 +1179,8 @@ CONSTANT_FUNCTION(ExtractBits)
     ASSERT(arguments.size() == 3);
     auto offset = std::get<uint32_t>(arguments[1]);
     auto count = std::get<uint32_t>(arguments[2]);
+    if (auto error = validateBitOffsetAndCount(offset, count)) [[unlikely]]
+        return makeUnexpected(*error);
 
     const auto& extractBits = [&]<typename T>(T e) {
         constexpr unsigned w = 32;
@@ -1244,6 +1310,9 @@ CONSTANT_FUNCTION(Frexp)
 CONSTANT_FUNCTION(InsertBits)
 {
     UNUSED_PARAM(resultType);
+    if (auto error = validateBitOffsetAndCount(std::get<uint32_t>(arguments[2]), std::get<uint32_t>(arguments[3]))) [[unlikely]]
+        return makeUnexpected(*error);
+
     return scalarOrVector([&](auto eValue, auto newbitsValue, auto offset, auto count) -> ConstantValue {
         constexpr unsigned w = 32;
         unsigned o = std::min(std::get<uint32_t>(offset), w);
@@ -1315,7 +1384,24 @@ UNARY_OPERATION(Log, Float, WRAP_STD(log))
 UNARY_OPERATION(Log2, Float, WRAP_STD(log2))
 BINARY_OPERATION(Max, Number, WRAP_STD(max))
 BINARY_OPERATION(Min, Number, WRAP_STD(min))
-TERNARY_OPERATION(Mix, Number, [&]<typename T>(T e1, T e2, T e3) -> T { return  e1 * (1 - e3) + e2 * e3; })
+TERNARY_OPERATION(Mix, Number, [&]<typename T>(T e1, T e2, T e3) -> ConstantResult {
+    // https://www.w3.org/TR/WGSL/#mix-builtin
+    // Every step of e1 * (1 - e3) + e2 * e3 has to be representable in T, so the steps are taken
+    // one at a time and rounded back to T: written as a single expression, half arithmetic
+    // promotes to float and an intermediate that overflows f16 would go unnoticed.
+    auto oneMinusE3 = static_cast<T>(1 - e3);
+    auto scaledE1 = static_cast<T>(e1 * oneMinusE3);
+    auto scaledE2 = static_cast<T>(e2 * e3);
+    auto result = static_cast<T>(scaledE1 + scaledE2);
+    if constexpr (std::is_floating_point_v<T> || std::is_same_v<T, half>) {
+        auto isFinite = [](T value) {
+            return std::isfinite(static_cast<double>(value));
+        };
+        if (!isFinite(oneMinusE3) || !isFinite(scaledE1) || !isFinite(scaledE2) || !isFinite(result))
+            return makeUnexpected("mix overflow"_s);
+    }
+    return { { result } };
+})
 
 CONSTANT_FUNCTION(Modf)
 {
@@ -2055,6 +2141,47 @@ VALIDATION_FUNCTION(BitwiseShiftRight)
     if (shiftAmountExceedsBitWidth(arguments[0], arguments[1]))
         return { "shift right value must be less than the bit width of the shifted value, which is 32"_s };
     return std::nullopt;
+}
+
+// Only checked when both the offset and the count are known: as const-expressions that is a
+// shader-creation error handled by constantExtractBits/constantInsertBits, and as
+// override-expressions the same call is validated again with the override values substituted in at
+// pipeline creation.
+static std::optional<String> validateBitOffsetAndCount(const std::optional<ConstantValue>& offset, const std::optional<ConstantValue>& count)
+{
+    if (!offset || !count)
+        return std::nullopt;
+    return validateBitOffsetAndCount(static_cast<uint64_t>(offset->integerValue()), static_cast<uint64_t>(count->integerValue()));
+}
+
+VALIDATION_FUNCTION(ExtractBits)
+{
+    UNUSED_PARAM(parameterTypes);
+    return validateBitOffsetAndCount(arguments[1], arguments[2]);
+}
+
+VALIDATION_FUNCTION(InsertBits)
+{
+    UNUSED_PARAM(parameterTypes);
+    return validateBitOffsetAndCount(arguments[2], arguments[3]);
+}
+
+// https://www.w3.org/TR/WGSL/#workgroupUniformLoad-builtin
+// The pointee has to be a concrete plain type with a fixed footprint and no atomics in it, which is
+// exactly what constructible means. A pointer straight at an atomic is the other overload of this
+// builtin, and is allowed.
+VALIDATION_FUNCTION(WorkgroupUniformLoad)
+{
+    UNUSED_PARAM(arguments);
+    auto* pointer = std::get_if<Types::Pointer>(parameterTypes[0]);
+    if (!pointer)
+        return std::nullopt;
+
+    auto* element = pointer->element;
+    if (std::holds_alternative<Types::Atomic>(*element) || element->isConstructible())
+        return std::nullopt;
+
+    return { makeString("the type of the argument to 'workgroupUniformLoad' must be constructible, but '"_s, *element, "' is not"_s) };
 }
 
 // https://www.w3.org/TR/WGSL/#subgroupShuffle-builtin

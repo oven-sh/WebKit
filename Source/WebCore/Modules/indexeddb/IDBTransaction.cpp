@@ -59,6 +59,7 @@
 #include "WorkerOrWorkletScriptController.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -89,7 +90,7 @@ IDBTransaction::IDBTransaction(IDBDatabase& database, const IDBTransactionInfo& 
     , m_currentlyCompletingRequest(request)
 
 {
-    LOG(IndexedDB, "IDBTransaction::IDBTransaction - %s", m_info.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBTransaction::IDBTransaction - "_s << m_info.loggingString());
     ASSERT(canCurrentThreadAccessThreadLocalData(m_database->originThread()));
 
     ++numberOfIDBTransactions;
@@ -223,7 +224,7 @@ void IDBTransaction::abortInternal()
     ASSERT(canCurrentThreadAccessThreadLocalData(m_database->originThread()));
     ASSERT(!isFinishedOrFinishing());
     if (isVersionChange())
-        RELEASE_LOG(IndexedDB, "IDBTransaction::abortInternal: version change transaction %" PUBLIC_LOG_STRING, info().identifier().loggingString().utf8().data());
+        RELEASE_LOG(IndexedDB, "IDBTransaction::abortInternal: version change transaction %" PUBLIC_LOG_STRING, info().identifier().loggingString().utf8().legacyCStringPointer());
 
     m_database->willAbortTransaction(*this);
 
@@ -258,7 +259,7 @@ void IDBTransaction::abortInternal()
     
     m_abortQueue.swap(m_pendingTransactionOperationQueue);
 
-    LOG(IndexedDBOperations, "IDB abort-on-server operation: Transaction %s", info().identifier().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB abort-on-server operation: Transaction "_s << info().identifier().loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, nullptr, [protectedThis = Ref { *this }] (auto& operation) {
         protectedThis->abortOnServerAndCancelRequests(operation);
     }));
@@ -322,7 +323,7 @@ bool IDBTransaction::virtualHasPendingActivity() const
 
 void IDBTransaction::stop()
 {
-    LOG(IndexedDB, "IDBTransaction::stop - %s", m_info.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBTransaction::stop - "_s << m_info.loggingString());
     ASSERT(canCurrentThreadAccessThreadLocalData(m_database->originThread()));
 
     // IDBDatabase::stop() calls IDBTransaction::stop() for each of its active transactions.
@@ -481,12 +482,12 @@ void IDBTransaction::commitInternal()
     ASSERT(canCurrentThreadAccessThreadLocalData(m_database->originThread()));
     ASSERT(!isFinishedOrFinishing());
     if (isVersionChange())
-        RELEASE_LOG(IndexedDB, "IDBTransaction::commitInternal: version change transaction %" PUBLIC_LOG_STRING, info().identifier().loggingString().utf8().data());
+        RELEASE_LOG(IndexedDB, "IDBTransaction::commitInternal: version change transaction %" PUBLIC_LOG_STRING, info().identifier().loggingString().utf8().legacyCStringPointer());
 
     transitionedToFinishing(IndexedDB::TransactionState::Committing);
     m_database->willCommitTransaction(*this);
 
-    LOG(IndexedDBOperations, "IDB commit operation: Transaction %s", info().identifier().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB commit operation: Transaction "_s << info().identifier().loggingString());
 
     uint64_t handledRequestResultsCount = m_handledRequestResultsCount;
     if (m_currentlyCompletingRequest && m_currentlyCompletingRequest->isEventBeingDispatched())
@@ -677,7 +678,7 @@ Ref<IDBObjectStore> IDBTransaction::createObjectStore(const IDBObjectStoreInfo& 
     Ref objectStoreRef { objectStore.get() };
     m_referencedObjectStores.set(info.name(), objectStore.moveToUniquePtr());
 
-    LOG(IndexedDBOperations, "IDB create object store operation: %s", info.condensedLoggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB create object store operation: "_s << info.condensedLoggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, [protectedThis = Ref { *this }] (const auto& result) {
         protectedThis->didCreateObjectStoreOnServer(result);
     }, [protectedThis = Ref { *this }, info = info.isolatedCopy()] (auto& operation) {
@@ -719,7 +720,7 @@ void IDBTransaction::renameObjectStore(IDBObjectStore& objectStore, const String
 
     auto objectStoreIdentifier = objectStore.info().identifier();
 
-    LOG(IndexedDBOperations, "IDB rename object store operation: %s to %s", objectStore.info().condensedLoggingString().utf8().data(), newName.utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB rename object store operation: "_s << objectStore.info().condensedLoggingString() << " to "_s << newName);
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, [protectedThis = Ref { *this }] (const auto& result) {
         protectedThis->didRenameObjectStoreOnServer(result);
     }, [protectedThis = Ref { *this }, objectStoreIdentifier, newName = newName.isolatedCopy()] (auto& operation) {
@@ -754,7 +755,7 @@ std::unique_ptr<IDBIndex> IDBTransaction::createIndex(IDBObjectStore& objectStor
     if (!scriptExecutionContext())
         return nullptr;
 
-    LOG(IndexedDBOperations, "IDB create index operation: %s under object store %s", info.condensedLoggingString().utf8().data(), objectStore.info().condensedLoggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB create index operation: "_s << info.condensedLoggingString() << " under object store "_s << objectStore.info().condensedLoggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, [protectedThis = Ref { *this }] (const auto& result) {
         protectedThis->didCreateIndexOnServer(result);
     }, [protectedThis = Ref { *this }, info = info.isolatedCopy()] (auto& operation) {
@@ -809,7 +810,7 @@ void IDBTransaction::renameIndex(IDBIndex& index, const String& newName)
     auto objectStoreIdentifier = index.objectStore().info().identifier();
     auto indexIdentifier = index.info().identifier();
 
-    LOG(IndexedDBOperations, "IDB rename index operation: %s to %s under object store %" PRIu64, index.info().condensedLoggingString().utf8().data(), newName.utf8().data(), objectStoreIdentifier.toUInt64());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB rename index operation: "_s << index.info().condensedLoggingString() << " to "_s << newName << " under object store "_s << objectStoreIdentifier.toUInt64());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, [protectedThis = Ref { *this }] (const auto& result) {
         protectedThis->didRenameIndexOnServer(result);
     }, [protectedThis = Ref { *this }, objectStoreIdentifier, indexIdentifier, newName = newName.isolatedCopy()] (auto& operation) {
@@ -864,7 +865,7 @@ Ref<IDBRequest> IDBTransaction::doRequestOpenCursor(Ref<IDBCursor>&& cursor)
     addRequest(request.get());
     addCursorRequest(request.get());
 
-    LOG(IndexedDBOperations, "IDB open cursor operation: %s", cursor->info().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB open cursor operation: "_s << cursor->info().loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didOpenCursorOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, info = cursor->info().isolatedCopy()] (auto& operation) {
@@ -900,7 +901,7 @@ void IDBTransaction::iterateCursor(IDBCursor& cursor, const IDBIterateCursorData
 
     addRequest(*request);
 
-    LOG(IndexedDBOperations, "IDB iterate cursor operation: %s %s", cursor.info().loggingString().utf8().data(), data.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB iterate cursor operation: "_s << cursor.info().loggingString() << " "_s << data.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, *request, [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didIterateCursorOnServer(*request, result);
     }, [protectedThis = Ref { *this }, data = data.isolatedCopy()] (auto& operation) {
@@ -952,7 +953,7 @@ Ref<IDBRequest> IDBTransaction::requestGetAllObjectStoreRecords(IDBObjectStore& 
 
     IDBGetAllRecordsData getAllRecordsData { keyRangeData, getAllType, count, cursorDirection, objectStore.info().identifier() };
 
-    LOG(IndexedDBOperations, "IDB get all object store records operation: %s", getAllRecordsData.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB get all object store records operation: "_s << getAllRecordsData.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didGetAllRecordsOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, getAllRecordsData = WTF::move(getAllRecordsData).isolatedCopy()] (auto& operation) {
@@ -973,7 +974,7 @@ Ref<IDBRequest> IDBTransaction::requestGetAllIndexRecords(IDBIndex& index, const
 
     IDBGetAllRecordsData getAllRecordsData { keyRangeData, getAllType, count, cursorDirection, index.objectStore().info().identifier(), index.info().identifier() };
 
-    LOG(IndexedDBOperations, "IDB get all index records operation: %s", getAllRecordsData.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB get all index records operation: "_s << getAllRecordsData.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didGetAllRecordsOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, getAllRecordsData = WTF::move(getAllRecordsData).isolatedCopy()] (auto& operation) {
@@ -1031,7 +1032,7 @@ Ref<IDBRequest> IDBTransaction::requestGetRecord(IDBObjectStore& objectStore, co
     auto request = IDBRequest::createObjectStoreGet(*protect(scriptExecutionContext()), objectStore, type, *this);
     addRequest(request.get());
 
-    LOG(IndexedDBOperations, "IDB get record operation: %s %s", objectStore.info().condensedLoggingString().utf8().data(), getRecordData.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB get record operation: "_s << objectStore.info().condensedLoggingString() << " "_s << getRecordData.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didGetRecordOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, getRecordData = getRecordData.isolatedCopy()] (auto& operation) {
@@ -1069,7 +1070,7 @@ Ref<IDBRequest> IDBTransaction::requestIndexRecord(IDBIndex& index, IndexedDB::I
 
     IDBGetRecordData getRecordData = { range, IDBGetRecordDataType::KeyAndValue };
 
-    LOG(IndexedDBOperations, "IDB get index record operation: %s %s", index.info().condensedLoggingString().utf8().data(), getRecordData.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB get index record operation: "_s << index.info().condensedLoggingString() << " "_s << getRecordData.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didGetRecordOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, getRecordData = getRecordData.isolatedCopy()] (auto& operation) {
@@ -1130,7 +1131,7 @@ Ref<IDBRequest> IDBTransaction::requestCount(IDBObjectStore& objectStore, const 
     auto request = IDBRequest::create(*protect(scriptExecutionContext()), objectStore, *this);
     addRequest(request.get());
 
-    LOG(IndexedDBOperations, "IDB object store count operation: %s, range %s", objectStore.info().condensedLoggingString().utf8().data(), range.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB object store count operation: "_s << objectStore.info().condensedLoggingString() << ", range "_s << range.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didGetCountOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, range = range.isolatedCopy()] (auto& operation) {
@@ -1150,7 +1151,7 @@ Ref<IDBRequest> IDBTransaction::requestCount(IDBIndex& index, const IDBKeyRangeD
     auto request = IDBRequest::create(*protect(scriptExecutionContext()), index, *this);
     addRequest(request.get());
 
-    LOG(IndexedDBOperations, "IDB index count operation: %s, range %s", index.info().condensedLoggingString().utf8().data(), range.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB index count operation: "_s << index.info().condensedLoggingString() << ", range "_s << range.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didGetCountOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, range = range.isolatedCopy()] (auto& operation) {
@@ -1187,7 +1188,7 @@ Ref<IDBRequest> IDBTransaction::requestDeleteRecord(IDBObjectStore& objectStore,
     auto request = IDBRequest::create(*protect(scriptExecutionContext()), objectStore, *this);
     addRequest(request.get());
 
-    LOG(IndexedDBOperations, "IDB delete record operation: %s, range %s", objectStore.info().condensedLoggingString().utf8().data(), range.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB delete record operation: "_s << objectStore.info().condensedLoggingString() << ", range "_s << range.loggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didDeleteRecordOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, range = range.isolatedCopy()] (auto& operation) {
@@ -1224,7 +1225,7 @@ Ref<IDBRequest> IDBTransaction::requestClearObjectStore(IDBObjectStore& objectSt
 
     auto objectStoreIdentifier = objectStore.info().identifier();
 
-    LOG(IndexedDBOperations, "IDB clear object store operation: %s", objectStore.info().condensedLoggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB clear object store operation: "_s << objectStore.info().condensedLoggingString());
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didClearObjectStoreOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, objectStoreIdentifier] (auto& operation) {
@@ -1262,7 +1263,7 @@ Ref<IDBRequest> IDBTransaction::requestPutOrAdd(IDBObjectStore& objectStore, Ref
     auto request = IDBRequest::create(*protect(scriptExecutionContext()), objectStore, *this);
     addRequest(request.get());
 
-    LOG(IndexedDBOperations, "IDB putOrAdd operation: %s key: %s", objectStore.info().condensedLoggingString().utf8().data(), key ? key->loggingString().utf8().data() : "<null key>");
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB putOrAdd operation: "_s << objectStore.info().condensedLoggingString() << " key: "_s << (key ? key->loggingString() : "<null key>"_s));
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, request.get(), [protectedThis = Ref { *this }, request] (const auto& result) {
         protectedThis->didPutOrAddOnServer(request.get(), result);
     }, [protectedThis = Ref { *this }, key = WTF::move(key), value = Ref { value }, overwriteMode, objectStoreInfo = objectStore.info()] (auto& operation) mutable {
@@ -1369,7 +1370,7 @@ void IDBTransaction::deleteObjectStore(const String& objectStoreName)
         m_deletedObjectStores.set(identifier, WTF::move(objectStore));
     }
 
-    LOG(IndexedDBOperations, "IDB delete object store operation: %s", objectStoreName.utf8().data());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB delete object store operation: "_s << objectStoreName);
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, [protectedThis = Ref { *this }] (const auto& result) {
         protectedThis->didDeleteObjectStoreOnServer(result);
     }, [protectedThis = Ref { *this }, objectStoreName = objectStoreName.isolatedCopy()] (auto& operation) {
@@ -1399,7 +1400,7 @@ void IDBTransaction::deleteIndex(IDBObjectStoreIdentifier objectStoreIdentifier,
     ASSERT(canCurrentThreadAccessThreadLocalData(m_database->originThread()));
     ASSERT(isVersionChange());
 
-    LOG(IndexedDBOperations, "IDB delete index operation: %s (%" PRIu64 ")", indexName.utf8().data(), objectStoreIdentifier.toUInt64());
+    LOG_WITH_STREAM(IndexedDBOperations, stream << "IDB delete index operation: "_s << indexName << " ("_s << objectStoreIdentifier.toUInt64() << ")"_s);
     scheduleOperation(IDBClient::TransactionOperationImpl::create(*this, [protectedThis = Ref { *this }] (const auto& result) {
         protectedThis->didDeleteIndexOnServer(result);
     }, [protectedThis = Ref { *this }, objectStoreIdentifier, indexName = indexName.isolatedCopy()] (auto& operation) {
@@ -1478,7 +1479,7 @@ void IDBTransaction::deactivate()
 
 void IDBTransaction::connectionClosedFromServer(const IDBError& error)
 {
-    LOG(IndexedDB, "IDBTransaction::connectionClosedFromServer - %s", error.message().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBTransaction::connectionClosedFromServer - "_s << error.message());
 
     m_database->willAbortTransaction(*this);
     transitionedToFinishing(IndexedDB::TransactionState::Aborting);

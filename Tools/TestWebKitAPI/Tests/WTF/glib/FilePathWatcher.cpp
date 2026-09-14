@@ -117,7 +117,7 @@ TEST(WTF_FilePathWatcher, FiresOnSymlinkSwap)
     String targetB = writeAndReturnPath(dir.path(), "tz-b", std::span<const uint8_t> { });
     GUniquePtr<char> linkPath(g_build_filename(dir.path(), "localtime", nullptr));
 
-    if (symlink(targetA.utf8().data(), linkPath.get()) < 0)
+    if (symlink(targetA.utf8().legacyCStringPointer(), linkPath.get()) < 0)
         GTEST_SKIP() << "symlink() unavailable on this filesystem";
 
     bool fired = false;
@@ -127,7 +127,7 @@ TEST(WTF_FilePathWatcher, FiresOnSymlinkSwap)
     EXPECT_TRUE(watcher.isActive());
 
     g_unlink(linkPath.get());
-    ASSERT_EQ(symlink(targetB.utf8().data(), linkPath.get()), 0);
+    ASSERT_EQ(symlink(targetB.utf8().legacyCStringPointer(), linkPath.get()), 0);
 
     EXPECT_TRUE(runMainLoopUntil([&] {
         return fired;

@@ -63,7 +63,7 @@ void PlatformPasteboard::getTypes(Vector<String>& types) const
     wpe_pasteboard_get_types(m_pasteboard, &pasteboardTypes);
     for (auto& typeString : unsafeMakeSpan(pasteboardTypes.strings, pasteboardTypes.length)) {
         const auto length = std::min(static_cast<size_t>(typeString.length), std::numeric_limits<size_t>::max());
-        types.append(String(unsafeMakeSpan(typeString.data, length)));
+        types.append(String::fromLatin1(unsafeMakeSpan(typeString.data, length)));
     }
 
     wpe_pasteboard_string_vector_free(&pasteboardTypes);
@@ -72,12 +72,12 @@ void PlatformPasteboard::getTypes(Vector<String>& types) const
 String PlatformPasteboard::readString(size_t, const String& type) const
 {
     struct wpe_pasteboard_string string = { nullptr, 0 };
-    wpe_pasteboard_get_string(m_pasteboard, type.utf8().data(), &string);
+    wpe_pasteboard_get_string(m_pasteboard, type.utf8().legacyCStringPointer(), &string);
     if (!string.length)
         return String();
 
     const auto length = std::min(static_cast<size_t>(string.length), std::numeric_limits<size_t>::max());
-    String returnValue(unsafeMakeSpan(string.data, length));
+    String returnValue = String::fromLatin1(unsafeMakeSpan(string.data, length));
 
     wpe_pasteboard_string_free(&string);
     return returnValue;
@@ -88,8 +88,8 @@ void PlatformPasteboard::write(const PasteboardWebContent& content)
     static constexpr auto plainText = "text/plain;charset=utf-8"_s;
     static constexpr auto htmlText = "text/html"_s;
 
-    CString textString = content.text.utf8();
-    CString markupString = content.markup.utf8();
+    auto textString = content.text.utf8();
+    auto markupString = content.markup.utf8();
 
     IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
     std::array<struct wpe_pasteboard_string_pair, 2> pairs = { {
@@ -97,9 +97,9 @@ void PlatformPasteboard::write(const PasteboardWebContent& content)
         { { nullptr, 0 }, { nullptr, 0 } },
     } };
     wpe_pasteboard_string_initialize(&pairs[0].type, plainText, strlen(plainText));
-    wpe_pasteboard_string_initialize(&pairs[0].string, textString.data(), textString.length());
+    wpe_pasteboard_string_initialize(&pairs[0].string, textString.legacyCStringPointer(), textString.length());
     wpe_pasteboard_string_initialize(&pairs[1].type, htmlText, strlen(htmlText));
-    wpe_pasteboard_string_initialize(&pairs[1].string, markupString.data(), markupString.length());
+    wpe_pasteboard_string_initialize(&pairs[1].string, markupString.legacyCStringPointer(), markupString.length());
     struct wpe_pasteboard_string_map map = { pairs.data(), pairs.size() };
     IGNORE_CLANG_WARNINGS_END
 
@@ -120,8 +120,8 @@ void PlatformPasteboard::write(const String& type, const String& string)
 
     auto typeUTF8 = type.utf8();
     auto stringUTF8 = string.utf8();
-    wpe_pasteboard_string_initialize(&pairs[0].type, typeUTF8.data(), typeUTF8.length());
-    wpe_pasteboard_string_initialize(&pairs[0].string, stringUTF8.data(), stringUTF8.length());
+    wpe_pasteboard_string_initialize(&pairs[0].type, typeUTF8.legacyCStringPointer(), typeUTF8.length());
+    wpe_pasteboard_string_initialize(&pairs[0].string, stringUTF8.legacyCStringPointer(), stringUTF8.length());
     struct wpe_pasteboard_string_map map = { pairs, 1 };
 
     wpe_pasteboard_write(m_pasteboard, &map);

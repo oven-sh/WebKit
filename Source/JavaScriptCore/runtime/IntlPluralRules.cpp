@@ -145,7 +145,7 @@ void IntlPluralRules::initializePluralRules(JSGlobalObject* globalObject, JSValu
     StringView skeletonView { skeletonBuilder };
     auto upconverted = skeletonView.upconvertedCharacters();
 
-    m_numberFormatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), locale.data(), &status));
+    m_numberFormatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), locale.legacyCStringPointer(), &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize PluralRules"_s);
         return;
@@ -153,7 +153,7 @@ void IntlPluralRules::initializePluralRules(JSGlobalObject* globalObject, JSValu
 
     vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberFormatterSize);
 
-    m_numberRangeFormatter = std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter>(unumrf_openForSkeletonWithCollapseAndIdentityFallback(upconverted.get(), skeletonView.length(), UNUM_RANGE_COLLAPSE_NONE, UNUM_IDENTITY_FALLBACK_RANGE, locale.data(), nullptr, &status));
+    m_numberRangeFormatter = std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter>(unumrf_openForSkeletonWithCollapseAndIdentityFallback(upconverted.get(), skeletonView.length(), UNUM_RANGE_COLLAPSE_NONE, UNUM_IDENTITY_FALLBACK_RANGE, locale.legacyCStringPointer(), nullptr, &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize PluralRules"_s);
         return;
@@ -161,7 +161,7 @@ void IntlPluralRules::initializePluralRules(JSGlobalObject* globalObject, JSValu
 
     vm.heap.reportExtraMemoryAllocated(this, estimatedUNumberRangeFormatterSize);
 
-    m_pluralRules = std::unique_ptr<UPluralRules, UPluralRulesDeleter>(uplrules_openForType(locale.data(), m_type == Type::Ordinal ? UPLURAL_TYPE_ORDINAL : UPLURAL_TYPE_CARDINAL, &status));
+    m_pluralRules = std::unique_ptr<UPluralRules, UPluralRulesDeleter>(uplrules_openForType(locale.legacyCStringPointer(), m_type == Type::Ordinal ? UPLURAL_TYPE_ORDINAL : UPLURAL_TYPE_CARDINAL, &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize PluralRules"_s);
         return;
@@ -219,7 +219,7 @@ JSObject* IntlPluralRules::resolvedOptions(JSGlobalObject* globalObject) const
     unsigned index = 0;
     while (const char* result = uenum_next(keywords.get(), &resultLength, &status)) {
         ASSERT(U_SUCCESS(status));
-        categoriesSet.add(String(unsafeMakeSpan(result, static_cast<size_t>(resultLength))));
+        categoriesSet.add(String::fromLatin1(unsafeMakeSpan(result, static_cast<size_t>(resultLength))));
     }
 
     // 4. Let pluralCategories be a List of Strings containing all possible results of PluralRuleSelect for the selected locale pr.[[Locale]],

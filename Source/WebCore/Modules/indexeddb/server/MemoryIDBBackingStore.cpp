@@ -38,6 +38,7 @@
 #include "MemoryObjectStore.h"
 #include "MemoryObjectStoreCursor.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -103,7 +104,7 @@ IDBError MemoryIDBBackingStore::beginTransaction(const IDBTransactionInfo& info)
 
 IDBError MemoryIDBBackingStore::abortTransaction(const IDBResourceIdentifier& transactionIdentifier)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::abortTransaction - %s", transactionIdentifier.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIDBBackingStore::abortTransaction - "_s << transactionIdentifier.loggingString());
 
     auto transaction = m_transactions.take(transactionIdentifier);
     if (!transaction)
@@ -116,7 +117,7 @@ IDBError MemoryIDBBackingStore::abortTransaction(const IDBResourceIdentifier& tr
 
 IDBError MemoryIDBBackingStore::commitTransaction(const IDBResourceIdentifier& transactionIdentifier)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::commitTransaction - %s", transactionIdentifier.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIDBBackingStore::commitTransaction - "_s << transactionIdentifier.loggingString());
 
     auto transaction = m_transactions.take(transactionIdentifier);
     if (!transaction)
@@ -129,7 +130,7 @@ IDBError MemoryIDBBackingStore::commitTransaction(const IDBResourceIdentifier& t
 
 IDBError MemoryIDBBackingStore::createObjectStore(const IDBResourceIdentifier& transactionIdentifier, const IDBObjectStoreInfo& info)
 {
-    LOG(IndexedDB, "MemoryIDBBackingStore::createObjectStore - adding OS %s with ID %" PRIu64, info.name().utf8().data(), info.identifier().toUInt64());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIDBBackingStore::createObjectStore - adding OS "_s << info.name() << " with ID "_s << info.identifier().toUInt64());
 
     ASSERT(m_databaseInfo);
     if (m_databaseInfo->hasObjectStore(info.name()))

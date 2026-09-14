@@ -111,12 +111,10 @@ public:
     static void applyHighlightValueColor(BuilderState&, CSSValue&);
 
     // Custom handling of value setting only.
-    static void applyValueWebkitLocale(BuilderState&, CSSValue&);
     static void applyValueTextOrientation(BuilderState&, CSSValue&);
     static void applyValueWebkitTextSizeAdjust(BuilderState&, CSSValue&);
     static void applyValueWebkitTextZoom(BuilderState&, CSSValue&);
     static void applyValueWritingMode(BuilderState&, CSSValue&);
-    static void applyValueFontSizeAdjust(BuilderState&, CSSValue&);
 
 private:
     static void resetUsedZoom(BuilderState&);
@@ -242,10 +240,10 @@ void maybeUpdateFontForLetterSpacingOrWordSpacing(BuilderState& builderState, CS
 {
     // This is unfortunate. It's related to https://github.com/w3c/csswg-drafts/issues/5498.
     //
-    // From StyleBuilder's point of view, there's a dependency cycle:
+    // From Style::Builder's point of view, there's a dependency cycle:
     // letter-spacing accepts an arbitrary <length>, which must be resolved against a font, which must
     // be selected after all the properties that affect font selection are processed, but letter-spacing
-    // itself affects font selection because it can disable font features. StyleBuilder has some (valid)
+    // itself affects font selection because it can disable font features. Style::Builder has some (valid)
     // ASSERT()s which would fire because of this cycle.
     //
     // There isn't *actually* a dependency cycle, though, as none of the font-relative units are
@@ -379,11 +377,6 @@ inline void BuilderCustom::applyValueLineHeight(BuilderState& builderState, CSSV
 
     builderState.style().setTextAutosizingAdjustedLineHeight(WTF::move(textAutosizingAdjustedLineHeight));
     builderState.style().setLineHeight(WTF::move(lineHeight));
-}
-
-inline void BuilderCustom::applyValueWebkitLocale(BuilderState& builderState, CSSValue& value)
-{
-    builderState.setFontDescriptionSpecifiedLocale(toStyleFromCSSValue<WebkitLocale>(builderState, value));
 }
 
 inline void BuilderCustom::applyValueWritingMode(BuilderState& builderState, CSSValue& value)

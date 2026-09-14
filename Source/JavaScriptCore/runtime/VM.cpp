@@ -476,7 +476,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         else
             pathOut.print("/tmp/");
         pathOut.print("JSCProfile-", getCurrentProcessID(), "-", m_perBytecodeProfiler->databaseID(), ".json");
-        static NeverDestroyed<CString> pathOutString = pathOut.toCString();
+        static NeverDestroyed<UTF8CString> pathOutString = pathOut.toUTF8CString();
 
 #if PLATFORM(COCOA)
         static std::once_flag registerFlag;
@@ -489,7 +489,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             int token;
             notify_register_dispatch(key, &token, mainDispatchQueueSingleton(), ^(int) {
                 dataLogLn("<BYTECODE.STAT><", pid, "> Dumping");
-                if (!m_perBytecodeProfiler->save(pathOutString->data()))
+                if (!m_perBytecodeProfiler->save(pathOutString->legacyCStringPointer()))
                     dataLogLn("<BYTECODE.STAT><", pid, "> Failed to dump to ", pathOutString.get(), ". Do you need to add a sandbox extension? ((allow file-write* (subpath \"/private/tmp/\")) in WebProcess.sb.in");
                 else
                     dataLogLn("<BYTECODE.STAT><", pid, "> Dumped to ", pathOutString.get());
@@ -499,7 +499,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
         if (Options::dumpProfilerDataAtExit()) [[unlikely]]
-            m_perBytecodeProfiler->registerToSaveAtExit(pathOutString->data());
+            m_perBytecodeProfiler->registerToSaveAtExit(pathOutString->legacyCStringPointer());
     }
 
     // Initialize this last, as a free way of asserting that VM initialization itself
@@ -1693,7 +1693,7 @@ void VM::verifyExceptionCheckNeedIsSatisfied(unsigned recursionDepth, ExceptionE
         out.println("Unchecked exception detected at:");
         out.println(StackTracePrinter { *currentTrace, "    " });
 
-        dataLog(out.toCString());
+        dataLog(out.toUTF8CString());
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("exception check validation failed");
     }
 }

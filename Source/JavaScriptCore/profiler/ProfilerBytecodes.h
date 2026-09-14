@@ -39,8 +39,8 @@ public:
     ~Bytecodes();
     
     size_t id() const { return m_id; }
-    const CString& inferredName() const LIFETIME_BOUND { return m_inferredName; }
-    const CString& sourceCode() const LIFETIME_BOUND { return m_sourceCode; }
+    const UTF8CString& inferredName() const LIFETIME_BOUND { return m_inferredName; }
+    const UTF8CString& sourceCode() const LIFETIME_BOUND { return m_sourceCode; }
     unsigned instructionCount() const { return m_instructionCount; }
     CodeBlockHash hash() const { return m_hash; }
 
@@ -50,8 +50,8 @@ public:
     
 private:
     size_t m_id;
-    CString m_inferredName;
-    CString m_sourceCode;
+    UTF8CString m_inferredName;
+    UTF8CString m_sourceCode;
     CodeBlockHash m_hash;
     unsigned m_instructionCount;
 };

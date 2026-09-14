@@ -1582,7 +1582,7 @@ URLParser::URLParser(URL& result, String&& input, const URL& base, const URLText
 template<typename CharacterType>
 void URLParser::parse(std::span<const CharacterType> input, const URL& base, const URLTextEncoding* nonUTF8QueryEncoding)
 {
-    URL_PARSER_LOG("Parsing URL <%s> base <%s>", String(input).utf8().data(), base.string().utf8().data());
+    URL_PARSER_LOG("Parsing URL <%s> base <%s>", String(input).utf8().legacyCStringPointer(), base.string().utf8().legacyCStringPointer());
     ASSERT(!m_url.isValid() && m_url.m_string.isNull());
     ASSERT(m_asciiBuffer.isEmpty());
 
@@ -1639,7 +1639,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         Fragment,
     };
 
-#define LOG_STATE(x) URL_PARSER_LOG("State %s, code point %c, parsed data <%s> size %zu", x, *c, parsedDataView(0, currentPosition(c)).utf8().data(), currentPosition(c))
+#define LOG_STATE(x) URL_PARSER_LOG("State %s, code point %c, parsed data <%s> size %zu", x, *c, parsedDataView(0, currentPosition(c)).utf8().legacyCStringPointer(), currentPosition(c))
 #define LOG_FINAL_STATE(x) URL_PARSER_LOG("Final State: %s", x)
 
     State state = State::SchemeStart;
@@ -2902,7 +2902,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     } else
         m_url.m_string = String::adopt(WTF::move(m_asciiBuffer));
     m_url.m_isValid = true;
-    URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8().data());
+    URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8().legacyCStringPointer());
 }
 
 template<typename CharacterType>
@@ -3990,7 +3990,7 @@ bool URLParser::allValuesEqual(const URL& a, const URL& b)
         a.m_pathAfterLastSlash,
         a.m_pathEnd,
         a.m_queryEnd,
-        a.m_string.utf8().data(),
+        a.m_string.utf8().legacyCStringPointer(),
         b.m_isValid,
         b.m_hasOpaquePath,
         b.m_protocolIsInHTTPFamily,
@@ -4003,7 +4003,7 @@ bool URLParser::allValuesEqual(const URL& a, const URL& b)
         b.m_pathAfterLastSlash,
         b.m_pathEnd,
         b.m_queryEnd,
-        b.m_string.utf8().data());
+        b.m_string.utf8().legacyCStringPointer());
 
     return a.m_string == b.m_string
         && a.m_isValid == b.m_isValid

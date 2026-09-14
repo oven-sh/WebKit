@@ -94,7 +94,7 @@ bool WebSocketExtensionDispatcher::processHeaderValue(const String& headerValue)
         return false;
     }
 
-    const CString headerValueData = headerValue.utf8();
+    const auto headerValueData = headerValue.utf8();
     // FIXME: Is UTF-8 the encoding that WebSocketExtensionParser expects? It doesn't specify.
     WebSocketExtensionParser parser(byteCast<uint8_t>(headerValueData.span()));
     while (!parser.finished()) {

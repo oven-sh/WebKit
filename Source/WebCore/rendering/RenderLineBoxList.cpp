@@ -124,7 +124,7 @@ void RenderLineBoxList::shiftLinesBy(LayoutUnit shiftX, LayoutUnit shiftY)
 
 void RenderLineBoxList::dirtyLineFromChangedChild(RenderBoxModelObject& container)
 {
-    ASSERT(is<RenderInline>(container) || is<RenderBlockFlow>(container));
+    ASSERT(is<RenderSVGInline>(container) || is<RenderBlockFlow>(container));
     if (!container.isSVGRenderer())
         return;
 

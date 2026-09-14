@@ -64,9 +64,8 @@ extension WTF.String {
         // string for the duration that we're using it to construct the WTF::String.
         // The WTF::String will take a copy.
         self = unsafe string.utf8CString.span.withUnsafeBufferPointer { ptr in
-            // Warning here is rdar://163018821
             // swift-format-ignore: NeverForceUnwrap
-            let cppspan = unsafe SpanConstChar(ptr.baseAddress!, string.utf8CString.count)
+            let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: string.utf8CString.count))
             return unsafe WTF.String.fromUTF8(cppspan)
         }
     }

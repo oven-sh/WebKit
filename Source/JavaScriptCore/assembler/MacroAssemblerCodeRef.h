@@ -53,7 +53,7 @@ class MacroAssemblerCodeRefBase {
 protected:
     static bool tryToDisassemble(CodePtr<DisassemblyPtrTag>, size_t, const char* prefix, PrintStream& out);
     static bool tryToDisassemble(CodePtr<DisassemblyPtrTag>, size_t, const char* prefix);
-    JS_EXPORT_PRIVATE static CString disassembly(CodePtr<DisassemblyPtrTag>, size_t);
+    JS_EXPORT_PRIVATE static UTF8CString disassembly(CodePtr<DisassemblyPtrTag>, size_t);
 };
 
 template<PtrTag tag>
@@ -133,7 +133,7 @@ public:
         return tryToDisassemble(retaggedCode<DisassemblyPtrTag>(), size(), prefix);
     }
     
-    CString disassembly() const
+    UTF8CString disassembly() const
     {
         return MacroAssemblerCodeRefBase::disassembly(retaggedCode<DisassemblyPtrTag>(), size());
     }

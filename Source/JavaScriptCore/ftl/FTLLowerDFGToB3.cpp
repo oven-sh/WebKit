@@ -225,7 +225,7 @@ public:
 
         CString name;
         if (verboseCompilationEnabled()) {
-            name = toCString(
+            name = toUTF8CString(
                 "jsBody_", ++compileCounter, "_", codeBlock()->inferredName(),
                 "_", codeBlock()->hash());
         } else
@@ -28175,7 +28175,7 @@ IGNORE_CLANG_WARNINGS_END
             if (Options::validateFTLOSRExitLiveness()) [[unlikely]] {
                 if (m_graph.m_plan.mode() != JITCompilationMode::FTLForOSREntry) {
                     if (availability.isDead() && m_graph.isLiveInBytecode(operand, exitOrigin))
-                        DFG_CRASH(m_graph, m_node, toCString("Live bytecode local not available: operand = ", operand, ", availability = ", availability, ", origin = ", exitOrigin).data());
+                        DFG_CRASH(m_graph, m_node, toUTF8CString("Live bytecode local not available: operand = ", operand, ", availability = ", availability, ", origin = ", exitOrigin).legacyCStringPointer());
                 }
             }
             ExitValue exitValue = exitValueForAvailability(arguments, map, availability);
@@ -28189,7 +28189,7 @@ IGNORE_CLANG_WARNINGS_END
             Node* node = heapPair.key.base();
             ExitTimeObjectMaterialization* materialization = map.get(node);
             if (!materialization)
-                DFG_CRASH(m_graph, m_node, toCString("Could not find materialization for ", node, " in ", availabilityMap).data());
+                DFG_CRASH(m_graph, m_node, toUTF8CString("Could not find materialization for ", node, " in ", availabilityMap).legacyCStringPointer());
 
             ExitValue exitValue = exitValueForAvailability(arguments, map, heapPair.value);
             if (exitValue.hasIndexInStackmapLocations())
@@ -28304,7 +28304,7 @@ IGNORE_CLANG_WARNINGS_END
         if (isValid(value))
             return exitArgument(arguments, DataFormatStorage, value.value());
 
-        DFG_CRASH(m_graph, m_node, toCString("Cannot find value for node: ", node).data());
+        DFG_CRASH(m_graph, m_node, toUTF8CString("Cannot find value for node: ", node).legacyCStringPointer());
         return ExitValue::dead();
     }
 
@@ -28343,7 +28343,7 @@ IGNORE_CLANG_WARNINGS_END
             return exitArgument(arguments, DataFormatJS, boxBoolean(value.value()));
 
         // Doubles and Int52 have been converted by ValueRep()
-        DFG_CRASH(m_graph, m_node, toCString("Cannot find value for node: ", node).data());
+        DFG_CRASH(m_graph, m_node, toUTF8CString("Cannot find value for node: ", node).legacyCStringPointer());
     }
 
     void setInt32(Node* node, LValue value)

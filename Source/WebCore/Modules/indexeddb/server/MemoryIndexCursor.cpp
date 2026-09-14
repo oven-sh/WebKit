@@ -34,6 +34,7 @@
 #include "MemoryIndex.h"
 #include "MemoryObjectStore.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -49,7 +50,7 @@ MemoryIndexCursor::MemoryIndexCursor(MemoryIndex& index, const IDBCursorInfo& cu
     : MemoryCursor(cursorInfo, transaction)
     , m_index(index)
 {
-    LOG(IndexedDB, "MemoryIndexCursor::MemoryIndexCursor %s", cursorInfo.range().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIndexCursor::MemoryIndexCursor "_s << cursorInfo.range().loggingString());
 
     CheckedPtr valueStore = index.valueStore();
     if (!valueStore)
@@ -88,7 +89,7 @@ void MemoryIndexCursor::currentData(IDBGetResult& getResult)
 
 void MemoryIndexCursor::iterate(const IDBKeyData& key, const IDBKeyData& primaryKey, uint32_t count, IDBGetResult& getResult)
 {
-    LOG(IndexedDB, "MemoryIndexCursor::iterate to key %s, %u count", key.loggingString().utf8().data(), count);
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryIndexCursor::iterate to key "_s << key.loggingString() << ", "_s << count << " count"_s);
 
 #if ASSERT_ENABLED
     if (primaryKey.isValid())

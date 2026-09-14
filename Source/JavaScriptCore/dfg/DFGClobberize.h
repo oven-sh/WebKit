@@ -2796,7 +2796,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         return;
     }
     
-    DFG_CRASH(graph, node, toCString("Unrecognized node type: ", Graph::opName(node->op())).data());
+    DFG_CRASH(graph, node, toUTF8CString("Unrecognized node type: ", Graph::opName(node->op())).legacyCStringPointer());
 }
 
 class NoOpClobberize {

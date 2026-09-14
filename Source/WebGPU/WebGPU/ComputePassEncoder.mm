@@ -347,15 +347,41 @@ void ComputePassEncoder::endPass()
     }
     m_passEnded = true;
 
-    RETURN_IF_FINISHED();
+    // https://gpuweb.github.io/gpuweb/#dom-gpucomputepassencoder-end
+    // A pass begun while the command encoder was already locked by another pass never took the
+    // encoder over. Ending it is a validation error the page can catch, not a silent no-op.
+    if (m_encoderStateWasNotOpen) {
+        protect(m_device)->generateAValidationError([NSString stringWithFormat:@"%s: failed as the command encoder was not open when the pass began", __PRETTY_FUNCTION__]);
+        return;
+    }
 
     auto parentEncoder = m_parentEncoder;
 
+    // Spelled out rather than RETURN_IF_FINISHED() because ending a pass hands the command encoder
+    // back and only then looks at whether the pass ended in a good state, so every path from here
+    // unlocks the encoder. A pass that ended badly invalidates its encoder instead of leaving it
+    // locked: a later pass can still be begun on an invalid encoder.
+    if (!parentEncoder->isLocked() || parentEncoder->isFinished()) {
+        protect(m_device)->generateAValidationError([NSString stringWithFormat:@"%s: failed as encoding has finished", __PRETTY_FUNCTION__]);
+        m_computeCommandEncoder = nil;
+        return;
+    }
+
     auto passIsValid = isValid();
     if (m_debugGroupStackSize || !passIsValid) {
-        parentEncoder->endEncoding(m_computeCommandEncoder);
+        // An already-invalidated pass has handed its command encoder back already.
+        if (m_computeCommandEncoder)
+            parentEncoder->endEncoding(m_computeCommandEncoder);
         m_computeCommandEncoder = nil;
+        parentEncoder->lock(false);
         parentEncoder->makeInvalid([NSString stringWithFormat:@"ComputePassEncoder.endPass failure, m_debugGroupStackSize = %llu, isValid = %d, error = %@", m_debugGroupStackSize, passIsValid, m_lastErrorString]);
+        return;
+    }
+
+    if (!parentEncoder->isValid() || !parentEncoder->encoderIsCurrent(m_computeCommandEncoder)) {
+        m_computeCommandEncoder = nil;
+        parentEncoder->lock(false);
+        parentEncoder->makeInvalid(@"ComputePassEncoder.endPass: the pass no longer holds the command encoder");
         return;
     }
 

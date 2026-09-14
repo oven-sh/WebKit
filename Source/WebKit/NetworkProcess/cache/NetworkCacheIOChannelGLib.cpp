@@ -39,7 +39,7 @@ namespace NetworkCache {
 IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue::QOS> qos)
 {
     auto path = FileSystem::fileSystemRepresentation(filePath);
-    GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.data()));
+    GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.legacyCStringPointer()));
 
     Locker locker { m_lock };
     switch (type) {

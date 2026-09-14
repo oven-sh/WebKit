@@ -43,7 +43,7 @@ public:
 
     void advance()
     {
-        if (is<RenderInline>(*m_iterator))
+        if (m_iterator->isInlineBox())
             m_iterator.traverseNext();
         else
             m_iterator.traverseNextSkippingChildren();

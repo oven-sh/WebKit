@@ -1295,6 +1295,26 @@ template<typename T> requires (std::is_pointer_v<T>) inline T safePrintfType(T a
     dataLogF(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__))) \
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+// WTFLogAlways() and the other WTF_ATTRIBUTE_NSSTRING functions accept %@ as well as the printf
+// conversions, and vprintf_stderr_common() routes a format containing %@ through
+// CFStringCreateWithFormatAndArguments(). An Objective-C object argument therefore has to arrive
+// unchanged: safePrintfType()'s NSString* overload would turn it into a const char*, handing
+// CoreFoundation a char pointer where it expects an object.
+#ifdef __OBJC__
+template<typename T> concept ObjectiveCObjectPointer = std::convertible_to<T, id>;
+#else
+template<typename T> concept ObjectiveCObjectPointer = false;
+#endif
+
+template<ObjectiveCObjectPointer T> inline T safeNSStringPrintfType(T argument) { return argument; }
+template<typename T> requires (!ObjectiveCObjectPointer<std::decay_t<T>>)
+inline decltype(auto) safeNSStringPrintfType(T&& argument) { return safePrintfType(std::forward<T>(argument)); }
+
+#define SAFE_NSSTRING_PRINTF_TYPE(...) WTF_FOR_EACH(WTF::safeNSStringPrintfType, __VA_ARGS__)
+
+#define SAFE_WTFLOGALWAYS(format, ...) \
+    WTFLogAlways(format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
 template<typename T>
 concept NonConstByteType = CanBeConstByteType<T> && !std::is_const_v<T>;
 

@@ -221,7 +221,7 @@ void testX86LeaAddShlLeftScale1()
                 return strstr(disassembly, "lea (%rdi,%rsi,1), %rax")
                     || strstr(disassembly, "lea (%rsi,%rdi,1), %rax");
             },
-            "Expected to find something like lea (%rdi,%rsi,1), %rax but didn't!");
+            "Expected to find something like lea (%rdi,%rsi,1), %rax but didn't!"_s);
     }
 }
 

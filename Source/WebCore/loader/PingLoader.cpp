@@ -114,14 +114,12 @@ void PingLoader::loadImage(LocalFrame& frame, URL&& url)
 
     request.setHTTPHeaderField(HTTPHeaderName::CacheControl, HTTPHeaderValues::maxAge0());
 
-    HTTPHeaderMap originalRequestHeader = request.httpHeaderFields();
-
     String referrer = SecurityPolicy::generateReferrerHeader(document->referrerPolicy(), request.url(), frame.loader().outgoingReferrerURL(), OriginAccessPatternsForWebProcess::singleton());
     if (!referrer.isEmpty())
         request.setHTTPReferrer(referrer);
     frame.loader().updateRequestAndAddExtraFields(request, IsMainResource::No);
 
-    startPingLoad(frame, request, WTF::move(originalRequestHeader), ShouldFollowRedirects::Yes, ContentSecurityPolicyImposition::DoPolicyCheck, ReferrerPolicy::EmptyString);
+    startPingLoad(frame, request, ShouldFollowRedirects::Yes, ContentSecurityPolicyImposition::DoPolicyCheck, ReferrerPolicy::EmptyString);
 }
 
 // http://www.whatwg.org/specs/web-apps/current-work/multipage/links.html#hyperlink-auditing
@@ -151,8 +149,6 @@ void PingLoader::sendPing(LocalFrame& frame, URL&& sendPingURL, const URL& desti
     request.setHTTPBody(FormData::create("PING"_s));
     request.setHTTPHeaderField(HTTPHeaderName::CacheControl, HTTPHeaderValues::maxAge0());
 
-    HTTPHeaderMap originalRequestHeader = request.httpHeaderFields();
-
     Ref sourceOrigin = document->securityOrigin();
     FrameLoader::addHTTPOriginIfNeeded(request, SecurityPolicy::generateOriginHeader(document->referrerPolicy(), request.url(), sourceOrigin, OriginAccessPatternsForWebProcess::singleton()));
 
@@ -164,7 +160,7 @@ void PingLoader::sendPing(LocalFrame& frame, URL&& sendPingURL, const URL& desti
         request.setHTTPHeaderField(HTTPHeaderName::PingFrom, document->url().string());
     request.setHTTPHeaderField(HTTPHeaderName::PingTo, destinationURL.string());
 
-    startPingLoad(frame, request, WTF::move(originalRequestHeader), ShouldFollowRedirects::Yes, ContentSecurityPolicyImposition::DoPolicyCheck, ReferrerPolicy::NoReferrer);
+    startPingLoad(frame, request, ShouldFollowRedirects::Yes, ContentSecurityPolicyImposition::DoPolicyCheck, ReferrerPolicy::NoReferrer);
 }
 
 void PingLoader::sendViolationReport(LocalFrame& frame, URL&& violationReportURL, Ref<FormData>&& report, ViolationReportType reportType)
@@ -210,8 +206,6 @@ void PingLoader::sendViolationReport(LocalFrame& frame, URL&& violationReportURL
     if (removeCookies)
         request.setAllowCookies(false);
 
-    HTTPHeaderMap originalRequestHeader = request.httpHeaderFields();
-
     if (reportType == ViolationReportType::ContentSecurityPolicy)
         frame.loader().updateRequestAndAddExtraFields(request, IsMainResource::No);
 
@@ -219,10 +213,10 @@ void PingLoader::sendViolationReport(LocalFrame& frame, URL&& violationReportURL
     if (!referrer.isEmpty())
         request.setHTTPReferrer(referrer);
 
-    startPingLoad(frame, request, WTF::move(originalRequestHeader), ShouldFollowRedirects::No, ContentSecurityPolicyImposition::SkipPolicyCheck, ReferrerPolicy::EmptyString, reportType);
+    startPingLoad(frame, request, ShouldFollowRedirects::No, ContentSecurityPolicyImposition::SkipPolicyCheck, ReferrerPolicy::EmptyString, reportType);
 }
 
-void PingLoader::startPingLoad(LocalFrame& frame, ResourceRequest& request, HTTPHeaderMap&& originalRequestHeaders, ShouldFollowRedirects shouldFollowRedirects, ContentSecurityPolicyImposition policyCheck, ReferrerPolicy referrerPolicy, std::optional<ViolationReportType> violationReportType)
+void PingLoader::startPingLoad(LocalFrame& frame, ResourceRequest& request, ShouldFollowRedirects shouldFollowRedirects, ContentSecurityPolicyImposition policyCheck, ReferrerPolicy referrerPolicy, std::optional<ViolationReportType> violationReportType)
 {
     auto identifier = ResourceLoaderIdentifier::generate();
     // FIXME: Why activeDocumentLoader? I would have expected documentLoader().
@@ -246,22 +240,6 @@ void PingLoader::startPingLoad(LocalFrame& frame, ResourceRequest& request, HTTP
         options.mode = FetchOptions::Mode::Cors;
         options.serviceWorkersMode = ServiceWorkersMode::None;
         options.destination = FetchOptions::Destination::Report;
-    }
-
-    // FIXME: Deprecate the ping load code path.
-    if (platformStrategies()->loaderStrategy()->usePingLoad()) {
-        InspectorInstrumentation::willSendRequestOfType(&frame, identifier, protect(frame.loader().activeDocumentLoader()), request, Inspector::UncachedLoadType::Ping);
-
-        platformStrategies()->loaderStrategy()->startPingLoad(frame, request, WTF::move(originalRequestHeaders), options, policyCheck, [protectedFrame = Ref { frame }, identifier] (const ResourceError& error, const ResourceResponse& response) {
-            if (!response.isNull())
-                InspectorInstrumentation::didReceiveResourceResponse(protectedFrame, identifier, protect(protectedFrame->loader().activeDocumentLoader()), response, nullptr);
-            if (!error.isNull()) {
-                InspectorInstrumentation::didFailLoading(protectedFrame.ptr(), protect(protectedFrame->loader().activeDocumentLoader()), identifier, error);
-                return;
-            }
-            InspectorInstrumentation::didFinishLoading(protectedFrame.ptr(), protect(protectedFrame->loader().activeDocumentLoader()), identifier, { }, nullptr);
-        });
-        return;
     }
 
     CachedResourceRequest cachedResourceRequest { ResourceRequest { request }, options };

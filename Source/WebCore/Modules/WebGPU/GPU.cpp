@@ -61,6 +61,14 @@ struct GPU::PendingRequestAdapterArguments {
 
 void GPU::requestAdapter(const std::optional<GPURequestAdapterOptions>& options, RequestAdapterPromise&& promise)
 {
+    // https://gpuweb.github.io/gpuweb/#dom-gpu-requestadapter
+    // A feature level that is spelled out but is not one we recognize gets no adapter at all, rather
+    // than being treated as if it had been left out.
+    if (options && !options->featureLevel.isNull() && options->featureLevel != "core"_s && options->featureLevel != "compatibility"_s) {
+        promise.resolve(nullptr);
+        return;
+    }
+
     m_backing->requestAdapter(convertToBacking(options), [promise = WTF::move(promise)](RefPtr<WebGPU::Adapter>&& adapter) mutable {
         if (!adapter) {
             promise.resolve(nullptr);

@@ -4089,6 +4089,35 @@ private:
             if (tryAppendMultiplyWithExtend())
                 return;
 
+            auto tryAppendMultiplyNegOperand = [&] () -> bool {
+                // MNEG/FNMUL : d = (-n) * m or d = n * (-m).
+                Air::Opcode airOpcode = tryOpcodeForType(MultiplyNeg32, MultiplyNeg64, MultiplyNegDouble, MultiplyNegFloat, m_value->type());
+                if (!isValidForm(airOpcode, Arg::Tmp, Arg::Tmp, Arg::Tmp))
+                    return false;
+
+                Value* negated = nullptr;
+                Value* other = nullptr;
+                if (left->opcode() == Neg && canBeInternal(left)) {
+                    negated = left;
+                    other = right;
+                } else if (right->opcode() == Neg && canBeInternal(right)) {
+                    negated = right;
+                    other = left;
+                } else
+                    return false;
+
+                Value* negatedInput = negated->child(0);
+                if (m_locked.contains(negatedInput) || m_locked.contains(other))
+                    return false;
+
+                append(airOpcode, tmp(negatedInput), tmp(other), tmp(m_value));
+                commitInternal(negated);
+                return true;
+            };
+
+            if (tryAppendMultiplyNegOperand())
+                return;
+
             appendBinOp<Mul32, Mul64, MulDouble, MulFloat, Commutative>(left, right);
             return;
         }

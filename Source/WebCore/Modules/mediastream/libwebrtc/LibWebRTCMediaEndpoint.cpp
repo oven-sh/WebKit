@@ -206,7 +206,7 @@ void LibWebRTCMediaEndpoint::doSetLocalDescription(const RTCSessionDescription* 
     }
 
     webrtc::SdpParseError error;
-    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description->type()), description->sdp().utf8().data(), &error);
+    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description->type()), description->sdp().utf8().legacyCStringPointer(), &error);
 
     if (!sessionDescription) {
         protect(m_peerConnectionBackend)->setLocalDescriptionFailed(Exception { ExceptionCode::OperationError, fromStdString(error.description) });
@@ -227,7 +227,7 @@ void LibWebRTCMediaEndpoint::doSetRemoteDescription(const RTCSessionDescription&
     ASSERT(!m_isStopped);
 
     webrtc::SdpParseError error;
-    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description.type()), description.sdp().utf8().data(), &error);
+    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description.type()), description.sdp().utf8().legacyCStringPointer(), &error);
     if (!sessionDescription) {
         protect(m_peerConnectionBackend)->setRemoteDescriptionFailed(Exception { ExceptionCode::SyntaxError, fromStdString(error.description) });
         return;
@@ -254,7 +254,7 @@ bool LibWebRTCMediaEndpoint::addTrack(LibWebRTCRtpSenderBackend& sender, MediaSt
 
     std::vector<std::string> ids;
     for (auto& id : mediaStreamIds)
-        ids.push_back(id.utf8().data());
+        ids.push_back(id.utf8().legacyCStringPointer());
 
     auto newRTPSender = m_backend->AddTrack(WTF::move(rtcTrack), WTF::move(ids));
     if (!newRTPSender.ok())
@@ -414,7 +414,7 @@ std::pair<LibWebRTCRtpSenderBackend::Source, webrtc::scoped_refptr<webrtc::Media
     switch (track.privateTrack().type()) {
     case RealtimeMediaSource::Type::Audio: {
         Ref audioSource = RealtimeOutgoingAudioSource::create(track.privateTrack());
-        rtcTrack = m_peerConnectionFactory->CreateAudioTrack(track.id().utf8().data(), audioSource.ptr());
+        rtcTrack = m_peerConnectionFactory->CreateAudioTrack(track.id().utf8().legacyCStringPointer(), audioSource.ptr());
         source = WTF::move(audioSource);
         break;
     }
@@ -425,7 +425,7 @@ std::pair<LibWebRTCRtpSenderBackend::Source, webrtc::scoped_refptr<webrtc::Media
         if (context && context->settingsValues().peerConnectionVideoScalingAdaptationDisabled)
             videoSource->disableVideoScaling();
 
-        auto rtcVideoTrack = m_peerConnectionFactory->CreateVideoTrack(webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> (videoSource.ptr()), track.id().utf8().data());
+        auto rtcVideoTrack = m_peerConnectionFactory->CreateVideoTrack(webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> (videoSource.ptr()), track.id().utf8().legacyCStringPointer());
         rtcVideoTrack->set_content_hint(toWebRTCContentHint(track.privateTrack().contentHint()));
         rtcTrack = WTF::move(rtcVideoTrack);
         source = WTF::move(videoSource);
@@ -466,7 +466,7 @@ std::unique_ptr<RTCDataChannelHandler> LibWebRTCMediaEndpoint::createDataChannel
 {
     auto init = LibWebRTCDataChannelHandler::fromRTCDataChannelInit(options);
     // FIXME: Forward or log error  if there is one.
-    auto channel = m_backend->CreateDataChannelOrError(label.utf8().data(), &init);
+    auto channel = m_backend->CreateDataChannelOrError(label.utf8().legacyCStringPointer(), &init);
     return channel.ok() ? makeUnique<LibWebRTCDataChannelHandler>(channel.MoveValue()) : nullptr;
 }
 

@@ -804,7 +804,7 @@ void SlotVisitor::donateAndDrain(MonotonicTime timeout)
 
 void SlotVisitor::didRace(const VisitRaceKey& race)
 {
-    dataLogLnIf(Options::verboseVisitRace(), toCString("GC visit race: ", race));
+    dataLogLnIf(Options::verboseVisitRace(), toUTF8CString("GC visit race: ", race));
     
     Locker locker { heap()->m_raceMarkStackLock };
     JSCell* cell = race.cell();

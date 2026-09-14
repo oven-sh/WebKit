@@ -285,6 +285,7 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
     sources = angle_end2end_tests_sources + [ "angle_end2end_tests_main.cpp" ]
     if (angle_enable_cl) {
       sources += [ "capture_tests/CapturedTestCL.cpp" ]
+      configs += [ "$angle_root:opencl_no_pragma_messages" ]
     }
     libs = []
     defines = []
@@ -1612,6 +1613,12 @@ if (build_angle_deqp_tests && !is_fuchsia) {
 
   angle_deqp_source_set("angle_deqp_framework_common") {
     sources = deqp_framework_common_sources
+    if (is_win) {
+      sources += deqp_framework_common_win_sources
+    } else {
+      sources += deqp_framework_common_linux_sources
+    }
+
     public_configs = [ ":angle_deqp_framework_common_public_config" ]
     configs += [ ":angle_deqp_framework_common_private_config" ]
     public_deps = [

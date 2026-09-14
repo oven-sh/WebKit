@@ -109,6 +109,16 @@ void SVGDocumentExtensions::unpauseAnimations()
     m_areAnimationsPaused = false;
 }
 
+bool SVGDocumentExtensions::hasActiveSMILAnimations() const
+{
+    for (Ref container : m_timeContainers) {
+        auto& timeContainer = container->timeContainer();
+        if (timeContainer.isActive() && timeContainer.hasAnimations())
+            return true;
+    }
+    return false;
+}
+
 void SVGDocumentExtensions::dispatchLoadEventToOutermostSVGElements()
 {
     auto timeContainers = copyToVectorOf<Ref<SVGSVGElement>>(m_timeContainers);

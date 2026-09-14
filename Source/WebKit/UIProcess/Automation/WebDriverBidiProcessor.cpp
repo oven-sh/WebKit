@@ -28,6 +28,7 @@
 
 #include "AutomationBackendDispatchers.h"
 #include <optional>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(WEBDRIVER_BIDI)
 
@@ -83,8 +84,8 @@ void WebDriverBidiProcessor::processBidiMessage(const String& message)
         return;
     }
 
-    LOG(Automation, "[s:%s] processBidiMessage of length %d", session->sessionIdentifier().utf8().data(), message.length());
-    LOG(Automation, "%s", message.utf8().data());
+    LOG_WITH_STREAM(Automation, stream << "[s:"_s << session->sessionIdentifier() << "] processBidiMessage of length "_s << message.length());
+    LOG_WITH_STREAM(Automation, stream << message);
 
     m_backendDispatcher->dispatch(message);
 }
@@ -203,23 +204,23 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
         return;
     }
 
-    LOG(Automation, "[s:%s] sendBidiMessage of length %d", session->sessionIdentifier().utf8().data(), message.length());
-    LOG(Automation, "%s", message.utf8().data());
+    LOG_WITH_STREAM(Automation, stream << "[s:"_s << session->sessionIdentifier() << "] sendBidiMessage of length "_s << message.length());
+    LOG_WITH_STREAM(Automation, stream << message);
 
     auto msgValue = JSON::Object::parseJSON(message);
     if (!msgValue) {
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON: %s", session->sessionIdentifier().utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
         return;
     }
     auto msgObj = msgValue->asObject();
     if (!msgObj) {
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON object: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse message as JSON object: %s", session->sessionIdentifier().utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
         return;
     }
 
     if (auto internalErrorObj = msgObj->getObject("error"_s)) {
         if (auto codeField = internalErrorObj->getInteger("code"_s)) {
-            RELEASE_LOG(Automation, "[s:%s] sendBidiMessage converting internal error into BiDi error: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+            RELEASE_LOG(Automation, "[s:%s] sendBidiMessage converting internal error into BiDi error: %s", session->sessionIdentifier().utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
 
             auto bidiErrorObj = JSON::Object::create();
             bidiErrorObj->setString("type"_s, "error"_s);
@@ -243,7 +244,7 @@ void WebDriverBidiProcessor::sendBidiMessage(const String& message)
             return;
         }
         // FIXME should we forward some unknown error?
-        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse error code: %s", session->sessionIdentifier().utf8().data(), message.utf8().data());
+        RELEASE_LOG_ERROR(Automation, "[s:%s] sendBidiMessage failed to parse error code: %s", session->sessionIdentifier().utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
     } else if (msgObj->getInteger("id"_s))
         msgObj->setString("type"_s, "success"_s);
     else

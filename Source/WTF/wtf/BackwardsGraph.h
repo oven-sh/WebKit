@@ -147,7 +147,7 @@ public:
         return m_graph.numNodes() + 1;
     }
 
-    CString dump(Node node) const
+    UTF8CString dump(Node node) const
     {
         StringPrintStream out;
         if (!node)
@@ -156,7 +156,7 @@ public:
             out.print(Node::rootName());
         else
             out.print(m_graph.dump(node.node()));
-        return out.toCString();
+        return out.toUTF8CString();
     }
 
     void dump(PrintStream& out) const

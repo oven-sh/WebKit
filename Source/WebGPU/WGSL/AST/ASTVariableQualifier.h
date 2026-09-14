@@ -41,15 +41,22 @@ public:
     AddressSpace addressSpace() const { return m_addressSpace; }
     AccessMode accessMode() const { return m_accessMode; }
 
+    // True when the source spelled the access mode out rather than leaving it to the address
+    // space's default. Such a name has to resolve to the predeclared enumerant, so a
+    // module-scope declaration of the same name hides it and makes the qualifier invalid.
+    bool hasExplicitAccessMode() const { return m_hasExplicitAccessMode; }
+
 private:
-    VariableQualifier(SourceSpan span, AddressSpace addressSpace, AccessMode accessMode)
+    VariableQualifier(SourceSpan span, AddressSpace addressSpace, AccessMode accessMode, bool hasExplicitAccessMode = false)
         : Node(span)
         , m_addressSpace(addressSpace)
         , m_accessMode(accessMode)
+        , m_hasExplicitAccessMode(hasExplicitAccessMode)
     { }
 
     AddressSpace m_addressSpace;
     AccessMode m_accessMode;
+    bool m_hasExplicitAccessMode;
 };
 
 } // namespace WGSL::AST

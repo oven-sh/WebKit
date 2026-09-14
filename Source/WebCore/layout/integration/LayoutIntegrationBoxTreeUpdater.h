@@ -80,7 +80,6 @@ private:
     Layout::InitialContainingBlock& NODELETE initialContainingBlock();
 
     static UniqueRef<Layout::Box> createLayoutBox(RenderObject&);
-    static void adjustStyleIfNeeded(const RenderElement&, Style::ComputedStyle&, Style::ComputedStyle* firstLineStyle);
 
     void buildTreeForInlineContent();
     void buildTreeForFlexContent();

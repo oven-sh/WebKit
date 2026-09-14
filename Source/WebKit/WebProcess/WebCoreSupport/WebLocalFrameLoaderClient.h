@@ -61,7 +61,7 @@ public:
     
     struct FrameSpecificStorageAccessIdentifier {
         WebCore::FrameIdentifier frameID;
-        WebCore::PageIdentifier pageID;
+        WebPageProxyIdentifier webPageProxyID;
     };
     void NODELETE setHasFrameSpecificStorageAccess(FrameSpecificStorageAccessIdentifier&&);
     void didLoadFromRegistrableDomain(WebCore::RegistrableDomain&&) final;
@@ -292,7 +292,7 @@ private:
     bool NODELETE siteIsolationEnabled() const;
 
     void broadcastAllFrameTreeSyncDataToOtherProcesses(WebCore::FrameTreeSyncData&) final;
-    void broadcastFrameTreeSyncDataToOtherProcesses(const WebCore::FrameTreeSyncSerializationData&) final;
+    void broadcastFrameTreeSyncDataToOtherProcesses(WebCore::FrameTreeSyncSerializationData&&) final;
 
     void didNotifyUserActivation(MonotonicTime) final;
     void didConsumeUserActivation() final;

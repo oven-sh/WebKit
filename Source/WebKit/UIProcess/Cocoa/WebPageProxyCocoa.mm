@@ -659,7 +659,7 @@ _WKRemoteObjectRegistry *WebPageProxy::remoteObjectRegistry()
 RemoteObjectRegistry* WebPageProxy::uiRemoteObjectRegistry()
 {
     if (RetainPtr registry = remoteObjectRegistry())
-        return &[registry remoteObjectRegistry];
+        return [registry remoteObjectRegistry];
     return nullptr;
 }
 
@@ -1300,13 +1300,13 @@ void WebPageProxy::setMediaCapability(RefPtr<MediaCapability>&& capability)
         return;
     }
 
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setMediaCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().mediaCapability->environmentIdentifier().utf8().data(), internals().mediaCapability->webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setMediaCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().mediaCapability->environmentIdentifier().utf8().legacyCStringPointer(), internals().mediaCapability->webPageURL().string().utf8().legacyCStringPointer());
     protect(legacyMainFrameProcess())->send(Messages::WebPage::SetDisplayCaptureEnvironment(protect(internals().mediaCapability)->environmentIdentifier()), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::deactivateMediaCapability(MediaCapability& capability)
 {
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateMediaCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().data(), capability.webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateMediaCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().legacyCStringPointer(), capability.webPageURL().string().utf8().legacyCStringPointer());
     Ref processPool = protect(legacyMainFrameProcess())->processPool();
     Ref granter = processPool->extensionCapabilityGranter();
     granter->setMediaCapabilityActive(capability, false);
@@ -1394,13 +1394,13 @@ void WebPageProxy::setDisplayCaptureCapability(RefPtr<MediaCapability>&& capabil
         return;
     }
 
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setDisplayCaptureCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().displayCaptureCapability->environmentIdentifier().utf8().data(), internals().displayCaptureCapability->webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "setDisplayCaptureCapability: creating (envID=%{public}s) for URL '%{sensitive}s'", internals().displayCaptureCapability->environmentIdentifier().utf8().legacyCStringPointer(), internals().displayCaptureCapability->webPageURL().string().utf8().legacyCStringPointer());
     protect(legacyMainFrameProcess())->send(Messages::WebPage::SetDisplayCaptureEnvironment(protect(internals().displayCaptureCapability)->environmentIdentifier()), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::deactivateDisplayCaptureCapability(MediaCapability& capability)
 {
-    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateDisplayCaptureCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().data(), capability.webPageURL().string().utf8().data());
+    WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateDisplayCaptureCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().legacyCStringPointer(), capability.webPageURL().string().utf8().legacyCStringPointer());
     Ref processPool = protect(legacyMainFrameProcess())->processPool();
     Ref granter = processPool->extensionCapabilityGranter();
     granter->setMediaCapabilityActive(capability, false);
@@ -1584,6 +1584,14 @@ void WebPageProxy::removeTextEffectForID(IPC::Connection& connection, const WTF:
 }
 #endif // ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
 
+static bool isValidTextAnimationData(const WebCore::TextAnimationData& styleData)
+{
+    if (styleData.style != WebCore::TextAnimationType::Source)
+        return true;
+
+    return styleData.destinationAnimationUUID && styleData.destinationAnimationUUID->isValid();
+}
+
 void WebPageProxy::addTextAnimationForAnimationID(IPC::Connection& connection, const WTF::UUID& uuid, const WebCore::TextAnimationData& styleData, const RefPtr<WebCore::TextIndicator> textIndicator)
 {
     addTextAnimationForAnimationIDWithCompletionHandler(connection, uuid, styleData, textIndicator, { });
@@ -1591,10 +1599,13 @@ void WebPageProxy::addTextAnimationForAnimationID(IPC::Connection& connection, c
 
 void WebPageProxy::addTextAnimationForAnimationIDWithCompletionHandler(IPC::Connection& connection, const WTF::UUID& uuid, const WebCore::TextAnimationData& styleData, const RefPtr<WebCore::TextIndicator> textIndicator, CompletionHandler<void(WebCore::TextAnimationRunMode)>&& completionHandler)
 {
-    if (completionHandler)
+    if (completionHandler) {
         MESSAGE_CHECK_COMPLETION(uuid.isValid(), connection, completionHandler({ }));
-    else
+        MESSAGE_CHECK_COMPLETION(isValidTextAnimationData(styleData), connection, completionHandler({ }));
+    } else {
         MESSAGE_CHECK(uuid.isValid(), connection);
+        MESSAGE_CHECK(isValidTextAnimationData(styleData), connection);
+    }
 
     internals().textIndicatorForAnimationID.add(uuid, textIndicator);
 

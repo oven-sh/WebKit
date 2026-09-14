@@ -46,7 +46,7 @@ TextureViewImpl::~TextureViewImpl() = default;
 
 void TextureViewImpl::setLabelInternal(const String& label)
 {
-    wgpuTextureViewSetLabel(m_backing.get(), label.utf8().data());
+    wgpuTextureViewSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

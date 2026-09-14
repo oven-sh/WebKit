@@ -58,7 +58,6 @@ public:
     void servePendingRequests(ResourceLoadPriority) final { }
     void suspendPendingRequests() final { }
     void resumePendingRequests() final { }
-    void startPingLoad(LocalFrame&, ResourceRequest&, const HTTPHeaderMap&, const FetchOptions&, ContentSecurityPolicyImposition, PingLoadCompletionHandler&&) final { }
     void preconnectTo(FrameLoader&, ResourceRequest&&, StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final { }
     void setCaptureExtraNetworkLoadMetricsEnabled(bool) final { }
     bool isOnLine() const final { return true; }

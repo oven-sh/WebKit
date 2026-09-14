@@ -54,7 +54,8 @@ public:
         return adoptRef(*new NetworkLoad(networkLoadClient, WTF::move(networkLoadParameters), networkSession));
     }
 
-    template<typename CreateTaskCallback> static Ref<NetworkLoad> create(NetworkLoadClient& networkLoadClient, NetworkSession& networkSession, NOESCAPE const CreateTaskCallback& createTask)
+    using CreateTaskCallback = Function<RefPtr<NetworkDataTask>(NetworkLoad&)>;
+    static Ref<NetworkLoad> create(NetworkLoadClient& networkLoadClient, NetworkSession& networkSession, NOESCAPE const CreateTaskCallback& createTask)
     {
         return adoptRef(*new NetworkLoad(networkLoadClient, networkSession, createTask));
     }
@@ -97,13 +98,7 @@ public:
 
 private:
     NetworkLoad(NetworkLoadClient&, NetworkLoadParameters&&, NetworkSession&);
-
-    template<typename CreateTaskCallback> NetworkLoad(NetworkLoadClient& client, NetworkSession& networkSession, NOESCAPE const CreateTaskCallback& createTask)
-        : m_client(client)
-        , m_networkProcess(networkSession.networkProcess())
-        , m_task(createTask(*this))
-    {
-    }
+    NetworkLoad(NetworkLoadClient&, NetworkSession&, NOESCAPE const CreateTaskCallback&);
 
     // NetworkDataTaskClient
     void willPerformHTTPRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, RedirectCompletionHandler&&) final;
@@ -118,6 +113,9 @@ private:
     void wasBlockedByRestrictions() final;
     void wasBlockedByDisabledFTP() final;
     void didNegotiateModernTLS(const URL&) final;
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+    void emulatedConditionsDidChange() final;
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
     void notifyDidReceiveResponse(WebCore::ResourceResponse&&, NegotiatedLegacyTLS, PrivateRelayed, ResponseCompletionHandler&&);
 
@@ -129,6 +127,11 @@ private:
 
     // FIXME: Deduplicate this with NetworkDataTask's m_previousRequest.
     WebCore::ResourceRequest m_currentRequest; // Updated on redirects.
+
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+    class ConditionEmulator;
+    std::unique_ptr<ConditionEmulator> m_conditionEmulator;
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 };
 
 } // namespace WebKit

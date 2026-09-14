@@ -78,26 +78,24 @@ public:
 
     ResumeMode stopCode(Locker<Lock>&, StopTheWorldEvent) WTF_REQUIRES_LOCK(m_lock);
 
-    DebuggerTrapStatus handleDebuggerTrapIfNeeded(CallFrame*, JSWebAssemblyInstance*, IPIntCallee*, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry*, Wasm::ExceptionType);
+    // Returns the opcode to resume with, or Unreachable to propagate the trap.
+    OpType handleDebuggerTrapIfNeeded(CallFrame*, JSWebAssemblyInstance*, IPIntCallee*, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry*, Wasm::ExceptionType);
 
     JS_EXPORT_PRIVATE void resume();
     JS_EXPORT_PRIVATE void step();
     JS_EXPORT_PRIVATE void interrupt();
-    void notifyDebuggerOfNewModule(VM&);
+    void notifyDebuggerOfNewInstance(VM&);
     void handleThreadStopInfo(StringView packet);
     String callStackStringFor(uint64_t threadId);
     JS_EXPORT_PRIVATE void reset();
 
-    JS_EXPORT_PRIVATE void setBreakpointAtEntry(JSWebAssemblyInstance*, IPIntCallee*, Breakpoint::Type);
-    void setBreakpointAtPC(JSWebAssemblyInstance*, FunctionCodeIndex, Breakpoint::Type, const uint8_t* pc);
+    JS_EXPORT_PRIVATE void setStepBreakpointAtEntry(IPIntCallee*, const ModuleInformation&);
     void setBreakpoint(StringView packet);
     void removeBreakpoint(StringView packet);
     JS_EXPORT_PRIVATE BreakpointManager* breakpointManager() { return m_breakpointManager.get(); };
 
     void setStepIntoBreakpointForCall(VM&, CalleeBits, JSWebAssemblyInstance*);
     void setStepIntoBreakpointForThrow(VM&);
-
-    bool hasBreakpoints() const;
 
     uint64_t debugServerThreadId() const
     {
@@ -147,6 +145,8 @@ private:
     void sendErrorReply(ProtocolError);
 
     void selectDebuggeeIfNeeded(VM& fallbackVM) WTF_REQUIRES_LOCK(m_lock);
+
+    bool requireModuleAddress(VirtualAddress);
 
     bool requiresStopConfirmation() const WTF_REQUIRES_LOCK(m_lock)
     {

@@ -465,7 +465,7 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForAssertion(const 
             if (prf->evalByCredential) {
                 perCredentialInputValues = adoptNS([[NSMutableDictionary alloc] init]);
                 for (auto& credentialIDAndInputValues : *prf->evalByCredential) {
-                    auto key = base64URLDecode(credentialIDAndInputValues.key.utf8().span());
+                    auto key = base64URLDecode(credentialIDAndInputValues.key);
                     if (!key)
                         continue;
                     [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(*key).get()];
@@ -501,7 +501,7 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForAssertion(const 
             if (prf->evalByCredential) {
                 perCredentialInputValues = adoptNS([[NSMutableDictionary alloc] init]);
                 for (auto& credentialIDAndInputValues : *prf->evalByCredential) {
-                    auto key = base64URLDecode(credentialIDAndInputValues.key.utf8().span());
+                    auto key = base64URLDecode(credentialIDAndInputValues.key);
                     if (!key)
                         continue;
                     [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(*key).get()];

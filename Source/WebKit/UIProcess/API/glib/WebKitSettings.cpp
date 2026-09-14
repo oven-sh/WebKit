@@ -3317,7 +3317,7 @@ void webkit_settings_set_user_agent(WebKitSettings* settings, const char* userAg
     } else
         userAgentString = WebCore::standardUserAgent(emptyString());
 
-    CString newUserAgent = userAgentString.utf8();
+    auto newUserAgent = userAgentString.utf8();
     if (newUserAgent == priv->userAgent)
         return;
 
@@ -3341,8 +3341,8 @@ void webkit_settings_set_user_agent_with_application_details(WebKitSettings* set
 {
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
-    CString newUserAgent = WebCore::standardUserAgent(String::fromUTF8(applicationName), String::fromUTF8(applicationVersion)).utf8();
-    webkit_settings_set_user_agent(settings, newUserAgent.data());
+    auto newUserAgent = WebCore::standardUserAgent(String::fromUTF8(applicationName), String::fromUTF8(applicationVersion)).utf8();
+    webkit_settings_set_user_agent(settings, newUserAgent.legacyCStringPointer());
 }
 
 /**

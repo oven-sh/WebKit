@@ -1799,10 +1799,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFill16B, void, (void* payloa
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFillRefs, void, (uint64_t* payload, uint64_t value, size_t elementCount))
 {
-    // A reference is stored whole so the concurrent collector cannot observe a torn JSValue.
-    volatile uint64_t* cursor = payload;
-    for (size_t i = 0; i < elementCount; ++i)
-        cursor[i] = value;
+    gcSafeMemfill(payload, value, elementCount * sizeof(uint64_t));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayCopyRefs, void, (uint64_t* dst, const uint64_t* src, size_t byteCount))

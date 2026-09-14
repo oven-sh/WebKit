@@ -234,6 +234,7 @@ angle_source_set("angle_trace_fixture") {
     "$angle_root:angle_capture_common",
     "$angle_root:includes",
   ]
+  deps = [ "$angle_root:angle_common" ]
   if (is_ios) {
     # shared libraries are hidden inside ios_framework_bundle, but we include
     # headers from them
@@ -245,6 +246,7 @@ if (angle_enable_cl) {
   angle_source_set("angle_trace_fixture_cl") {
     testonly = true
     defines = [ "ANGLE_REPLAY_IMPLEMENTATION" ]
+    configs += [ "$angle_root:opencl_no_pragma_messages" ]
     suppressed_configs += [ "$angle_root:constructor_and_destructor_warnings" ]
     sources = [
       "capture/trace_fixture_cl.cpp",

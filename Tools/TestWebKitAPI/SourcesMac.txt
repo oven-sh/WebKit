@@ -83,6 +83,7 @@ Tests/WebKit/WKWebView/mac/MouseEventTests.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/mac/NoPolicyDelegateResponse.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/mac/NSResponderTests.mm @nonARC
 Tests/WebKit/WKWebView/mac/PageVisibilityStateWithWindowChanges.mm @nonARC @no-unify
+Tests/WebKit/WKWebView/mac/PopupMenuTests.mm @nonARC
 Tests/WebKit/WKWebView/mac/RenderedImageFromDOMNode.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/mac/RenderedImageFromDOMRange.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/mac/ScrollbarTests.mm @nonARC @no-unify

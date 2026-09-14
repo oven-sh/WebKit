@@ -1220,7 +1220,7 @@ public:
         __block bool webPushDaemonDone = false;
         sender.sendWithAsyncReplyWithoutUsingIPCConnection(Messages::PushClientConnection::InjectPushMessageForTesting(message), ^(const String& error) {
             if (!error.isEmpty())
-                NSLog(@"ERROR: %s", error.utf8().data());
+                NSLog(@"ERROR: %s", error.utf8().legacyCStringPointer());
             webPushDaemonDone = true;
         });
         TestWebKitAPI::Util::run(&webPushDaemonDone);
@@ -1322,7 +1322,7 @@ public:
     {
         auto identifier = m_notificationProvider.lastNotificationDataStoreIdentifier();
         if (m_dataStoreIdentifier)
-            EXPECT_WK_STREQ(m_dataStoreIdentifier->toString().utf8().data(), identifier);
+            EXPECT_WK_STREQ(m_dataStoreIdentifier->toString().utf8().legacyCStringPointer(), identifier);
         else
             EXPECT_NULL(identifier);
     }
@@ -1962,7 +1962,7 @@ TEST_F(WebPushDBuiltInTest, ShowAndGetNotifications)
     webPushDaemonDone = false;
     sender.sendWithAsyncReplyWithoutUsingIPCConnection(Messages::PushClientConnection::InjectPushMessageForTesting(message), ^(const String& error) {
         if (!error.isEmpty())
-            NSLog(@"ERROR: %s", error.utf8().data());
+            NSLog(@"ERROR: %s", error.utf8().legacyCStringPointer());
         webPushDaemonDone = true;
     });
     TestWebKitAPI::Util::run(&webPushDaemonDone);

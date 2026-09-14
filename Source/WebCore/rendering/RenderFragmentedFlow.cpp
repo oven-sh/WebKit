@@ -653,7 +653,7 @@ bool RenderFragmentedFlow::objectShouldFragmentInFlowFragment(const RenderObject
         && !fragmentInRange(fragment, enclosingBoxStartFragment, enclosingBoxEndFragment))
         return false;
     
-    return object->isRenderBox() || object->isRenderInline();
+    return object->isRenderBox() || object->isInlineBox();
 }
 
 bool RenderFragmentedFlow::objectInFlowFragment(const RenderObject* object, const RenderFragmentContainer* fragment) const

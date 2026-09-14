@@ -205,14 +205,14 @@ WGPUBool wgpuAdapterHasFeature(WGPUAdapter adapter, WGPUFeatureName feature)
 void wgpuAdapterRequestDevice(WGPUAdapter adapter, const WGPUDeviceDescriptor* descriptor, WGPURequestDeviceCallback callback, void* userdata)
 {
     protect(WebGPU::fromAPI(adapter))->requestDevice(*descriptor, [callback, userdata](WGPURequestDeviceStatus status, Ref<WebGPU::Device>&& device, String&& message) {
-        callback(status, WebGPU::releaseToAPI(WTF::move(device)), message.utf8().data(), userdata);
+        callback(status, WebGPU::releaseToAPI(WTF::move(device)), message.utf8().legacyCStringPointer(), userdata);
     });
 }
 
 void wgpuAdapterRequestDeviceWithBlock(WGPUAdapter adapter, WGPUDeviceDescriptor const * descriptor, WGPURequestDeviceBlockCallback callback)
 {
     protect(WebGPU::fromAPI(adapter))->requestDevice(*descriptor, [callback = WebGPU::fromAPI(WTF::move(callback))](WGPURequestDeviceStatus status, Ref<WebGPU::Device>&& device, String&& message) {
-        callback(status, WebGPU::releaseToAPI(WTF::move(device)), message.utf8().data());
+        callback(status, WebGPU::releaseToAPI(WTF::move(device)), message.utf8().legacyCStringPointer());
     });
 }
 

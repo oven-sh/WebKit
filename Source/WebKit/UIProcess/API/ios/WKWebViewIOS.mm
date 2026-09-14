@@ -2096,7 +2096,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
         coordinator->setRootNodeIsInUserScroll(true);
 
         if (coordinator->scrollingPerformanceTestingEnabled() && _scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
-            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8().data());
+            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8().legacyCStringPointer());
             _scrollPerfIntervalState = ScrollPerfIntervalState::FingerDown;
             _scrollPerfRubberbandingNotified = NO;
         }
@@ -2179,7 +2179,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
                 _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
             }
             if (decelerate && _scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
-                WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8().data());
+                WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES; currentURL=%s", _page->currentURL().utf8().legacyCStringPointer());
                 _scrollPerfIntervalState = ScrollPerfIntervalState::Momentum;
             }
         }
@@ -4660,10 +4660,12 @@ static bool isLockdownModeWarningNeeded()
     return nil;
 }
 
+#if HAVE(UIKIT_PRINTING)
 - (_WKWebViewPrintFormatter *)_webViewPrintFormatter
 {
     return checked_objc_cast<_WKWebViewPrintFormatter>(self.viewPrintFormatter);
 }
+#endif
 
 - (_WKDragInteractionPolicy)_dragInteractionPolicy
 {
@@ -5170,7 +5172,7 @@ static std::optional<WebCore::ViewportArguments> viewportArgumentsFromDictionary
         String keyString = key;
         String valueString = value;
         WebCore::setViewportFeature(viewportArguments, keyString, valueString, metaViewportInteractiveWidgetEnabled, [] (WebCore::ViewportErrorCode, const String& errorMessage) {
-            NSLog(@"-[WKWebView _overrideViewportWithArguments:]: Error parsing viewport argument: %s", errorMessage.utf8().data());
+            NSLog(@"-[WKWebView _overrideViewportWithArguments:]: Error parsing viewport argument: %s", errorMessage.utf8().legacyCStringPointer());
         });
     }).get()];
 
@@ -5570,6 +5572,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 #endif // ENABLE(FULLSCREEN_API)
 
+#if HAVE(UIKIT_PRINTING)
+
 @implementation WKWebView (_WKWebViewPrintFormatter)
 
 - (Class)_printFormatterClass
@@ -5586,6 +5590,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 }
 
 @end
+
+#endif // HAVE(UIKIT_PRINTING)
 
 #if ENABLE(TWO_PHASE_CLICKS)
 

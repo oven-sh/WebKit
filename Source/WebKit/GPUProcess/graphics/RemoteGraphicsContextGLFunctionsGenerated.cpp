@@ -54,7 +54,7 @@ void RemoteGraphicsContextGL::attachShader(uint32_t program, uint32_t shader)
     protect(m_context)->attachShader(program, shader);
 }
 
-void RemoteGraphicsContextGL::bindAttribLocation(uint32_t arg0, uint32_t index, CString&& name)
+void RemoteGraphicsContextGL::bindAttribLocation(uint32_t arg0, uint32_t index, UTF8CString&& name)
 {
     assertIsCurrent(workQueue());
     MESSAGE_CHECK(m_objectNames.isValidKey(arg0));
@@ -446,10 +446,10 @@ void RemoteGraphicsContextGL::getBufferParameteri(uint32_t target, uint32_t pnam
     completionHandler(returnValue);
 }
 
-void RemoteGraphicsContextGL::getString(uint32_t name, CompletionHandler<void(CString&&)>&& completionHandler)
+void RemoteGraphicsContextGL::getString(uint32_t name, CompletionHandler<void(UTF8CString&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
-    CString returnValue = { };
+    UTF8CString returnValue = { };
     returnValue = protect(m_context)->getString(name);
     completionHandler(WTF::move(returnValue));
 }
@@ -527,10 +527,10 @@ void RemoteGraphicsContextGL::getFramebufferAttachmentParameteri(uint32_t target
     completionHandler(returnValue);
 }
 
-void RemoteGraphicsContextGL::getProgramInfoLog(uint32_t arg0, CompletionHandler<void(CString&&)>&& completionHandler)
+void RemoteGraphicsContextGL::getProgramInfoLog(uint32_t arg0, CompletionHandler<void(UTF8CString&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
-    CString returnValue = { };
+    UTF8CString returnValue = { };
     MESSAGE_CHECK(m_objectNames.isValidKey(arg0));
     if (arg0)
         arg0 = m_objectNames.get(arg0);
@@ -557,10 +557,10 @@ void RemoteGraphicsContextGL::getShaderi(uint32_t arg0, uint32_t pname, Completi
     completionHandler(returnValue);
 }
 
-void RemoteGraphicsContextGL::getShaderInfoLog(uint32_t arg0, CompletionHandler<void(CString&&)>&& completionHandler)
+void RemoteGraphicsContextGL::getShaderInfoLog(uint32_t arg0, CompletionHandler<void(UTF8CString&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
-    CString returnValue = { };
+    UTF8CString returnValue = { };
     MESSAGE_CHECK(m_objectNames.isValidKey(arg0));
     if (arg0)
         arg0 = m_objectNames.get(arg0);
@@ -765,7 +765,7 @@ void RemoteGraphicsContextGL::scissor(int32_t x, int32_t y, int32_t width, int32
     protect(m_context)->scissor(x, y, width, height);
 }
 
-void RemoteGraphicsContextGL::shaderSource(uint32_t arg0, CString&& arg1)
+void RemoteGraphicsContextGL::shaderSource(uint32_t arg0, UTF8CString&& arg1)
 {
     assertIsCurrent(workQueue());
     MESSAGE_CHECK(m_objectNames.isValidKey(arg0));
@@ -1242,7 +1242,7 @@ void RemoteGraphicsContextGL::compressedTexSubImage3D1(uint32_t target, int32_t 
     protect(m_context)->compressedTexSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, static_cast<GCGLintptr>(offset));
 }
 
-void RemoteGraphicsContextGL::getFragDataLocation(uint32_t program, CString&& name, CompletionHandler<void(int32_t)>&& completionHandler)
+void RemoteGraphicsContextGL::getFragDataLocation(uint32_t program, UTF8CString&& name, CompletionHandler<void(int32_t)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
     GCGLint returnValue = { };
@@ -1635,7 +1635,7 @@ void RemoteGraphicsContextGL::endTransformFeedback()
     protect(m_context)->endTransformFeedback();
 }
 
-void RemoteGraphicsContextGL::transformFeedbackVaryings(uint32_t program, Vector<CString>&& varyings, uint32_t bufferMode)
+void RemoteGraphicsContextGL::transformFeedbackVaryings(uint32_t program, Vector<UTF8CString>&& varyings, uint32_t bufferMode)
 {
     assertIsCurrent(workQueue());
     MESSAGE_CHECK(m_objectNames.isValidKey(program));
@@ -1685,7 +1685,7 @@ void RemoteGraphicsContextGL::bindBufferRange(uint32_t target, uint32_t index, u
     protect(m_context)->bindBufferRange(target, index, buffer, static_cast<GCGLintptr>(offset), static_cast<GCGLsizeiptr>(arg4));
 }
 
-void RemoteGraphicsContextGL::getUniformBlockIndex(uint32_t program, CString&& uniformBlockName, CompletionHandler<void(uint32_t)>&& completionHandler)
+void RemoteGraphicsContextGL::getUniformBlockIndex(uint32_t program, UTF8CString&& uniformBlockName, CompletionHandler<void(uint32_t)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
     GCGLuint returnValue = { };
@@ -1696,10 +1696,10 @@ void RemoteGraphicsContextGL::getUniformBlockIndex(uint32_t program, CString&& u
     completionHandler(returnValue);
 }
 
-void RemoteGraphicsContextGL::getActiveUniformBlockName(uint32_t program, uint32_t uniformBlockIndex, CompletionHandler<void(CString&&)>&& completionHandler)
+void RemoteGraphicsContextGL::getActiveUniformBlockName(uint32_t program, uint32_t uniformBlockIndex, CompletionHandler<void(UTF8CString&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
-    CString returnValue = { };
+    UTF8CString returnValue = { };
     MESSAGE_CHECK(m_objectNames.isValidKey(program));
     if (program)
         program = m_objectNames.get(program);
@@ -1729,10 +1729,10 @@ void RemoteGraphicsContextGL::getActiveUniformBlockiv(uint32_t program, uint32_t
     completionHandler(spanReinterpretCast<const int32_t>(params.span()));
 }
 
-void RemoteGraphicsContextGL::getTranslatedShaderSourceANGLE(uint32_t arg0, CompletionHandler<void(CString&&)>&& completionHandler)
+void RemoteGraphicsContextGL::getTranslatedShaderSourceANGLE(uint32_t arg0, CompletionHandler<void(UTF8CString&&)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
-    CString returnValue = { };
+    UTF8CString returnValue = { };
     MESSAGE_CHECK(m_objectNames.isValidKey(arg0));
     if (arg0)
         arg0 = m_objectNames.get(arg0);

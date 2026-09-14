@@ -37,6 +37,7 @@
 #include "Types.h"
 #include "WGSLShaderModule.h"
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SortedArrayMap.h>
@@ -89,6 +90,9 @@ struct Binding {
     const struct Type* type;
     Evaluation evaluation;
     std::optional<ConstantValue> constantValue;
+    // Set for a declaration in a loop body that follows a continue statement targeting that loop.
+    // A shadowing declaration is a separate binding, so it is left unmarked and stays usable.
+    bool declaredAfterContinue { false };
 };
 
 using Behavior = AST::Behavior;
@@ -265,9 +269,21 @@ private:
     DiscardResult m_discardResult { DiscardResult::No };
     bool m_suppressConstantErrors { false };
 
+    // https://www.w3.org/TR/WGSL/#continue-statement
+    // Source offset of the earliest continue statement targeting the innermost enclosing loop, used
+    // to mark the declarations that a continue would jump over on its way to the continuing clause.
+    unsigned m_earliestContinueOffset { std::numeric_limits<unsigned>::max() };
+    bool m_declaringAfterContinue { false };
+    bool m_inContinuingClause { false };
+
     TypeStore& m_types;
     Vector<BreakTarget> m_breakTargetStack;
     HashMap<String, AST::IdentifierExpression*> m_arrayCountOverrides;
+
+    // The names declared at module scope, collected before any of them is visited. Module scope has
+    // no declaration order, so a rule about what those names hide cannot be answered by the scope
+    // built up as the declarations are visited one after another.
+    HashSet<String> m_moduleScopeNames;
 };
 
 TypeChecker::TypeChecker(ShaderModule& shaderModule)
@@ -309,11 +325,25 @@ Result<void> TypeChecker::declareBuiltins()
             if (!elementType->isStorable()) [[unlikely]]
                 TYPE_ERROR(type.span(), '\'', *elementType, "' cannot be used as the store type of a pointer"_s);
 
+            // https://www.w3.org/TR/WGSL/#ref-ptr-types
+            // A pointer's address space has to permit its store type. Textures and samplers only ever
+            // live in the handle address space, and that address space cannot be spelled, so no
+            // pointer that can be written down may point at one.
+            if (elementType->isTexture() || elementType->isSampler()) [[unlikely]]
+                TYPE_ERROR(type.span(), '\'', *elementType, "' cannot be used as the store type of a pointer in the <"_s, toString(addressSpace), "> address space"_s);
+
             if (std::holds_alternative<Types::Atomic>(*elementType) && addressSpace != AddressSpace::Storage && addressSpace != AddressSpace::Workgroup) [[unlikely]]
                 TYPE_ERROR(type.span(), '\'', *elementType, "' atomic variables must have <storage> or <workgroup> address space"_s);
 
             if (elementType->containsRuntimeArray() && addressSpace != AddressSpace::Storage) [[unlikely]]
                 TYPE_ERROR(type.span(), "runtime-sized arrays can only be used in the <storage> address space"_s);
+
+            // https://www.w3.org/TR/WGSL/#array-types
+            // An override element count survives only where the array itself could live, and a
+            // 'var<workgroup>' store type is the one such place, so its pointers are the only
+            // pointers that may point at one.
+            if (elementType->containsOverrideArray() && addressSpace != AddressSpace::Workgroup) [[unlikely]]
+                TYPE_ERROR(type.span(), "array with an 'override' element count can only be pointed to in the <workgroup> address space"_s);
 
             AccessMode accessMode;
             if (argumentCount > 2) {
@@ -484,6 +514,11 @@ std::optional<FailedCheck> TypeChecker::check()
 
 Result<void> TypeChecker::visit(ShaderModule& shaderModule)
 {
+    for (auto& declaration : shaderModule.declarations()) {
+        if (!is<AST::ConstAssert>(declaration))
+            m_moduleScopeNames.add(declaration.name().id());
+    }
+
     for (auto& declaration : shaderModule.declarations())
         CHECK(visit(declaration));
     return { };
@@ -610,6 +645,12 @@ Result<void> TypeChecker::visit(AST::Variable& variable)
         if (auto* maybeQualifier = variable.maybeQualifier()) {
             addressSpace = maybeQualifier->addressSpace();
             accessMode = maybeQualifier->accessMode();
+
+            // https://www.w3.org/TR/WGSL/#access-mode - the access mode is named by a predeclared
+            // enumerant, so a module-scope declaration of that name hides it and leaves the
+            // qualifier naming a value that is not an access mode at all.
+            if (maybeQualifier->hasExplicitAccessMode() && m_moduleScopeNames.contains(String { toString(accessMode) })) [[unlikely]]
+                TYPE_ERROR(maybeQualifier->span(), "cannot use '"_s, toString(accessMode), "' as access mode because it is shadowed by a module-scope declaration"_s);
         } else if (!isModuleScope()) {
             addressSpace = AddressSpace::Function;
             accessMode = AccessMode::ReadWrite;
@@ -726,11 +767,17 @@ Result<void> TypeChecker::visit(AST::ConstAssert& assertion)
 Result<void> TypeChecker::visit(AST::Function& function)
 {
     bool mustUse = false;
+    // AST::Function::stage() is filled in by AttributeValidator, which runs after this pass, so the
+    // stage attribute has to be read off the function directly to know whether it is an entry point.
+    bool isEntryPoint = false;
     for (auto& attribute : function.attributes()) {
         if (is<AST::MustUseAttribute>(attribute)) {
             mustUse = true;
             continue;
         }
+
+        if (is<AST::StageAttribute>(attribute))
+            isEntryPoint = true;
 
         CHECK(visit(attribute));
     }
@@ -768,7 +815,7 @@ Result<void> TypeChecker::visit(AST::Function& function)
         ASSERT(!behaviors.containsAny({ Behavior::Break, Behavior::Continue }));
     }
 
-    const Type* functionType = m_types.functionType(WTF::move(parameters), m_returnType, mustUse);
+    const Type* functionType = m_types.functionType(WTF::move(parameters), m_returnType, mustUse, isEntryPoint);
     CHECK(introduceFunction(function.name(), functionType));
 
     m_returnType = nullptr;
@@ -921,8 +968,10 @@ Result<void> TypeChecker::visit(AST::Statement& statement)
     case AST::NodeKind::WhileStatement:
         return visit(uncheckedDowncast<AST::WhileStatement>(statement));
     case AST::NodeKind::BreakStatement:
-    case AST::NodeKind::ContinueStatement:
     case AST::NodeKind::DiscardStatement:
+        return { };
+    case AST::NodeKind::ContinueStatement:
+        m_earliestContinueOffset = std::min(m_earliestContinueOffset, statement.span().offset);
         return { };
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -1033,7 +1082,17 @@ Result<void> TypeChecker::visit(AST::IfStatement& statement)
 
 Result<void> TypeChecker::visit(AST::PhonyAssignmentStatement& statement)
 {
-    CHECK(infer(statement.rhs(), Evaluation::Runtime));
+    UNWRAP(type, infer(statement.rhs(), Evaluation::Runtime));
+
+    // https://www.w3.org/TR/WGSL/#phony-assignment-section
+    // Naming a variable loads from it, so its store type has to be one the load rule accepts.
+    // Textures and samplers are exempt: they are handles, and reading one never loads a value.
+    if (auto* reference = std::get_if<Types::Reference>(type)) {
+        auto* element = reference->element;
+        if (!element->isConstructible() && !element->isTexture() && !element->isSampler()) [[unlikely]]
+            TYPE_ERROR(statement.rhs().span(), "cannot assign '"_s, *element, "' to '_' because it is not constructible"_s);
+    }
+
     return { };
 }
 
@@ -1061,6 +1120,8 @@ Result<void> TypeChecker::visit(AST::ReturnStatement& statement)
 Result<void> TypeChecker::visit(AST::ForStatement& statement)
 {
     ContextScope forScope(this);
+    SetForScope earliestContinueOffset(m_earliestContinueOffset, std::numeric_limits<unsigned>::max());
+
     if (auto* initializer = statement.maybeInitializer())
         CHECK(visit(*initializer));
 
@@ -1083,8 +1144,17 @@ Result<void> TypeChecker::visit(AST::LoopStatement& statement)
     ContextScope loopScope(this);
     CHECK(visitAttributes(statement.attributes()));
 
-    for (auto& statement : statement.body())
-        CHECK(visit(statement));
+    // https://www.w3.org/TR/WGSL/#continue-statement
+    // A continue must not jump over the declaration of a value that the continuing clause then
+    // reads, so every declaration following the earliest continue in this body gets marked and the
+    // continuing clause rejects the identifiers that resolve to one of them. The offset is shadowed
+    // here so that a continue inside a nested loop, which targets that loop, does not count.
+    SetForScope earliestContinueOffset(m_earliestContinueOffset, std::numeric_limits<unsigned>::max());
+
+    for (auto& bodyStatement : statement.body()) {
+        SetForScope declaringAfterContinue(m_declaringAfterContinue, is<AST::VariableStatement>(bodyStatement) && bodyStatement.span().offset > m_earliestContinueOffset);
+        CHECK(visit(bodyStatement));
+    }
 
     if (auto& continuing = statement.continuing())
         CHECK(visit(*continuing));
@@ -1094,6 +1164,8 @@ Result<void> TypeChecker::visit(AST::LoopStatement& statement)
 
 Result<void> TypeChecker::visit(AST::WhileStatement& statement)
 {
+    SetForScope earliestContinueOffset(m_earliestContinueOffset, std::numeric_limits<unsigned>::max());
+
     UNWRAP(testType, infer(statement.test(), Evaluation::Runtime));
     if (!unify(m_types.boolType(), testType)) [[unlikely]]
         TYPE_ERROR(statement.test().span(), "while condition must be bool, got "_s, *testType);
@@ -1109,9 +1181,19 @@ Result<void> TypeChecker::visit(AST::SwitchStatement& statement)
     if (!satisfies(valueType, Constraints::ConcreteInteger)) [[unlikely]]
         TYPE_ERROR(statement.value().span(), "switch selector must be of type i32 or u32"_s);
 
+    // https://www.w3.org/TR/WGSL/#switch-statement
+    // No two case selectors in a switch may have the same value. A switch has few enough clauses
+    // that a linear scan is cheaper than building a hash table.
+    Vector<int64_t> selectorValues;
     const auto& visitClause = [&](AST::SwitchClause& clause) -> Result<void> {
         for (auto& selector : clause.selectors) {
             UNWRAP(selectorType, infer(selector, Evaluation::Runtime));
+            if (auto& constantValue = selector.constantValue(); constantValue.has_value()) {
+                auto value = constantValue->integerValue();
+                if (selectorValues.contains(value)) [[unlikely]]
+                    TYPE_ERROR(selector.span(), "the case selector value '"_s, String::number(value), "' appears more than once in the switch statement"_s);
+                selectorValues.append(value);
+            }
             if (unify(valueType, selectorType)) {
                 // If the selectorType can satisfy the value type, we're good to go.
                 // e.g. valueType is i32 or u32 and the selector is a literal of type AbstractInt
@@ -1411,6 +1493,10 @@ Result<void> TypeChecker::visit(AST::IdentifierExpression& identifier)
     if (binding->evaluation > m_maxEvaluation) [[unlikely]]
         TYPE_ERROR(identifier.span(), "cannot use "_s, evaluationToString(binding->evaluation), " value in "_s, evaluationToString(m_maxEvaluation), " expression"_s);
 
+    // https://www.w3.org/TR/WGSL/#continue-statement
+    if (m_inContinuingClause && binding->declaredAfterContinue) [[unlikely]]
+        TYPE_ERROR(identifier.span(), "the 'continuing' clause cannot use '"_s, identifier.identifier(), "', which is declared after a 'continue' statement in the loop body"_s);
+
     evaluated(binding->evaluation);
     inferred(binding->type);
     if (binding->constantValue.has_value())
@@ -1530,6 +1616,10 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
             if (m_maxEvaluation < Evaluation::Runtime) [[unlikely]]
                 TYPE_ERROR(call.span(), "cannot call function from "_s, evaluationToString(m_maxEvaluation), " context"_s);
 
+            // https://www.w3.org/TR/WGSL/#function-restriction
+            if (functionType.isEntryPoint) [[unlikely]]
+                TYPE_ERROR(call.span(), "cannot call entry point '"_s, targetName, '\'');
+
             if (numberOfArguments != numberOfParameters) [[unlikely]] {
                 auto errorKind = numberOfArguments < numberOfParameters ? "few"_s : "many"_s;
                 TYPE_ERROR(call.span(), "funtion call has too "_s, errorKind, " arguments: expected "_s, numberOfParameters, ", found "_s, numberOfArguments);
@@ -1625,7 +1715,9 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
 
                 auto& lastArg = call.arguments().last();
                 auto* vectorType = std::get_if<Types::Vector>(lastArg.inferredType());
-                if (!vectorType || vectorType->size != 2 || vectorType->element != m_types.i32Type())
+                // vec2<i32> for the 2d overloads and vec3<i32> for the 3d ones; for any other last
+                // argument this builtin has no offset to validate.
+                if (!vectorType || (vectorType->size != 2 && vectorType->size != 3) || vectorType->element != m_types.i32Type())
                     return { };
 
                 auto& maybeConstant = lastArg.constantValue();
@@ -1633,7 +1725,7 @@ Result<void> TypeChecker::visit(AST::CallExpression& call)
                     TYPE_ERROR(lastArg.span(), "the offset argument must be a const-expression"_s);
 
                 auto& vector = std::get<ConstantVector>(*maybeConstant);
-                for (unsigned i = 0; i < 2; ++i) {
+                for (unsigned i = 0; i < vectorType->size; ++i) {
                     auto& i32 = std::get<int32_t>(vector.elements[i]);
                     if (i32 < -8 || i32 > 7) [[unlikely]]
                         TYPE_ERROR(lastArg.span(), "each component of the offset argument must be at least -8 and at most 7. offset component "_s, String::number(i), " is "_s, String::number(i32));
@@ -2013,6 +2105,7 @@ Result<void> TypeChecker::visit(AST::ElaboratedTypeExpression& type)
 Result<void> TypeChecker::visit(AST::Continuing& continuing)
 {
     ContextScope continuingScope(this);
+    SetForScope inContinuingClause(m_inContinuingClause, true);
 
     CHECK(visitAttributes(continuing.attributes));
 
@@ -2153,6 +2246,11 @@ Result<const Type*> TypeChecker::chooseOverload(ASCIILiteral kind, const SourceS
         ASSERT(selectedOverload->parameters.size() == callArguments.size());
         if (m_discardResult == DiscardResult::Yes && overload->mustUse) [[unlikely]]
             TYPE_ERROR(span, "ignoring return value of builtin '"_s, target, '\'');
+
+        // A builtin that returns nothing, such as a barrier, cannot appear where a value is
+        // expected. This is the same rule already applied to user-declared functions above.
+        if (m_discardResult == DiscardResult::No && isPrimitive(selectedOverload->result, Types::Primitive::Void)) [[unlikely]]
+            TYPE_ERROR(span, "builtin '"_s, target, "' does not return a value"_s);
 
         for (unsigned i = 0; i < callArguments.size(); ++i)
             callArguments[i].m_inferredType = selectedOverload->parameters[i];
@@ -2574,7 +2672,7 @@ Result<void> TypeChecker::introduceValue(const AST::Identifier& name, const Type
     ASSERT(type);
     if (shouldDumpConstantValues && value.has_value()) [[unlikely]]
         dataLogLn("> Assigning value: ", name, " => ", value);
-    if (!introduceVariable(name, { Binding::Value, type, evaluation, value })) [[unlikely]]
+    if (!introduceVariable(name, { Binding::Value, type, evaluation, value, m_declaringAfterContinue })) [[unlikely]]
         TYPE_ERROR(name.span(), "redeclaration of '"_s, name, '\'');
     return { };
 }

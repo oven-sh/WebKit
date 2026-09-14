@@ -195,7 +195,7 @@ void RemoteGraphicsContextGL::forceContextLost()
     send(Messages::RemoteGraphicsContextGLProxy::WasLost());
 }
 
-void RemoteGraphicsContextGL::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, const CString& message)
+void RemoteGraphicsContextGL::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, std::span<const char8_t> message)
 {
     assertIsCurrent(workQueue());
     send(Messages::RemoteGraphicsContextGLProxy::addDebugMessage(type, id, severity, message));

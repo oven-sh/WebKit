@@ -36,6 +36,8 @@ class Branch(Command):
     help = 'Create a local development branch from the current checkout state'
 
     PR_PREFIX = 'eng'
+    MAX_BRANCH_NAME_LENGTH = 200
+    MINIMUM_TITLE_MATCH = 8
 
     @classmethod
     def parser(cls, parser, loggers=None):
@@ -89,6 +91,51 @@ class Branch(Command):
     @classmethod
     def to_branch_name(cls, value):
         return string_utils.encode(re.sub(r'\W+', '-', string_utils.decode(value)).strip('-'), target_type=str)
+
+    @classmethod
+    def truncate_branch_name(cls, name, limit=None):
+        limit = limit or cls.MAX_BRANCH_NAME_LENGTH
+        if not name or len(name) <= limit:
+            return name
+        truncated = name[:limit]
+        if '-' in truncated:
+            truncated = truncated[:truncated.rindex('-')]
+        return truncated.rstrip('-')
+
+    @classmethod
+    def branch_matches_issue(cls, repository, branch, issue):
+        """Check if a development branch was created to track a specific issue.
+
+        Branch names may prefix the issue's title with additional context (such as the commits a
+        revert reverts) and may be truncated, so an exact match on the title is not required.
+        """
+        if not branch or not issue:
+            return False
+
+        associated = repository.config().get('branch.{}.bug'.format(branch))
+        if associated:
+            for url in Commit.bug_urls(issue):
+                if url and url in associated:
+                    return True
+
+        candidate = branch.split('/')[-1]
+        if candidate == str(issue.id) or candidate.endswith('-{}'.format(issue.id)):
+            return True
+
+        if not issue.title:
+            return False
+        title = cls.to_branch_name(issue.title)
+        if candidate == title or candidate.endswith('-{}'.format(title)):
+            return True
+
+        components = candidate.split('-')
+        for index in range(len(components)):
+            suffix = '-'.join(components[index:])
+            if len(suffix) < cls.MINIMUM_TITLE_MATCH:
+                break
+            if title.startswith(suffix):
+                return True
+        return False
 
     @classmethod
     def cc_radar(cls, args, repository, issue, rdar=None):
@@ -201,7 +248,7 @@ class Branch(Command):
         return issue, 0
 
     @classmethod
-    def main(cls, args, repository, why=None, redact=False, target_remote='fork', **kwargs):
+    def main(cls, args, repository, why=None, redact=False, target_remote='fork', name_prefix=None, **kwargs):
         if not isinstance(repository, local.Git):
             sys.stderr.write("Can only 'branch' on a native Git repository\n")
             return 1
@@ -214,7 +261,11 @@ class Branch(Command):
             # Support creating a branch from PR or revert when update_issue is False
             args.issue = cls.to_branch_name(args.issue)
 
-        args.issue = cls.normalize_branch_name(args.issue)
+        if name_prefix and not (repository or local.Scm).DEV_BRANCHES.match(args.issue):
+            prefixed = '{}-{}'.format(name_prefix, args.issue).strip('-')
+            args.issue = cls.truncate_branch_name(cls.normalize_branch_name(prefixed))
+        else:
+            args.issue = cls.normalize_branch_name(args.issue)
 
         if run([repository.executable(), 'check-ref-format', args.issue], capture_output=True).returncode:
             sys.stderr.write("'{}' is an invalid branch name, cannot create it\n".format(args.issue))
@@ -241,6 +292,7 @@ class Branch(Command):
                 log.warning("Rebasing existing branch '{}' instead of creating a new one".format(args.issue))
                 if run([repository.executable(), 'rebase', 'HEAD', args.issue, '--autostash'], cwd=repository.root_path).returncode:
                     return 1
+                repository._branch = args.issue  # Assign the cache because of repository.branch's caching
                 print("Rebased the local development branch '{}'".format(args.issue))
                 return 0
             else:

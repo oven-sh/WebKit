@@ -57,7 +57,7 @@ public:
 
 private:
     enum class ShouldFollowRedirects : bool { No, Yes };
-    static void startPingLoad(LocalFrame&, ResourceRequest&, HTTPHeaderMap&& originalRequestHeaders, ShouldFollowRedirects, ContentSecurityPolicyImposition, ReferrerPolicy, std::optional<ViolationReportType> = std::nullopt);
+    static void startPingLoad(LocalFrame&, ResourceRequest&, ShouldFollowRedirects, ContentSecurityPolicyImposition, ReferrerPolicy, std::optional<ViolationReportType> = std::nullopt);
 };
 
 } // namespace WebCore

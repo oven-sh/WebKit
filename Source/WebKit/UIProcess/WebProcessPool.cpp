@@ -126,6 +126,7 @@
 #include <wtf/WallTime.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(SERVICE_CONTROLS)
 #include "ServicesController.h"
@@ -1218,7 +1219,7 @@ void WebProcessPool::processDidFinishLaunching(WebProcessProxy& process)
 #if ENABLE(EXTENSION_CAPABILITIES)
     for (auto& page : process.pages()) {
         if (RefPtr mediaCapability = page->mediaCapability()) {
-            WEBPROCESSPOOL_RELEASE_LOG(ProcessCapabilities, "processDidFinishLaunching[envID=%" PUBLIC_LOG_STRING "]: updating media capability", mediaCapability->environmentIdentifier().utf8().data());
+            WEBPROCESSPOOL_RELEASE_LOG(ProcessCapabilities, "processDidFinishLaunching[envID=%" PUBLIC_LOG_STRING "]: updating media capability", mediaCapability->environmentIdentifier().utf8().legacyCStringPointer());
             page->updateMediaCapability();
         }
     }
@@ -2169,7 +2170,7 @@ void WebProcessPool::addProcessToOriginCacheSet(WebProcessProxy& process, const 
     if (!result.isNewEntry)
         result.iterator->value = process;
 
-    LOG(ProcessSwapping, "(ProcessSwapping) Registrable domain %s just saved a cached process with pid %i", registrableDomain.string().utf8().data(), process.processID());
+    LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Registrable domain "_s << registrableDomain.string() << " just saved a cached process with pid "_s << process.processID());
     if (!result.isNewEntry)
         LOG(ProcessSwapping, "(ProcessSwapping) Note: It already had one saved");
 }
@@ -2283,7 +2284,7 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
 
         addProcessToOriginCacheSet(sourceProcess, sourceURL);
 
-        LOG(ProcessSwapping, "(ProcessSwapping) Navigating from %s to %s, keeping around old process. Now holding on to old processes for %u origins.", sourceURL.string().utf8().data(), navigation.currentRequest().url().string().utf8().data(), m_swappedProcessesPerRegistrableDomain.size());
+        LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Navigating from "_s << sourceURL.string() << " to "_s << navigation.currentRequest().url().string() << ", keeping around old process. Now holding on to old processes for "_s << m_swappedProcessesPerRegistrableDomain.size() << " origins."_s);
     }
 
     if (!isMainFrameNavigation && siteIsolationEnabled)
@@ -2378,10 +2379,10 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
         return { WTF::move(sourceProcess), nullptr, "Process has not yet committed any provisional loads"_s };
     }
 
-    if (siteIsolationEnabled && targetURL.isAboutBlank()) {
+    if (siteIsolationEnabled && (targetURL.isAboutBlank() || targetURL.isAboutSrcDoc())) {
         RefPtr navigationOriginatorFrame = navigation.originatingFrameInfo() ? WebFrameProxy::webFrame(navigation.originatingFrameInfo()->frameID) : nullptr;
         if (navigationOriginatorFrame)
-            return { navigationOriginatorFrame->process(), nullptr, "Frame is navigating to about:blank from a cross site origin. Switching to process that originated navigation."_s };
+            return { navigationOriginatorFrame->process(), nullptr, "Frame is navigating to about:blank or about:srcdoc from a cross site origin. Switching to process that originated navigation."_s };
     }
 
     // FIXME: We should support process swap when a window has been opened via window.open() without 'noopener'.
@@ -2508,11 +2509,11 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
     auto reason = "Navigation is cross-site"_s;
     
     if (m_configuration->alwaysKeepAndReuseSwappedProcesses()) {
-        LOG(ProcessSwapping, "(ProcessSwapping) Considering re-use of a previously cached process for domain %s", targetSite.domain().string().utf8().data());
+        LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Considering re-use of a previously cached process for domain "_s << targetSite.domain().string());
 
         if (RefPtr process = m_swappedProcessesPerRegistrableDomain.get(targetSite.domain())) {
             if (process->websiteDataStore() == dataStore.ptr() && process->state() != AuxiliaryProcessProxy::State::Terminated) {
-                LOG(ProcessSwapping, "(ProcessSwapping) Reusing a previously cached process with pid %i to continue navigation to URL %s", process->processID(), targetURL.string().utf8().data());
+                LOG_WITH_STREAM(ProcessSwapping, stream << "(ProcessSwapping) Reusing a previously cached process with pid "_s << process->processID() << " to continue navigation to URL "_s << targetURL.string());
 
                 return { process.releaseNonNull(), nullptr, reason };
             }

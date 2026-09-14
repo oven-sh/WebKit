@@ -700,7 +700,7 @@ const gchar* webkit_website_data_manager_get_local_storage_directory(WebKitWebsi
         return nullptr;
 
     if (!priv->localStorageDirectory)
-        priv->localStorageDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultLocalStorageDirectory().utf8().data()));
+        priv->localStorageDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultLocalStorageDirectory().utf8().legacyCStringPointer()));
     return priv->localStorageDirectory.get();
 }
 
@@ -771,7 +771,7 @@ const gchar* webkit_website_data_manager_get_indexeddb_directory(WebKitWebsiteDa
         return nullptr;
 
     if (!priv->indexedDBDirectory)
-        priv->indexedDBDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultIndexedDBDatabaseDirectory().utf8().data()));
+        priv->indexedDBDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultIndexedDBDatabaseDirectory().utf8().legacyCStringPointer()));
     return priv->indexedDBDirectory.get();
 }
 
@@ -796,7 +796,7 @@ const gchar* webkit_website_data_manager_get_websql_directory(WebKitWebsiteDataM
         return nullptr;
 
     if (!priv->webSQLDirectory)
-        priv->webSQLDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultWebSQLDatabaseDirectory().utf8().data()));
+        priv->webSQLDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultWebSQLDatabaseDirectory().utf8().legacyCStringPointer()));
     return priv->webSQLDirectory.get();
 }
 
@@ -821,7 +821,7 @@ const gchar* webkit_website_data_manager_get_hsts_cache_directory(WebKitWebsiteD
         return nullptr;
 
     if (!priv->hstsCacheDirectory)
-        priv->hstsCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultHSTSStorageDirectory().utf8().data()));
+        priv->hstsCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultHSTSStorageDirectory().utf8().legacyCStringPointer()));
     return priv->hstsCacheDirectory.get();
 }
 
@@ -846,7 +846,7 @@ const gchar* webkit_website_data_manager_get_itp_directory(WebKitWebsiteDataMana
         return nullptr;
 
     if (!priv->itpDirectory)
-        priv->itpDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultResourceLoadStatisticsDirectory().utf8().data()));
+        priv->itpDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultResourceLoadStatisticsDirectory().utf8().legacyCStringPointer()));
     return priv->itpDirectory.get();
 }
 
@@ -871,7 +871,7 @@ const gchar* webkit_website_data_manager_get_service_worker_registrations_direct
         return nullptr;
 
     if (!priv->swRegistrationsDirectory)
-        priv->swRegistrationsDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultServiceWorkerRegistrationDirectory().utf8().data()));
+        priv->swRegistrationsDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultServiceWorkerRegistrationDirectory().utf8().legacyCStringPointer()));
     return priv->swRegistrationsDirectory.get();
 }
 
@@ -896,7 +896,7 @@ const gchar* webkit_website_data_manager_get_dom_cache_directory(WebKitWebsiteDa
         return nullptr;
 
     if (!priv->domCacheDirectory)
-        priv->domCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultCacheStorageDirectory().utf8().data()));
+        priv->domCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultCacheStorageDirectory().utf8().legacyCStringPointer()));
     return priv->domCacheDirectory.get();
 }
 

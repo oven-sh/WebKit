@@ -85,6 +85,14 @@ static unsigned isIdentifierContinue(Latin1Character character, std::span<const 
 
 }
 
+// https://www.w3.org/TR/WGSL/#blankspace-and-line-breaks
+template <typename T>
+static bool isLineBreak(T character)
+{
+    return character == '\n' || character == '\v' || character == '\f' || character == '\r'
+        || character == u'\x85' || character == u'\U00002028' || character == u'\U00002029';
+}
+
 template<typename CharacterType>
 Token Lexer<CharacterType>::makeToken(TokenType type)
 {
@@ -583,7 +591,7 @@ bool Lexer<T>::skipLineComment()
     ASSERT(peek(0) == '/' && peek(1) == '/');
     // Note that in the case of \r\n this makes the comment end on the \r. It is
     // fine, as the \n after that is simple whitespace.
-    while (!isAtEndOfFile() && peek() != '\n') {
+    while (!isAtEndOfFile() && !isLineBreak(peek())) {
         if (peek() == '\0')
             return false;
         shift();

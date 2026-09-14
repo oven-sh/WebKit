@@ -604,7 +604,7 @@ TEST(ContentRuleList, CSPReport)
 
     URL expectedURL = server.request().URL;
     expectedURL.setPath("/resources/save-report.py"_s);
-    EXPECT_STREQ(expectedURL.string().utf8().data(), notificationList.first().url.utf8().data());
+    EXPECT_EQ(expectedURL.string(), notificationList.first().url);
 }
 
 TEST(WebKit, RedirectToPlaintextHTTPSUpgrade)

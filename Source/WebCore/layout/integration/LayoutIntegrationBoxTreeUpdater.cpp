@@ -41,12 +41,12 @@
 #include "RenderFlexibleBox.h"
 #include "RenderGrid.h"
 #include "RenderImage.h"
+#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderListItem.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderMenuList.h"
 #include "RenderObjectInlines.h"
-#include "RenderSVGInline.h"
 #include "RenderSlider.h"
 #include "RenderTable.h"
 #include "RenderTextControl.h"
@@ -89,6 +89,8 @@ static Layout::Box::ElementAttributes elementAttributes(const RenderElement& ren
             return renderLineBreak->isWBR() ? Layout::Box::NodeType::WordBreakOpportunity : Layout::Box::NodeType::LineBreak;
         if (is<RenderTable>(renderer))
             return Layout::Box::NodeType::TableBox;
+        if (is<RenderInline>(renderer))
+            return Layout::Box::NodeType::InlineBox;
         return Layout::Box::NodeType::GenericElement;
     }();
 
@@ -173,63 +175,6 @@ void BoxTreeUpdater::tearDown()
         rootLayoutBox().destroyChildren();
 }
 
-void BoxTreeUpdater::adjustStyleIfNeeded(const RenderElement& renderer, Style::ComputedStyle& style, Style::ComputedStyle* firstLineStyle)
-{
-    auto adjustStyle = [&](auto& styleToAdjust) {
-        // If we end up here with a box that has a table display type, just treat it as a regular block-level box.
-        if (styleToAdjust.display().isInternalTableBox() || styleToAdjust.display() == Style::DisplayType::TableCaption) {
-            styleToAdjust.setDisplay(Style::DisplayType::BlockFlow);
-            return;
-        }
-
-        if (is<RenderBlock>(renderer)) {
-            if (styleToAdjust.display() == Style::DisplayType::InlineFlow)
-                styleToAdjust.setDisplay(Style::DisplayType::InlineFlowRoot);
-
-            if (renderer.isAnonymousBlock()) {
-                CheckedRef anonBlockParentStyle = renderer.parent()->style();
-                // overflow and text-overflow property values don't get forwarded to anonymous block boxes.
-                // e.g. <div style="overflow: hidden; text-overflow: ellipsis; width: 100px; white-space: pre;">this text should have ellipsis<div></div></div>
-                styleToAdjust.setTextOverflow(Style::TextOverflow { anonBlockParentStyle->textOverflow() });
-                styleToAdjust.setOverflowX(anonBlockParentStyle->overflowX());
-                styleToAdjust.setOverflowY(anonBlockParentStyle->overflowY());
-            }
-            return;
-        }
-
-        if (auto* renderInline = dynamicDowncast<RenderInline>(renderer)) {
-            auto isSupportedInlineDisplay = [&] {
-                auto display = styleToAdjust.display();
-                if (display == Style::DisplayType::RubyBase || display == Style::DisplayType::RubyText)
-                    return renderInline->parent()->style().display() == Style::DisplayType::InlineRuby;
-                if (is<RenderSVGInline>(*renderInline))
-                    return display == Style::DisplayType::InlineFlow;
-                return display.isInlineType();
-            };
-            if (!isSupportedInlineDisplay())
-                styleToAdjust.setDisplay(Style::DisplayType::InlineFlow);
-            return;
-        }
-
-        if (auto* renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer)) {
-            if (!styleToAdjust.hasOutOfFlowPosition()) {
-                // Force in-flow display value to inline (see webkit.org/b/223151).
-                styleToAdjust.setDisplay(Style::DisplayType::InlineFlow);
-            }
-            styleToAdjust.setFloating(Float::None);
-            // Clear property should only apply on block elements, however,
-            // it appears that browsers seem to ignore it on <br> inline elements.
-            // https://drafts.csswg.org/css2/#propdef-clear
-            if (renderLineBreak->isWBR())
-                styleToAdjust.setClear(Clear::None);
-            return;
-        }
-    };
-    adjustStyle(style);
-    if (firstLineStyle)
-        adjustStyle(*firstLineStyle);
-}
-
 static Layout::ElementBox::IsListMarkerImage isListMarkerImage(const RenderListOutsideMarker& listMarkerRenderer)
 {
     return listMarkerRenderer.isImage() ? Layout::ElementBox::IsListMarkerImage::Yes : Layout::ElementBox::IsListMarkerImage::No;
@@ -300,7 +245,6 @@ UniqueRef<Layout::Box> BoxTreeUpdater::createLayoutBox(RenderObject& renderer)
     auto& renderElement = downcast<RenderElement>(renderer);
 
     auto style = Style::ComputedStyle::clone(renderElement.style());
-    adjustStyleIfNeeded(renderElement, style, firstLineStyle.get());
 
     if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(renderElement))
         return makeUniqueRef<Layout::ElementBox>(elementAttributes(renderElement), isListMarkerImage(*listMarkerRenderer), WTF::move(style), WTF::move(firstLineStyle));
@@ -404,7 +348,6 @@ void BoxTreeUpdater::updateStyle(const RenderObject& renderer)
 
     auto firstLineNewStyle = firstLineStyleFor(renderer);
     auto newStyle = Style::ComputedStyle::clone(downcast<RenderElement>(renderer).style());
-    adjustStyleIfNeeded(downcast<RenderElement>(renderer), newStyle, firstLineNewStyle.get());
     layoutBox->updateStyle(WTF::move(newStyle), WTF::move(firstLineNewStyle));
     if (auto* listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(renderer)) {
         if (auto* elementBox = dynamicDowncast<Layout::ElementBox>(*layoutBox))

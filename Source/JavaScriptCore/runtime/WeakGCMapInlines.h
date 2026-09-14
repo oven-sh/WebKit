@@ -27,7 +27,6 @@
 
 #include "HeapInlines.h"
 #include "WeakGCMap.h"
-#include "WeakInlines.h"
 #include <wtf/IterationStatus.h>
 
 namespace JSC {
@@ -68,11 +67,22 @@ inline bool WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::contains(const K
 }
 
 template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTraitsArg>
-NEVER_INLINE void WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::pruneStaleEntries()
+NEVER_INLINE void WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
 {
-    m_map.removeIf([](const typename HashMapType::KeyValuePairType& entry) {
-        return !entry.value;
-    });
+    if (collectionScope == CollectionScope::Full) {
+        m_map.removeIf([&](const typename HashMapType::KeyValuePairType& entry) {
+            return !entry.value || !vm.heap.isMarked(entry.value);
+        });
+        return;
+    }
+
+    // Rehashing here would have to run without allocating or touching the heap, and an eden
+    // collection frees little enough that it is not worth it. Leave a zombie entry for the next
+    // full collection to remove.
+    for (auto& entry : m_map) {
+        if (entry.value && !vm.heap.isMarked(entry.value))
+            entry.value = nullptr;
+    }
 }
 
 template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTraitsArg>
@@ -82,7 +92,7 @@ inline void WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::forEach(Func fun
     ASSERT(m_vm.heap.isDeferred());
     for (auto& entry : m_map) {
         if (entry.value) {
-            if (func(entry.value.get()) == IterationStatus::Done)
+            if (func(entry.value) == IterationStatus::Done)
                 return;
         }
     }

@@ -2583,7 +2583,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
     if (m_renderer->isRenderTableSection())
         return AccessibilityRole::Ignored;
 
-    auto treatStyleFormatGroupAsInline = is<RenderInline>(*m_renderer) ? TreatStyleFormatGroupAsInline::Yes : TreatStyleFormatGroupAsInline::No;
+    auto treatStyleFormatGroupAsInline = m_renderer->isInlineBox() ? TreatStyleFormatGroupAsInline::Yes : TreatStyleFormatGroupAsInline::No;
     auto roleFromNode = determineAccessibilityRoleFromNode(treatStyleFormatGroupAsInline);
 
     // Table cells (by default) return a TextGroup role from determineAccessibilityRoleFromNode.
@@ -2606,7 +2606,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
     // InlineRole is the final fallback before assigning AccessibilityRole::Unknown to an object. It makes it
     // possible to distinguish truly unknown objects from non-focusable inline text elements
     // which have an event handler or attribute suggesting possible inclusion by the platform.
-    if (is<RenderInline>(*m_renderer)
+    if (m_renderer->isInlineBox()
         && (hasAttributesRequiredForInclusion()
             || (node && node->hasEventListeners())
             || (supportsDatetimeAttribute() && !getAttribute(datetimeAttr).isEmpty())))

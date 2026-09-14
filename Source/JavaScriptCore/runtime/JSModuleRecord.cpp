@@ -315,7 +315,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_moduleProgramExecutable.set(vm, this, executable);
     if (executable->importedBindings())
-        executables.set(key, Weak<ModuleProgramExecutable>(executable));
+        executables.set(key, executable);
     return executable;
 }
 

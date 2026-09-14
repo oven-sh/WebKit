@@ -412,6 +412,12 @@ config("extra_warnings") {
   }
 }
 
+config("opencl_no_pragma_messages") {
+  if (is_clang) {
+    cflags = [ "-Wno-#pragma-messages" ]
+  }
+}
+
 # This config adds build-ids to the associated library. -Wl is a special option
 # that indicates that clang should pass the associated option --build-id to the
 # linker. This will cause a build-id section to be added to the associated
@@ -623,6 +629,8 @@ angle_source_set("angle_capture_common") {
   sources = [
     "src/common/frame_capture_binary_data.cpp",
     "src/common/frame_capture_binary_data.h",
+    "src/common/frame_capture_shared.cpp",
+    "src/common/frame_capture_shared.h",
     "src/common/frame_capture_utils.cpp",
     "src/common/frame_capture_utils.h",
     "src/common/frame_capture_utils_autogen.cpp",
@@ -1073,13 +1081,14 @@ config("libANGLE_config") {
 
 angle_source_set("libANGLE_headers") {
   sources = libangle_headers
-  if (angle_enable_cl) {
-    sources += libangle_cl_headers
-  }
   public_deps = [
     ":angle_common",
     ":angle_translator_headers",
+    ":cl_includes",
   ]
+  if (angle_enable_cl) {
+    sources += libangle_cl_headers
+  }
   public_configs += [ ":libANGLE_config" ]
 }
 
@@ -1102,6 +1111,7 @@ angle_source_set("libANGLE_no_vulkan") {
   sources = libangle_sources
   if (angle_enable_cl) {
     sources += libangle_cl_sources
+    configs += [ ":opencl_no_pragma_messages" ]
   }
   defines = []
 
@@ -1199,6 +1209,7 @@ angle_source_set("angle_frame_capture_mock") {
   public_configs = [ ":angle_frame_capture_disabled" ]
   sources = [
     "src/common/frame_capture_binary_data.h",
+    "src/common/frame_capture_shared.h",
     "src/common/frame_capture_utils.h",
     "src/common/frame_capture_utils_autogen.h",
     "src/common/gl_enum_utils_autogen.h",
@@ -1245,10 +1256,6 @@ if (angle_use_wayland) {
       ]
     }
   }
-}
-
-if (!defined(angle_perfetto_cpp_dir)) {
-  angle_perfetto_cpp_dir = "//third_party/perfetto"
 }
 
 if (angle_enable_perfetto) {
@@ -1309,6 +1316,7 @@ group("angle_abseil") {
 
     public_configs = [ ":angle_abseil_config" ]
   }
+  visibility = [ "./*" ]
 }
 
 config("angle_compression_config") {
@@ -1328,6 +1336,7 @@ if (angle_has_rapidjson) {
   config("angle_rapidjson_config") {
     defines = [ "ANGLE_HAS_RAPIDJSON" ]
   }
+
   angle_source_set("angle_json_serializer") {
     public_deps = [
       ":angle_common",
@@ -1862,6 +1871,7 @@ if (install_prefix != "") {
     }
 
     install_deps += [ ":install_includes" ]
+
     action("install_includes") {
       script = "scripts/install_target.py"
       configs = invoker.configs

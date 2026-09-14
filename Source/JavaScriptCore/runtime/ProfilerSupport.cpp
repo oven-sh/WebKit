@@ -115,7 +115,7 @@ uint32_t ProfilerSupport::getCurrentThreadID()
 
 void ProfilerSupport::write(const AbstractLocker&, uint64_t start, uint64_t end, const CString& message)
 {
-    auto header = toCString(start, " ", end, " ");
+    auto header = toUTF8CString(start, " ", end, " ");
     m_file.write(WTF::asByteSpan(header.span()));
     m_file.write(WTF::asByteSpan(message.span()));
     m_file.write(WTF::asByteSpan("\n"_span));

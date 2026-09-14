@@ -558,7 +558,7 @@ ALLOW_NONLITERAL_FORMAT_END
 
     loggingAccumulator().accumulate(loggingString);
 
-    logToStderr(channel, loggingString.utf8().data());
+    logToStderr(channel, loggingString.utf8().legacyCStringPointer());
 }
 
 void WTFLog(WTFLogChannel* channel, const char* format, ...)
@@ -667,14 +667,14 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
             else if (equalLettersIgnoringASCIICase(level, "debug"_s))
                 logChannelLevel = WTFLogLevel::Debug;
             else
-                WTFLogAlways("Unknown logging level: %s", level.utf8().data());
+                WTFLogAlways("Unknown logging level: %s", level.utf8().legacyCStringPointer());
         }
 
-        if (WTFLogChannel* channel = WTFLogChannelByName(channels, count, component.utf8().data())) {
+        if (WTFLogChannel* channel = WTFLogChannelByName(channels, count, component.utf8().legacyCStringPointer())) {
             channel->state = logChannelState;
             channel->level = logChannelLevel;
         } else
-            WTFLogAlways("Unknown logging channel: %s", component.utf8().data());
+            WTFLogAlways("Unknown logging channel: %s", component.utf8().legacyCStringPointer());
     }
 }
 

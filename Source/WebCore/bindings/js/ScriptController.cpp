@@ -173,7 +173,7 @@ ValueOrException ScriptController::evaluateInWorld(const ScriptSourceCode& sourc
     SetForScope sourceURLScope(m_sourceURL, &sourceURL);
 
     if (RefPtr document = m_frame->document()) {
-        if (auto script = document->quirks().scriptToEvaluateBeforeRunningScriptFromURL(sourceURL); !script.isEmpty())
+        for (auto& script : document->quirks().scriptsToEvaluateBeforeRunningScriptFromURL(sourceURL))
             evaluateIgnoringException({ WTF::move(script), JSC::SourceTaintedOrigin::Untainted });
     }
 

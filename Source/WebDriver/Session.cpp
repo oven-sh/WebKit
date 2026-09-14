@@ -40,6 +40,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/UUID.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(WEBDRIVER_BIDI)
 #include "WebSocketServer.h"
@@ -2757,7 +2758,7 @@ static Ref<JSON::Object> builtAutomationCookie(const Session::Cookie& cookie)
     cookieObject->setBoolean("httpOnly"_s, cookie.httpOnly.value_or(false));
     cookieObject->setBoolean("session"_s, !cookie.expiry);
     cookieObject->setDouble("expires"_s, cookie.expiry.value_or(0));
-    cookieObject->setString("sameSite"_s, cookie.sameSite.value_or("None"_s));
+    cookieObject->setString("sameSite"_s, cookie.sameSite.value_or("Lax"_s));
     return cookieObject;
 }
 
@@ -3333,7 +3334,7 @@ void Session::dispatchBidiMessage(RefPtr<JSON::Object>&& message)
         return;
     }
 
-    LOG(WebDriverBiDi, "Session::dispatchBidiMessage: received bidi message %s", bidiMessageValue->toJSONString().utf8().data());
+    LOG_WITH_STREAM(WebDriverBiDi, stream << "Session::dispatchBidiMessage: received bidi message "_s << bidiMessageValue->toJSONString());
     auto bidiMessage = bidiMessageValue->asObject();
     if (!bidiMessage) {
         RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Bidi message is not an object.");
@@ -3343,7 +3344,7 @@ void Session::dispatchBidiMessage(RefPtr<JSON::Object>&& message)
 
     if (bidiMessage->getString("type"_s) == "event"_s) {
         if (bidiMessage->size() < 3 || (bidiMessage->find("method"_s) == bidiMessage->end()) || (bidiMessage->find("params"_s) == bidiMessage->end())) {
-            RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Malformed bidi event: %s", bidiMessageValue->toJSONString().utf8().data());
+            RELEASE_LOG(WebDriverBiDi, "Session::dispatchBidiMessage: Malformed bidi event: %s", bidiMessageValue->toJSONString().utf8().legacyCStringPointer());
             return;
         }
 

@@ -223,7 +223,7 @@ void WebInspectorUIProxy::platformInspectedURLChanged(const String& url)
     if (!m_inspectorWindow)
         return;
 
-    GUniquePtr<char> title(g_strdup_printf("Web Inspector — %s", url.utf8().data()));
+    GUniquePtr<char> title(g_strdup_printf("Web Inspector — %s", url.utf8().legacyCStringPointer()));
     wpe_toplevel_set_title(m_inspectorWindow.get(), title.get());
 }
 
@@ -240,8 +240,8 @@ static String computeContentHash(const String& content, bool base64Encoded)
         if (decoded)
             digest.reset(g_compute_checksum_for_data(G_CHECKSUM_SHA256, decoded->span().data(), decoded->size()));
     } else {
-        CString utf8 = content.utf8();
-        digest.reset(g_compute_checksum_for_string(G_CHECKSUM_SHA256, utf8.data(), utf8.length()));
+        auto utf8 = content.utf8();
+        digest.reset(g_compute_checksum_for_string(G_CHECKSUM_SHA256, utf8.legacyCStringPointer(), utf8.length()));
     }
 
     return String::fromUTF8(digest.get());
@@ -268,7 +268,7 @@ void WebInspectorUIProxy::platformSave(Vector<WebCore::InspectorFrontendClient::
 
     auto updatedFilename = makeString(filename, "-"_s, hash.left(8)).utf8();
 
-    GRefPtr<GFile> file = adoptGRef(g_file_new_build_filename(downloadsDir, updatedFilename.data(), nullptr));
+    GRefPtr<GFile> file = adoptGRef(g_file_new_build_filename(downloadsDir, updatedFilename.legacyCStringPointer(), nullptr));
 
     platformSaveDataToFile(WTF::move(file), saveDatas[0].content, saveDatas[0].base64Encoded);
 }

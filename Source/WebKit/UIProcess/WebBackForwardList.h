@@ -138,7 +138,7 @@ private:
     void backForwardUpdateItem(IPC::Connection&, Ref<FrameState>&&);
     void backForwardGoToItem(WebCore::BackForwardItemIdentifier);
     void backForwardAllItems(WebCore::FrameIdentifier, CompletionHandler<void(Vector<Ref<FrameState>>&&)>&&);
-    void backForwardItemAtIndexForWebContent(IPC::Connection&, int32_t index, WebCore::FrameIdentifier, CompletionHandler<void(RefPtr<FrameState>&&)>&&);
+    void backForwardItemAtIndexForWebContent(IPC::Connection&, int32_t delta, WebCore::FrameIdentifier, CompletionHandler<void(RefPtr<FrameState>&&)>&&);
     void backForwardListContainsItem(WebCore::BackForwardItemIdentifier, CompletionHandler<void(bool)>&&);
     void backForwardListCounts(CompletionHandler<void(WebBackForwardListCounts&&)>&&);
 

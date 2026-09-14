@@ -108,7 +108,7 @@ inline match_constness_t<Source, Target>& downcast(Source& source LIFETIME_BOUND
 {
     static_assert(!std::is_same_v<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::is_base_of_v<Source, Target>, "Should be a downcast");
-    RELEASE_ASSERT(is<Target>(source));
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(is<Target>(source));
     SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<match_constness_t<Source, Target>&>(source);
 }
 
@@ -117,7 +117,7 @@ inline match_constness_t<Source, Target>* downcast(Source* source LIFETIME_BOUND
 {
     static_assert(!std::is_same_v<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::is_base_of_v<Source, Target>, "Should be a downcast");
-    RELEASE_ASSERT(!source || is<Target>(*source));
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(!source || is<Target>(*source));
     SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<match_constness_t<Source, Target>*>(source);
 }
 

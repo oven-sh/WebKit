@@ -9,13 +9,16 @@
 #ifndef LIBANGLE_CLMEMORY_H_
 #define LIBANGLE_CLMEMORY_H_
 
+#include <angle_cl.h>
+
+#include "libANGLE/CLBitField.h"
 #include "libANGLE/CLObject.h"
+#include "libANGLE/cl_types.h"
+#include "libANGLE/cl_utils.h"
 #include "libANGLE/renderer/CLMemoryImpl.h"
 
-#include "common/SynchronizedValue.h"
-
 #include <atomic>
-#include <stack>
+#include <cstddef>
 
 namespace cl
 {
@@ -50,8 +53,6 @@ class Memory : public _cl_mem, public Object
     static Memory *Cast(cl_mem memobj);
 
   protected:
-    using CallbackData = std::pair<MemoryCB, void *>;
-
     Memory(const Buffer &buffer,
            Context &context,
            PropArray &&properties,
@@ -72,7 +73,7 @@ class Memory : public _cl_mem, public Object
     rx::CLMemoryImpl::Ptr mImpl;
     size_t mSize;
 
-    angle::SynchronizedValue<std::stack<CallbackData>> mDestructorCallbacks;
+    DestructorCallbacks<MemoryCB> mDestructorCallbacks;
     std::atomic<cl_uint> mMapCount;
 
     friend class Buffer;

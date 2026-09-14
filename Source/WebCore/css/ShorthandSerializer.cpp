@@ -141,6 +141,7 @@ private:
     String serializeGridArea() const;
     String serializeGridRowColumn() const;
     String serializeGridTemplate() const;
+    String serializeHyphenateLimitChars() const;
     String serializeOffset() const;
     String serializePageBreak() const;
     String serializePositionTry() const;
@@ -243,8 +244,18 @@ bool ShorthandSerializer::commonSerializationChecks(const StyleProperties& prope
         auto longhand = longhandProperty(i);
 
         int propertyIndex = properties.findPropertyIndex(longhand);
-        if (propertyIndex == -1)
+        if (propertyIndex == -1) {
+            // Internal-only longhands can never be set (or removed) independently through the
+            // CSSOM, so a shorthand containing one should never fail to serialize purely because
+            // it happens to be absent from the property set — treat it as if it were present and
+            // set to its initial value instead.
+            if (isInternal(longhand)) {
+                if (m_shorthand.id() != CSSPropertyAll)
+                    m_longhandValues[i] = initialCSSValueForLonghand(longhand);
+                continue;
+            }
             return true;
+        }
         auto property = properties.propertyAt(propertyIndex);
 
         // Don't serialize if longhands have different importance.
@@ -417,6 +428,8 @@ String ShorthandSerializer::serialize()
         return serializeGridRowColumn();
     case CSSPropertyGridTemplate:
         return serializeGridTemplate();
+    case CSSPropertyHyphenateLimitChars:
+        return serializeHyphenateLimitChars();
     case CSSPropertyLineClamp:
         return serializeLineClamp();
     case CSSPropertyMarker:
@@ -1486,6 +1499,24 @@ String ShorthandSerializer::serializePositionTry() const
         return positionTryFallbacksSerialization;
 
     return makeString(serializeLonghandValue(positionTryOrderIndex), " "_s, positionTryFallbacksSerialization);
+}
+
+String ShorthandSerializer::serializeHyphenateLimitChars() const
+{
+    ASSERT(length() == 3);
+
+    auto total = serializeLonghandValue(0);
+    auto before = serializeLonghandValue(1);
+    auto after = serializeLonghandValue(2);
+
+    bool showAfter = after != before;
+    bool showBefore = showAfter || !isLonghandValueID(1, CSSValueAuto);
+
+    if (showAfter)
+        return makeString(total, ' ', before, ' ', after);
+    if (showBefore)
+        return makeString(total, ' ', before);
+    return total;
 }
 
 String ShorthandSerializer::serializeLineClamp() const

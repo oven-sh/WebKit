@@ -1333,7 +1333,7 @@ void SkiaCompositingLayer::paintWithMaskAndBackdrop(SkCanvas& canvas, PaintConte
 void SkiaCompositingLayer::paintWithFilterAndMask(SkCanvas& canvas, PaintContext& context)
 {
     auto filter = this->filter();
-    if (!filter) {
+    if (!filter || !filter->filter) {
         paintSelfAndChildren(canvas, context);
         return;
     }

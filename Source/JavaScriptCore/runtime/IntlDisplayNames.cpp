@@ -341,7 +341,7 @@ JSValue IntlDisplayNames::of(JSGlobalObject* globalObject, JSValue codeValue) co
         // uldn_localeDisplayName, uldn_regionDisplayName, and uldn_scriptDisplayName return U_ILLEGAL_ARGUMENT_ERROR if the display-name is not found.
         // We should return undefined if fallback is "none". Otherwise, we should return input value.
         if (status == U_ILLEGAL_ARGUMENT_ERROR)
-            return (m_fallback == Fallback::None) ? jsUndefined() : jsString(vm, String(canonicalCode.span()));
+            return (m_fallback == Fallback::None) ? jsUndefined() : jsString(vm, String::fromLatin1(canonicalCode.span()));
         return throwTypeError(globalObject, scope, "Failed to query a display name."_s);
     }
     return jsString(vm, String(WTF::move(buffer)));

@@ -45,7 +45,7 @@ class PerfLog {
     WTF_MAKE_NONCOPYABLE(PerfLog);
     friend class LazyNeverDestroyed<PerfLog>;
 public:
-    static void log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag>, std::unique_ptr<IRDumpDebugInfo>&& = nullptr, std::unique_ptr<SourceCodeDumpDebugInfo>&& = nullptr);
+    static void log(const UTF8CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag>, std::unique_ptr<IRDumpDebugInfo>&& = nullptr, std::unique_ptr<SourceCodeDumpDebugInfo>&& = nullptr);
 
 private:
     PerfLog();

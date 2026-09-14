@@ -36,6 +36,7 @@
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
 #include "DocumentSVG.h"
+#include "DocumentTimeline.h"
 #include "DocumentView.h"
 #include "EditorClient.h"
 #include "FrameLoader.h"
@@ -52,6 +53,7 @@
 #include "PageConfiguration.h"
 #include "RenderSVGRoot.h"
 #include "RenderView.h"
+#include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGFEImageElement.h"
 #include "SVGForeignObjectElement.h"
@@ -521,7 +523,15 @@ bool SVGImage::isAnimating() const
     RefPtr rootElement = this->rootElement();
     if (!rootElement)
         return false;
-    return rootElement->hasActiveAnimation();
+
+    Ref document = rootElement->document();
+    if (CheckedPtr svgExtensions = document->svgExtensionsIfExists()) {
+        if (svgExtensions->hasActiveSMILAnimations())
+            return true;
+    }
+
+    RefPtr timeline = document->existingTimeline();
+    return timeline && !timeline->animationsAreSuspended() && !timeline->relevantAnimations().isEmpty();
 }
 
 void SVGImage::reportApproximateMemoryCost() const

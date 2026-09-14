@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -129,9 +129,13 @@ ExceptionOr<void> DataTransferItemList::remove(unsigned index)
     return { };
 }
 
+// https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransferitemlist-clear
 void DataTransferItemList::clear()
 {
-    Ref dataTransfer = m_dataTransfer.get();
+    Ref dataTransfer = m_dataTransfer;
+    if (!dataTransfer->canWriteData())
+        return;
+
     dataTransfer->pasteboard().clear();
     bool removedItemContainingFile = false;
     if (m_items) {

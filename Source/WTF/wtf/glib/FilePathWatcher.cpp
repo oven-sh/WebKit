@@ -41,11 +41,11 @@ FilePathWatcher::FilePathWatcher(const String& path, Function<void()>&& handler)
         return;
 
     auto pathUtf8 = path.utf8();
-    GRefPtr file = adoptGRef(g_file_new_for_path(pathUtf8.data()));
+    GRefPtr file = adoptGRef(g_file_new_for_path(pathUtf8.legacyCStringPointer()));
     GUniqueOutPtr<GError> error;
     m_monitor = adoptGRef(g_file_monitor_file(file.get(), G_FILE_MONITOR_WATCH_HARD_LINKS, nullptr, &error.outPtr()));
     if (!m_monitor) {
-        LOG_ERROR("FilePathWatcher: failed to monitor %s: %s", pathUtf8.data(), error.get() ? error->message : "unknown error");
+        LOG_ERROR("FilePathWatcher: failed to monitor %s: %s", pathUtf8.legacyCStringPointer(), error.get() ? error->message : "unknown error");
         return;
     }
     // GFileMonitor coalesces events within a rate-limit window that defaults to

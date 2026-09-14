@@ -399,7 +399,7 @@ inline Ref<match_constness_t<Source, Target>> downcast(Ref<Source, PtrTraits, Re
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
-    RELEASE_ASSERT(is<Target>(source));
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(is<Target>(source));
     return unsafeRefDowncast<match_constness_t<Source, Target>>(WTF::move(source));
 }
 

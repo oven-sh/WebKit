@@ -1090,7 +1090,10 @@ static String navigationIDToProtocolString(std::optional<WebCore::NavigationIden
         return nullString();
 
     uint64_t id = navigationID->toUInt64();
-    return WTF::UUID(id, id).toString();
+    auto uuid = WTF::UUID::tryCreate(id, id);
+    if (!uuid)
+        return nullString();
+    return uuid->toString();
 }
 #endif
 

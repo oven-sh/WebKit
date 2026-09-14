@@ -178,7 +178,7 @@ TEST(URLExtras, URLExtras_Spoof)
     };
     for (auto& host : punycodedSpoofHosts) {
         auto url = makeString("http://"_s, host, '/').utf8();
-        EXPECT_STREQ(url.data(), userVisibleString(literalURL(url.data())));
+        EXPECT_STREQ(url.legacyCStringPointer(), userVisibleString(literalURL(url.legacyCStringPointer())));
     }
 }
 
@@ -409,7 +409,7 @@ TEST(URLExtras, URLByRemovingUserInfo)
     URL url("https://apple.com%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40%40@foo.github.io/upload/test.zip"_s);
     RetainPtr cfUrl = WTF::URLByRemovingUserInfo(url.createNSURL().get());
     URL url2(cfUrl.get());
-    EXPECT_STREQ("https://foo.github.io/upload/test.zip", url2.string().utf8().data());
+    EXPECT_EQ("https://foo.github.io/upload/test.zip"_s, url2.string());
 }
 
 // isUserVisibleURL() is a fast-path guard that must return YES only when

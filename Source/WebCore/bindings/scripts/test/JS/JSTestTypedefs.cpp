@@ -874,7 +874,7 @@ static inline void verifyVTable(TestTypedefs* ptr)
         // TestTypedefs has subclasses. If TestTypedefs has subclasses that get passed
         // to toJS() we currently require TestTypedefs you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

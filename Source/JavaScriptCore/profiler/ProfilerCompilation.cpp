@@ -69,7 +69,7 @@ void Compilation::addDescription(const CompiledBytecode& compiledBytecode)
     m_descriptions.append(compiledBytecode);
 }
 
-void Compilation::addDescription(const OriginStack& stack, const CString& description)
+void Compilation::addDescription(const OriginStack& stack, const UTF8CString& description)
 {
     addDescription(CompiledBytecode(stack, description));
 }
@@ -101,9 +101,9 @@ void Compilation::setJettisonReason(JettisonReason jettisonReason, const FireDet
     
     m_jettisonReason = jettisonReason;
     if (detail)
-        m_additionalJettisonReason = toCString(*detail);
+        m_additionalJettisonReason = toUTF8CString(*detail);
     else
-        m_additionalJettisonReason = CString();
+        m_additionalJettisonReason = { };
 }
 
 void Compilation::dump(PrintStream& out) const
@@ -115,7 +115,7 @@ Ref<JSON::Value> Compilation::toJSON(Dumper& dumper) const
 {
     auto result = JSON::Object::create();
     result->setDouble(dumper.keys().m_bytecodesID, m_bytecodes->id());
-    result->setString(dumper.keys().m_compilationKind, String::fromUTF8(toCString(m_kind).span()));
+    result->setString(dumper.keys().m_compilationKind, String::fromUTF8(toUTF8CString(m_kind).span()));
 
     auto profiledBytecodes = JSON::Array::create();
     for (const auto& bytecode : m_profiledBytecodes)
@@ -149,7 +149,7 @@ Ref<JSON::Value> Compilation::toJSON(Dumper& dumper) const
     result->setDouble(dumper.keys().m_numInlinedGetByIds, m_numInlinedGetByIds);
     result->setDouble(dumper.keys().m_numInlinedPutByIds, m_numInlinedPutByIds);
     result->setDouble(dumper.keys().m_numInlinedCalls, m_numInlinedCalls);
-    result->setString(dumper.keys().m_jettisonReason, String::fromUTF8(toCString(m_jettisonReason).span()));
+    result->setString(dumper.keys().m_jettisonReason, String::fromUTF8(toUTF8CString(m_jettisonReason).span()));
     if (!m_additionalJettisonReason.isNull())
         result->setString(dumper.keys().m_additionalJettisonReason, String::fromUTF8(m_additionalJettisonReason.span()));
 

@@ -59,6 +59,7 @@ public:
     LayoutUnit minContentLogicalWidthContribution(const ElementBox&) const;
     LayoutUnit maxContentLogicalWidthContribution(const ElementBox&) const;
     void layoutWithFormattingContextForBlockInInline(const ElementBox& block, LayoutPoint blockLineLogicalTopLeft, const InlineLayoutState&) const;
+    static const Style::ComputedStyle& firstNonAnonymousAncestorStyle(const Box&);
 
     static BlockLayoutState::MarginState NODELETE toMarginState(const RenderBlockFlow::MarginInfo&);
     static RenderBlockFlow::MarginInfo toMarginInfo(const Layout::BlockLayoutState::MarginState&);

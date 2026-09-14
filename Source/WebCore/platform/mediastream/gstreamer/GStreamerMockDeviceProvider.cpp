@@ -91,7 +91,7 @@ void webkitGstMockDeviceProviderSwitchDefaultDevice(const CaptureDevice& oldDevi
     g_list_free_full(devices, gst_object_unref);
 
     if (!oldGstDevice) {
-        GST_ERROR_OBJECT(s_provider, "Unable to find GStreamer mock device corresponding to old capture device with ID %s", oldDevice.persistentId().utf8().data());
+        GST_ERROR_OBJECT(s_provider, "Unable to find GStreamer mock device corresponding to old capture device with ID %s", oldDevice.persistentId().utf8().legacyCStringPointer());
         return;
     }
 
@@ -101,7 +101,7 @@ void webkitGstMockDeviceProviderSwitchDefaultDevice(const CaptureDevice& oldDevi
     gst_device_provider_device_changed(GST_DEVICE_PROVIDER_CAST(s_provider), previousDefaultGstDevice.get(), oldGstDevice.get());
 
     if (!newGstDevice) {
-        GST_ERROR_OBJECT(s_provider, "Unable to find GStreamer mock device corresponding to new capture device with ID %s", oldDevice.persistentId().utf8().data());
+        GST_ERROR_OBJECT(s_provider, "Unable to find GStreamer mock device corresponding to new capture device with ID %s", oldDevice.persistentId().utf8().legacyCStringPointer());
         return;
     }
 

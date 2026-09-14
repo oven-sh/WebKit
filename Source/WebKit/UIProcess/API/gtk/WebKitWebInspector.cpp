@@ -312,7 +312,7 @@ private:
 
     void inspectedURLChanged(WebInspectorUIProxy&, const String& url) override
     {
-        CString uri = url.utf8();
+        auto uri = url.utf8();
         if (uri == m_inspector->priv->inspectedURI)
             return;
         m_inspector->priv->inspectedURI = uri;

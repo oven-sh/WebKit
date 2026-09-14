@@ -275,10 +275,35 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
 #undef SET_MAX_VALUE
     }
 
+    // https://gpuweb.github.io/gpuweb/#limits
+    // The combined maxStorage{Buffers,Textures}PerShaderStage limits and their per-stage counterparts
+    // auto-upgrade each other, so a page that only knows one spelling still gets the capacity it asked
+    // for: naming a per-stage limit raises the combined limit to match, and naming only the combined
+    // limit fills in the per-stage limits it implies.
+    const auto& wasRequested = [&](ASCIILiteral name) {
+        return descriptor.requiredLimits.containsIf([&](auto& pair) {
+            return pair.key == name;
+        });
+    };
+
+    if (wasRequested("maxStorageBuffersInVertexStage"_s) || wasRequested("maxStorageBuffersInFragmentStage"_s))
+        limits.maxStorageBuffersPerShaderStage = std::max({ limits.maxStorageBuffersPerShaderStage, limits.maxStorageBuffersInVertexStage, limits.maxStorageBuffersInFragmentStage });
+    else if (wasRequested("maxStorageBuffersPerShaderStage"_s)) {
+        limits.maxStorageBuffersInVertexStage = std::min(limits.maxStorageBuffersPerShaderStage, supportedLimits.maxStorageBuffersInVertexStage());
+        limits.maxStorageBuffersInFragmentStage = std::min(limits.maxStorageBuffersPerShaderStage, supportedLimits.maxStorageBuffersInFragmentStage());
+    }
+
+    if (wasRequested("maxStorageTexturesInVertexStage"_s) || wasRequested("maxStorageTexturesInFragmentStage"_s))
+        limits.maxStorageTexturesPerShaderStage = std::max({ limits.maxStorageTexturesPerShaderStage, limits.maxStorageTexturesInVertexStage, limits.maxStorageTexturesInFragmentStage });
+    else if (wasRequested("maxStorageTexturesPerShaderStage"_s)) {
+        limits.maxStorageTexturesInVertexStage = std::min(limits.maxStorageTexturesPerShaderStage, supportedLimits.maxStorageTexturesInVertexStage());
+        limits.maxStorageTexturesInFragmentStage = std::min(limits.maxStorageTexturesPerShaderStage, supportedLimits.maxStorageTexturesInFragmentStage());
+    }
+
     WGPURequiredLimits requiredLimits { .limits = WTF::move(limits) };
 
     WGPUDeviceDescriptor backingDescriptor {
-        .label = label.data(),
+        .label = label.legacyCStringPointer(),
         .requiredFeatureCount = features.size(),
         .requiredFeatures = features.size() ? features.span().data() : nullptr,
         .requiredLimits = &requiredLimits,
@@ -327,7 +352,14 @@ void AdapterImpl::requestDevice(const DeviceDescriptor& descriptor, CompletionHa
 
     auto requestedFeatures = supportedFeatures(features);
     auto blockPtr = makeBlockPtr([protectedThis = protect(*this), convertToBackingContext = m_convertToBackingContext.copyRef(), callback = WTF::move(callback), requestedLimits, requestedFeatures](WGPURequestDeviceStatus status, WGPUDevice device, const char*) mutable {
-        callback(DeviceImpl::create(adoptWebGPU(device), status == WGPURequestDeviceStatus_Success ? WTF::move(requestedFeatures) : SupportedFeatures::create({ }), WTF::move(requestedLimits), convertToBackingContext));
+        auto adoptedDevice = adoptWebGPU(device);
+        // A null device is how the caller learns the request was rejected; an adapter that has
+        // already handed out a device reports itself this way.
+        if (status != WGPURequestDeviceStatus_Success) {
+            callback(nullptr);
+            return;
+        }
+        callback(DeviceImpl::create(WTF::move(adoptedDevice), WTF::move(requestedFeatures), WTF::move(requestedLimits), convertToBackingContext));
     });
     wgpuAdapterRequestDevice(m_backing.get(), &backingDescriptor, &requestDeviceCallback, Block_copy(blockPtr.get())); // Block_copy is matched with Block_release above in requestDeviceCallback().
 }

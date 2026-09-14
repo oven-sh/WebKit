@@ -1921,6 +1921,9 @@ NSString *Device::errorValidatingTextureCreation(const WGPUTextureDescriptor& de
     if (!descriptor.usage)
         return @"createTexture: descriptor.usage is zero";
 
+    if (descriptor.usage & WGPUTextureUsage_Invalid)
+        return @"createTexture: descriptor.usage contains a usage bit that is not defined";
+
     if (!descriptor.size.width || !descriptor.size.height || !descriptor.size.depthOrArrayLayers)
         return @"createTexture: descriptor.size.width/height/depth is zero";
 
@@ -3044,6 +3047,10 @@ std::optional<WGPUTextureViewDescriptor> Texture::resolveTextureViewDescriptorDe
 
     WGPUTextureViewDescriptor resolved = descriptor;
 
+    // A zero usage means the view inherits every usage of the texture it is a view of.
+    if (!resolved.usage)
+        resolved.usage = m_usage;
+
     if (resolved.format == WGPUTextureFormat_Undefined) {
         if (auto format = resolveTextureFormat(m_format, descriptor.aspect))
             resolved.format = *format;
@@ -3164,6 +3171,17 @@ NSString* Texture::errorValidatingTextureViewCreation(const WGPUTextureViewDescr
         if (descriptor.format != resolveTextureFormat(m_format, descriptor.aspect))
             return ERROR_STRING(@"aspect == All and (format != resolveTextureFormat(format, aspect))");
     }
+
+    // The view's usage narrows the texture's, and each usage it keeps has to be supported by the
+    // view's own format rather than by the format of the texture it is a view of.
+    if (descriptor.usage & ~m_usage)
+        return ERROR_STRING([NSString stringWithFormat:@"view usage(%u) is not a subset of the texture's usage(%u)", descriptor.usage, m_usage]);
+
+    if ((descriptor.usage & WGPUTextureUsage_StorageBinding) && !hasStorageBindingCapability(descriptor.format, m_device, WGPUStorageTextureAccess_WriteOnly))
+        return ERROR_STRING(@"view usage contains storage binding and the view's format does not support it");
+
+    if ((descriptor.usage & WGPUTextureUsage_RenderAttachment) && !isDepthOrStencilFormat(descriptor.format) && !isColorRenderableFormat(descriptor.format, m_device))
+        return ERROR_STRING(@"view usage contains render attachment and the view's format is not color renderable");
 
     if (!descriptor.mipLevelCount)
         return ERROR_STRING(@"!mipLevelCount");
@@ -3362,8 +3380,16 @@ Ref<TextureView> Texture::createView(const WGPUTextureViewDescriptor& inputDescr
 
 void Texture::recreateIfNeeded()
 {
-    if (m_canvasBacking)
-        m_destroyed = false;
+    if (!m_canvasBacking)
+        return;
+
+    m_destroyed = false;
+    // Every one of these is the canvas handing this backing out for a new frame, either directly or
+    // through the undestroy the Web process sends in place of the round trip it elides once the
+    // render buffers wrap around. A frame starts as transparent black rather than holding whatever
+    // the frame that last used this backing left behind, so forget having cleared it and let the
+    // next use initialize it again.
+    setPreviouslyCleared(0, 0, false);
 }
 
 void Texture::makeCanvasBacking()
@@ -4211,9 +4237,9 @@ void wgpuTextureDestroy(WGPUTexture texture)
     protect(WebGPU::fromAPI(texture))->destroy();
 }
 
-void NODELETE wgpuTextureUndestroy(WGPUTexture texture)
+void wgpuTextureUndestroy(WGPUTexture texture)
 {
-    WebGPU::fromAPI(texture).recreateIfNeeded();
+    protect(WebGPU::fromAPI(texture))->recreateIfNeeded();
 }
 
 void wgpuTextureSetLabel(WGPUTexture texture, const char* label)

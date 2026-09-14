@@ -248,7 +248,7 @@ Ref<Device> Device::create(id<MTLDevice> device, String&& deviceLabel, HardwareC
 
     commandQueue.label = @"Default queue";
     if (!deviceLabel.isEmpty())
-        commandQueue.label = [NSString stringWithFormat:@"Default queue for device %s", deviceLabel.utf8().data()];
+        commandQueue.label = [NSString stringWithFormat:@"Default queue for device %s", deviceLabel.utf8().legacyCStringPointer()];
 
     return adoptRef(*new Device(device, commandQueue, WTF::move(capabilities), adapter));
 }
@@ -1386,14 +1386,14 @@ WGPUBool wgpuDeviceHasFeature(WGPUDevice device, WGPUFeatureName feature)
 void wgpuDevicePopErrorScope(WGPUDevice device, WGPUErrorCallback callback, void* userdata)
 {
     protect(WebGPU::fromAPI(device))->popErrorScope([callback, userdata](WGPUErrorType type, String&& message) {
-        callback(type, message.utf8().data(), userdata);
+        callback(type, message.utf8().legacyCStringPointer(), userdata);
     });
 }
 
 void wgpuDevicePopErrorScopeWithBlock(WGPUDevice device, WGPUErrorBlockCallback callback)
 {
     protect(WebGPU::fromAPI(device))->popErrorScope([callback = WebGPU::fromAPI(WTF::move(callback))](WGPUErrorType type, String&& message) {
-        callback(type, message.utf8().data());
+        callback(type, message.utf8().legacyCStringPointer());
     });
 }
 
@@ -1415,7 +1415,7 @@ void wgpuDeviceSetDeviceLostCallback(WGPUDevice device, WGPUDeviceLostCallback c
 {
     return protect(WebGPU::fromAPI(device))->setDeviceLostCallback([callback, userdata](WGPUDeviceLostReason reason, String&& message) {
         if (callback)
-            callback(reason, message.utf8().data(), userdata);
+            callback(reason, message.utf8().legacyCStringPointer(), userdata);
     });
 }
 
@@ -1423,7 +1423,7 @@ void wgpuDeviceSetDeviceLostCallbackWithBlock(WGPUDevice device, WGPUDeviceLostB
 {
     return protect(WebGPU::fromAPI(device))->setDeviceLostCallback([callback = WebGPU::fromAPI(WTF::move(callback))](WGPUDeviceLostReason reason, String&& message) {
         if (callback)
-            callback(reason, message.utf8().data());
+            callback(reason, message.utf8().legacyCStringPointer());
     });
 }
 
@@ -1431,7 +1431,7 @@ void wgpuDeviceSetUncapturedErrorCallback(WGPUDevice device, WGPUErrorCallback c
 {
     return protect(WebGPU::fromAPI(device))->setUncapturedErrorCallback([callback, userdata](WGPUErrorType type, String&& message) {
         if (callback)
-            callback(type, message.utf8().data(), userdata);
+            callback(type, message.utf8().legacyCStringPointer(), userdata);
     });
 }
 
@@ -1439,7 +1439,7 @@ void wgpuDeviceSetUncapturedErrorCallbackWithBlock(WGPUDevice device, WGPUErrorB
 {
     return protect(WebGPU::fromAPI(device))->setUncapturedErrorCallback([callback = WebGPU::fromAPI(WTF::move(callback))](WGPUErrorType type, String&& message) {
         if (callback)
-            callback(type, message.utf8().data());
+            callback(type, message.utf8().legacyCStringPointer());
     });
 }
 

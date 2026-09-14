@@ -266,7 +266,7 @@ inline TextSpacingTrim ComputedStyleProperties::textSpacingTrim() const
 
 inline WebkitLocale ComputedStyleProperties::locale() const
 {
-    return fontDescription().specifiedLocale();
+    return fontDescription().computedLocale();
 }
 
 // MARK: - Custom ColorPropertyTrait function definitions

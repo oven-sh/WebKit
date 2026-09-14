@@ -820,8 +820,8 @@ TextureMapperShaderProgram::TextureMapperShaderProgram(const String& vertex, con
 {
     m_vertexShader = glCreateShader(GL_VERTEX_SHADER);
     {
-        CString vertexCString = vertex.utf8();
-        const char* data = vertexCString.data();
+        auto vertexCString = vertex.utf8();
+        const char* data = vertexCString.legacyCStringPointer();
         int length = vertexCString.length();
         glShaderSource(m_vertexShader, 1, &data, &length);
     }
@@ -829,8 +829,8 @@ TextureMapperShaderProgram::TextureMapperShaderProgram(const String& vertex, con
 
     m_fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
     {
-        CString fragmentCString = fragment.utf8();
-        const char* data = fragmentCString.data();
+        auto fragmentCString = fragment.utf8();
+        const char* data = fragmentCString.legacyCStringPointer();
         int length = fragmentCString.length();
         glShaderSource(m_fragmentShader, 1, &data, &length);
     }

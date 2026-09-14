@@ -242,7 +242,7 @@ public:
 
     GTlsCertificate* certificate() const { return m_certificate.get(); }
     GTlsCertificateFlags tlsErrors() const { return m_tlsErrors; }
-    CString host() const { return m_failingURL.host().toString().utf8(); }
+    UTF8CString host() const { return m_failingURL.host().toString().utf8(); }
 
 private:
     GRefPtr<GTlsCertificate> m_certificate;
@@ -268,9 +268,9 @@ static void testLoadFailedWithTLSErrors(TLSErrorsTest* test, gconstpointer)
 
     // Test allowing an exception for this certificate on this host.
 #if ENABLE(2022_GLIB_API)
-    webkit_network_session_allow_tls_certificate_for_host(test->m_networkSession.get(), test->certificate(), test->host().data());
+    webkit_network_session_allow_tls_certificate_for_host(test->m_networkSession.get(), test->certificate(), test->host().legacyCStringPointer());
 #else
-    webkit_web_context_allow_tls_certificate_for_host(test->m_webContext.get(), test->certificate(), test->host().data());
+    webkit_web_context_allow_tls_certificate_for_host(test->m_webContext.get(), test->certificate(), test->host().legacyCStringPointer());
 #endif
     // The page should now load without errors.
     test->loadURI(kHttpsServer->getURIForPath("/test-tls/").data());

@@ -67,6 +67,8 @@ public:
     void layerDidEnterContext(PlatformCALayerRemote&, WebCore::PlatformCALayer::LayerType);
 #if HAVE(AVKIT)
     void layerDidEnterContext(PlatformCALayerRemote&, WebCore::PlatformCALayer::LayerType, WebCore::HTMLVideoElement&);
+
+    RefPtr<WebCore::HTMLVideoElement> videoElementForLayer(WebCore::PlatformLayerIdentifier) const;
 #endif
     void layerWillLeaveContext(PlatformCALayerRemote&);
 

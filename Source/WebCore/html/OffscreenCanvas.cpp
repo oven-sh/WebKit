@@ -284,17 +284,19 @@ ExceptionOr<std::optional<OffscreenRenderingContext>> OffscreenCanvas::getContex
     return Exception { ExceptionCode::TypeError };
 }
 
-ExceptionOr<RefPtr<ImageBitmap>> OffscreenCanvas::transferToImageBitmap()
+ExceptionOr<Ref<ImageBitmap>> OffscreenCanvas::transferToImageBitmap()
 {
     if (m_detached || !m_context)
         return Exception { ExceptionCode::InvalidStateError };
+    // An ImageBitmap cannot have a zero dimension, so there is nothing to hand back. This matches
+    // createImageBitmap() on a zero-sized canvas. https://html.spec.whatwg.org/#dom-offscreencanvas-transfertoimagebitmap
     if (size().isEmpty())
-        return { RefPtr<ImageBitmap> { nullptr } };
+        return Exception { ExceptionCode::InvalidStateError };
     bool bitmapOriginClean = originClean();
     RefPtr buffer = m_context->transferToImageBuffer();
     if (!buffer)
         return Exception { ExceptionCode::UnknownError }; // UnknownError is used for DOM out-of-memory.
-    return { ImageBitmap::create(buffer.releaseNonNull(), bitmapOriginClean) };
+    return ImageBitmap::create(buffer.releaseNonNull(), bitmapOriginClean);
 }
 
 static String toEncodingMimeType(const String& mimeType)

@@ -72,16 +72,18 @@ RetainPtr<CFArrayRef> CertificateInfo::certificateChainFromSecTrust(SecTrustRef 
 
 bool CertificateInfo::containsNonRootSHA1SignedCertificate() const
 {
-    if (m_trust) {
-        auto chain = adoptCF(SecTrustCopyCertificateChain(trust().get()));
-        // Allow only the root certificate (the last in the chain) to be SHA1.
-        for (CFIndex i = 0, size = SecTrustGetCertificateCount(trust().get()) - 1; i < size; ++i) {
-            RetainPtr certificate = checked_cf_cast<SecCertificateRef>(CFArrayGetValueAtIndex(chain.get(), i));
-            if (SecCertificateGetSignatureHashAlgorithm(certificate.get()) == kSecSignatureHashAlgorithmSHA1)
-                return true;
-        }
-
+    if (!m_trust)
         return false;
+
+    RetainPtr chain = adoptCF(SecTrustCopyCertificateChain(trust()));
+    if (!chain)
+        return false;
+
+    // Allow only the root certificate (the last in the chain) to be SHA1.
+    for (CFIndex i = 0, size = CFArrayGetCount(chain) - 1; i < size; ++i) {
+        RetainPtr certificate = checked_cf_cast<SecCertificateRef>(CFArrayGetValueAtIndex(chain, i));
+        if (SecCertificateGetSignatureHashAlgorithm(certificate) == kSecSignatureHashAlgorithmSHA1)
+            return true;
     }
 
     return false;

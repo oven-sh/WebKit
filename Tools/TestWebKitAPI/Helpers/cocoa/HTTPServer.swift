@@ -237,6 +237,23 @@ extension HTTPServer {
         /// The port of the server.
         public let port: Int
 
+        // swift-format-ignore: NeverForceUnwrap
+        /// The URL of the server, addressed by IP.
+        public var address: Foundation.URL {
+            // Well formed for every port number, so this cannot fail.
+            Foundation.URL(string: "http://127.0.0.1:\(port)/")!
+        }
+
+        // swift-format-ignore: NeverForceUnwrap
+        /// The URL of the server, addressed by the `localhost` host name.
+        ///
+        /// Some code paths treat `localhost` and `127.0.0.1` as distinct origins, so a test that
+        /// needs two same-server origins can use one of each.
+        public var localhostAddress: Foundation.URL {
+            // Well formed for every port number, so this cannot fail.
+            Foundation.URL(string: "http://localhost:\(port)/")!
+        }
+
         /// The URL representing the HTTPS proxy for the server.
         public var httpsProxy: Foundation.URL? {
             Foundation.URL(string: "https://127.0.0.1:\(port)/")

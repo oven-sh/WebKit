@@ -66,6 +66,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
+inline std::span<const char8_t> unsafeSpan(const char8_t* string)
+{
+    return byteCast<char8_t>(unsafeSpan(byteCast<char>(string)));
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 inline std::span<const char16_t> unsafeSpan(const char16_t* string)
 {

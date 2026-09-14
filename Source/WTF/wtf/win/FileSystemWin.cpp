@@ -87,15 +87,15 @@ std::optional<WallTime> fileCreationTime(const String& path)
     return WallTime::fromRawSeconds(time);
 }
 
-CString fileSystemRepresentation(const String& path)
+UTF8CString fileSystemRepresentation(const String& path)
 {
     auto characters = StringView(path).upconvertedCharacters();
-    int size = WideCharToMultiByte(CP_ACP, 0, wcharFrom(characters), path.length(), 0, 0, 0, 0);
+    int size = WideCharToMultiByte(CP_UTF8, 0, wcharFrom(characters), path.length(), 0, 0, 0, 0);
 
-    std::span<char> buffer;
-    CString string = CString::newUninitialized(size, buffer);
+    std::span<char8_t> buffer;
+    auto string = UTF8CString::newUninitialized(size, buffer);
 
-    WideCharToMultiByte(CP_ACP, 0, wcharFrom(characters), path.length(), buffer.data(), buffer.size(), 0, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wcharFrom(characters), path.length(), byteCast<char>(buffer).data(), buffer.size(), 0, 0);
 
     return string;
 }

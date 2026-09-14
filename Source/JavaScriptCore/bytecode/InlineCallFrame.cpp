@@ -51,7 +51,7 @@ CodeBlockHash InlineCallFrame::hash() const
     return baselineCodeBlock->hash();
 }
 
-CString InlineCallFrame::inferredName() const
+UTF8CString InlineCallFrame::inferredName() const
 {
     return uncheckedDowncast<FunctionExecutable>(baselineCodeBlock->ownerExecutable())->inferredNameForTools();
 }

@@ -377,22 +377,22 @@ private:
         auto logMessage = makeString(LogArgument<Argument>::toString(arguments)...);
 
 #if RELEASE_LOG_DISABLED
-        WTFLog(&channel, "%s", logMessage.utf8().data());
+        WTFLog(&channel, "%s", logMessage.utf8().legacyCStringPointer());
 #elif USE(OS_LOG)
         osLog(channel, logMessage.utf8());
 #elif OS(ANDROID)
-        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().data());
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().legacyCStringPointer());
 #elif ENABLE(JOURNALD_LOG)
         if (WTFShouldLogToJournal())
-            sd_journal_send("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
+            sd_journal_send("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().legacyCStringPointer(), nullptr);
         else {
             IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-            fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().data());
+            fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().legacyCStringPointer());
             IGNORE_WARNINGS_END
         }
 #else
         IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().data());
+        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().legacyCStringPointer());
         IGNORE_WARNINGS_END
 #endif
 
@@ -419,26 +419,26 @@ private:
         auto logMessage = makeString(LogArgument<Argument>::toString(arguments)...);
 
 #if RELEASE_LOG_DISABLED
-        WTFLogVerbose(file, line, function, &channel, "%s", logMessage.utf8().data());
+        WTFLogVerbose(file, line, function, &channel, "%s", logMessage.utf8().legacyCStringPointer());
 #elif USE(OS_LOG)
         osLog(channel, logMessage.utf8());
         UNUSED_PARAM(file);
         UNUSED_PARAM(line);
         UNUSED_PARAM(function);
 #elif OS(ANDROID)
-        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().data(), file, line, function);
+        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
 #elif ENABLE(JOURNALD_LOG)
         if (WTFShouldLogToJournal()) {
             auto fileString = makeString("CODE_FILE="_s, unsafeSpan(file));
             auto lineString = makeString("CODE_LINE="_s, line);
-            sd_journal_send_with_location(fileString.utf8().data(), lineString.utf8().data(), function, "WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().data(), nullptr);
+            sd_journal_send_with_location(fileString.utf8().legacyCStringPointer(), lineString.utf8().legacyCStringPointer(), function, "WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().legacyCStringPointer(), nullptr);
         } else {
             IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-            fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s [%s:%d %s]\n", channel.name, logMessage.utf8().data(), file, line, function);
+            fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s [%s:%d %s]\n", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
             IGNORE_WARNINGS_END
         }
 #else
-        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s FILE=%s:%d %s\n", channel.name, logMessage.utf8().data(), file, line, function);
+        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s FILE=%s:%d %s\n", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
 #endif
 
         sendMessageToObservers(channel, level, { { file, function, line } }, arguments...);

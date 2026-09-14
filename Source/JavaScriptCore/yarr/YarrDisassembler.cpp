@@ -122,12 +122,12 @@ Vector<YarrDisassembler::DumpedOp> YarrDisassembler::dumpVectorForInstructions(L
         for (unsigned nextIndex = i + 1; ; nextIndex++) {
             if (nextIndex >= labels.size()) {
                 dumpDisassembly(out, indentString(), linkBuffer, labels[realIndex(i)], endLabel);
-                result.last().disassembly = out.toCString();
+                result.last().disassembly = out.toUTF8CString();
                 return result;
             }
             if (labels[realIndex(nextIndex)].isSet()) {
                 dumpDisassembly(out, indentString(), linkBuffer, labels[realIndex(i)], labels[realIndex(nextIndex)]);
-                result.last().disassembly = out.toCString();
+                result.last().disassembly = out.toUTF8CString();
                 i = nextIndex;
                 break;
             }
