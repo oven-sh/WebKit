@@ -74,7 +74,7 @@ function callExported(i, x) {
 noInline(callExported);
 noInline(callPrivate);
 
-for (let i = 0; i < 100000; ++i) {
+for (let i = 0; i < testLoopCount * 10; ++i) {
     shouldBe(callExported(0, i), i);
     shouldBe(callPrivate(0, i), i * 2);
 }
@@ -94,10 +94,10 @@ function readIt() { return readWatched(); }
 noInline(readIt);
 let first = readIt();
 shouldBe(first(), "watched");
-for (let i = 0; i < 100000; ++i)
+for (let i = 0; i < testLoopCount * 10; ++i)
     shouldBe(readIt(), first);
 overwriteWatched(1);
-for (let i = 0; i < 100000; ++i)
+for (let i = 0; i < testLoopCount * 10; ++i)
     shouldBe(readIt(), 1);
 shouldBe(lib.watched, 1);
 overwriteWatched(2);
@@ -108,9 +108,9 @@ shouldBe(lib.watched, 2);
 function readOther() { return readNeverInstantiated(); }
 noInline(readOther);
 overwriteNeverInstantiated("first store");
-for (let i = 0; i < 100000; ++i)
+for (let i = 0; i < testLoopCount * 10; ++i)
     shouldBe(readOther(), "first store");
 overwriteNeverInstantiated("second store");
-for (let i = 0; i < 100000; ++i)
+for (let i = 0; i < testLoopCount * 10; ++i)
     shouldBe(readOther(), "second store");
 shouldBe(lib.neverInstantiatedButOverwritten, "second store");
