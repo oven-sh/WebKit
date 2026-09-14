@@ -89,8 +89,8 @@ public:
     void* const* functionTable() const { return m_functionTable.span().data(); }
     // This thread's copy of the module's `_Thread_local` objects, created on first use.
     JS_EXPORT_PRIVATE static void* SYSV_ABI threadLocalBase(void* module);
-    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process; nothing where the
-    // lowering has no calling convention for the platform. Which of these an embedder supports is its to say.
+    // The (BIR::Arch, BIR::OS) a module has to have been compiled for to load in this process: x86-64 Linux, x86-64
+    // Windows or AArch64 macOS, the platforms there is a frontend for and the lowering is tested on; nothing anywhere else.
     JS_EXPORT_PRIVATE static std::optional<std::pair<uint8_t, uint8_t>> hostTarget();
     BIRLinkEnvironment linkEnvironment() const;
 

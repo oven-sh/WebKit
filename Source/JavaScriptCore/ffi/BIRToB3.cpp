@@ -28,18 +28,19 @@
 
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(B3_JIT)
 
+#include "AirCode.h"
 #include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CCallValue.h"
-#include "B3Const32Value.h"
 #include "B3Const128Value.h"
+#include "B3Const32Value.h"
 #include "B3Const64Value.h"
-#include "B3ExtractValue.h"
-#include "B3FenceValue.h"
 #include "B3ConstDoubleValue.h"
 #include "B3ConstFloatValue.h"
 #include "B3ConstPtrValue.h"
+#include "B3ExtractValue.h"
+#include "B3FenceValue.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
@@ -47,7 +48,6 @@
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3SwitchValue.h"
-#include "AirCode.h"
 #include "B3ValueInlines.h"
 #include "B3Variable.h"
 #include "B3VariableValue.h"
@@ -212,8 +212,6 @@ ArgumentLayout layoutArguments(const BIR::Signature& signature, std::span<const 
     layout.namedGPRs = gprIndex;
     layout.namedFPRs = fprIndex;
     layout.namedStackBytes = nextStackOffset - shadowStackBytes(cc);
-    if (cc == NativeCC::Win64)
-        layout.namedGPRs = std::min<unsigned>(position, 4);
 
     for (B3::Type type : anonymous) {
         layout.locations.append(placeScalar(position, type.isFloat() || type.isVector(), type.isVector() ? 16 : 8, false));
@@ -549,8 +547,8 @@ void BIRToB3::emitVariadicEntry(const BIR::Signature& signature, BasicBlock* ent
             Value* argument = entry->appendNew<ArgumentRegValue>(m_proc, m_origin, gprs[i]);
             entry->appendNew<MemoryValue>(m_proc, B3::Store, m_origin, argument, framePointer, static_cast<int32_t>(savedFrameAndReturnAddressBytes + i * 8));
         }
-    } else if (!(cc == NativeCC::AAPCS64 && stackPackingForNativeCC(cc) == StackPacking::Natural)) {
-        // SysV: six GPRs then eight 16-byte vector slots. AAPCS64: eight GPRs then eight 16-byte slots.
+    } else if (cc == NativeCC::SysV64) {
+        // Six GPRs then eight 16-byte vector slots. (Apple's AArch64 passes every anonymous argument on the stack.)
         unsigned gprBytes = gprs.size() * 8;
         frame.registerSaveArea = m_proc.addStackSlot(gprBytes + fprs.size() * 16);
         Value* base = entry->appendNew<SlotBaseValue>(m_proc, m_origin, frame.registerSaveArea);
@@ -589,21 +587,13 @@ void BIRToB3::emitVaStart(Value* vaList)
         store64(frameAddress(savedFrameAndReturnAddressBytes + roundUpToMultipleOf<8>(frame.namedStackBytes)), 0);
         return;
     }
+    RELEASE_ASSERT(cc == NativeCC::SysV64);
     Value* saveArea = m_block->appendNew<SlotBaseValue>(m_proc, m_origin, frame.registerSaveArea);
     Value* stackArguments = frameAddress(savedFrameAndReturnAddressBytes + frame.namedStackBytes);
-    if (cc == NativeCC::SysV64) {
-        store32(frame.namedGPRs * 8, 0);
-        store32(48 + frame.namedFPRs * 16, 4);
-        store64(stackArguments, 8);
-        store64(saveArea, 16);
-        return;
-    }
-    // AAPCS64: the offsets are negative distances from the end of each save area.
-    store64(stackArguments, 0);
-    store64(m_block->appendNew<Value>(m_proc, B3::Add, m_origin, saveArea, constant(Int64, 64)), 8);
-    store64(m_block->appendNew<Value>(m_proc, B3::Add, m_origin, saveArea, constant(Int64, 64 + 128)), 16);
-    store32(-static_cast<int32_t>((8 - frame.namedGPRs) * 8), 24);
-    store32(-static_cast<int32_t>((8 - frame.namedFPRs) * 16), 28);
+    store32(frame.namedGPRs * 8, 0);
+    store32(48 + frame.namedFPRs * 16, 4);
+    store64(stackArguments, 8);
+    store64(saveArea, 16);
 }
 
 namespace {
@@ -1107,7 +1097,7 @@ Value* BIRToB3::emitMathFunction(const BIR::Function& function, const BIR::Inst&
     m_block->appendNewControlValue(m_proc, Branch, m_origin, m_block->appendNew<Value>(m_proc, B3::Equal, m_origin, root, root),
         FrequentedBlock(continuation), FrequentedBlock(callBlock, FrequencyClass::Rare));
     m_block = callBlock;
-    Vector<Value*, 1> called = emitCall(function, inst, signature, pointer(m_environment.externAddresses[inst.a]));
+    Vector<Value*, 1> called = emitPatchpointCall(signature, pointer(m_environment.externAddresses[inst.a]), argumentsOf(function, inst));
     m_block->appendNew<VariableValue>(m_proc, B3::Set, m_origin, result, called[0]);
     m_block->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(continuation));
     m_block = continuation;
@@ -1602,12 +1592,12 @@ Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, V
     return results;
 }
 
-Vector<Value*, 1> BIRToB3::emitCall(const BIR::Function& function, const BIR::Inst& inst, const BIR::Signature& signature, Value* target)
+Vector<Value*> BIRToB3::argumentsOf(const BIR::Function& function, const BIR::Inst& inst)
 {
     Vector<Value*> arguments;
     for (unsigned i = 0; i < inst.extraCount; ++i)
         arguments.append(m_body.values[static_cast<uint32_t>(function.extra[inst.extraOffset + i])]);
-    return emitPatchpointCall(signature, target, arguments);
+    return arguments;
 }
 
 void BIRToB3::emitReturn(const BIR::Function& function, const BIR::Inst& inst)
@@ -1920,12 +1910,8 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
         return;
     case Op::Call: {
         const BIR::Signature& signature = m_module.signatures[m_module.functions[inst.a].signature];
-        Vector<Value*> arguments;
-        bool hasConstantArgument = false;
-        for (unsigned i = 0; i < inst.extraCount; ++i) {
-            arguments.append(value(static_cast<uint32_t>(function.extra[inst.extraOffset + i])));
-            hasConstantArgument |= arguments.last()->isConstant();
-        }
+        Vector<Value*> arguments = argumentsOf(function, inst);
+        bool hasConstantArgument = std::ranges::any_of(arguments, [](Value* argument) { return argument->isConstant(); });
         if (shouldInlineCallee(inst.a, hasConstantArgument)) {
             (m_module.functions[inst.a].isAlwaysInline ? m_alwaysInlineInstructionBudget : m_inlinedInstructionBudget) -= m_module.functions[inst.a].insts.size();
             Body caller = std::exchange(m_body, { });
@@ -1939,7 +1925,7 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
         }
         m_referencedFunctions.append(inst.a);
         Value* target = m_block->appendNew<MemoryValue>(m_proc, B3::Load, Int64, m_origin, pointer(&m_environment.functionTable[inst.a]), 0);
-        defineAll(emitCall(function, inst, signature, target));
+        defineAll(emitPatchpointCall(signature, target, arguments));
         return;
     }
     case Op::CallExtern: {
@@ -1964,11 +1950,11 @@ void BIRToB3::emitInst(const BIR::Function& function, const BIR::Inst& inst)
             define(result);
             return;
         }
-        defineAll(emitCall(function, inst, signature, pointer(m_environment.externAddresses[inst.a])));
+        defineAll(emitPatchpointCall(signature, pointer(m_environment.externAddresses[inst.a]), argumentsOf(function, inst)));
         return;
     }
     case Op::CallIndirect: {
-        defineAll(emitCall(function, inst, m_module.signatures[inst.a], value(inst.b)));
+        defineAll(emitPatchpointCall(m_module.signatures[inst.a], value(inst.b), argumentsOf(function, inst)));
         return;
     }
     case Op::Select:

@@ -121,14 +121,12 @@
 //   - A struct the ABI passes by reference (Win64, AArch64 above 16 bytes) is a Value i64 pointing
 //     at a copy the caller made. So is a 128-bit vector on Win64, which has no Value v128 parameters.
 //
-// Values. A function's parameters are values 0..nparams-1 (ByValStack and IndirectResult are
-// i64). Every instruction that produces
-// a result defines the next value id, in instruction order across the whole function. A call
-// that returns n results defines n consecutive values. A
-// value may only be used in the block that defines it; parameters may be used anywhere.
-// Anything that lives across blocks goes through a local (LocalGet/LocalSet) or a slot.
-// Locals are zero on entry. Block 0 is the entry block. Every block ends in exactly one
-// terminator and has no other terminator.
+// Values. A function's parameters are values 0..nparams-1 (ByValStack and IndirectResult are i64). Every
+// instruction that produces a result defines the next value id, in instruction order across the whole
+// function. A call that returns n results defines n consecutive values. A value may only be used in the
+// block that defines it; parameters may be used anywhere. Anything that lives across blocks goes through a
+// local (LocalGet/LocalSet) or a slot. Locals are zero on entry. Block 0 is the entry block. Every block
+// ends in exactly one terminator and has no other terminator.
 //
 // Instruction operands, in order (v = varuint value id):
 //   ConstI32 varint | ConstI64 varint | ConstF32 u32le bits | ConstF64 u64le bits | ConstV128 16 bytes
@@ -239,11 +237,8 @@
 // platform's <stdarg.h> describes, and the frontend implements va_arg/va_copy against it:
 //   x86-64 SysV:     struct { u32 gp_offset; u32 fp_offset; void* overflow_arg_area; void* reg_save_area; }
 //                    reg_save_area holds rdi,rsi,rdx,rcx,r8,r9 at 0..48 and xmm0..7 at 48 + 16*i.
-//   AArch64 (Linux): struct { void* stack; void* gr_top; void* vr_top; i32 gr_offs; i32 vr_offs; }
-//                    x0..x7 end at gr_top, q0..q7 (16 bytes each) end at vr_top.
 //   AArch64 (Apple), Win64: char*, pointing at the first anonymous argument; every argument takes
 //                    an 8-byte slot.
-
 //
 // Limits. What is past one of these the frontend diagnoses in the source, or arranges differently (an
 // offset that does not fit is added to the address instead).

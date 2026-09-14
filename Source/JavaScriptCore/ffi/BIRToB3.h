@@ -98,7 +98,7 @@ private:
     Inlined lowerInline(unsigned functionIndex, B3::BasicBlock* block, std::span<B3::Value* const> arguments, B3::Origin);
     void emitBody(const BIR::Function&, B3::BasicBlock* entry, std::span<B3::Value* const> arguments, const ReturnTarget*);
     void emitInst(const BIR::Function&, const BIR::Inst&);
-    Vector<B3::Value*, 1> emitCall(const BIR::Function&, const BIR::Inst&, const BIR::Signature&, B3::Value* target);
+    Vector<B3::Value*> argumentsOf(const BIR::Function&, const BIR::Inst&);
     Vector<B3::Value*, 1> emitPatchpointCall(const BIR::Signature&, B3::Value* target, const Vector<B3::Value*>& arguments);
     void emitReturn(const BIR::Function&, const BIR::Inst&);
     bool shouldInlineCallee(unsigned functionIndex, bool hasConstantArgument) const;
