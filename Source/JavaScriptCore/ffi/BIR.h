@@ -239,9 +239,13 @@
 // offset that does not fit is added to the address instead).
 //   data: size <= 4 GiB, align a power of two <= 4096, readOnly <= size.  tls: size <= 256 MiB, align a power of two <= 4096.
 //   A reloc's 8 bytes lie inside its segment; a Data (Tls) reloc's index is <= the segment's size.
-//   slot: size <= 256 MiB, align a power of two <= 4096; the slots of one function, each rounded up to 16 plus its
-//   alignment, <= 1 GiB.  StackAlloc: align a power of two <= 4096.
-//   ByValStack: 1 <= size <= 1 MiB; the ByValStack parameters of one sig, each plus its alignment, <= 1 GiB.
+//   slot: size <= 256 MiB, align a power of two <= 4096; the slots of one function, each (or 1 byte, if it has none)
+//   rounded up to 16 plus its alignment, <= 512 MiB.  StackAlloc: align a power of two <= 4096.
+//   ByValStack: 1 <= size <= 1 MiB.  The arguments of a call: 16 bytes for each of them, the anonymous ones of a variadic
+//   call too, and for each ByValStack parameter its size plus its alignment as well, <= 512 MiB; a sig is held to that
+//   for its parameters whether or not anything calls it.
+//   (A frame is its function's slots, those of what the loader inlines into it, which it keeps within the same 512 MiB,
+//   and the largest argument area of its calls: under 2 GiB, which is what a frame offset can say.)
 //   Load, Store: offset fits in 32 bits signed.  ConstI32, and a Switch case on an i32: fits in 32 bits signed.
 //   InlineAsm: at most 4096 bytes of code, 16 inputs, 16 outputs, 64 clobbers.
 

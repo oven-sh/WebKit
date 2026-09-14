@@ -109,8 +109,28 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
             rejects(`a by-value argument aligned to ${align}`, taking([{ byval: 32, align }]), /bad by-value argument alignment/);
         accepts("a by-value argument aligned to 16", taking([{ byval: 32, align: 16 }]));
         rejects("exhausts 3", taking([{ byval: 32, exhausts: 3 }]), /bad exhausts/);
-        accepts("1023 by-value arguments of a megabyte", taking(new Array(1023).fill({ byval: 1 << 20 })));
-        rejects("1025 by-value arguments of a megabyte", taking(new Array(1025).fill({ byval: 1 << 20 })), /by-value arguments are too large/);
+        // What a call passes in: 16 bytes for each argument, and each by-value one's size and alignment, under 512 MiB.
+        accepts("511 by-value arguments of a megabyte", taking(new Array(511).fill({ byval: 1 << 20 })));
+        rejects("512 by-value arguments of a megabyte", taking(new Array(512).fill({ byval: 1 << 20 })), /arguments are too large/);
+        rejects("1025 by-value arguments of a megabyte", taking(new Array(1025).fill({ byval: 1 << 20 })), /arguments are too large/);
+        accepts("511 by-value arguments of a megabyte and 60000 integers", taking([...new Array(511).fill({ byval: 1 << 20 }), ...new Array(60000).fill(T.i64)]));
+        rejects("511 by-value arguments of a megabyte and 70000 integers", taking([...new Array(511).fill({ byval: 1 << 20 }), ...new Array(70000).fill(T.i64)]), /arguments are too large/);
+        // The anonymous arguments of a variadic call count like the named ones.
+        {
+            const variadicCall = anonymous => {
+                const block = new Block(0);
+                const address = block.def("SlotAddr", 0);
+                const word = block.def("ConstI64", s(1));
+                block.run("Call", 0, 511 + anonymous, ...new Array(511).fill(address), ...new Array(anonymous).fill(word));
+                block.run("RetVoid");
+                return {
+                    sigs: [{ ret: T.void, params: new Array(511).fill({ byval: 1 << 20 }), variadic: true }, { ret: T.void, params: [] }],
+                    funcs: [{ name: "callee", sig: 0, noinline: true, blocks: [[["RetVoid"]]] }, { name: "f", sig: 1, exported: true, slots: [{ size: 1 << 20, align: 8 }], blocks: [block.insts] }],
+                };
+            };
+            accepts("a variadic call with 511 by-value megabytes and 60000 anonymous arguments", variadicCall(60000));
+            rejects("a variadic call with 511 by-value megabytes and 70000 anonymous arguments", variadicCall(70000), /arguments are too large/);
+        }
     }
     accepts("an indirect result first", taking([{ sret: true }, T.i32]));
     rejects("an indirect result second", taking([T.i32, { sret: true }]), /indirect result must be the first/);
@@ -221,11 +241,33 @@ const voidFunction = (blocks, more) => body({ ret: T.void, params: [] }, blocks,
         rejects(`slot ${what}`, voidFunction([[["RetVoid"]]], { slots: [slot] }), /bad stack slot/);
     accepts("slot of 256 MiB aligned to 4096", voidFunction([[["RetVoid"]]], { slots: [{ size: 2 ** 28, align: 4096 }] }));
     accepts("slot of no bytes", voidFunction([[["RetVoid"]]], { slots: [{ size: 0, align: 1 }] }));
-    accepts("three slots of 256 MiB", voidFunction([[["RetVoid"]]], { slots: new Array(3).fill({ size: 2 ** 28, align: 16 }) }));
-    rejects("five slots of 256 MiB", voidFunction([[["RetVoid"]]], { slots: new Array(5).fill({ size: 2 ** 28, align: 16 }) }), /stack frame is too large/);
+    // The slots of a function, each rounded up to 16 and with its alignment: 512 MiB.
+    accepts("slots of 256 MiB and of 256 MiB less 32 bytes", voidFunction([[["RetVoid"]]], { slots: [{ size: 2 ** 28, align: 16 }, { size: 2 ** 28 - 32, align: 16 }] }));
+    rejects("slots of 256 MiB and of 256 MiB less 16 bytes", voidFunction([[["RetVoid"]]], { slots: [{ size: 2 ** 28, align: 16 }, { size: 2 ** 28 - 16, align: 16 }] }), /stack frame is too large/);
+    rejects("two slots of 256 MiB", voidFunction([[["RetVoid"]]], { slots: new Array(2).fill({ size: 2 ** 28, align: 16 }) }), /stack frame is too large/);
+    rejects("three slots of 256 MiB", voidFunction([[["RetVoid"]]], { slots: new Array(3).fill({ size: 2 ** 28, align: 16 }) }), /stack frame is too large/);
     rejects("seventeen slots of 256 MiB", voidFunction([[["RetVoid"]]], { slots: new Array(17).fill({ size: 2 ** 28, align: 16 }) }), /stack frame is too large/);
-    accepts("a thousand slots of a megabyte", voidFunction([[["RetVoid"]]], { slots: new Array(1000).fill({ size: 1 << 20, align: 16 }) }));
-    rejects("1025 slots of a megabyte", voidFunction([[["RetVoid"]]], { slots: new Array(1025).fill({ size: 1 << 20, align: 16 }) }), /stack frame is too large/);
+    accepts("five hundred slots of a megabyte", voidFunction([[["RetVoid"]]], { slots: new Array(500).fill({ size: 1 << 20, align: 16 }) }));
+    rejects("512 slots of a megabyte", voidFunction([[["RetVoid"]]], { slots: new Array(512).fill({ size: 1 << 20, align: 16 }) }), /stack frame is too large/);
+    // A frame is the slots and the largest argument area: both as large as they get, it is compiled (and not run: no
+    // thread has a stack for it), as it is when a callee that asks to be inlined would bring its own copies of what
+    // it is passed by value into a frame with no room for them.
+    if (!isWindows) {
+        for (const alwaysInline of [false, true]) {
+            const block = new Block(0);
+            const address = block.def("SlotAddr", 0);
+            block.run("Call", 0, 511, ...new Array(511).fill(address));
+            block.run("Call", 0, 511, ...new Array(511).fill(address));
+            block.run("RetVoid");
+            accepts(`slots of 511 MiB and two calls that pass 511 MiB by value${alwaysInline ? " to an always_inline callee" : ""}`, {
+                sigs: [{ ret: T.void, params: new Array(511).fill({ byval: 1 << 20 }) }, { ret: T.void, params: [] }],
+                funcs: [
+                    { name: "callee", sig: 0, alwaysInline, noinline: !alwaysInline, blocks: [[["Load", b(MEM.i8u), 510, s(0)], ["RetVoid"]]] },
+                    { name: "f", sig: 1, exported: true, slots: [{ size: 2 ** 28, align: 8 }, { size: 2 ** 28 - (1 << 20), align: 8 }], blocks: [block.insts] },
+                ],
+            });
+        }
+    }
 
     rejects("no blocks", voidFunction([]), /function has no blocks/);
     rejects("an empty block", voidFunction([[]]), /empty block/);

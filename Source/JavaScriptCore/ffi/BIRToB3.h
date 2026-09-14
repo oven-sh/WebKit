@@ -151,7 +151,7 @@ private:
     };
     VariadicFrame m_variadicFrame;
     static constexpr unsigned maximumInlineDepth = 64;
-    static constexpr uint64_t maximumFrameBytes = 1u << 30;
+    static constexpr uint64_t maximumFrameBytes = 1u << 29; // The decoder's bound on one function's slots, for all of them.
     unsigned m_inlinedInstructionBudget { 0 };
     unsigned m_alwaysInlineInstructionBudget { 0 };
     uint64_t m_frameBytes { 0 }; // Of the function being lowered and everything inlined into it so far.

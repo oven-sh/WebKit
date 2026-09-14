@@ -42,8 +42,12 @@ namespace {
 
 constexpr uint32_t parameterBlock = UINT32_MAX;
 constexpr uint64_t maxCount = 1u << 24;
-// What a function's slots, and what a call's by-value arguments, may add up to: frame offsets are 32-bit.
-constexpr uint64_t maxFrameBytes = 1u << 30;
+// What a function's slots, and what the arguments of a call, may each add up to. A frame is the slots of the function
+// and of what is inlined into it (BIRToB3 keeps those under this too), the largest argument area of its calls, and what
+// the register allocator spills; frame offsets are 32-bit and signed.
+constexpr uint64_t maxFrameBytes = 1u << 29;
+// An argument takes 8 bytes of the argument area, or 16 (a vector, and an integer after an odd number of them on Apple's AArch64).
+constexpr uint64_t maxArgumentBytes = 16;
 
 bool isInt(Type type) { return type == Type::I32 || type == Type::I64; }
 bool isFloat(Type type) { return type == Type::F32 || type == Type::F64; }
@@ -223,7 +227,9 @@ private:
             if (flags > 1)
                 return fail("unknown signature flags"_s);
             signature.isVariadic = flags & 1;
-            uint64_t byValueBytes = 0;
+            signature.argumentBytes = maxArgumentBytes * parameterCount;
+            if (signature.argumentBytes > maxFrameBytes)
+                return fail("arguments are too large"_s);
             for (uint32_t j = 0; j < parameterCount; ++j) {
                 Parameter parameter;
                 uint8_t kind;
@@ -254,9 +260,10 @@ private:
                     if (isWindows)
                         return fail("an aggregate cannot be passed in the stack arguments on this target"_s);
                     parameter.exhausts = static_cast<Exhausts>(exhausts);
-                    byValueBytes += parameter.size + parameter.alignment;
-                    if (byValueBytes > maxFrameBytes)
-                        return fail("by-value arguments are too large"_s);
+                    signature.byValueBytes += parameter.size + parameter.alignment;
+                    signature.argumentBytes += parameter.size + parameter.alignment;
+                    if (signature.argumentBytes > maxFrameBytes)
+                        return fail("arguments are too large"_s);
                     break;
                 }
                 case ParamKind::IndirectResult:
@@ -520,6 +527,8 @@ private:
         bool isVariadic = allowVariadic && signature.isVariadic;
         if (argumentCount < fixedCount || (!isVariadic && argumentCount != fixedCount))
             return fail("call has the wrong number of arguments"_s);
+        if (signature.argumentBytes + maxArgumentBytes * (argumentCount - fixedCount) > maxFrameBytes)
+            return fail("arguments are too large"_s);
         inst.extraOffset = static_cast<uint32_t>(m_function->extra.size());
         inst.extraCount = argumentCount;
         for (uint32_t i = 0; i < argumentCount; ++i) {

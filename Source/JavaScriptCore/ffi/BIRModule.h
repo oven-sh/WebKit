@@ -57,6 +57,8 @@ struct Signature {
     Vector<Type, 1> results;
     bool isVariadic { false };
     Vector<Parameter> parameters;
+    uint64_t byValueBytes { 0 }; // Of the ByValStack parameters, each with its alignment: what a private copy of them takes.
+    uint64_t argumentBytes { 0 }; // No call passes the parameters in more stack than this: byValueBytes and 16 for each parameter.
 
     // True when a plain C call with scalar arguments and at most one scalar result describes it.
     bool isScalar() const

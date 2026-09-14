@@ -250,8 +250,8 @@ bool BIRToB3::shouldInlineCallee(unsigned functionIndex, bool hasConstantArgumen
     // Each level of inlining is a level of recursion in this lowering.
     if (m_inlineStack.size() >= maximumInlineDepth)
         return false;
-    // Frame offsets are 32-bit.
-    if (m_frameBytes + callee.frameBytes > maximumFrameBytes)
+    // Frame offsets are 32-bit. The body's slots and its own copies of what it is passed by value become this frame's.
+    if (m_frameBytes + callee.frameBytes + m_module.signatures[callee.signature].byValueBytes > maximumFrameBytes)
         return false;
     size_t size = callee.insts.size();
     // The author says its callers' constant arguments are what make it fast, so it has a budget of its
@@ -420,7 +420,7 @@ BIRToB3::Inlined BIRToB3::lowerInline(unsigned functionIndex, BasicBlock* block,
         Value* size = constant(Int64, static_cast<int64_t>(parameter.size));
         if (!emitSmallMemoryCopy(copy, arguments[i], size))
             block->appendNew<CCallValue>(m_proc, Int64, m_origin, pointer(cFunctionPointer(copyMemory)), copy, arguments[i], size);
-        m_frameBytes += parameter.size;
+        m_frameBytes += parameter.size + parameter.alignment;
         privateArguments.append(copy);
     }
 
