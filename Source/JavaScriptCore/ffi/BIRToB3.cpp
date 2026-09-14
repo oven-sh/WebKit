@@ -336,6 +336,9 @@ void BIRToB3::lowerFunction(unsigned functionIndex)
     const BIR::Function& function = m_module.functions[functionIndex];
     const BIR::Signature& signature = m_module.signatures[function.signature];
     m_proc.setHasCodeFromC();
+    // Such a function is never inlined (canBeInlined), so only a procedure of its own has the call.
+    if (function.callsReturnsTwice)
+        m_proc.code().setHasCallThatReturnsTwice();
 
     BasicBlock* entry = m_proc.addBlock();
     m_block = entry;

@@ -169,6 +169,12 @@ public:
     // to be addressed from the frame pointer: their distance from the stack pointer is not fixed.
     bool hasDynamicStackAllocation() const { return m_hasDynamicStackAllocation; }
     void setHasDynamicStackAllocation() { m_hasDynamicStackAllocation = true; }
+
+    // Set when the code makes a call that can return a second time (C's setjmp, which longjmp goes back to). What
+    // was spilled before that call is read after its second return, which comes after code the control flow graph
+    // says cannot lead there; so no two spill slots share their bytes, whatever liveness says.
+    bool hasCallThatReturnsTwice() const { return m_hasCallThatReturnsTwice; }
+    void setHasCallThatReturnsTwice() { m_hasCallThatReturnsTwice = true; }
 #endif
 
     // You can call this before code generation to force a minimum call arg area size.
@@ -418,6 +424,7 @@ private:
     bool m_stackIsAllocated { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_hasDynamicStackAllocation { false };
+    bool m_hasCallThatReturnsTwice { false };
 #endif
     bool m_preserveB3Origins { true };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;

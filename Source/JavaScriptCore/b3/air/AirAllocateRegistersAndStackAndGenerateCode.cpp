@@ -437,6 +437,11 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
             };
 
             auto flushToFreeList = [&] {
+#if USE(BUN_JSC_ADDITIONS)
+                // See Code::hasCallThatReturnsTwice(): a slot is not given to another Tmp when its own is dead.
+                if (m_code.hasCallThatReturnsTwice())
+                    toFree.clear();
+#endif
                 for (auto* stackSlot : toFree)
                     freeSlots.append(stackSlot);
                 toFree.clear();
