@@ -213,6 +213,85 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOri
     return result;
 }
 
+bool SymbolTable::isCloneOfScopePartOf(SymbolTable& original)
+{
+    if (m_usesSloppyEval != original.m_usesSloppyEval || m_nestedLexicalScope != original.m_nestedLexicalScope || m_scopeType != original.m_scopeType)
+        return false;
+    if (m_maxScopeOffset != original.m_maxScopeOffset)
+        return false;
+    // Of the rare data a clone copies the private names and, when the code is profiled, the type profiler's maps; what
+    // collectDebuggerInfo() adds to a clone is not part of the scope.
+    auto privateNames = [] (SymbolTable& table) -> const PrivateNameEnvironment* {
+        return table.m_rareData && !table.m_rareData->m_privateNames.isEmpty() ? &table.m_rareData->m_privateNames : nullptr;
+    };
+    auto* clonePrivateNames = privateNames(*this);
+    auto* originalPrivateNames = privateNames(original);
+    if (!!clonePrivateNames != !!originalPrivateNames)
+        return false;
+    if (clonePrivateNames && *clonePrivateNames != *originalPrivateNames)
+        return false;
+    auto isPreparedForTypeProfiling = [] (SymbolTable& table) {
+        return table.m_rareData && !table.m_rareData->m_uniqueIDMap.isEmpty();
+    };
+    if (isPreparedForTypeProfiling(original) && !isPreparedForTypeProfiling(*this))
+        return false;
+
+    uint32_t argumentsLength = this->argumentsLength();
+    if (argumentsLength != original.argumentsLength() || !!m_arguments != !!original.m_arguments)
+        return false;
+    for (uint32_t i = 0; i < argumentsLength; ++i) {
+        if (m_arguments->get(i) != original.m_arguments->get(i))
+            return false;
+    }
+
+    // Only this thread takes two of these locks at a time.
+    ConcurrentJSLocker originalLocker(original.m_lock);
+    original.materializeCachedEntriesIfNeeded(originalLocker);
+    ConcurrentJSLocker locker(m_lock);
+    materializeCachedEntriesIfNeeded(locker);
+    unsigned scopeEntries = 0;
+    for (auto& entry : original.m_map) {
+        if (!entry.value.varOffset().isScope())
+            continue;
+        scopeEntries++;
+        auto iter = m_map.find(entry.key);
+        if (iter == m_map.end() || iter->value.varOffset() != entry.value.varOffset() || iter->value.getAttributes() != entry.value.getAttributes())
+            return false;
+    }
+    return m_map.size() == scopeEntries;
+}
+
+void SymbolTable::adoptOriginal(VM& vm, SymbolTable& original)
+{
+    m_clonedFrom.set(vm, this, &original);
+    if (m_propagateCloneInvalidationToOriginal != PropagateCloneInvalidationToOriginal::Yes)
+        return;
+    // Both ways, as between a clone and what it was cloned from (cloneScopePart, notifyCreation).
+    if (m_singleton.hasBeenInvalidated() && !original.m_singleton.hasBeenInvalidated())
+        original.m_singleton.invalidate(vm, StringFireDetail("Singleton invalidated in clone"));
+    else if (original.m_singleton.hasBeenInvalidated() && !m_singleton.hasBeenInvalidated())
+        m_singleton.invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
+}
+
+void SymbolTable::invalidateInferencesOfAbandonedClone(VM& vm)
+{
+    Vector<InlineWatchpointSet*> sets;
+    {
+        ConcurrentJSLocker locker(m_lock);
+        materializeCachedEntriesIfNeeded(locker);
+        for (auto& entry : m_map) {
+            // An entry that nobody watches yet would start out clear when somebody does.
+            entry.value.prepareToWatch();
+            if (auto* set = entry.value.watchpointSet())
+                sets.append(set);
+        }
+    }
+    StringFireDetail detail("The code this SymbolTable was cloned for was generated again with a different scope");
+    m_singleton.invalidate(vm, detail);
+    for (auto* set : sets)
+        set->invalidate(vm, detail);
+}
+
 void SymbolTable::prepareForTypeProfiling(const ConcurrentJSLocker& locker)
 {
     if (m_rareData)
