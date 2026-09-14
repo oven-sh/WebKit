@@ -325,7 +325,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.test) }}
-    # The macOS and Windows lanes are tested on GitHub's standard runners, which have 3 or 4 cores.
+    # A quick lane is one tested on a runner with few cores (lanes.mjs); there is none at the moment.
     timeout-minutes: ${{ matrix.quick && 300 || 90 }}
     env:
       QUICK: ${{ matrix.quick }}

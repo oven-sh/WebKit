@@ -33,11 +33,10 @@ const BUILDER = "linux-x64-gh";
 // A toolchain image is built on a standard runner: it is mostly downloading and unpacking, and those are never
 // waited for.
 const IMAGE_BUILDER = "ubuntu-latest";
-// GitHub's standard macOS and Windows runners, where the macOS and Windows lanes are tested. They have 3 or 4 cores,
-// so the tests run there with --quick (each test in its default and no-cjit-validate modes, not all of them).
-const MACOS_ARM64 = "macos-15";
-const WINDOWS_X64 = "windows-2025";
-const WINDOWS_ARM64 = "windows-11-arm";
+// The macOS and Windows lanes are not tested. The `test` job can run them (`tested: { arm64: { on: "macos-15", variants:
+// ["lto"], quick: true } }`, "windows-2025", "windows-11-arm": GitHub's standard runners, 3 or 4 cores, hence quick), and
+// did until the run of bcdda91cfc30: macos-arm64-lto took 16 minutes, windows-amd64-lto 145, because --ruby-runner, the
+// only runner that works there, runs the tests one at a time (TestRunnerRuby in jsc-stress-test-writer-ruby.rb).
 
 // ThinLTO: the bitcode carries ThinLTO summaries, so the consumer's link gets parallel backends and cross-language
 // importing instead of one giant serial full-LTO module. -fno-split-lto-unit keeps every module a pure summary module
@@ -89,7 +88,7 @@ const NO_ASAN = ["release", "lto", "debug"];
 //                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" ("release"
 //                   where there is no lto lane) is what bun ships. The asan lanes are not tested: the tests take 65 to
 //                   100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick` is --quick, for
-//                   the small runners.
+//                   a runner with few cores.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -135,7 +134,6 @@ const platforms = [
     label: arch => `bun-webkit-macos-${arch}`,
     dockerfile: "Dockerfile.macos",
     packageOS: "darwin",
-    tested: { arm64: { on: MACOS_ARM64, variants: ["lto"], quick: true } },
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
@@ -157,10 +155,6 @@ const platforms = [
     dockerfile: "Dockerfile.windows",
     packageOS: "windows",
     // There is no asan lane for arm64, and no lto one: bun ships its plain release build.
-    tested: {
-      amd64: { on: WINDOWS_X64, variants: ["lto"], quick: true },
-      arm64: { on: WINDOWS_ARM64, variants: ["release"], quick: true },
-    },
     lanes: {
       // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
       // thunk, DLL) comes from the compiler-rt-windows-* release tag.
