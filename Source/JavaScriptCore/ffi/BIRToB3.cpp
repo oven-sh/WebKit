@@ -78,13 +78,6 @@ void* SYSV_ABI copyMemory(void* destination, const void* source, size_t size) { 
 void* SYSV_ABI moveMemory(void* destination, const void* source, size_t size) { return memmove(destination, source, size); }
 void* SYSV_ABI fillMemory(void* destination, int byte, size_t size) { return memset(destination, byte, size); }
 
-// Whether B3's CCall and a C function agree on where arguments go.
-#if OS(WINDOWS) && CPU(X86_64)
-constexpr bool b3CallsAreNativeCalls = false;
-#else
-constexpr bool b3CallsAreNativeCalls = true;
-#endif
-
 template<typename Function>
 void* cFunctionPointer(Function* function)
 {
@@ -1368,9 +1361,10 @@ Value* BIRToB3::emitBitOperation(BIR::Op op, Value* value)
 
 Vector<Value*, 1> BIRToB3::emitPatchpointCall(const BIR::Signature& signature, Value* target, const Vector<Value*>& arguments)
 {
-    // Everything B3's CCall cannot say: a variadic callee (SysV wants the vector register count
-    // in al, Win64 wants floating-point arguments duplicated in the integer registers), aggregates
-    // copied into the outgoing arguments, x8, and results in more than one register.
+    // Every call of a C function, on every target, is made here. B3's CCall cannot say all of it: the
+    // platform's own convention where the JIT's differs (Win64), a variadic callee (SysV wants the vector
+    // register count in al, Win64 wants floating-point arguments duplicated in the integer registers),
+    // aggregates copied into the outgoing arguments, x8, and results in more than one register.
     constexpr NativeCC cc = hostNativeCC();
     size_t fixedCount = signature.parameters.size();
     Vector<B3::Type> anonymousTypes;
@@ -1549,11 +1543,7 @@ Vector<Value*, 1> BIRToB3::emitCall(const BIR::Function& function, const BIR::In
     Vector<Value*> arguments;
     for (unsigned i = 0; i < inst.extraCount; ++i)
         arguments.append(m_body.values[static_cast<uint32_t>(function.extra[inst.extraOffset + i])]);
-    if (!signature.isScalar() || !b3CallsAreNativeCalls)
-        return emitPatchpointCall(signature, target, arguments);
-    CCallValue* call = m_block->appendNew<CCallValue>(m_proc, toB3(signature.soleResultOrVoid()), m_origin, target);
-    call->appendArgs(arguments);
-    return { call };
+    return emitPatchpointCall(signature, target, arguments);
 }
 
 void BIRToB3::emitReturn(const BIR::Function& function, const BIR::Inst& inst)
