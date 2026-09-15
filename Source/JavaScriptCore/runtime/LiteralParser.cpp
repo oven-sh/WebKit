@@ -1705,8 +1705,10 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
             array->putDirectIndex(m_globalObject, array->length(), lastValue);
             RETURN_IF_EXCEPTION(scope, { });
             if constexpr (reviverMode == JSONReviverMode::Enabled) {
-                if (sourceRanges)
-                    std::get<JSONRanges::Array>(m_rangesStack.last().properties).append(WTF::move(lastValueRange));
+                if (sourceRanges && !std::get<JSONRanges::Array>(m_rangesStack.last().properties).tryAppend(WTF::move(lastValueRange))) [[unlikely]] {
+                    throwOutOfMemoryError(m_globalObject, scope);
+                    return { };
+                }
             }
 
             if (m_lexer.currentToken()->type == TokComma)
