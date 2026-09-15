@@ -395,6 +395,10 @@ public:
     size_t sizeAfterLastCollection() const { return m_sizeAfterLastCollect; }
     // Everything the mutator has allocated (cells and reported extra memory), the current cycle included. Mutator thread only.
     uint64_t totalBytesAllocated() const { return m_bytesAllocatedInPastCycles + m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // How much the mutator may allocate before the heap collects by itself: what updateAllocationLimits() decided after the last
+    // collection. For an embedder that wants to say "this program is allocating a lot" in the heap's own terms and not in bytes
+    // per second of its own choosing. Mutator thread only.
+    size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
 #endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
