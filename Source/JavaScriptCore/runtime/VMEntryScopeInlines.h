@@ -37,6 +37,8 @@ ALWAYS_INLINE VMEntryScope::VMEntryScope(VM& vm, JSGlobalObject* globalObject)
     if (!vm.entryScope)
         setUpSlow();
     vm.clearLastException();
+    if (vm.heap.hasPendingDeferredGCWork() && Options::usePollingDeferredGCWorkAtVMEntry()) [[unlikely]]
+        vm.heap.performPendingDeferredGCWork();
 }
 
 ALWAYS_INLINE VMEntryScope::~VMEntryScope()
