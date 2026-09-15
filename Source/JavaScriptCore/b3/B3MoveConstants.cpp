@@ -113,6 +113,14 @@ private:
             materializations[value->owner].append(value);
         }
 
+        // Where each constant is in those lists. There is one Value for a constant, so a search of the lists for a
+        // particular constant, below, has one place to look.
+        UncheckedKeyHashMap<Value*, std::pair<BasicBlock*, unsigned>> materializationOf;
+        for (BasicBlock* block : m_proc) {
+            for (unsigned i = 0; i < materializations[block].size(); ++i)
+                materializationOf.add(materializations[block][i], std::pair { block, i });
+        }
+
         // Get rid of Value's that are fast constants but aren't canonical. Also remove the canonical
         // ones from the CFG, since we're going to reinsert them elsewhere.
         for (BasicBlock* block : m_proc) {
@@ -219,15 +227,29 @@ private:
                         int64_t addendConst = addend->asInt();
                         if (Air::Arg::isValidImmForm(addendConst))
                             break;
-                        Value* bestAddend = findBestConstant(
-                            [&] (Value* candidateAddend) -> bool {
-                                if (candidateAddend->type() != addend->type())
-                                    return false;
-                                if (!candidateAddend->hasInt())
-                                    return false;
-                                return candidateAddend == addend
-                                    || candidateAddend->asInt() == -addendConst;
-                            });
+                        // The addend itself or the constant that is its negation, whichever is materialized in the
+                        // outermost of this block's dominators (in one block, whichever comes first in its list): what
+                        // findBestConstant finds for that pair, without going through every constant of every
+                        // dominator for each of what may be tens of thousands of such additions.
+                        Value* bestAddend = nullptr;
+                        std::pair<BasicBlock*, unsigned> bestPlace { nullptr, 0 };
+                        auto consider = [&] (Value* candidate) {
+                            if (!candidate)
+                                return;
+                            auto place = materializationOf.get(candidate);
+                            if (!place.first || !dominators.dominates(place.first, block))
+                                return;
+                            bool isBetter = !bestAddend
+                                || (place.first == bestPlace.first ? place.second < bestPlace.second : dominators.dominates(place.first, bestPlace.first));
+                            if (isBetter) {
+                                bestAddend = candidate;
+                                bestPlace = place;
+                            }
+                        };
+                        consider(addend);
+                        int64_t negated = static_cast<int64_t>(-static_cast<uint64_t>(addendConst));
+                        if (negated != addendConst && (addend->type() == Int64 || isRepresentableAs<int32_t>(negated)))
+                            consider(valueForConstant.get(ValueKey(addend->opcode(), addend->type(), negated)));
                         if (!bestAddend || bestAddend == addend)
                             break;
                         materialize(value->child(0));

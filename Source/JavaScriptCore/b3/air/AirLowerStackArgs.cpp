@@ -47,7 +47,11 @@ void lowerStackArgs(Code& code)
             for (Arg& arg : inst.args()) {
                 if (arg.isCallArg()) {
                     ASSERT(arg.offset() >= 0);
+#if USE(BUN_JSC_ADDITIONS)
+                    code.requestCallArgAreaSizeInBytes(std::min<unsigned>(arg.offset() + conservativeCallArgBytes, code.maximumCallArgAreaSizeInBytes()));
+#else
                     code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
+#endif
                 }
             }
         }
@@ -82,9 +86,16 @@ void lowerStackArgs(Code& code)
                 if (result.isValidForm(Move, width))
                     return result;
 
-                result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
-                if (result.isValidForm(Move, width))
-                    return result;
+#if USE(BUN_JSC_ADDITIONS)
+                bool canAddressFromSP = !code.hasDynamicStackAllocation();
+#else
+                bool canAddressFromSP = true;
+#endif
+                if (canAddressFromSP) {
+                    result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
+                    if (result.isValidForm(Move, width))
+                        return result;
+                }
 
                 if (inst.kind.opcode == Patch)
                     return Arg::extendedOffsetAddr(offsetFromFP);
@@ -94,9 +105,11 @@ void lowerStackArgs(Code& code)
                 Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
                 extendedOffsetAddrRegInUse = true;
 
-                Arg largeOffset = Arg::isValidImmForm(offsetFromSP) ? Arg::imm(offsetFromSP) : Arg::bigImm(offsetFromSP);
+                int32_t offsetFromBase = canAddressFromSP ? offsetFromSP : offsetFromFP;
+                Air::Tmp base = Air::Tmp(canAddressFromSP ? MacroAssembler::stackPointerRegister : GPRInfo::callFrameRegister);
+                Arg largeOffset = Arg::isValidImmForm(offsetFromBase) ? Arg::imm(offsetFromBase) : Arg::bigImm(offsetFromBase);
                 insertionSet.insert(insertionIndex, Move, inst.origin, largeOffset, tmp);
-                insertionSet.insert(insertionIndex, Add64, inst.origin, Air::Tmp(MacroAssembler::stackPointerRegister), tmp);
+                insertionSet.insert(insertionIndex, Add64, inst.origin, base, tmp);
                 result = Arg::addr(tmp, 0);
                 return result;
 #elif CPU(X86_64)
@@ -148,6 +161,12 @@ void lowerStackArgs(Code& code)
                     break;
                 }
                 case Arg::CallArg:
+#if USE(BUN_JSC_ADDITIONS)
+                    if (code.hasDynamicStackAllocation()) {
+                        lowerArmLea(inst.args()[0].offset(), Tmp(MacroAssembler::stackPointerRegister));
+                        break;
+                    }
+#endif
                     lowerArmLea(inst.args()[0].offset() - code.frameSize(), Tmp(GPRInfo::callFrameRegister));
                     break;
                 case Arg::Addr:
@@ -233,6 +252,31 @@ void lowerStackArgs(Code& code)
                         break;
                     }
                     case Arg::CallArg:
+#if USE(BUN_JSC_ADDITIONS)
+                        if (code.hasDynamicStackAllocation()) {
+                            // What is passed to a call goes where the callee will look for it: above the stack
+                            // pointer as it is now, which is no longer a fixed distance from the frame pointer.
+                            Arg fromSP = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), arg.offset());
+                            // A patchpoint only names where its stack argument is, for whoever asks: the store that
+                            // put it there is an instruction of its own, ahead of it. Any offset will do for that.
+                            if (inst.kind.opcode == Patch || inst.admitsExtendedOffsetAddr(arg) || fromSP.isValidForm(Move, width)) {
+                                arg = fromSP;
+                                break;
+                            }
+#if CPU(ARM64)
+                            RELEASE_ASSERT(!extendedOffsetAddrRegInUse);
+                            Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
+                            extendedOffsetAddrRegInUse = true;
+                            Arg offset = Arg::isValidImmForm(arg.offset()) ? Arg::imm(arg.offset()) : Arg::bigImm(arg.offset());
+                            insertionSet.insert(instIndex, Move, inst.origin, offset, tmp);
+                            insertionSet.insert(instIndex, Add64, inst.origin, Air::Tmp(MacroAssembler::stackPointerRegister), tmp);
+                            arg = Arg::addr(tmp, 0);
+                            break;
+#else
+                            RELEASE_ASSERT_NOT_REACHED();
+#endif
+                        }
+#endif
                         arg = stackAddr(instIndex, arg, width, arg.offset() - code.frameSize());
                         break;
                     default:

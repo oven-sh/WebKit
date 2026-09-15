@@ -2659,7 +2659,13 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                     addToGraph(CheckIsConstant, OpInfo(frozenFunction), Edge(callTargetNode, CellUse));
                     m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(
                         std::max<unsigned>(ffiFunction->signature().slotCount() + 1, argumentCountIncludingThis)));
-                    addCall(result, Call, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
+                    // The value profile saw this function's uint32_t results as boxed numbers: int32s, and
+                    // doubles once they pass INT32_MAX. They are all integers that fit an Int52, which is
+                    // what lets their consumers work on them unboxed (see the CallFFI case in fixup).
+                    SpeculatedType ffiPrediction = prediction;
+                    if (ffiFunction->signature().returnType() == FFI::Type::Uint32 && (ffiPrediction & SpecFullDouble))
+                        ffiPrediction = (ffiPrediction & ~SpecFullDouble) | SpecNonInt32AsInt52;
+                    addCall(result, Call, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, ffiPrediction);
                     return CallOptimizationResult::Inlined;
                 }
 #endif

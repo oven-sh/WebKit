@@ -5731,7 +5731,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case CallFFI: {
 #if USE(BUN_JSC_ADDITIONS)
         clobberWorld();
-        setTypeForNode(node, FFI::speculatedResultTypeForCallFFI(node));
+        if (node->hasInt52Result())
+            setNonCellTypeForNode(node, SpecInt52Any);
+        else
+            setTypeForNode(node, FFI::speculatedResultTypeForCallFFI(node));
 #else
         DFG_CRASH(m_graph, node, "Unexpected node type");
 #endif

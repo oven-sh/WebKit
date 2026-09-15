@@ -4456,7 +4456,7 @@ private:
             // This pattern is super useful on both x86 and ARM64, since the inversion of the CAS result
             // can be done with zero cost on x86 (just flip the set from E to NE) and it's a progression
             // on ARM64 (since STX returns 0 on success, so ordinarily we have to flip it).
-            if (right->isInt(1) && left->opcode() == AtomicWeakCAS && canBeInternal(left)) {
+            if (right->isInt(1) && left->opcode() == AtomicWeakCAS && canBeInternal(left) && !crossesInterference(left)) {
                 commitInternal(left);
                 appendCAS(left, true);
                 return;
@@ -4868,6 +4868,16 @@ private:
                 Value* base1 = address->child(0);
                 Value* base2 = memory->child(1);
                 if (base1 != base2 || !address->child(1)->hasIntPtr())
+                    return false;
+                // The written-back register would be a copy of the stored one, and the two coalesce: a store
+                // that writes back its own source register is UNPREDICTABLE, and Apple's cores trap on it.
+                // What is compared is what tmp() gives a register to: a Trunc of the base is the base's.
+                auto registerHolder = [&](Value* candidate) {
+                    while (shouldCopyPropagate(candidate))
+                        candidate = candidate->child(0);
+                    return candidate;
+                };
+                if (registerHolder(value) == registerHolder(base1) || registerHolder(value) == address)
                     return false;
                 intptr_t offset = address->child(1)->asIntPtr();
                 Value::OffsetType smallOffset = static_cast<Value::OffsetType>(offset);
@@ -5928,7 +5938,8 @@ private:
             if (m_value->child(0)->opcode() == AtomicStrongCAS
                 && m_value->child(0)->as<AtomicValue>()->isCanonicalWidth()
                 && m_value->child(0)->child(0) == m_value->child(1)
-                && canBeInternal(m_value->child(0))) {
+                && canBeInternal(m_value->child(0))
+                && !crossesInterference(m_value->child(0))) {
                 ASSERT(!m_locked.contains(m_value->child(0)->child(1)));
                 ASSERT(!m_locked.contains(m_value->child(1)));
                 
@@ -6570,7 +6581,11 @@ private:
                     }
                     break;
                 }
+                // The compare-and-swap is emitted where the branch is: not past anything between the two that reads
+                // or writes what it does.
                 case AtomicWeakCAS:
+                    if (crossesInterference(branchChild))
+                        break;
                     commitInternal(branchChild);
                     appendCAS(branchChild, false);
                     return;
@@ -6580,7 +6595,8 @@ private:
                     // FIXME: Teach this to match patterns that arise from subwidth CAS.
                     // https://bugs.webkit.org/show_bug.cgi?id=169250
                     if (branchChild->child(0)->isInt(0)
-                        && branchChild->as<AtomicValue>()->isCanonicalWidth()) {
+                        && branchChild->as<AtomicValue>()->isCanonicalWidth()
+                        && !crossesInterference(branchChild)) {
                         commitInternal(branchChild);
                         appendCAS(branchChild, true);
                         return;
@@ -6594,6 +6610,7 @@ private:
                     if (branchChild->child(0)->opcode() == AtomicStrongCAS
                         && branchChild->child(0)->as<AtomicValue>()->isCanonicalWidth()
                         && canBeInternal(branchChild->child(0))
+                        && !crossesInterference(branchChild->child(0))
                         && branchChild->child(0)->child(0) == branchChild->child(1)) {
                         commitInternal(branchChild);
                         commitInternal(branchChild->child(0));
