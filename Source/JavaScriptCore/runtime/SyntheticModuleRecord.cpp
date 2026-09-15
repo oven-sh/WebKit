@@ -107,15 +107,20 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
     if (!m_deferredGenerator)
         return;
 
+    // The generator runs once. A failure here or in initializeExports() is what every later link reports.
+    auto failed = [&](Exception* exception) {
+        if (vm.isTerminationException(exception))
+            return;
+        m_deferredGeneratorError.set(vm, this, exception->value());
+        m_deferredGenerator = nullptr;
+    };
+
     Ref generator = *m_deferredGenerator;
     MarkedArgumentBuffer exportValues;
     Vector<Identifier, 4> exportNames;
     JSObject* lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues);
     if (Exception* exception = scope.exception()) [[unlikely]] {
-        if (!vm.isTerminationException(exception)) {
-            m_deferredGeneratorError.set(vm, this, exception->value());
-            m_deferredGenerator = nullptr;
-        }
+        failed(exception);
         return;
     }
 
@@ -126,7 +131,10 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
         return;
 
     initializeExports(globalObject, exportNames, exportValues, lazyExportsSource);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        failed(exception);
+        return;
+    }
     m_deferredGenerator = nullptr;
 }
 #endif
