@@ -529,6 +529,9 @@ jobs:
           if [ -n "$failed" ]; then
             echo "jobs that did not succeed:"; echo "$failed"; ok=false
           else
+            # `plan` made the draft. It is gone if this is a re-run of only the jobs that failed, after this job deleted
+            # it in the earlier attempt (a failed test leaves every lane built, so nothing before here notices).
+            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .id >/dev/null 2>&1 || { echo "::error::no release for $TAG (id $RELEASE_ID): an earlier attempt of this run deleted the draft. Use 'Re-run all jobs' so that plan creates it again."; exit 1; }
             jq -r '.[]' <<< "$LABELS" | sort > expected.txt
             gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
             missing=$(comm -23 expected.txt uploaded.txt)
