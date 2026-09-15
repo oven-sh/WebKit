@@ -255,7 +255,6 @@ bool UnlinkedCodeBlock::typeProfilerExpressionInfoForBytecodeOffset(unsigned byt
 
 UnlinkedCodeBlock::~UnlinkedCodeBlock()
 {
-    delete m_valueAndArrayProfiles;
 #if USE(BUN_JSC_ADDITIONS)
     if (m_cachedPayloadIndex) {
         if (auto* payloads = vm().persistentBytecodePayloadsIfExists())
@@ -386,7 +385,9 @@ void UnlinkedCodeBlock::ensureValueAndArrayProfiles()
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
     if (m_valueAndArrayProfiles || isBuiltinFunction())
         return;
-    WTF::atomicStore(&m_valueAndArrayProfiles, ValueAndArrayProfiles::create(numberOfValueProfiles(), m_numberOfArrayProfiles).release(), std::memory_order_release);
+    auto profiles = ValueAndArrayProfiles::create(numberOfValueProfiles(), m_numberOfArrayProfiles);
+    WTF::storeStoreFence(); // The collector and the compiler threads read m_valueAndArrayProfiles without a lock.
+    m_valueAndArrayProfiles = WTF::move(profiles);
 }
 
 } // namespace JSC
