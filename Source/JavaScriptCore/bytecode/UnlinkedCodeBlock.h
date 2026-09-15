@@ -389,7 +389,7 @@ public:
         {
         }
     };
-    ValueAndArrayProfiles* valueAndArrayProfiles() { return WTF::atomicLoad(&m_valueAndArrayProfiles, std::memory_order_acquire); }
+    ValueAndArrayProfiles* valueAndArrayProfiles() { return m_valueAndArrayProfiles.get(); }
     void ensureValueAndArrayProfiles();
     unsigned numberOfValueProfiles() const { return numParameters() + (m_metadata->hasMetadata() ? m_metadata->numValueProfiles() : 0); }
     unsigned numberOfArrayProfiles() const { return m_numberOfArrayProfiles; }
@@ -537,7 +537,7 @@ private:
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
     uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
     uint32_t m_cachedRecordOffset { 0 }; // of this block's own record in that payload, while m_cachedPayloadIndex is set
-    ValueAndArrayProfiles* m_valueAndArrayProfiles { nullptr };
+    std::unique_ptr<ValueAndArrayProfiles> m_valueAndArrayProfiles;
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;
     FixedVector<UnaryArithProfile> m_unaryArithProfiles;
 
