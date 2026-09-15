@@ -51,7 +51,10 @@ RemoteInspector& RemoteInspector::singleton()
 
 RemoteInspector::RemoteInspector()
 {
-    Socket::init();
+    // Socket::init() (WSAStartup on Windows) is deferred to RemoteInspectorSocketEndpoint,
+    // which every socket operation goes through; constructing the singleton - which
+    // happens for every JSGlobalObject via RemoteControllableTarget::init() - must not
+    // initialize the platform socket library.
     start();
 }
 
