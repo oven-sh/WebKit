@@ -386,6 +386,7 @@ op :catch,
     },
     metadata: {
         buffer: ValueProfileAndVirtualRegisterBuffer.*,
+        hasExecutedWithoutBuffer: bool, # Options::useLazyCatchLiveness(): executed before its buffer was created; CodeBlock::ensureCatchLivenessIsComputedForExecutedCatches()
     }
 
 op :new_array_with_size,
@@ -528,8 +529,8 @@ op :resolve_scope,
         },
         _1: { # offset 6
              # written during linking
-             lexicalEnvironment: WriteBarrierBase[JSCell], # lexicalEnvironment && type == ModuleVar
-             symbolTable: WriteBarrierBase[SymbolTable], # lexicalEnvironment && type != ModuleVar
+             symbolTable: WriteBarrierBase[SymbolTable], # lexicalEnvironment (ClosureVar)
+             moduleImportSlot: unsigned, # ModuleVar: the import slot, as a variable index in the importing module environment
 
              constantScope: WriteBarrierBase[JSScope],
 

@@ -3484,7 +3484,16 @@ enum class TextUnit {
             AX_ASSERT_NOT_REACHED();
             break;
         }
-        return AXTextMarker { textMarker }.lineRange(rangeType, includeTrailingLineBreak).platformData().bridgingAutorelease();
+
+        auto lineRange = AXTextMarker { textMarker }.lineRange(rangeType, includeTrailingLineBreak);
+        if (textUnit == TextUnit::Line) {
+            // The range ends at the downstream start of the next line, rather than the upstream start of this
+            // one. This enables AT line-by-line navigation and matches the live tree.
+            auto endMarker = lineRange.end();
+            endMarker.setAffinity(Affinity::Downstream);
+            lineRange = { lineRange.start(), WTF::move(endMarker) };
+        }
+        return lineRange.platformData().bridgingAutorelease();
     }
 
     return (id)Accessibility::retrieveAutoreleasedValueFromMainThread<AXTextMarkerRangeRef>([textMarker = retainPtr(textMarker), &textUnit, protectedSelf = retainPtr(self)] () ->  RetainPtr<AXTextMarkerRangeRef> {
@@ -3592,6 +3601,13 @@ static bool isMatchingPlugin(AXCoreObject& axObject, const AccessibilitySearchCr
     if (!isMainThread()) {
         std::optional markerRange = Accessibility::markerRangeFrom(range, backingObject);
         return markerRange ? static_cast<CGRect>(markerRange->viewportRelativeFrame()) : CGRectZero;
+    }
+
+    // For a representative, offsets can address text past its own node, so resolve them against
+    // simpleRange() (the whole stitched text). visiblePositionForIndex would clamp to its first run.
+    if (backingObject.stitchGroupIfRepresentative()) {
+        if (std::optional stitchScope = backingObject.simpleRange())
+            return FloatRect(backingObject.boundsForRange(resolveCharacterRange(*stitchScope, CharacterRange(range.location, range.length))));
     }
 
     auto start = backingObject.visiblePositionForIndex(range.location);

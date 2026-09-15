@@ -864,12 +864,7 @@ std::optional<bool> JSArray::fastIncludes(JSGlobalObject* globalObject, JSValue 
         if (!searchElement.isNumber())
             return false;
 
-        double searchNumber = searchElement.asNumber();
-        for (; index < length; ++index) {
-            if (data[index] == searchNumber)
-                return true;
-        }
-        return false;
+        return !!WTF::findDouble(data + index, searchElement.asNumber(), length - index);
     }
     default:
         return std::nullopt;
@@ -904,11 +899,11 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
     switch (type) {
     case ArrayWithInt32:
     case ArrayWithContiguous: {
-        auto data = this->butterfly()->contiguous().data();
+        Butterfly* butterfly = this->butterfly();
 
-        if (containsHole(data, length))
-            return false;
+        RELEASE_ASSERT(butterfly->vectorLength() >= length);
 
+        auto data = butterfly->contiguousInt32().data();
         std::span<WriteBarrier<Unknown>> destination { data + to, count };
         std::span<const WriteBarrier<Unknown>> source { data + from, count };
 
@@ -922,11 +917,11 @@ bool JSArray::fastCopyWithin(JSGlobalObject* globalObject, uint64_t from64, uint
         return true;
     }
     case ArrayWithDouble: {
-        auto data = this->butterfly()->contiguousDouble().data();
+        Butterfly* butterfly = this->butterfly();
 
-        if (containsHole(data, length))
-            return false;
+        RELEASE_ASSERT(butterfly->vectorLength() >= length);
 
+        auto data = butterfly->contiguousDouble().data();
         std::span<double> destination { data + to, count };
         std::span<double> source { data + from, count };
 
@@ -1304,8 +1299,12 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
         if (indexingType() == ArrayWithDouble) {
             for (unsigned i = butterfly->publicLength(); i-- > newLength;)
                 butterfly->contiguousDouble().at(this, i) = PNaN;
-        } else
+        } else if (indexingType() == ArrayWithContiguous)
             gcSafeZeroMemory(butterfly->contiguous().data() + newLength, lengthToClear * sizeof(JSValue));
+        else {
+            for (unsigned i = butterfly->publicLength(); i-- > newLength;)
+                butterfly->contiguous().at(this, i).clear();
+        }
         butterfly->setPublicLength(newLength);
         return true;
     }
@@ -1728,7 +1727,12 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
             }
         }
 
-        gcSafeZeroMemory(butterfly->contiguous().data() + end, count * sizeof(JSValue));
+        if (indexingType == ArrayWithContiguous)
+            gcSafeZeroMemory(butterfly->contiguous().data() + end, count * sizeof(JSValue));
+        else {
+            for (unsigned i = end; i < oldLength; ++i)
+                butterfly->contiguous().at(this, i).clear();
+        }
 
         butterfly->setPublicLength(oldLength - count);
 

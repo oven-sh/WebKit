@@ -26,14 +26,63 @@
 #pragma once
 
 #include "StyleGridTrackBreadth.h"
+#include "StyleGridTrackSize.h"
 #include "StyleZoomPrimitives.h"
 
 namespace WebCore {
 namespace Layout {
 
+// https://drafts.csswg.org/css-grid-2/#typedef-track-size
+// fit-content() is only ever a max track sizing function.
+class MaxTrackSizingFunction {
+public:
+    MaxTrackSizingFunction(Style::GridTrackBreadth breadth)
+        : m_value(WTF::move(breadth)) { }
+
+    MaxTrackSizingFunction(Style::GridTrackSize::FitContent fitContent)
+        : m_value(WTF::move(fitContent)) { }
+
+    FORWARD_VARIANT_FUNCTIONS(MaxTrackSizingFunction, m_value)
+
+    // Absent for a fit-content() maximum.
+    std::optional<Style::GridTrackBreadth> tryBreadth() const
+    {
+        if (auto* breadth = std::get_if<Style::GridTrackBreadth>(&m_value))
+            return *breadth;
+        return { };
+    }
+
+    bool isAuto() const
+    {
+        auto breadth = tryBreadth();
+        return breadth && breadth->isAuto();
+    }
+
+    bool isFlex() const
+    {
+        auto breadth = tryBreadth();
+        return breadth && breadth->isFlex();
+    }
+
+    Style::GridTrackBreadth::Flex flex() const
+    {
+        ASSERT(isFlex());
+        return tryBreadth()->flex();
+    }
+
+    bool isContentSized() const
+    {
+        auto breadth = tryBreadth();
+        return !breadth || breadth->isContentSized();
+    }
+
+private:
+    Variant<Style::GridTrackBreadth, Style::GridTrackSize::FitContent> m_value;
+};
+
 struct TrackSizingFunctions {
     Style::GridTrackBreadth min { CSS::Keyword::Auto { } };
-    Style::GridTrackBreadth max { CSS::Keyword::Auto { } };
+    MaxTrackSizingFunction max { Style::GridTrackBreadth { CSS::Keyword::Auto { } } };
     Style::ZoomFactor zoom;
 };
 

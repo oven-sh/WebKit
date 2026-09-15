@@ -45,6 +45,11 @@ inline std::span<const uint8_t> span(const sk_sp<SkData>& data)
     return span(data.get());
 }
 
+inline std::span<uint8_t> mutableSpan(SkData* data)
+{
+    return unsafeMakeSpan(static_cast<uint8_t*>(data->writable_data()), data->size());
+}
+
 inline std::span<const uint8_t> span(const SkPixmap& pixmap)
 {
     return unsafeMakeSpan(static_cast<const uint8_t*>(pixmap.addr()), pixmap.computeByteSize());

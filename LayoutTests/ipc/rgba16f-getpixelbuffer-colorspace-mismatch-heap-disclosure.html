@@ -61,9 +61,6 @@ window.setTimeout(async () => {
         contextIdentifier: ctxId
     });
     const ib = sc.newInterface('RemoteImageBuffer', bufId);
-    // Drain the unsolicited DidCreateBackend in-turn; otherwise it reaches the stream
-    // connection's dummy receiver, which ASSERT_NOT_REACHED()s in debug builds.
-    sc.connection.waitForMessage(bufId, IPC.messages.RemoteImageBufferProxy_DidCreateBackend.name);
 
     // Seed the IOSurface with Float16 1.0 (00 3C) as a sentinel.
     const sentinel = new Uint8Array(NBYTES);

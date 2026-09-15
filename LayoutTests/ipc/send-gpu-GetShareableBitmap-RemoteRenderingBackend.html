@@ -47,12 +47,6 @@ function fuzz() {
             debug("Failed: " + error)
     }
     try {
-        o35.waitForMessage(imageBufferID, IPC.messages.RemoteImageBufferProxy_DidCreateBackend.name);
-    } catch (error) {
-        if (!(error instanceof TypeError))
-            debug("Failed: " + error)
-    }
-    try {
         o35.sendSyncMessage(imageBufferID,IPC.messages.RemoteImageBuffer_GetShareableBitmap.name, [{type: 'bool',value: 0}]);
     } catch (error) {
         if (!(error instanceof TypeError))

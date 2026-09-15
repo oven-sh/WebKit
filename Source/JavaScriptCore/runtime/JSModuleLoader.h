@@ -32,6 +32,7 @@
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
 #include "ModuleMap.h"
+#include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC {
@@ -73,17 +74,26 @@ public:
         Ready,
     };
 
-    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm, Structure* structure)
+    // moduleScope: the scope the environments of this loader's modules are created
+    // in; the global lexical environment, or lexical environments ending in it.
+    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSScope* moduleScope)
     {
-        JSModuleLoader* object = new (NotNull, allocateCell<JSModuleLoader>(vm)) JSModuleLoader(vm, structure);
+        JSModuleLoader* object = new (NotNull, allocateCell<JSModuleLoader>(vm)) JSModuleLoader(vm, structure, moduleScope);
         object->finishCreation(globalObject, vm);
         return object;
     }
 
-    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm)
-    {
-        return create(globalObject, vm, vm.moduleLoaderStructure.get());
-    }
+    JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
+
+    JSScope* moduleScope() const { return m_moduleScope.get(); }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The async context (JSGlobalObject::m_asyncContextData field 0) the top-level code of
+    // this loader's modules runs in, its top-level await continuations included. Empty
+    // (the default): whatever is current when a module is executed.
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+    void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
+#endif
 
     DECLARE_INFO;
 
@@ -164,7 +174,7 @@ public:
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
 
-    static JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
+    JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
     static ErrorInstance* duplicateError(JSGlobalObject*, ErrorInstance*);
@@ -186,8 +196,12 @@ public:
         auto* impl = key.impl();
         if (auto entry = m_moduleMap.get({ impl, ScriptFetchParameters::Type::JavaScript }))
             return entry.get();
-        for (auto& [k, entry] : m_moduleMap) {
-            if (k.first == impl)
+        if (!m_nonJavaScriptEntryCount) [[likely]]
+            return nullptr; // a miss is common (require(esm), "is it registered yet?")
+        using Type = ScriptFetchParameters::Type;
+        static_assert(static_cast<unsigned>(Type::HostDefined) == 5, "every Type but JavaScript is listed below");
+        for (Type type : { Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::None }) {
+            if (auto entry = m_moduleMap.get({ impl, type }))
                 return entry.get();
         }
         return nullptr;
@@ -198,18 +212,50 @@ public:
         // Bun's registry is conceptually flat (one entry per specifier), so
         // delete every (specifier, type) variant — text/json/HostDefined etc.
         auto* impl = key.impl();
+        Locker locker { cellLock() }; // visitChildren iterates these
+        forgetPrelinkedRecordsWithKey(impl);
         m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
-        return m_moduleMap.removeIf([&](auto& entry) { return entry.key.first == impl; });
+        return m_moduleMap.removeIf([&](auto& entry) {
+            if (entry.key.first != impl)
+                return false;
+            didRemoveModuleMapEntry(entry.key.second);
+            return true;
+        });
     }
     void clearAll()
     {
+        Locker locker { cellLock() };
+        forgetPrelinkedRecordsWithKey(nullptr);
         m_loadedModules.clear();
         m_moduleMap.clear();
+        m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
+
+    // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
+    // for each of its modules (null until that module is fetched). Prelinked records resolve their pre-resolved
+    // import bindings' module indices through this table.
+    PrelinkedModuleGraph* prelinkedModuleGraph() const { return m_prelinkedGraph.get(); }
+    JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(Ref<PrelinkedModuleGraph>&&);
+    AbstractModuleRecord* prelinkedRecord(uint32_t moduleIndex) const
+    {
+        return moduleIndex < m_prelinkedRecords.size() ? m_prelinkedRecords[moduleIndex].get() : nullptr;
+    }
+    JS_EXPORT_PRIVATE void setPrelinkedRecord(VM&, uint32_t moduleIndex, AbstractModuleRecord*);
+    // A second record now exists for that module's key: clear the slot and resolve bindings into it by name from now on.
+    JS_EXPORT_PRIVATE void forgetPrelinkedRecord(uint32_t moduleIndex);
+    void pinPrelinkedEdges(uint32_t moduleIndex);
+    // prelinkedRecord(), or null once that module's registry entry has ever been deleted: from then on the index may name
+    // a record other than the one an importer's own (retained) graph edges lead to, so bindings into it resolve by name.
+    AbstractModuleRecord* prelinkedRecordForResolution(uint32_t moduleIndex) const
+    {
+        if (moduleIndex < m_prelinkedRecordRemoved.size() && m_prelinkedRecordRemoved.quickGet(moduleIndex)) [[unlikely]]
+            return nullptr;
+        return prelinkedRecord(moduleIndex);
+    }
 #endif
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
@@ -218,14 +264,43 @@ public:
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
 private:
-    JSModuleLoader(VM&, Structure*);
+    JSModuleLoader(VM&, Structure*, JSScope* moduleScope);
     void finishCreation(JSGlobalObject*, VM&);
 
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
+#if USE(BUN_JSC_ADDITIONS)
+    void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
+
+    RefPtr<PrelinkedModuleGraph> m_prelinkedGraph;
+    Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
+    BitVector m_prelinkedRecordRemoved; // empty until the first removal
+    unsigned m_nonJavaScriptEntryCount { 0 }; // m_moduleMap entries whose type is not JavaScript, for registryEntry()'s by-specifier fallback
+#endif
+    void didAddModuleMapEntry(ScriptFetchParameters::Type type)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        m_nonJavaScriptEntryCount += type != ScriptFetchParameters::Type::JavaScript;
+#else
+        UNUSED_PARAM(type);
+#endif
+    }
+    void didRemoveModuleMapEntry(ScriptFetchParameters::Type type)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(type == ScriptFetchParameters::Type::JavaScript || m_nonJavaScriptEntryCount);
+        m_nonJavaScriptEntryCount -= type != ScriptFetchParameters::Type::JavaScript;
+#else
+        UNUSED_PARAM(type);
+#endif
+    }
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
+    WriteBarrier<JSScope> m_moduleScope;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
     ResolutionMap<WriteBarrier<Unknown>> m_resolutionFailures;

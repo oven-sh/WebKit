@@ -212,10 +212,10 @@ String JSFunction::nameWithoutGC(VM& vm)
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
-    const Identifier identifier = jsExecutable()->name();
-    if (identifier == vm.propertyNames->starDefaultPrivateName)
+    String name = jsExecutable()->nameWithoutGC();
+    if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl())
         return emptyString();
-    return identifier.string();
+    return name;
 }
 
 String JSFunction::displayName(VM& vm)
@@ -478,7 +478,7 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction())
             return actualName;
 
-        return function->jsExecutable()->ecmaName().string();
+        return function->jsExecutable()->ecmaNameWithoutGC();
     }
     if (auto* function = dynamicDowncast<InternalFunction>(object))
         return function->name();

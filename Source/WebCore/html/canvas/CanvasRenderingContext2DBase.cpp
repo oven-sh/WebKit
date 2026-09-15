@@ -93,6 +93,7 @@
 #include "TextUtil.h"
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <numbers>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -110,8 +111,6 @@ static constexpr InterpolationQuality defaultInterpolationQuality = Interpolatio
 
 static constexpr ImageSmoothingQuality defaultSmoothingQuality = ImageSmoothingQuality::Low;
 
-const int CanvasRenderingContext2DBase::DefaultFontSize = 10;
-const ASCIILiteral CanvasRenderingContext2DBase::DefaultFontFamily = "sans-serif"_s;
 static constexpr ASCIILiteral DefaultFont = "10px sans-serif"_s;
 
 // putImageData data smaller than this is cached in anticipation for next getImageData.
@@ -800,11 +799,12 @@ void CanvasRenderingContext2DBase::setLineDash(const Vector<double>& dash)
         return;
 
     realizeSaves();
-    modifiableState().lineDash = dash;
+    auto& state = modifiableState();
+    state.lineDash = dash;
     // Spec requires the concatenation of two copies the dash list when the
     // number of elements is odd
     if (dash.size() % 2)
-        modifiableState().lineDash.appendVector(dash);
+        state.lineDash.appendVector(dash);
 
     applyLineDash();
 }
@@ -835,10 +835,11 @@ void CanvasRenderingContext2DBase::applyLineDash() const
     GraphicsContext* c = effectiveDrawingContext();
     if (!c)
         return;
-    DashArray convertedLineDash(state().lineDash.size());
-    for (size_t i = 0; i < state().lineDash.size(); ++i)
-        convertedLineDash[i] = static_cast<DashArrayElement>(state().lineDash[i]);
-    c->setLineDash(convertedLineDash, state().lineDashOffset);
+    auto& state = this->state();
+    DashArray convertedLineDash(state.lineDash.size());
+    for (size_t i = 0; i < state.lineDash.size(); ++i)
+        convertedLineDash[i] = static_cast<DashArrayElement>(state.lineDash[i]);
+    c->setLineDash(convertedLineDash, state.lineDashOffset);
 }
 
 void CanvasRenderingContext2DBase::setGlobalAlpha(double alpha)
@@ -1212,7 +1213,12 @@ void CanvasRenderingContext2DBase::fillInternal(const Path& path, CanvasFillRule
         clearCanvas();
         c->fillPath(path);
     } else {
-        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : path.fastBoundingRect());
+#if !USE(COORDINATED_GRAPHICS)
+        if (isEntireBackingStoreDirty())
+            willUpdateContents(std::nullopt);
+        else
+#endif
+            willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : path.fastBoundingRect());
         c->fillPath(path);
     }
 
@@ -1248,7 +1254,12 @@ void CanvasRenderingContext2DBase::strokeInternal(const Path& path)
         clearCanvas();
         c->strokePath(path);
     } else {
-        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : inflatedStrokeRect(path.fastBoundingRect()));
+#if !USE(COORDINATED_GRAPHICS)
+        if (isEntireBackingStoreDirty())
+            willUpdateContents(std::nullopt);
+        else
+#endif
+            willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : inflatedStrokeRect(path.fastBoundingRect()));
         c->strokePath(path);
     }
 }
@@ -2022,7 +2033,7 @@ void CanvasRenderingContext2DBase::clearCanvas()
 
     c->save();
     c->setCTM(baseTransform());
-    c->clearRect(FloatRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height()));
+    c->clearRect(backingStoreBounds());
     c->restore();
 }
 
@@ -2043,13 +2054,13 @@ Path CanvasRenderingContext2DBase::transformAreaToDevice(const FloatRect& rect) 
 bool CanvasRenderingContext2DBase::rectContainsCanvas(const FloatRect& rect) const
 {
     FloatQuad quad(rect);
-    FloatQuad canvasQuad(FloatRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height()));
+    FloatQuad canvasQuad(backingStoreBounds());
     return state().transform.mapQuad(quad).containsQuad(canvasQuad);
 }
 
 template<class T> IntRect CanvasRenderingContext2DBase::calculateCompositingBufferRect(const T& area, IntSize* croppedOffset)
 {
-    IntRect canvasRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height());
+    IntRect canvasRect(enclosingIntRect(backingStoreBounds()));
     canvasRect = baseTransform().mapRect(canvasRect);
     Path path = transformAreaToDevice(area);
     IntRect bufferRect = enclosingIntRect(path.fastBoundingRect());
@@ -2062,7 +2073,7 @@ template<class T> IntRect CanvasRenderingContext2DBase::calculateCompositingBuff
 
 void CanvasRenderingContext2DBase::compositeBuffer(ImageBuffer& buffer, const IntRect& bufferRect, CompositeOperator op)
 {
-    IntRect canvasRect(0, 0, protect(canvasBase())->width(), protect(canvasBase())->height());
+    IntRect canvasRect(enclosingIntRect(backingStoreBounds()));
     canvasRect = baseTransform().mapRect(canvasRect);
 
     auto* c = effectiveDrawingContext();
@@ -2472,7 +2483,11 @@ void CanvasRenderingContext2DBase::clearAccumulatedDirtyRect()
 
 bool CanvasRenderingContext2DBase::isEntireBackingStoreDirty() const
 {
+#if USE(COORDINATED_GRAPHICS)
     return m_dirtyRect == backingStoreBounds();
+#else
+    return m_dirtyRect.contains(backingStoreBounds());
+#endif
 }
 
 const Vector<CanvasRenderingContext2DBase::State, 1>& CanvasRenderingContext2DBase::stateStack()
@@ -2655,21 +2670,20 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
     IntRect imageDataRect { sx, sy, sw, sh };
     auto outputImageDataPixelFormat = settings ? settings->pixelFormat : ImageDataPixelFormat::RgbaUnorm8;
     auto outputPixelFormat = toPixelFormat(outputImageDataPixelFormat);
+    auto computedColorSpace = ImageData::computeColorSpace(settings, m_settings.colorSpace);
 
     if (scriptContext && scriptContext->requiresScriptTrackingPrivacyProtection(ScriptTrackingPrivacyCategory::Canvas)) {
         RefPtr buffer = protect(canvasBase())->createImageForNoiseInjection();
         if (!buffer)
             return Exception { ExceptionCode::InvalidStateError };
 
-        auto format = PixelBufferFormat { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, buffer->colorSpace() };
+        auto format = PixelBufferFormat { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, toColorSpace(computedColorSpace, allowExtendedColorSpace(outputPixelFormat)) };
         RefPtr pixelBuffer = dynamicDowncast<ArrayPixelBuffer>(buffer->getPixelBuffer(format, imageDataRect));
         if (!pixelBuffer)
             return Exception { ExceptionCode::InvalidStateError };
 
         return { { ImageData::create(pixelBuffer.releaseNonNull(), outputImageDataPixelFormat) } };
     }
-
-    auto computedColorSpace = ImageData::computeColorSpace(settings, m_settings.colorSpace);
 
     if (outputImageDataPixelFormat == ImageDataPixelFormat::RgbaUnorm8) {
         if (auto imageData = makeImageDataIfContentsCached(imageDataRect, outputPixelFormat, computedColorSpace))
@@ -2745,7 +2759,7 @@ FloatRect CanvasRenderingContext2DBase::inflatedStrokeRect(const FloatRect& rect
     // Fast approximation of the stroke's bounding rect.
     // This yields a slightly oversized rect but is very fast
     // compared to Path::strokeBoundingRect().
-    static const float root2 = sqrtf(2);
+    static constexpr float root2 = std::numbers::sqrt2_v<float>;
     float delta = state().lineWidth / 2;
     if (state().lineJoin == LineJoin::Miter)
         delta *= state().miterLimit;
@@ -2986,7 +3000,7 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
 
 #if USE(CG)
     const CanvasStyle& drawStyle = fill ? state().fillStyle : state().strokeStyle;
-    if (drawStyle.canvasGradient() || drawStyle.canvasPattern()) {
+    if (drawStyle.isGradientOrPattern()) {
         IntRect maskRect = enclosingIntRect(textRect);
 
         willUpdateContents(FloatRect { maskRect });
@@ -3227,9 +3241,8 @@ std::optional<RenderingMode> CanvasRenderingContext2DBase::renderingModeForTesti
 std::optional<CanvasRenderingContext2DBase::RenderingMode> CanvasRenderingContext2DBase::getEffectiveRenderingModeForTesting()
 {
     if (RefPtr buffer = this->buffer()) {
-        buffer->ensureBackendCreated();
-        if (buffer->hasBackend())
-            return buffer->renderingMode();
+        if (auto renderingMode = buffer->getEffectiveRenderingModeForTesting())
+            return *renderingMode;
     }
     return std::nullopt;
 }
@@ -3359,10 +3372,10 @@ ImageBuffer* CanvasRenderingContext2DBase::buffer() const
 {
     if (m_hasCreatedImageBuffer)
         return m_buffer;
-    m_hasCreatedImageBuffer = true;
     RefPtr buffer = allocateImageBuffer();
     if (!buffer)
         return nullptr;
+    m_hasCreatedImageBuffer = true;
     auto& context = buffer->context();
     context.setShadowsIgnoreTransforms(true);
     context.setImageInterpolationQuality(defaultInterpolationQuality);

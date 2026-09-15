@@ -48,6 +48,8 @@ void printInternal(PrintStream& out, JSC::ResolveMode mode)
 void printInternal(PrintStream& out, JSC::ResolveType type)
 {
     out.print(resolveTypeName(type));
+    if (isStaticClosureVarResolveType(type))
+        out.print("+", staticClosureVarHops(type));
 }
 
 void printInternal(PrintStream& out, JSC::InitializationMode mode)

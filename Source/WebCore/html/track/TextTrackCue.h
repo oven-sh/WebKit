@@ -40,6 +40,13 @@
 #include <wtf/JSONValues.h>
 #include <wtf/Lock.h>
 #include <wtf/MediaTime.h>
+#include <wtf/ThreadAssertions.h>
+
+namespace JSC {
+
+class AbstractSlotVisitor;
+
+}
 
 namespace WebCore {
 
@@ -81,6 +88,7 @@ public:
     void didMoveToNewDocument(Document&);
 
     TextTrack* NODELETE track() const;
+    bool containsTrackAsOpaqueRootInGCThread(JSC::AbstractSlotVisitor&) const;
     void setTrack(TextTrack*);
 
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
@@ -167,8 +175,11 @@ private:
     MediaTime m_endTime;
     int m_processingCueChanges { 0 };
 
-    Lock m_trackLockForGC;
-    CheckedPtr<TextTrack> m_track;
+    mutable Lock m_trackLockForGC;
+    // Only mutated on the main thread while holding m_trackLockForGC, so main-thread reads use
+    // assertIsOwnerThread() instead of locking; the GC thread must lock even to read.
+    CheckedPtr<TextTrack> m_track WTF_GUARDED_BY_LOCK(m_trackLockForGC);
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_trackLockForGC, mainThreadLike);
 
     const RefPtr<DocumentFragment> m_cueNode;
     const RefPtr<TextTrackCueBox> m_displayTree;

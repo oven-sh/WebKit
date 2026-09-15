@@ -651,14 +651,15 @@ private:
         case WasmAddress: {
             WasmAddressValue* wasmAddress = address->as<WasmAddressValue>();
             Value* pointer = wasmAddress->child(0);
-            // Why don't we need to check m_locked here? WasmAddressValue is purely used for address computation,
+            // Why don't we need to check m_locked for the WasmAddressValue itself? It is purely used for address computation,
             // which is different from the other operations. And we already know that numUses(address) is below the threshold.
             // If we ensure that all use of WasmAddress gets indexArg form, we do not need to have WasmAddressValue's instruction actually.
             if (!Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
             Tmp base = Tmp(wasmAddress->pinnedGPR());
-            if (std::optional<unsigned> scale = scaleForShl(pointer, offset, width))
+            std::optional<unsigned> scale = scaleForShl(pointer, offset, width);
+            if (scale && !m_locked.contains(pointer->child(0)))
                 return indexArg(base, pointer->child(0), *scale, offset);
 
             return indexArg(base, pointer, 1, offset);
@@ -1673,35 +1674,9 @@ private:
         }
 
         Tmp maskTmp = m_code.newTmp(FP);
-
-        {
-            v128_t towerOfPower { };
-            switch (simdInfo.lane) {
-            case SIMDLane::i32x4:
-                for (unsigned i = 0; i < 4; ++i)
-                    towerOfPower.u32x4[i] = 1 << i;
-                break;
-            case SIMDLane::i16x8:
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u16x8[i] = 1 << i;
-                break;
-            case SIMDLane::i8x16:
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u8x16[i] = 1 << i;
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u8x16[i + 8] = 1 << i;
-                break;
-            default:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-
-            // FIXME: this is bad, we should load
-            auto gpTmp = m_code.newTmp(GP);
-            append(Air::Move, Arg::bigImm(towerOfPower.u64x2[0]), gpTmp);
-            append(Air::VectorSplatInt64, gpTmp, maskTmp);
-            append(Air::Move, Arg::bigImm(towerOfPower.u64x2[1]), gpTmp);
-            append(Air::VectorReplaceLaneInt64, Arg::imm(1), gpTmp, maskTmp);
-        }
+        auto gpTmp = m_code.newTmp(GP);
+        append(Air::Move, Arg::immPtr(vectorBitmaskTower(simdInfo.lane)), gpTmp);
+        append(Air::MoveVector, Arg::addr(gpTmp), maskTmp);
 
         Tmp vectorTmp = m_code.newTmp(FP);
 

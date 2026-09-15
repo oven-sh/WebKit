@@ -518,10 +518,15 @@ void MediaSessionManagerCocoa::updateActiveNowPlayingSession(RefPtr<PlatformMedi
     });
 
     if (activeSessionChanged) {
-        client().hasActiveNowPlayingSessionChanged(activeNowPlayingSession.get());
+        activeNowPlayingSessionChanged(activeNowPlayingSession.get());
 
         adjustNowPlayingUpdateInterval();
     }
+}
+
+void MediaSessionManagerCocoa::activeNowPlayingSessionChanged(PlatformMediaSessionInterface* session)
+{
+    client().hasActiveNowPlayingSessionChanged(session);
 }
 
 bool MediaSessionManagerCocoa::shouldUpdateNowPlaying(const NowPlayingInfo& nowPlayingInfo)

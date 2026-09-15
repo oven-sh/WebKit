@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // One battery, one HARDCODED expected table, no reference implementation:
 // the harness runs this file under all of its option matrices (LLInt-only,

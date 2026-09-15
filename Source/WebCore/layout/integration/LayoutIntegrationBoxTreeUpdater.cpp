@@ -43,7 +43,7 @@
 #include "RenderImage.h"
 #include "RenderLineBreak.h"
 #include "RenderListItem.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMenuList.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
@@ -79,7 +79,7 @@ static Layout::Box::IsAnonymous NODELETE isAnonymous(const RenderObject& rendere
 static Layout::Box::ElementAttributes elementAttributes(const RenderElement& renderer)
 {
     auto nodeType = [&] {
-        if (is<RenderListMarker>(renderer))
+        if (is<RenderListOutsideMarker>(renderer))
             return Layout::Box::NodeType::ListMarker;
         if (is<RenderReplaced>(renderer))
             return is<RenderImage>(renderer) ? Layout::Box::NodeType::Image : Layout::Box::NodeType::ReplacedElement;
@@ -230,23 +230,21 @@ void BoxTreeUpdater::adjustStyleIfNeeded(const RenderElement& renderer, Style::C
         adjustStyle(*firstLineStyle);
 }
 
-static EnumSet<Layout::ElementBox::ListMarkerAttribute> calculateListMarkerAttribute(const RenderListMarker& listMarkerRenderer)
+static Layout::ElementBox::IsListMarkerImage isListMarkerImage(const RenderListOutsideMarker& listMarkerRenderer)
 {
-    auto listMarkerAttributes = EnumSet<Layout::ElementBox::ListMarkerAttribute> { };
-    if (listMarkerRenderer.isImage())
-        listMarkerAttributes.add(Layout::ElementBox::ListMarkerAttribute::Image);
-    if (!listMarkerRenderer.isInside())
-        listMarkerAttributes.add(Layout::ElementBox::ListMarkerAttribute::Outside);
-    if (listMarkerRenderer.shouldCollapseAnonymousBlockParent())
-        listMarkerAttributes.add(Layout::ElementBox::ListMarkerAttribute::ShouldCollapseAnonymousBlockParent);
-
-    return listMarkerAttributes;
+    return listMarkerRenderer.isImage() ? Layout::ElementBox::IsListMarkerImage::Yes : Layout::ElementBox::IsListMarkerImage::No;
 }
 
 static bool markerTextSynthesizesGlyph(const RenderText& textRenderer)
 {
-    CheckedPtr marker = dynamicDowncast<RenderListMarker>(textRenderer.parent()->parent());
-    return marker && marker->synthesizesGlyph();
+    // The marker is this text's parent when it is an inline box, and its grandparent when a marker box holds the text in a content container of its own.
+    for (CheckedPtr marker = textRenderer.parent(); marker; marker = marker->parent()) {
+        if (marker->style().isListMarkerStyle())
+            return listMarkerSynthesizesGlyph(marker->style(), protect(marker->document()));
+        if (!marker->isAnonymous())
+            return false;
+    }
+    return false;
 }
 
 UniqueRef<Layout::Box> BoxTreeUpdater::createLayoutBox(RenderObject& renderer)
@@ -304,8 +302,8 @@ UniqueRef<Layout::Box> BoxTreeUpdater::createLayoutBox(RenderObject& renderer)
     auto style = Style::ComputedStyle::clone(renderElement.style());
     adjustStyleIfNeeded(renderElement, style, firstLineStyle.get());
 
-    if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListMarker>(renderElement))
-        return makeUniqueRef<Layout::ElementBox>(elementAttributes(renderElement), calculateListMarkerAttribute(*listMarkerRenderer), WTF::move(style), WTF::move(firstLineStyle));
+    if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(renderElement))
+        return makeUniqueRef<Layout::ElementBox>(elementAttributes(renderElement), isListMarkerImage(*listMarkerRenderer), WTF::move(style), WTF::move(firstLineStyle));
 
     return makeUniqueRef<Layout::ElementBox>(elementAttributes(renderElement), WTF::move(style), WTF::move(firstLineStyle));
 };
@@ -314,7 +312,8 @@ void BoxTreeUpdater::buildTreeForInlineContent()
 {
     for (auto walker = InlineWalker(downcast<RenderBlockFlow>(m_rootRenderer)); !walker.atEnd(); walker.advance()) {
         CheckedRef childRenderer = *walker.current();
-        ASSERT_IMPLIES(is<RenderBox>(childRenderer.get()), !childRenderer->isExcludedMarker());
+        if (childRenderer->isExcludedMarker())
+            continue;
         auto childLayoutBox = [&] {
             if (auto existingChildBox = childRenderer->layoutBox())
                 return existingChildBox->removeFromParent();
@@ -407,9 +406,9 @@ void BoxTreeUpdater::updateStyle(const RenderObject& renderer)
     auto newStyle = Style::ComputedStyle::clone(downcast<RenderElement>(renderer).style());
     adjustStyleIfNeeded(downcast<RenderElement>(renderer), newStyle, firstLineNewStyle.get());
     layoutBox->updateStyle(WTF::move(newStyle), WTF::move(firstLineNewStyle));
-    if (auto* listMarkerRenderer = dynamicDowncast<RenderListMarker>(renderer)) {
+    if (auto* listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(renderer)) {
         if (auto* elementBox = dynamicDowncast<Layout::ElementBox>(*layoutBox))
-            elementBox->setListMarkerAttributes(calculateListMarkerAttribute(*listMarkerRenderer));
+            elementBox->setIsListMarkerImage(isListMarkerImage(*listMarkerRenderer));
     }
 }
 

@@ -45,6 +45,10 @@ enum class CodeGenerationMode : uint8_t {
     ControlFlowProfiler = 1 << 2,
 };
 
+// Whether to run the whole-function bytecode optimizer while generating (embedders ask for it when building a
+// bytecode cache image; it is a property of the generation request, never of the resulting code block).
+enum class OptimizeBytecode : bool { No, Yes };
+
 enum class FunctionMode { None, FunctionExpression, FunctionDeclaration, MethodDefinition };
 
 enum class FunctionConstructionMode : uint8_t {

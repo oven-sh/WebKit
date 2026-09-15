@@ -46,12 +46,12 @@ void ExecutionCounter<countingVariant>::forceSlowPathConcurrently()
 }
 
 template<CountingVariant countingVariant>
-bool ExecutionCounter<countingVariant>::checkIfThresholdCrossedAndSet(CodeBlock* codeBlock)
+bool ExecutionCounter<countingVariant>::checkIfThresholdCrossedAndSet(CodeBlock* codeBlock, double startupDeferralScale)
 {
-    if (hasCrossedThreshold(codeBlock))
+    if (hasCrossedThreshold(codeBlock, startupDeferralScale))
         return true;
     
-    if (setThreshold(codeBlock))
+    if (setThreshold(codeBlock, startupDeferralScale))
         return true;
     
     return false;
@@ -127,7 +127,7 @@ int32_t maximumExecutionCountsBetweenCheckpoints(CountingVariant countingVariant
 }
 
 template<CountingVariant countingVariant>
-bool ExecutionCounter<countingVariant>::hasCrossedThreshold(CodeBlock* codeBlock) const
+bool ExecutionCounter<countingVariant>::hasCrossedThreshold(CodeBlock* codeBlock, double startupDeferralScale) const
 {
     // This checks if the current count rounded up to the threshold we were targeting.
     // For example, if we are using half of available executable memory and have
@@ -147,7 +147,7 @@ bool ExecutionCounter<countingVariant>::hasCrossedThreshold(CodeBlock* codeBlock
     // small is arbitrarily picked to be half of the original threshold (i.e.
     // m_activeThreshold).
     
-    double modifiedThreshold = applyMemoryUsageHeuristics(m_activeThreshold, codeBlock);
+    double modifiedThreshold = applyMemoryUsageHeuristics(m_activeThreshold, codeBlock) * startupDeferralScale;
     
     double actualCount = static_cast<double>(m_totalCount) + m_counter;
     double desiredCount = modifiedThreshold - static_cast<double>(
@@ -155,13 +155,13 @@ bool ExecutionCounter<countingVariant>::hasCrossedThreshold(CodeBlock* codeBlock
     
     bool result = actualCount >= desiredCount;
     
-    CODEBLOCK_LOG_EVENT(codeBlock, "thresholdCheck", ("activeThreshold = ", m_activeThreshold, ", modifiedThreshold = ", modifiedThreshold, ", actualCount = ", actualCount, ", desiredCount = ", desiredCount));
+    CODEBLOCK_LOG_EVENT(codeBlock, "thresholdCheck", ("activeThreshold = ", m_activeThreshold, ", modifiedThreshold = ", modifiedThreshold, ", startupDeferralScale = ", startupDeferralScale, ", actualCount = ", actualCount, ", desiredCount = ", desiredCount));
     
     return result;
 }
 
 template<CountingVariant countingVariant>
-bool ExecutionCounter<countingVariant>::setThreshold(CodeBlock* codeBlock)
+bool ExecutionCounter<countingVariant>::setThreshold(CodeBlock* codeBlock, double startupDeferralScale)
 {
     if (m_activeThreshold == std::numeric_limits<int32_t>::max()) {
         deferIndefinitely();
@@ -172,7 +172,8 @@ bool ExecutionCounter<countingVariant>::setThreshold(CodeBlock* codeBlock)
     double trueTotalCount = count();
     
     // Correct the threshold for current memory usage.
-    double threshold = applyMemoryUsageHeuristics(m_activeThreshold, codeBlock);
+    double unscaledThreshold = applyMemoryUsageHeuristics(m_activeThreshold, codeBlock);
+    double threshold = unscaledThreshold * startupDeferralScale;
         
     // Threshold must be non-negative and not NaN.
     ASSERT(threshold >= 0);
@@ -187,7 +188,10 @@ bool ExecutionCounter<countingVariant>::setThreshold(CodeBlock* codeBlock)
         return true;
     }
 
-    threshold = clippedThreshold(codeBlock, threshold);
+    if (startupDeferralScale != 1)
+        threshold = std::min({ threshold, std::max(unscaledThreshold, clippedThreshold(codeBlock, threshold)), static_cast<double>(std::numeric_limits<int32_t>::max()) });
+    else
+        threshold = clippedThreshold(codeBlock, threshold);
     
     m_counter = static_cast<int32_t>(-threshold);
         

@@ -132,7 +132,7 @@ bool MockPageOverlayClient::copyAccessibilityAttributeBoolValueForPoint(PageOver
 
 Vector<String> MockPageOverlayClient::copyAccessibilityAttributeNames(PageOverlay&, bool /* parameterizedNames */)
 {
-    return Vector<String>();
+    return { };
 }
 
 }

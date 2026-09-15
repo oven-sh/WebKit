@@ -27,6 +27,7 @@
 
 #include "CachedResource.h"
 #include <JavaScriptCore/CodeBlockHash.h>
+#include <wtf/ThreadAssertions.h>
 
 namespace WebCore {
 
@@ -50,25 +51,31 @@ private:
     bool mayTryReplaceEncodedData() const final { return true; }
 
     void setEncoding(const String&) final;
-    ASCIILiteral encoding() const final;
-    const TextResourceDecoder* textResourceDecoder() const final { return m_decoder.get(); }
+    ASCIILiteral encoding() const final WTF_REQUIRES_SHARED_LOCK(m_lock);
+    const TextResourceDecoder* textResourceDecoder() const final WTF_REQUIRES_SHARED_LOCK(m_lock) { return m_decoder.get(); }
     void finishLoading(const FragmentedSharedBuffer*, const NetworkLoadMetrics&) final;
 
     void destroyDecodedData() final;
 
     void setBodyDataFrom(const CachedResource&) final;
 
-    String m_script;
+    // m_script, m_decodingState and m_decoder are written on the main thread under m_lock and read
+    // on compilation threads by codeBlockHashConcurrently(), which locks; the main thread's own
+    // reads use assertIsOwnerThread() instead of locking. m_scriptHash and m_wasForceDecodedAsUTF8
+    // are not read off the main thread, so they need no guard.
+    String m_script WTF_GUARDED_BY_LOCK(m_lock);
     unsigned m_scriptHash { 0 };
     bool m_wasForceDecodedAsUTF8 { false };
     bool m_requiresPrivacyProtections { false };
 
     enum DecodingState : uint8_t { NeverDecoded, DataAndDecodedStringHaveSameBytes, DataAndDecodedStringHaveDifferentBytes };
-    DecodingState m_decodingState { NeverDecoded };
+    DecodingState m_decodingState WTF_GUARDED_BY_LOCK(m_lock) { NeverDecoded };
 
     mutable Lock m_lock;
 
-    RefPtr<TextResourceDecoder> m_decoder;
+    RefPtr<TextResourceDecoder> m_decoder WTF_GUARDED_BY_LOCK(m_lock);
+
+    WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_lock, mainThreadLike);
 };
 
 } // namespace WebCore

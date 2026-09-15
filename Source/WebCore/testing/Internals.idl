@@ -639,6 +639,8 @@ enum ContentsFormat {
 
     DOMRect layoutViewportRect();
     DOMRect visualViewportRect();
+    DOMRect windowClipRect();
+    DOMRect exposedContentRect();
 
     undefined setViewIsTransparent(boolean trnasparent);
 
@@ -701,6 +703,7 @@ enum ContentsFormat {
     DOMString textFragmentDirectiveForRange(Range range);
 
     undefined setDelegatesScrolling(boolean enabled);
+    boolean delegatesScrollingToNativeView();
 
     unsigned long long lastSpellCheckRequestSequence();
     unsigned long long lastSpellCheckProcessedSequence();
@@ -1061,6 +1064,11 @@ enum ContentsFormat {
     [Conditional=VIDEO&FULLSCREEN_API] boolean isChildOfElementFullscreen(HTMLMediaElement media);
 
     [Conditional=VIDEO] undefined enterViewerMode(HTMLVideoElement element);
+
+    // Simulates the platform presenting a video outside the page, e.g. visionOS Spatial Browsing
+    // viewer mode. Does nothing unless ENABLE(LINEAR_MEDIA_PLAYER) is on, so tests that depend on
+    // the resulting state must be limited to visionOS via TestExpectations.
+    [Conditional=VIDEO] undefined setVideoInExternalPlayback(HTMLVideoElement element, boolean inExternalPlayback);
 
     undefined setIsPlayingToBluetoothOverride(optional boolean? isPlaying = null);
 

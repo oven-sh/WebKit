@@ -124,6 +124,10 @@ void Connection::receiveHTTPMessagingRequest(CompletionHandler<void(HTTPRequestD
                             if (path)
                                 blockPartial.path = String::fromUTF8(path);
                         });
+                        nw_http_request_access_authority(request.get(), ^(const char* authority) {
+                            if (authority)
+                                blockPartial.authority = String::fromUTF8(authority);
+                        });
                         if (RetainPtr fields = adoptNS(nw_http_request_copy_header_fields(request.get()))) {
                             nw_http_fields_enumerate(fields.get(), ^bool(const char* name, size_t nameLength, const char* value, size_t valueLength) {
                                 String fieldName = String::fromUTF8(std::span(name, nameLength));
@@ -271,8 +275,10 @@ void Connection::webSocketHandshake(CompletionHandler<void()>&& connectionHandle
 
 void Connection::terminate(CompletionHandler<void()>&& completionHandler)
 {
-    nw_connection_set_state_changed_handler(m_connection.get(), makeBlockPtr([completionHandler = WTF::move(completionHandler)] (nw_connection_state_t state, nw_error_t error) mutable {
-        ASSERT_UNUSED(error, !error);
+    nw_connection_set_state_changed_handler(m_connection.get(), makeBlockPtr([completionHandler = WTF::move(completionHandler)] (nw_connection_state_t state, nw_error_t) mutable {
+        // The error reported here describes the connection, not the cancellation: a connection that
+        // failed its TLS handshake still reports "bad certificate" once cancelled. Cancelling
+        // cannot itself fail, so there is nothing to check.
         if (state == nw_connection_state_cancelled && completionHandler)
             completionHandler();
     }).get());

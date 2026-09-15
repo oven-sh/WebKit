@@ -28,6 +28,7 @@
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericOrKeyword.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
+#include "StyleSizeOrKeyword.h"
 
 namespace WebCore {
 namespace Style {
@@ -68,11 +69,9 @@ static auto processKeywordForCSSValueConversion(const K& keyword, CSSValueID val
     return false;
 }
 
-template<PrimitiveNumericOrKeywordDerived StyleType, typename... Rest>
-auto convertPrimitiveNumericOrKeywordFromCSSValue(const CSSKeywordValue& value, Rest&&...) -> std::optional<StyleType>
+template<PrimitiveNumericOrKeywordDerived StyleType>
+static auto convertKeywordIDForCSSValueConversion(CSSValueID valueID) -> std::optional<StyleType>
 {
-    auto valueID = value.valueID();
-
     constexpr auto keywordsTuple = StyleType::Keywords::tuple;
 
     return std::apply([&](const auto& ...keyword) {
@@ -80,6 +79,12 @@ auto convertPrimitiveNumericOrKeywordFromCSSValue(const CSSKeywordValue& value, 
         (processKeywordForCSSValueConversion<StyleType>(keyword, valueID, result) || ...);
         return result;
     }, keywordsTuple);
+}
+
+template<PrimitiveNumericOrKeywordDerived StyleType, typename... Rest>
+auto convertPrimitiveNumericOrKeywordFromCSSValue(const CSSKeywordValue& value, Rest&&...) -> std::optional<StyleType>
+{
+    return convertKeywordIDForCSSValueConversion<StyleType>(value.valueID());
 }
 
 template<PrimitiveNumericOrKeywordDerived StyleType, typename... Rest>
@@ -197,24 +202,21 @@ auto convertPrimitiveNumericOrKeywordFromCSSValue(BuilderState& state, const CSS
     }
 }
 
-template<LengthPercentageOrKeywordDerived StyleType> struct CSSValueConversion<StyleType> {
+// Split out so that specializations can reuse the overloads they do not change.
+template<LengthPercentageOrKeywordDerived StyleType> struct NumericOrKeywordCSSValueConversion {
+    static StyleType invalidValue() { return StyleType { CSS::px(0) }; }
+
     template<typename... Rest> auto operator()(const CSSToLengthConversionData& conversionData, const CSSPrimitiveValue& value, Rest&&... rest) -> StyleType
     {
-        using namespace CSS::Literals;
-
-        return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(conversionData, value, std::forward<Rest>(rest)...).value_or(StyleType { 0_css_px });
+        return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(conversionData, value, std::forward<Rest>(rest)...).value_or(invalidValue());
     }
     template<typename... Rest> auto operator()(const CSSToLengthConversionData& conversionData, const CSSKeywordValue& value, Rest&&... rest) -> StyleType
     {
-        using namespace CSS::Literals;
-
-        return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(conversionData, value, std::forward<Rest>(rest)...).value_or(StyleType { 0_css_px });
+        return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(conversionData, value, std::forward<Rest>(rest)...).value_or(invalidValue());
     }
     template<typename... Rest> auto operator()(const CSSToLengthConversionData& conversionData, const CSSValue& value, Rest&&... rest) -> StyleType
     {
-        using namespace CSS::Literals;
-
-        return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(conversionData, value, std::forward<Rest>(rest)...).value_or(StyleType { 0_css_px });
+        return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(conversionData, value, std::forward<Rest>(rest)...).value_or(invalidValue());
     }
 
     template<typename... Rest> auto operator()(BuilderState& state, const CSSPrimitiveValue& value, Rest&&... rest) -> StyleType
@@ -230,6 +232,10 @@ template<LengthPercentageOrKeywordDerived StyleType> struct CSSValueConversion<S
         return convertPrimitiveNumericOrKeywordFromCSSValue<StyleType>(state, value, std::forward<Rest>(rest)...);
     }
 };
+
+// The sizing properties have their own specialization.
+template<LengthPercentageOrKeywordDerived StyleType> requires (!SizeOrKeywordDerived<StyleType>)
+struct CSSValueConversion<StyleType> : NumericOrKeywordCSSValueConversion<StyleType> { };
 
 } // namespace Style
 } // namespace WebCore

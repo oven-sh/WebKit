@@ -40,6 +40,7 @@
 #include "CSSBorderImageSourceValue.h"
 #include "CSSBorderImageWidthValue.h"
 #include "CSSBoxShadowPropertyValue.h"
+#include "CSSCalcSizeValue.h"
 #include "CSSCanvasValue.h"
 #include "CSSClipValue.h"
 #include "CSSColorImageValue.h"
@@ -58,6 +59,7 @@
 #include "CSSFontFaceSrcValue.h"
 #include "CSSFontFamilyNameValue.h"
 #include "CSSFontFeatureValue.h"
+#include "CSSFontPaletteValue.h"
 #include "CSSFontStyleRangeValue.h"
 #include "CSSFontStyleWithAngleValue.h"
 #include "CSSFontValue.h"
@@ -109,6 +111,10 @@
 #include "EventTarget.h"
 #include <wtf/Hasher.h>
 
+#if ENABLE(SPATIAL_PORTAL)
+#include "CSSPinnedAnchorNameValue.h"
+#endif
+
 namespace WebCore {
 
 struct SameSizeAsCSSValue {
@@ -146,6 +152,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBoxShadowPropertyValue>(*this));
     case Canvas:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCanvasValue>(*this));
+    case CalcSize:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCalcSizeValue>(*this));
     case Clip:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSClipValue>(*this));
     case Color:
@@ -184,6 +192,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontFamilyNameValue>(*this));
     case FontFeature:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontFeatureValue>(*this));
+    case FontPalette:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontPaletteValue>(*this));
     case FontStyleWithAngle:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSFontStyleWithAngleValue>(*this));
     case FontStyleRange:
@@ -238,6 +248,10 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPathValue>(*this));
     case ShorthandSubstitution:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSShorthandSubstitutionValue>(*this));
+#if ENABLE(SPATIAL_PORTAL)
+    case PinnedAnchorName:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPinnedAnchorNameValue>(*this));
+#endif
     case Position:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSPositionValue>(*this));
     case PositionX:
@@ -330,6 +344,8 @@ void CSSValue::collectComputedStyleDependencies(ComputedStyleDependencies& depen
     }
     if (auto* asPrimitiveValue = dynamicDowncast<CSSPrimitiveValue>(*this))
         asPrimitiveValue->collectComputedStyleDependencies(dependencies);
+    if (auto* asCalcSizeValue = dynamicDowncast<CSSCalcSizeValue>(*this))
+        asCalcSizeValue->collectComputedStyleDependencies(dependencies);
 }
 
 bool CSSValue::equals(const CSSValue& other) const

@@ -235,7 +235,7 @@ TrackSizingFunctions GridLayout::convertGridTrackSizeToTrackSizingFunctions(cons
         return gridTrackSize.minTrackBreadth();
     };
 
-    auto maxTrackSizingFunction = [&]() {
+    auto maxTrackSizingFunction = [&]() -> MaxTrackSizingFunction {
         // If the track was sized with a minmax() function, this is the second argument to that function.
         if (gridTrackSize.isMinMax())
             return gridTrackSize.maxTrackBreadth();
@@ -243,6 +243,9 @@ TrackSizingFunctions GridLayout::convertGridTrackSizeToTrackSizingFunctions(cons
         // Otherwise, the track’s sizing function. In all cases, treat auto and fit-content() as max-content,
         // except where specified otherwise for fit-content().
         // Note: This special treatment is handled inside of TrackSizingAlgorithm.
+        if (gridTrackSize.isFitContent())
+            return Style::GridTrackSize::FitContent { gridTrackSize.fitContentTrackLength() };
+
         return gridTrackSize.maxTrackBreadth();
     };
 

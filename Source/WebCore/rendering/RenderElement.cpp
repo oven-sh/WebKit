@@ -2634,7 +2634,6 @@ void RenderElement::repaintOldAndNewPositionsForSVGRenderer() const
     repaint();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 static RenderObject::BlockContentHeightType includeNonFixedHeight(const RenderObject& renderer)
 {
     const Style::ComputedStyle& style = renderer.style();
@@ -2706,7 +2705,6 @@ void RenderElement::resetTextAutosizing()
         newFixedDepth = 0;
     }
 }
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 std::unique_ptr<Style::ComputedStyle> RenderElement::animatedStyle()
 {
@@ -2769,7 +2767,7 @@ FloatRect RenderElement::referenceBoxRect(CSSBoxType boxType) const
     // is removed this function should be moved to RenderLayerModelObject.
     // As this method is used by both SVG engines, we need to place it
     // here in RenderElement, as temporary solution.
-    if (element() && !is<SVGElement>(element()))
+    if (!is<SVGElement>(element()) && !is<RenderSVGViewportContainer>(*this))
         return { };
 
     auto alignReferenceBox = [&](FloatRect referenceBox) {

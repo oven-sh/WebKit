@@ -25,30 +25,42 @@
 
 #pragma once
 
-#include <WebCore/QuirkNames.h>
+#include <WebCore/QuirkBehaviors.h>
 #include <WebCore/QuirksData.h>
 #include <WebCore/URLMatch.h>
+#include <algorithm>
+#include <array>
 #include <initializer_list>
 #include <optional>
+#include <span>
 
 namespace WebCore {
 
-class QuirkBehaviors {
+class QuirkBehaviorList {
 public:
-    constexpr QuirkBehaviors() = default;
-
-    consteval QuirkBehaviors(std::initializer_list<SiteSpecificQuirk> quirks)
+    constexpr QuirkBehaviorList() = default;
+    consteval QuirkBehaviorList(std::initializer_list<QuirkBehavior> behaviors)
     {
-        for (auto quirk : quirks)
-            m_bits.set(static_cast<size_t>(quirk));
+        for (auto& behavior : behaviors)
+            m_behaviors[m_count++] = behavior;
+
+        removeUnavailable();
     }
 
-    constexpr const QuirkBitSet& bits() const LIFETIME_BOUND { return m_bits; }
-
-    constexpr void exclude(const QuirkBitSet& quirks) { m_bits.exclude(quirks); }
+    constexpr std::span<const QuirkBehavior> span() const LIFETIME_BOUND { return std::span { m_behaviors }.first(m_count); }
 
 private:
-    QuirkBitSet m_bits;
+    static constexpr size_t maxBehaviors = 12;
+
+    constexpr void removeUnavailable()
+    {
+        const auto behaviors = std::span { m_behaviors }.first(m_count);
+        const auto unavailable = std::ranges::remove_if(behaviors, std::not_fn(&QuirkBehavior::isAvailable));
+        m_count -= unavailable.size();
+    }
+
+    std::array<QuirkBehavior, maxBehaviors> m_behaviors { };
+    size_t m_count { 0 };
 };
 
 enum class IsTopDocument : bool { No, Yes };
@@ -90,9 +102,9 @@ private:
 
 struct Quirk {
     QuirkURLMatch match;
-    QuirkBehaviors behaviors { };
+    QuirkBehaviorList behaviors { };
     std::optional<QuirkSite> site { };
-    bool availableWhen { true };
+    bool isAvailable { true };
 
     void apply(QuirksData&) const;
 };

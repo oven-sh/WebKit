@@ -29,6 +29,7 @@
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
 #import "Helpers/cocoa/TestScriptMessageHandler.h"
+#import "TestNavigationDelegate.h"
 #import "TestURLSchemeHandler.h"
 #import <WebKit/WKProcessPoolPrivate.h>
 #import <WebKit/WKUserContentControllerPrivate.h>
@@ -687,6 +688,13 @@ TEST(IndexedDB, TransactionOfSuspendedProcessIsNotAbortedByItsOwnQueuedTransacti
         readyToContinue = true;
     }];
     TestWebKitAPI::Util::run(&readyToContinue);
+
+    // Keep another WebView's process (a separate WebView always uses a separate WebProcess) alive
+    // and foregrounded, so that network process won't be suspended and trigger transaction abort
+    // in a different path.
+    RetainPtr holderWebView = adoptNS([[WKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:adoptNS([[WKWebViewConfiguration alloc] init]).get()]);
+    [holderWebView loadHTMLString:@"<script></script>" baseURL:[NSURL URLWithString:@"http://webkit.org"]];
+    [holderWebView _test_waitForDidFinishNavigation];
 
     RetainPtr handler = adoptNS([TestScriptMessageHandler new]);
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);

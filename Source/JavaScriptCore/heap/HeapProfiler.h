@@ -47,7 +47,7 @@ public:
     void clearSnapshots();
 
     HeapAnalyzer* activeHeapAnalyzer() const { return m_activeAnalyzer; }
-    void NODELETE setActiveHeapAnalyzer(HeapAnalyzer*);
+    void setActiveHeapAnalyzer(HeapAnalyzer*);
 
 private:
     VM& m_vm;

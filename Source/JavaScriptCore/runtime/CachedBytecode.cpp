@@ -25,8 +25,6 @@
 
 #include "config.h"
 #include "CachedBytecode.h"
-#include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 #include "CachedTypes.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -65,40 +63,6 @@ void CachedBytecode::copyLeafExecutables(const CachedBytecode& bytecode)
 
 void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
 {
-    // The executable records being patched, as they will read after every patch so far, so each can be re-sealed.
-    HashMap<ptrdiff_t, Vector<uint8_t>> patchedRecords;
-    auto recordBytes = [&](ptrdiff_t base) -> Vector<uint8_t>& {
-        return patchedRecords.ensure(base, [&] {
-            // The record lives either in the original payload or in an update appended before this one.
-            auto findIn = [&](std::span<const uint8_t> bytes, ptrdiff_t start) -> std::span<const uint8_t> {
-                if (base < start || base >= start + static_cast<ptrdiff_t>(bytes.size()))
-                    return { };
-                auto record = bytes.subspan(base - start);
-                RELEASE_ASSERT(record.size() >= CachedFunctionExecutableOffsets::fixedSize());
-                RELEASE_ASSERT(CachedFunctionExecutableOffsets::isUpdatable(record)); // only the jsc shell's disk cache writes patchable records
-                uint32_t extent;
-                memcpySpan(std::span { reinterpret_cast<uint8_t*>(&extent), sizeof(extent) }, record.subspan(CachedFunctionExecutableOffsets::extentOffset(), sizeof(extent)));
-                RELEASE_ASSERT(extent >= CachedFunctionExecutableOffsets::fixedSize() && extent <= record.size()); // our own encoder wrote this record moments ago
-                return record.first(extent);
-            };
-            auto found = findIn(m_payload.span(), 0);
-            ptrdiff_t start = m_payload.size();
-            for (const auto& earlier : m_updates) {
-                if (!found.empty())
-                    break;
-                const CachePayload& earlierPayload = earlier.isGlobal() ? earlier.asGlobal().m_payload : earlier.asFunction().m_payload;
-                found = findIn(earlierPayload.span(), start);
-                start += earlierPayload.size();
-            }
-            RELEASE_ASSERT(!found.empty());
-            return Vector<uint8_t>(found);
-        }).iterator->value;
-    };
-    auto patch = [&](ptrdiff_t base, ptrdiff_t fieldOffset, std::span<const uint8_t> bytes) {
-        callback(base + fieldOffset, bytes);
-        memcpySpan(recordBytes(base).mutableSpan().subspan(fieldOffset, bytes.size()), bytes);
-    };
-
     off_t offset = m_payload.size();
     for (const auto& update : m_updates) {
         const CachePayload* payload = nullptr;
@@ -112,13 +76,9 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
                 ptrdiff_t fieldOffset = kindOffset + CachedWriteBarrierOffsets::ptrOffset() + CachedPtrOffsets::offsetOffset();
                 VariableLengthObjectBase::Offset offsetPayload = safeCast<VariableLengthObjectBase::Offset>(static_cast<ptrdiff_t>(offset + functionUpdate.m_rootOffset) - (functionUpdate.m_base + fieldOffset));
                 static_assert(std::is_same<decltype(VariableLengthObjectBase::m_offset), VariableLengthObjectBase::Offset>::value);
-                patch(functionUpdate.m_base, fieldOffset, { reinterpret_cast<const uint8_t*>(&offsetPayload), sizeof(offsetPayload) });
+                callback(functionUpdate.m_base + fieldOffset, { reinterpret_cast<const uint8_t*>(&offsetPayload), sizeof(offsetPayload) });
             }
-            patch(functionUpdate.m_base, CachedFunctionExecutableOffsets::metadataOffset(), { reinterpret_cast<const uint8_t*>(&functionUpdate.m_metadata), sizeof(functionUpdate.m_metadata) });
-            {
-                uint32_t checksum = bytecodeCacheRecordChecksum(recordBytes(functionUpdate.m_base).span(), CachedFunctionExecutableOffsets::checksumOffset());
-                callback(functionUpdate.m_base + CachedFunctionExecutableOffsets::checksumOffset(), { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
-            }
+            callback(functionUpdate.m_base + CachedFunctionExecutableOffsets::metadataOffset(), { reinterpret_cast<const uint8_t*>(&functionUpdate.m_metadata), sizeof(functionUpdate.m_metadata) });
         }
 
         ASSERT(payload);

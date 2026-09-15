@@ -26,7 +26,7 @@
 #pragma once
 
 #include <wtf/Ref.h>
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
 #if USE(BUN_JSC_ADDITIONS)
 #include <wtf/HashMap.h>
@@ -35,7 +35,8 @@
 
 namespace JSC {
 
-class ScriptFetchParameters : public RefCounted<ScriptFetchParameters> {
+// ThreadSafeRefCounted: the shared per-type instances (create(Type)) are process-wide and every VM's module records ref them.
+class ScriptFetchParameters : public ThreadSafeRefCounted<ScriptFetchParameters> {
 public:
     enum Type : uint8_t {
         None,
@@ -72,10 +73,11 @@ public:
     virtual bool isTopLevelModule() const { return false; }
 
 
-    static Ref<ScriptFetchParameters> create(Type type)
-    {
-        return adoptRef(*new ScriptFetchParameters(type));
-    }
+    // The plain per-type parameters carry nothing but the type, so every module request of a given type shares one
+    // immortal instance instead of allocating its own (a large module graph makes thousands of requests). A request that
+    // needs its own state (WebCore's ModuleFetchParameters, a HostDefined type string, an attributes map) still allocates.
+    JS_EXPORT_PRIVATE static Ref<ScriptFetchParameters> create(Type);
+    static Ref<ScriptFetchParameters> createUnique(Type type) { return adoptRef(*new ScriptFetchParameters(type)); }
 
 
 #if USE(BUN_JSC_ADDITIONS)

@@ -35,6 +35,7 @@
 
 namespace JSC {
 
+class JSModuleLoader;
 class JSWebAssemblyInstance;
 class JSWebAssemblyModule;
 class WebAssemblyFunction;
@@ -60,7 +61,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static WebAssemblyModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier&, const Wasm::ModuleInformation&);
+    static WebAssemblyModuleRecord* create(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier&, const Wasm::ModuleInformation&);
 
     void prepareLink(VM&, JSWebAssemblyInstance*);
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
@@ -73,7 +74,7 @@ public:
     static constexpr ptrdiff_t offsetOfExportsObject() { return OBJECT_OFFSETOF(WebAssemblyModuleRecord, m_exportsObject); }
 
 private:
-    WebAssemblyModuleRecord(VM&, Structure*, const Identifier&);
+    WebAssemblyModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&);
 
     void finishCreation(JSGlobalObject*, VM&, const Wasm::ModuleInformation&);
     JSValue evaluateConstantExpression(JSGlobalObject*, uint64_t constantExpressionIndex, uint64_t&);

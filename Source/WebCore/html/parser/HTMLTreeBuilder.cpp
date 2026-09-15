@@ -251,8 +251,9 @@ private:
 
 inline bool HTMLTreeBuilder::isParsingTemplateContents() const
 {
-    return m_tree.openElements().containsTemplateElement()
-        && m_tree.openElements().hasTemplateInHTMLScope();
+    if (m_tree.openElements().containsTemplateElement() && m_tree.openElements().hasTemplateInHTMLScope())
+        return true;
+    return m_fragmentContext.contextElementIsTemplate();
 }
 
 inline bool HTMLTreeBuilder::isParsingFragmentOrTemplateContents() const
@@ -315,6 +316,11 @@ inline HTMLStackItem& HTMLTreeBuilder::FragmentParsingContext::contextElementSta
 {
     ASSERT(m_fragment);
     return m_contextElementStackItem;
+}
+
+inline bool HTMLTreeBuilder::FragmentParsingContext::contextElementIsTemplate() const
+{
+    return m_fragment && m_contextElementStackItem.elementName() == HTML::template_;
 }
 
 RefPtr<ScriptElement> HTMLTreeBuilder::takeScriptToProcess(TextPosition& scriptStartPosition)
@@ -747,7 +753,7 @@ void HTMLTreeBuilder::processStartTagForInBody(AtomHTMLToken&& token)
             return;
         }
         processFakePEndTagIfPInButtonScope();
-        m_tree.insertHTMLFormElement(WTF::move(token));
+        m_tree.insertHTMLFormElement(WTF::move(token), isParsingTemplateContents());
         return;
     case TagName::li:
         processCloseWhenNestedTag<isLi>(WTF::move(token));
@@ -1156,7 +1162,7 @@ void HTMLTreeBuilder::processStartTagForInTable(AtomHTMLToken&& token)
         parseError(token);
         if (m_tree.form() && !isParsingTemplateContents())
             return;
-        m_tree.insertHTMLFormElement(WTF::move(token));
+        m_tree.insertHTMLFormElement(WTF::move(token), isParsingTemplateContents());
         m_tree.openElements().pop();
         return;
     case TagName::template_:

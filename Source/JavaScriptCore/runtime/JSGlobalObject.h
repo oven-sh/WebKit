@@ -110,6 +110,7 @@ class MapIteratorPrototype;
 class MapPrototype;
 class Microtask;
 class MicrotaskQueue;
+class ModuleProgramExecutable;
 class NullGetterFunction;
 class NullSetterFunction;
 class ObjectAdaptiveStructureWatchpoint;
@@ -513,6 +514,14 @@ public:
 
     StructureCache m_structureCache;
     WeakGCMap<SymbolTable*, SymbolTable> m_symbolTableCache;
+    // CodeBlock::setConstantRegisters: the clone that the body of a generator, an async function or a module got for one of
+    // its SymbolTable constants, by who owns the code (the UnlinkedFunctionExecutable, or the ModuleProgramExecutable) and
+    // the constant's index, so that it gets the same clone when its code is generated or decoded again while an activation
+    // is suspended. The owner is not kept alive and its address can come back as another owner's: what is found is checked.
+    using ResumableCodeSymbolTableKey = std::pair<JSCell*, unsigned>;
+    WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable> m_resumableCodeSymbolTableClones;
+    using ModuleProgramExecutableKey = std::pair<UniquedStringImpl*, SymbolTable*>; // module key, module scope: JSModuleRecord::getOrMakeExecutable
+    WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable> m_moduleProgramExecutables;
 
     String m_name;
 
@@ -1175,6 +1184,8 @@ public:
 
     StructureCache& structureCache() LIFETIME_BOUND { return m_structureCache; }
     WeakGCMap<SymbolTable*, SymbolTable>& symbolTableCache() { return m_symbolTableCache; }
+    WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable>& resumableCodeSymbolTableClones() { return m_resumableCodeSymbolTableClones; }
+    WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
 
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }

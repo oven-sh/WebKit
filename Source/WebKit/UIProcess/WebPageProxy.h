@@ -479,6 +479,10 @@ OBJC_CLASS WKQuickLookPreviewController;
 OBJC_CLASS WKWebView;
 OBJC_CLASS _WKRemoteObjectRegistry;
 
+#if USE(GLIB)
+typedef struct _WebKitWebView WebKitWebView;
+#endif
+
 struct WKPageInjectedBundleClientBase;
 struct wpe_view_backend;
 
@@ -1607,7 +1611,6 @@ public:
     void updateAccessibilityFrameGeometry();
     void scheduleAccessibilityFrameGeometryUpdate();
 #endif
-    void setAccessibilityMode(WebCore::AccessibilityMode);
 
 #if PLATFORM(MAC)
     NSDictionary *getAccessibilityWebProcessDebugInfo();
@@ -2701,6 +2704,11 @@ public:
 
     RetainPtr<WKWebView> cocoaView();
     void setCocoaView(WKWebView *);
+#endif
+
+#if USE(GLIB)
+    WebKitWebView* platformView();
+    void setPlatformView(WebKitWebView *);
 #endif
 
     bool shouldAvoidSynchronouslyWaitingToPreventDeadlock() const;
@@ -4012,7 +4020,6 @@ private:
 
     bool m_isEditable { false };
 
-    WebCore::AccessibilityMode m_accessibilityMode { };
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     MonotonicTime m_lastAccessibilityFrameGeometryUpdate;
     RefPtr<RunLoop::DispatchTimer> m_pendingAccessibilityFrameGeometryUpdateTimer;

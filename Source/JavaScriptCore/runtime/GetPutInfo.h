@@ -83,6 +83,19 @@ enum ResolveType : unsigned {
     Dynamic
 };
 
+// Only in the resolveType operand of an *unlinked* op_resolve_scope emitted by the bytecode optimizer: the variable
+// lives in the environment record staticClosureVarHops(type) hops out from the function's own scope (plus the
+// instruction's localScopeDepth). CodeBlock linking turns it into ordinary ClosureVar metadata without name lookups;
+// no other consumer sees these values.
+static constexpr unsigned firstStaticClosureVarResolveType = 32;
+inline bool isStaticClosureVarResolveType(ResolveType type) { return static_cast<unsigned>(type) >= firstStaticClosureVarResolveType; }
+inline unsigned staticClosureVarHops(ResolveType type)
+{
+    ASSERT(isStaticClosureVarResolveType(type));
+    return static_cast<unsigned>(type) - firstStaticClosureVarResolveType;
+}
+inline ResolveType staticClosureVarResolveType(unsigned hops) { return static_cast<ResolveType>(firstStaticClosureVarResolveType + hops); }
+
 enum class InitializationMode : unsigned {
     Initialization,      // "let x = 20;"
     ConstInitialization, // "const x = 20;"
@@ -116,6 +129,8 @@ ALWAYS_INLINE const char* resolveTypeName(ResolveType type)
         "UnresolvedPropertyWithVarInjectionChecks",
         "Dynamic"
     });
+    if (isStaticClosureVarResolveType(type))
+        return "StaticClosureVar";
     return names[type];
 }
 
@@ -200,7 +215,7 @@ ALWAYS_INLINE bool needsVarInjectionChecks(ResolveType type)
 }
 
 struct ResolveOp {
-    ResolveOp(ResolveType type, size_t depth, Structure* structure, JSLexicalEnvironment* lexicalEnvironment, InlineWatchpointSet* watchpointSet, uintptr_t operand, UniquedStringImpl* importedName = nullptr)
+    ResolveOp(ResolveType type, size_t depth, Structure* structure, JSLexicalEnvironment* lexicalEnvironment, InlineWatchpointSet* watchpointSet, uintptr_t operand, UniquedStringImpl* importedName = nullptr, unsigned moduleImportSlot = 0)
         : type(type)
         , depth(depth)
         , structure(structure)
@@ -208,6 +223,7 @@ struct ResolveOp {
         , watchpointSet(watchpointSet)
         , operand(operand)
         , importedName(importedName)
+        , moduleImportSlot(moduleImportSlot)
     {
     }
 
@@ -218,6 +234,7 @@ struct ResolveOp {
     InlineWatchpointSet* watchpointSet;
     uintptr_t operand;
     RefPtr<UniquedStringImpl> importedName;
+    unsigned moduleImportSlot; // ModuleVar: where the importing module environment keeps lexicalEnvironment (JSModuleEnvironment::importSlot)
 };
 
 class GetPutInfo {

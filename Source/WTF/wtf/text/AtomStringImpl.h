@@ -41,6 +41,23 @@ public:
 
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(HashTranslatorCharBuffer<Latin1Character>&);
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(HashTranslatorCharBuffer<char16_t>&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Like add(HashTranslatorCharBuffer&), but a new atom aliases the (immortal) characters instead of copying them.
+    WTF_EXPORT_PRIVATE static Ref<AtomStringImpl> addWithoutCopying(HashTranslatorCharBuffer<Latin1Character>&);
+    WTF_EXPORT_PRIVATE static Ref<AtomStringImpl> addWithoutCopying(HashTranslatorCharBuffer<char16_t>&);
+    // A hash read back from a serialized table is only usable (here or in a HashTranslatorCharBuffer) if it is what
+    // StringHasher::computeHashAndMaskTop8Bits can return; anything else must be recomputed from the characters.
+    static bool isValidPrecomputedHash(unsigned hash) { return hash && !(hash & ~StringHasher::maskHash); }
+    // For a fresh (unpublished, non-atom, non-static, non-symbol) string whose characters and StringHasher hash come
+    // from the same trusted serialized table: records the hash so neither the atom table nor a later hash() computes
+    // it. A hash that does not match the characters makes this string a distinct atom/property key from its equal.
+    static void adoptPrecomputedHash(const StringImpl& string, unsigned hash)
+    {
+        ASSERT(!string.isAtom() && !string.isStatic() && !string.isSymbol());
+        ASSERT(isValidPrecomputedHash(hash));
+        string.setHash(hash);
+    }
+#endif
 
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(StringImpl*, unsigned offset, unsigned length);
     ALWAYS_INLINE static RefPtr<AtomStringImpl> add(StringImpl*);

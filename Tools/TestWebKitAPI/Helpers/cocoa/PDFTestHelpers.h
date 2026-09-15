@@ -35,6 +35,12 @@
 
 @protocol WKUIDelegate;
 
+NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+
+@interface TestPDFBuilder : NSObject
++ (NSData *)pdfDataWithLink;
+@end
+
 @interface PDFPrintUIDelegate : NSObject <WKUIDelegate>
 
 #if PLATFORM(MAC)
@@ -42,9 +48,11 @@
 #else
 - (CGSize)waitForPageSize;
 #endif
-- (_WKFrameHandle *)lastPrintedFrame;
+- (nullable _WKFrameHandle *)lastPrintedFrame;
 
 @end
+
+NS_HEADER_AUDIT_END(nullability, sendability)
 
 #ifdef __cplusplus
 

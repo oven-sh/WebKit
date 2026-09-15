@@ -344,12 +344,6 @@ public:
     static JSC::Heap* heap(const JSValue); // 0 for immediate values
     static JSC::Heap* heap(const HeapCell*);
 
-    // This constant determines how many blocks we iterate between checks of our 
-    // deadline when calling Heap::isPagedOut. Decreasing it will cause us to detect 
-    // overstepping our deadline more quickly, while increasing it will cause 
-    // our scan to run faster. 
-    static constexpr unsigned s_timeCheckResolution = 16;
-
     bool isMarked(const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
 
@@ -525,8 +519,7 @@ public:
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
-    bool isPagedOut();
-    
+
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
     void addReference(JSCell*, ArrayBuffer*);
@@ -730,6 +723,9 @@ private:
     // When a collection last began that found the mutator had allocated more than a trickle since the one before: the
     // mutator was at work then. Idle optimized code ages against this (CodeBlock::shouldJettisonDueToOldAge).
     ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime; }
+    // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
+    // clock for every block it visits.
+    ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
     // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
     bool isIdleCollection() const { return m_currentRequest.isIdle; }
 #endif
@@ -887,6 +883,7 @@ private:
     size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
 #if USE(BUN_JSC_ADDITIONS)
     ApproximateTime m_lastActiveCollectionTime;
+    ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
 #endif
     size_t m_sizeAfterLastCollect { 0 };
@@ -1021,13 +1018,13 @@ private:
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
     unsigned m_numberOfActiveParallelMarkers { 0 };
-    unsigned m_numberOfWaitingParallelMarkers { 0 };
+    unsigned m_numberOfWaitingParallelMarkers WTF_GUARDED_BY_LOCK(m_markingMutex) { 0 };
 
     ConcurrentPtrHashSet m_opaqueRoots;
     static constexpr size_t s_blockFragmentLength = 32;
 
     ParallelHelperClient m_helperClient;
-    RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask;
+    RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
 
 #if ENABLE(RESOURCE_USAGE)
     size_t m_blockBytesAllocated { 0 };
@@ -1063,7 +1060,7 @@ private:
     bool m_threadShouldStop { false };
     bool m_mutatorDidRun { true };
     bool m_didDeferGCWork { false };
-    bool m_shouldStopCollectingContinuously { false };
+    bool m_shouldStopCollectingContinuously WTF_GUARDED_BY_LOCK(m_collectContinuouslyLock) { false };
     bool m_isCompilerThreadsSuspended { false };
 
     uint64_t m_mutatorExecutionVersion { 0 };

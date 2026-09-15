@@ -42,6 +42,7 @@ template<typename Traits>
 class BytecodeGeneratorBase {
     template<typename BytecodeGenerator>
     friend class GenericBoundLabel;
+    friend class BytecodeOptimizerAccess;
 
     template<typename BytecodeGenerator>
     friend class GenericLabel;

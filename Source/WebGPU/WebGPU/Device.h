@@ -152,6 +152,11 @@ public:
     const Vector<WGPUFeatureName>& features() const LIFETIME_BOUND { return m_capabilities.features; }
     const HardwareCapabilities::BaseCapabilities& baseCapabilities() const LIFETIME_BOUND { return m_capabilities.baseCapabilities; }
 
+    // Encoding an ICB into an argument buffer, and dereferencing that argument buffer from a shader
+    // in order to write render_command slots, both require argument buffers tier 2. Tier 1 devices
+    // (Apple4/Apple5, e.g. A12) must replay render bundle commands into the render pass instead.
+    bool supportsIndirectCommandBuffersInArgumentBuffers() const { return m_capabilities.baseCapabilities.argumentBuffersTier >= MTLArgumentBuffersTier2; }
+
     id<MTLDevice> _Nullable device() const { return m_device; }
     void generateAValidationError(NSString * message);
     void generateAValidationError(String&& message);

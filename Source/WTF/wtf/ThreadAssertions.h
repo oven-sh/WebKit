@@ -168,6 +168,68 @@ inline ThreadLikeAssertion ThreadLike::createThreadLikeAssertion(uint32_t uid)
     return ThreadLikeAssertion { uid };
 }
 
+// Some state is mutated only on one thread, always while holding a lock, yet is read on that same
+// thread without taking the lock because doing so on every read would be too expensive. Threads
+// other than the owner must hold the lock even to read. Annotate such state with
+// WTF_GUARDED_BY_LOCK() as usual, and call assertIsOwnerThread() on the unlocked read path:
+//
+// struct MyClass {
+//     Element* element() const { assertIsOwnerThread(); return m_element.get(); }
+//     void setElement(Element* element) { Locker locker { m_lock }; m_element = element; }
+//     // Runs on another thread, so it must lock even though it only reads.
+//     void visit(Visitor& visitor) const { Locker locker { m_lock }; visitor.append(m_element); }
+// private:
+//     mutable Lock m_lock;
+//     RefPtr<Element> m_element WTF_GUARDED_BY_LOCK(m_lock);
+//     WTF_DECLARE_OWNER_THREAD_ASSERTIONS(m_lock, mainThreadLike);
+// };
+//
+// The owner may be given as mainThreadLike, or as a ThreadLikeAssertion member for state owned by
+// some other thread or work queue.
+//
+// assertIsOwnerThread() grants only shared, read-only access, so thread safety analysis still
+// reports any write that does not hold the lock exclusively. That is what makes this preferable to
+// leaving the state unannotated: the "every write holds the lock" half of the invariant stays
+// machine-checked, reads from any other thread must still lock, and the unlocked reads become both
+// self-documenting and checked at run time.
+//
+// BlockDirectory has long used this idiom by hand, with assertIsMutatorOrMutatorIsStopped() granting
+// shared access to m_bitvectorLock; these helpers generalize it.
+//
+// A function that calls assertIsOwnerThread() and then takes the lock must release the assertion
+// first, by calling releaseOwnerThreadAssertion() below. Otherwise the assertion leaves the lock
+// marked as held for the remainder of the scope and the subsequent Locker is reported as acquiring
+// a lock that is already held.
+template<typename LockType>
+inline void assertIsOwnerThread(const LockType& lock, const ThreadLikeAssertion& ownerThread) WTF_ASSERTS_ACQUIRED_SHARED_LOCK(lock)
+{
+    UNUSED_PARAM(lock);
+    assertIsCurrent(ownerThread);
+}
+
+// Hands back the shared access granted by assertIsOwnerThread(), so that a function which starts
+// with an unlocked owner-thread read can go on to take the lock. Without this the analysis still
+// considers the lock held and reports the Locker as acquiring a lock that is already held. This
+// generates no code; it only moves the analysis state.
+template<typename LockType>
+ALWAYS_INLINE void releaseOwnerThreadAssertion(const LockType& lock) WTF_RELEASES_SHARED_LOCK(lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+{
+    UNUSED_PARAM(lock);
+}
+
+// Declares assertIsOwnerThread() and releaseOwnerThreadAssertion() members for a class whose state is
+// guarded by lock and owned by ownerThread, so call sites need not repeat both names. Because they are
+// members, a function that also touches a second instance's guarded state asserts on that instance:
+// sourceRange.assertIsOwnerThread() grants shared access to sourceRange's lock, not to this one's.
+#define WTF_DECLARE_OWNER_THREAD_ASSERTIONS(lock, ownerThread) \
+    void assertIsOwnerThread() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(lock) \
+    { \
+        WTF::assertIsOwnerThread(lock, ownerThread); \
+    } \
+    ALWAYS_INLINE void releaseOwnerThreadAssertion() const WTF_RELEASES_SHARED_LOCK(lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS \
+    { \
+    }
+
 // Type for globally named assertions for describing access requirements.
 // Can be used, for example, to require that a variable is accessed only in
 // a known named thread.
@@ -189,6 +251,7 @@ class WTF_CAPABILITY("is current") NamedAssertion { };
 using WTF::anyThreadLike;
 using WTF::AnyThreadLike;
 using WTF::assertIsCurrent;
+using WTF::assertIsOwnerThread;
 using WTF::currentThreadLike;
 using WTF::CurrentThreadLike;
 using WTF::mainThreadLike;
@@ -196,5 +259,6 @@ using WTF::MainThreadLike;
 using WTF::NamedAssertion;
 using WTF::noneThreadLike;
 using WTF::NoneThreadLike;
+using WTF::releaseOwnerThreadAssertion;
 using WTF::ThreadLike;
 using WTF::ThreadLikeAssertion;

@@ -308,9 +308,12 @@ bool ComputedStyle::borderAndBackgroundEqual(const ComputedStyle& other) const
         && backgroundColor() == other.backgroundColor();
 }
 
-float ComputedStyle::computedLineHeight() const
+float ComputedStyle::usedLineHeight() const
 {
-    return evaluate<float>(lineHeight(), LineHeightEvaluationContext { usedFontSize(), metricsOfPrimaryFont().lineSpacing() }, usedZoomForLength());
+    return evaluate<float>(textAutosizingAdjustedLineHeight(), LineHeightEvaluationContext {
+        usedFontSize(),
+        metricsOfPrimaryFont().lineSpacing()
+    }, usedZoomForLength());
 }
 
 bool ComputedStyle::scrollSnapDataEquivalent(const ComputedStyle& other) const

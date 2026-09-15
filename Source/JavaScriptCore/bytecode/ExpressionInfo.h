@@ -89,6 +89,11 @@ public:
         template<typename RemapFunc>
         void remap(Vector<unsigned>&& adjustments, RemapFunc);
 
+        // Re-encode all entries with instruction PCs mapped through a monotonic (non-decreasing) function.
+        // Entries that end up sharing a PC with a later entry are dropped (the later one wins on lookup anyway).
+        template<typename MapFunc>
+        void rebuild(const MapFunc&);
+
         Entry entry() const { return m_entry; }
 
         std::unique_ptr<ExpressionInfo> createExpressionInfo();

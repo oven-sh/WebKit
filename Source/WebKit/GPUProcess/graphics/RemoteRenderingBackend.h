@@ -132,7 +132,7 @@ public:
 
     RefPtr<WebCore::ImageBuffer> imageBuffer(WebCore::RenderingResourceIdentifier);
 
-    RefPtr<WebCore::ImageBuffer> allocateImageBuffer(const WebCore::FloatSize& logicalSize, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat, WebCore::ImageBufferCreationContext);
+    RefPtr<WebCore::ImageBuffer> allocateImageBuffer(const WebCore::FloatSize& logicalSize, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat, WebCore::ImageBufferCreationContext, std::optional<ImageBufferBackendHandle>&& providedBackingStore = std::nullopt);
 
     RemoteRenderingBackendIdentifier identifier() { return m_renderingBackendIdentifier; }
 private:
@@ -152,6 +152,8 @@ private:
 
     // Messages to be received.
     void createImageBuffer(const WebCore::FloatSize& logicalSize, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier);
+    void createMappableImageBuffer(const WebCore::FloatSize& logicalSize, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat, ImageBufferBackendHandle&& backingStore, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier);
+    void createImageBufferWithBackingStore(const WebCore::FloatSize& logicalSize, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat, std::optional<ImageBufferBackendHandle>&& backingStore, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier);
     void releaseImageBuffer(WebCore::RenderingResourceIdentifier);
     void moveToSerializedBuffer(WebCore::RenderingResourceIdentifier, RemoteSerializedImageBufferIdentifier);
     void moveToImageBuffer(RemoteSerializedImageBufferIdentifier, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier);

@@ -45,9 +45,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferIOSurfaceBackend);
 
-IntSize ImageBufferIOSurfaceBackend::calculateSafeBackendSize(const Parameters& parameters)
+IntSize ImageBufferIOSurfaceBackend::calculateSafeBackendSize(const ImageBufferParameters& parameters)
 {
-    IntSize backendSize = parameters.backendSize;
+    IntSize backendSize = parameters.backendSize();
     if (backendSize.isEmpty())
         return { };
 
@@ -65,12 +65,7 @@ unsigned ImageBufferIOSurfaceBackend::calculateBytesPerRow(const IntSize& backen
     return (bytesPerRow + alignmentMask) & ~alignmentMask;
 }
 
-size_t ImageBufferIOSurfaceBackend::calculateMemoryCost(const Parameters& parameters)
-{
-    return ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters.backendSize, parameters.bufferFormat.pixelFormat));
-}
-
-std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const ImageBufferCreationContext& creationContext)
+std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const ImageBufferParameters& parameters, const ImageBufferCreationContext& creationContext)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
@@ -89,7 +84,7 @@ std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create
     return std::unique_ptr<ImageBufferIOSurfaceBackend> { new ImageBufferIOSurfaceBackend { parameters, WTF::move(surface), WTF::move(cgContext), creationContext.displayID, creationContext.surfacePool.get() } };
 }
 
-ImageBufferIOSurfaceBackend::ImageBufferIOSurfaceBackend(const Parameters& parameters, std::unique_ptr<IOSurface> surface, RetainPtr<CGContextRef> platformContext, PlatformDisplayID displayID, IOSurfacePool* ioSurfacePool)
+ImageBufferIOSurfaceBackend::ImageBufferIOSurfaceBackend(const ImageBufferParameters& parameters, std::unique_ptr<IOSurface> surface, RetainPtr<CGContextRef> platformContext, PlatformDisplayID displayID, IOSurfacePool* ioSurfacePool)
     : ImageBufferCGBackend(parameters)
     , m_surface(WTF::move(surface))
     , m_platformContext(WTF::move(platformContext))
@@ -107,6 +102,15 @@ ImageBufferIOSurfaceBackend::~ImageBufferIOSurfaceBackend()
     IOSurface::moveToPool(WTF::move(m_surface), m_ioSurfacePool.get());
 }
 
+RenderingMode ImageBufferIOSurfaceBackend::renderingMode() const
+{
+    return RenderingMode::Accelerated;
+}
+
+size_t ImageBufferIOSurfaceBackend::memoryCost() const
+{
+    return ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size(), pixelFormat()));
+}
 
 GraphicsContext& ImageBufferIOSurfaceBackend::context()
 {

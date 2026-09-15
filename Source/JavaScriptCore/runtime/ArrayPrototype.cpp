@@ -1382,18 +1382,13 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
         double searchNumber = searchElement.asNumber();
         auto& butterfly = *array->butterfly();
         auto data = butterfly.contiguousDouble().data();
-        if constexpr (direction == IndexOfDirection::Forward) {
-            for (; index < length; ++index) {
-                // Array#indexOf uses `===` semantics (not UncheckedKeyHashMap isEqual semantics).
-                // And the hole never matches since it is NaN.
-                if (data[index] == searchNumber)
-                    return jsNumber(index);
-            }
-        } else {
-            auto* result = WTF::reverseFindDouble(data, searchNumber, static_cast<uint64_t>(index) + 1);
-            if (result)
-                return jsNumber(result - data);
-        }
+        const double* result = nullptr;
+        if constexpr (direction == IndexOfDirection::Forward)
+            result = WTF::findDouble(data + index, searchNumber, length - index);
+        else
+            result = WTF::reverseFindDouble(data, searchNumber, static_cast<uint64_t>(index) + 1);
+        if (result)
+            return jsNumber(result - data);
         return jsNumber(-1);
     }
     default:
@@ -2265,7 +2260,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToSpliced, (JSGlobalObject* globalObject,
 
     uint64_t newLen = length + insertCount - deleteCount;
 
-    if (newLen >= maxSafeIntegerAsUInt64()) [[unlikely]] {
+    if (newLen > maxSafeIntegerAsUInt64()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Array length exceeds 2**53 - 1"_s);
         return { };
     }

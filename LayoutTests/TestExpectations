@@ -64,6 +64,8 @@ fast/images/text-recognition [ Skip ]
 fast/images/mac [ Skip ]
 fast/images/spatial-image-controls.html [ Skip ]
 fast/images/spatial-image-controls-rtl.html [ Skip ]
+# Requires ENABLE(LINEAR_MEDIA_PLAYER) or the test times out.
+media/caption-mirroring-quirk-external-playback.html [ Skip ]
 fast/sandbox/ios [ Skip ]
 fast/sandbox/mac [ Skip ]
 fast/text/data-detectors/ios [ Skip ]
@@ -2444,7 +2446,6 @@ imported/w3c/web-platform-tests/mathml/presentation-markup/scripts/stretchy-mund
 imported/w3c/web-platform-tests/mathml/relations/css-styling/lengths-1.html [ ImageOnlyFailure ]
 
 mathml/non-core/mathvariant/mathvariant-case-sensitivity.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/mathml/presentation-markup/operators/mo-single-char-and-children.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/mathml/relations/css-styling/presentational-hints-001.html [ ImageOnlyFailure Pass ]
 imported/w3c/web-platform-tests/mathml/relations/css-styling/transform.html [ ImageOnlyFailure ]
 
@@ -2958,8 +2959,6 @@ imported/w3c/web-platform-tests/svg/text/reftests/text-font-face-load-image.html
 imported/w3c/web-platform-tests/svg/text/reftests/textLength-list-y-spacing.svg [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/css-linked-parameters-precedence-1.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/css-linked-parameters-precedence-2.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-linked-parameters-1.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-linked-parameters-2.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-url-fragment-identifiers-1.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-url-fragment-identifiers-2.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-url-function-1.html [ ImageOnlyFailure ]
@@ -3134,7 +3133,6 @@ webkit.org/b/148650 fast/repaint/add-table-overpaint.html [ Pass Failure ]
 
 # Initial failures on the import of css-content
 
-imported/w3c/web-platform-tests/css/css-content/element-replacement-gradient.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-content/element-replacement-on-replaced-element.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-content/quotes-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-content/quotes-006.html [ ImageOnlyFailure ]
@@ -4021,7 +4019,6 @@ imported/w3c/web-platform-tests/css/css-pseudo/first-letter-width-2.html [ Image
 imported/w3c/web-platform-tests/css/css-pseudo/highlight-custom-properties-dynamic-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/highlight-painting-currentcolor-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/highlight-painting-currentcolor-001a.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-pseudo/marker-text-transform-dynamic.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/selection-link-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/selection-link-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/selection-over-highlight-001.html [ ImageOnlyFailure ]
@@ -5561,16 +5558,10 @@ imported/w3c/web-platform-tests/css/css-lists/li-list-item-counter-005.html [ Im
 imported/w3c/web-platform-tests/css/css-lists/marker-counter.html [ ImageOnlyFailure ]
 
 # list-style
-imported/w3c/web-platform-tests/css/css-lists/list-style-type-decimal-vertical-lr.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-lists/list-style-type-decimal-vertical-rl.html [ ImageOnlyFailure ]
 
 # list-style bidi support
-webkit.org/b/202849 imported/w3c/web-platform-tests/css/css-lists/list-style-type-string-005b.html [ ImageOnlyFailure ]
 webkit.org/b/249918 imported/w3c/web-platform-tests/css/css-lists/list-marker-symbol-bidi.html [ ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/css/css-lists/content-property/marker-text-matches-lower-greek.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-lists/content-property/marker-text-matches-lower-latin.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-lists/content-property/marker-text-matches-square.html [ ImageOnlyFailure ]
 
 # -- CSS multicol -- #
 webkit.org/b/214458 imported/w3c/web-platform-tests/css/css-multicol/multicol-fill-balance-003.html [ ImageOnlyFailure ]
@@ -5746,11 +5737,8 @@ webkit.org/b/214461 imported/w3c/web-platform-tests/css/css-pseudo/first-letter-
 webkit.org/b/214461 imported/w3c/web-platform-tests/css/css-pseudo/first-line-opacity-001.html [ ImageOnlyFailure ]
 webkit.org/b/214461 imported/w3c/web-platform-tests/css/css-pseudo/grammar-error-001.html [ ImageOnlyFailure ]
 webkit.org/b/204163 imported/w3c/web-platform-tests/css/css-pseudo/marker-content-010.html [ ImageOnlyFailure ]
-webkit.org/b/204163 imported/w3c/web-platform-tests/css/css-pseudo/marker-content-012.html [ ImageOnlyFailure ]
 webkit.org/b/204163 imported/w3c/web-platform-tests/css/css-pseudo/marker-content-017.html [ ImageOnlyFailure ]
-webkit.org/b/204163 imported/w3c/web-platform-tests/css/css-pseudo/marker-content-018.html [ ImageOnlyFailure ]
 webkit.org/b/214461 imported/w3c/web-platform-tests/css/css-pseudo/marker-list-style-position.html [ ImageOnlyFailure ]
-webkit.org/b/214461 imported/w3c/web-platform-tests/css/css-pseudo/marker-unicode-bidi-normal.html [ ImageOnlyFailure ]
 webkit.org/b/214461 imported/w3c/web-platform-tests/css/css-pseudo/spelling-error-001.html [ ImageOnlyFailure ]
 
 webkit.org/b/214462 imported/w3c/web-platform-tests/css/css-scoping/host-context-specificity-001.html [ ImageOnlyFailure ]
@@ -5842,6 +5830,13 @@ webkit.org/b/217931 imported/w3c/web-platform-tests/html/semantics/scripting-1/t
 webkit.org/b/217931 imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-success-inline-classic.html [ Pass Failure ]
 
 
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-deep-chain-001.tentative.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-inheritance-001.tentative.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-no-named-rule-001.tentative.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-no-named-rule-002.tentative.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-001.tentative.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-002.tentative.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-003.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/highlight-image-currentcolor.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/highlight-image-stacked.html [ ImageOnlyFailure ]
 
@@ -6091,14 +6086,10 @@ webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/grammar-spell
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/highlight-painting-001.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/highlight-painting-002.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-content-024.html [ ImageOnlyFailure ]
-webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-hyphens.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-letter-spacing.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-line-break.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-overflow-wrap.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-text-decoration-skip-ink.html [ ImageOnlyFailure ]
-webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-text-emphasis.html [ ImageOnlyFailure ]
-webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-text-shadow.html [ ImageOnlyFailure ]
-webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-text-transform-uppercase.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/marker-word-break.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/selection-contenteditable-011.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/selection-input-011.html [ ImageOnlyFailure ]
@@ -6195,7 +6186,6 @@ ipc/start-message-testing.html [ Skip ]
 
 # Fixing timeouts/crashes is tracked by https://bugs.webkit.org/show_bug.cgi?id=267714 (rdar://120486467)
 ipc/invalid-fullscreen-enum.html [ Pass Timeout ]
-ipc/invalid-message-to-addTrackBuffer.html [ Pass Timeout ]
 ipc/removeMediaUsageManagerSession-test.html [ Skip ]
 
 # Test is crashing since import.
@@ -6895,10 +6885,6 @@ webkit.org/b/257336 imported/w3c/web-platform-tests/css/css-tables/visibility-co
 imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase [ Skip ]
 
 # WebTransport: the webtransport-h3 server now runs (webkit.org/b/319008); the rest stay skipped. https://bugs.webkit.org/show_bug.cgi?id=318998
-
-# Crash tests, must pass.
-imported/w3c/web-platform-tests/webtransport/bidirectional-cancel-crash.https.html [ Skip ]
-imported/w3c/web-platform-tests/webtransport/datagram-cancel-crash.https.sub.window.html [ Skip ]
 
 # Internal timeout (streams hang).
 imported/w3c/web-platform-tests/webtransport/echo-large-bidirectional-streams.https.any.html [ Skip ]
@@ -7808,6 +7794,9 @@ ipc/create-media-source-with-invalid-constraints-crash.html [ Skip ]
 ipc/create-image-buffer-crash.html [ Skip ]
 ipc/validate-media-constraint.html [ Skip ]
 ipc/validate-message-check-in-networkconnectiontowebprocess.html [ Skip ]
+
+# Testing MESSAGE_CHECK of sync messages is incorrect.
+webkit.org/b/323670 ipc/getpixelbuffer-layerbacking-heap-disclosure.html [ Skip ]
 
 # webkit.org/b/287275 [ Sequoia EWS] media/video-replaces-poster.html is a flaky crash
 media/video-presentation-mode.html [ Skip ]

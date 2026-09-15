@@ -24,7 +24,7 @@
 
 #pragma once
 
-#include <WebCore/StylePrimitiveNumericOrKeyword.h>
+#include <WebCore/StyleSizeOrKeyword.h>
 
 namespace WebCore {
 namespace Style {
@@ -48,7 +48,7 @@ struct PreferredSize;
 //
 // https://drafts.csswg.org/css-sizing-3/#min-size-properties
 // https://drafts.csswg.org/css-sizing-4/#sizing-values (additional values added)
-struct MinimumSize : PrimitiveNumericOrKeyword<LengthPercentage<CSS::NonnegativeLayoutUnitClamped>, CSS::Keyword::Auto, CSS::Keyword::MinContent, CSS::Keyword::MaxContent, CSS::Keyword::FitContent, CSS::Keyword::Stretch, CSS::Keyword::WebkitFillAvailable, CSS::Keyword::Intrinsic, CSS::Keyword::MinIntrinsic> {
+struct MinimumSize : SizeOrKeyword<CSS::Keyword::Auto, CSS::Keyword::MinContent, CSS::Keyword::MaxContent, CSS::Keyword::FitContent, CSS::Keyword::Stretch, CSS::Keyword::WebkitFillAvailable, CSS::Keyword::Intrinsic, CSS::Keyword::MinIntrinsic> {
     using Base::Base;
 
     ALWAYS_INLINE bool isAuto() const { return holdsAlternative<CSS::Keyword::Auto>(); }

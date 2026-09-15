@@ -26,8 +26,8 @@
 
 #pragma once
 
-#include "ColorInterpolationMethod.h"
 #include "StyleColor.h"
+#include "StyleColorInterpolationMethod.h"
 #include "StylePrimitiveNumericTypes.h"
 #include <optional>
 #include <wtf/UniqueRef.h>

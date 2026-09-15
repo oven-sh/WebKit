@@ -26,10 +26,22 @@
 #pragma once
 
 #include "YarrErrorCode.h"
+#include "YarrFlags.h"
+#include <wtf/OptionSet.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace Yarr {
 
+// What the Parser alone (no YarrPattern) reports about a pattern.
+struct SyntaxSummary {
+    ErrorCode error { ErrorCode::NoError };
+    unsigned numSubpatterns { 0 };
+    unsigned maxParenthesesDepth { 0 };
+    bool hasNamedCaptureGroups { false };
+    bool isOnlyPatternCharacters { true };
+};
+
 ErrorCode checkSyntax(StringView pattern, StringView flags);
+SyntaxSummary checkSyntax(StringView pattern, OptionSet<Flags>);
 
 }} // JSC::Yarr

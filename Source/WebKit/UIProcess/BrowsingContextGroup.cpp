@@ -240,17 +240,22 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
 }
 
 #if ASSERT_ENABLED
-// True when the previous FrameProcess registered for a site can be safely replaced.
+// A Site maps to exactly one FrameProcess at a time, so the entry registered for a site may only be
+// replaced when the previous FrameProcess is on its way out.
 // In addition to the obvious terminated case, sites with an empty registrable domain
 // (e.g. data:, blob:, file:) all collapse to the same key in m_processMap, so they
 // never represented a unique site-to-process binding; replacing them is benign.
-static bool canReplaceFrameProcessInProcessMap(const WebCore::Site& site, FrameProcess& existing)
+// Otherwise the previous FrameProcess must be used by at most the one frame the navigation causing
+// this replacement is replacing, so it is destroyed when that navigation commits. Navigations that
+// would move a site away from a FrameProcess other frames still need are declined before they get
+// this far (see canMoveSiteToEnhancedSecurityProcess in WebPageProxy.cpp).
+static bool canReplaceFrameProcessInProcessMap(const WebCore::Site& site, const FrameProcess& existing)
 {
     if (existing.process().state() == WebProcessProxy::State::Terminated)
         return true;
     if (site.isEmpty())
         return true;
-    return false;
+    return existing.frameCount() <= 1;
 }
 #endif
 
@@ -271,10 +276,9 @@ void BrowsingContextGroup::removeFrameProcess(FrameProcess& process)
             clearSharedProcess();
     } else {
         auto& site = *process.site();
-        // Either we are still the current entry for this site (normal teardown), or a
-        // later navigation already replaced us under the same conditions used by
-        // addFrameProcess.
-        ASSERT(m_processMap.get(site) == &process || canReplaceFrameProcessInProcessMap(site, process));
+        // A later navigation may already have replaced this entry (see
+        // canReplaceFrameProcessInProcessMap), in which case the site now belongs to a different
+        // FrameProcess and this teardown must leave it alone.
         if (m_processMap.get(site) == &process)
             m_processMap.remove(site);
     }

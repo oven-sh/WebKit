@@ -38,6 +38,7 @@ namespace JSC {
 class UnlinkedCodeBlockGenerator {
     WTF_MAKE_TZONE_ALLOCATED(UnlinkedCodeBlockGenerator);
     WTF_MAKE_NONCOPYABLE(UnlinkedCodeBlockGenerator)
+    friend class BytecodeOptimizerAccess;
 public:
     UnlinkedCodeBlockGenerator(VM&, UnlinkedCodeBlock*);
 

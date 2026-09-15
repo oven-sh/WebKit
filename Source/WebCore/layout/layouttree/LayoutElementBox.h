@@ -46,12 +46,8 @@ class ElementBox : public Box {
 public:
     ElementBox(ElementAttributes&&, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr, EnumSet<BaseTypeFlag> = { ElementBoxFlag });
 
-    enum class ListMarkerAttribute : uint8_t {
-        Image,
-        Outside,
-        ShouldCollapseAnonymousBlockParent,
-    };
-    ElementBox(ElementAttributes&&, EnumSet<ListMarkerAttribute>, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr);
+    enum class IsListMarkerImage : bool { No, Yes };
+    ElementBox(ElementAttributes&&, IsListMarkerImage, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr);
 
     struct ReplacedAttributes {
         LayoutSize intrinsicSize;
@@ -98,11 +94,9 @@ public:
     LayoutUnit NODELETE intrinsicRatio() const;
     bool NODELETE hasAspectRatio() const;
 
-    void setListMarkerAttributes(EnumSet<ListMarkerAttribute> listMarkerAttributes) { m_replacedData->listMarkerAttributes = listMarkerAttributes; }
+    void setIsListMarkerImage(IsListMarkerImage isListMarkerImage) { m_replacedData->isListMarkerImage = isListMarkerImage == IsListMarkerImage::Yes; }
 
-    bool isListMarkerImage() const { return m_replacedData && m_replacedData->listMarkerAttributes.contains(ListMarkerAttribute::Image); }
-    bool isListMarkerOutside() const { return m_replacedData && m_replacedData->listMarkerAttributes.contains(ListMarkerAttribute::Outside); }
-    bool shouldCollapseAnonymousBlockParentForListMarker() const { return m_replacedData && m_replacedData->listMarkerAttributes.contains(ListMarkerAttribute::ShouldCollapseAnonymousBlockParent); }
+    bool isListMarkerImage() const { return m_replacedData && m_replacedData->isListMarkerImage; }
 
     // FIXME: This is temporary until after list marker content is accessible by IFC (webkit.org/b/294342)
     void setListMarkerLayoutBounds(std::pair<float, float> layoutBounds) { m_replacedData->layoutBounds = layoutBounds; }
@@ -119,7 +113,7 @@ private:
     struct ReplacedData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReplacedData);
 
-        EnumSet<ListMarkerAttribute> listMarkerAttributes;
+        bool isListMarkerImage { false };
         std::pair<float, float> layoutBounds;
 
         std::optional<LayoutSize> intrinsicSize;

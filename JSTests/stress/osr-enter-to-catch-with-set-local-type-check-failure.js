@@ -1,3 +1,4 @@
+//@ defaultRun; run("eager-catch-liveness", "--useLazyCatchLiveness=false")
 let flag = true;
 function foo() {
     if (flag)

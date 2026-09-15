@@ -1384,7 +1384,7 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
 
     if (auto* textControlRenderer = dynamicDowncast<WebCore::RenderTextControl>(*renderer))
         return textControlRenderer->innerLineHeight();
-    return renderer->style().computedLineHeight();
+    return renderer->style().usedLineHeight();
 }
 
 - (void)updateLayout
@@ -1537,7 +1537,7 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
     auto frame = core(self);
     if (!frame)
         return 0;
-    frame->document()->updateLayout();
+    protect(frame->document())->updateLayout();
     return frame->selection().selection().visibleStart().characterBefore();
 }
 
@@ -1546,7 +1546,7 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
     auto frame = core(self);
     if (!frame)
         return 0;
-    frame->document()->updateLayout();
+    protect(frame->document())->updateLayout();
     return frame->selection().selection().visibleEnd().characterAfter();
 }
 
@@ -1590,7 +1590,7 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
     auto frame = core(self);
     if (!frame)
         return NO;
-    frame->document()->updateLayout();
+    protect(frame->document())->updateLayout();
     return isStartOfDocument(frame->selection().selection().visibleStart());
 }
 
@@ -1601,7 +1601,7 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
     if (frame->selection().selection().isNone())
         return NO;
         
-    frame->document()->updateLayout();
+    protect(frame->document())->updateLayout();
     
     return frame->selection().selectionAtSentenceStart();
 }
@@ -1613,7 +1613,7 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
     if (frame->selection().selection().isNone())
         return NO;
         
-    frame->document()->updateLayout();
+    protect(frame->document())->updateLayout();
     
     return frame->selection().selectionAtWordStart();
 }
@@ -1910,7 +1910,6 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
 
 #endif // PLATFORM(IOS_FAMILY)
 
-#if ENABLE(TEXT_AUTOSIZING)
 - (void)resetTextAutosizingBeforeLayout
 {
     if (![self _webHTMLDocumentView])
@@ -1942,19 +1941,6 @@ static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frame
 
     page->setTextAutosizingWidth(width);
 }
-#else
-- (void)resetTextAutosizingBeforeLayout
-{
-}
-
-- (void)_setVisibleSize:(CGSize)size
-{
-}
-
-- (void)_setTextAutosizingWidth:(CGFloat)width
-{
-}
-#endif // ENABLE(TEXT_AUTOSIZING)
 
 - (void)_createCaptionPreferencesTestingModeToken
 {

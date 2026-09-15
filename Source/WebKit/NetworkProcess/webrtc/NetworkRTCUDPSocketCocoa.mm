@@ -240,7 +240,11 @@ NetworkRTCUDPSocketCocoaConnections::NetworkRTCUDPSocketCocoaConnections(WebCore
     {
         auto hostAddress = computeHostAddress(address);
         auto localEndpoint = adoptNS(nw_endpoint_create_host_with_numeric_port(hostAddress.c_str(), 0));
-        m_address = { nw_endpoint_get_hostname(localEndpoint.get()), nw_endpoint_get_port(localEndpoint.get()) };
+        ASSERT(localEndpoint && nw_endpoint_get_hostname(localEndpoint.get()));
+        if (auto* hostname = nw_endpoint_get_hostname(localEndpoint.get()))
+            m_address = { hostname, nw_endpoint_get_port(localEndpoint.get()) };
+        else
+            RELEASE_LOG_ERROR(WebRTC, "NetworkRTCUDPSocketCocoaConnections was given a local address that cannot be used as an endpoint");
         nw_parameters_set_local_endpoint(parameters.get(), localEndpoint.get());
     }
     configureParameters(parameters.get(), address.family() == AF_INET ? nw_ip_version_4 : nw_ip_version_6);
@@ -308,7 +312,9 @@ void NetworkRTCUDPSocketCocoaConnections::configureParameters(nw_parameters_t pa
 {
     auto protocolStack = adoptNS(nw_parameters_copy_default_protocol_stack(parameters));
     auto options = adoptNS(nw_protocol_stack_copy_internet_protocol(protocolStack.get()));
-    nw_ip_options_set_version(options.get(), version);
+
+    if (version != nw_ip_version_any)
+        nw_ip_options_set_version(options.get(), version);
 
     setNWParametersApplicationIdentifiers(parameters, m_sourceApplicationBundleIdentifier.data(), m_sourceApplicationAuditToken, m_attributedBundleIdentifier);
     setNWParametersTrackerOptions(parameters, m_shouldBypassRelay, m_isFirstParty, m_isKnownTracker);
@@ -388,7 +394,7 @@ auto NetworkRTCUDPSocketCocoaConnections::createNWConnection(const webrtc::Socke
         auto localEndpoint = adoptNS(nw_endpoint_create_host_with_numeric_port(hostAddress.c_str(), m_address.port()));
         nw_parameters_set_local_endpoint(parameters.get(), localEndpoint.get());
     }
-    configureParameters(parameters.get(), remoteAddress.family() == AF_INET ? nw_ip_version_4 : nw_ip_version_6);
+    configureParameters(parameters.get(), ipVersionFromFamily(remoteAddress.family()));
 
     if (m_trafficClass)
         nw_parameters_set_traffic_class(parameters.get(), *m_trafficClass);
@@ -415,8 +421,8 @@ void NetworkRTCUDPSocketCocoaConnections::setupNWConnection(nw_connection_t nwCo
             connectionStateTracker->markAsStopped();
     }).get());
 
-    processUDPData(nwConnection, Ref  { connectionStateTracker }, 0, [identifier = m_identifier, connection = m_connection.copyRef(), ip = remoteAddress.ipaddr(), port = remoteAddress.port()](std::span<const uint8_t> message, WebRTCNetwork::EcnMarking ecn) mutable {
-        connection->send(Messages::LibWebRTCNetwork::SignalReadPacket { identifier, message, RTCNetwork::IPAddress(ip), port, webrtc::TimeMicros(), ecn }, 0);
+    processUDPData(nwConnection, Ref  { connectionStateTracker }, 0, [identifier = m_identifier, connection = m_connection.copyRef(), remoteAddress](std::span<const uint8_t> message, WebRTCNetwork::EcnMarking ecn) mutable {
+        connection->send(Messages::LibWebRTCNetwork::SignalReadPacket { identifier, message, RTCNetwork::SocketAddress(remoteAddress), webrtc::TimeMicros(), ecn }, 0);
     });
 
     nw_connection_start(nwConnection);

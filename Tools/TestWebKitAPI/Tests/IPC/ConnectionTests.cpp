@@ -244,6 +244,11 @@ TEST_P(ConnectionTestABBA, AAndBInvalidateDoesNotDeliverDidClose)
     EXPECT_FALSE(bClient().waitForDidClose(kWaitForAbsenceTimeout));
 }
 
+#if PLATFORM(COCOA)
+
+// Invalidating an unopened connection closes its socket, so a peer using Unix domain sockets sees
+// the end of file and reports didClose. A Mach based peer is never told.
+
 TEST_P(ConnectionTestABBA, UnopenedAAndInvalidateDoesNotDeliverBDidClose)
 {
     ASSERT_TRUE(openB());
@@ -251,6 +256,8 @@ TEST_P(ConnectionTestABBA, UnopenedAAndInvalidateDoesNotDeliverBDidClose)
     deleteA();
     EXPECT_FALSE(bClient().waitForDidClose(kWaitForAbsenceTimeout));
 }
+
+#endif // PLATFORM(COCOA)
 
 TEST_P(ConnectionTestABBA, IncomingMessageThrottlingWorks)
 {
@@ -567,7 +574,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendAsync)
         for (uint64_t i = 100u; i < 160u; ++i) {
             b()->sendWithAsyncReply(MockTestMessageWithAsyncReply1 { }, [&, j = i] (uint64_t value) {
                 if (!value)
-                    WTFLogAlways("GOT: %llu", j);
+                    WTFLogAlways("GOT: %" PRIu64, j);
                 EXPECT_GE(value, 100u);
                 replies.add(value);
             }, i);
@@ -788,7 +795,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendAsyncOnTarget)
                 b()->sendWithAsyncReplyOnDispatcher(MockTestMessageWithAsyncReply1 { }, awq.queue(), [&, j = i, queue = awq.queue()] (uint64_t value) {
                     assertIsCurrent(queue);
                     if (!value)
-                        WTFLogAlways("GOT: %llu", j);
+                        WTFLogAlways("GOT: %" PRIu64, j);
                     EXPECT_GE(value, 100u);
                     replies.add(value);
                 }, i);
@@ -823,7 +830,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendWithPromisedReply)
             b()->sendWithPromisedReply(MockTestMessageWithAsyncReply1 { }, i)->then(runLoop,
                 [&, j = i] (uint64_t value) {
                     if (!value)
-                        WTFLogAlways("GOT: %llu", j);
+                        WTFLogAlways("GOT: %" PRIu64, j);
                     EXPECT_GE(value, 100u);
                     replies.add(value);
                 },
@@ -902,7 +909,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendWithPromisedReplyOnMixAndMatchDispatche
                     EXPECT_TRUE(result);
                     auto value = *result;
                     if (!value)
-                        WTFLogAlways("GOT: %llu", j);
+                        WTFLogAlways("GOT: %" PRIu64, j);
                     EXPECT_GE(value, 100u);
                     replies.add(value);
                 });

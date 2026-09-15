@@ -10,10 +10,6 @@ accessibility/mac/focus-setting-selection-syncronizing-not-clearing.html [ Crash
 accessibility/mac/frame-with-title.html [ Failure ]
 accessibility/mac/pseudo-element-text-markers.html [ Failure ]
 accessibility/mac/ruby-hierarchy-roles.html [ Failure Pass ]
-accessibility/mac/search-predicate-from-ignored-element.html [ Failure ]
-accessibility/mac/search-predicate-immediate-descendants-only.html [ Failure ]
-accessibility/mac/set-value-editable-types.html [ Failure ]
-accessibility/mac/setting-attributes-is-asynchronous.html [ Failure ]
 accessibility/mac/attributed-string/attributed-string-has-completion-annotation.html [ Failure ]
 accessibility/isolated-tree/mac/attributed-string/attributed-string-has-completion-annotation.html [ Failure ]
 
@@ -42,8 +38,6 @@ accessibility/loading-iframe-sends-notification.html [ Pass Failure ]
 accessibility/text-marker/text-marker-bidi-element-arabic.html [ Failure ]
 accessibility/text-marker/text-marker-bidi-element-hebrew.html [ Failure ]
 
-accessibility/mac/search-text-with-image-hang.html [ Failure ]
-
 # Failures introduced by ENABLE(AX_THREAD_TEXT_APIS).
 accessibility/content-editable-as-textarea.html [ Failure ]
 accessibility/isolated-tree/content-editable-as-textarea.html [ Failure ]
@@ -57,7 +51,6 @@ accessibility/mac/attributed-string/attributed-string-for-range-with-options.htm
 accessibility/isolated-tree/mac/attributed-string/attributed-string-for-range-with-options.html [ Failure ]
 accessibility/mac/attributed-string/attributed-string-for-range.html [ Failure ]
 accessibility/isolated-tree/mac/attributed-string/attributed-string-for-range.html [ Failure ]
-accessibility/mac/line-range-continuity.html [ Failure ]
 accessibility/mac/content-editable-attributed-string.html [ Failure ]
 accessibility/mac/misspelled-attributed-string.html [ Failure ]
 accessibility/mac/spellcheck-with-voiceover.html [ Failure ]
@@ -65,7 +58,6 @@ accessibility/mac/text-marker-for-index.html [ Failure ]
 accessibility/mac/text-marker-p-tags.html [ Failure ]
 accessibility/mac/text-marker-string-for-document-end-replaced-node.html [ Failure ]
 accessibility/mac/text-marker-word-nav-collapsed-whitespace.html [ Failure ]
-accessibility/text-markers-for-input-with-placeholder.html [ Failure ]
 accessibility/mac/textmarker-range-for-range.html [ Failure ]
 accessibility/native-text-control-attributed-string.html [ Failure ]
 accessibility/text-marker/text-marker-previous-next.html [ Failure ]
@@ -73,7 +65,6 @@ accessibility/mac/text-marker-for-index-2.html [ Failure ]
 accessibility/mac/text-marker-word-nav.html [ Failure ]
 accessibility/mac/selected-visible-position-range.html [ Failure ]
 accessibility/mac/text-marker-word-nav.html [ Timeout ]
-accessibility/textarea-insertion-point-line-number.html [ Failure ]
 
 # We compute the wrong line index relative to what is actually visually laid out.
 accessibility/mac/replaced-element-line-index-hang.html [ Failure ]

@@ -28,7 +28,8 @@
 #include "LineInlineHeaders.h"
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
-#include "RenderListMarker.h"
+#include "RenderImage.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderMenuList.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectStyle.h"
@@ -37,6 +38,7 @@
 #include "RenderTreeUpdaterGeneratedContent.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleComputedStyle.h"
 #include "StyleContent.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -48,7 +50,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTreeBuilder::List);
 static RenderObject* firstNonMarkerChild(RenderBlock& parent)
 {
     RenderObject* child = parent.firstChild();
-    while (is<RenderListMarker>(child))
+    while (is<RenderListOutsideMarker>(child))
         child = child->nextSibling();
     return child;
 }
@@ -58,62 +60,48 @@ RenderTreeBuilder::List::List(RenderTreeBuilder& builder)
 {
 }
 
-bool markerNeedsOwnLine(const RenderListItem& listItemRenderer)
-{
-    if (!listItemRenderer.document().inQuirksMode())
-        return false;
-    for (CheckedPtr child = listItemRenderer.firstChild(); child; child = child->nextSibling()) {
-        if (child.get() == listItemRenderer.markerRenderer() || child->isFloatingOrOutOfFlowPositioned() || is<RenderMenuList>(*child))
-            continue;
-        return child->node() && isHTMLListElement(*child->node());
-    }
-    return false;
-}
-
 struct MarkerParentSearchResult {
     CheckedPtr<RenderBlock> parent;
-    bool shouldCollapseAnonymousBlockParent { false };
 };
 
-static MarkerParentSearchResult parentCandidateForMarker(RenderListItem& listItemRenderer, const RenderListMarker& marker)
+static MarkerParentSearchResult parentCandidateForMarker(RenderListItem& listItemRenderer, const RenderListOutsideMarker& marker)
 {
-    if (!marker.isInside() && listItemRenderer.document().settings().listMarkerPositionedPostLayoutEnabled() && !markerNeedsOwnLine(listItemRenderer)) {
+    if (listItemRenderer.document().settings().listMarkerPositionedPostLayoutEnabled()) {
         // The outside marker is always the list item's first child and it takes no part in in-flow layout.
-        return { &listItemRenderer, false };
+        return { &listItemRenderer };
     }
 
-    if (marker.isInside()) {
-        // Past the marker itself, for a list-style-position change from outside to inside: the marker the list item
-        // was positioning is its own first child, so plain firstChild() would hand back the marker rather than the
-        // content this is meant to look at, and the marker would be pushed down into a descendant instead of taking
-        // a line at the start of the list item.
-        if (auto* firstChild = dynamicDowncast<RenderBlock>(firstNonMarkerChild(listItemRenderer))) {
-            if (!firstChild->isAnonymous())
-                return { &listItemRenderer, false };
-            // We may have created this anonymous block for the marker itself. Let's keep it in there.
-            if (firstChild->firstChild() == &marker && !marker.nextSibling())
-                return { firstChild, false };
-        }
-        auto result = RenderListItem::firstFormattedLineRootFor(listItemRenderer, marker);
-        return { result.parent, false };
-    }
     auto result = RenderListItem::firstFormattedLineRootFor(listItemRenderer, marker);
-    return { result.parent ? result.parent : result.fallbackParent, result.stoppedAtTableRubyOrReplaced };
+    return { result.parent ? result.parent : result.fallbackParent };
+}
+
+// An inside marker among the list item's own inline content is not a box of its own: it is an anonymous inline box
+// holding the marker's content renderers, so that they are inline content of the list item's formatting context and are
+// laid out, reordered and painted with the rest of the line.
+static void adjustStyleForInlineMarker(Style::ComputedStyle& markerStyle)
+{
+    markerStyle.setDisplay(Style::DisplayType::InlineFlow);
 }
 
 void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
 {
     auto& style = listItemRenderer.style();
 
-    if (listItemRenderer.element() && listItemRenderer.element()->hasTagName(HTMLNames::fieldsetTag)) {
-        if (auto* marker = listItemRenderer.markerRenderer())
+    auto destroyExistingMarker = [&] {
+        if (auto* marker = listItemRenderer.markerBox())
             m_builder.destroy(*marker);
+        else if (auto* inlineMarker = listItemRenderer.markerRenderer())
+            m_builder.destroyAndCleanUpAnonymousWrappers(*inlineMarker, { });
+    };
+
+    if (listItemRenderer.element() && listItemRenderer.element()->hasTagName(HTMLNames::fieldsetTag)) {
+        destroyExistingMarker();
         return;
     }
 
     auto newStyle = listItemRenderer.computeMarkerStyle();
     auto markerContentEnabled = listItemRenderer.document().settings().cssMarkerContentEnabled();
-    auto markerHasContent = markerContentEnabled && newStyle.content().isData();
+    auto markerHasContent = listMarkerHasContent(newStyle, listItemRenderer.document());
 
     // css-content-3: `content: none` on the ::marker suppresses the marker box entirely, regardless
     // of list-style-type/image. Otherwise (css-lists-3 §3.3) a non-normal `content` generates the
@@ -122,8 +110,7 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
     RefPtr styleImage = style.listStyleImage().tryStyleImage();
     auto hasListStyle = !style.listStyleType().isNone() || (styleImage && !styleImage->errorOccurred());
     if ((markerContentEnabled && newStyle.content().isNone()) || (!markerHasContent && !hasListStyle)) {
-        if (auto* marker = listItemRenderer.markerRenderer())
-            m_builder.destroy(*marker);
+        destroyExistingMarker();
         return;
     }
 
@@ -131,27 +118,33 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
     // excluded and attaches directly to the list item, while an inside one is ordinary inline content that needs an
     // anonymous block when the list item's other children are block level. Only attach() makes that call, and it is not
     // consulted when the marker's parent happens to be unchanged, so rebuild rather than patch the placement in place.
-    if (auto* markerRenderer = listItemRenderer.markerRenderer(); markerRenderer && markerRenderer->style().listStylePosition() != newStyle.listStylePosition())
+    auto shouldBuildInlineMarker = newStyle.listStylePosition() == ListStylePosition::Inside;
+
+    if (CheckedPtr inlineMarker = listItemRenderer.markerRenderer(); inlineMarker && !listItemRenderer.markerBox()) {
+        auto contentChanged = inlineMarker->style().content() != newStyle.content();
+        if (shouldBuildInlineMarker && !contentChanged) {
+            adjustStyleForInlineMarker(newStyle);
+            inlineMarker->setStyle(WTF::move(newStyle));
+            m_builder.addListItemNeedingMarkerUpdate(listItemRenderer);
+            return;
+        }
+        m_builder.destroyAndCleanUpAnonymousWrappers(*inlineMarker, { });
+    }
+
+    if (auto* markerRenderer = listItemRenderer.markerBox(); markerRenderer && markerRenderer->style().listStylePosition() != newStyle.listStylePosition())
         m_builder.destroyAndCleanUpAnonymousWrappers(*markerRenderer, { });
 
-    if (auto* markerRenderer = listItemRenderer.markerRenderer()) {
-        // Whether the marker box holds inline content depends on `content` and on list-style-type
-        // (only text markers with right-to-left content need it). The container also inherits
-        // unicode-bidi, so rebuild on that too, to carry the new value into it.
-        auto contentChanged = markerRenderer->style().content() != newStyle.content() || markerRenderer->style().unicodeBidi() != newStyle.unicodeBidi() || markerRenderer->style().listStyleType() != newStyle.listStyleType();
+    if (auto* markerRenderer = listItemRenderer.markerBox()) {
+        auto contentChanged = markerRenderer->style().content() != newStyle.content() || markerRenderer->style().unicodeBidi() != newStyle.unicodeBidi()
+            || markerRenderer->style().listStyleType() != newStyle.listStyleType() || markerRenderer->style().listStyleImage() != newStyle.listStyleImage();
         markerRenderer->setStyle(WTF::move(newStyle));
         // list-style-type, the counter style it resolves to and the writing mode all decide the marker's text.
         m_builder.addListItemNeedingMarkerUpdate(listItemRenderer);
 
-        // Recomputing this here rather than diffing the style properties it is made of also picks up
-        // what is not the marker's own style: its direction, and what the document's counter style
-        // registry currently resolves list-style-type to.
-        auto needsContentContainer = markerRenderer->needsContentContainer();
-        if (contentChanged || needsContentContainer != !!markerRenderer->contentContainer()) {
+        if (contentChanged) {
             if (auto* existingContainer = markerRenderer->contentContainer())
                 m_builder.destroy(*existingContainer);
-            if (needsContentContainer)
-                buildMarkerContentRenderers(*markerRenderer);
+            buildMarkerContentRenderers(*markerRenderer);
         } else if (auto* container = markerRenderer->contentContainer()) {
             // Content unchanged but other style changed: refresh the generated image/quote children
             // (RenderText/RenderCounter are handled by propagateStyleToAnonymousChildren on setStyle).
@@ -167,9 +160,6 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
         markerRenderer->setIsExcludedFromNormalLayout(false);
         if (!searchResult.parent) {
             if (currentParent->isAnonymousBlock()) {
-                // For outside markers, if the search failed because a flex/grid container blockified a replaced
-                // child (e.g., <img>), we should collapse the anonymous block's height so it doesn't inflate the list item.
-                markerRenderer->setShouldCollapseAnonymousBlockParent(searchResult.shouldCollapseAnonymousBlockParent);
                 // If the marker is currently contained inside an anonymous box, we are the only item in that anonymous box
                 // since no line box parent was found. It's ok to just leave the marker where it is in this case.
                 return;
@@ -193,34 +183,73 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
         return;
     }
 
-    RenderPtr<RenderListMarker> newMarkerRenderer = WebCore::createRenderer<RenderListMarker>(listItemRenderer, WTF::move(newStyle));
+    if (shouldBuildInlineMarker) {
+        buildInlineMarker(listItemRenderer, WTF::move(newStyle));
+        return;
+    }
+
+    RenderPtr<RenderListOutsideMarker> newMarkerRenderer = WebCore::createRenderer<RenderListOutsideMarker>(listItemRenderer, WTF::move(newStyle));
     newMarkerRenderer->initializeStyle();
     m_builder.addListItemNeedingMarkerUpdate(listItemRenderer);
     listItemRenderer.setMarkerRenderer(*newMarkerRenderer);
     auto searchResult = parentCandidateForMarker(listItemRenderer, *newMarkerRenderer);
-    auto shouldCollapseAnonymousBlockParent = !searchResult.parent && !newMarkerRenderer->isInside() && searchResult.shouldCollapseAnonymousBlockParent;
     if (!searchResult.parent) {
         searchResult.parent = &listItemRenderer;
         if (auto* multiColumnFlow = listItemRenderer.multiColumnFlow())
             searchResult.parent = multiColumnFlow;
     }
     m_builder.attach(*searchResult.parent, WTF::move(newMarkerRenderer), firstNonMarkerChild(*searchResult.parent));
-    // For outside markers, if the search failed because a flex/grid container blockified a replaced
-    // child (e.g., <img>), we should collapse the anonymous block's height so it doesn't inflate the list item.
-    listItemRenderer.markerRenderer()->setShouldCollapseAnonymousBlockParent(shouldCollapseAnonymousBlockParent);
 
-    if (listItemRenderer.markerRenderer()->needsContentContainer())
-        buildMarkerContentRenderers(*listItemRenderer.markerRenderer());
+    buildMarkerContentRenderers(*listItemRenderer.markerBox());
 }
 
-void RenderTreeBuilder::List::buildMarkerContentRenderers(RenderListMarker& marker)
+static CheckedRef<RenderBlock> parentForInlineMarker(RenderListItem& listItemRenderer, const RenderInline& marker)
 {
-    ASSERT(marker.needsContentContainer());
+    if (CheckedPtr firstChild = dynamicDowncast<RenderBlock>(firstNonMarkerChild(listItemRenderer)); firstChild && !firstChild->isAnonymous())
+        return listItemRenderer;
+    auto firstFormattedLineRoot = RenderListItem::firstFormattedLineRootFor(listItemRenderer, marker);
+    if (firstFormattedLineRoot.parent)
+        return *firstFormattedLineRoot.parent;
+    return listItemRenderer;
+}
+
+void RenderTreeBuilder::List::buildInlineMarker(RenderListItem& listItemRenderer, Style::ComputedStyle&& markerStyle)
+{
+    adjustStyleForInlineMarker(markerStyle);
+    auto newMarker = WebCore::createRenderer<RenderInline>(RenderObject::Type::Inline, listItemRenderer.document(), WTF::move(markerStyle));
+    newMarker->initializeStyle();
+    CheckedRef marker = *newMarker;
+    CheckedRef markerParent = parentForInlineMarker(listItemRenderer, marker.get());
+    m_builder.attach(markerParent.get(), WTF::move(newMarker), firstNonMarkerChild(markerParent.get()));
+    listItemRenderer.setMarkerRenderer(marker.get());
+    // What the marker shows is only known once counter values resolve, so leave it to the builder to fill in when the
+    // tree is done changing, the same way the marker box's content is filled in.
+    m_builder.addListItemNeedingMarkerUpdate(listItemRenderer);
+
+    if (marker->style().content().isData()) {
+        RenderTreeUpdater::GeneratedContent::createContentRenderers(m_builder, marker.get(), marker->style(), PseudoElementType::Marker);
+        return;
+    }
+
+    // css-lists-3 §3.3: a list-style-image draws in place of the counter style's text, as an image of its own.
+    if (RefPtr styleImage = marker->style().listStyleImage().tryStyleImage(); styleImage && !styleImage->errorOccurred()) {
+        auto imageRenderer = WebCore::createRenderer<RenderImage>(RenderObject::Type::Image, listItemRenderer.document(), Style::ComputedStyle::createStyleInheritingFromPseudoStyle(marker->style()), styleImage.get());
+        imageRenderer->initializeStyle();
+        m_builder.attach(marker.get(), WTF::move(imageRenderer));
+        return;
+    }
+
+    auto textRenderer = WebCore::createRenderer<RenderText>(RenderObject::Type::Text, listItemRenderer.document(), emptyString());
+    m_builder.attach(marker.get(), WTF::move(textRenderer));
+}
+
+void RenderTreeBuilder::List::buildMarkerContentRenderers(RenderListOutsideMarker& marker)
+{
     ASSERT(!marker.contentContainer());
 
     // css-lists-3 §3.3 generates the marker contents "exactly as for ::before": an anonymous
     // inline-block box holding the content list (strings, images, counters, quotes). The marker
-    // (RenderListMarker) lays this box out and paints it as a single atomic inline.
+    // (RenderListOutsideMarker) lays this box out and paints it as a single atomic inline.
     auto containerStyle = Style::ComputedStyle::createAnonymousStyleWithDisplay(marker.style(), Style::DisplayType::InlineFlowRoot);
     auto newContainer = WebCore::createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, marker.document(), WTF::move(containerStyle));
     newContainer->initializeStyle();
@@ -228,9 +257,17 @@ void RenderTreeBuilder::List::buildMarkerContentRenderers(RenderListMarker& mark
     m_builder.attach(marker, WTF::move(newContainer));
 
     if (!marker.hasContentProperty()) {
+        // css-lists-3 §3.3: a list-style-image draws in place of the counter style's text, as an image of its own.
+        if (RefPtr styleImage = marker.style().listStyleImage().tryStyleImage(); styleImage && !styleImage->errorOccurred()) {
+            auto imageRenderer = WebCore::createRenderer<RenderImage>(RenderObject::Type::Image, marker.document(), Style::ComputedStyle::createStyleInheritingFromPseudoStyle(marker.style()), styleImage.get());
+            imageRenderer->initializeStyle();
+            m_builder.attach(container.get(), WTF::move(imageRenderer));
+            return;
+        }
+
         // list-style-type text that needs renderers of its own, so inline layout can bidi-resolve it.
         // The text itself is only known once counter values resolve, so start empty and let
-        // RenderListMarker::updateContent() fill it in at layout time.
+        // RenderListOutsideMarker::updateContent() fill it in at layout time.
         auto textRenderer = WebCore::createRenderer<RenderText>(RenderObject::Type::Text, marker.document(), emptyString());
         m_builder.attach(container.get(), WTF::move(textRenderer));
         return;

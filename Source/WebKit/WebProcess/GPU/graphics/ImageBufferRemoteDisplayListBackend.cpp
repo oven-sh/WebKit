@@ -26,29 +26,30 @@
 #include "config.h"
 #include "ImageBufferRemoteDisplayListBackend.h"
 
-#include <WebCore/NativeImage.h>
+#include <WebCore/PixelBuffer.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferRemoteDisplayListBackend);
 
-std::unique_ptr<ImageBufferRemoteDisplayListBackend> ImageBufferRemoteDisplayListBackend::create(const Parameters& parameters)
+std::unique_ptr<ImageBufferRemoteDisplayListBackend> ImageBufferRemoteDisplayListBackend::create(const WebCore::ImageBufferParameters& parameters)
 {
     return std::unique_ptr<ImageBufferRemoteDisplayListBackend> { new ImageBufferRemoteDisplayListBackend { parameters } };
 }
 
-ImageBufferRemoteDisplayListBackend::ImageBufferRemoteDisplayListBackend(const Parameters& parameters)
-    : WebCore::NullImageBufferBackend(parameters)
+ImageBufferRemoteDisplayListBackend::ImageBufferRemoteDisplayListBackend(const WebCore::ImageBufferParameters& parameters)
+    : ImageBufferBackend(parameters)
 {
 }
 
 ImageBufferRemoteDisplayListBackend::~ImageBufferRemoteDisplayListBackend() = default;
 
-RefPtr<NativeImage> ImageBufferRemoteDisplayListBackend::createNativeImageReference()
+void ImageBufferRemoteDisplayListBackend::getPixelBuffer(const IntRect&, PixelBuffer& destination)
 {
-    return nullptr;
+    destination.zeroFill();
 }
 
 String ImageBufferRemoteDisplayListBackend::debugDescription() const
@@ -58,4 +59,4 @@ String ImageBufferRemoteDisplayListBackend::debugDescription() const
     return stream.release();
 }
 
-} // namespace WebCore
+} // namespace WebKit

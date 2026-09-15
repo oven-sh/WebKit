@@ -56,6 +56,9 @@ JITPlan::JITPlan(JITCompilationMode mode, CodeBlock* codeBlock)
     , m_codeBlock(codeBlock)
     , m_signpostMessage(signpostMessage())
 {
+    ASSERT(!isCompilationThread());
+    // Every plan is created on the mutator; the block it will read on a compiler thread is completed here at the latest.
+    codeBlock->baselineAlternative()->prepareLazyStateForConcurrentCompilation();
     m_vm->changeNumberOfActiveJITPlans(1);
 }
 

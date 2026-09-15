@@ -67,6 +67,7 @@
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
 #include "NativeCallee.h"
+#include "OSCheck.h"
 #include "ObjectConstructor.h"
 #include "ParserError.h"
 #include "ProfilerDatabase.h"
@@ -203,6 +204,64 @@ struct MemoryFootprint {
 #define PATH_MAX 4096
 #endif
 
+#if defined(BUN_ICU_ZSTD)
+// The ICU data the release lanes bundle is repacked with a zstd frame per item (icu/compress-data.ts), and their ICU
+// calls this hook, which it declares weak, on every item it loads (icu/udata-decompress-hook.patch). Bun defines it
+// (src/jsc/bindings/bun_icu_decompress.cpp); this is the same thing for the shell. The items of icu/keep-raw.txt keep
+// their ICU header and pass through after one compare; a decompressed item is kept for the life of the process.
+#define ZSTD_STATIC_LINKING_ONLY
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
+#include <zstd.h>
+
+extern "C" const unsigned char bun_icu_zstd_dict[];
+extern "C" const unsigned bun_icu_zstd_dict_size;
+
+extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
+{
+    // A raw item has 0xda 0x27 at bytes 2 and 3 (ucmndata.h), so its first word is never zstd's magic number.
+    uint32_t magic;
+    if (!item)
+        return item;
+    memcpy(&magic, item, sizeof(magic));
+    if (magic != ZSTD_MAGICNUMBER) [[likely]]
+        return item;
+
+    static Lock lock;
+    static NeverDestroyed<HashMap<const void*, void*>> cache;
+    static ZSTD_DCtx* context = ZSTD_createDCtx();
+    static ZSTD_DDict* dictionary = bun_icu_zstd_dict_size ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size) : nullptr;
+
+    Locker locker { lock };
+    size_t bound = *length > 0 ? static_cast<size_t>(*length) : 1u << 20;
+    size_t compressedSize = ZSTD_findFrameCompressedSize(item, bound);
+    if (ZSTD_isError(compressedSize))
+        return item;
+    unsigned long long size = ZSTD_getFrameContentSize(item, compressedSize);
+    if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR)
+        return item;
+
+    if (void* cached = cache->get(item)) {
+        *length = static_cast<int32_t>(size);
+        return cached;
+    }
+
+    void* buffer = fastMalloc(roundUpToMultipleOf<16>(static_cast<size_t>(size)));
+    size_t result = dictionary
+        ? ZSTD_decompress_usingDDict(context, buffer, size, item, compressedSize, dictionary)
+        : ZSTD_decompressDCtx(context, buffer, size, item, compressedSize);
+    if (ZSTD_isError(result)) {
+        fastFree(buffer);
+        return item;
+    }
+    cache->add(item, buffer);
+    *length = static_cast<int32_t>(size);
+    return buffer;
+}
+#endif // defined(BUN_ICU_ZSTD)
+
 using namespace JSC;
 
 namespace {
@@ -329,6 +388,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionPrintStdOut);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateBytecodeCacheFile);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCacheFor);
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinFromBytecodeCache);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionEvalTwiceFromTransientBytecodeCache);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinBytecodeSize);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdErr);
@@ -695,6 +757,9 @@ private:
         addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
         addFunction(vm, "bytecodeCacheFor"_s, functionBytecodeCacheFor, 2);
         addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
+#if USE(BUN_JSC_ADDITIONS)
+        addFunction(vm, "evalTwiceFromTransientBytecodeCache"_s, functionEvalTwiceFromTransientBytecodeCache, 1);
+#endif
         addFunction(vm, "builtinBytecodeSize"_s, functionBuiltinBytecodeSize, 2);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
         addFunction(vm, "describe"_s, functionDescribe, 1);
@@ -1014,6 +1079,7 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
     &shouldInterruptScriptBeforeTimeout,
+    nullptr, // moduleTypeIsAllowed
     &moduleLoaderImportModule,
     &moduleLoaderResolve,
     &moduleLoaderFetch,
@@ -1148,7 +1214,7 @@ static URL absoluteFileURL(const String& fileName)
     return URL(directoryName, fileName);
 }
 
-JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader*, JSString* moduleNameValue, RefPtr<ScriptFetchParameters> fetchParams, const SourceOrigin& sourceOrigin, bool deferred)
+JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSModuleLoader* loader, JSString* moduleNameValue, RefPtr<ScriptFetchParameters> fetchParams, const SourceOrigin& sourceOrigin, bool deferred)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1171,9 +1237,9 @@ JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, 
 
     auto referrerKey = Identifier::fromString(vm, referrer.string());
 #if USE(BUN_JSC_ADDITIONS)
-    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey));
+    auto* result = loader->requestImportModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred, loader->asyncEvaluationOrderForKey(referrerKey));
 #else
-    auto* result = JSC::importModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
+    auto* result = loader->requestImportModule(globalObject, Identifier::fromString(vm, specifier), referrerKey, WTF::move(fetchParams), nullptr, deferred);
 #endif
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();
@@ -1196,8 +1262,14 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     auto resolvePath = [&] (const URL& directoryURL) -> Identifier {
         String specifier = key.impl();
         auto filePrefix = "file://"_s;
+#if OS(WINDOWS)
+        // Bun: file:///D:/x is D:\x. With "file://" cut off it is "/D:/x", which isAbsolutePath() does not take for one.
+        if (specifier.startsWith(filePrefix))
+            specifier = URL({ }, specifier).fileSystemPath();
+#else
         if (specifier.startsWith(filePrefix))
             specifier = specifier.substringSharingImpl(filePrefix.length());
+#endif
 
         bool specifierIsAbsolute = isAbsolutePath(specifier);
         if (!specifierIsAbsolute && !isDottedRelativePath(specifier)) {
@@ -1311,18 +1383,18 @@ static bool fillBufferWithContentsOfFile(const String& fileName, Vector<char>& b
         fprintf(stderr, "Error when parsing file name: %s\n", fileName.ascii().data());
         return false;
     }
-    if (stat(fileNameUTF->data(), &statBuf) == -1) {
-        fprintf(stderr, "Could not open file: %s\n", fileNameUTF->data());
+    if (FileSystem::statFile(fileNameUTF->spanIncludingNullTerminator(), statBuf) == -1) {
+        SAFE_FPRINTF(stderr, "Could not open file: %s\n", *fileNameUTF);
         return false;
     }
 
     if ((statBuf.st_mode & S_IFMT) != S_IFREG) {
-        fprintf(stderr, "Trying to open a non-file: %s\n", fileNameUTF->data());
+        SAFE_FPRINTF(stderr, "Trying to open a non-file: %s\n", *fileNameUTF);
         return false;
     }
-    auto* f = fopen(fileNameUTF->data(), "rb");
+    auto* f = fopen(fileNameUTF->characters(), "rb");
     if (!f) {
-        fprintf(stderr, "Could not open file: %s\n", fileNameUTF->data());
+        SAFE_FPRINTF(stderr, "Could not open file: %s\n", *fileNameUTF);
         return false;
     }
 
@@ -1492,17 +1564,16 @@ static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
     // directory separators as it disables all string parsing on names.
     fileName = makeStringByReplacingAll(fileName, '/', '\\');
     auto pathName = makeString("\\\\?\\"_s, fileName).wideCharacters();
-    struct _stat status { };
-    if (_wstat(pathName.span().data(), &status))
-        return false;
-    if ((status.st_mode & S_IFMT) != S_IFREG)
+    // Bun: not _wstat(). The CRT's stat rejects a path with a '?' in it as a wildcard, which every \\?\ path has.
+    DWORD attributes = GetFileAttributesW(pathName.span().data());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
         return false;
 
     FILE* f = _wfopen(pathName.span().data(), L"rb");
 #else
     auto pathName = fileName.utf8();
     struct stat status { };
-    if (stat(pathName.data(), &status))
+    if (FileSystem::statFile(pathName.spanIncludingNullTerminator(), status))
         return false;
     if ((status.st_mode & S_IFMT) != S_IFREG)
         return false;
@@ -1617,7 +1688,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 
 #endif // ENABLE(FUZZILLI)
 
-static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<CString, UTF8ConversionError> expectedString)
+static UTF8CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<UTF8CString, UTF8ConversionError> expectedString)
 {
     if (expectedString)
         return expectedString.value();
@@ -1633,7 +1704,7 @@ static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::e
     return { };
 }
 
-template<typename T> static CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, T& string)
+template<typename T> static UTF8CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, T& string)
 {
     return toCString(globalObject, scope, string.tryGetUTF8());
 }
@@ -1863,6 +1934,68 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), globalObject)));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// evalTwiceFromTransientBytecodeCache(sourceText) — what an embedder handing JSC a caller-owned buffer does (a bare span:
+// no destructor, not persistent; e.g. node:vm's cachedData): encode sourceText as a program, decode its code block from a
+// copy of the bytes JSC merely borrows, evaluate it, then scribble over and free the copy and evaluate the same decoded
+// block again in a fresh realm. Nothing the block still owns may point into the buffer. Returns [firstResult, secondResult].
+JSC_DEFINE_HOST_FUNCTION(functionEvalTwiceFromTransientBytecodeCache, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    URL url { "file:///evalTwiceFromTransientBytecodeCache.js"_s };
+    SourceCode source = makeSource(text, SourceOrigin { url }, SourceTaintedOrigin::Untainted, url.string(), TextPosition(), SourceProviderSourceType::Program);
+    RefPtr<CachedBytecode> generated;
+    {
+        FileSystem::FileHandle inMemory;
+        BytecodeCacheError error;
+        generated = generateProgramBytecode(vm, source, inMemory, error);
+        if (error.isValid())
+            return throwVMError(globalObject, scope, error.message());
+        if (!generated)
+            return throwVMError(globalObject, scope, "no bytecode generated"_s);
+    }
+    size_t size = generated->size();
+    auto* transient = static_cast<uint8_t*>(fastMalloc(size));
+    memcpySpan(std::span { transient, size }, generated->span());
+    generated = nullptr;
+
+    UnlinkedProgramCodeBlock* block = decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, sourceCodeKeyForSerializedProgram(vm, source), CachedBytecode::create(std::span { transient, size }, nullptr, { }));
+    if (!block) {
+        fastFree(transient);
+        return throwVMError(globalObject, scope, "decode rejected the payload"_s);
+    }
+    MarkedArgumentBuffer keepAlive; // evaluate() roots neither the block between calls nor `first`
+    keepAlive.append(block);
+    NakedPtr<Exception> exception;
+    JSValue first = evaluate(globalObject, source, block, JSValue(), exception);
+    memset(transient, 0xbe, size);
+    fastFree(transient);
+    if (exception) {
+        scope.throwException(globalObject, exception);
+        return { };
+    }
+    keepAlive.append(first);
+    // A fresh realm, so the second link clones the block's SymbolTable constants afresh instead of reusing the first realm's clones (JSGlobalObject::symbolTableCache).
+    GlobalObject* realm = GlobalObject::create(vm, GlobalObject::createStructure(vm, jsNull()), Vector<String>());
+    JSValue second = evaluate(realm, source, block, JSValue(), exception);
+    if (exception) {
+        scope.throwException(globalObject, exception);
+        return { };
+    }
+    keepAlive.append(second);
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    array->putDirectIndex(globalObject, 0, first);
+    RETURN_IF_EXCEPTION(scope, { });
+    array->putDirectIndex(globalObject, 1, second);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(array);
+}
+#endif
 
 // builtinBytecodeSize(source, depth) — bytes encodeBuiltinFunction produces for a builtin created from `source`.
 JSC_DEFINE_HOST_FUNCTION(functionBuiltinBytecodeSize, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -4105,7 +4238,7 @@ static void dumpException(GlobalObject* globalObject, JSValue exception)
         if (stackString.length()) {
             auto expectedUtf8 = stackString.tryGetUTF8();
             if (expectedUtf8)
-                printf("%s\n", expectedUtf8.value().data());
+                SAFE_PRINTF("%s\n", expectedUtf8.value());
         }
     }
 
@@ -4916,7 +5049,8 @@ int jscmain(int argc, char** argv)
     WTF::initializeMainThread();
 
     // Match the QoS of the WebKit WebContent process.
-    WTF::Thread::setCurrentThreadIsUserInteractive(-1);
+    if constexpr (isDarwin())
+        WTF::Thread::setCurrentThreadIsUserInteractive(-1);
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.

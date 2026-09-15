@@ -114,14 +114,14 @@ struct FontDescriptionKey {
         : m_size(description.usedSize())
         , m_fontSelectionRequest(description.fontSelectionRequest())
         , m_flags(makeFlagsKey(description))
-        , m_locale(description.computedLocale())
+        , m_locale(description.usedLocale())
     {
         auto featureSettings = description.featureSettings();
         auto variationSettings = description.variationSettings();
         auto variantAlternates = description.variantAlternates();
         auto fontPalette = description.fontPalette();
         auto fontSizeAdjust = description.fontSizeAdjust();
-        if (!featureSettings.isEmpty() || !variationSettings.isEmpty() || !variantAlternates.isNormal() || fontPalette.type != FontPalette::Type::Normal || !fontSizeAdjust.isNone())
+        if (!featureSettings.isEmpty() || !variationSettings.isEmpty() || !variantAlternates.isNormal() || !fontPalette.isNormal() || !fontSizeAdjust.isNone())
             lazyInitialize(m_rareData, FontDescriptionKeyRareData::create(WTF::move(featureSettings), WTF::move(variationSettings), WTF::move(variantAlternates), WTF::move(fontPalette), WTF::move(fontSizeAdjust)));
     }
 

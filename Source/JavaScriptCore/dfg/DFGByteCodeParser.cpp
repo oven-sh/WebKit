@@ -78,6 +78,7 @@
 #include "JSIteratorHelper.h"
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
+#include "ModuleProgramExecutable.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
@@ -541,6 +542,7 @@ private:
     void handlePutAccessorById(NodeType, Bytecode);
     template <typename Bytecode>
     void handlePutAccessorByVal(NodeType, Bytecode);
+    bool handleUnmaterializedFunctionExecutable(FunctionExecutable*, VirtualRegister dst);
     template <typename Bytecode>
     void handleNewFunc(NodeType, Bytecode);
     template <typename Bytecode>
@@ -1111,7 +1113,7 @@ private:
         CodeOrigin semantic = m_currentSemanticOrigin.isSet() ? m_currentSemanticOrigin : currentCodeOrigin();
         CodeOrigin forExit = m_currentExitOrigin.isSet() ? m_currentExitOrigin : currentCodeOrigin();
 
-        return NodeOrigin(semantic, forExit, m_exitOK);
+        return NodeOrigin(WTF::move(semantic), WTF::move(forExit), m_exitOK);
     }
     
     BranchData* branchData(unsigned taken, unsigned notTaken)
@@ -10419,7 +10421,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             ResolveType resolveType;
             unsigned depth;
             JSScope* constantScope = nullptr;
-            JSCell* lexicalEnvironment = nullptr;
+            unsigned moduleImportSlot = 0;
             SymbolTable* symbolTable = nullptr;
             {
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
@@ -10435,7 +10437,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     constantScope = metadata.m_constantScope.get();
                     break;
                 case ModuleVar:
-                    lexicalEnvironment = metadata.m_lexicalEnvironment.get();
+                    moduleImportSlot = metadata.m_moduleImportSlot;
+                    if (auto* moduleProgramExecutable = dynamicDowncast<ModuleProgramExecutable>(m_inlineStackTop->executable()->topLevelExecutable()))
+                        symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
                     break;
                 case ResolvedClosureVar:
                 case ClosureVar:
@@ -10478,11 +10482,30 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 break;
             }
             case ModuleVar: {
-                // Module environment is already strongly referenced by the CodeBlock.
-                set(bytecode.m_dst, weakJSConstant(lexicalEnvironment));
-                // BytecodeUseDef reports m_scope as a use regardless of resolve type,
-                // so we need to keep it OSR-available even though LLInt won't read it.
-                addToGraph(Phantom, get(bytecode.m_scope));
+                // The exporting environment is the importing module environment's import
+                // slot `depth` scopes up. With one importing environment (its symbol
+                // table's singleton) the filled slot is a constant; otherwise it is a
+                // closure-variable-like load that Graph::tryGetConstantClosureVar can still
+                // fold once the scope is known. An empty slot exits to the baseline slow
+                // path, which fills it.
+                Node* localBase = get(bytecode.m_scope);
+                addToGraph(Phantom, localBase);
+                if (symbolTable) {
+                    if (JSScope* scope = symbolTable->singleton().inferredValue()) {
+                        if (JSModuleEnvironment* exporter = uncheckedDowncast<JSModuleEnvironment>(scope)->importSlot(moduleImportSlot - JSModuleEnvironment::importSlotScopeOffset(symbolTable, 0).offset()).get()) {
+                            m_graph.watchpoints().addLazily(m_graph, symbolTable);
+                            set(bytecode.m_dst, weakJSConstant(exporter));
+                            break;
+                        }
+                    }
+                }
+                for (unsigned n = depth; n--;)
+                    localBase = addToGraph(SkipScope, localBase);
+                Node* exporter = addToGraph(GetClosureVar, OpInfo(moduleImportSlot), OpInfo(SpecObjectOther), localBase);
+                // Empty (not filled yet: exit and let the baseline slow path fill it) or the exporting
+                // JSModuleEnvironment; get_from_scope's KnownCellUse of this scope relies on nothing else being stored there.
+                addToGraph(CheckNotEmpty, exporter);
+                set(bytecode.m_dst, exporter);
                 break;
             }
             case ResolvedClosureVar:
@@ -11817,10 +11840,24 @@ void ByteCodeParser::handlePutAccessorByVal(NodeType op, Bytecode bytecode)
     addToGraph(op, OpInfo(bytecode.m_attributes), base, subscript, accessor);
 }
 
+// CodeBlock::prepareLazyStateForConcurrentCompilation() created every FunctionExecutable of a block this thread parses
+// (Options::useLazyFunctionExecutables()); one cannot be created here, so a hole is an OSR exit rather than a crash.
+bool ByteCodeParser::handleUnmaterializedFunctionExecutable(FunctionExecutable* executable, VirtualRegister dst)
+{
+    if (executable) [[likely]]
+        return false;
+    ASSERT_NOT_REACHED_WITH_MESSAGE("compiling a CodeBlock whose FunctionExecutables were not materialized by the mutator");
+    addToGraph(ForceOSRExit);
+    set(dst, addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+    return true;
+}
+
 template <typename Bytecode>
 void ByteCodeParser::handleNewFunc(NodeType op, Bytecode bytecode)
 {
-    FunctionExecutable* decl = m_inlineStackTop->m_profiledBlock->functionDecl(bytecode.m_functionDecl);
+    FunctionExecutable* decl = m_inlineStackTop->m_profiledBlock->functionDeclIfMaterialized(bytecode.m_functionDecl);
+    if (handleUnmaterializedFunctionExecutable(decl, bytecode.m_dst)) [[unlikely]]
+        return;
     FrozenValue* frozen = m_graph.freezeStrong(decl);
     Node* scope = get(bytecode.m_scope);
     set(bytecode.m_dst, addToGraph(op, OpInfo(frozen), scope));
@@ -11837,7 +11874,9 @@ void ByteCodeParser::handleNewFunc(NodeType op, Bytecode bytecode)
 template <typename Bytecode>
 void ByteCodeParser::handleNewFuncExp(NodeType op, Bytecode bytecode)
 {
-    FunctionExecutable* expr = m_inlineStackTop->m_profiledBlock->functionExpr(bytecode.m_functionDecl);
+    FunctionExecutable* expr = m_inlineStackTop->m_profiledBlock->functionExprIfMaterialized(bytecode.m_functionDecl);
+    if (handleUnmaterializedFunctionExecutable(expr, bytecode.m_dst)) [[unlikely]]
+        return;
     FrozenValue* frozen = m_graph.freezeStrong(expr);
     Node* scope = get(bytecode.m_scope);
     set(bytecode.m_dst, addToGraph(op, OpInfo(frozen), scope));

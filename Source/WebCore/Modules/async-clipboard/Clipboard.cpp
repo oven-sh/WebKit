@@ -263,7 +263,7 @@ void Clipboard::getType(ClipboardItem& item, const String& type, Ref<DeferredPro
         return;
     }
 
-    if (type == "image/png"_s) {
+    if (type == "image/png"_s || type == imageSVGContentTypeAtom()) {
         ClipboardImageReader imageReader { frame->document(), type };
         activePasteboard().read(imageReader, itemIndex);
         auto imageBlob = imageReader.takeResult();
@@ -291,17 +291,6 @@ void Clipboard::getType(ClipboardItem& item, const String& type, Ref<DeferredPro
         WebContentMarkupReader markupReader { *frame };
         activePasteboard().read(markupReader, WebContentReadingPolicy::OnlyRichTextTypes, itemIndex);
         resultAsString = markupReader.takeMarkup();
-    }
-
-    if (type == imageSVGContentTypeAtom()) {
-        ClipboardImageReader imageReader { frame->document(), type };
-        activePasteboard().read(imageReader, itemIndex);
-        auto imageBlob = imageReader.takeResult();
-        if (updateSessionValidity() == SessionIsValid::Yes && imageBlob)
-            promise->resolve<IDLInterface<Blob>>(imageBlob.releaseNonNull());
-        else
-            promise->reject(ExceptionCode::NotAllowedError);
-        return;
     }
 
     // FIXME: Support reading custom data.
@@ -434,7 +423,7 @@ void Clipboard::ItemWriter::didSetAllData()
 
     Vector<PasteboardCustomData> customData;
     customData.reserveInitialCapacity(dataToWrite.size());
-    for (auto data : dataToWrite) {
+    for (auto&& data : WTF::move(dataToWrite)) {
         if (!data) {
             reject();
             return;
@@ -456,7 +445,7 @@ void Clipboard::ItemWriter::didSetAllData()
             }
         }
 
-        customData.append(*data);
+        customData.append(WTF::move(*data));
     }
 
     m_pasteboard->writeCustomData(WTF::move(customData), PasteboardWriteType::AsyncClipboard);

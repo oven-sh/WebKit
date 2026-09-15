@@ -3589,20 +3589,27 @@ void LOLJIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar)
-        loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), destGPR);
-    else if (profiledResolveType == ClosureVar) {
-        move(scopeGPR, destGPR);
+    if (profiledResolveType == ClosureVar || profiledResolveType == ModuleVar) {
+        // ModuleVar walks in the scratch register: its slow case needs scopeGPR, which destGPR may alias.
+        GPRReg walkGPR = profiledResolveType == ModuleVar ? metadataGPR : destGPR;
+        move(scopeGPR, walkGPR);
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
         if (localScopeDepth < 8) {
             for (unsigned index = 0; index < localScopeDepth; ++index)
-                loadPtr(Address(destGPR, JSScope::offsetOfNext()), destGPR);
+                loadPtr(Address(walkGPR, JSScope::offsetOfNext()), walkGPR);
         } else {
             ASSERT(localScopeDepth >= 8);
             load32FromMetadata(bytecode, Metadata::offsetOfLocalScopeDepth(), s_scratch);
             auto loop = label();
-            loadPtr(Address(destGPR, JSScope::offsetOfNext()), destGPR);
+            loadPtr(Address(walkGPR, JSScope::offsetOfNext()), walkGPR);
             branchSub32(NonZero, s_scratch, TrustedImm32(1), s_scratch).linkTo(loop, this);
+        }
+        if (profiledResolveType == ModuleVar) {
+            // See JIT::emit_op_resolve_scope.
+            unsigned moduleImportSlot = bytecode.metadata(m_profiledCodeBlock).m_moduleImportSlot;
+            loadPtr(Address(walkGPR, JSLexicalEnvironment::offsetOfVariables() + moduleImportSlot * sizeof(WriteBarrier<Unknown>)), walkGPR);
+            addSlowCase(branchIfEmpty(walkGPR));
+            move(walkGPR, destGPR);
         }
     } else {
         // Inlined fast path for common types.
@@ -3653,7 +3660,7 @@ void LOLJIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
                 code = vm().getCTIStub(generateOpResolveScopeThunk<GlobalVar>);
 
 
-            // TODO: We should teach RegisterAllocator to always pick these registers when not one of the constant resolve types (e.g. ModuleVar).
+            // TODO: We should teach RegisterAllocator to always pick these registers when not one of the constant resolve types (e.g. GlobalVar).
             silentSpill(m_fastAllocator, allocations);
 
             if (metadataAddress.base != metadataGPR) {

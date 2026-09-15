@@ -2812,18 +2812,23 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
         bineq JSGlobalObject::m_globalLexicalBindingEpoch[globalObject], scratch, slowPath
     end
 
-    macro resolveScope()
+    # t0 := the scope m_localScopeDepth up from the scope register.
+    macro walkLocalScopeDepth()
         loadi OpResolveScope::Metadata::m_localScopeDepth[t5], t2
         get(m_scope, t0)
         loadq [cfr, t0, 8], t0
-        btiz t2, .resolveScopeLoopEnd
+        btiz t2, .walkLocalScopeDepthEnd
 
-    .resolveScopeLoop:
+    .walkLocalScopeDepthLoop:
         loadp JSScope::m_next[t0], t0
         subi 1, t2
-        btinz t2, .resolveScopeLoop
+        btinz t2, .walkLocalScopeDepthLoop
 
-    .resolveScopeLoopEnd:
+    .walkLocalScopeDepthEnd:
+    end
+
+    macro resolveScope()
+        walkLocalScopeDepth()
         return(t0)
     end
 
@@ -2849,7 +2854,13 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
 
 .rModuleVar:
     bineq t0, ModuleVar, .rGlobalPropertyWithVarInjectionChecks
-    returnConstantScope()
+    # The importing module environment (m_localScopeDepth up from the scope
+    # register) holds the exporting environment in an import slot; empty until filled.
+    walkLocalScopeDepth()
+    loadi OpResolveScope::Metadata::m_moduleImportSlot[t5], t1
+    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+    btqz t0, .rDynamic
+    return(t0)
 
 .rGlobalPropertyWithVarInjectionChecks:
     bineq t0, GlobalPropertyWithVarInjectionChecks, .rGlobalVarWithVarInjectionChecks

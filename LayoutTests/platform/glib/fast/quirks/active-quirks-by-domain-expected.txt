@@ -25,7 +25,7 @@ https://amazon.design/
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
 https://www.apple.com/
-    EnsureCaptionVisibilityInFullscreenAndPictureInPicture
+    (none)
 https://as.com/
     (none)
 https://www.att.com/
@@ -293,7 +293,7 @@ https://www.yahoo.com/
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
     ShouldPreventDispatchOfTouchEventQuirk
 https://news.ycombinator.com/
-    (none)
+    ShouldIgnoreTextAutoSizingQuirk
 https://ycombinator.com/
     (none)
 https://www.youtube.com/

@@ -48,7 +48,7 @@
 #include "RenderLayer.h"
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderTable.h"
 #include "RenderTheme.h"
@@ -148,7 +148,7 @@ bool RenderInline::mayAffectLayout() const
         || !WTF::holdsAlternative<CSS::Keyword::Baseline>(style().verticalAlign())
         || !style().textEmphasisStyle().isNone()
         || (checkFonts && (!parentStyle->fontCascade().metricsOfPrimaryFont().hasIdenticalAscentDescentAndLineGap(style().fontCascade().metricsOfPrimaryFont())
-        || parentStyle->lineHeight() != style().lineHeight()))
+        || parentStyle->textAutosizingAdjustedLineHeight() != style().textAutosizingAdjustedLineHeight()))
         || hasHardLineBreakChildOnly;
 
     if (!mayAffectLayout && checkFonts) {
@@ -157,7 +157,7 @@ bool RenderInline::mayAffectLayout() const
         auto& childStyle = firstLineStyle();
         mayAffectLayout = !parentStyle->fontCascade().metricsOfPrimaryFont().hasIdenticalAscentDescentAndLineGap(childStyle.fontCascade().metricsOfPrimaryFont())
             || !WTF::holdsAlternative<CSS::Keyword::Baseline>(childStyle.verticalAlign())
-            || parentStyle->lineHeight() != childStyle.lineHeight();
+            || parentStyle->textAutosizingAdjustedLineHeight() != childStyle.textAutosizingAdjustedLineHeight();
     }
     return mayAffectLayout;
 }
@@ -238,14 +238,6 @@ void RenderInline::absoluteQuads(Vector<FloatQuad>& quads, bool*) const
     AbsoluteQuadsGeneratorContext context(this, quads);
     generateLineBoxRects(context);
 }
-
-#if PLATFORM(IOS_FAMILY)
-void RenderInline::absoluteQuadsForSelection(Vector<FloatQuad>& quads) const
-{
-    AbsoluteQuadsGeneratorContext context(this, quads);
-    generateLineBoxRects(context);
-}
-#endif
 
 LayoutUnit RenderInline::offsetLeft() const
 {
@@ -681,21 +673,6 @@ const RenderElement* RenderInline::pushMappingToContainer(const RenderLayerModel
     return ancestorSkipped ? ancestorToStopAt : container;
 }
 
-void RenderInline::updateHitTestResult(HitTestResult& result, const LayoutPoint& point) const
-{
-    if (result.innerNode())
-        return;
-
-    LayoutPoint localPoint(point);
-    if (RefPtr node = nodeForHitTest()) {
-        result.setInnerNode(node.get());
-        if (!result.innerNonSharedNode())
-            result.setInnerNonSharedNode(node.get());
-        result.setPseudoElementIdentifier(style().pseudoElementIdentifier());
-        result.setLocalPoint(localPoint);
-    }
-}
-
 void RenderInline::deleteLegacyLineBoxes()
 {
     m_legacyLineBoxes.deleteLineBoxes();
@@ -805,21 +782,31 @@ void RenderInline::collectLineBoxRects(Vector<LayoutRect>& rects, const LayoutPo
     generateLineBoxRects(context);
 }
 
-bool isEmptyInline(const RenderInline& renderer)
+static RenderObject* firstContentfulChild(const RenderInline& renderer)
 {
     for (auto& current : childrenOfType<RenderObject>(renderer)) {
         if (current.isFloatingOrOutOfFlowPositioned())
             continue;
-        if (auto* text = dynamicDowncast<RenderText>(current)) {
-            if (!text->containsOnlyCollapsibleWhitespace())
-                return false;
+        if (auto* text = dynamicDowncast<RenderText>(current); text && text->containsOnlyCollapsibleWhitespace())
+            continue;
+        if (auto* renderInline = dynamicDowncast<RenderInline>(current)) {
+            if (auto* nested = firstContentfulChild(*renderInline))
+                return nested;
             continue;
         }
-        auto* renderInline = dynamicDowncast<RenderInline>(current);
-        if (!renderInline || !isEmptyInline(*renderInline))
-            return false;
+        return const_cast<RenderObject*>(&current);
     }
-    return true;
+    return { };
+}
+
+bool isEmptyInline(const RenderInline& renderer)
+{
+    return !firstContentfulChild(renderer);
+}
+
+RenderObject* firstContentfulChild(RenderInline& renderer)
+{
+    return firstContentfulChild(const_cast<const RenderInline&>(renderer));
 }
 
 bool RenderInline::requiresLayer() const

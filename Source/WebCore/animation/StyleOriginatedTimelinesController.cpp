@@ -415,15 +415,7 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
 
     if (!hasNamedTimeline) {
         ASSERT(allowsDeferral == AllowsDeferral::No);
-        // We don't have an active named timeline and yet we must set a timeline since
-        // we've already dealt with the deferral case before. There are two cases:
-        //     1. the name is within scope and we should create a placeholder inactive
-        //        scroll timeline, or,
-        //     2. the name is not within scope and the timeline is null.
-        if (relevantTimelineScopeElement)
-            protectedAnimation->setTimeline(&inactiveNamedTimeline(timelineName->name));
-        else
-            protectedAnimation->setTimeline(nullptr);
+        protectedAnimation->setTimeline(&inactiveNamedTimeline(timelineName->name));
     } else {
         auto& timelines = it->value;
         RefPtr timeline = determineTimelineForElement(timelines, *target, timelineName->scopeOrdinal, relevantTimelineScopeElement.get());
@@ -470,15 +462,27 @@ void StyleOriginatedTimelinesController::updateNamedTimelineMapForTimelineScope(
     // subtree—​for example, by siblings, cousins, or ancestors.
     switch (scope.type) {
     case Style::NameScope::Type::None: {
+        HashSet<Ref<ScrollTimeline>> namedTimelinesToUpdate;
         for (auto& entry : m_nameToTimelineMap) {
             for (auto& timeline : entry.value) {
                 if (timeline->timelineScopeDeclaredElement() == &styleable.element)
                     timeline->clearTimelineScopeDeclaredElement();
+                // Make sure to track this timeline to be updated in a separate
+                // step since updating timeline relationships could affect m_nameToTimelineMap.
+                namedTimelinesToUpdate.add(timeline.get());
             }
         }
         m_timelineScopeEntries.removeAllMatching([&](const std::pair<Style::NameScope, WeakStyleable> entry) {
             return entry.second == styleable;
         });
+        for (auto& timeline : namedTimelinesToUpdate) {
+            for (Ref animation : copyToVector(timeline->relevantAnimations())) {
+                if (RefPtr cssAnimation = dynamicDowncast<CSSAnimation>(animation)) {
+                    if (cssAnimation->owningElement())
+                        cssAnimation->syncStyleOriginatedTimeline();
+                }
+            }
+        }
         break;
     }
     case Style::NameScope::Type::All:

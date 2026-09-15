@@ -37,7 +37,7 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
 { 
     for (var i = 0; i < testLoopCount; i++) {
         foo({}, 'function', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
 
     boo({}, 'function', 'function');
@@ -45,20 +45,20 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
 {
     for (var i = 0; i < testLoopCount; i++) {
         foo({f : 10}, 'number', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
     boo({f : 10}, 'number', 'function');
 
     for (var i = 0; i < testLoopCount; i++) {
         foo({f : {}}, 'object', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
     boo({f : {}}, 'object', 'function');
 }
 {
     for (var i = 0; i < testLoopCount; i++) {
         foo(12345, 'function', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
     boo(12345, 'function', 'function');
 
@@ -66,7 +66,7 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
         let val  = 12345;
         val.f = 10;
         foo(val, 'function', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
     let x  = 12345;
     x.f = 10;
@@ -76,7 +76,7 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
 
     for (var i = 0; i < testLoopCount; i++) {
         foo('12345', 'function', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
     boo('12345', 'function', 'function');
 
@@ -84,7 +84,7 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
         let val  = '12345';
         val.f = 10;
         foo(val, 'function', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
     let z  = '12345';
     z.f = 10;
@@ -93,7 +93,7 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
 {
     for (var i = 0; i < testLoopCount; i++) {
         foo(function () {}, 'function', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
 
     boo(function () {}, 'function', 'function');
@@ -102,7 +102,7 @@ function boo(withScope, firstAssertValue,  secondAssertValue) {
         let val2 = function () {};
         val2.f = 10;
         foo(val2, 'number', 'function');
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
     }
 
     let val3 = function () {};

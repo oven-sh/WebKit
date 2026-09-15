@@ -59,6 +59,7 @@
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 #include "StyleResolveForFont.h"
 #include "StyleResolver.h"
+#include "StyleSizeOrKeyword+CSSValueConversion.h"
 #include "StyleTextEdge+CSSValueConversion.h"
 #include "StyleValueTypes+CSSValueConversion.h"
 #include "TextSpacing.h"
@@ -91,11 +92,9 @@ public:
     static void applyInitialLetterSpacing(BuilderState&);
     static void applyValueLetterSpacing(BuilderState&, CSSValue&);
 
-#if ENABLE(TEXT_AUTOSIZING)
     static void applyInheritLineHeight(BuilderState&);
     static void applyInitialLineHeight(BuilderState&);
     static void applyValueLineHeight(BuilderState&, CSSValue&);
-#endif
 
     static void applyInheritWordSpacing(BuilderState&);
     static void applyInitialWordSpacing(BuilderState&);
@@ -114,9 +113,7 @@ public:
     // Custom handling of value setting only.
     static void applyValueWebkitLocale(BuilderState&, CSSValue&);
     static void applyValueTextOrientation(BuilderState&, CSSValue&);
-#if ENABLE(TEXT_AUTOSIZING)
     static void applyValueWebkitTextSizeAdjust(BuilderState&, CSSValue&);
-#endif
     static void applyValueWebkitTextZoom(BuilderState&, CSSValue&);
     static void applyValueWritingMode(BuilderState&, CSSValue&);
     static void applyValueFontSizeAdjust(BuilderState&, CSSValue&);
@@ -306,18 +303,16 @@ inline void BuilderCustom::applyValueLetterSpacing(BuilderState& builderState, C
     builderState.setFontDirty();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 inline void BuilderCustom::applyInheritLineHeight(BuilderState& builderState)
 {
+    builderState.style().setTextAutosizingAdjustedLineHeight(forwardInheritedValue(builderState.parentStyle().textAutosizingAdjustedLineHeight()));
     builderState.style().setLineHeight(forwardInheritedValue(builderState.parentStyle().lineHeight()));
-    builderState.style().setSpecifiedLineHeight(forwardInheritedValue(builderState.parentStyle().specifiedLineHeight()));
 }
 
 inline void BuilderCustom::applyInitialLineHeight(BuilderState& builderState)
 {
+    builderState.style().setTextAutosizingAdjustedLineHeight(ComputedStyle::initialLineHeight());
     builderState.style().setLineHeight(ComputedStyle::initialLineHeight());
-    builderState.style().setSpecifiedLineHeight(ComputedStyle::initialSpecifiedLineHeight());
 }
 
 static inline float computeBaseComputedFontSize(const Document& document, const ComputedStyle& style)
@@ -371,7 +366,7 @@ inline void BuilderCustom::applyValueLineHeight(BuilderState& builderState, CSSV
 
     auto lineHeight = toStyleFromCSSValue<LineHeight>(builderState, value, 1.0f);
 
-    auto computedLineHeight = [&] -> LineHeight {
+    auto textAutosizingAdjustedLineHeight = [&] -> LineHeight {
         if (lineHeight.isNormal())
             return lineHeight;
 
@@ -382,11 +377,9 @@ inline void BuilderCustom::applyValueLineHeight(BuilderState& builderState, CSSV
         return toStyleFromCSSValue<LineHeight>(builderState, value, multiplier);
     }();
 
-    builderState.style().setLineHeight(WTF::move(computedLineHeight));
-    builderState.style().setSpecifiedLineHeight(WTF::move(lineHeight));
+    builderState.style().setTextAutosizingAdjustedLineHeight(WTF::move(textAutosizingAdjustedLineHeight));
+    builderState.style().setLineHeight(WTF::move(lineHeight));
 }
-
-#endif
 
 inline void BuilderCustom::applyValueWebkitLocale(BuilderState& builderState, CSSValue& value)
 {
@@ -404,13 +397,11 @@ inline void BuilderCustom::applyValueTextOrientation(BuilderState& builderState,
     builderState.setTextOrientation(fromCSSValue<TextOrientation>(value));
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 inline void BuilderCustom::applyValueWebkitTextSizeAdjust(BuilderState& builderState, CSSValue& value)
 {
     builderState.style().setTextSizeAdjust(toStyleFromCSSValue<TextSizeAdjust>(builderState, value));
     builderState.setFontDirty();
 }
-#endif
 
 inline void BuilderCustom::applyValueWebkitTextZoom(BuilderState& builderState, CSSValue& value)
 {

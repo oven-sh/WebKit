@@ -44,6 +44,9 @@ class BytecodeCacheError;
 class CachedBytecode;
 class SourceCodeKey;
 class SourceProvider;
+class CachedSymbolTable;
+class ExpressionInfo;
+class SymbolTable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
@@ -58,9 +61,6 @@ struct CachedFunctionExecutableMetadata {
     bool m_hasCapturedVariables;
 };
 
-// Per-record CRC-32C checksums. A persistent payload (a section of the executable) does without: corruption there means
-// the program is already broken and code signing covers it. Separate on-disk cache files keep them.
-enum class BytecodeCacheChecksums : bool { No, Yes };
 // Whether executable records keep the fixed fields CachedBytecode::addFunctionUpdate patches when a lazily compiled
 // function joins the cache later. A payload generated all at once (bun --compile) needs none of that.
 enum class BytecodeCacheUpdatable : bool { No, Yes };
@@ -70,15 +70,7 @@ struct CachedFunctionExecutableOffsets {
     static ptrdiff_t NODELETE codeBlockForCallOffset();
     static ptrdiff_t NODELETE codeBlockForConstructOffset();
     static ptrdiff_t NODELETE metadataOffset();
-    // For re-sealing a record after it is patched in place: the checksum covers [0, extent).
-    static ptrdiff_t NODELETE checksumOffset();
-    static ptrdiff_t NODELETE extentOffset(); // uint32_t: bytes covered by the record's checksum
-    static size_t NODELETE fixedSize();
-    static bool NODELETE isUpdatable(std::span<const uint8_t> record);
 };
-
-// CRC-32C of `record` with the 4 bytes at `checksumOffset` read as zero (how every checksummed record is sealed).
-JS_EXPORT_PRIVATE uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset);
 
 struct CachedWriteBarrierOffsets {
     static ptrdiff_t NODELETE ptrOffset();
@@ -114,35 +106,77 @@ public:
     JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>);
     JS_EXPORT_PRIVATE ~DecoderStringTable();
     Ref<AtomStringImpl> atomFor(VM&, uint32_t ordinal);
+    // How many of `lookups` coming atomFor calls to expect to insert into the thread's atom table, going by the calls so
+    // far (all of them until there is a history). For AtomStringImpl::reserveCapacityForCurrentThread: reserving for
+    // every lookup once most are slot hits grows the table past what its key count keeps (HashTable shrinks on the next
+    // removal below 1/6 load, then regrows).
+    unsigned expectedAtomTableInserts(unsigned lookups) const
+    {
+        if (m_atomForCalls < 1024)
+            return lookups;
+        return static_cast<unsigned>(static_cast<uint64_t>(lookups) * (m_atomsPromoted + m_atomsCreated) / m_atomForCalls);
+    }
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
+    // StringImpl::hash() of the string atomForSlot(slot) would return, without creating it; nullopt where atomForSlot
+    // returns null (a record with bad bounds crashes in both).
+    std::optional<uint32_t> hashForSlot(uint32_t slot) const;
+    // atomForSlot(vm, slot) would return `string`'s atom, decided without creating it (by the slot's cached pointer when
+    // it has one, else by contents); false for a symbol and where atomForSlot returns null (a record with bad bounds
+    // crashes in both). Mutator only.
+    bool slotEquals(uint32_t slot, const StringImpl&) const;
     // The one JSString this VM uses for the string constant with this ordinal (single characters come from SmallStrings
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives.
     JSString* jsStringFor(VM&, uint32_t ordinal);
+    // The characters as a plain string, touching neither the slot, a cell nor the atom table (a reader that must not
+    // atomize: a stack trace the collector builds).
+    String stringFor(uint32_t ordinal) const;
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
+    // Options::useFastCachedAtoms(): unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
+    // header, or slot -> offsets[] -> record -> atom-table bucket) and jsStringFor's miss is three. A caller about to
+    // resolve a run of ordinals makes one pass per hop over the run first; each pass is a burst of independent loads, so
+    // its misses overlap instead of queueing behind each other inside the decode:
+    //   prefetchSlot   - the slot and its offsets[] entry; address arithmetic only, issue as early as the run is known;
+    //   prefetchTarget - reads the slot: the StringImpl (For::Atom: or JSString) it holds, else (reads offsets[]) the record;
+    //   prefetchLookup - For::Atom only; reads that: a cell's StringImpl header, or an empty slot's atom-table bucket
+    //                    by stored hash.
+    // noOrdinal (CachedRefPtr::externalStringOrdinal() for a non-table string), or any ordinal out of range, is ignored
+    // by all three. Defined in CachedTypes.cpp, their only user.
+    enum class PrefetchFor : uint8_t { Atom, JSString }; // atomFor / jsStringFor: the latter touches neither a held cell nor the atom table
+    static constexpr unsigned prefetchWindow = 32; // ordinals per burst: about what stays in flight at once, and still cached when the decode reaches the last
+    static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
+    void prefetchSlot(uint32_t ordinal) const;
+    template<PrefetchFor> void prefetchTarget(uint32_t ordinal) const;
+    void prefetchLookup(AtomStringTable&, uint32_t ordinal) const;
 private:
+    static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
         const uint8_t* characters;
         uint32_t length;
         uint32_t hash;
         bool is8Bit;
     };
+    const uint32_t* offsets() const { return std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t)); }
     Record record(uint32_t ordinal) const;
+    static Ref<StringImpl> createImpl(const Record&);
     // A slot is empty, a StringImpl* (+1 ref held by the table), or a JSString* tagged with cellTag whose value is that
     // StringImpl. empty -> impl -> cell, never backwards.
     static constexpr uintptr_t cellTag = 1;
     static bool isCell(uintptr_t slot) { return slot & cellTag; }
     static JSString* cell(uintptr_t slot) { return std::bit_cast<JSString*>(slot & ~cellTag); }
     static StringImpl* impl(uintptr_t slot);
-    StringImpl* ensureImpl(uint32_t ordinal);
 
     std::span<const uint8_t> m_bytes;
     uintptr_t* m_slots { nullptr }; // demand-zero, one per ordinal
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
+    // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
+    uint32_t m_atomForCalls { 0 };
+    uint32_t m_atomsPromoted { 0 };
+    uint32_t m_atomsCreated { 0 };
     Lock m_cellsLock;
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
@@ -194,22 +228,27 @@ class Decoder : public RefCounted<Decoder> {
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
-    bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
     bool payloadContains(const void* start, size_t size) const;
     std::span<const uint8_t> payloadSpan() const;
-    bool verifiesChecksums() const;
     // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
     // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
     static Ref<AtomStringImpl> atomForInlineString(VM&, std::span<const uint8_t, 4> slot);
     Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot) { return atomForInlineString(m_vm, slot); }
-    // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
+    static String stringForInlineString(std::span<const uint8_t, 4> slot); // the same characters, not atomized
+    // Strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots): every non-empty,
+    // non-symbol string when encoding against a table; EncoderStringTable::slotFor (module_info) still inlines 1-3 chars.
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     JSString* jsStringForExternalString(uint32_t ordinal);
+    String stringForExternalString(uint32_t ordinal); // DecoderStringTable::stringFor
+    // See DecoderStringTable::prefetchSlot. Null with useFastCachedAtoms off or no embedder table (a payload that then
+    // names a table string still fails in atomForExternalString, not here).
+    const DecoderStringTable* stringsToPrefetch();
 
     ~Decoder();
 
@@ -236,23 +275,25 @@ private:
     const Ref<CachedBytecode> m_cachedBytecode;
     Vector<AtomStringImpl*> m_atomsByOrdinal;
     DecoderStringTable* m_externalStrings { nullptr };
+    bool m_lookedUpExternalStrings { false }; // stringsToPrefetch asked the embedder (m_externalStrings may still be null)
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
     Vector<std::function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
+    bool m_canDeferIntoPayload { false };
 };
 
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>);
 
 // An embedder's JS builtin (a root UnlinkedFunctionExecutable from BuiltinExecutables::createExecutable), with its code
 // blocks generated recursively beforehand (see recursivelyGenerateUnlinkedCodeBlocksForFunction). `embedderStamp`
 // identifies the builtin source's contents; decode checks it and the source length instead of hashing the source.
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr, BytecodeCacheChecksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp);
 
 template<typename UnlinkedCodeBlockType>
@@ -266,6 +307,13 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
+
+// Options::useLazySymbolTableConstants(): fill in the entries of a SymbolTable whose CachedSymbolTable record was left
+// undecoded (SymbolTable::materializeCachedEntries). Mutator only; allocates no GC cells.
+void decodeSymbolTableEntries(Decoder&, const CachedSymbolTable&, SymbolTable&, bool scopePartOnly);
+// Options::useLazyCachedExpressionInfo(): the ExpressionInfo for a CachedExpressionInfo record left unread in a persistent
+// payload that ends `payloadBytesLeft` past it (UnlinkedCodeBlock::expressionInfo). Any thread; allocates no GC cells.
+std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo, uint32_t payloadBytesLeft);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

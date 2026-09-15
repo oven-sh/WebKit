@@ -42,7 +42,7 @@
 
 namespace WebCore {
 
-ImageBufferCairoSurfaceBackend::ImageBufferCairoSurfaceBackend(const Parameters& parameters, RefPtr<cairo_surface_t>&& surface)
+ImageBufferCairoSurfaceBackend::ImageBufferCairoSurfaceBackend(const ImageBufferParameters& parameters, RefPtr<cairo_surface_t>&& surface)
     : ImageBufferCairoBackend(parameters)
     , m_surface(WTF::move(surface))
     , m_context(m_surface.get())

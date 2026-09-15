@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "BuiltinNames.h"
 #include "Debugger.h"
 #include "JSCInlines.h"
 #include "JSWebAssemblyCompileError.h"
@@ -76,6 +77,8 @@ void JSWebAssemblyModule::finishCreation(VM& vm)
     {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
+        offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+        exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), SymbolTableEntry(VarOffset(offset)));
     }
     for (auto& exp : moduleInformation.exports) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);

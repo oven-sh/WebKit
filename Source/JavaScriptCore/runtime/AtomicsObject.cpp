@@ -309,21 +309,16 @@ EncodedJSValue isLockFree(JSGlobalObject* globalObject, JSValue arg)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t size = arg.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-    
-    bool result;
-    switch (size) {
-    case 1:
-    case 2:
-    case 4:
-    case 8:
-        result = true;
-        break;
-    default:
-        result = false;
-        break;
+    if (arg.isInt32()) [[likely]] {
+        int32_t size = arg.asInt32();
+        bool result = size == 1 || size == 2 || size == 4 || size == 8;
+        return JSValue::encode(jsBoolean(result));
     }
+
+    double size = arg.toIntegerOrInfinity(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+
+    bool result = size == 1 || size == 2 || size == 4 || size == 8;
     return JSValue::encode(jsBoolean(result));
 }
 

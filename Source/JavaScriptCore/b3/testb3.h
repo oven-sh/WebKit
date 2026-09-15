@@ -1282,6 +1282,7 @@ void testWasmBoundsCheck(unsigned offset);
 void testWasmAddress();
 void testWasmAddressZeroExtendScaledIndex();
 void testWasmAddressZeroExtend32BitShiftWraps();
+void testWasmAddressScaledIndexWithLockedShlChild();
 void testFastTLSLoad();
 void testFastTLSStore();
 void testDoubleLiteralComparison(double, double);

@@ -61,6 +61,7 @@
 #include "SVGLengthContext.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
+#include "StyleFontPaletteInlines.h"
 #include "StyleExtractorState.h"
 #include "StyleInterpolation.h"
 #include "StyleKeyword+CSSValueConversion.h"
@@ -683,7 +684,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyWordSpacing> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyLineHeight> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        return WTF::switchOn(state.style.lineHeight(),
+        return WTF::switchOn(state.style.textAutosizingAdjustedLineHeight(),
             [&](const CSS::Keyword::Normal& keyword) {
                 return functor(keyword);
             },

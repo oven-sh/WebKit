@@ -582,7 +582,7 @@ static std::optional<SpecialCaseFontLookupResult> fontDescriptorWithFamilySpecia
     if (family.startsWith("UICTFontTextStyle"_s)) {
         const auto& request = fontDescription.fontSelectionRequest();
         CTFontSymbolicTraits traits = (isFontWeightBold(request.weight) ? kCTFontTraitBold : 0) | (isItalic(request.slope) ? kCTFontTraitItalic : 0);
-        auto descriptor = adoptCF(CTFontDescriptorCreateWithTextStyle(family.string().createCFString().get(), protect(contentSizeCategory()).get(), fontDescription.computedLocale().string().createCFString().get()));
+        auto descriptor = adoptCF(CTFontDescriptorCreateWithTextStyle(family.string().createCFString().get(), protect(contentSizeCategory()).get(), fontDescription.usedLocale().string().createCFString().get()));
         if (traits) {
             // FIXME: rdar://105369379 As far as I can tell, there's no modification to the attributes dictionary that has the same effect as CTFontDescriptorCreateCopyWithSymbolicTraits(),
             // because there doesn't seem to be a place to specify the bitmask. That's the reason we're creating the derived CTFontDescriptor here, rather than in UnrealizedCoreTextFont::realize().
@@ -592,16 +592,16 @@ static std::optional<SpecialCaseFontLookupResult> fontDescriptorWithFamilySpecia
     }
 
     if (equalLettersIgnoringASCIICase(family, "-apple-menu"_s))
-        return { { adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontMenuItem, size, fontDescription.computedLocale().string().createCFString().get())), FontTypeForPreparation::SystemFont } };
+        return { { adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontMenuItem, size, fontDescription.usedLocale().string().createCFString().get())), FontTypeForPreparation::SystemFont } };
 
     if (equalLettersIgnoringASCIICase(family, "-apple-status-bar"_s))
-        return { { adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, size, fontDescription.computedLocale().string().createCFString().get())), FontTypeForPreparation::SystemFont } };
+        return { { adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, size, fontDescription.usedLocale().string().createCFString().get())), FontTypeForPreparation::SystemFont } };
 
     if (equalLettersIgnoringASCIICase(family, "lastresort"_s))
         return { { adoptCF(CTFontDescriptorCreateLastResort()), FontTypeForPreparation::NonSystemFont } };
 
     if (equalLettersIgnoringASCIICase(family, "-apple-system-monospaced-numbers"_s)) {
-        auto systemFontDescriptor = UnrealizedCoreTextFont { adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, size, fontDescription.computedLocale().string().createCFString().get())) };
+        auto systemFontDescriptor = UnrealizedCoreTextFont { adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, size, fontDescription.usedLocale().string().createCFString().get())) };
         systemFontDescriptor.modify([](CFMutableDictionaryRef attributes) {
             int numberSpacingType = kNumberSpacingType;
             int monospacedNumbersSelector = kMonospacedNumbersSelector;
@@ -815,7 +815,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
     if (!fullName.isEmpty())
         m_fontNamesRequiringSystemFallbackForPrewarming.add(fullName);
 
-    auto result = lookupFallbackFont(ctFont.get(), description.weight(), description.computedLocale(), description.shouldAllowUserInstalledFonts(), characterCluster);
+    auto result = lookupFallbackFont(ctFont.get(), description.weight(), description.usedLocale(), description.shouldAllowUserInstalledFonts(), characterCluster);
     result = preparePlatformFont(UnrealizedCoreTextFont { WTF::move(result) }, description, { });
 
     if (!result)

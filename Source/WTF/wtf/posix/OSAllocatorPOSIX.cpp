@@ -194,7 +194,7 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
 {
     ASSERT(hasOneBitSet(alignment) && alignment >= pageSize());
 
-#if PLATFORM(MAC) || USE(APPLE_INTERNAL_SDK) || BUN_MACOSX
+#if PLATFORM(MAC) || USE(APPLE_INTERNAL_SDK) || defined(BUN_MACOSX)
     ASSERT_UNUSED(numGuardPagesToAddOnEachEnd, !numGuardPagesToAddOnEachEnd);
     ASSERT_UNUSED(jitCageEnabled, !jitCageEnabled); // Not supported for mach API.
     vm_prot_t protections = VM_PROT_READ;

@@ -102,7 +102,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
         ModuleProgramExecutable* executable = static_cast<ModuleProgramExecutable*>(this);
         executable->m_codeBlock.clear();
         executable->m_unlinkedCodeBlock.clear();
-        executable->m_moduleEnvironmentSymbolTable.clear();
+        // m_moduleEnvironmentSymbolTable stays: the module's one environment was made from it and a module that is
+        // suspended at a top-level await goes on using that (ModuleProgramExecutable::getUnlinkedCodeBlock).
         break;
     }
     default:
@@ -241,9 +242,7 @@ bool ScriptExecutable::hasClearableCode() const
 
     } else if (structure()->classInfoForCells() == ModuleProgramExecutable::info()) {
         auto* executable = static_cast<const ModuleProgramExecutable*>(this);
-        if (executable->m_codeBlock
-            || executable->m_unlinkedCodeBlock
-            || executable->m_moduleEnvironmentSymbolTable)
+        if (executable->m_codeBlock || executable->m_unlinkedCodeBlock)
             return true;
     }
     return false;
@@ -255,7 +254,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(vm.heap.isDeferred());
-    ASSERT(endColumn() != UINT_MAX);
+    ASSERT(type() == FunctionExecutableType || endColumn() != UINT_MAX); // a function's is computed on demand, possibly from the bytecode cache
 
     JSGlobalObject* globalObject = scope->realm();
 
@@ -289,6 +288,9 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->getUnlinkedCodeBlock(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
+        // The body is about to run in this code, and it can be suspended at a top-level await from then on.
+        if (executable->isAsync())
+            pinCodeGenerationModeForResumableBody();
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
     }
 
@@ -301,21 +303,19 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     // We continue using the same CodeGenerationMode for Generators because live generator objects can
     // keep the state which is only valid with the CodeBlock compiled with the same CodeGenerationMode.
     if (isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode())) {
-        if (!m_codeForGeneratorBodyWasGenerated) {
-            m_codeGenerationModeForGeneratorBody = codeGenerationMode;
-            m_codeForGeneratorBodyWasGenerated = true;
-        } else
-            codeGenerationMode = m_codeGenerationModeForGeneratorBody;
+        codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
+        pinCodeGenerationModeForResumableBody();
     }
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 
             executable->parseMode());
-    recordParse(
-        executable->m_unlinkedExecutable->features(), 
+    // The (lastLine, endColumn) overload drops those two for a FunctionExecutable; computing them would pull the
+    // function's end position out of the bytecode cache (UnlinkedFunctionExecutable::materializeDeferredScalarsIfNeeded).
+    executable->recordParse(
+        executable->m_unlinkedExecutable->features(),
         executable->m_unlinkedExecutable->lexicallyScopedFeatures(),
-        executable->m_unlinkedExecutable->hasCapturedVariables(),
-        lastLine(), endColumn());
+        executable->m_unlinkedExecutable->hasCapturedVariables());
     if (!unlinkedCodeBlock) {
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;

@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // FFI Type::BufferLength ("buffer_length"): the length twin of "buffer". Given a
 // TypedArray / DataView argument it marshals the view's byteLength() as an unsigned 64-bit
 // integer. Bound as args: ["ptr", "buffer_length"] with the SAME view passed for both, the

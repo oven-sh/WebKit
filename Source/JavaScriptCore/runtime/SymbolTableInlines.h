@@ -58,8 +58,9 @@ inline void SymbolTable::notifyCreation(VM& vm, JSScope* scope, const char* reas
     }
 }
 
-inline SymbolTableEntry::Fast SymbolTable::get(const ConcurrentJSLocker&, UniquedStringImpl* key)
+inline SymbolTableEntry::Fast SymbolTable::get(const ConcurrentJSLocker& locker, UniquedStringImpl* key)
 {
+    materializeCachedEntriesIfNeeded(locker);
     return m_map.get(key);
 }
 
@@ -69,8 +70,9 @@ inline SymbolTableEntry::Fast SymbolTable::get(UniquedStringImpl* key)
     return get(locker, key);
 }
 
-inline SymbolTableEntry::Fast SymbolTable::inlineGet(const ConcurrentJSLocker&, UniquedStringImpl* key)
+inline SymbolTableEntry::Fast SymbolTable::inlineGet(const ConcurrentJSLocker& locker, UniquedStringImpl* key)
 {
+    materializeCachedEntriesIfNeeded(locker);
     return m_map.inlineGet(key);
 }
 

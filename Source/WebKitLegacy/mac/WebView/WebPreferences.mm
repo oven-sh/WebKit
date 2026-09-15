@@ -30,6 +30,7 @@
 #import "WebPreferencesInternal.h"
 
 #import "NetworkStorageSessionMap.h"
+#import <WebCore/CookieStorageSession.h>
 #import "WebFeature.h"
 #import "WebFrameNetworkingContext.h"
 #import "WebKitLogging.h"
@@ -42,7 +43,6 @@
 #import <JavaScriptCore/InitializeThreading.h>
 #import <WebCore/AudioSession.h>
 #import <WebCore/MediaPlayerEnums.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/Settings.h>
 #import <WebCore/WebCoreJITOperations.h>
 #import <WebCore/WebCoreMainThread.h>
@@ -1241,7 +1241,6 @@ public:
 }
 #endif
 
-#if ENABLE(TEXT_AUTOSIZING)
 - (void)_setMinimumZoomFontSize:(float)size
 {
     [self _setFloatValue:size forKey:WebKitMinimumZoomFontSizePreferenceKey];
@@ -1261,7 +1260,6 @@ public:
 {
     return [self _boolValueForKey:WebKitTextAutosizingEnabledPreferenceKey];
 }
-#endif
 
 #if PLATFORM(IOS_FAMILY)
 - (void)_setMaxParseDuration:(float)d

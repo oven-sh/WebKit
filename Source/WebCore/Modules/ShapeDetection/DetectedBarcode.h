@@ -59,11 +59,11 @@ struct DetectedBarcode {
     Vector<Point2D> cornerPoints;
 };
 
-inline DetectedBarcode convertFromBacking(const ShapeDetection::DetectedBarcode& detectedBarcode)
+inline DetectedBarcode convertFromBacking(ShapeDetection::DetectedBarcode&& detectedBarcode)
 {
     return {
         DOMRectReadOnly::create(detectedBarcode.boundingBox.x(), detectedBarcode.boundingBox.y(), detectedBarcode.boundingBox.width(), detectedBarcode.boundingBox.height()),
-        detectedBarcode.rawValue,
+        WTF::move(detectedBarcode.rawValue),
         convertFromBacking(detectedBarcode.format),
         detectedBarcode.cornerPoints.map([] (const auto& cornerPoint) {
             return Point2D { cornerPoint.x(), cornerPoint.y() };

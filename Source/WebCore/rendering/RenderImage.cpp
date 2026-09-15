@@ -456,7 +456,7 @@ void RenderImage::setImageDevicePixelRatio(float factor)
 
 bool RenderImage::isShowingMissingOrImageError() const
 {
-    return !imageResource().cachedImage() || imageResource().errorOccurred();
+    return !imageResource().hasStyleImage() || imageResource().errorOccurred();
 }
 
 bool RenderImage::isShowingAltText() const
@@ -483,8 +483,11 @@ bool RenderImage::shouldDisplayBrokenImageIcon() const
     return imageResource().errorOccurred();
 }
 
-// Per CSSWG resolution, we should respect 0px inline sizes.
-// See: https://github.com/w3c/csswg-drafts/issues/11236#issuecomment-2718502765
+// A width or height of 0 is a natural dimension of 0 rather than an absent one,
+// except that a natural height of 0 is superseded by one derived from the natural
+// width and aspect ratio. See:
+// https://github.com/w3c/csswg-drafts/issues/6286#issuecomment-866986544 and
+// https://github.com/w3c/csswg-drafts/issues/11236#issuecomment-2718502765
 bool RenderImage::shouldRespectZeroIntrinsicWidth() const
 {
     RefPtr cachedImage = this->cachedImage();
@@ -493,6 +496,18 @@ bool RenderImage::shouldRespectZeroIntrinsicWidth() const
     if (RefPtr svgImage = dynamicDowncast<SVGImage>(cachedImage->image())) {
         if (auto rootElement = svgImage->rootElement())
             return rootElement->hasIntrinsicWidth();
+    }
+    return false;
+}
+
+bool RenderImage::shouldRespectZeroIntrinsicHeight() const
+{
+    RefPtr cachedImage = this->cachedImage();
+    if (!cachedImage)
+        return false;
+    if (RefPtr svgImage = dynamicDowncast<SVGImage>(cachedImage->image())) {
+        if (auto rootElement = svgImage->rootElement())
+            return rootElement->hasIntrinsicHeight() && !rootElement->hasIntrinsicWidth();
     }
     return false;
 }
@@ -662,7 +677,7 @@ void RenderImage::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
         return;
     }
 
-    if (!imageResource().cachedImage() || shouldDisplayBrokenImageIcon()) {
+    if (!imageResource().hasStyleImage() || shouldDisplayBrokenImageIcon()) {
         paintMissingImageState(paintInfo, paintOffset);
         return;
     }
@@ -787,7 +802,7 @@ void RenderImage::areaElementFocusChanged(HTMLAreaElement* element)
 
 ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect& rect)
 {
-    if (!imageResource().cachedImage() || imageResource().errorOccurred() || rect.width() <= 0 || rect.height() <= 0)
+    if (isShowingMissingOrImageError() || rect.width() <= 0 || rect.height() <= 0)
         return ImageDrawResult::DidNothing;
 
     RefPtr<Image> img = imageResource().image(flooredIntSize(rect.size()));

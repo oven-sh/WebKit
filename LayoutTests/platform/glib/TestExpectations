@@ -148,8 +148,6 @@ imported/w3c/web-platform-tests/svg/pservers/reftests/fill-fallback-none-1.svg [
 imported/w3c/web-platform-tests/svg/pservers/reftests/radialgradient-fully-overlapping.svg [ Pass ]
 imported/w3c/web-platform-tests/svg/pservers/reftests/stop-color-currentcolor-dynamic-001.svg [ Pass ]
 imported/w3c/web-platform-tests/svg/shapes/rect-03.svg [ Pass ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-linked-parameters-1.html [ Pass ]
-imported/w3c/web-platform-tests/svg/styling/css-linked-parameters/img-with-linked-parameters-2.html [ Pass ]
 imported/w3c/web-platform-tests/svg/struct/reftests/gradient-in-symbol.svg [ Pass ]
 imported/w3c/web-platform-tests/svg/text/reftests/opacity.svg [ Pass ]
 webkit.org/b/309044 imported/w3c/web-platform-tests/svg/text/reftests/textpath-shape-001.svg [ ImageOnlyFailure ]
@@ -891,9 +889,6 @@ imported/w3c/web-platform-tests/css/css-flexbox/select-element-multiple.html [ P
 imported/w3c/web-platform-tests/css/css-backgrounds/background-size-043.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-backgrounds/background-size-044.html [ Pass ]
 
-imported/w3c/web-platform-tests/css/css-animations/nested-scale-animations.html [ Pass ]
-imported/w3c/web-platform-tests/css/css-animations/transform-animation-under-large-scale.html [ Pass ]
-imported/w3c/web-platform-tests/css/css-transforms/3d-scene-with-iframe-001.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-transforms/transform3d-matrix3d-001.html [ Pass ]
 imported/w3c/web-platform-tests/css/filter-effects/css-filters-animation-combined-001.html [ Pass ]
 
@@ -1362,7 +1357,6 @@ imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-pa
 webkit.org/b/314309 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-edge-behavior.html [ ImageOnlyFailure ]
 webkit.org/b/314310 imported/w3c/web-platform-tests/css/filter-effects/drop-shadow-currentcolor-dynamic-003.html [ ImageOnlyFailure ]
 webkit.org/b/314312 media/media-sources-selection.html [ ImageOnlyFailure ]
-webkit.org/b/314313 platform/glib/fast/layers/fractional-transforms.html [ ImageOnlyFailure ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Compositing tests
@@ -1992,7 +1986,7 @@ http/wpt/webcodecs/encoder-decoder-vp9-I420.html [ Failure ]
 
 fast/mediacapturefromelement/CanvasCaptureMediaStream-capture-out-of-DOM-canvas-webgl.html [ Pass Failure ]
 
-webkit.org/b/298925 [ x86_64 ] fast/mediacapturefromelement/CanvasCaptureMediaStream-offscreencanvas.html [ Timeout ]
+webkit.org/b/298925 [ x86_64 ] fast/mediacapturefromelement/CanvasCaptureMediaStream-offscreencanvas.html [ Pass Timeout ]
 webkit.org/b/298925 [ arm64 ] fast/mediacapturefromelement/CanvasCaptureMediaStream-offscreencanvas.html [ Pass ]
 
 webkit.org/b/264665 http/wpt/webcodecs/videoFrame-webglCanvasImageSource.html [ Failure ]
@@ -2674,6 +2668,8 @@ webkit.org/b/316179 webaudio/decode-audio-data-ogg-vorbis.html [ Failure ]
 #////////////////////////////////////////////////////////////////////////////////////////
 # WebGL-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
+
+webkit.org/b/200026 fast/canvas/webgl/composited-alpha-modes-match-drawImage.html [ ImageOnlyFailure ]
 
 webkit.org/b/216071 fast/canvas/webgl/move-canvas-in-document-while-clean.html [ ImageOnlyFailure ]
 
@@ -3415,9 +3411,6 @@ ipc/validate-message-check-in-networkconnectiontowebproces-crash.html [ Skip ]
 
 ### NEEDS PROPER TRIAGGING/GARDENING
 
-# Times out: the wiretap never captures m_databaseConnectionIdentifier.
-ipc/networksindexeddb-close-connection-during-version-change.html [ Skip ]
-
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of IPC testing
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -3967,11 +3960,6 @@ webkit.org/b/172271 fast/text/emoji-overlap.html [ ImageOnlyFailure ]
 webkit.org/b/172271 fast/text/system-font-fallback-emoji.html [ Failure ]
 webkit.org/b/172279 fast/multicol/flexbox-rows.html [ ImageOnlyFailure ]
 webkit.org/b/174609 accessibility/presentation-role-iframe.html [ Failure ]
-webkit.org/b/175134 fast/text/line-height-minimumFontSize-autosize.html [ Failure ]
-webkit.org/b/175134 fast/text/line-height-minimumFontSize.html [ Failure ]
-webkit.org/b/175134 fast/text/line-height-minimumFontSize-text-zoom.html [ ImageOnlyFailure ]
-webkit.org/b/175134 fast/text/line-height-minimumFontSize-visual.html [ ImageOnlyFailure ]
-webkit.org/b/175134 fast/text/line-height-minimumFontSize-zoom.html [ ImageOnlyFailure ]
 webkit.org/b/297178 media/media-source/media-source-paint-stereo-to-canvas.html [ Failure ]
 
 # Flaky failure
@@ -4939,7 +4927,6 @@ webkit.org/b/306384 imported/w3c/web-platform-tests/css/filter-effects/filters-d
 webkit.org/b/306384 imported/w3c/web-platform-tests/css/filter-effects/root-element-with-opacity-filter-001.html [ ImageOnlyFailure ]
 webkit.org/b/306384 imported/w3c/web-platform-tests/html/editing/editing-0/spelling-and-grammar-checking/spelling-markers-009.html [ ImageOnlyFailure ]
 webkit.org/b/306384 imported/w3c/web-platform-tests/html/editing/editing-0/spelling-and-grammar-checking/spelling-markers-010.html [ ImageOnlyFailure ]
-webkit.org/b/306384 svg/as-list-image/svg-list-image-intrinsic-size-1.html [ ImageOnlyFailure ]
 
 webkit.org/b/219498 imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-padding-003.html [ Pass ImageOnlyFailure ]
 webkit.org/b/244538 imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-margin-003.html [ Pass ImageOnlyFailure ]
@@ -5325,6 +5312,13 @@ webkit.org/b/314218 imported/w3c/web-platform-tests/html/semantics/embedded-cont
 
 webkit.org/b/323308 http/tests/web-locks/web-lock-in-third-party-serviceworker.html [ Failure Pass ]
 webkit.org/b/323309 ipc/getpixelbuffer-layerbacking-heap-disclosure.html [ Pass Timeout ]
+
+# Gardening 2026-09-09
+webkit.org/b/323776 http/wpt/webcodecs/configure-encoder-big-frame-size.html [ Failure Pass ]
+
+# These now pass on the GLib ports; the generic expectations in LayoutTests/TestExpectations still apply elsewhere.
+webkit.org/b/249918 imported/w3c/web-platform-tests/css/css-lists/list-marker-symbol-bidi.html [ Pass ]
+imported/w3c/web-platform-tests/css/filter-effects/filter-function/filter-function-001.html [ Pass ]
 
 # End: Common failures between GTK and WPE.
 

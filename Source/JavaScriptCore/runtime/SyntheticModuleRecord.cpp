@@ -43,15 +43,15 @@ Structure* SyntheticModuleRecord::createStructure(VM& vm, JSGlobalObject* global
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, SourceProviderSourceType sourceType)
+SyntheticModuleRecord* SyntheticModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, SourceProviderSourceType sourceType)
 {
-    SyntheticModuleRecord* instance = new (NotNull, allocateCell<SyntheticModuleRecord>(vm)) SyntheticModuleRecord(vm, structure, moduleKey, sourceType);
+    SyntheticModuleRecord* instance = new (NotNull, allocateCell<SyntheticModuleRecord>(vm)) SyntheticModuleRecord(vm, structure, moduleLoader, moduleKey, sourceType);
     instance->finishCreation(globalObject, vm);
     return instance;
 }
 
-SyntheticModuleRecord::SyntheticModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, SourceProviderSourceType sourceType)
-    : Base(vm, structure, moduleKey, sourceType)
+SyntheticModuleRecord::SyntheticModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, const Identifier& moduleKey, SourceProviderSourceType sourceType)
+    : Base(vm, structure, moduleLoader, moduleKey, sourceType)
 {
 }
 
@@ -91,19 +91,19 @@ JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType)
 {
-    return tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, exportValues, sourceType, nullptr);
+    return tryCreateWithExportNamesAndValues(globalObject, moduleLoader, moduleKey, exportNames, exportValues, sourceType, nullptr);
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource)
 {
-    return tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, exportValues, SourceProviderSourceType::Module, lazyExportsSource);
+    return tryCreateWithExportNamesAndValues(globalObject, moduleLoader, moduleKey, exportNames, exportValues, SourceProviderSourceType::Module, lazyExportsSource);
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType, JSObject* lazyExportsSource)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType, JSObject* lazyExportsSource)
 #else
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType)
 #endif
 {
     VM& vm = globalObject->vm();
@@ -111,12 +111,14 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
 
     ASSERT(exportNames.size() == exportValues.size());
 
-    auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleKey, sourceType);
+    auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleLoader, moduleKey, sourceType);
 
     SymbolTable* exportSymbolTable = SymbolTable::create(vm);
     {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
+        offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+        exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), SymbolTableEntry(VarOffset(offset)));
     }
     for (auto& exportName : exportNames) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
@@ -215,7 +217,7 @@ void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, 
 }
 #endif
 
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSValue defaultExport, SourceProviderSourceType sourceType)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, JSValue defaultExport, SourceProviderSourceType sourceType)
 {
     VM& vm = globalObject->vm();
 
@@ -224,10 +226,10 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateDefaultExportSyntheticMod
         JSValue::encode(defaultExport),
     });
     exportNames.append(vm.propertyNames->defaultKeyword);
-    return tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, ArgList { exportValues.data(), exportValues.size() }, sourceType);
+    return tryCreateWithExportNamesAndValues(globalObject, moduleLoader, moduleKey, exportNames, ArgList { exportValues.data(), exportValues.size() }, sourceType);
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::parseJSONModule(JSGlobalObject* globalObject, const Identifier& moduleKey, SourceCode&& sourceCode)
+SyntheticModuleRecord* SyntheticModuleRecord::parseJSONModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, SourceCode&& sourceCode)
 {
     // https://tc39.es/proposal-json-modules/#sec-parse-json-module
     VM& vm = globalObject->vm();
@@ -236,14 +238,14 @@ SyntheticModuleRecord* SyntheticModuleRecord::parseJSONModule(JSGlobalObject* gl
     JSValue result = JSONParseWithException(globalObject, sourceCode.view());
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleKey, result, SourceProviderSourceType::JSON));
+    RELEASE_AND_RETURN(scope, SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleLoader, moduleKey, result, SourceProviderSourceType::JSON));
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::createTextModule(JSGlobalObject* globalObject, const Identifier& moduleKey, SourceCode&& sourceCode)
+SyntheticModuleRecord* SyntheticModuleRecord::createTextModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, SourceCode&& sourceCode)
 {
     // https://tc39.es/proposal-import-text/#sec-create-text-module
     VM& vm = globalObject->vm();
-    return SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleKey, jsString(vm, sourceCode.view()), SourceProviderSourceType::Text);
+    return SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, moduleLoader, moduleKey, jsString(vm, sourceCode.view()), SourceProviderSourceType::Text);
 }
 
 } // namespace JSC

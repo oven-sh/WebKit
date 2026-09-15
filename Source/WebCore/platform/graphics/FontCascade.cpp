@@ -400,7 +400,7 @@ NEVER_INLINE float FontCascade::widthForSimpleTextSlow(StringView text, TextDire
     else
         addGlyphsFromText(glyphBuffer, font, text.span16());
 
-    auto initialAdvance = font->applyTransforms(glyphBuffer, 0, 0, enableKerning(), requiresShaping(), fontDescription().computedLocale(), text, textDirection);
+    auto initialAdvance = font->applyTransforms(glyphBuffer, 0, 0, enableKerning(), requiresShaping(), fontDescription().usedLocale(), text, textDirection);
     auto result = 0.f;
     for (size_t i = 0; i < glyphBuffer.size(); ++i)
         result += WebCore::width(glyphBuffer.advanceAt(i));

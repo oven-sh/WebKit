@@ -41,7 +41,7 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferShareableMappedIOSurfaceBackend);
 
-std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const Parameters& parameters, const ImageBufferCreationContext& creationContext)
+std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const WebCore::ImageBufferParameters& parameters, const ImageBufferCreationContext& creationContext)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
@@ -62,21 +62,29 @@ std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareable
     return std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> { new ImageBufferShareableMappedIOSurfaceBackend { parameters, WTF::move(surface), WTF::move(cgContext), 0, protect(creationContext.surfacePool) } };
 }
 
-std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const Parameters& parameters, ImageBufferBackendHandle handle)
+std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const WebCore::ImageBufferParameters& parameters, ImageBufferBackendHandle handle)
 {
-    if (!std::holds_alternative<MachSendRight>(handle)) {
-        ASSERT_NOT_REACHED();
+    if (!std::holds_alternative<MachSendRight>(handle))
         return nullptr;
-    }
 
-    auto surface = IOSurface::createFromSendRight(WTF::move(std::get<MachSendRight>(handle)));
+    auto surface = IOSurface::createFromUntrustedUncompressedWebKitSendRight(WTF::move(std::get<MachSendRight>(handle)));
     if (!surface)
         return nullptr;
+
+    auto requestedSize = calculateSafeBackendSize(parameters);
+    if (requestedSize.isEmpty())
+        return nullptr;
+    if (surface->size() != requestedSize)
+        return nullptr;
+    if (surface->colorSpace() != parameters.colorSpace)
+        return nullptr;
+    if (!surface->hasFormat({ convertToIOSurfaceFormat(parameters.bufferFormat.pixelFormat), parameters.bufferFormat.useLosslessCompression }))
+        return nullptr;
+
     auto cgContext = surface->createPlatformContext();
     if (!cgContext)
         return nullptr;
 
-    ASSERT(surface->colorSpace() == parameters.colorSpace);
     return std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> { new ImageBufferShareableMappedIOSurfaceBackend { parameters, WTF::move(surface), WTF::move(cgContext), 0, nullptr } };
 }
 

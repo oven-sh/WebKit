@@ -40,15 +40,15 @@ class ImageBufferCairoImageSurfaceBackend : public ImageBufferCairoSurfaceBacken
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferCairoImageSurfaceBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferCairoImageSurfaceBackend);
 public:
-    static IntSize calculateSafeBackendSize(const Parameters&);
+    static IntSize calculateSafeBackendSize(const ImageBufferParameters&);
     static unsigned calculateBytesPerRow(const IntSize& backendSize);
-    static size_t calculateMemoryCost(const Parameters&);
+    size_t memoryCost() const final { return ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size())); }
 
-    static std::unique_ptr<ImageBufferCairoImageSurfaceBackend> create(const Parameters&, const ImageBufferCreationContext&);
-    static std::unique_ptr<ImageBufferCairoImageSurfaceBackend> create(const Parameters&, const GraphicsContext&);
+    static std::unique_ptr<ImageBufferCairoImageSurfaceBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
+    static std::unique_ptr<ImageBufferCairoImageSurfaceBackend> create(const ImageBufferParameters&, const GraphicsContext&);
 
 private:
-    ImageBufferCairoImageSurfaceBackend(const Parameters&, RefPtr<cairo_surface_t>&&);
+    ImageBufferCairoImageSurfaceBackend(const ImageBufferParameters&, RefPtr<cairo_surface_t>&&);
 
     unsigned bytesPerRow() const override;
 

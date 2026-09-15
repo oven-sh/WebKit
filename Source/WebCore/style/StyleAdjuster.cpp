@@ -800,10 +800,8 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
             style.setCursor(CSS::Keyword::Auto { });
 #endif
 
-#if ENABLE(TEXT_AUTOSIZING)
         if (m_document->settings().textAutosizingUsesIdempotentMode())
             adjustForTextAutosizing(style, protect(*m_element));
-#endif
     }
 
     if (m_parentStyle.contentVisibility() != ContentVisibility::Hidden && m_element && ContainmentChecker { style, *m_element }.isSkippedContentRoot())
@@ -1352,7 +1350,6 @@ std::unique_ptr<Style::ComputedStyle> Adjuster::restoreUsedDocumentElementStyleT
     return adjusted;
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 static bool NODELETE hasTextChild(const Element& element)
 {
     for (auto* child = element.firstChild(); child; child = child->nextSibling()) {
@@ -1381,7 +1378,7 @@ auto Adjuster::adjustmentForTextAutosizing(const Style::ComputedStyle& style, co
 
     float initialScale = document->page() ? document->page()->initialScaleIgnoringContentSize() : 1;
     auto adjustLineHeightIfNeeded = [&](auto usedFontSize) {
-        auto lineHeight = style.specifiedLineHeight();
+        auto lineHeight = style.lineHeight();
         constexpr static unsigned eligibleFontSize = 12;
         if (usedFontSize * initialScale >= eligibleFontSize)
             return;
@@ -1433,7 +1430,7 @@ bool Adjuster::adjustForTextAutosizing(Style::ComputedStyle& style, AdjustmentFo
         style.setFontDescription(WTF::move(fontDescription));
     }
     if (auto newLineHeight = adjustment.newLineHeight)
-        style.setLineHeight(LineHeight::Fixed { *newLineHeight });
+        style.setTextAutosizingAdjustedLineHeight(LineHeight::Fixed { *newLineHeight });
     if (auto newStatus = adjustment.newStatus)
         style.setAutosizeStatus(*newStatus);
     return adjustment.newFontSize || adjustment.newLineHeight;
@@ -1443,7 +1440,6 @@ bool Adjuster::adjustForTextAutosizing(Style::ComputedStyle& style, const Elemen
 {
     return adjustForTextAutosizing(style, adjustmentForTextAutosizing(style, element));
 }
-#endif
 
 void Adjuster::adjustVisibilityForPseudoElement(Style::ComputedStyle& style, const Element& host)
 {

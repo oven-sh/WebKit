@@ -269,8 +269,7 @@ static TrackIndexes tracksWithAutoMaxTrackSizingFunction(const UnsizedTracks& un
 {
     TrackIndexes trackIndexes;
     for (auto [trackIndex, track] : WTF::indexedRange(unsizedTracks)) {
-        auto& maxTrackSizingFunction = track.trackSizingFunction.max;
-        if (maxTrackSizingFunction.isAuto())
+        if (track.trackSizingFunction.max.isAuto())
             trackIndexes.append(trackIndex);
     }
     return trackIndexes;
@@ -299,20 +298,22 @@ static Vector<LayoutUnit> maxContentContributions(const TrackSizingItemList& tra
 // item's used minimum size as its preferred size; else the item's minimum contribution is its
 // min-content contribution.
 static LayoutUnit minimumContribution(const TrackSizingItemList& trackSizingItems, size_t gridItemIndex,
-    const GridItemSizingFunctions& gridItemSizingFunctions, const TrackSizingFunctionsList& trackSizingFunctions)
+    const GridItemSizingFunctions& gridItemSizingFunctions, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit gapSize,
+    const AxisConstraint& axisConstraint)
 {
     auto& trackSizingItem = trackSizingItems[gridItemIndex];
     auto& preferredSize = trackSizingItem.computedSizes.preferredSize;
     if (GridLayoutUtils::preferredSizeBehavesAsAuto(preferredSize) || GridLayoutUtils::sizeDependsOnContainingBlockSize(preferredSize))
-        return gridItemSizingFunctions.usedMinimumSize(trackSizingItem.gridItem, trackSizingFunctions, trackSizingItem.borderAndPadding, trackSizingItem.oppositeAxisConstraint);
+        return gridItemSizingFunctions.usedMinimumSize(trackSizingItem.gridItem, trackSizingFunctions, trackSizingItem.borderAndPadding, trackSizingItem.oppositeAxisConstraint, gapSize, axisConstraint);
     return gridItemSizingFunctions.minContentContribution(trackSizingItem.gridItem, trackSizingItem.oppositeAxisConstraint);
 }
 
 static Vector<LayoutUnit> minimumContributions(const TrackSizingItemList& trackSizingItems,
-    const GridItemIndexes& gridItemIndexes, const GridItemSizingFunctions& gridItemSizingFunctions, const TrackSizingFunctionsList& trackSizingFunctions)
+    const GridItemIndexes& gridItemIndexes, const GridItemSizingFunctions& gridItemSizingFunctions, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit gapSize,
+    const AxisConstraint& axisConstraint)
 {
     return gridItemIndexes.map([&](size_t gridItemIndex) {
-        return minimumContribution(trackSizingItems, gridItemIndex, gridItemSizingFunctions, trackSizingFunctions);
+        return minimumContribution(trackSizingItems, gridItemIndex, gridItemSizingFunctions, trackSizingFunctions, gapSize, axisConstraint);
     });
 }
 
@@ -324,13 +325,19 @@ static std::optional<LayoutUnit> fixedMaxTrackSizingFunctionSum(const WTF::Range
     LayoutUnit sum;
     for (size_t trackIndex = itemSpan.begin(); trackIndex < itemSpan.end(); ++trackIndex) {
         auto& trackSizingFunction = unsizedTracks[trackIndex].trackSizingFunction;
-        auto& maxTrackSizingFunction = trackSizingFunction.max;
-        if (!maxTrackSizingFunction.isLength())
+        auto fixedMaximum = WTF::switchOn(trackSizingFunction.max,
+            [](const Style::GridTrackBreadth& breadth) -> std::optional<Style::GridTrackBreadthLength::Fixed> {
+                if (!breadth.isLength())
+                    return { };
+                return breadth.length().tryFixed();
+            },
+            // The limit "could be the argument to a fit-content() track sizing function".
+            [](const Style::GridTrackSize::FitContent& fitContent) -> std::optional<Style::GridTrackBreadthLength::Fixed> {
+                return fitContent->value.tryFixed();
+            });
+        if (!fixedMaximum)
             return { };
-        auto fixedValue = maxTrackSizingFunction.length().tryFixed();
-        if (!fixedValue)
-            return { };
-        sum += Style::evaluate<LayoutUnit>(*fixedValue, trackSizingFunction.zoom);
+        sum += Style::evaluate<LayoutUnit>(*fixedMaximum, trackSizingFunction.zoom);
     }
     return sum;
 }
@@ -398,14 +405,14 @@ static void sizeTracksToFitNonSpanningItems(const ResolveIntrinsicTrackSizesCont
                     });
 
                     // and ultimately floored by its minimum contribution.
-                    auto itemMinimumContributions = minimumContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions, resolveIntrinsicTrackSizesContext.trackSizingFunctionsList);
+                    auto itemMinimumContributions = minimumContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions, resolveIntrinsicTrackSizesContext.trackSizingFunctionsList, resolveIntrinsicTrackSizesContext.gapSize, resolveIntrinsicTrackSizesContext.axisConstraint);
 
                     auto limitedContributions = limitedContentContributions(minContentSizeContributions, fixedMaxTrackSizingFunctionSums, itemMinimumContributions);
                     return std::max({ }, std::ranges::max(limitedContributions));
                 }
                 // Otherwise, set the track’s base size to the maximum of its items’ minimum
                 // contributions, floored at zero.
-                auto contributions = minimumContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions, resolveIntrinsicTrackSizesContext.trackSizingFunctionsList);
+                auto contributions = minimumContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions, resolveIntrinsicTrackSizesContext.trackSizingFunctionsList, resolveIntrinsicTrackSizesContext.gapSize, resolveIntrinsicTrackSizesContext.axisConstraint);
                 return std::max({ }, std::ranges::max(contributions));
             },
             // A <length-percentage> min track sizing function was already resolved to an absolute
@@ -425,42 +432,56 @@ static void sizeTracksToFitNonSpanningItems(const ResolveIntrinsicTrackSizesCont
             }
         );
 
-        auto& maximumTrackSizingFunction = track.trackSizingFunction.max;
-        track.growthLimit = WTF::switchOn(maximumTrackSizingFunction,
-            [&](const CSS::Keyword::MinContent&) -> LayoutUnit {
-                // If the track has a min-content max track sizing function, set its growth
-                // limit to the maximum of the items’ min-content contributions.
-                auto itemContributions = minContentContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions);
-                ASSERT(itemContributions.size() == singleSpanningItemsIndexes.size());
-                return std::ranges::max(itemContributions);
+        track.growthLimit = WTF::switchOn(track.trackSizingFunction.max,
+            [&](const Style::GridTrackBreadth& maximumTrackSizingFunction) -> LayoutUnit {
+                return WTF::switchOn(maximumTrackSizingFunction,
+                    [&](const CSS::Keyword::MinContent&) -> LayoutUnit {
+                        // If the track has a min-content max track sizing function, set its growth
+                        // limit to the maximum of the items’ min-content contributions.
+                        auto itemContributions = minContentContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions);
+                        ASSERT(itemContributions.size() == singleSpanningItemsIndexes.size());
+                        return std::ranges::max(itemContributions);
+                    },
+                    [&](const CSS::Keyword::MaxContent&) -> LayoutUnit {
+                        // If the track has a max-content max track sizing function, set its growth
+                        // limit to the maximum of the items’ max-content contributions.
+                        auto itemContributions = maxContentContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions);
+                        return std::ranges::max(itemContributions);
+                    },
+                    [&](const CSS::Keyword::Auto&) -> LayoutUnit {
+                        // Since it is not explicitly stated otherwise in the spec, auto is treated as max-content:
+                        // If the track has a max-content max track sizing function, set its growth
+                        // limit to the maximum of the items’ max-content contributions.
+                        auto itemContributions = maxContentContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions);
+                        return std::ranges::max(itemContributions);
+                    },
+                    // A <length-percentage> max track sizing function was already resolved to an absolute
+                    // length by Initialize Track Sizes.
+                    [&](const Style::GridTrackBreadth::Fixed&) -> LayoutUnit {
+                        return track.growthLimit;
+                    },
+                    [&](const Style::GridTrackBreadth::Percentage&) -> LayoutUnit {
+                        return track.growthLimit;
+                    },
+                    [&](const Style::GridTrackBreadth::Calc&) -> LayoutUnit {
+                        return track.growthLimit;
+                    },
+                    [&](const auto&) -> LayoutUnit {
+                        ASSERT_NOT_REACHED();
+                        return { };
+                    }
+                );
             },
-            [&](const CSS::Keyword::MaxContent&) -> LayoutUnit {
-                // If the track has a max-content max track sizing function, set its growth
-                // limit to the maximum of the items’ max-content contributions.
+            // For fit-content() maximums, furthermore clamp this growth limit by the fit-content()
+            // argument.
+            [&](const Style::GridTrackSize::FitContent& fitContent) -> LayoutUnit {
                 auto itemContributions = maxContentContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions);
-                return std::ranges::max(itemContributions);
-            },
-            [&](const CSS::Keyword::Auto&) -> LayoutUnit {
-                // Since it is not explicitly stated otherwise in the spec, auto is treated as max-content:
-                // If the track has a max-content max track sizing function, set its growth
-                // limit to the maximum of the items’ max-content contributions.
-                auto itemContributions = maxContentContributions(trackSizingItems, singleSpanningItemsIndexes, gridItemSizingFunctions);
-                return std::ranges::max(itemContributions);
-            },
-            // A <length-percentage> max track sizing function was already resolved to an absolute
-            // length by Initialize Track Sizes.
-            [&](const Style::GridTrackBreadth::Fixed&) -> LayoutUnit {
-                return track.growthLimit;
-            },
-            [&](const Style::GridTrackBreadth::Percentage&) -> LayoutUnit {
-                return track.growthLimit;
-            },
-            [&](const Style::GridTrackBreadth::Calc&) -> LayoutUnit {
-                return track.growthLimit;
-            },
-            [&](const auto&) -> LayoutUnit {
-                ASSERT_NOT_REACHED();
-                return { };
+                auto fitContentLimit = [&] -> LayoutUnit {
+                    if (auto fixedArgument = fitContent->value.tryFixed())
+                        return Style::evaluate<LayoutUnit>(*fixedArgument, track.trackSizingFunction.zoom);
+                    return Style::evaluate<LayoutUnit>(fitContent->value, resolveIntrinsicTrackSizesContext.axisConstraint.availableSpace(), track.trackSizingFunction.zoom);
+                }();
+                return std::min(std::ranges::max(itemContributions), fitContentLimit);
             }
         );
 
@@ -554,8 +575,11 @@ static bool hasAffectedTrackSizingFunction(const UnsizedTrack& track, AffectedTr
         // https://drafts.csswg.org/css-grid-1/#track-sizing
         // As a maximum, auto "represents the largest max-content contribution of the grid items
         // occupying the grid track", so it is accommodated together with max-content here.
-        return maxTrackSizingFunction.isAuto()
-            || (maxTrackSizingFunction.isLength() && maxTrackSizingFunction.length().isMaxContent());
+        // FIXME: A fit-content() track's maximum becomes fixed once it reaches its argument,
+        // which would exclude it here.
+        if (auto breadth = maxTrackSizingFunction.tryBreadth())
+            return breadth->isAuto() || (breadth->isLength() && breadth->length().isMaxContent());
+        return true;
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -576,8 +600,11 @@ static bool shouldTrackGrowBeyondGrowthLimits(const UnsizedTrack& track, Affecte
     // to also have a max-content max track sizing function..."
     case AffectedTrackSizingFunction::AutoOrMaxContentMinimum:
     case AffectedTrackSizingFunction::MaxContentMinimum:
-        return maxTrackSizingFunction.isAuto()
-            || (maxTrackSizingFunction.isLength() && maxTrackSizingFunction.length().isMaxContent());
+        // FIXME: A fit-content() track's maximum becomes fixed once it reaches its argument,
+        // which would stop it growing beyond limits here.
+        if (auto breadth = maxTrackSizingFunction.tryBreadth())
+            return breadth->isAuto() || (breadth->isLength() && breadth->length().isMaxContent());
+        return true;
     // "...when accommodating any contribution into growth limits: any affected track that has an
     // intrinsic max track sizing function."
     case AffectedTrackSizingFunction::IntrinsicMaximum:
@@ -742,7 +769,7 @@ static void resolveIntrinsicTrackSizesWithSpanningItems(const ResolveIntrinsicTr
     auto& trackSizingFunctions = resolveIntrinsicTrackSizesContext.trackSizingFunctionsList;
     auto gapSize = resolveIntrinsicTrackSizesContext.gapSize;
 
-    auto minimumContributionsList = minimumContributions(trackSizingItems, spanningItems, gridItemSizingFunctions, trackSizingFunctions);
+    auto minimumContributionsList = minimumContributions(trackSizingItems, spanningItems, gridItemSizingFunctions, trackSizingFunctions, gapSize, resolveIntrinsicTrackSizesContext.axisConstraint);
     Vector<std::optional<LayoutUnit>> fixedMaxTrackSizingFunctionSums;
     if (isSizedUnderMinOrMaxContentConstraint(resolveIntrinsicTrackSizesContext.axisConstraint)) {
         fixedMaxTrackSizingFunctionSums = spanningItems.map([&](size_t gridItemIndex) {
@@ -962,8 +989,8 @@ static UnsizedTracks initializeTrackSizes(const TrackSizingFunctionsList& trackS
 
             // A fixed sizing function
             // Resolve to an absolute length and use that size as the track’s initial growth limit.
-            if (maxTrackSizingFunction.isLength()) {
-                auto trackBreadthLength = maxTrackSizingFunction.length();
+            if (auto breadth = maxTrackSizingFunction.tryBreadth(); breadth && breadth->isLength()) {
+                auto trackBreadthLength = breadth->length();
                 if (auto fixedValue = trackBreadthLength.tryFixed())
                     return Style::evaluate<LayoutUnit>(*fixedValue, trackSizingFunctions.zoom);
                 if (trackBreadthLength.isPercentOrCalculated())
@@ -989,10 +1016,8 @@ static FlexTracks collectFlexTracks(const UnsizedTracks& unsizedTracks)
     FlexTracks flexTracks;
 
     for (auto [trackIndex, track] : indexedRange(unsizedTracks)) {
-        const auto& maxTrackSizingFunction = track.trackSizingFunction.max;
-
-        if (maxTrackSizingFunction.isFlex()) {
-            auto flexFactor = maxTrackSizingFunction.flex();
+        if (track.trackSizingFunction.max.isFlex()) {
+            auto flexFactor = track.trackSizingFunction.max.flex();
             flexTracks.append(FlexTrack(trackIndex, flexFactor, track.baseSize, track.growthLimit));
         }
     }

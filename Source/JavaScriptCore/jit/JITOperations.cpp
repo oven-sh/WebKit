@@ -66,6 +66,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMapIterator.h"
 #include "JSMicrotask.h"
+#include "JSModuleEnvironment.h"
 #include "JSPromise.h"
 #include "JSRemoteFunction.h"
 #include "JSSentinel.h"
@@ -3082,6 +3083,14 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
             OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
         }
     } else {
+        if (codeBlock->ensureCatchLivenessIsComputedForExecutedCatches()) {
+            // Options::useLazyCatchLiveness(): those catches only start profiling now; give them a warm-up like the other value profiles had.
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("catch profiling just started"));
+            updateAllPredictionsAndOptimizeAfterWarmUp(codeBlock);
+            dataLogLnIf(Options::verboseOSR(), "Delaying optimization for ", *codeBlock, " because its catch value profiles were just created.");
+            OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+        }
+
         if (!codeBlock->shouldOptimizeNowFromBaseline()) {
             dataLogLnIf(Options::verboseOSR(),
                 "Delaying optimization for ", *codeBlock,
@@ -3190,10 +3199,10 @@ JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (
         break;
     }
 
-    codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
-    auto bytecode = codeBlock->instructions().at(bytecodeIndex)->as<OpCatch>();
-    auto& metadata = bytecode.metadata(codeBlock);
-    metadata.m_buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
+    auto* buffer = codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
+    if (!buffer)
+        OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+    buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
         profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 
@@ -4520,15 +4529,19 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     auto bytecode = pc->as<OpResolveScope>();
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* environment = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    auto& metadata = bytecode.metadata(codeBlock);
+
+    if (metadata.m_resolveType == ModuleVar) {
+        JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, environment, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
+
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:

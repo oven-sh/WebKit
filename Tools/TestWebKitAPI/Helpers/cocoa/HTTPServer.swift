@@ -208,6 +208,11 @@ public struct HTTPServer: ~Copyable {
 
         return result
     }
+
+    /// The number of requests this server has received so far.
+    public var totalRequests: Int {
+        unsafe Int(storage.pointee.totalRequests())
+    }
 }
 
 extension TestWebKitAPI.__CxxHTTPServer.`Protocol` {
