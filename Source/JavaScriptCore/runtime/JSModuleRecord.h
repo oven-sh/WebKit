@@ -97,13 +97,15 @@ public:
     JSValue readFunctionDeclarationSlot(VM&, JSModuleEnvironment*, ScopeOffset);
     unsigned numberOfUninstantiatedFunctionDeclarations() const { return m_uninstantiatedFunctionDeclarations ? m_uninstantiatedFunctionDeclarations->remaining : 0; }
 
-    // Local names of the import entries that bind a single export (namespace imports
-    // are variables of this module's environment), sorted: the environment has one
-    // import slot per name in this order (JSModuleEnvironment::importSlot), so the order
-    // is the same for every record of the same source.
-    const Vector<Identifier>& importSlotNames();
-    unsigned importSlotCount() { return importSlotNames().size(); }
+    // The environment has an import slot (JSModuleEnvironment::importSlot) for each import entry
+    // that binds a single export (namespace imports are variables of this module's environment),
+    // numbered the same way for every record of the same source: a prelinked record's by the
+    // entry's position among the graph's imports of the module (a namespace import's position is
+    // a slot nothing uses), any other record's in the order of its import entries.
+    unsigned importSlotCount();
     unsigned importSlotIndex(UniquedStringImpl* localName);
+    // resolveImport(localName) and, for a resolved binding, its import slot.
+    Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
     JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
 
@@ -112,9 +114,14 @@ private:
 
     void finishCreation(JSGlobalObject*, VM&);
 
+    const Vector<Identifier>& importSlotNames(); // not prelinked: the local names that have a slot, in the import entries' order
+    const Identifier& importSlotLocalName(unsigned index);
+    template<typename Functor> void forEachImportSlot(const Functor&); // (index, local name) -> IterationStatus
+
     SourceCode m_sourceCode;
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
     std::optional<Vector<Identifier>> m_importSlotNames;
+    HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
     CodeFeatures m_features;
 
     struct UninstantiatedFunctionDeclarations {

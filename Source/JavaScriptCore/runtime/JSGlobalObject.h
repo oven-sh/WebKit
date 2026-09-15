@@ -522,6 +522,7 @@ public:
     WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable> m_resumableCodeSymbolTableClones;
     using ModuleProgramExecutableKey = std::pair<UniquedStringImpl*, SymbolTable*>; // module key, module scope: JSModuleRecord::getOrMakeExecutable
     WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable> m_moduleProgramExecutables;
+    bool m_hasAdditionalModuleLoaders { false }; // JSModuleLoader::create(JSGlobalObject*, VM&, JSScope*) was called
 
     String m_name;
 
@@ -1189,6 +1190,8 @@ public:
     WeakGCMap<SymbolTable*, SymbolTable>& symbolTableCache() { return m_symbolTableCache; }
     WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable>& resumableCodeSymbolTableClones() { return m_resumableCodeSymbolTableClones; }
     WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
+    bool hasAdditionalModuleLoaders() const { return m_hasAdditionalModuleLoaders; }
+    void didCreateAdditionalModuleLoader() { m_hasAdditionalModuleLoaders = true; }
 
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }

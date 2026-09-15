@@ -128,7 +128,7 @@ bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTabl
 
 bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const
 {
-    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || !exporterSource != !other.exporterSource)
+    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || importSlot != other.importSlot || !exporterSource != !other.exporterSource)
         return false;
     if (!exporterSource || exporterSource == other.exporterSource)
         return true;

@@ -83,6 +83,7 @@ public:
         return object;
     }
 
+    // A loader besides the global object's own (JSGlobalObject::moduleLoader(), which is made with the overload above).
     JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
 
     JSScope* moduleScope() const { return m_moduleScope.get(); }

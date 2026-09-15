@@ -1881,7 +1881,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_moduleLoader.initLater(
         [] (const Initializer<JSModuleLoader>& init) {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
-            init.set(JSModuleLoader::create(init.owner, init.vm, init.owner->globalLexicalEnvironment()));
+            init.set(JSModuleLoader::create(init.owner, init.vm, init.vm.moduleLoaderStructure.get(), init.owner->globalLexicalEnvironment()));
             catchScope.releaseAssertNoException();
         });
     if (Options::exposeInternalModuleLoader())

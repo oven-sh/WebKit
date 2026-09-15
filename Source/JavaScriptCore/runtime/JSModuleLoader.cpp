@@ -250,6 +250,7 @@ JSModuleLoader::JSModuleLoader(VM& vm, Structure* structure, JSScope* moduleScop
 
 JSModuleLoader* JSModuleLoader::create(JSGlobalObject* globalObject, VM& vm, JSScope* moduleScope)
 {
+    globalObject->didCreateAdditionalModuleLoader();
     return create(globalObject, vm, vm.moduleLoaderStructure.get(), moduleScope);
 }
 
