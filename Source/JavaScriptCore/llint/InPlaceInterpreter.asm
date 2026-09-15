@@ -370,6 +370,15 @@ macro unimplementedInstruction(instrname)
     break
 end
 
+if not (ARM64 or ARM64E or X86_64)
+# Architectures without an IPInt backend never include InPlaceInterpreter64,
+# where the real dispatch macro lives. The trap handler below still references
+# it outside of any architecture guard, so give it a trapping definition.
+macro nextIPIntInstruction()
+    break
+end
+end
+
 macro reservedOpcode(opcode)
     unimplementedInstruction(_reserved_%opcode%)
 end
@@ -2612,4 +2621,20 @@ unimplementedInstruction(_i32_atomic_rmw16_cmpxchg_u)
 unimplementedInstruction(_i64_atomic_rmw8_cmpxchg_u)
 unimplementedInstruction(_i64_atomic_rmw16_cmpxchg_u)
 unimplementedInstruction(_i64_atomic_rmw32_cmpxchg_u)
+
+# The call trampolines and return locations live in InPlaceInterpreter64, which
+# is only included on architectures with an IPInt backend. LowLevelInterpreter
+# defines them when WebAssembly is disabled entirely; define them here for the
+# in-between case, WebAssembly enabled on an architecture without IPInt.
+_wasm_trampoline_wasm_ipint_call:
+_wasm_trampoline_wasm_ipint_call_wide16:
+_wasm_trampoline_wasm_ipint_call_wide32:
+_wasm_trampoline_wasm_ipint_tail_call:
+_wasm_trampoline_wasm_ipint_tail_call_wide16:
+_wasm_trampoline_wasm_ipint_tail_call_wide32:
+
+_wasm_ipint_call_return_location:
+_wasm_ipint_call_return_location_wide16:
+_wasm_ipint_call_return_location_wide32:
+    break
 end

@@ -842,6 +842,9 @@ void Options::notifyOptionsChanged()
     Options::useWasmSIMD() = false;
     Options::useWasmIPInt() = false;
     Options::useBBQJIT() = false;
+    // With both wasm tiers off, keeping useWasm() on trips the coherency check
+    // in Options::isCoherent ("at least one of useWasmIPInt, or useBBQJIT").
+    Options::useWasm() = false;
 #endif
 
 #if !CPU(ARM64)

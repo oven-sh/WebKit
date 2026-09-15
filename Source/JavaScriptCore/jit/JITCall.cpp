@@ -464,6 +464,7 @@ void JIT::emit_op_iterator_next(const JSInstruction* instruction)
     genericCases.append(branchIfNotType(nextGPR, SentinelType));
 
     JumpList doneCases;
+#if CPU(ARM64) || CPU(X86_64)
     loadGlobalObject(argumentGPR0);
     emitGetVirtualRegister(bytecode.m_iterator, argumentGPR1);
     emitGetVirtualRegister(bytecode.m_iterable, argumentGPR2);
@@ -474,6 +475,11 @@ void JIT::emit_op_iterator_next(const JSInstruction* instruction)
     doneCases.append(branchIfEmpty(returnValueGPR2));
     emitValueProfilingSite(bytecode, m_bytecodeIndex.withCheckpoint(OpIteratorNext::getValue), returnValueGPR2);
     doneCases.append(jump());
+#else
+    // operationIteratorNextTryFast is declared only for ARM64 and x86_64;
+    // everywhere else the generic path below handles the opcode.
+    genericCases.append(jump());
+#endif
 
     genericCases.link(this);
     load16FromMetadata(bytecode, OpIteratorNext::Metadata::offsetOfIterationMetadata() + IterationModeMetadata::offsetOfSeenModes(), regT0);

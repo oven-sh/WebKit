@@ -20186,6 +20186,12 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileRegExpTestInline()
     {
+#if !ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+        // See the matching guard in DFGSpeculativeJIT64: without the inline
+        // Yarr test there is no YarrJITRegisters, and this node is never
+        // emitted.
+        RELEASE_ASSERT_NOT_REACHED();
+#else
         RegExp* regExp = uncheckedDowncast<RegExp>(m_node->cellOperand2()->value());
 
         ASSERT(!regExp->globalOrSticky());
@@ -20337,6 +20343,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         setBoolean(m_out.phi(Int32, inlineresult, operationResult));
+#endif
     }
 
     void compileRegExpMatchFast()

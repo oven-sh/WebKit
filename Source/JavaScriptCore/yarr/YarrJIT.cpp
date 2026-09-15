@@ -4914,7 +4914,12 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // Emit fast skip path with stride if we have BoyerMooreInfo.
                 if (op.m_bmInfo) {
+#if CPU(ARM64) || CPU(X86_64)
                     auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan());
+#else
+                    // canUseVectorScan lives inside the ARM64/x86_64 SIMD block.
+                    auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, false);
+#endif
                     if (range) {
                         auto [beginIndex, endIndex] = *range;
                         ASSERT(endIndex <= alternative->m_minimumSize);

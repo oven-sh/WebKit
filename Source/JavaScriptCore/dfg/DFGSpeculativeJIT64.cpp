@@ -3049,6 +3049,13 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<G
 
 void SpeculativeJIT::compileRegExpTestInline(Node* node)
 {
+#if !ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+    // The fork enables the inline Yarr test only on ARM64 and x86_64, and
+    // YarrJITRegisters does not exist without it. DFG never emits this node
+    // when the inline path is off.
+    UNUSED_PARAM(node);
+    RELEASE_ASSERT_NOT_REACHED();
+#else
     RegExp* regExp = uncheckedDowncast<RegExp>(node->cellOperand2()->value());
 
     auto jitCodeBlock = regExp->getRegExpJITCodeBlock();
@@ -3176,6 +3183,7 @@ void SpeculativeJIT::compileRegExpTestInline(Node* node)
 
     doneCases.link(this);
     unblessedBooleanResult(temp0GPR, node);
+#endif
 }
 
 #if USE(LARGE_TYPED_ARRAYS)

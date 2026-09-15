@@ -3085,6 +3085,32 @@ public:
         return branchTestFinalize(cond, temp.data());
     }
 
+    Jump branchTestBit64(ResultCondition cond, RegisterID testValue, TrustedImm32 bit)
+    {
+        auto temp = temps<Data>();
+        m_assembler.srliInsn(temp.data(), testValue, static_cast<uint32_t>(bit.m_value) % 64);
+        m_assembler.andiInsn(temp.data(), temp.data(), Imm::I<1>());
+        return branchTestFinalize(cond, temp.data());
+    }
+
+    Jump branchTestBit64(ResultCondition cond, RegisterID reg, RegisterID bit)
+    {
+        auto temp = temps<Data>();
+        m_assembler.srlInsn(temp.data(), reg, bit);
+        m_assembler.andiInsn(temp.data(), temp.data(), Imm::I<1>());
+        return branchTestFinalize(cond, temp.data());
+    }
+
+    Jump branchTestBit64(ResultCondition cond, Address testValue, TrustedImm32 bit)
+    {
+        auto temp = temps<Data, Memory>();
+        auto resolution = resolveAddress(testValue, temp.memory());
+        m_assembler.ldInsn(temp.data(), resolution.base, Imm::I(resolution.offset));
+        m_assembler.srliInsn(temp.data(), temp.data(), static_cast<uint32_t>(bit.m_value) % 64);
+        m_assembler.andiInsn(temp.data(), temp.data(), Imm::I<1>());
+        return branchTestFinalize(cond, temp.data());
+    }
+
     Jump branchTest64(ResultCondition cond, RegisterID lhs, TrustedImm32 imm = TrustedImm32(-1))
     {
         auto temp = temps<Data>();
