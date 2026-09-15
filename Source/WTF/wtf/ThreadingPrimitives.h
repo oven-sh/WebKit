@@ -33,6 +33,7 @@
 #include <limits.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Locker.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/WallTime.h>
 
@@ -97,12 +98,21 @@ class ThreadCondition final {
     WTF_MAKE_NONCOPYABLE(ThreadCondition);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ThreadCondition);
 public:
+#if HAVE(PTHREAD_CONDATTR_SETCLOCK)
+    // Timed waits count on CLOCK_MONOTONIC, and a condition variable on that clock has no static
+    // initializer.
+    WTF_EXPORT_PRIVATE ThreadCondition();
+#else
     constexpr ThreadCondition() = default;
+#endif
     WTF_EXPORT_PRIVATE ~ThreadCondition();
     
     WTF_EXPORT_PRIVATE void wait(Mutex& mutex);
     // Returns true if the condition was signaled before absoluteTime, false if the absoluteTime was reached or is in the past.
     WTF_EXPORT_PRIVATE bool timedWait(Mutex&, WallTime absoluteTime);
+    // A timeout that is a duration belongs on the monotonic clock: this wait gets no longer and no
+    // shorter when the system clock is set.
+    WTF_EXPORT_PRIVATE bool timedWait(Mutex&, MonotonicTime absoluteTime);
     WTF_EXPORT_PRIVATE void signal();
     WTF_EXPORT_PRIVATE void broadcast();
     
