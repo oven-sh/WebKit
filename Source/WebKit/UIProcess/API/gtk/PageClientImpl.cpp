@@ -169,7 +169,7 @@ void PageClientImpl::didRelaunchProcess()
 
 void PageClientImpl::toolTipChanged(const String&, const String& newToolTip)
 {
-    webkitWebViewBaseSetTooltipText(WEBKIT_WEB_VIEW_BASE(m_viewWidget), newToolTip.utf8().data());
+    webkitWebViewBaseSetTooltipText(WEBKIT_WEB_VIEW_BASE(m_viewWidget), newToolTip.utf8().legacyCStringPointer());
 }
 
 void PageClientImpl::setCursor(const WebCore::Cursor& cursor)

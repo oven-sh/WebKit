@@ -103,7 +103,7 @@ void MemoryIndex::notifyCursorsOfAllRecordsChanged()
 
 IDBGetResult MemoryIndex::getResultForKeyRange(IndexedDB::IndexRecordType type, const IDBKeyRangeData& range) const
 {
-    LOG(IndexedDB, "MemoryIndex::getResultForKeyRange - %s", range.loggingString().utf8().data());
+    LOG(IndexedDB, "MemoryIndex::getResultForKeyRange - %s", range.loggingString().utf8().legacyCStringPointer());
 
     CheckedPtr records = m_records.get();
     if (!records)

@@ -105,8 +105,10 @@ RefPtr<SVGTextPositioningElement> SVGTextPositioningElement::elementFromRenderer
     if (!is<RenderSVGText>(renderer) && !is<RenderSVGInline>(renderer))
         return nullptr;
 
-    ASSERT(renderer.element());
-    RefPtr element = downcast<SVGElement>(renderer.element());
+    RefPtr element = dynamicDowncast<SVGElement>(renderer.element());
+    if (!element)
+        return nullptr;
+
     return dynamicDowncast<SVGTextPositioningElement>(WTF::move(element));
 }
 

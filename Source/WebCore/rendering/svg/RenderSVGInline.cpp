@@ -46,6 +46,12 @@ RenderSVGInline::RenderSVGInline(Type type, SVGGraphicsElement& element, Style::
     ASSERT(isRenderSVGInline());
 }
 
+RenderSVGInline::RenderSVGInline(Type type, Document& document, Style::ComputedStyle&& style)
+    : RenderInline(type, document, WTF::move(style))
+{
+    ASSERT(isRenderSVGInline());
+}
+
 RenderSVGInline::~RenderSVGInline() = default;
 
 std::unique_ptr<LegacyInlineFlowBox> RenderSVGInline::createInlineFlowBox()
@@ -189,11 +195,14 @@ void RenderSVGInline::styleDidChange(Style::Difference diff, const Style::Comput
     if (diff == Style::DifferenceResult::Layout)
         invalidateCachedBoundaries();
     RenderInline::styleDidChange(diff, oldStyle);
-    SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
+    if (!isAnonymous())
+        SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
 }
 
 bool RenderSVGInline::needsHasSVGTransformFlags() const
 {
+    if (isAnonymous())
+        return false;
     return protect(graphicsElement())->hasTransformRelatedAttributes();
 }
 

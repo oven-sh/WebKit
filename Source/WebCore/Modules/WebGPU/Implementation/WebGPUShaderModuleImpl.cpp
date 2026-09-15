@@ -90,7 +90,7 @@ void ShaderModuleImpl::compilationInfo(CompletionHandler<void(Ref<CompilationInf
 
 void ShaderModuleImpl::setLabelInternal(const String& label)
 {
-    wgpuShaderModuleSetLabel(m_backing.get(), label.utf8().data());
+    wgpuShaderModuleSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

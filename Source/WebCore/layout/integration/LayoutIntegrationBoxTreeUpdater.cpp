@@ -41,12 +41,12 @@
 #include "RenderFlexibleBox.h"
 #include "RenderGrid.h"
 #include "RenderImage.h"
+#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderListItem.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderMenuList.h"
 #include "RenderObjectInlines.h"
-#include "RenderSVGInline.h"
 #include "RenderSlider.h"
 #include "RenderTable.h"
 #include "RenderTextControl.h"
@@ -89,6 +89,8 @@ static Layout::Box::ElementAttributes elementAttributes(const RenderElement& ren
             return renderLineBreak->isWBR() ? Layout::Box::NodeType::WordBreakOpportunity : Layout::Box::NodeType::LineBreak;
         if (is<RenderTable>(renderer))
             return Layout::Box::NodeType::TableBox;
+        if (is<RenderInline>(renderer))
+            return Layout::Box::NodeType::InlineBox;
         return Layout::Box::NodeType::GenericElement;
     }();
 
@@ -183,9 +185,6 @@ void BoxTreeUpdater::adjustStyleIfNeeded(const RenderElement& renderer, Style::C
         }
 
         if (is<RenderBlock>(renderer)) {
-            if (styleToAdjust.display() == Style::DisplayType::InlineFlow)
-                styleToAdjust.setDisplay(Style::DisplayType::InlineFlowRoot);
-
             if (renderer.isAnonymousBlock()) {
                 CheckedRef anonBlockParentStyle = renderer.parent()->style();
                 // overflow and text-overflow property values don't get forwarded to anonymous block boxes.
@@ -194,34 +193,6 @@ void BoxTreeUpdater::adjustStyleIfNeeded(const RenderElement& renderer, Style::C
                 styleToAdjust.setOverflowX(anonBlockParentStyle->overflowX());
                 styleToAdjust.setOverflowY(anonBlockParentStyle->overflowY());
             }
-            return;
-        }
-
-        if (auto* renderInline = dynamicDowncast<RenderInline>(renderer)) {
-            auto isSupportedInlineDisplay = [&] {
-                auto display = styleToAdjust.display();
-                if (display == Style::DisplayType::RubyBase || display == Style::DisplayType::RubyText)
-                    return renderInline->parent()->style().display() == Style::DisplayType::InlineRuby;
-                if (is<RenderSVGInline>(*renderInline))
-                    return display == Style::DisplayType::InlineFlow;
-                return display.isInlineType();
-            };
-            if (!isSupportedInlineDisplay())
-                styleToAdjust.setDisplay(Style::DisplayType::InlineFlow);
-            return;
-        }
-
-        if (auto* renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer)) {
-            if (!styleToAdjust.hasOutOfFlowPosition()) {
-                // Force in-flow display value to inline (see webkit.org/b/223151).
-                styleToAdjust.setDisplay(Style::DisplayType::InlineFlow);
-            }
-            styleToAdjust.setFloating(Float::None);
-            // Clear property should only apply on block elements, however,
-            // it appears that browsers seem to ignore it on <br> inline elements.
-            // https://drafts.csswg.org/css2/#propdef-clear
-            if (renderLineBreak->isWBR())
-                styleToAdjust.setClear(Clear::None);
             return;
         }
     };

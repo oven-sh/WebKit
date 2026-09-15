@@ -138,13 +138,13 @@ std::optional<size_t> CurlFormDataStream::readFromFile(const FormDataElement::En
         m_fileHandle = FileSystem::openFile(fileData.filename, FileSystem::FileOpenMode::Read);
 
     if (!m_fileHandle) {
-        LOG(Network, "Curl - Failed while trying to open %s for upload\n", fileData.filename.utf8().data());
+        LOG(Network, "Curl - Failed while trying to open %s for upload\n", fileData.filename.utf8().legacyCStringPointer());
         return std::nullopt;
     }
 
     auto readBytes = m_fileHandle.read({ byteCast<uint8_t>(buffer), size });
     if (!readBytes) {
-        LOG(Network, "Curl - Failed while trying to read %s for upload\n", fileData.filename.utf8().data());
+        LOG(Network, "Curl - Failed while trying to read %s for upload\n", fileData.filename.utf8().legacyCStringPointer());
         m_fileHandle = { };
         return std::nullopt;
     }

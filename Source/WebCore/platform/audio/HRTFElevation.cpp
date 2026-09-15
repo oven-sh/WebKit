@@ -84,7 +84,7 @@ static RefPtr<AudioBus> getConcatenatedImpulseResponsesForSubject(const String& 
         auto& cache = concatenatedImpulseResponsesMap();
         bus = cache.get(subjectName);
         if (!bus) {
-            bus = AudioBus::loadPlatformResource(subjectName.utf8().data(), ResponseSampleRate);
+            bus = AudioBus::loadPlatformResource(subjectName.utf8().legacyCStringPointer(), ResponseSampleRate);
             ASSERT(bus);
             if (!bus)
                 return nullptr;

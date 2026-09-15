@@ -260,7 +260,7 @@ static void bindX11(Vector<CString>& args)
         }, 1);
         auto displayString = display.substring(1, displayNumberEnd - 1);
         auto x11File = makeString("/tmp/.X11-unix/X"_s, displayString);
-        bindIfExists(args, x11File.utf8().data(), BindFlags::ReadWrite);
+        bindIfExists(args, x11File.utf8().legacyCStringPointer(), BindFlags::ReadWrite);
     }
 
     const char* xauth = g_getenv("XAUTHORITY");
@@ -431,21 +431,21 @@ static void bindGStreamerData(Vector<CString>& args)
     GUniquePtr<char> defaultRegistryPath(g_build_filename(g_get_user_cache_dir(), "gstreamer-1.0", nullptr));
     const char* registryPath = environmentVariableValue("GST_REGISTRY", defaultRegistryPath.get());
     auto registryDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(registryPath));
-    bindIfExists(args, registryDir.utf8().data(), BindFlags::ReadWrite);
+    bindIfExists(args, registryDir.utf8().legacyCStringPointer(), BindFlags::ReadWrite);
 
     bindPathVar(args, "GST_PRESET_PATH");
 
     // GST_DEBUG_FILE points to an absolute file path, so we need write permissions for its parent directory.
     if (const char* debugFilePath = g_getenv("GST_DEBUG_FILE")) {
         auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(debugFilePath));
-        bindIfExists(args, parentDir.utf8().data(), BindFlags::ReadWrite);
+        bindIfExists(args, parentDir.utf8().legacyCStringPointer(), BindFlags::ReadWrite);
     }
 
     // GST_DEBUG_DUMP_DOT_DIR might not exist when the application starts, so we need write
     // permissions for its parent directory.
     if (const char* dotDir = g_getenv("GST_DEBUG_DUMP_DOT_DIR")) {
         auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(dotDir));
-        bindIfExists(args, parentDir.utf8().data(), BindFlags::ReadWrite);
+        bindIfExists(args, parentDir.utf8().legacyCStringPointer(), BindFlags::ReadWrite);
     }
 
     // /usr/lib is already added so this is only required for other dirs.
@@ -765,7 +765,7 @@ static std::optional<CString> directoryContainingDBusSocket(const char* dbusAddr
 
         auto pathEnd = dbusAddressString.find(',', pathStart);
         auto path = pathEnd == notFound ? dbusAddressString.substring(pathStart) : dbusAddressString.substring(pathStart, pathEnd - pathStart);
-        GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.utf8().data()));
+        GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(path.utf8().legacyCStringPointer()));
         GRefPtr<GFile> parent = adoptGRef(g_file_get_parent(file.get()));
         if (!parent)
             return std::nullopt;
@@ -878,7 +878,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         }
 
 #if USE(ATSPI)
-        if (auto a11yBusDirectory = directoryContainingDBusSocket(launchOptions.extraInitializationData.get("accessibilityBusAddress"_s).utf8().data())) {
+        if (auto a11yBusDirectory = directoryContainingDBusSocket(launchOptions.extraInitializationData.get("accessibilityBusAddress"_s).utf8().legacyCStringPointer())) {
             sandboxArgs.appendList<CString>({
                 "--bind", *a11yBusDirectory, *a11yBusDirectory,
             });
@@ -977,14 +977,14 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
     const char* execDirectory = g_getenv("WEBKIT_EXEC_PATH");
     if (execDirectory) {
         auto parentDir = FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(execDirectory));
-        bindIfExists(sandboxArgs, parentDir.utf8().data());
+        bindIfExists(sandboxArgs, parentDir.utf8().legacyCStringPointer());
     }
 
     CString executablePath = FileSystem::currentExecutablePath();
     if (!executablePath.isNull()) {
         // Our executable is `/foo/bar/bin/Process`, we want `/foo/bar` as a usable prefix
         auto parentDir = FileSystem::parentPath(FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(executablePath.data())));
-        bindIfExists(sandboxArgs, parentDir.utf8().data());
+        bindIfExists(sandboxArgs, parentDir.utf8().legacyCStringPointer());
     }
 #endif
 

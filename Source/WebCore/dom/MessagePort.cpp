@@ -131,7 +131,7 @@ MessagePort::MessagePort(ScriptExecutionContext& scriptExecutionContext, const M
     , m_identifier(local)
     , m_remoteIdentifier(remote)
 {
-    LOG(MessagePorts, "Created MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().data(), this, Process::identifier().toUInt64());
+    LOG(MessagePorts, "Created MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().legacyCStringPointer(), this, Process::identifier().toUInt64());
 
     Locker locker { allMessagePortsLock };
     // We disable threading assertions since the allMessagePorts() is used from multiple threads in a safe way, using a lock.
@@ -148,7 +148,7 @@ MessagePort::MessagePort(ScriptExecutionContext& scriptExecutionContext, const M
 
 MessagePort::~MessagePort()
 {
-    LOG(MessagePorts, "Destroyed MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().data(), this, Process::identifier().toUInt64());
+    LOG(MessagePorts, "Destroyed MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().legacyCStringPointer(), this, Process::identifier().toUInt64());
 
     Locker locker { allMessagePortsLock };
 
@@ -175,7 +175,7 @@ void MessagePort::entangle()
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    LOG(MessagePorts, "Attempting to post message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
+    LOG(MessagePorts, "Attempting to post message to port %s (to be received by port %s)", m_identifier.logString().utf8().legacyCStringPointer(), m_remoteIdentifier.logString().utf8().legacyCStringPointer());
 
     Vector<Ref<MessagePort>> ports;
     auto messageData = SerializedScriptValue::create(globalObject, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No);
@@ -202,7 +202,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& globalObject, JS
 
     MessageWithMessagePorts message { messageData.releaseReturnValue(), WTF::move(transferredPorts) };
 
-    LOG(MessagePorts, "Actually posting message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
+    LOG(MessagePorts, "Actually posting message to port %s (to be received by port %s)", m_identifier.logString().utf8().legacyCStringPointer(), m_remoteIdentifier.logString().utf8().legacyCStringPointer());
 
     if (RefPtr partner = m_localPartner) {
         partner->m_localQueue.append(WTF::move(message));
@@ -323,11 +323,11 @@ void MessagePort::dispatchMessages()
     if (!context || context->activeDOMObjectsAreSuspended() || isDetached())
         return;
 
-    LOG(MessagePorts, "Dispatching messages on MessagePort %s (%p)", m_identifier.logString().utf8().data(), this);
+    LOG(MessagePorts, "Dispatching messages on MessagePort %s (%p)", m_identifier.logString().utf8().legacyCStringPointer(), this);
     while (m_newLocalMessages) {
         --m_newLocalMessages;
         queueTaskKeepingObjectAlive(*this, TaskSource::PostedMessageQueue, [](auto& port) {
-            LOG(MessagePorts, "Draining one local message on MessagePort %s (%p)", port.m_identifier.logString().utf8().data(), &port);
+            LOG(MessagePorts, "Draining one local message on MessagePort %s (%p)", port.m_identifier.logString().utf8().legacyCStringPointer(), &port);
             port.drainOneLocalMessage();
         });
     }
@@ -340,7 +340,7 @@ void MessagePort::dispatchMessages()
     auto messagesTakenHandler = [pendingActivity = makePendingActivity(*this)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
         auto scopeExit = makeScopeExit(WTF::move(completionCallback));
 
-        LOG(MessagePorts, "MessagePort %s (%p) dispatching %zu messages", pendingActivity->object().m_identifier.logString().utf8().data(), &pendingActivity->object(), messages.size());
+        LOG(MessagePorts, "MessagePort %s (%p) dispatching %zu messages", pendingActivity->object().m_identifier.logString().utf8().legacyCStringPointer(), &pendingActivity->object(), messages.size());
 
         RefPtr context = pendingActivity->object().scriptExecutionContext();
         if (!context || !context->globalObject())
@@ -469,7 +469,7 @@ ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector
 
 Vector<Ref<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& context, Vector<TransferredMessagePort>&& transferredPorts)
 {
-    LOG(MessagePorts, "Entangling %zu transferred ports to ScriptExecutionContext %s (%p)", transferredPorts.size(), context.url().string().utf8().data(), &context);
+    LOG(MessagePorts, "Entangling %zu transferred ports to ScriptExecutionContext %s (%p)", transferredPorts.size(), context.url().string().utf8().legacyCStringPointer(), &context);
 
     if (transferredPorts.isEmpty())
         return { };

@@ -4227,7 +4227,7 @@ bool EventHandler::internalKeyEvent(const PlatformKeyboardEvent& initialKeyEvent
     Ref frame = m_frame.get();
     RefPtr protectedView { frame->view() };
 
-    LOG(Editing, "EventHandler %p keyEvent (text %s keyIdentifier %s)", this, initialKeyEvent.text().utf8().data(), initialKeyEvent.keyIdentifier().utf8().data());
+    LOG(Editing, "EventHandler %p keyEvent (text %s keyIdentifier %s)", this, initialKeyEvent.text().utf8().legacyCStringPointer(), initialKeyEvent.keyIdentifier().utf8().legacyCStringPointer());
 
 #if ENABLE(POINTER_LOCK)
     if (initialKeyEvent.type() == PlatformEvent::Type::KeyDown && initialKeyEvent.windowsVirtualKeyCode() == VK_ESCAPE && frame->page()->pointerLockController().element()) {
@@ -4946,7 +4946,7 @@ bool EventHandler::mouseMovementExceedsThreshold(const FloatPoint& viewportLocat
 
 bool EventHandler::handleTextInputEvent(const String& text, Event* underlyingEvent, TextEventInputType inputType)
 {
-    LOG(Editing, "EventHandler %p handleTextInputEvent (text %s)", this, text.utf8().data());
+    LOG(Editing, "EventHandler %p handleTextInputEvent (text %s)", this, text.utf8().legacyCStringPointer());
 
     // Platforms should differentiate real commands like selectAll from text input in disguise (like insertNewline),
     // and avoid dispatching text input events from keydown default handlers.

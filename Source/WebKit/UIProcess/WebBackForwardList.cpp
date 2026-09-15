@@ -228,7 +228,7 @@ void WebBackForwardList::goToItem(WebBackForwardListItem& item)
 
     // If the target item wasn't even in the list, there's nothing else to do.
     if (targetIndex == notFound) {
-        LOG(BackForward, "(Back/Forward) WebBackForwardList %p could not go to item %s (%s) because it was not found", this, item.identifier().toString().utf8().data(), item.url().utf8().data());
+        LOG(BackForward, "(Back/Forward) WebBackForwardList %p could not go to item %s (%s) because it was not found", this, item.identifier().toString().utf8().legacyCStringPointer(), item.url().utf8().legacyCStringPointer());
         return;
     }
 
@@ -264,7 +264,7 @@ void WebBackForwardList::goToItem(WebBackForwardListItem& item)
 
     m_currentIndex = targetIndex;
 
-    LOG(BackForward, "(Back/Forward) WebBackForwardList %p going to item %s, is now at index %zu", this, item.identifier().toString().utf8().data(), targetIndex);
+    LOG(BackForward, "(Back/Forward) WebBackForwardList %p going to item %s, is now at index %zu", this, item.identifier().toString().utf8().legacyCStringPointer(), targetIndex);
     page->didChangeBackForwardList(nullptr, WTF::move(removedItems));
 }
 
@@ -1113,12 +1113,12 @@ WebCore::BackForwardFrameItemIdentifier generateBackForwardFrameItemIdentifier()
 // rdar://168139823 is the task of doing a productionized version of WebKit Swift logging
 void doLog(const WTF::String& msg)
 {
-    LOG(BackForward, "%s", msg.utf8().data());
+    LOG(BackForward, "%s", msg.utf8().legacyCStringPointer());
 }
 
 void doLoadingReleaseLog(const WTF::String& msg)
 {
-    RELEASE_LOG(Loading, "%s", msg.utf8().data());
+    RELEASE_LOG(Loading, "%s", msg.utf8().legacyCStringPointer());
 }
 // rdar://168139740 is the task of doing a productionized Swift MESSAGE_CHECK
 void messageCheckFailed(Ref<WebKit::WebProcessProxy> process)

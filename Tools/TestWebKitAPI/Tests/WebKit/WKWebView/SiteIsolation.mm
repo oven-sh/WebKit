@@ -634,7 +634,7 @@ static void printTree(_WKFrameTreeNode *n, size_t indent = 0)
 static void printTree(const ExpectedFrameTree& n, size_t indent = 0)
 {
     if (auto* s = std::get_if<String>(&n.remoteOrOrigin))
-        WTFLogAlways("%s%s", indentation(indent).span().data(), s->utf8().data());
+        WTFLogAlways("%s%s", indentation(indent).span().data(), s->utf8().legacyCStringPointer());
     else
         WTFLogAlways("%s(remote)", indentation(indent).span().data());
     for (const auto& c : n.children)
@@ -2016,14 +2016,13 @@ TEST(SiteIsolation, QueuedDialogPurgedByMainFrameNavigation)
     // cannot be shown while the first is held, so a longer wait here is harmless.
     TestWebKitAPI::Util::runFor(Seconds(0.5));
 
-    // Navigate the main frame and wait for the new provisional load to start, which is where the queue
-    // is purged.
-    __block bool navigationStarted = false;
-    navigationDelegate.get().didStartProvisionalNavigation = ^(WKWebView *, WKNavigation *) {
-        navigationStarted = true;
+    // Waiting for the provisional load would be racy: the old frames are the page's tree until the commit.
+    __block bool navigationCommitted = false;
+    navigationDelegate.get().didCommitNavigation = ^(WKWebView *, WKNavigation *) {
+        navigationCommitted = true;
     };
     [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/next"]]];
-    while (!navigationStarted)
+    while (!navigationCommitted)
         TestWebKitAPI::Util::runFor(Seconds(0.05));
 
     // Release the first dialog. If the queued dialog had not been purged, dismissing the first would
@@ -2031,6 +2030,52 @@ TEST(SiteIsolation, QueuedDialogPurgedByMainFrameNavigation)
     std::exchange(firstCompletion, nullptr)();
 
     // Let anything still in flight settle, then confirm only the first dialog was ever delivered.
+    TestWebKitAPI::Util::runFor(Seconds(0.5));
+    EXPECT_EQ(totalDialogs, 1u);
+}
+
+TEST(SiteIsolation, QueuedSameProcessDialogPurgedByMainFrameNavigation)
+{
+    // Same-site iframes share a process, so the first frame's modal run loop blocks the second frame's script.
+    HTTPServer server({
+        { "/example"_s, { "<iframe src='https://webkit.org/first'></iframe>"
+            "<iframe src='https://webkit.org/second'></iframe>"_s } },
+        { "/first"_s, { "<script>alert('first dialog')</script>"_s } },
+        { "/second"_s, { "<script>alert('second dialog')</script>"_s } },
+        { "/next"_s, { "<p>next</p>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+
+    __block unsigned totalDialogs = 0;
+    __block BlockPtr<void()> firstCompletion;
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    uiDelegate.get().runJavaScriptAlertPanelWithMessage = ^(WKWebView *, NSString *message, WKFrameInfo *frameInfo, void (^completionHandler)(void)) {
+        if (!totalDialogs++) {
+            firstCompletion = makeBlockPtr(completionHandler);
+            return;
+        }
+        completionHandler();
+    };
+    webView.get().UIDelegate = uiDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+
+    while (!firstCompletion)
+        TestWebKitAPI::Util::runFor(Seconds(0.05));
+
+    TestWebKitAPI::Util::runFor(Seconds(0.5));
+
+    __block bool navigationCommitted = false;
+    navigationDelegate.get().didCommitNavigation = ^(WKWebView *, WKNavigation *) {
+        navigationCommitted = true;
+    };
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/next"]]];
+    while (!navigationCommitted)
+        TestWebKitAPI::Util::runFor(Seconds(0.05));
+
+    std::exchange(firstCompletion, nullptr)();
+
     TestWebKitAPI::Util::runFor(Seconds(0.5));
     EXPECT_EQ(totalDialogs, 1u);
 }
@@ -10299,6 +10344,53 @@ TEST(SiteIsolation, ColorInputPickerLocation)
     EXPECT_EQ(popoverPositioningRect, NSMakeRect(0, 0, 50, 50));
 
     NSRect popoverPositioningViewBoundsInWebViewCoordinates = [popoverPositioningView convertRect:[popoverPositioningView bounds] toView:webView.get()];
+    EXPECT_EQ(popoverPositioningViewBoundsInWebViewCoordinates, NSMakeRect(168, 168, 50, 50));
+}
+
+TEST(SiteIsolation, ColorInputPickerLocation2)
+{
+    auto mainPageSource =
+        "<iframe id=iframe style='margin: 100px; width: 400px; height: 300px;' src='https://webkit.org/iframe' onload='load()'></iframe>"_s
+        "<script>function load() { alert('loaded'); }</script>"_s;
+
+    auto iframeSource =
+        "<!DOCTYPE html>"_s
+        "<div style='height: 1000px'></div>"_s
+        "<input style='margin: 50px; appearance: none; width: 50px; height: 50px;' type='color'>"_s
+        "<div style='height: 1000px'></div>"_s
+        "<script>onload = () => window.scroll(0, 1000);</script>"_s;
+
+    HTTPServer server({
+        { "/mainframe"_s, { mainPageSource } },
+        { "/iframe"_s, { iframeSource } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    __block bool done = false;
+    __block NSRect popoverPositioningRect = NSZeroRect;
+    __block RetainPtr<NSView> popoverPositioningView;
+
+    InstanceMethodSwizzler swizzler {
+        NSPopover.class,
+        @selector(showRelativeToRect:ofView:preferredEdge:),
+        imp_implementationWithBlock(^(id, NSRect positioningRect, NSView *positioningView, NSRectEdge) {
+            popoverPositioningRect = positioningRect;
+            popoverPositioningView = positioningView;
+            done = true;
+        })
+    };
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "loaded");
+    [webView waitForNextPresentationUpdate];
+
+    [webView sendClickAtPoint:NSMakePoint(200, 400)];
+
+    Util::run(&done);
+
+    EXPECT_EQ(popoverPositioningRect, NSMakeRect(0, 0, 50, 50));
+
+    NSRect popoverPositioningViewBoundsInWebViewCoordinates = [popoverPositioningView convertRect:[popoverPositioningView bounds] toView:webView];
     EXPECT_EQ(popoverPositioningViewBoundsInWebViewCoordinates, NSMakeRect(168, 168, 50, 50));
 }
 

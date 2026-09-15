@@ -310,3 +310,22 @@ for (const [offset, size] of [[1, -1], [-1, 1], [-1, -1], [0, 9], [8, 1], [9, 0]
         assert.throws(() => m.copySrc(size), WebAssembly.RuntimeError, "access to a null reference");
     }
 }
+
+{
+    for (const length of [1, 9, 32]) {
+        const m = instantiate(`
+            (module
+               (type $arr (array (mut anyref)))
+               (type $box (struct (field i32)))
+               (global $a (ref $arr) (array.new_default $arr (i32.const ${length})))
+               (func (export "fill") (param i32)
+                 (array.fill $arr (global.get $a) (i32.const 0) (struct.new $box (local.get 0)) (i32.const ${length})))
+               (func (export "get") (param i32) (result i32)
+                 (struct.get $box 0 (ref.cast (ref $box) (array.get $arr (global.get $a) (local.get 0))))))
+        `).exports;
+
+        m.fill(9);
+        for (let i = 0; i < length; ++i)
+            assert.eq(m.get(i), 9);
+    }
+}

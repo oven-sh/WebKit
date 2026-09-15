@@ -456,7 +456,7 @@ bool HTMLPlugInElement::requestObject(const String& relativeURL, const String& m
         completedURL = document->encodingParseURL(relativeURL);
 
     if (ReplacementPlugin* replacement = pluginReplacementForType(completedURL, mimeType)) {
-        LOG(Plugins, "%p - Found plug-in replacement for %s.", this, completedURL.string().utf8().data());
+        LOG(Plugins, "%p - Found plug-in replacement for %s.", this, completedURL.string().utf8().legacyCStringPointer());
 
         lazyInitialize(m_pluginReplacement, replacement->create(*this, paramNames, paramValues));
         setDisplayState(DisplayState::PreparingPluginReplacement);

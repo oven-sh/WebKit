@@ -796,74 +796,74 @@ TEST_F(FileSystemTest, updateFileModificationTime)
 TEST_F(FileSystemTest, pathFileName)
 {
     auto testPath = FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "subfolder"_s, "filename.txt"_s }));
-    EXPECT_STREQ("filename.txt", FileSystem::pathFileName(testPath).utf8().data());
+    EXPECT_STREQ("filename.txt", FileSystem::pathFileName(testPath).utf8().legacyCStringPointer());
 
 #if OS(UNIX)
-    EXPECT_STREQ(".", FileSystem::pathFileName("."_s).utf8().data());
-    EXPECT_STREQ("..", FileSystem::pathFileName(".."_s).utf8().data());
-    EXPECT_STREQ("", FileSystem::pathFileName("/"_s).utf8().data());
-    EXPECT_STREQ(".", FileSystem::pathFileName("/foo/."_s).utf8().data());
-    EXPECT_STREQ("..", FileSystem::pathFileName("/foo/.."_s).utf8().data());
-    EXPECT_STREQ("", FileSystem::pathFileName("/foo/"_s).utf8().data());
-    EXPECT_STREQ("host", FileSystem::pathFileName("//host"_s).utf8().data());
+    EXPECT_STREQ(".", FileSystem::pathFileName("."_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("..", FileSystem::pathFileName(".."_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("", FileSystem::pathFileName("/"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ(".", FileSystem::pathFileName("/foo/."_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("..", FileSystem::pathFileName("/foo/.."_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("", FileSystem::pathFileName("/foo/"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("host", FileSystem::pathFileName("//host"_s).utf8().legacyCStringPointer());
 #endif
 #if OS(WINDOWS)
-    EXPECT_STREQ("", FileSystem::pathFileName("C:\\"_s).utf8().data());
-    EXPECT_STREQ("foo", FileSystem::pathFileName("C:\\foo"_s).utf8().data());
-    EXPECT_STREQ("", FileSystem::pathFileName("C:\\foo\\"_s).utf8().data());
-    EXPECT_STREQ("bar.txt", FileSystem::pathFileName("C:\\foo\\bar.txt"_s).utf8().data());
+    EXPECT_STREQ("", FileSystem::pathFileName("C:\\"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("foo", FileSystem::pathFileName("C:\\foo"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("", FileSystem::pathFileName("C:\\foo\\"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("bar.txt", FileSystem::pathFileName("C:\\foo\\bar.txt"_s).utf8().legacyCStringPointer());
 #endif
 }
 
 TEST_F(FileSystemTest, parentPath)
 {
     auto testPath = FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "subfolder"_s, "filename.txt"_s }));
-    EXPECT_STREQ(FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "subfolder"_s).utf8().data(), FileSystem::parentPath(testPath).utf8().data());
+    EXPECT_STREQ(FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "subfolder"_s).utf8().legacyCStringPointer(), FileSystem::parentPath(testPath).utf8().legacyCStringPointer());
 #if OS(UNIX)
-    EXPECT_STREQ("/var/tmp", FileSystem::parentPath("/var/tmp/example.txt"_s).utf8().data());
-    EXPECT_STREQ("/var/tmp", FileSystem::parentPath("/var/tmp/"_s).utf8().data());
-    EXPECT_STREQ("/var/tmp", FileSystem::parentPath("/var/tmp/."_s).utf8().data());
-    EXPECT_STREQ("/", FileSystem::parentPath("/"_s).utf8().data());
+    EXPECT_STREQ("/var/tmp", FileSystem::parentPath("/var/tmp/example.txt"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp", FileSystem::parentPath("/var/tmp/"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp", FileSystem::parentPath("/var/tmp/."_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/", FileSystem::parentPath("/"_s).utf8().legacyCStringPointer());
 #endif
 #if OS(WINDOWS)
-    EXPECT_STREQ("C:\\foo", FileSystem::parentPath("C:\\foo\\example.txt"_s).utf8().data());
-    EXPECT_STREQ("C:\\", FileSystem::parentPath("C:\\"_s).utf8().data());
+    EXPECT_STREQ("C:\\foo", FileSystem::parentPath("C:\\foo\\example.txt"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\", FileSystem::parentPath("C:\\"_s).utf8().legacyCStringPointer());
 #endif
 }
 
 TEST_F(FileSystemTest, pathByAppendingComponent)
 {
 #if OS(UNIX)
-    EXPECT_STREQ("/var", FileSystem::pathByAppendingComponent("/"_s, "var"_s).utf8().data());
-    EXPECT_STREQ("/var/tmp", FileSystem::pathByAppendingComponent("/var/"_s, "tmp"_s).utf8().data());
-    EXPECT_STREQ("/var/tmp", FileSystem::pathByAppendingComponent("/var"_s, "tmp"_s).utf8().data());
-    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponent("/var/tmp"_s, "file.txt"_s).utf8().data());
-    EXPECT_STREQ("/var/", FileSystem::pathByAppendingComponent("/var"_s, ""_s).utf8().data());
-    EXPECT_STREQ("/var/", FileSystem::pathByAppendingComponent("/var/"_s, ""_s).utf8().data());
+    EXPECT_STREQ("/var", FileSystem::pathByAppendingComponent("/"_s, "var"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp", FileSystem::pathByAppendingComponent("/var/"_s, "tmp"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp", FileSystem::pathByAppendingComponent("/var"_s, "tmp"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponent("/var/tmp"_s, "file.txt"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/", FileSystem::pathByAppendingComponent("/var"_s, ""_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/", FileSystem::pathByAppendingComponent("/var/"_s, ""_s).utf8().legacyCStringPointer());
 #endif
 #if OS(WINDOWS)
-    EXPECT_STREQ("C:\\Foo", FileSystem::pathByAppendingComponent("C:\\"_s, "Foo"_s).utf8().data());
-    EXPECT_STREQ("C:\\Foo\\Bar", FileSystem::pathByAppendingComponent("C:\\Foo"_s, "Bar"_s).utf8().data());
-    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponent("C:\\Foo\\Bar"_s, "File.txt"_s).utf8().data());
+    EXPECT_STREQ("C:\\Foo", FileSystem::pathByAppendingComponent("C:\\"_s, "Foo"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\Foo\\Bar", FileSystem::pathByAppendingComponent("C:\\Foo"_s, "Bar"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponent("C:\\Foo\\Bar"_s, "File.txt"_s).utf8().legacyCStringPointer());
 #endif
 }
 
 TEST_F(FileSystemTest, pathByAppendingComponents)
 {
-    EXPECT_STREQ(tempEmptyFolderPath().utf8().data(), FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), { }).utf8().data());
-    EXPECT_STREQ(FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "file.txt"_s).utf8().data(), FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "file.txt"_s })).utf8().data());
+    EXPECT_STREQ(tempEmptyFolderPath().utf8().legacyCStringPointer(), FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), { }).utf8().legacyCStringPointer());
+    EXPECT_STREQ(FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "file.txt"_s).utf8().legacyCStringPointer(), FileSystem::pathByAppendingComponents(tempEmptyFolderPath(), std::initializer_list<StringView>({ "file.txt"_s })).utf8().legacyCStringPointer());
 #if OS(UNIX)
-    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/"_s, std::initializer_list<StringView>({ "var"_s, "tmp"_s, "file.txt"_s })).utf8().data());
-    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/var"_s, std::initializer_list<StringView>({ "tmp"_s, "file.txt"_s })).utf8().data());
-    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/var/"_s, std::initializer_list<StringView>({ "tmp"_s, "file.txt"_s })).utf8().data());
-    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/var/tmp"_s, std::initializer_list<StringView>({ "file.txt"_s })).utf8().data());
+    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/"_s, std::initializer_list<StringView>({ "var"_s, "tmp"_s, "file.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/var"_s, std::initializer_list<StringView>({ "tmp"_s, "file.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/var/"_s, std::initializer_list<StringView>({ "tmp"_s, "file.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("/var/tmp/file.txt", FileSystem::pathByAppendingComponents("/var/tmp"_s, std::initializer_list<StringView>({ "file.txt"_s })).utf8().legacyCStringPointer());
 #endif
 #if OS(WINDOWS)
-    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\"_s, std::initializer_list<StringView>({ "Foo"_s, "Bar"_s, "File.txt"_s })).utf8().data());
-    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo"_s, std::initializer_list<StringView>({ "Bar"_s, "File.txt"_s })).utf8().data());
-    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo\\"_s, std::initializer_list<StringView>({ "Bar"_s, "File.txt"_s })).utf8().data());
-    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo\\Bar"_s, std::initializer_list<StringView>({ "File.txt"_s })).utf8().data());
-    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo\\Bar\\"_s, std::initializer_list<StringView>({ "File.txt"_s })).utf8().data());
+    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\"_s, std::initializer_list<StringView>({ "Foo"_s, "Bar"_s, "File.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo"_s, std::initializer_list<StringView>({ "Bar"_s, "File.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo\\"_s, std::initializer_list<StringView>({ "Bar"_s, "File.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo\\Bar"_s, std::initializer_list<StringView>({ "File.txt"_s })).utf8().legacyCStringPointer());
+    EXPECT_STREQ("C:\\Foo\\Bar\\File.txt", FileSystem::pathByAppendingComponents("C:\\Foo\\Bar\\"_s, std::initializer_list<StringView>({ "File.txt"_s })).utf8().legacyCStringPointer());
 #endif
 }
 
@@ -880,17 +880,17 @@ TEST_F(FileSystemTest, listDirectory)
     auto matches = FileSystem::listDirectory(tempEmptyFolderPath());
     ASSERT_EQ(matches.size(), 5U);
     std::ranges::sort(matches, WTF::codePointCompareLessThan);
-    EXPECT_STREQ(matches[0].utf8().data(), "a.txt");
-    EXPECT_STREQ(matches[1].utf8().data(), "b.txt");
-    EXPECT_STREQ(matches[2].utf8().data(), "bar.png");
-    EXPECT_STREQ(matches[3].utf8().data(), "foo.png");
-    EXPECT_STREQ(matches[4].utf8().data(), "subfolder");
+    EXPECT_STREQ(matches[0].utf8().legacyCStringPointer(), "a.txt");
+    EXPECT_STREQ(matches[1].utf8().legacyCStringPointer(), "b.txt");
+    EXPECT_STREQ(matches[2].utf8().legacyCStringPointer(), "bar.png");
+    EXPECT_STREQ(matches[3].utf8().legacyCStringPointer(), "foo.png");
+    EXPECT_STREQ(matches[4].utf8().legacyCStringPointer(), "subfolder");
 
     matches = FileSystem::listDirectory(FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "subfolder"_s));
     ASSERT_EQ(matches.size(), 2U);
     std::ranges::sort(matches, WTF::codePointCompareLessThan);
-    EXPECT_STREQ(matches[0].utf8().data(), "c.txt");
-    EXPECT_STREQ(matches[1].utf8().data(), "d.txt");
+    EXPECT_STREQ(matches[0].utf8().legacyCStringPointer(), "c.txt");
+    EXPECT_STREQ(matches[1].utf8().legacyCStringPointer(), "d.txt");
 
     matches = FileSystem::listDirectory(FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "does-not-exist"_s));
     ASSERT_EQ(matches.size(), 0U);
@@ -906,27 +906,27 @@ TEST_F(FileSystemTest, listDirectory)
 TEST_F(FileSystemTest, realPath)
 {
     auto doesNotExistPath = FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "does-not-exist"_s);
-    EXPECT_STREQ(FileSystem::realPath(doesNotExistPath).utf8().data(), doesNotExistPath.utf8().data());
+    EXPECT_STREQ(FileSystem::realPath(doesNotExistPath).utf8().legacyCStringPointer(), doesNotExistPath.utf8().legacyCStringPointer());
 
     auto resolvedTempFilePath = FileSystem::realPath(tempFilePath());
-    EXPECT_STREQ(FileSystem::realPath(resolvedTempFilePath).utf8().data(), resolvedTempFilePath.utf8().data());
-    EXPECT_STREQ(FileSystem::realPath(tempFileSymlinkPath()).utf8().data(), resolvedTempFilePath.utf8().data()); // Should resolve file symlink.
+    EXPECT_STREQ(FileSystem::realPath(resolvedTempFilePath).utf8().legacyCStringPointer(), resolvedTempFilePath.utf8().legacyCStringPointer());
+    EXPECT_STREQ(FileSystem::realPath(tempFileSymlinkPath()).utf8().legacyCStringPointer(), resolvedTempFilePath.utf8().legacyCStringPointer()); // Should resolve file symlink.
 
     auto resolvedTempEmptyFolderPath = FileSystem::realPath(tempEmptyFolderPath());
-    EXPECT_STREQ(FileSystem::realPath(resolvedTempEmptyFolderPath).utf8().data(), resolvedTempEmptyFolderPath.utf8().data());
-    EXPECT_STREQ(FileSystem::realPath(tempEmptyFolderSymlinkPath()).utf8().data(), resolvedTempEmptyFolderPath.utf8().data()); // Should resolve directory symlink.
+    EXPECT_STREQ(FileSystem::realPath(resolvedTempEmptyFolderPath).utf8().legacyCStringPointer(), resolvedTempEmptyFolderPath.utf8().legacyCStringPointer());
+    EXPECT_STREQ(FileSystem::realPath(tempEmptyFolderSymlinkPath()).utf8().legacyCStringPointer(), resolvedTempEmptyFolderPath.utf8().legacyCStringPointer()); // Should resolve directory symlink.
 
     // Symlink to symlink case.
     auto symlinkToSymlinkPath = FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "symlinkToSymlink"_s);
     EXPECT_TRUE(FileSystem::createSymbolicLink(tempFileSymlinkPath(), symlinkToSymlinkPath));
-    EXPECT_STREQ(FileSystem::realPath(symlinkToSymlinkPath).utf8().data(), resolvedTempFilePath.utf8().data()); // Should resolve all symlinks.
+    EXPECT_STREQ(FileSystem::realPath(symlinkToSymlinkPath).utf8().legacyCStringPointer(), resolvedTempFilePath.utf8().legacyCStringPointer()); // Should resolve all symlinks.
 
     auto subFolderPath = FileSystem::pathByAppendingComponent(tempEmptyFolderPath(), "subfolder"_s);
     FileSystem::makeAllDirectories(subFolderPath);
     auto resolvedSubFolderPath = FileSystem::realPath(subFolderPath);
-    EXPECT_STREQ(FileSystem::realPath(FileSystem::pathByAppendingComponent(subFolderPath, ".."_s)).utf8().data(), resolvedTempEmptyFolderPath.utf8().data()); // Should resolve "..".
-    EXPECT_STREQ(FileSystem::realPath(FileSystem::pathByAppendingComponents(subFolderPath, std::initializer_list<StringView>({ ".."_s, "subfolder"_s }))).utf8().data(), resolvedSubFolderPath.utf8().data()); // Should resolve "..".
-    EXPECT_STREQ(FileSystem::realPath(FileSystem::pathByAppendingComponents(subFolderPath, std::initializer_list<StringView>({ ".."_s, "."_s, "."_s, "subfolder"_s }))).utf8().data(), resolvedSubFolderPath.utf8().data()); // Should resolve ".." and "."
+    EXPECT_STREQ(FileSystem::realPath(FileSystem::pathByAppendingComponent(subFolderPath, ".."_s)).utf8().legacyCStringPointer(), resolvedTempEmptyFolderPath.utf8().legacyCStringPointer()); // Should resolve "..".
+    EXPECT_STREQ(FileSystem::realPath(FileSystem::pathByAppendingComponents(subFolderPath, std::initializer_list<StringView>({ ".."_s, "subfolder"_s }))).utf8().legacyCStringPointer(), resolvedSubFolderPath.utf8().legacyCStringPointer()); // Should resolve "..".
+    EXPECT_STREQ(FileSystem::realPath(FileSystem::pathByAppendingComponents(subFolderPath, std::initializer_list<StringView>({ ".."_s, "."_s, "."_s, "subfolder"_s }))).utf8().legacyCStringPointer(), resolvedSubFolderPath.utf8().legacyCStringPointer()); // Should resolve ".." and "."
 }
 #endif
 

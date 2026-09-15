@@ -422,7 +422,7 @@ String MediaControlsHost::externalDeviceDisplayName() const
     }
 
     String name = player->wirelessPlaybackTargetName();
-    LOG(Media, "MediaControlsHost::externalDeviceDisplayName - returning \"%s\"", name.utf8().data());
+    LOG(Media, "MediaControlsHost::externalDeviceDisplayName - returning \"%s\"", name.utf8().legacyCStringPointer());
     return name;
 #else
     return emptyString();
@@ -434,7 +434,7 @@ String MediaControlsHost::externalDeviceRouteName() const
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     if (RefPtr player = m_mediaElement->player()) {
         String name = player->wirelessPlaybackRouteName();
-        LOG(Media, "MediaControlsHost::externalDeviceRouteName - returning \"%s\"", name.utf8().data());
+        LOG(Media, "MediaControlsHost::externalDeviceRouteName - returning \"%s\"", name.utf8().legacyCStringPointer());
         return name;
     }
 

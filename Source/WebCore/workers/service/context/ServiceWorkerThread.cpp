@@ -223,7 +223,7 @@ void ServiceWorkerThread::queueTaskToPostMessage(MessageWithMessagePorts&& messa
                         addMismatch("host"_s);
                     if (serviceWorkerGlobalScope.url().port() != sourceClient->url().port())
                         addMismatch("port"_s);
-                    RELEASE_LOG_FAULT(ServiceWorker, "ServiceWorkerThread::queueTaskToPostMessage service worker and client mismatch: %s", mismatchParts.toString().utf8().data());
+                    RELEASE_LOG_FAULT(ServiceWorker, "ServiceWorkerThread::queueTaskToPostMessage service worker and client mismatch: %s", mismatchParts.toString().utf8().legacyCStringPointer());
                     ASSERT_NOT_REACHED();
                     return ExtendableMessageEventSource { WTF::move(sourceClient) };
                 }
@@ -534,7 +534,7 @@ void ServiceWorkerThread::start(Function<void(const String&, bool)>&& callback)
     WorkerThread::start([callback = WTF::move(callback), weakThis = ThreadSafeWeakPtr { *this }](auto& errorMessage) mutable {
 #ifndef NDEBUG
         if (!errorMessage.isEmpty())
-            LOG(ServiceWorker, "Service worker thread failed to start: %s", errorMessage.utf8().data());
+            LOG(ServiceWorker, "Service worker thread failed to start: %s", errorMessage.utf8().legacyCStringPointer());
 #endif
         bool doesHandleFetch = true;
         if (RefPtr protectedThis = weakThis.get()) {

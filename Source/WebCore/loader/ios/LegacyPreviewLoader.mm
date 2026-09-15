@@ -78,7 +78,7 @@ LegacyPreviewLoader::LegacyPreviewLoader(ResourceLoader& loader, const ResourceR
 {
     ASSERT(PreviewConverter::supportsMIMEType(response.mimeType()));
     protect(m_converter)->addClient(*this);
-    LOG(Network, "LegacyPreviewLoader created with preview file name \"%s\".", m_converter->previewFileName().utf8().data());
+    LOG(Network, "LegacyPreviewLoader created with preview file name \"%s\".", m_converter->previewFileName().utf8().legacyCStringPointer());
 }
 
 LegacyPreviewLoader::~LegacyPreviewLoader() = default;

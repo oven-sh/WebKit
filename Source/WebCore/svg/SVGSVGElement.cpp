@@ -584,11 +584,6 @@ bool SVGSVGElement::animationsPaused() const
     return timeContainer().isPaused();
 }
 
-bool SVGSVGElement::hasActiveAnimation() const
-{
-    return timeContainer().isActive();
-}
-
 float SVGSVGElement::getCurrentTime() const
 {
     return narrowPrecisionToFloat(protect(timeContainer())->elapsed().value());

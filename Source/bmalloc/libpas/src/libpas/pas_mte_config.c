@@ -74,6 +74,11 @@ extern const pas_heap_config iso_heap_config;
 #endif // PAS_ENABLE_ISO
 extern const pas_heap_config pas_utility_heap_config;
 
+static inline bool pas_mte_is_mte_enabled_unchecked(void)
+{
+    return PAS_RUNTIME_CONFIG_PTR->mte_state == pas_mte_state_enabled;
+}
+
 #if defined(PAS_USE_OPENSOURCE_MTE) && PAS_USE_OPENSOURCE_MTE
 #if PAS_ENABLE_MTE
 
@@ -110,20 +115,24 @@ static void pas_mte_do_initialization(void)
 {
     pas_runtime_config* config = PAS_RUNTIME_CONFIG_PTR;
 
+    bool enabled = false;
+
     struct proc_bsdinfo info;
     int rc = proc_pidinfo(getpid(), PROC_PIDTBSDINFO, 0, &info, sizeof(info));
     if (rc == sizeof(info) && info.pbi_flags & PAS_MTE_PROC_FLAG_SEC_ENABLED)
-        config->enabled = true;
+        enabled = true;
 
     if (is_env_true("MTE_overrideEnablementForJavaScriptCore")) {
         PAS_ASSERT(!is_env_false("MTE_overrideEnablementForJavaScriptCore"));
-        config->enabled = true;
+        enabled = true;
     }
     if (is_env_false("MTE_overrideEnablementForJavaScriptCore"))
-        config->enabled = false;
+        enabled = false;
 
-    if (!config->enabled)
+    if (!enabled) {
+        pas_atomic_store_uint8(&config->mte_state, pas_mte_state_disabled);
         return;
+    }
 
     uint64_t ldmState = 0;
     size_t sysCtlLen = sizeof(ldmState);
@@ -161,7 +170,7 @@ static void pas_mte_do_initialization(void)
             wcp_is_hardened = true;
 
         if (wcp_is_hardened) {
-            config->enabled = true;
+            enabled = true;
             config->is_hardened = true;
 
             pas_mte_force_nontaggable_user_allocations_into_large_heap();
@@ -169,26 +178,32 @@ static void pas_mte_do_initialization(void)
             config->is_hardened = false;
 #if !PAS_USE_MTE_IN_WEBCONTENT
             // Disable tagging in libpas by default in WebContent process
-            config->enabled = false;
+            enabled = false;
 #else
-            config->enabled = true;
+            enabled = true;
 #endif
         }
 
 #ifndef NDEBUG
         if (is_env_true("MTE_disableForWebContent")) {
             PAS_ASSERT(!is_env_true("MTE_overrideEnablementForWebContent"));
-            config->enabled = false;
+            enabled = false;
         }
 #endif
         if (is_env_true("MTE_overrideEnablementForWebContent")) {
-            config->enabled = true;
+            enabled = true;
         } else if (is_env_false("MTE_overrideEnablementForWebContent")) {
-            config->enabled = false;
+            enabled = false;
         }
     } else {
         config->is_hardened = true;
     }
+
+    /* We must publish here at the latest,
+       since the tail may read the enablement bits via
+       pas_bmalloc_force_allocations_into_biftit_heaps_where_available() */
+    pas_atomic_store_uint8(&config->mte_state,
+        enabled ? pas_mte_state_enabled : pas_mte_state_disabled);
 
     PAS_IGNORE_WARNINGS_BEGIN("unreachable-code");
     // Retag-on-scavenge functionally supports both segregated and bitfit heaps.
@@ -213,10 +228,10 @@ static void pas_mte_do_initialization(void)
 
 static bool pas_mte_is_enabled(void)
 {
-    const pas_runtime_config* config = PAS_RUNTIME_CONFIG_PTR;
     struct proc_bsdinfo info;
     int rc = proc_pidinfo(getpid(), PROC_PIDTBSDINFO, 0, &info, sizeof(info));
-    return (rc == sizeof(info) && (info.pbi_flags & PAS_MTE_PROC_FLAG_SEC_ENABLED) && config->enabled);
+    return (rc == sizeof(info) && (info.pbi_flags & PAS_MTE_PROC_FLAG_SEC_ENABLED)
+        && pas_mte_is_mte_enabled_unchecked());
 }
 
 #else // !PAS_ENABLE_MTE
@@ -224,7 +239,7 @@ static bool pas_mte_is_enabled(void)
 static PAS_UNUSED void pas_mte_do_initialization(void)
 {
     pas_runtime_config* config = PAS_RUNTIME_CONFIG_PTR;
-    config->enabled = false;
+    config->mte_state = pas_mte_state_disabled;
 }
 
 static PAS_UNUSED bool pas_mte_is_enabled(void)
@@ -299,7 +314,7 @@ static void pas_report_config(void)
         progname, pid, (int)threadno,
         (size_t)PAS_DEALLOCATION_LOG_SIZE, (size_t)PAS_DEALLOCATION_LOG_MAX_BYTES,
         pas_scavenger_period_in_milliseconds, pas_scavenger_deep_sleep_timeout_in_milliseconds, pas_scavenger_max_epoch_delta,
-        config->enabled, config->is_lockdown_mode, config->is_hardened,
+        pas_mte_is_mte_enabled_unchecked(), config->is_lockdown_mode, config->is_hardened,
         config->mode_bits.adjacent_tag_exclusion, config->mode_bits.retag_on_scavenge, config->mode_bits.zero_tag_all,
 #if PAS_ENABLE_BMALLOC
         pas_system_heap_should_supplant_bmalloc(pas_heap_config_kind_bmalloc),
@@ -382,11 +397,11 @@ void pas_bmalloc_force_allocations_into_bitfit_heaps_where_available(void)
     PAS_IGNORE_WARNINGS_END;
 }
 
-bool pas_mte_is_mte_enabled(void)
+bool pas_mte_is_mte_enabled_slow(void)
 {
     pas_mte_ensure_initialized();
 #if PAS_ENABLE_MTE
-    return PAS_RUNTIME_CONFIG_PTR->enabled;
+    return pas_mte_is_mte_enabled_unchecked();
 #else
     return false;
 #endif

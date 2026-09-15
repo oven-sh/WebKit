@@ -202,7 +202,7 @@ public:
 
     void dump(PrintStream& out) const
     {
-        if (auto str = enumName(m_e); !str.empty())
+        if (auto str = enumName(m_e); !str.isEmpty())
             out.print(str);
         else
             out.print(m_default);

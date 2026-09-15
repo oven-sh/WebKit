@@ -273,7 +273,7 @@ static bool validateContentRuleListActionsMatchingEverything(const WTF::String& 
     auto universalActions = copyToVector(interpreter.actionsMatchingEverything());
     for (uint64_t universalActionLocation : universalActions) {
         if (universalActionLocation >= metaData.actionsSize) {
-            LOG(ContentRuleLists, "Universal action has location outside range of serialized actions. The compiled extension may be corrupted: %s", path.utf8().data());
+            LOG(ContentRuleLists, "Universal action has location outside range of serialized actions. The compiled extension may be corrupted: %s", path.utf8().legacyCStringPointer());
             return false;
         }
     }

@@ -270,7 +270,7 @@ auto MockRealtimeVideoSource::takePhotoInternal(PhotoSettings&&) -> Ref<TakePhot
         return TakePhotoNativePromise::createAndReject("Already taking photo"_s);
 
     {
-        Locker lock { m_imageBufferLock };
+        Locker lock { m_frameGenerationLock };
         invalidateDrawingState();
     }
 
@@ -380,8 +380,10 @@ const RealtimeMediaSourceSettings& MockRealtimeVideoSource::settings()
             settings.setTorch(torch());
         }
 
-        if (canBePowerEfficient())
+        if (canBePowerEfficient()) {
+            Locker lock { m_frameGenerationLock };
             settings.setPowerEfficient(m_preset ? m_preset->isEfficient() : false);
+        }
         supportedConstraints.setSupportsPowerEfficient(true);
 
         supportedConstraints.setSupportsBackgroundBlur(true);
@@ -401,15 +403,23 @@ void MockRealtimeVideoSource::applyFrameRateAndZoomWithPreset(double frameRate, 
 {
     UNUSED_PARAM(zoom);
     ASSERT(m_beingConfigured);
-    m_preset = WTF::move(preset);
-    if (m_preset)
-        setIntrinsicSize(m_preset->size());
+    std::optional<IntSize> intrinsicSize;
+    {
+        Locker lock { m_frameGenerationLock };
+        m_preset = WTF::move(preset);
+        if (m_preset)
+            intrinsicSize = m_preset->size();
+    }
+    if (intrinsicSize)
+        setIntrinsicSize(*intrinsicSize);
     if (isProducingData())
         startCaptureTimer(frameRate);
 }
 
 IntSize MockRealtimeVideoSource::captureSize() const
 {
+    assertIsHeld(m_frameGenerationLock);
+
     return m_preset ? m_preset->size() : this->size();
 }
 
@@ -420,7 +430,7 @@ VideoFrameRotation MockRealtimeVideoSource::videoFrameRotation() const
 
 void MockRealtimeVideoSource::invalidateDrawingState()
 {
-    assertIsHeld(m_imageBufferLock);
+    assertIsHeld(m_frameGenerationLock);
 
     m_imageBuffer = nullptr;
     m_drawingState = { };
@@ -428,7 +438,7 @@ void MockRealtimeVideoSource::invalidateDrawingState()
 
 MockRealtimeVideoSource::DrawingState& MockRealtimeVideoSource::drawingState()
 {
-    assertIsHeld(m_imageBufferLock);
+    assertIsHeld(m_frameGenerationLock);
 
     if (!m_drawingState)
         m_drawingState = { DrawingState(captureSize().height() * .08) };
@@ -440,7 +450,7 @@ void MockRealtimeVideoSource::settingsDidChange(OptionSet<RealtimeMediaSourceSet
 {
     m_currentSettings = std::nullopt;
     if (settings.containsAny({ RealtimeMediaSourceSettings::Flag::Width, RealtimeMediaSourceSettings::Flag::Height })) {
-        Locker lock { m_imageBufferLock };
+        Locker lock { m_frameGenerationLock };
         invalidateDrawingState();
     }
 
@@ -479,18 +489,24 @@ void MockRealtimeVideoSource::startProducingData()
 #endif
 
     startCaptureTimer();
+
+    Locker lock { m_frameGenerationLock };
     m_startTime = MonotonicTime::now();
 }
 
 void MockRealtimeVideoSource::stopProducingData()
 {
     stopCaptureTimer();
+
+    Locker lock { m_frameGenerationLock };
     m_elapsedTime += MonotonicTime::now() - m_startTime;
     m_startTime = MonotonicTime::nan();
 }
 
 Seconds MockRealtimeVideoSource::elapsedTime()
 {
+    assertIsHeld(m_frameGenerationLock);
+
     if (m_startTime.isNaN())
         return m_elapsedTime;
 
@@ -581,7 +597,7 @@ void MockRealtimeVideoSource::drawBoxes(GraphicsContext& context)
 
 void MockRealtimeVideoSource::drawText(GraphicsContext& context)
 {
-    assertIsHeld(m_imageBufferLock);
+    assertIsHeld(m_frameGenerationLock);
 
     unsigned milliseconds = lround(elapsedTime().milliseconds());
     unsigned seconds = milliseconds / 1000 % 60;
@@ -666,14 +682,19 @@ void MockRealtimeVideoSource::drawText(GraphicsContext& context)
 
 void MockRealtimeVideoSource::delaySamples(Seconds delta)
 {
-    m_delayUntil = MonotonicTime::now() + delta;
+    // generateFrame() reads and clears m_delayUntil on m_runLoop's thread, so set it there too
+    // rather than synchronizing it. The deadline is computed here so it is unaffected by how
+    // long the dispatch takes to run.
+    m_runLoop->dispatch([this, protectedThis = Ref { *this }, delayUntil = MonotonicTime::now() + delta] {
+        m_delayUntil = delayUntil;
+    });
 }
 
 RefPtr<ImageBuffer> MockRealtimeVideoSource::generatePhoto()
 {
     ASSERT(!isMainThread());
 
-    Locker lock { m_imageBufferLock };
+    Locker lock { m_frameGenerationLock };
     invalidateDrawingState();
     auto currentImage = generateFrameInternal();
     invalidateDrawingState();
@@ -683,7 +704,7 @@ RefPtr<ImageBuffer> MockRealtimeVideoSource::generatePhoto()
 
 RefPtr<ImageBuffer> MockRealtimeVideoSource::generateFrameInternal()
 {
-    assertIsHeld(m_imageBufferLock);
+    assertIsHeld(m_frameGenerationLock);
 
     RefPtr buffer = imageBufferInternal();
     if (!buffer)
@@ -715,19 +736,19 @@ void MockRealtimeVideoSource::generateFrame()
         m_delayUntil = MonotonicTime();
     }
 
-    Locker lock { m_imageBufferLock };
+    Locker lock { m_frameGenerationLock };
     generateFrameInternal();
 }
 
 ImageBuffer* MockRealtimeVideoSource::imageBuffer()
 {
-    Locker lock { m_imageBufferLock };
+    Locker lock { m_frameGenerationLock };
     return imageBufferInternal();
 }
 
 ImageBuffer* MockRealtimeVideoSource::imageBufferInternal()
 {
-    assertIsHeld(m_imageBufferLock);
+    assertIsHeld(m_frameGenerationLock);
 
     if (m_imageBuffer)
         return m_imageBuffer.get();
@@ -769,7 +790,7 @@ void MockRealtimeVideoSource::orientationChanged(IntDegrees orientation)
     if (m_isUsingRotationAngleForHorizonLevelDisplayChanged)
         return;
 
-    auto deviceOrientation = m_deviceOrientation;
+    auto deviceOrientation = m_deviceOrientation.load();
     switch (orientation) {
     case 0:
         m_deviceOrientation = VideoFrame::Rotation::None;

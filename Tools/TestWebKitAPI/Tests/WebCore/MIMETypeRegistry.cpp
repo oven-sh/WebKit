@@ -93,36 +93,36 @@ TEST(MIMETypeRegistry, ExtensionsForMIMEType)
 TEST(MIMETypeRegistry, CorrectExtensionForMIMEType)
 {
     EXPECT_TRUE(MIMETypeRegistry::correctExtensionForMIMEType({ }, "image/png"_s).isEmpty());
-    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file.png"_s, { }).utf8().data());
-    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file.png"_s, "application/octet-stream"_s).utf8().data());
-    EXPECT_STREQ("file.html", MIMETypeRegistry::correctExtensionForMIMEType("file.html"_s, "text/plain"_s).utf8().data());
+    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file.png"_s, { }).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file.png"_s, "application/octet-stream"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.html", MIMETypeRegistry::correctExtensionForMIMEType("file.html"_s, "text/plain"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("image.png", MIMETypeRegistry::correctExtensionForMIMEType("image.png"_s, "image/png"_s).utf8().data());
+    EXPECT_STREQ("image.png", MIMETypeRegistry::correctExtensionForMIMEType("image.png"_s, "image/png"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("video.mp4", MIMETypeRegistry::correctExtensionForMIMEType("video.gif"_s, "video/mp4"_s).utf8().data());
-    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file.gif"_s, "image/png"_s).utf8().data());
+    EXPECT_STREQ("video.mp4", MIMETypeRegistry::correctExtensionForMIMEType("video.gif"_s, "video/mp4"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file.gif"_s, "image/png"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file"_s, "image/png"_s).utf8().data());
+    EXPECT_STREQ("file.png", MIMETypeRegistry::correctExtensionForMIMEType("file"_s, "image/png"_s).utf8().legacyCStringPointer());
 
 #if PLATFORM(COCOA)
-    EXPECT_STREQ("archive.tar.gz", MIMETypeRegistry::correctExtensionForMIMEType("archive.tar.gz"_s, "application/gzip"_s).utf8().data());
+    EXPECT_STREQ("archive.tar.gz", MIMETypeRegistry::correctExtensionForMIMEType("archive.tar.gz"_s, "application/gzip"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("resource.tgz", MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "application/gzip"_s).utf8().data());
+    EXPECT_STREQ("resource.tgz", MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "application/gzip"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("resource.tgz", MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "application/x-gzip"_s).utf8().data());
-    EXPECT_STREQ("file.zip", MIMETypeRegistry::correctExtensionForMIMEType("file.zip"_s, "application/x-zip-compressed"_s).utf8().data());
-    EXPECT_STREQ("file.gz", MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/gzip"_s).utf8().data());
-    EXPECT_STREQ("file.gz", MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/x-gzip"_s).utf8().data());
+    EXPECT_STREQ("resource.tgz", MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "application/x-gzip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.zip", MIMETypeRegistry::correctExtensionForMIMEType("file.zip"_s, "application/x-zip-compressed"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.gz", MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/gzip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.gz", MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/x-gzip"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("resource.TGZ", MIMETypeRegistry::correctExtensionForMIMEType("resource.TGZ"_s, "application/gzip"_s).utf8().data());
-    EXPECT_STREQ("resource.tgz", MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "Application/X-Gzip"_s).utf8().data());
+    EXPECT_STREQ("resource.TGZ", MIMETypeRegistry::correctExtensionForMIMEType("resource.TGZ"_s, "application/gzip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("resource.tgz", MIMETypeRegistry::correctExtensionForMIMEType("resource.tgz"_s, "Application/X-Gzip"_s).utf8().legacyCStringPointer());
 
-    EXPECT_STREQ("archive.cpgz", MIMETypeRegistry::correctExtensionForMIMEType("archive.cpgz"_s, "application/zip"_s).utf8().data());
-    EXPECT_STREQ("archive.cpgz", MIMETypeRegistry::correctExtensionForMIMEType("archive.cpgz"_s, "application/gzip"_s).utf8().data());
-    EXPECT_STREQ("data.tar", MIMETypeRegistry::correctExtensionForMIMEType("data.tar"_s, "application/gzip"_s).utf8().data());
-    EXPECT_STREQ("data.tgz", MIMETypeRegistry::correctExtensionForMIMEType("data.tgz"_s, "application/zip"_s).utf8().data());
-    EXPECT_STREQ("file.gz", MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/zip"_s).utf8().data());
-    EXPECT_STREQ("app.jar", MIMETypeRegistry::correctExtensionForMIMEType("app.jar"_s, "application/zip"_s).utf8().data());
+    EXPECT_STREQ("archive.cpgz", MIMETypeRegistry::correctExtensionForMIMEType("archive.cpgz"_s, "application/zip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("archive.cpgz", MIMETypeRegistry::correctExtensionForMIMEType("archive.cpgz"_s, "application/gzip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("data.tar", MIMETypeRegistry::correctExtensionForMIMEType("data.tar"_s, "application/gzip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("data.tgz", MIMETypeRegistry::correctExtensionForMIMEType("data.tgz"_s, "application/zip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("file.gz", MIMETypeRegistry::correctExtensionForMIMEType("file.gz"_s, "application/zip"_s).utf8().legacyCStringPointer());
+    EXPECT_STREQ("app.jar", MIMETypeRegistry::correctExtensionForMIMEType("app.jar"_s, "application/zip"_s).utf8().legacyCStringPointer());
 #endif
 }
 

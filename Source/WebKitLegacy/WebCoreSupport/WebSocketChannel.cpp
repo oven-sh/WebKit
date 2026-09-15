@@ -174,7 +174,7 @@ void WebSocketChannel::send(Blob& binaryData)
     if (m_outgoingFrameQueueStatus != OutgoingFrameQueueOpen)
         return;
 
-    LOG(Network, "WebSocketChannel %p send() Sending Blob '%s'", this, binaryData.url().string().utf8().data());
+    LOG(Network, "WebSocketChannel %p send() Sending Blob '%s'", this, binaryData.url().string().utf8().legacyCStringPointer());
     enqueueBlobFrame(WebSocketFrame::OpCodeBinary, binaryData);
     processOutgoingFrameQueue();
 }
@@ -191,7 +191,7 @@ void WebSocketChannel::send(std::span<const uint8_t> data)
 
 void WebSocketChannel::close(int code, const String& reason)
 {
-    LOG(Network, "WebSocketChannel %p close() code=%d reason='%s'", this, code, reason.utf8().data());
+    LOG(Network, "WebSocketChannel %p close() code=%d reason='%s'", this, code, reason.utf8().legacyCStringPointer());
     ASSERT(!m_suspended);
     if (!m_handle)
         return;
@@ -203,7 +203,7 @@ void WebSocketChannel::close(int code, const String& reason)
 
 void WebSocketChannel::fail(String&& reason)
 {
-    RELEASE_LOG(Network, "WebSocketChannel %p fail() reason='%s'", this, reason.utf8().data());
+    RELEASE_LOG(Network, "WebSocketChannel %p fail() reason='%s'", this, reason.utf8().legacyCStringPointer());
     ASSERT(!m_suspended);
     if (m_document) {
         LegacyWebSocketInspectorInstrumentation::didReceiveWebSocketFrameError(m_document.get(), m_progressIdentifier, reason);
@@ -367,7 +367,7 @@ void WebSocketChannel::didFailSocketStream(SocketStreamHandle& handle, const Soc
     if (m_document) {
         LegacyWebSocketInspectorInstrumentation::didReceiveWebSocketFrameError(m_document.get(), m_progressIdentifier, message);
         m_document->addConsoleMessage(MessageSource::Network, MessageLevel::Error, message);
-        LOG_ERROR("%s", message.utf8().data());
+        LOG_ERROR("%s", message.utf8().legacyCStringPointer());
     }
     m_shouldDiscardReceivedData = true;
     if (RefPtr client = m_client)

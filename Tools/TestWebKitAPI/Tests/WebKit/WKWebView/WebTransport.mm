@@ -826,7 +826,7 @@ TEST(WebTransport, ServerCertificateHashes)
             "    alert('successfully read ' + new TextDecoder().decode(value));"
             "  } catch (e) { alert('caught ' + e); }"
             "}; test();"
-            "</script>", certificateBytes.toString().utf8().data(), echoServer.port()];
+            "</script>", certificateBytes.toString().utf8().legacyCStringPointer(), echoServer.port()];
 
         RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
         enableWebTransport(configuration.get());

@@ -119,7 +119,7 @@ void DatabaseTracker::openTrackerDatabase(TrackerCreationAction createAction)
 
     if (!m_database->open(databasePath)) {
         // FIXME: What do do here?
-        LOG_ERROR("Failed to open databasePath %s.", databasePath.utf8().data());
+        LOG_ERROR("Failed to open databasePath %s.", databasePath.utf8().legacyCStringPointer());
         return;
     }
     m_database->disableThreadingChecks();
@@ -339,7 +339,7 @@ String DatabaseTracker::fullPathForDatabaseNoLock(const SecurityOriginData& orig
             return String();
 
         if (result != SQLITE_DONE) {
-            LOG_ERROR("Failed to retrieve filename from Database Tracker for origin %s, name %s", originIdentifier.utf8().data(), name.utf8().data());
+            LOG_ERROR("Failed to retrieve filename from Database Tracker for origin %s, name %s", originIdentifier.utf8().legacyCStringPointer(), name.utf8().legacyCStringPointer());
             return String();
         }
     }
@@ -410,7 +410,7 @@ Vector<String> DatabaseTracker::databaseNamesNoLock(const SecurityOriginData& or
     names.shrinkToFit();
 
     if (result != SQLITE_DONE) {
-        LOG_ERROR("Failed to retrieve all database names for origin %s", origin.databaseIdentifier().utf8().data());
+        LOG_ERROR("Failed to retrieve all database names for origin %s", origin.databaseIdentifier().utf8().legacyCStringPointer());
         return { };
     }
 
@@ -447,7 +447,7 @@ DatabaseDetails DatabaseTracker::detailsForNameAndOrigin(const String& name, con
             return DatabaseDetails();
 
         if (result != SQLITE_ROW) {
-            LOG_ERROR("Error retrieving details for database %s in origin %s from tracker database", name.utf8().data(), originIdentifier.utf8().data());
+            LOG_ERROR("Error retrieving details for database %s in origin %s from tracker database", name.utf8().legacyCStringPointer(), originIdentifier.utf8().legacyCStringPointer());
             return DatabaseDetails();
         }
         displayName = statement->columnText(0);
@@ -485,12 +485,12 @@ void DatabaseTracker::setDatabaseDetails(const SecurityOriginData& origin, const
 
         if (!guid) {
             if (result != SQLITE_DONE)
-                LOG_ERROR("Error to determing existence of database %s in origin %s in tracker database", name.utf8().data(), originIdentifier.utf8().data());
+                LOG_ERROR("Error to determing existence of database %s in origin %s in tracker database", name.utf8().legacyCStringPointer(), originIdentifier.utf8().legacyCStringPointer());
             else {
                 // This case should never occur - we should never be setting database details for a database that doesn't already exist in the tracker
                 // But since the tracker file is an external resource not under complete control of our code, it's somewhat invalid to make this an ASSERT case
                 // So we'll print an error instead
-                LOG_ERROR("Could not retrieve guid for database %s in origin %s from the tracker database - it is invalid to set database details on a database that doesn't already exist in the tracker", name.utf8().data(), originIdentifier.utf8().data());
+                LOG_ERROR("Could not retrieve guid for database %s in origin %s from the tracker database - it is invalid to set database details on a database that doesn't already exist in the tracker", name.utf8().legacyCStringPointer(), originIdentifier.utf8().legacyCStringPointer());
             }
             return;
         }
@@ -505,7 +505,7 @@ void DatabaseTracker::setDatabaseDetails(const SecurityOriginData& origin, const
     updateStatement->bindInt64(3, guid);
 
     if (updateStatement->step() != SQLITE_DONE) {
-        LOG_ERROR("Failed to update details for database %s in origin %s", name.utf8().data(), originIdentifier.utf8().data());
+        LOG_ERROR("Failed to update details for database %s in origin %s", name.utf8().legacyCStringPointer(), originIdentifier.utf8().legacyCStringPointer());
         return;
     }
 
@@ -544,7 +544,7 @@ void DatabaseTracker::addOpenDatabase(Database& database)
         .add(name, DatabaseSet { }).iterator->value
         .add(database);
 
-    LOG(StorageAPI, "Added open Database %s (%p)\n", name.utf8().data(), &database);
+    LOG(StorageAPI, "Added open Database %s (%p)\n", name.utf8().legacyCStringPointer(), &database);
 }
 
 void DatabaseTracker::removeOpenDatabase(Database& database)
@@ -566,7 +566,7 @@ void DatabaseTracker::removeOpenDatabase(Database& database)
 
     innerIterator->value.remove(database);
 
-    LOG(StorageAPI, "Removed open Database %s (%p)\n", name.utf8().data(), &database);
+    LOG(StorageAPI, "Removed open Database %s (%p)\n", name.utf8().legacyCStringPointer(), &database);
 
     if (!innerIterator->value.isEmptyIgnoringNullReferences())
         return;
@@ -671,13 +671,13 @@ void DatabaseTracker::setQuota(const SecurityOriginData& origin, uint64_t quota)
     if (!originEntryExists) {
         auto statement = m_database->prepareStatement("INSERT INTO Origins VALUES (?, ?)"_s);
         if (!statement) {
-            LOG_ERROR("Unable to establish origin %s in the tracker", origin.databaseIdentifier().utf8().data());
+            LOG_ERROR("Unable to establish origin %s in the tracker", origin.databaseIdentifier().utf8().legacyCStringPointer());
         } else {
             statement->bindText(1, origin.databaseIdentifier());
             statement->bindInt64(2, quota);
 
             if (statement->step() != SQLITE_DONE)
-                LOG_ERROR("Unable to establish origin %s in the tracker", origin.databaseIdentifier().utf8().data());
+                LOG_ERROR("Unable to establish origin %s in the tracker", origin.databaseIdentifier().utf8().legacyCStringPointer());
             else
                 insertedNewOrigin = true;
         }
@@ -692,7 +692,7 @@ void DatabaseTracker::setQuota(const SecurityOriginData& origin, uint64_t quota)
         }
 
         if (error)
-            LOG_ERROR("Failed to set quota %" PRIu64 " in tracker database for origin %s", quota, origin.databaseIdentifier().utf8().data());
+            LOG_ERROR("Failed to set quota %" PRIu64 " in tracker database for origin %s", quota, origin.databaseIdentifier().utf8().legacyCStringPointer());
     }
 
     if (RefPtr client = m_client.get()) {
@@ -722,7 +722,7 @@ bool DatabaseTracker::addDatabase(const SecurityOriginData& origin, const String
     statement->bindText(3, path);
 
     if (!statement->executeCommand()) {
-        LOG_ERROR("Failed to add database %s to origin %s: %s\n", name.utf8().data(), origin.databaseIdentifier().utf8().data(), m_database->lastErrorMsg());
+        LOG_ERROR("Failed to add database %s to origin %s: %s\n", name.utf8().legacyCStringPointer(), origin.databaseIdentifier().utf8().legacyCStringPointer(), m_database->lastErrorMsg());
         return false;
     }
 
@@ -793,10 +793,10 @@ bool DatabaseTracker::deleteOrigin(const SecurityOriginData& origin, DeletionMod
 
         databaseNames = databaseNamesNoLock(origin);
         if (databaseNames.isEmpty())
-            LOG_ERROR("Unable to retrieve list of database names for origin %s", origin.databaseIdentifier().utf8().data());
+            LOG_ERROR("Unable to retrieve list of database names for origin %s", origin.databaseIdentifier().utf8().legacyCStringPointer());
 
         if (!canDeleteOrigin(origin)) {
-            LOG_ERROR("Tried to delete an origin (%s) while either creating database in it or already deleting it", origin.databaseIdentifier().utf8().data());
+            LOG_ERROR("Tried to delete an origin (%s) while either creating database in it or already deleting it", origin.databaseIdentifier().utf8().legacyCStringPointer());
             ASSERT_NOT_REACHED();
             return false;
         }
@@ -808,7 +808,7 @@ bool DatabaseTracker::deleteOrigin(const SecurityOriginData& origin, DeletionMod
     for (auto& name : databaseNames) {
         if (FileSystem::fileExists(fullPathForDatabase(origin, name, false)) && !deleteDatabaseFile(origin, name, deletionMode)) {
             // Even if the file can't be deleted, we want to try and delete the rest, don't return early here.
-            LOG_ERROR("Unable to delete file for database %s in origin %s", name.utf8().data(), origin.databaseIdentifier().utf8().data());
+            LOG_ERROR("Unable to delete file for database %s in origin %s", name.utf8().legacyCStringPointer(), origin.databaseIdentifier().utf8().legacyCStringPointer());
             failedToDeleteAnyDatabaseFile = true;
         }
     }
@@ -848,27 +848,27 @@ bool DatabaseTracker::deleteOrigin(const SecurityOriginData& origin, DeletionMod
         {
             auto statement = m_database->prepareStatement("DELETE FROM Databases WHERE origin=?"_s);
             if (!statement) {
-                LOG_ERROR("Unable to prepare deletion of databases from origin %s from tracker", origin.databaseIdentifier().utf8().data());
+                LOG_ERROR("Unable to prepare deletion of databases from origin %s from tracker", origin.databaseIdentifier().utf8().legacyCStringPointer());
                 return false;
             }
 
             statement->bindText(1, origin.databaseIdentifier());
 
             if (!statement->executeCommand()) {
-                LOG_ERROR("Unable to execute deletion of databases from origin %s from tracker", origin.databaseIdentifier().utf8().data());
+                LOG_ERROR("Unable to execute deletion of databases from origin %s from tracker", origin.databaseIdentifier().utf8().legacyCStringPointer());
                 return false;
             }
 
             auto originStatement = m_database->prepareStatement("DELETE FROM Origins WHERE origin=?"_s);
             if (!originStatement) {
-                LOG_ERROR("Unable to prepare deletion of origin %s from tracker", origin.databaseIdentifier().utf8().data());
+                LOG_ERROR("Unable to prepare deletion of origin %s from tracker", origin.databaseIdentifier().utf8().legacyCStringPointer());
                 return false;
             }
 
             originStatement->bindText(1, origin.databaseIdentifier());
 
             if (!originStatement->executeCommand()) {
-                LOG_ERROR("Unable to execute deletion of databases from origin %s from tracker", origin.databaseIdentifier().utf8().data());
+                LOG_ERROR("Unable to execute deletion of databases from origin %s from tracker", origin.databaseIdentifier().utf8().legacyCStringPointer());
                 return false;
             }
         }
@@ -1033,7 +1033,7 @@ bool DatabaseTracker::deleteDatabase(const SecurityOriginData& origin, const Str
 
     // We drop the lock here because holding locks during a call to deleteDatabaseFile will deadlock.
     if (FileSystem::fileExists(fullPathForDatabase(origin, name, false)) && !deleteDatabaseFile(origin, name, DeletionMode::Default)) {
-        LOG_ERROR("Unable to delete file for database %s in origin %s", name.utf8().data(), origin.databaseIdentifier().utf8().data());
+        LOG_ERROR("Unable to delete file for database %s in origin %s", name.utf8().legacyCStringPointer(), origin.databaseIdentifier().utf8().legacyCStringPointer());
         Locker lockDatabase { m_databaseGuard };
         doneDeletingDatabase(origin, name);
         return false;
@@ -1043,7 +1043,7 @@ bool DatabaseTracker::deleteDatabase(const SecurityOriginData& origin, const Str
 
     auto statement = m_database->prepareStatement("DELETE FROM Databases WHERE origin=? AND name=?"_s);
     if (!statement) {
-        LOG_ERROR("Unable to prepare deletion of database %s from origin %s from tracker", name.utf8().data(), origin.databaseIdentifier().utf8().data());
+        LOG_ERROR("Unable to prepare deletion of database %s from origin %s from tracker", name.utf8().legacyCStringPointer(), origin.databaseIdentifier().utf8().legacyCStringPointer());
         doneDeletingDatabase(origin, name);
         return false;
     }
@@ -1052,7 +1052,7 @@ bool DatabaseTracker::deleteDatabase(const SecurityOriginData& origin, const Str
     statement->bindText(2, name);
 
     if (!statement->executeCommand()) {
-        LOG_ERROR("Unable to execute deletion of database %s from origin %s from tracker", name.utf8().data(), origin.databaseIdentifier().utf8().data());
+        LOG_ERROR("Unable to execute deletion of database %s from origin %s from tracker", name.utf8().legacyCStringPointer(), origin.databaseIdentifier().utf8().legacyCStringPointer());
         doneDeletingDatabase(origin, name);
         return false;
     }

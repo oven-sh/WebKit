@@ -33,6 +33,7 @@ class RenderSVGInline : public RenderInline {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGInline);
 public:
     RenderSVGInline(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
+    RenderSVGInline(Type, Document&, Style::ComputedStyle&&);
     virtual ~RenderSVGInline();
 
     inline SVGGraphicsElement& graphicsElement() const;

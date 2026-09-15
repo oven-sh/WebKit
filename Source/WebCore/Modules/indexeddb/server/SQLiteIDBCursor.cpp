@@ -191,7 +191,7 @@ bool SQLiteIDBCursor::establishStatement()
 
 bool SQLiteIDBCursor::createSQLiteStatement(StringView sql)
 {
-    LOG(IndexedDB, "Creating cursor with SQL query: \"%s\"", sql.utf8().data());
+    LOG(IndexedDB, "Creating cursor with SQL query: \"%s\"", sql.utf8().legacyCStringPointer());
 
     ASSERT(!m_currentLowerKey.isNull());
     ASSERT(!m_currentUpperKey.isNull());
@@ -270,7 +270,7 @@ void SQLiteIDBCursor::resetAndRebindStatement()
 
 bool SQLiteIDBCursor::bindArguments()
 {
-    LOG(IndexedDB, "Cursor is binding lower key '%s' and upper key '%s'", m_currentLowerKey.loggingString().utf8().data(), m_currentUpperKey.loggingString().utf8().data());
+    LOG(IndexedDB, "Cursor is binding lower key '%s' and upper key '%s'", m_currentLowerKey.loggingString().utf8().legacyCStringPointer(), m_currentUpperKey.loggingString().utf8().legacyCStringPointer());
 
     int currentBindArgument = 1;
 

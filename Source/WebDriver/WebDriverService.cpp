@@ -130,20 +130,20 @@ int WebDriverService::run(int argc, char** argv)
 
         static constexpr auto portArgument = "--port="_span;
         if (spanHasPrefix(arg, portArgument) && portString.isNull()) {
-            portString = arg.subspan(portArgument.size());
+            portString = String::fromLatin1(arg.subspan(portArgument.size()));
             continue;
         }
 
         static constexpr auto hostArgument = "--host="_span;
         if (spanHasPrefix(arg, hostArgument) && !host) {
-            host = arg.subspan(hostArgument.size());
+            host = String::fromLatin1(arg.subspan(hostArgument.size()));
             continue;
         }
 
 #if ENABLE(WEBDRIVER_BIDI)
         static constexpr auto bidiPortArgument = "--bidi-port="_span;
         if (spanHasPrefix(arg, bidiPortArgument) && bidiPortString.isNull()) {
-            bidiPortString = arg.subspan(bidiPortArgument.size());
+            bidiPortString = String::fromLatin1(arg.subspan(bidiPortArgument.size()));
             continue;
         }
 #endif
@@ -159,7 +159,7 @@ int WebDriverService::run(int argc, char** argv)
 
         static constexpr auto targetArgument = "--target="_span;
         if (spanHasPrefix(arg, targetArgument) && targetString.isNull()) {
-            targetString = arg.subspan(targetArgument.size());
+            targetString = String::fromLatin1(arg.subspan(targetArgument.size()));
             continue;
         }
 
@@ -184,8 +184,8 @@ int WebDriverService::run(int argc, char** argv)
 
     auto port = parseInteger<uint16_t>(portString);
     if (!port) {
-        RELEASE_LOG_ERROR(WebDriverClassic, "Invalid port %s provided", portString.utf8().data());
-        fprintf(stderr, "Invalid port %s provided\n", portString.utf8().data());
+        RELEASE_LOG_ERROR(WebDriverClassic, "Invalid port %s provided", portString.utf8().legacyCStringPointer());
+        SAFE_FPRINTF(stderr, "Invalid port %s provided\n", portString.utf8());
         return EXIT_FAILURE;
     }
 
@@ -194,7 +194,7 @@ int WebDriverService::run(int argc, char** argv)
     if (!bidiPortString.isNull()) {
         bidiPort = parseInteger<uint16_t>(bidiPortString);
         if (!bidiPort) {
-            RELEASE_LOG_ERROR(WebDriverBiDi, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.", bidiPortString.utf8().data());
+            RELEASE_LOG_ERROR(WebDriverBiDi, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.", bidiPortString.utf8().legacyCStringPointer());
             SAFE_FPRINTF(stderr, "Invalid WebSocket BiDi port %s explicitly provided. Aborting.\n", bidiPortString.utf8());
             return EXIT_FAILURE;
         }
@@ -216,12 +216,12 @@ int WebDriverService::run(int argc, char** argv)
     if (m_targetAddress.isEmpty())
         RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d bidi=%d", programNameStr.data(), hostStr.data(), *port, *bidiPort);
     else
-        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d bidi=%d target=%s:%d", programNameStr.data(), hostStr.data(), *port, *bidiPort, m_targetAddress.utf8().data(), m_targetPort);
+        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d bidi=%d target=%s:%d", programNameStr.data(), hostStr.data(), *port, *bidiPort, m_targetAddress.utf8().legacyCStringPointer(), m_targetPort);
 #else
     if (m_targetAddress.isEmpty())
         RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d", programNameStr.data(), hostStr.data(), *port);
     else
-        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d target=%s:%d", programNameStr.data(), hostStr.data(), *port, m_targetAddress.utf8().data(), m_targetPort);
+        RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d target=%s:%d", programNameStr.data(), hostStr.data(), *port, m_targetAddress.utf8().legacyCStringPointer(), m_targetPort);
 #endif
 
     if (!m_server.listen(host, *port)) {
@@ -237,7 +237,7 @@ int WebDriverService::run(int argc, char** argv)
         fprintf(stderr, "FATAL: Unable to listen for WebSocket BiDi server at host %s and port %d.\n", hostStr.data(), *bidiPort);
         return EXIT_FAILURE;
     }
-    RELEASE_LOG_INFO(WebDriverBiDi, "Started WebSocket BiDi server at %s", bidiServerURL->utf8().data());
+    RELEASE_LOG_INFO(WebDriverBiDi, "Started WebSocket BiDi server at %s", bidiServerURL->utf8().legacyCStringPointer());
 #endif // ENABLE(WEBDRIVER_BIDI)
 
     RunLoop::run();
@@ -382,7 +382,7 @@ void WebDriverService::handleRequest(HTTPRequestHandler::Request&& request, Func
 {
     Function<void (HTTPRequestHandler::Response&&)> actualReplyHandler = WTF::move(replyHandler);
     if (LOG_CHANNEL(WebDriverClassic).state != WTFLogChannelState::Off) {
-        RELEASE_LOG_INFO(WebDriverClassic, "HTTP request %s %s (body=%zu bytes)", request.method.utf8().data(), request.path.utf8().data(), request.dataLength);
+        RELEASE_LOG_INFO(WebDriverClassic, "HTTP request %s %s (body=%zu bytes)", request.method.utf8().legacyCStringPointer(), request.path.utf8().legacyCStringPointer(), request.dataLength);
         actualReplyHandler = [startTime = MonotonicTime::now(), replyHandler = WTF::move(actualReplyHandler)](HTTPRequestHandler::Response&& response) mutable {
             RELEASE_LOG_INFO(WebDriverClassic, "HTTP response %u in %.0fms", response.statusCode, (MonotonicTime::now() - startTime).milliseconds());
             replyHandler(WTF::move(response));
@@ -464,7 +464,7 @@ bool WebDriverService::acceptHandshake(HTTPRequestHandler::Request&& request)
     auto& resources = m_bidiServer->listener()->resources;
     auto foundResource = std::ranges::find(resources, resourceName);
     if (foundResource == resources.end()) {
-        RELEASE_LOG(WebDriverBiDi, "Resource name %s not found in listener's list of WebSocket resources. Rejecting handshake.", resourceName.utf8().data());
+        RELEASE_LOG(WebDriverBiDi, "Resource name %s not found in listener's list of WebSocket resources. Rejecting handshake.", resourceName.utf8().legacyCStringPointer());
         return false;
     }
 
@@ -476,13 +476,13 @@ bool WebDriverService::acceptHandshake(HTTPRequestHandler::Request&& request)
 
     auto sessionID = m_bidiServer->getSessionID(resourceName);
     if (sessionID.isNull()) {
-        RELEASE_LOG(WebDriverBiDi, "No session ID found for resource name %s. Rejecting handshake.", resourceName.utf8().data());
+        RELEASE_LOG(WebDriverBiDi, "No session ID found for resource name %s. Rejecting handshake.", resourceName.utf8().legacyCStringPointer());
         return false;
     }
 
     // FIXME Properly support multiple sessions in the future
     if (sessionID != m_session->id()) {
-        RELEASE_LOG(WebDriverBiDi, "No active session found for session ID %s. Rejecting handshake.", sessionID.utf8().data());
+        RELEASE_LOG(WebDriverBiDi, "No active session found for session ID %s. Rejecting handshake.", sessionID.utf8().legacyCStringPointer());
         return false;
     }
 
@@ -537,7 +537,7 @@ void WebDriverService::handleMessage(WebSocketMessageHandler::Message&& message,
         m_session->relayBidiCommand(makeString(message.payload), *commandId, [completionHandler = WTF::move(completionHandler), sessionID, this](WebSocketMessageHandler::Message&& resultMessage) {
             auto connection = m_bidiServer->connection(sessionID);
             if (!connection) {
-                RELEASE_LOG(WebDriverBiDi, "Failed to find connection for session ID %s. Ignoring message.", sessionID.utf8().data());
+                RELEASE_LOG(WebDriverBiDi, "Failed to find connection for session ID %s. Ignoring message.", sessionID.utf8().legacyCStringPointer());
                 return;
             }
             resultMessage.connection = *connection;
@@ -1203,11 +1203,11 @@ void WebDriverService::createSession(Vector<Capabilities>&& capabilitiesList, Re
                 capabilitiesObject->setString("webSocketUrl"_s, webSocketURL);
                 m_session->setHasBiDiEnabled(true);
             } else {
-                RELEASE_LOG(WebDriverBiDi, "BiDi support not enabled for session %s", m_session->id().utf8().data());
+                RELEASE_LOG(WebDriverBiDi, "BiDi support not enabled for session %s", m_session->id().utf8().legacyCStringPointer());
                 if (!m_session->hasBiDiEnabled())
-                    RELEASE_LOG(WebDriverBiDi, "BiDi flag not set for session %s", m_session->id().utf8().data());
+                    RELEASE_LOG(WebDriverBiDi, "BiDi flag not set for session %s", m_session->id().utf8().legacyCStringPointer());
                 if (!capabilities.webSocketURL || !*capabilities.webSocketURL)
-                    RELEASE_LOG(WebDriverBiDi, "webSocketURL not set for session %s", m_session->id().utf8().data());
+                    RELEASE_LOG(WebDriverBiDi, "webSocketURL not set for session %s", m_session->id().utf8().legacyCStringPointer());
             }
 #endif
 

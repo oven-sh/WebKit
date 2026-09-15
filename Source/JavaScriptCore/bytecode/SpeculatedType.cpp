@@ -54,6 +54,7 @@
 #include "StringObject.h"
 #include "TypedArrayInlines.h"
 #include <wtf/CommaPrinter.h>
+#include <wtf/SortedArrayMap.h>
 #include <wtf/StringPrintStream.h>
 
 namespace JSC {
@@ -964,147 +965,81 @@ SpeculatedType typeOfDoubleUnaryOp(SpeculatedType value)
     return polluteDouble(value);
 }
 
-SpeculatedType speculationFromString(const char* speculation)
+SpeculatedType speculationFromString(StringView speculation)
 {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    if (!strncmp(speculation, "SpecNone", strlen("SpecNone")))
-        return SpecNone;
-    if (!strncmp(speculation, "SpecFinalObject", strlen("SpecFinalObject")))
-        return SpecFinalObject;
-    if (!strncmp(speculation, "SpecArray", strlen("SpecArray")))
-        return SpecArray;
-    if (!strncmp(speculation, "SpecFunction", strlen("SpecFunction")))
-        return SpecFunction;
-    if (!strncmp(speculation, "SpecInt8Array", strlen("SpecInt8Array")))
-        return SpecInt8Array;
-    if (!strncmp(speculation, "SpecInt16Array", strlen("SpecInt16Array")))
-        return SpecInt16Array;
-    if (!strncmp(speculation, "SpecInt32Array", strlen("SpecInt32Array")))
-        return SpecInt32Array;
-    if (!strncmp(speculation, "SpecUint8Array", strlen("SpecUint8Array")))
-        return SpecUint8Array;
-    if (!strncmp(speculation, "SpecUint8ClampedArray", strlen("SpecUint8ClampedArray")))
-        return SpecUint8ClampedArray;
-    if (!strncmp(speculation, "SpecUint16Array", strlen("SpecUint16Array")))
-        return SpecUint16Array;
-    if (!strncmp(speculation, "SpecUint32Array", strlen("SpecUint32Array")))
-        return SpecUint32Array;
-    if (!strncmp(speculation, "SpecFloat16Array", strlen("SpecFloat16Array")))
-        return SpecFloat16Array;
-    if (!strncmp(speculation, "SpecFloat32Array", strlen("SpecFloat32Array")))
-        return SpecFloat32Array;
-    if (!strncmp(speculation, "SpecFloat64Array", strlen("SpecFloat64Array")))
-        return SpecFloat64Array;
-    if (!strncmp(speculation, "SpecBigInt64Array", strlen("SpecBigInt64Array")))
-        return SpecBigInt64Array;
-    if (!strncmp(speculation, "SpecBigUint64Array", strlen("SpecBigUint64Array")))
-        return SpecBigUint64Array;
-    if (!strncmp(speculation, "SpecTypedArrayView", strlen("SpecTypedArrayView")))
-        return SpecTypedArrayView;
-    if (!strncmp(speculation, "SpecDirectArguments", strlen("SpecDirectArguments")))
-        return SpecDirectArguments;
-    if (!strncmp(speculation, "SpecScopedArguments", strlen("SpecScopedArguments")))
-        return SpecScopedArguments;
-    if (!strncmp(speculation, "SpecStringObject", strlen("SpecStringObject")))
-        return SpecStringObject;
-    if (!strncmp(speculation, "SpecRegExpObject", strlen("SpecRegExpObject")))
-        return SpecRegExpObject;
-    if (!strncmp(speculation, "SpecDateObject", strlen("SpecDateObject")))
-        return SpecDateObject;
-    if (!strncmp(speculation, "SpecPromiseObject", strlen("SpecPromiseObject")))
-        return SpecPromiseObject;
-    if (!strncmp(speculation, "SpecMapObject", strlen("SpecMapObject")))
-        return SpecMapObject;
-    if (!strncmp(speculation, "SpecSetObject", strlen("SpecSetObject")))
-        return SpecSetObject;
-    if (!strncmp(speculation, "SpecWeakMapObject", strlen("SpecWeakMapObject")))
-        return SpecWeakMapObject;
-    if (!strncmp(speculation, "SpecWeakSetObject", strlen("SpecWeakSetObject")))
-        return SpecWeakSetObject;
-    if (!strncmp(speculation, "SpecProxyObject", strlen("SpecProxyObject")))
-        return SpecProxyObject;
-    if (!strncmp(speculation, "SpecGlobalProxy", strlen("SpecGlobalProxy")))
-        return SpecGlobalProxy;
-    if (!strncmp(speculation, "SpecDerivedArray", strlen("SpecDerivedArray")))
-        return SpecDerivedArray;
-    if (!strncmp(speculation, "SpecDataViewObject", strlen("SpecDataViewObject")))
-        return SpecDataViewObject;
-    if (!strncmp(speculation, "SpecObjectOther", strlen("SpecObjectOther")))
-        return SpecObjectOther;
-    if (!strncmp(speculation, "SpecObject", strlen("SpecObject")))
-        return SpecObject;
-    if (!strncmp(speculation, "SpecStringIdent", strlen("SpecStringIdent")))
-        return SpecStringIdent;
-    if (!strncmp(speculation, "SpecStringVar", strlen("SpecStringVar")))
-        return SpecStringVar;
-    if (!strncmp(speculation, "SpecString", strlen("SpecString")))
-        return SpecString;
-    if (!strncmp(speculation, "SpecSymbol", strlen("SpecSymbol")))
-        return SpecSymbol;
-    if (!strncmp(speculation, "SpecBigInt", strlen("SpecBigInt")))
-        return SpecBigInt;
-    if (!strncmp(speculation, "SpecCellOther", strlen("SpecCellOther")))
-        return SpecCellOther;
-    if (!strncmp(speculation, "SpecCell", strlen("SpecCell")))
-        return SpecCell;
-    if (!strncmp(speculation, "SpecBoolInt32", strlen("SpecBoolInt32")))
-        return SpecBoolInt32;
-    if (!strncmp(speculation, "SpecNonBoolInt32", strlen("SpecNonBoolInt32")))
-        return SpecNonBoolInt32;
-    if (!strncmp(speculation, "SpecInt32Only", strlen("SpecInt32Only")))
-        return SpecInt32Only;
-    if (!strncmp(speculation, "SpecInt32AsInt52", strlen("SpecInt32AsInt52")))
-        return SpecInt32AsInt52;
-    if (!strncmp(speculation, "SpecNonInt32AsInt52", strlen("SpecNonInt32AsInt52")))
-        return SpecNonInt32AsInt52;
-    if (!strncmp(speculation, "SpecInt52Any", strlen("SpecInt52Any")))
-        return SpecInt52Any;
-    if (!strncmp(speculation, "SpecIntAnyFormat", strlen("SpecIntAnyFormat")))
-        return SpecIntAnyFormat;
-    if (!strncmp(speculation, "SpecAnyIntAsDouble", strlen("SpecAnyIntAsDouble")))
-        return SpecAnyIntAsDouble;
-    if (!strncmp(speculation, "SpecNonIntAsDouble", strlen("SpecNonIntAsDouble")))
-        return SpecNonIntAsDouble;
-    if (!strncmp(speculation, "SpecDoubleReal", strlen("SpecDoubleReal")))
-        return SpecDoubleReal;
-    if (!strncmp(speculation, "SpecDoublePureNaN", strlen("SpecDoublePureNaN")))
-        return SpecDoublePureNaN;
-    if (!strncmp(speculation, "SpecDoubleImpureNaN", strlen("SpecDoubleImpureNaN")))
-        return SpecDoubleImpureNaN;
-    if (!strncmp(speculation, "SpecDoubleNaN", strlen("SpecDoubleNaN")))
-        return SpecDoubleNaN;
-    if (!strncmp(speculation, "SpecBytecodeDouble", strlen("SpecBytecodeDouble")))
-        return SpecBytecodeDouble;
-    if (!strncmp(speculation, "SpecFullDouble", strlen("SpecFullDouble")))
-        return SpecFullDouble;
-    if (!strncmp(speculation, "SpecBytecodeRealNumber", strlen("SpecBytecodeRealNumber")))
-        return SpecBytecodeRealNumber;
-    if (!strncmp(speculation, "SpecFullRealNumber", strlen("SpecFullRealNumber")))
-        return SpecFullRealNumber;
-    if (!strncmp(speculation, "SpecBytecodeNumber", strlen("SpecBytecodeNumber")))
-        return SpecBytecodeNumber;
-    if (!strncmp(speculation, "SpecFullNumber", strlen("SpecFullNumber")))
-        return SpecFullNumber;
-    if (!strncmp(speculation, "SpecBoolean", strlen("SpecBoolean")))
-        return SpecBoolean;
-    if (!strncmp(speculation, "SpecOther", strlen("SpecOther")))
-        return SpecOther;
-    if (!strncmp(speculation, "SpecMisc", strlen("SpecMisc")))
-        return SpecMisc;
-    if (!strncmp(speculation, "SpecHeapTop", strlen("SpecHeapTop")))
-        return SpecHeapTop;
-    if (!strncmp(speculation, "SpecPrimitive", strlen("SpecPrimitive")))
-        return SpecPrimitive;
-    if (!strncmp(speculation, "SpecEmpty", strlen("SpecEmpty")))
-        return SpecEmpty;
-    if (!strncmp(speculation, "SpecBytecodeTop", strlen("SpecBytecodeTop")))
-        return SpecBytecodeTop;
-    if (!strncmp(speculation, "SpecFullTop", strlen("SpecFullTop")))
-        return SpecFullTop;
-    if (!strncmp(speculation, "SpecCellCheck", strlen("SpecCellCheck")))
-        return SpecCellCheck;
-    RELEASE_ASSERT_NOT_REACHED();
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, SpeculatedType>>({
+        { "SpecAnyIntAsDouble"_s, SpecAnyIntAsDouble },
+        { "SpecArray"_s, SpecArray },
+        { "SpecBigInt"_s, SpecBigInt },
+        { "SpecBigInt64Array"_s, SpecBigInt64Array },
+        { "SpecBigUint64Array"_s, SpecBigUint64Array },
+        { "SpecBoolInt32"_s, SpecBoolInt32 },
+        { "SpecBoolean"_s, SpecBoolean },
+        { "SpecBytecodeDouble"_s, SpecBytecodeDouble },
+        { "SpecBytecodeNumber"_s, SpecBytecodeNumber },
+        { "SpecBytecodeRealNumber"_s, SpecBytecodeRealNumber },
+        { "SpecBytecodeTop"_s, SpecBytecodeTop },
+        { "SpecCell"_s, SpecCell },
+        { "SpecCellCheck"_s, SpecCellCheck },
+        { "SpecCellOther"_s, SpecCellOther },
+        { "SpecDataViewObject"_s, SpecDataViewObject },
+        { "SpecDateObject"_s, SpecDateObject },
+        { "SpecDerivedArray"_s, SpecDerivedArray },
+        { "SpecDirectArguments"_s, SpecDirectArguments },
+        { "SpecDoubleImpureNaN"_s, SpecDoubleImpureNaN },
+        { "SpecDoubleNaN"_s, SpecDoubleNaN },
+        { "SpecDoublePureNaN"_s, SpecDoublePureNaN },
+        { "SpecDoubleReal"_s, SpecDoubleReal },
+        { "SpecEmpty"_s, SpecEmpty },
+        { "SpecFinalObject"_s, SpecFinalObject },
+        { "SpecFloat16Array"_s, SpecFloat16Array },
+        { "SpecFloat32Array"_s, SpecFloat32Array },
+        { "SpecFloat64Array"_s, SpecFloat64Array },
+        { "SpecFullDouble"_s, SpecFullDouble },
+        { "SpecFullNumber"_s, SpecFullNumber },
+        { "SpecFullRealNumber"_s, SpecFullRealNumber },
+        { "SpecFullTop"_s, SpecFullTop },
+        { "SpecFunction"_s, SpecFunction },
+        { "SpecGlobalProxy"_s, SpecGlobalProxy },
+        { "SpecHeapTop"_s, SpecHeapTop },
+        { "SpecInt16Array"_s, SpecInt16Array },
+        { "SpecInt32Array"_s, SpecInt32Array },
+        { "SpecInt32AsInt52"_s, SpecInt32AsInt52 },
+        { "SpecInt32Only"_s, SpecInt32Only },
+        { "SpecInt52Any"_s, SpecInt52Any },
+        { "SpecInt8Array"_s, SpecInt8Array },
+        { "SpecIntAnyFormat"_s, SpecIntAnyFormat },
+        { "SpecMapObject"_s, SpecMapObject },
+        { "SpecMisc"_s, SpecMisc },
+        { "SpecNonBoolInt32"_s, SpecNonBoolInt32 },
+        { "SpecNonInt32AsInt52"_s, SpecNonInt32AsInt52 },
+        { "SpecNonIntAsDouble"_s, SpecNonIntAsDouble },
+        { "SpecNone"_s, SpecNone },
+        { "SpecObject"_s, SpecObject },
+        { "SpecObjectOther"_s, SpecObjectOther },
+        { "SpecOther"_s, SpecOther },
+        { "SpecPrimitive"_s, SpecPrimitive },
+        { "SpecPromiseObject"_s, SpecPromiseObject },
+        { "SpecProxyObject"_s, SpecProxyObject },
+        { "SpecRegExpObject"_s, SpecRegExpObject },
+        { "SpecScopedArguments"_s, SpecScopedArguments },
+        { "SpecSetObject"_s, SpecSetObject },
+        { "SpecString"_s, SpecString },
+        { "SpecStringIdent"_s, SpecStringIdent },
+        { "SpecStringObject"_s, SpecStringObject },
+        { "SpecStringVar"_s, SpecStringVar },
+        { "SpecSymbol"_s, SpecSymbol },
+        { "SpecTypedArrayView"_s, SpecTypedArrayView },
+        { "SpecUint16Array"_s, SpecUint16Array },
+        { "SpecUint32Array"_s, SpecUint32Array },
+        { "SpecUint8Array"_s, SpecUint8Array },
+        { "SpecUint8ClampedArray"_s, SpecUint8ClampedArray },
+        { "SpecWeakMapObject"_s, SpecWeakMapObject },
+        { "SpecWeakSetObject"_s, SpecWeakSetObject },
+    }) };
+    auto result = map.tryGet(speculation);
+    RELEASE_ASSERT(result);
+    return *result;
 }
 
 } // namespace JSC

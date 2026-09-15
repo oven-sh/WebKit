@@ -2634,6 +2634,14 @@ webkit.org/b/295127  transitions/svg-text-shadow-transition.html [ Pass Failure 
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # WebAnimations-related bugs
+
+# Apple ports dont's support `steps()` and `linear()` accelerated animations
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-2.html [ Skip ]
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-3.html [ Skip ]
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-6.html [ Skip ]
+webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-7.html [ Skip ]
+webkit.org/b/323852 webanimations/transform-animation-with-steps-timing-function-not-accelerated.html [ Skip ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 
 webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/css/animation-range-ignored.html [ Skip ]
@@ -5155,9 +5163,6 @@ webkit.org/b/315756 fast/css/container-query-orientation-modal-dialog-crash.html
 
 webkit.org/b/316158 fullscreen/full-screen-enter-while-exiting-mid-completion-handler.html [ Crash Pass ]
 
-webkit.org/b/316192 [ Release ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/no-cors.https.html [ Crash Pass ]
-webkit.org/b/316192 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/cors-check.https.html [ Crash Failure Pass ]
-
 webkit.org/b/316427 webkit.org/b/315994 animations/restart-after-scroll.html [ Pass Failure Crash ]
 
 webkit.org/b/316428 imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-inert-invoker.html [ Pass Failure ]
@@ -5277,9 +5282,6 @@ webkit.org/b/320647 [ Debug ] webrtc/canvas-to-peer-connection-vp8-2d.html [ Fai
 webkit.org/b/320648 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/computed-grid-column.html [ Timeout Pass ]
 
 webkit.org/b/321482 imported/w3c/web-platform-tests/css/filter-effects/filtered-inline-is-container.html [ ImageOnlyFailure ]
-
-webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count-on-src-change.html [ Crash Failure Timeout Pass ]
-webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count.html [ Crash Failure Timeout Pass ]
 
 webkit.org/b/164277 fast/preloader/image-srcset.html [ Pass Failure ]
 

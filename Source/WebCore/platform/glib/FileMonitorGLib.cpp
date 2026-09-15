@@ -45,7 +45,7 @@ FileMonitor::FileMonitor(const String& path, Ref<WorkQueue>&& handlerQueue, Func
         if (m_platformMonitor)
             g_signal_connect(m_platformMonitor.get(), "changed", G_CALLBACK(fileChangedCallback), this);
         else
-            WTFLogAlways("Failed to create a monitor for path %s: %s", path.utf8().data(), error->message);
+            WTFLogAlways("Failed to create a monitor for path %s: %s", path.utf8().legacyCStringPointer(), error->message);
     };
 
     // The monitor can be created in the work queue thread.

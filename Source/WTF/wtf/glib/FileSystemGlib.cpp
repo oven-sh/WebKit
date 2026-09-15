@@ -139,9 +139,9 @@ String createTemporaryDirectory(const String& directoryPrefix)
 {
     String newTempDir = makeString(directoryPrefix, "XXXXXX"_s);
     GUniqueOutPtr<GError> error;
-    GUniquePtr<char> tempDir(g_dir_make_tmp(newTempDir.utf8().data(), &error.outPtr()));
+    GUniquePtr<char> tempDir(g_dir_make_tmp(newTempDir.utf8().legacyCStringPointer(), &error.outPtr()));
     if (!tempDir) {
-        g_warning("Creating temporary directory at %s failed: %s", directoryPrefix.utf8().data(), error->message);
+        g_warning("Creating temporary directory at %s failed: %s", directoryPrefix.utf8().legacyCStringPointer(), error->message);
         return { };
     }
 

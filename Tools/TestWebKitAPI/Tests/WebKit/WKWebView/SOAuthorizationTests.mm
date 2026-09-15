@@ -471,7 +471,7 @@ WTF_ATTRIBUTE_PRINTF_MATCHES(1, "%s")
 static String generateHTML(const char* templateHTML, const String& substitute)
 {
     StringPrintStream stream;
-    stream.printf(templateHTML, substitute.utf8().data());
+    stream.printf(templateHTML, substitute.utf8().legacyCStringPointer());
     return stream.toString();
 }
 
@@ -479,7 +479,7 @@ WTF_ATTRIBUTE_PRINTF_MATCHES(1, "%s %s %s")
 static String generateOpenerHTML(const char* templateHTML, const String& substitute, const String& optionalSubstitute1 = emptyString(), const String& optionalSubstitute2 = emptyString())
 {
     StringPrintStream stream;
-    stream.printf(templateHTML, substitute.utf8().data(), optionalSubstitute1.utf8().data(), optionalSubstitute2.utf8().data());
+    stream.printf(templateHTML, substitute.utf8().legacyCStringPointer(), optionalSubstitute1.utf8().legacyCStringPointer(), optionalSubstitute2.utf8().legacyCStringPointer());
     return stream.toString();
 }
 

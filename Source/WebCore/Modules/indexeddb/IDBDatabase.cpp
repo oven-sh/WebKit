@@ -71,7 +71,7 @@ IDBDatabase::IDBDatabase(ScriptExecutionContext& context, IDBClient::IDBConnecti
     , m_databaseConnectionIdentifier(resultData.databaseConnectionIdentifier())
     , m_eventNames(eventNames())
 {
-    LOG(IndexedDB, "IDBDatabase::IDBDatabase - Creating database %s with version %" PRIu64 " connection %" PRIu64 " (%p)", m_info.name().utf8().data(), m_info.version(), m_databaseConnectionIdentifier.toUInt64(), this);
+    LOG(IndexedDB, "IDBDatabase::IDBDatabase - Creating database %s with version %" PRIu64 " connection %" PRIu64 " (%p)", m_info.name().utf8().legacyCStringPointer(), m_info.version(), m_databaseConnectionIdentifier.toUInt64(), this);
     m_connectionProxy->registerDatabaseConnection(*this, context.identifier());
 }
 
@@ -149,7 +149,7 @@ ScriptExecutionContext* IDBDatabase::scriptExecutionContext() const
 
 ExceptionOr<Ref<IDBObjectStore>> IDBDatabase::createObjectStore(const String& name, ObjectStoreParameters&& parameters)
 {
-    LOG(IndexedDB, "IDBDatabase::createObjectStore - (%s %s)", m_info.name().utf8().data(), name.utf8().data());
+    LOG(IndexedDB, "IDBDatabase::createObjectStore - (%s %s)", m_info.name().utf8().legacyCStringPointer(), name.utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(!m_versionChangeTransaction || m_versionChangeTransaction->isVersionChange());
@@ -212,10 +212,10 @@ ExceptionOr<Ref<IDBTransaction>> IDBDatabase::transaction(StringOrVectorOfString
 
     auto info = IDBTransactionInfo::clientTransaction(m_connectionProxy.get(), objectStores, mode, options.durability);
 
-    LOG(IndexedDBOperations, "IDB creating transaction: %s", info.loggingString().utf8().data());
+    LOG(IndexedDBOperations, "IDB creating transaction: %s", info.loggingString().utf8().legacyCStringPointer());
     auto transaction = IDBTransaction::create(*this, info);
 
-    LOG(IndexedDB, "IDBDatabase::transaction - Added active transaction %s", info.identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::transaction - Added active transaction %s", info.identifier().loggingString().utf8().legacyCStringPointer());
 
     m_activeTransactions.set(info.identifier(), transaction);
 
@@ -332,7 +332,7 @@ void IDBDatabase::stop()
 
 Ref<IDBTransaction> IDBDatabase::startVersionChangeTransaction(const IDBTransactionInfo& info, IDBOpenDBRequest& request)
 {
-    LOG(IndexedDB, "IDBDatabase::startVersionChangeTransaction %s", info.identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::startVersionChangeTransaction %s", info.identifier().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(!m_versionChangeTransaction);
@@ -350,7 +350,7 @@ Ref<IDBTransaction> IDBDatabase::startVersionChangeTransaction(const IDBTransact
 
 void IDBDatabase::didStartTransaction(IDBTransaction& transaction)
 {
-    LOG(IndexedDB, "IDBDatabase::didStartTransaction %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::didStartTransaction %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
     ASSERT(!m_versionChangeTransaction);
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
@@ -364,7 +364,7 @@ void IDBDatabase::didStartTransaction(IDBTransaction& transaction)
 
 void IDBDatabase::willCommitTransaction(IDBTransaction& transaction)
 {
-    LOG(IndexedDB, "IDBDatabase::willCommitTransaction %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::willCommitTransaction %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
@@ -374,7 +374,7 @@ void IDBDatabase::willCommitTransaction(IDBTransaction& transaction)
 
 void IDBDatabase::didCommitTransaction(IDBTransaction& transaction)
 {
-    LOG(IndexedDB, "IDBDatabase::didCommitTransaction %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::didCommitTransaction %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
@@ -386,7 +386,7 @@ void IDBDatabase::didCommitTransaction(IDBTransaction& transaction)
 
 void IDBDatabase::willAbortTransaction(IDBTransaction& transaction)
 {
-    LOG(IndexedDB, "IDBDatabase::willAbortTransaction %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::willAbortTransaction %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
@@ -405,7 +405,7 @@ void IDBDatabase::willAbortTransaction(IDBTransaction& transaction)
 
 void IDBDatabase::didAbortTransaction(IDBTransaction& transaction)
 {
-    LOG(IndexedDB, "IDBDatabase::didAbortTransaction %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::didAbortTransaction %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
@@ -421,7 +421,7 @@ void IDBDatabase::didAbortTransaction(IDBTransaction& transaction)
 
 void IDBDatabase::didCommitOrAbortTransaction(IDBTransaction& transaction)
 {
-    LOG(IndexedDB, "IDBDatabase::didCommitOrAbortTransaction %s", transaction.info().identifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBDatabase::didCommitOrAbortTransaction %s", transaction.info().identifier().loggingString().utf8().legacyCStringPointer());
 
     ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 

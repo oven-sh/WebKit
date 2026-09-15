@@ -29,10 +29,13 @@
 #if USE(LIBWEBRTC)
 
 #include "LibWebRTCNetwork.h"
+#include "LibWebRTCNetworkManager.h"
 #include "Logging.h"
 #include "NetworkProcessConnection.h"
 #include "NetworkRTCProviderMessages.h"
 #include "WebProcess.h"
+#include <WebCore/Document.h>
+#include <WebCore/Settings.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -56,6 +59,31 @@ LibWebRTCResolver::~LibWebRTCResolver()
     });
 }
 
+static bool canStart(WebCore::ScriptExecutionContextIdentifier contextIdentifier, const String& name)
+{
+    if (name.endsWithIgnoringASCIICase(".local"_s)) {
+        bool isValidUUID = WTF::isVersion4UUID(StringView { name }.left(name.length() - 6));
+        RELEASE_LOG_ERROR_IF(!isValidUUID, WebRTC, "mDNS candidate is not a Version 4 UUID");
+        return isValidUUID;
+    }
+
+    RefPtr document = WebCore::Document::allDocumentsMap().get(contextIdentifier);
+    if (!document) {
+        RELEASE_LOG_ERROR(WebRTC, "DNS Resolution requested for a missing document");
+        return false;
+    }
+
+    if (document->settings().webRTCDNSResolutionBySocketEnabled()) {
+        RefPtr networkManager = downcast<LibWebRTCNetworkManager>(document->rtcNetworkManager());
+        if (document->settings().webRTCRelayBypassDisabled() || (networkManager && networkManager->useMDNSCandidates())) {
+            RELEASE_LOG_INFO(WebRTC, "WebRTC DNS Resolution disabled by policy");
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void LibWebRTCResolver::start(const webrtc::SocketAddress& address, Function<void()>&& callback)
 {
     ASSERT(!m_callback);
@@ -65,15 +93,22 @@ void LibWebRTCResolver::start(const webrtc::SocketAddress& address, Function<voi
     m_port = address.port();
 
     auto addressString = address.HostAsURIString();
-    String name { std::span { addressString } };
+    String name = String::fromLatin1(std::span { addressString });
 
-    if (name.endsWithIgnoringASCIICase(".local"_s) && !WTF::isVersion4UUID(StringView { name }.left(name.length() - 6))) {
-        RELEASE_LOG_ERROR(WebRTC, "mDNS candidate is not a Version 4 UUID");
-        setError(-1);
-        return;
-    }
+    sendOnMainThread([identifier = this->identifier(), name = WTF::move(name).isolatedCopy(), contextIdentifier = m_contextIdentifier](IPC::Connection& connection) {
+        if (!canStart(contextIdentifier, name)) {
+            WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([identifier]() {
+                auto resolver = protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->resolver(identifier);
+                if (!resolver)
+                    return;
 
-    sendOnMainThread([identifier = this->identifier(), name = WTF::move(name).isolatedCopy()](IPC::Connection& connection) {
+                resolver->setError(-1);
+                if (auto callback = resolver->takeCallback())
+                    callback();
+            });
+            return;
+        }
+
         connection.send(Messages::NetworkRTCProvider::CreateResolver(identifier, name), 0);
     });
 }

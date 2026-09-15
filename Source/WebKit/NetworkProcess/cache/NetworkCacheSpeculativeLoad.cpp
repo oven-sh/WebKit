@@ -96,7 +96,7 @@ void SpeculativeLoad::cancel()
 
 void SpeculativeLoad::willSendRedirectedRequest(ResourceRequest&& request, ResourceRequest&& redirectRequest, ResourceResponse&& redirectResponse, CompletionHandler<void(WebCore::ResourceRequest&&)>&& completionHandler)
 {
-    LOG(NetworkCacheSpeculativePreloading, "Speculative redirect %s -> %s", request.url().string().utf8().data(), redirectRequest.url().string().utf8().data());
+    LOG(NetworkCacheSpeculativePreloading, "Speculative redirect %s -> %s", request.url().string().utf8().legacyCStringPointer(), redirectRequest.url().string().utf8().legacyCStringPointer());
 
     std::optional<Seconds> maxAgeCap;
     if (CheckedPtr networkStorageSession = m_cache->networkProcess().storageSession(m_cache->sessionID()))
@@ -189,14 +189,14 @@ static void dumpHTTPHeadersDiff(const HTTPHeaderMap& headersA, const HTTPHeaderM
     for (auto it = headersA.begin(); it != aEnd; ++it) {
         String valueB = headersB.get(it->key);
         if (valueB.isNull())
-            LOG(NetworkCacheSpeculativePreloading, "* '%s' HTTP header is only in first request (value: %s)", it->key.utf8().data(), it->value.utf8().data());
+            LOG(NetworkCacheSpeculativePreloading, "* '%s' HTTP header is only in first request (value: %s)", it->key.utf8().legacyCStringPointer(), it->value.utf8().legacyCStringPointer());
         else if (it->value != valueB)
-            LOG(NetworkCacheSpeculativePreloading, "* '%s' HTTP header differs in both requests: %s != %s", it->key.utf8().data(), it->value.utf8().data(), valueB.utf8().data());
+            LOG(NetworkCacheSpeculativePreloading, "* '%s' HTTP header differs in both requests: %s != %s", it->key.utf8().legacyCStringPointer(), it->value.utf8().legacyCStringPointer(), valueB.utf8().legacyCStringPointer());
     }
     auto bEnd = headersB.end();
     for (auto it = headersB.begin(); it != bEnd; ++it) {
         if (!headersA.contains(it->key))
-            LOG(NetworkCacheSpeculativePreloading, "* '%s' HTTP header is only in second request (value: %s)", it->key.utf8().data(), it->value.utf8().data());
+            LOG(NetworkCacheSpeculativePreloading, "* '%s' HTTP header is only in second request (value: %s)", it->key.utf8().legacyCStringPointer(), it->value.utf8().legacyCStringPointer());
     }
 }
 

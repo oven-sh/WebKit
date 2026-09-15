@@ -164,7 +164,7 @@ void GamepadManager::platformGamepadInputActivity(EventMakesGamepadsVisible even
 
 void GamepadManager::makeGamepadVisible(PlatformGamepad& platformGamepad, WeakHashSet<Navigator>& navigatorSet, WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>& domWindowSet)
 {
-    LOG(Gamepad, "(%u) GamepadManager::makeGamepadVisible - New gamepad '%s' is visible", (unsigned)getpid(), platformGamepad.id().utf8().data());
+    LOG(Gamepad, "(%u) GamepadManager::makeGamepadVisible - New gamepad '%s' is visible", (unsigned)getpid(), platformGamepad.id().utf8().legacyCStringPointer());
 
     if (navigatorSet.isEmptyIgnoringNullReferences() && domWindowSet.isEmptyIgnoringNullReferences())
         return;
@@ -185,7 +185,7 @@ void GamepadManager::makeGamepadVisible(PlatformGamepad& platformGamepad, WeakHa
         Ref gamepad = navigator.gamepadFromPlatformGamepad(platformGamepad);
         RefPtr document = navigator.navigator().document();
 
-        LOG(Gamepad, "(%u) GamepadManager::makeGamepadVisible - Dispatching gamepadconnected event for gamepad '%s'", (unsigned)getpid(), platformGamepad.id().utf8().data());
+        LOG(Gamepad, "(%u) GamepadManager::makeGamepadVisible - Dispatching gamepadconnected event for gamepad '%s'", (unsigned)getpid(), platformGamepad.id().utf8().legacyCStringPointer());
         UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, document.get());
         window->dispatchEvent(GamepadEvent::create(eventNames().gamepadconnectedEvent, WTF::move(gamepad)), protect(window->document()).get());
     }

@@ -94,16 +94,16 @@ static void testWASMVirtualAddressEncoding()
         VirtualAddress::Type type;
         uint32_t moduleId;
         uint32_t offset;
-        const char* description;
+        ASCIILiteral description;
     };
 
     AddressTest tests[] = {
-        { VirtualAddress::Type::Memory, 0, 0, "Module 0 memory base" },
-        { VirtualAddress::Type::Memory, 1, 0x1000, "Module 1 memory offset" },
-        { VirtualAddress::Type::Memory, 0x1000, 0x2000, "Module 4096 memory offset" },
-        { VirtualAddress::Type::Module, 0, 0, "Module 0 obj base" },
-        { VirtualAddress::Type::Module, 1, 0x2000, "Module 1 obj offset" },
-        { VirtualAddress::Type::Module, 0x2000, 0x3000, "Module 8192 obj offset" }
+        { VirtualAddress::Type::Memory, 0, 0, "Module 0 memory base"_s },
+        { VirtualAddress::Type::Memory, 1, 0x1000, "Module 1 memory offset"_s },
+        { VirtualAddress::Type::Memory, 0x1000, 0x2000, "Module 4096 memory offset"_s },
+        { VirtualAddress::Type::Module, 0, 0, "Module 0 obj base"_s },
+        { VirtualAddress::Type::Module, 1, 0x2000, "Module 1 obj offset"_s },
+        { VirtualAddress::Type::Module, 0x2000, 0x3000, "Module 8192 obj offset"_s }
     };
 
     for (const auto& test : tests) {
@@ -116,11 +116,11 @@ static void testWASMVirtualAddressEncoding()
         uint32_t decodedOffset = encoded.offset();
 
         TEST_ASSERT(decodedType == test.type,
-            makeString("Address encoding/decoding type mismatch for "_s, String::fromLatin1(test.description)).utf8().data());
+            makeString("Address encoding/decoding type mismatch for "_s, test.description));
         TEST_ASSERT(decodedId == test.moduleId,
-            makeString("Address encoding/decoding ID mismatch for "_s, String::fromLatin1(test.description)).utf8().data());
+            makeString("Address encoding/decoding ID mismatch for "_s, test.description));
         TEST_ASSERT(decodedOffset == test.offset,
-            makeString("Address encoding/decoding offset mismatch for "_s, String::fromLatin1(test.description)).utf8().data());
+            makeString("Address encoding/decoding offset mismatch for "_s, test.description));
     }
 
     dataLogLn("VirtualAddress encoding/decoding tests completed");
@@ -158,16 +158,16 @@ static void testWASMVirtualAddressLLDBEnumeration()
 
     struct RegionTest {
         uint64_t address;
-        const char* description;
+        ASCIILiteral description;
         bool shouldBeValid;
     };
 
     RegionTest regionTests[] = {
         // Core WASM addresses
-        { VirtualAddress::createMemory(0, 0), "Module 0 memory base", true },
-        { VirtualAddress::createModule(0, 0), "Module 0 module base", true },
-        { 0x8000000000000000ULL, "Invalid type probe", true }, // Invalid type (0x02)
-        { 0xC000000000000000ULL, "Invalid2 type probe", true }, // Invalid2 type (0x03)
+        { VirtualAddress::createMemory(0, 0), "Module 0 memory base"_s, true },
+        { VirtualAddress::createModule(0, 0), "Module 0 module base"_s, true },
+        { 0x8000000000000000ULL, "Invalid type probe"_s, true }, // Invalid type (0x02)
+        { 0xC000000000000000ULL, "Invalid2 type probe"_s, true }, // Invalid2 type (0x03)
     };
 
     for (const auto& test : regionTests) {
@@ -177,10 +177,10 @@ static void testWASMVirtualAddressLLDBEnumeration()
 
         if (test.shouldBeValid) {
             TEST_ASSERT(isValidType,
-                makeString("Address "_s, String::fromLatin1(test.description), " (0x"_s, hex(test.address, Lowercase), ") should decode to valid type"_s).utf8().data());
+                makeString("Address "_s, test.description, " (0x"_s, hex(test.address, Lowercase), ") should decode to valid type"_s));
         } else {
             TEST_ASSERT(!isValidType,
-                makeString("Address "_s, String::fromLatin1(test.description), " (0x"_s, hex(test.address, Lowercase), ") should not decode to valid type"_s).utf8().data());
+                makeString("Address "_s, test.description, " (0x"_s, hex(test.address, Lowercase), ") should not decode to valid type"_s));
         }
     }
 

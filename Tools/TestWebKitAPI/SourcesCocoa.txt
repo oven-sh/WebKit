@@ -75,6 +75,8 @@ Tests/WebKit/WKWebView/AccessibilityAnnouncementTranslation.mm @nonARC
 Tests/WebKit/WKWebView/AdaptiveImageGlyph.mm @nonARC
 Tests/WebKit/WKWebView/AdditionalReadAccessAllowedURLs.mm @nonARC
 Tests/WebKit/WKWebView/AdditionalSupportedImageTypes.mm @nonARC
+Tests/WebKit/WKWebView/AdvancedPrivacyProtections.mm @nonARC
+Tests/WebKit/WKWebView/AllowInlinePlaybackInDesktopClassBrowsing.mm @nonARC
 Tests/WebKit/WKWebView/AlwaysRevalidatedURLSchemes.mm @nonARC
 Tests/WebKit/WKWebView/AnimatedResize.mm @nonARC
 Tests/WebKit/WKWebView/AppPrivacyReport.mm @nonARC
@@ -123,6 +125,7 @@ Tests/WebKit/WKWebView/WritingTools.mm @nonARC
 Tests/WebKit/WKWebView/DecidePolicyForNavigationAction.mm @nonARC
 Tests/WebKit/WKWebView/DeviceManagementRestrictions.mm @nonARC
 Tests/WebKit/WKWebView/DeviceOrientation.mm @nonARC
+Tests/WebKit/WKWebView/DictationStreamingOpacity.mm @nonARC
 Tests/WebKit/WKWebView/DisableSpellcheck.mm @nonARC
 Tests/WebKit/WKWebView/DisplayName.mm @nonARC
 Tests/WebKit/WKWebView/DoAfterNextPresentationUpdateAfterCrash.mm @nonARC
@@ -134,6 +137,7 @@ Tests/WebKit/WKWebView/DragAndDropTests.mm @nonARC
 Tests/WebKit/WKWebView/DrawingToPDF.mm @nonARC
 Tests/WebKit/WKWebView/DuplicateCompletionHandlerCalls.mm @nonARC
 Tests/WebKit/WKWebView/EditorStateTests.mm @nonARC
+Tests/WebKit/WKWebView/ElementFullscreenIntersectionObserver.mm @nonARC
 Tests/WebKit/WKWebView/ElementTargetingTests.mm @nonARC
 Tests/WebKit/WKWebView/ElementTextPreview.mm @nonARC
 Tests/WebKit/WKWebView/EnhancedSecurity.mm @nonARC
@@ -163,6 +167,7 @@ Tests/WebKit/WKWebView/GetDisplayMedia.mm @nonARC
 Tests/WebKit/WKWebView/GetDisplayMediaWindowAndScreen.mm @nonARC
 Tests/WebKit/WKWebView/GetResourceData.mm @nonARC
 Tests/WebKit/WKWebView/GetUserMedia.mm @nonARC @no-unify
+Tests/WebKit/WKWebView/GetUserMediaReprompt.mm @nonARC
 Tests/WebKit/WKWebView/HistoryDelegate.mm @nonARC
 Tests/WebKit/WKWebView/HSTS.mm @nonARC
 Tests/WebKit/WKWebView/HTTP2Server.mm @nonARC
@@ -231,6 +236,7 @@ Tests/WebKit/WKWebView/NoResumeSoundPlayedToTheEndAfterThePageBecomesVisible.mm 
 Tests/WebKit/WKWebView/NotificationAPI.mm @nonARC
 Tests/WebKit/WKWebView/NowPlaying.mm @nonARC
 Tests/WebKit/WKWebView/NowPlayingControlsTests.mm @nonARC
+Tests/WebKit/WKWebView/NowPlayingSession.mm @nonARC
 Tests/WebKit/WKWebView/ObscuredContentInsets.mm @nonARC
 Tests/WebKit/WKWebView/ObservedRenderingProgressEventsAfterCrash.mm @nonARC
 Tests/WebKit/WKWebView/OpenAndCloseWindow.mm @nonARC
@@ -438,4 +444,5 @@ Tests/WebKit/WKWebView/iOSMouseSupport.mm @nonARC
 Tests/WebKit/WKWebView/iOSStylusSupport.mm @nonARC
 
 Tests/WebKit/WKWebView/UI/ElementFullscreen.mm @nonARC
+Tests/WebKit/WKWebView/UI/VideoInShadowDOMElementFullscreen.mm @nonARC
 Tests/WebKit/WKWebView/UI/VideoPresentationMode.mm @nonARC

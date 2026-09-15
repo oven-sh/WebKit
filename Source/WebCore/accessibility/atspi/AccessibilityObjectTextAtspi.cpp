@@ -125,14 +125,14 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_textFunctions = {
             const char* name;
             g_variant_get(parameters, "(i&s)", &offset, &name);
             auto attributes = atspiObject->textAttributesWithUTF8Offset(offset);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", attributes.attributes.get(String::fromUTF8(name)).utf8().data()));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", attributes.attributes.get(String::fromUTF8(name)).utf8().legacyCStringPointer()));
         } else if (!g_strcmp0(methodName, "GetAttributes")) {
             int offset;
             g_variant_get(parameters, "(i)", &offset);
             auto attributes = atspiObject->textAttributesWithUTF8Offset(offset);
             GVariantBuilder builder = G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{ss}"));
             for (const auto& it : attributes.attributes)
-                g_variant_builder_add(&builder, "{ss}", it.key.utf8().data(), it.value.utf8().data());
+                g_variant_builder_add(&builder, "{ss}", it.key.utf8().legacyCStringPointer(), it.value.utf8().legacyCStringPointer());
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{ss}ii)", &builder, attributes.startOffset, attributes.endOffset));
         } else if (!g_strcmp0(methodName, "GetAttributeRun")) {
             int offset;
@@ -141,13 +141,13 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_textFunctions = {
             auto attributes = atspiObject->textAttributesWithUTF8Offset(offset, includeDefaults);
             GVariantBuilder builder = G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{ss}"));
             for (const auto& it : attributes.attributes)
-                g_variant_builder_add(&builder, "{ss}", it.key.utf8().data(), it.value.utf8().data());
+                g_variant_builder_add(&builder, "{ss}", it.key.utf8().legacyCStringPointer(), it.value.utf8().legacyCStringPointer());
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{ss}ii)", &builder, attributes.startOffset, attributes.endOffset));
         } else if (!g_strcmp0(methodName, "GetDefaultAttributes") || !g_strcmp0(methodName, "GetDefaultAttributeSet")) {
             auto attributes = atspiObject->textAttributesWithUTF8Offset();
             GVariantBuilder builder = G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{ss}"));
             for (const auto& it : attributes.attributes)
-                g_variant_builder_add(&builder, "{ss}", it.key.utf8().data(), it.value.utf8().data());
+                g_variant_builder_add(&builder, "{ss}", it.key.utf8().legacyCStringPointer(), it.value.utf8().legacyCStringPointer());
             g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{ss})", &builder));
         } else if (!g_strcmp0(methodName, "GetCharacterExtents")) {
             int offset;
@@ -220,7 +220,7 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_textFunctions = {
         atspiObject->updateBackingStore();
 
         if (!g_strcmp0(propertyName, "CharacterCount"))
-            return g_variant_new_int32(g_utf8_strlen(atspiObject->text().utf8().data(), -1));
+            return g_variant_new_int32(g_utf8_strlen(atspiObject->text().utf8().legacyCStringPointer(), -1));
         if (!g_strcmp0(propertyName, "CaretOffset")) {
             int start = 0, end = 0;
             return g_variant_new_int32(atspiObject->selectionBounds(start, end) ? end : -1);

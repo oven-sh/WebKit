@@ -32,6 +32,7 @@
 #include "IPCUtilities.h"
 #include <stdint.h>
 #include <sys/socket.h>
+#include <wtf/StdLibExtras.h>
 
 #if USE(WPE_BACKEND_PLAYSTATION)
 #include "ProcessProviderLibWPE.h"
@@ -84,13 +85,13 @@ void ProcessLauncher::launchProcess()
 #else
     PlayStation::LaunchParam param { socketPair.client.value(), m_launchOptions.userId };
     int32_t appLocalPid = PlayStation::launchProcess(
-        !m_launchOptions.processPath.isEmpty() ? m_launchOptions.processPath.utf8().data() : defaultProcessPath(m_launchOptions.processType),
+        !m_launchOptions.processPath.isEmpty() ? m_launchOptions.processPath.utf8().legacyCStringPointer() : defaultProcessPath(m_launchOptions.processType),
         argv, param);
 #endif
 
     if (appLocalPid < 0) {
 #ifndef NDEBUG
-        fprintf(stderr, "Failed to launch process. err=0x%08x path=%s\n", appLocalPid, m_launchOptions.processPath.utf8().data());
+        SAFE_FPRINTF(stderr, "Failed to launch process. err=0x%08x path=%s\n", appLocalPid, m_launchOptions.processPath.utf8());
 #endif
         return;
     }

@@ -49,7 +49,7 @@ MemoryIndexCursor::MemoryIndexCursor(MemoryIndex& index, const IDBCursorInfo& cu
     : MemoryCursor(cursorInfo, transaction)
     , m_index(index)
 {
-    LOG(IndexedDB, "MemoryIndexCursor::MemoryIndexCursor %s", cursorInfo.range().loggingString().utf8().data());
+    LOG(IndexedDB, "MemoryIndexCursor::MemoryIndexCursor %s", cursorInfo.range().loggingString().utf8().legacyCStringPointer());
 
     CheckedPtr valueStore = index.valueStore();
     if (!valueStore)
@@ -88,7 +88,7 @@ void MemoryIndexCursor::currentData(IDBGetResult& getResult)
 
 void MemoryIndexCursor::iterate(const IDBKeyData& key, const IDBKeyData& primaryKey, uint32_t count, IDBGetResult& getResult)
 {
-    LOG(IndexedDB, "MemoryIndexCursor::iterate to key %s, %u count", key.loggingString().utf8().data(), count);
+    LOG(IndexedDB, "MemoryIndexCursor::iterate to key %s, %u count", key.loggingString().utf8().legacyCStringPointer(), count);
 
 #if ASSERT_ENABLED
     if (primaryKey.isValid())

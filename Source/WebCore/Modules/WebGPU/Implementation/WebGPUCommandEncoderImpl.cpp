@@ -245,7 +245,7 @@ void CommandEncoderImpl::clearBuffer(
 
 void CommandEncoderImpl::pushDebugGroup(String&& groupLabel)
 {
-    wgpuCommandEncoderPushDebugGroup(m_backing.get(), groupLabel.utf8().data());
+    wgpuCommandEncoderPushDebugGroup(m_backing.get(), groupLabel.utf8().legacyCStringPointer());
 }
 
 void CommandEncoderImpl::popDebugGroup()
@@ -255,7 +255,7 @@ void CommandEncoderImpl::popDebugGroup()
 
 void CommandEncoderImpl::insertDebugMarker(String&& markerLabel)
 {
-    wgpuCommandEncoderInsertDebugMarker(m_backing.get(), markerLabel.utf8().data());
+    wgpuCommandEncoderInsertDebugMarker(m_backing.get(), markerLabel.utf8().legacyCStringPointer());
 }
 
 void CommandEncoderImpl::writeTimestamp(const QuerySet& querySet, Size32 queryIndex)
@@ -285,7 +285,7 @@ RefPtr<CommandBuffer> CommandEncoderImpl::finish(const CommandBufferDescriptor& 
 
 void CommandEncoderImpl::setLabelInternal(const String& label)
 {
-    wgpuCommandEncoderSetLabel(m_backing.get(), label.utf8().data());
+    wgpuCommandEncoderSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

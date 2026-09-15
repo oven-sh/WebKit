@@ -38,7 +38,7 @@ bool InjectedBundle::initialize(const WebProcessCreationParameters&, RefPtr<API:
 {
     m_platformBundle = g_module_open(FileSystem::fileSystemRepresentation(m_path).data(), G_MODULE_BIND_LOCAL);
     if (!m_platformBundle) {
-        g_warning("Error loading the injected bundle (%s): %s", m_path.utf8().data(), g_module_error());
+        g_warning("Error loading the injected bundle (%s): %s", m_path.utf8().legacyCStringPointer(), g_module_error());
         return false;
     }
 

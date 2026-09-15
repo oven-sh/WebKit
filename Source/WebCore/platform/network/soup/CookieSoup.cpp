@@ -80,8 +80,8 @@ SoupCookie* Cookie::toSoupCookie() const
     if (name.isNull() || value.isNull() || domain.isNull() || path.isNull())
         return nullptr;
 
-    SoupCookie* soupCookie = soup_cookie_new(name.utf8().data(), value.utf8().data(),
-        domain.utf8().data(), path.utf8().data(), -1);
+    SoupCookie* soupCookie = soup_cookie_new(name.utf8().legacyCStringPointer(), value.utf8().legacyCStringPointer(),
+        domain.utf8().legacyCStringPointer(), path.utf8().legacyCStringPointer(), -1);
 
     soup_cookie_set_http_only(soupCookie, httpOnly);
     soup_cookie_set_secure(soupCookie, secure);

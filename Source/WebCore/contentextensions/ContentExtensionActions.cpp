@@ -423,7 +423,7 @@ static JSRetainPtr<JSStringRef> makeJSString(ASCIILiteral literal)
 
 static JSRetainPtr<JSStringRef> makeJSString(const String& string)
 {
-    return adopt(JSStringCreateWithUTF8CString(string.utf8().data()));
+    return adopt(JSStringCreateWithUTF8CString(string.utf8().legacyCStringPointer()));
 }
 
 void RedirectAction::RegexSubstitutionAction::applyToURL(URL& url) const

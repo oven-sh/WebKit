@@ -1405,7 +1405,7 @@ void SourceBuffer::updateBuffered()
     //    of this attribute to intersection ranges.
     if (oldRanges != intersectionRanges) {
         m_buffered = TimeRanges::create(intersectionRanges);
-        LOG(Media, "SourceBuffer::updateBuffered(%p) - buffered = %s", this, toString(intersectionRanges).utf8().data());
+        LOG(Media, "SourceBuffer::updateBuffered(%p) - buffered = %s", this, toString(intersectionRanges).utf8().legacyCStringPointer());
     }
 }
 

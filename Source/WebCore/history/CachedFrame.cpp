@@ -214,9 +214,9 @@ CachedFrame::CachedFrame(Frame& frame)
 
 #ifndef NDEBUG
     if (m_isMainFrame)
-        LOG(BackForwardCache, "Finished creating CachedFrame for main frame url '%s' and DocumentLoader %p\n", m_url.string().utf8().data(), m_documentLoader.get());
+        LOG(BackForwardCache, "Finished creating CachedFrame for main frame url '%s' and DocumentLoader %p\n", m_url.string().utf8().legacyCStringPointer(), m_documentLoader.get());
     else
-        LOG(BackForwardCache, "Finished creating CachedFrame for child frame with url '%s' and DocumentLoader %p\n", m_url.string().utf8().data(), m_documentLoader.get());
+        LOG(BackForwardCache, "Finished creating CachedFrame for child frame with url '%s' and DocumentLoader %p\n", m_url.string().utf8().legacyCStringPointer(), m_documentLoader.get());
 #endif
 
 #if PLATFORM(IOS_FAMILY)

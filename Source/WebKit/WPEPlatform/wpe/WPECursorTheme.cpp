@@ -51,7 +51,7 @@ static GUniquePtr<char> cursorsPath(const char* basePath, Vector<GUniquePtr<char
 
     String pathOfIndex = FileSystem::pathByAppendingComponent(String::fromUTF8(basePath), "index.theme"_s);
     String canonicalPathOfIndex = FileSystem::realPath(pathOfIndex);
-    GUniquePtr<char> canonicalDirectoryOfIndex(g_path_get_dirname(canonicalPathOfIndex.utf8().data()));
+    GUniquePtr<char> canonicalDirectoryOfIndex(g_path_get_dirname(canonicalPathOfIndex.utf8().legacyCStringPointer()));
     const char* actualBasePath = g_file_test(canonicalDirectoryOfIndex.get(), G_FILE_TEST_IS_DIR) ? canonicalDirectoryOfIndex.get() : basePath;
     GUniquePtr<char> baseCursorsPath(g_build_filename(actualBasePath, "cursors", nullptr));
 

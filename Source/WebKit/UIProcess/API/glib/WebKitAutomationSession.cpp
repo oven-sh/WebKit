@@ -356,19 +356,19 @@ static WebKitNetworkProxyMode parseProxyCapabilities(const Inspector::RemoteInsp
         Vector<const char*> ignoreAddressList;
         ignoreAddressList.reserveInitialCapacity(proxy.ignoreAddressList.size() + 1);
         for (const auto& ignoreAddress : proxy.ignoreAddressList)
-            ignoreAddressList.append(ignoreAddress.utf8().data());
+            ignoreAddressList.append(ignoreAddress.utf8().legacyCStringPointer());
         *settings = webkit_network_proxy_settings_new(nullptr, ignoreAddressList.span().data());
     } else
         *settings = webkit_network_proxy_settings_new(nullptr, nullptr);
 
     if (proxy.ftpURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "ftp", proxy.ftpURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "ftp", proxy.ftpURL->utf8().legacyCStringPointer());
     if (proxy.httpURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "http", proxy.httpURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "http", proxy.httpURL->utf8().legacyCStringPointer());
     if (proxy.httpsURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "https", proxy.httpsURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "https", proxy.httpsURL->utf8().legacyCStringPointer());
     if (proxy.socksURL)
-        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "socks", proxy.socksURL->utf8().data());
+        webkit_network_proxy_settings_add_proxy_for_scheme(*settings, "socks", proxy.socksURL->utf8().legacyCStringPointer());
 
     return WEBKIT_NETWORK_PROXY_MODE_CUSTOM;
 }
@@ -390,12 +390,12 @@ WebKitAutomationSession* webkitAutomationSessionCreate(WebKitWebContext* webCont
     }
 
     for (auto& certificate : capabilities.certificates) {
-        GRefPtr<GTlsCertificate> tlsCertificate = adoptGRef(g_tls_certificate_new_from_file(certificate.second.utf8().data(), nullptr));
+        GRefPtr<GTlsCertificate> tlsCertificate = adoptGRef(g_tls_certificate_new_from_file(certificate.second.utf8().legacyCStringPointer(), nullptr));
         if (tlsCertificate) {
 #if ENABLE(2022_GLIB_API)
-            webkit_network_session_allow_tls_certificate_for_host(networkSession, tlsCertificate.get(), certificate.first.utf8().data());
+            webkit_network_session_allow_tls_certificate_for_host(networkSession, tlsCertificate.get(), certificate.first.utf8().legacyCStringPointer());
 #else
-            webkit_web_context_allow_tls_certificate_for_host(webContext, tlsCertificate.get(), certificate.first.utf8().data());
+            webkit_web_context_allow_tls_certificate_for_host(webContext, tlsCertificate.get(), certificate.first.utf8().legacyCStringPointer());
 #endif
         }
     }

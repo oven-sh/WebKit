@@ -56,7 +56,7 @@ bool hasEntitlement(audit_token_t token, ASCIILiteral entitlement)
 
 bool hasEntitlement(xpc_connection_t connection, StringView entitlement)
 {
-    xpc_object_t value = xpc_connection_copy_entitlement_value(connection, entitlement.utf8().data());
+    xpc_object_t value = xpc_connection_copy_entitlement_value(connection, entitlement.utf8().legacyCStringPointer());
     return value && xpc_get_type(value) == XPC_TYPE_BOOL && xpc_bool_get_value(value);
 }
 

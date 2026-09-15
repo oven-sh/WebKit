@@ -38,7 +38,7 @@ constexpr auto stripValue = "/" PROCESS_DYLIB ""_s;
 static void testStrip(ASCIILiteral input, ASCIILiteral expected)
 {
     auto actual = WebKit::EnvironmentUtilities::stripEntriesEndingWith(input, stripValue);
-    EXPECT_STREQ(actual.utf8().data(), expected.characters());
+    EXPECT_STREQ(actual.utf8().legacyCStringPointer(), expected.characters());
 }
 
 TEST(WebKit, StripEntriesEndingWith)

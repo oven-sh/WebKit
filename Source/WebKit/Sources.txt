@@ -123,7 +123,6 @@ NetworkProcess/NetworkResourceLoader.cpp @cost:9
 NetworkProcess/NetworkSchemeRegistry.cpp
 NetworkProcess/NetworkSession.cpp @cost:9
 NetworkProcess/NetworkSocketChannel.cpp
-NetworkProcess/PingLoad.cpp @cost:4
 NetworkProcess/PreconnectTask.cpp @cost:3
 NetworkProcess/QualifiedServerTrustFetch.cpp @cost:3
 

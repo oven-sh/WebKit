@@ -283,7 +283,7 @@ void IntlDurationFormat::initializeDurationFormat(JSGlobalObject* globalObject, 
 
         // 5. Perform ! CreateDataPropertyOrThrow(lfOpts, "type", "unit").
         UErrorCode status = U_ZERO_ERROR;
-        m_listFormat = std::unique_ptr<UListFormatter, UListFormatterDeleter>(ulistfmt_openForType(m_locale.utf8().data(), ULISTFMT_TYPE_UNITS, toUListFormatterWidth(m_style), &status));
+        m_listFormat = std::unique_ptr<UListFormatter, UListFormatterDeleter>(ulistfmt_openForType(m_locale.utf8().legacyCStringPointer(), ULISTFMT_TYPE_UNITS, toUListFormatterWidth(m_style), &status));
         if (U_FAILURE(status)) {
             throwTypeError(globalObject, scope, "failed to initialize DurationFormat"_s);
             return;
@@ -311,7 +311,7 @@ static String retrieveSeparator(const CString& locale, const String& numberingSy
     if (U_FAILURE(status))
         return fallbackTimeSeparator;
 
-    auto numberingSystemBundle = std::unique_ptr<UResourceBundle, ICUDeleter<ures_close>>(ures_getByKey(numberElementsBundle.get(), numberingSystem.utf8().data(), nullptr, &status));
+    auto numberingSystemBundle = std::unique_ptr<UResourceBundle, ICUDeleter<ures_close>>(ures_getByKey(numberElementsBundle.get(), numberingSystem.utf8().legacyCStringPointer(), nullptr, &status));
     if (U_FAILURE(status))
         return fallbackTimeSeparator;
 

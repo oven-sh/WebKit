@@ -314,9 +314,9 @@ TEST(WTF_OrderedHashSet, StringValues)
         values.append(v);
 
     EXPECT_EQ(3u, values.size());
-    EXPECT_STREQ("banana", values[0].utf8().data());
-    EXPECT_STREQ("apple", values[1].utf8().data());
-    EXPECT_STREQ("cherry", values[2].utf8().data());
+    EXPECT_STREQ("banana", values[0].utf8().legacyCStringPointer());
+    EXPECT_STREQ("apple", values[1].utf8().legacyCStringPointer());
+    EXPECT_STREQ("cherry", values[2].utf8().legacyCStringPointer());
 }
 
 TEST(WTF_OrderedHashSet, InitializerList)

@@ -65,6 +65,7 @@
 		07275CBC2D01398C002315A5 /* _WebKit_SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07275CBB2D01398C002315A5 /* _WebKit_SwiftUI.framework */; };
 		07275CBD2D01398C002315A5 /* _WebKit_SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07275CBB2D01398C002315A5 /* _WebKit_SwiftUI.framework */; };
 		07792FA62F9D9AE9009EF126 /* WebProcessPlugInWithInternals.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1798B8422433647000764BD /* WebProcessPlugInWithInternals.mm */; };
+		07AA54552F8200000000A055 /* UnifiedSource54-nonARC.mm in Sources */ = {isa = PBXBuildFile; fileRef = 07AA54542F8200000000A054 /* UnifiedSource54-nonARC.mm */; };
 		143DDE9820C9018B007F76FA /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 574F55D0204D471C002948C6 /* Security.framework */; };
 		1AEDE22613E5E7E700E62FE8 /* InjectedBundleControllerMac.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1AEDE22413E5E7A000E62FE8 /* InjectedBundleControllerMac.mm */; };
 		2B7E14D63A5F60718293C1A3 /* SyntheticNSEvent.mm in Sources */ = {isa = PBXBuildFile; fileRef = 2B7E14D63A5F60718293C1A2 /* SyntheticNSEvent.mm */; };
@@ -419,6 +420,7 @@
 /* Begin PBXFileReference section */
 		07275CBB2D01398C002315A5 /* _WebKit_SwiftUI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = _WebKit_SwiftUI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		07597D7E2F81DD59000C96D0 /* config.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = config.h; sourceTree = "<group>"; };
+		07AA54542F8200000000A054 /* UnifiedSource54-nonARC.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "UnifiedSource54-nonARC.mm"; sourceTree = "<group>"; };
 		0DBC072EC3DC8EA98F7B7BEE /* UnifiedSource53-nonARC.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "UnifiedSource53-nonARC.mm"; sourceTree = "<group>"; };
 		0F4FFAA01ED3D0DE00F7111F /* ImageIO.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ImageIO.framework; path = System/Library/Frameworks/ImageIO.framework; sourceTree = SDKROOT; };
 		1AEDE22413E5E7A000E62FE8 /* InjectedBundleControllerMac.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = InjectedBundleControllerMac.mm; path = mac/InjectedBundleControllerMac.mm; sourceTree = "<group>"; };
@@ -608,17 +610,20 @@
 			membershipExceptions = (
 				"cocoa/AppKit+Extras.swift",
 				"cocoa/Bundle+Extras.swift",
+				cocoa/CocoaTypes.swift,
 				"cocoa/Foundation+Extras.swift",
 				cocoa/HTTPServer.mm,
 				cocoa/HTTPServer.swift,
 				cocoa/ImageAnalysisTestingUtilities.swift,
 				cocoa/JavaScriptMessages.swift,
 				cocoa/JavaScriptTypes.swift,
+				cocoa/MiniTURNServer.mm,
 				cocoa/PDFTestHelpers.swift,
 				cocoa/SafeBrowsingTestUtilities.swift,
 				cocoa/StdLibExtras.swift,
 				"cocoa/SwiftUI+Extras.swift",
 				cocoa/TestCocoaImageAndCocoaColor.mm,
+				cocoa/TestCocoaImageUtilities.swift,
 				cocoa/TestContextMenuDriver.mm,
 				cocoa/TestElementFullscreenDelegate.mm,
 				cocoa/TestNSBundleExtras.m,
@@ -982,14 +987,10 @@
 				WebKit/WKPage/WKSecurityOrigin.cpp,
 				WebKit/WKPage/WKString.cpp,
 				WebKit/WKPage/WKStringJSString.cpp,
-				WebKit/WKWebView/AdvancedPrivacyProtections.mm,
-				WebKit/WKWebView/AllowInlinePlaybackInDesktopClassBrowsing.mm,
 				WebKit/WKWebView/AnimationControl.mm,
-				WebKit/WKWebView/DictationStreamingOpacity.mm,
 				WebKit/WKWebView/FullscreenLifecycle.mm,
 				WebKit/WKWebView/GetUserMedia.mm,
 				WebKit/WKWebView/GetUserMediaNavigation.mm,
-				WebKit/WKWebView/GetUserMediaReprompt.mm,
 				WebKit/WKWebView/InjectedBundleHitTest.mm,
 				WebKit/WKWebView/InstanceMethodSwizzler.mm,
 				WebKit/WKWebView/ios/AccessibilityTestsIOS.mm,
@@ -1142,7 +1143,6 @@
 				WebKit/WKWebView/MSEIsTypeSupportedCaching.mm,
 				WebKit/WKWebView/NoHistoryItemScrollToFragment.mm,
 				WebKit/WKWebView/NowPlayingMetadataObserver.mm,
-				WebKit/WKWebView/NowPlayingSession.mm,
 				WebKit/WKWebView/OrthogonalFlowAvailableSize.mm,
 				WebKit/WKWebView/ParentalControlsContentFilteringTests.mm,
 				WebKit/WKWebView/SmartLists.mm,
@@ -1385,13 +1385,6 @@
 				IPC/WebFoundTextRangeTests.cpp,
 			);
 			target = 7B9FC39428A26137007570E7 /* TestIPC */;
-		};
-		07C913DD2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWebKitAPIApp" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				WebKit/WKWebView/ElementFullscreenIntersectionObserver.mm,
-			);
-			target = A17C58012C9AA12F009DD0B5 /* TestWebKitAPIApp */;
 		};
 		07C913DE2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWebKitAPIBundle" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -1684,7 +1677,6 @@
 				07C913DB2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWTFLibrary" target */,
 				07C913DC2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestIPC" target */,
 				07AA27602F83C3A900FE10FC /* Exceptions for "Tests" folder in "TestWebKitAPI" target */,
-				07C913DD2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWebKitAPIApp" target */,
 				07C913DE2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWebKitAPIBundle" target */,
 				07C913DF2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWGSL" target */,
 				07C913E02F820CCA003A09D8 /* Exceptions for "Tests" folder in "Copy Files" phase from "TestWGSL" target */,
@@ -1940,6 +1932,7 @@
 				5CABDB952735C9BB00B88BC0 /* UnifiedSource51-nonARC.mm */,
 				51A97F062FD0B59400FBDD0C /* UnifiedSource52-nonARC.mm */,
 				0DBC072EC3DC8EA98F7B7BEE /* UnifiedSource53-nonARC.mm */,
+				07AA54542F8200000000A054 /* UnifiedSource54-nonARC.mm */,
 			);
 			path = "unified-sources";
 			sourceTree = "<group>";
@@ -2569,6 +2562,7 @@
 				5CABDBC22735C9BE00B88BC0 /* UnifiedSource51-nonARC.mm in Sources */,
 				51A97F1B2FD0B5A400FBDD0C /* UnifiedSource52-nonARC.mm in Sources */,
 				F5971BD071D50EA78EF87EE5 /* UnifiedSource53-nonARC.mm in Sources */,
+				07AA54552F8200000000A055 /* UnifiedSource54-nonARC.mm in Sources */,
 				07792FA62F9D9AE9009EF126 /* WebProcessPlugInWithInternals.mm in Sources */,
 			);
 		};

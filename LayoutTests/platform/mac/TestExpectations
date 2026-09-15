@@ -136,6 +136,8 @@ webkit.org/b/306558 accessibility/mac/style-range.html [ Failure ]
 # Skip by default, enable tests that are stable.
 http/tests/site-isolation/accessibility/client [ Skip ]
 http/tests/site-isolation/accessibility/client/simple-iframe.html [ Pass ]
+http/tests/site-isolation/accessibility/client/iframe-bounds.html [ Pass ]
+http/tests/site-isolation/accessibility/client/absolute-position-iframe.html [ Pass ]
 
 # Shared-process site isolation accessibility tests using the accessibility client API:
 # Skip by default, enable tests that are stable.
@@ -1603,9 +1605,6 @@ webkit.org/b/230411 http/tests/media/hls/video-controller-getStartDate.html [ Pa
 # HLS stream fails to become ready to play on headless bots
 http/tests/media/hls/hls-limit-play-rate.html
 
-# rdar://65641438 ([WebGL2] tex-srgb-mipmap test fails on macOS Intel + iOS (but passes on macOS Apple Silicon) (214392))
-[ arm64 ] webgl/2.0.y/conformance2/textures/misc/tex-srgb-mipmap.html [ Failure ]
-
 [ x86_64 ] imported/w3c/web-platform-tests/css/filter-effects/css-filters-animation-opacity.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/css-filters-animation-saturate.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-boundary.html [ ImageOnlyFailure ]
@@ -1671,8 +1670,6 @@ webkit.org/b/222692 inspector/page/empty-or-missing-resources.html [ Pass Timeou
 
 # webkit.org/b/223043 the following tests have issues only on Apple Silicon
 webrtc/h264-baseline.html  [ Failure Timeout ]
-
-webkit.org/b/223259 [ arm64 ] webgl/2.0.y/conformance2/textures/misc/tex-mipmap-levels.html [ Failure ]
 
 webkit.org/b/223271 [ Debug ] imported/w3c/web-platform-tests/xhr/event-upload-progress.any.worker.html [ Pass Failure ]
 

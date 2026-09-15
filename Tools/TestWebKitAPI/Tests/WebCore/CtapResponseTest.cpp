@@ -366,7 +366,7 @@ TEST(CTAPResponseTest, TestReadMakeCredentialResponse)
     auto it = attestationObjectMap.find(cbor::CBORValue(kFormatKey));
     ASSERT_TRUE(it != attestationObjectMap.end());
     ASSERT_TRUE(it->second.isString());
-    EXPECT_STREQ(it->second.getString().utf8().data(), "packed");
+    EXPECT_STREQ(it->second.getString().utf8().legacyCStringPointer(), "packed");
 
     it = attestationObjectMap.find(cbor::CBORValue(kAuthDataKey));
     ASSERT_TRUE(it != attestationObjectMap.end());
@@ -437,8 +437,8 @@ TEST(CTAPResponseTest, TestReadGetAssertionResponse3)
     EXPECT_TRUE(equalSpans(getAssertionResponse->signature()->span(), std::span { TestData::kCtap2GetAssertionSignature }));
     EXPECT_EQ(getAssertionResponse->userHandle()->byteLength(), sizeof(TestData::kCtap2GetAssertionUserHandle));
     EXPECT_TRUE(equalSpans(getAssertionResponse->userHandle()->span(), std::span { TestData::kCtap2GetAssertionUserHandle }));
-    EXPECT_STREQ(getAssertionResponse->name().utf8().data(), "johnpsmith@example.com");
-    EXPECT_STREQ(getAssertionResponse->displayName().utf8().data(), "John P. Smith");
+    EXPECT_STREQ(getAssertionResponse->name().utf8().legacyCStringPointer(), "johnpsmith@example.com");
+    EXPECT_STREQ(getAssertionResponse->displayName().utf8().legacyCStringPointer(), "John P. Smith");
     EXPECT_EQ(getAssertionResponse->numberOfCredentials(), 1u);
 }
 

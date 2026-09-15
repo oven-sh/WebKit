@@ -104,7 +104,7 @@ void RenderBundleEncoderImpl::setBindGroup(Index32, const BindGroup*,
 
 void RenderBundleEncoderImpl::pushDebugGroup(String&& groupLabel)
 {
-    wgpuRenderBundleEncoderPushDebugGroup(m_backing.get(), groupLabel.utf8().data());
+    wgpuRenderBundleEncoderPushDebugGroup(m_backing.get(), groupLabel.utf8().legacyCStringPointer());
 }
 
 void RenderBundleEncoderImpl::popDebugGroup()
@@ -114,7 +114,7 @@ void RenderBundleEncoderImpl::popDebugGroup()
 
 void RenderBundleEncoderImpl::insertDebugMarker(String&& markerLabel)
 {
-    wgpuRenderBundleEncoderInsertDebugMarker(m_backing.get(), markerLabel.utf8().data());
+    wgpuRenderBundleEncoderInsertDebugMarker(m_backing.get(), markerLabel.utf8().legacyCStringPointer());
 }
 
 RefPtr<RenderBundle> RenderBundleEncoderImpl::finish(const RenderBundleDescriptor& descriptor)
@@ -130,7 +130,7 @@ RefPtr<RenderBundle> RenderBundleEncoderImpl::finish(const RenderBundleDescripto
 
 void RenderBundleEncoderImpl::setLabelInternal(const String& label)
 {
-    wgpuRenderBundleEncoderSetLabel(m_backing.get(), label.utf8().data());
+    wgpuRenderBundleEncoderSetLabel(m_backing.get(), label.utf8().legacyCStringPointer());
 }
 
 } // namespace WebCore::WebGPU

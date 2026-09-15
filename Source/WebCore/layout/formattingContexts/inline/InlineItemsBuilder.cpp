@@ -342,7 +342,7 @@ static bool NODELETE requiresVisualReordering(const Box& layoutBox)
 {
     if (auto* inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox))
         return inlineTextBox->hasStrongDirectionalityContent();
-    if (layoutBox.isInlineBox() && layoutBox.isInFlow()) {
+    if ((layoutBox.isInlineBox() || layoutBox.isLineBreakBox()) && layoutBox.isInFlow()) {
         auto& style = layoutBox.style();
         return style.writingMode().isBidiRTL() || (style.rtlOrdering() == Order::Logical && style.unicodeBidi() != UnicodeBidi::Normal);
     }
@@ -1230,6 +1230,9 @@ void InlineItemsBuilder::handleInlineBoxEnd(const Box& inlineBox, InlineItemList
 
 void InlineItemsBuilder::handleInlineLevelBox(const Box& layoutBox, InlineItemList& inlineItemList)
 {
+    if (layoutBox.isLineBreakBox())
+        return inlineItemList.append({ layoutBox, layoutBox.isWordBreakOpportunity() ? InlineItem::Type::WordBreakOpportunity : InlineItem::Type::HardLineBreak });
+
     if (layoutBox.isRubyAnnotationBox())
         return inlineItemList.append({ layoutBox, InlineItem::Type::OutOfFlow });
 
@@ -1240,9 +1243,6 @@ void InlineItemsBuilder::handleInlineLevelBox(const Box& layoutBox, InlineItemLi
             m_hasWhiteSpaceTrim |= !layoutBox.style().whiteSpaceTrim().isNone();
         return inlineItemList.append({ layoutBox, InlineItem::Type::AtomicInlineBox });
     }
-
-    if (layoutBox.isLineBreakBox())
-        return inlineItemList.append({ layoutBox, layoutBox.isWordBreakOpportunity() ? InlineItem::Type::WordBreakOpportunity : InlineItem::Type::HardLineBreak });
 
     ASSERT_NOT_REACHED();
 }

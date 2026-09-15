@@ -110,13 +110,13 @@ static String prefixTreeVertexToString(const PrefixTreeVertex& vertex, const Has
 
 static void recursivePrint(const PrefixTreeVertex& vertex, const HashMap<const PrefixTreeVertex*, ActionList>& actions, unsigned depth)
 {
-    dataLogF("%s", prefixTreeVertexToString(vertex, actions, depth).utf8().data());
+    dataLogF("%s", prefixTreeVertexToString(vertex, actions, depth).utf8().legacyCStringPointer());
     for (const auto& edge : vertex.edges) {
         StringBuilder builder;
         for (unsigned i = 0; i < depth * 2; ++i)
             builder.append(' ');
         builder.append("vertex edge: "_s, edge.term->toString(), '\n');
-        dataLogF("%s", builder.toString().utf8().data());
+        dataLogF("%s", builder.toString().utf8().legacyCStringPointer());
         ASSERT(edge.child);
         recursivePrint(*edge.child.get(), actions, depth + 1);
     }

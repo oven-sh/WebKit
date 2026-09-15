@@ -182,10 +182,10 @@ TEST(WindowsKeyNames, DomKeyReflectsAltGraph)
     WindowsKeyNames keyNames;
 
     setKeysDown({ VK_RMENU, VK_LCONTROL, VK_MENU, VK_CONTROL });
-    EXPECT_STREQ(keyNames.domKeyFromParams(VK_MENU, lParamForKey(true)).utf8().data(), "AltGraph");
+    EXPECT_STREQ(keyNames.domKeyFromParams(VK_MENU, lParamForKey(true)).utf8().legacyCStringPointer(), "AltGraph");
 
     setKeysDown({ VK_LMENU, VK_LCONTROL, VK_MENU, VK_CONTROL });
-    EXPECT_STREQ(keyNames.domKeyFromParams('E', lParamForKey(false)).utf8().data(), "\xE2\x82\xAC" /* euro, UTF-8 */);
+    EXPECT_STREQ(keyNames.domKeyFromParams('E', lParamForKey(false)).utf8().legacyCStringPointer(), "\xE2\x82\xAC" /* euro, UTF-8 */);
 }
 
 } // namespace TestWebKitAPI

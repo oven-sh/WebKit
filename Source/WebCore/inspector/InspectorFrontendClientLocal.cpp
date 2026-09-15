@@ -376,7 +376,7 @@ std::optional<bool> InspectorFrontendClientLocal::evaluationResultToBoolean(Insp
 
     auto valueOrException = result.value();
     if (!valueOrException) {
-        LOG(Inspector, "Encountered exception while evaluating upon the frontend: %s", valueOrException.error().message.utf8().data());
+        LOG(Inspector, "Encountered exception while evaluating upon the frontend: %s", valueOrException.error().message.utf8().legacyCStringPointer());
         return std::nullopt;
     }
 

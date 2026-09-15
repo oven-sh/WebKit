@@ -372,7 +372,7 @@ TEST(SafeBrowsing, URLObservation)
         if (urls.size() != expected.size())
             return;
         for (size_t i = 0; i < expected.size(); ++i)
-            EXPECT_STREQ(urls[i].string().utf8().data(), [expected[i] absoluteString].UTF8String);
+            EXPECT_STREQ(urls[i].string().utf8().legacyCStringPointer(), [expected[i] absoluteString].UTF8String);
     };
 
     {
@@ -1196,9 +1196,9 @@ TEST(SafeBrowsing, MultipleDeferredModalsShownInOrder)
         TestWebKitAPI::Util::spinRunLoop();
 
     EXPECT_EQ(modalMessages.size(), 3u);
-    EXPECT_STREQ(modalMessages[0].utf8().data(), "first");
-    EXPECT_STREQ(modalMessages[1].utf8().data(), "second");
-    EXPECT_STREQ(modalMessages[2].utf8().data(), "third");
+    EXPECT_STREQ(modalMessages[0].utf8().legacyCStringPointer(), "first");
+    EXPECT_STREQ(modalMessages[1].utf8().legacyCStringPointer(), "second");
+    EXPECT_STREQ(modalMessages[2].utf8().legacyCStringPointer(), "third");
 }
 
 TEST(SafeBrowsing, DeferredModalsClearedOnNavigation)
@@ -1321,9 +1321,9 @@ TEST(SafeBrowsing, AllModalTypesProperlyDeferred)
         TestWebKitAPI::Util::spinRunLoop();
 
     EXPECT_EQ(modalTypes.size(), 3u);
-    EXPECT_STREQ(modalTypes[0].utf8().data(), "alert");
-    EXPECT_STREQ(modalTypes[1].utf8().data(), "confirm");
-    EXPECT_STREQ(modalTypes[2].utf8().data(), "prompt");
+    EXPECT_STREQ(modalTypes[0].utf8().legacyCStringPointer(), "alert");
+    EXPECT_STREQ(modalTypes[1].utf8().legacyCStringPointer(), "confirm");
+    EXPECT_STREQ(modalTypes[2].utf8().legacyCStringPointer(), "prompt");
 }
 
 TEST(SafeBrowsing, NavigationFromWarningPage)

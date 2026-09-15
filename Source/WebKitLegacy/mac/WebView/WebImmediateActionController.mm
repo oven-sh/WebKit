@@ -50,6 +50,7 @@
 #import <WebCore/GeometryUtilities.h>
 #import <WebCore/ImmediateActionStage.h>
 #import <WebCore/LocalFrame.h>
+#import <WebCore/LocalFrameInlines.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/NodeDocument.h>
 #import <WebCore/NodeRenderStyle.h>

@@ -3078,6 +3078,7 @@
 		72C99A9F2F9944110070F060 /* ShareableCVPixelFormat.h in Headers */ = {isa = PBXBuildFile; fileRef = 72C99A9D2F993DF60070F060 /* ShareableCVPixelFormat.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		72C9B6522F99950B0070F060 /* GainMap.h in Headers */ = {isa = PBXBuildFile; fileRef = 72C9B6512F9994AD0070F060 /* GainMap.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		72C9B6532F99998D0070F060 /* ShareableGainMap.h in Headers */ = {isa = PBXBuildFile; fileRef = 72C9B64F2F9992DE0070F060 /* ShareableGainMap.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		72CC6D36304E3B91006895A1 /* FontBase.h in Headers */ = {isa = PBXBuildFile; fileRef = 72CC6D34304E369F006895A1 /* FontBase.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		72CD9C542FCB794100CFC9BF /* AsyncImageDecoder.h in Headers */ = {isa = PBXBuildFile; fileRef = 72E0375C2FC9323300088DDE /* AsyncImageDecoder.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		72D3F66D2A37FE9700F3A82B /* RotationDirection.h in Headers */ = {isa = PBXBuildFile; fileRef = 72D3F66C2A37F48E00F3A82B /* RotationDirection.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		72D73644278461A000398663 /* FilterResults.h in Headers */ = {isa = PBXBuildFile; fileRef = 7211B5D6276536820076FEF8 /* FilterResults.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -5368,6 +5369,8 @@
 		BC5EBA110E823E4700B25965 /* BlendingKeyframes.h in Headers */ = {isa = PBXBuildFile; fileRef = BC5EBA0F0E823E4700B25965 /* BlendingKeyframes.h */; };
 		BC6049CC0DB560C200204739 /* CSSCanvasValue.h in Headers */ = {isa = PBXBuildFile; fileRef = BC6049CB0DB560C200204739 /* CSSCanvasValue.h */; };
 		BC60D6E90D28D83400B9918F /* DOMException.h in Headers */ = {isa = PBXBuildFile; fileRef = BC60D6E80D28D83400B9918F /* DOMException.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		FE7CF1A5010000000000E002 /* QuotaExceededError.h in Headers */ = {isa = PBXBuildFile; fileRef = FE7CF1A5010000000000E001 /* QuotaExceededError.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		FE7CF1A5010000000000E006 /* QuotaExceededErrorOptions.h in Headers */ = {isa = PBXBuildFile; fileRef = FE7CF1A5010000000000E005 /* QuotaExceededErrorOptions.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		BC60D7C10D29A46300B9918F /* JSDOMException.h in Headers */ = {isa = PBXBuildFile; fileRef = BC60D7BF0D29A46300B9918F /* JSDOMException.h */; };
 		BC611FF52EC79F6000904592 /* StyleContain.h in Headers */ = {isa = PBXBuildFile; fileRef = BC611FF32EC79C1E00904592 /* StyleContain.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		BC6120002EC7B83D00904592 /* StyleTouchAction.h in Headers */ = {isa = PBXBuildFile; fileRef = BC611FFE2EC7ADDE00904592 /* StyleTouchAction.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -14767,6 +14770,8 @@
 		72C9B64F2F9992DE0070F060 /* ShareableGainMap.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ShareableGainMap.h; sourceTree = "<group>"; };
 		72C9B6502F9992DE0070F060 /* ShareableGainMap.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ShareableGainMap.cpp; sourceTree = "<group>"; };
 		72C9B6512F9994AD0070F060 /* GainMap.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GainMap.h; sourceTree = "<group>"; };
+		72CC6D34304E369F006895A1 /* FontBase.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FontBase.h; sourceTree = "<group>"; };
+		72CC6D35304E369F006895A1 /* FontBase.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FontBase.cpp; sourceTree = "<group>"; };
 		72CE4EA32970FF8800A2AD95 /* ImageControlsButtonMac.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ImageControlsButtonMac.mm; sourceTree = "<group>"; };
 		72CE4EA42970FF8800A2AD95 /* ImageControlsButtonMac.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ImageControlsButtonMac.h; sourceTree = "<group>"; };
 		72CE4EA5297102B800A2AD95 /* ImageControlsButtonPart.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ImageControlsButtonPart.h; sourceTree = "<group>"; };
@@ -16913,6 +16918,11 @@
 		978AD67314130A8D00C7CAE3 /* HTMLSpanElement.idl */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = HTMLSpanElement.idl; sourceTree = "<group>"; };
 		978CE10C711D6B12D9FBC9C9 /* UnifiedSource37-header-RenderStyleGetters.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = "UnifiedSource37-header-RenderStyleGetters.cpp"; sourceTree = "<group>"; };
 		978D07BD145A0F6C0096908D /* DOMException.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DOMException.cpp; sourceTree = "<group>"; };
+		FE7CF1A5010000000000E000 /* QuotaExceededError.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = QuotaExceededError.cpp; sourceTree = "<group>"; };
+		FE7CF1A5010000000000E001 /* QuotaExceededError.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = QuotaExceededError.h; sourceTree = "<group>"; };
+		FE7CF1A5010000000000E003 /* QuotaExceededError.idl */ = {isa = PBXFileReference; lastKnownFileType = text; path = QuotaExceededError.idl; sourceTree = "<group>"; };
+		FE7CF1A5010000000000E004 /* QuotaExceededErrorOptions.idl */ = {isa = PBXFileReference; lastKnownFileType = text; path = QuotaExceededErrorOptions.idl; sourceTree = "<group>"; };
+		FE7CF1A5010000000000E005 /* QuotaExceededErrorOptions.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = QuotaExceededErrorOptions.h; sourceTree = "<group>"; };
 		979F43D11075E44A0000F83B /* NavigationScheduler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = NavigationScheduler.cpp; sourceTree = "<group>"; };
 		979F43D21075E44A0000F83B /* NavigationScheduler.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NavigationScheduler.h; sourceTree = "<group>"; };
 		97AA3CA3145237CC003E1DA6 /* EventTargetHeaders.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EventTargetHeaders.h; sourceTree = "<group>"; };
@@ -36972,6 +36982,8 @@
 				58CD35CA18EB4C3900B9F3AC /* FloatSizeHash.h */,
 				B2C3DA530D006CD600EF6F26 /* Font.cpp */,
 				B2C3DA540D006CD600EF6F26 /* Font.h */,
+				72CC6D35304E369F006895A1 /* FontBase.cpp */,
+				72CC6D34304E369F006895A1 /* FontBase.h */,
 				BCB92D4E1293550B00C8387F /* FontBaseline.h */,
 				B2C3DA510D006CD600EF6F26 /* FontCache.cpp */,
 				B2C3DA520D006CD600EF6F26 /* FontCache.h */,
@@ -43370,6 +43382,11 @@
 				550A0BC8085F6039007353D6 /* QualifiedName.h */,
 				83C1F5911EDF69D300410D27 /* QualifiedNameCache.cpp */,
 				83C1F5921EDF69D300410D27 /* QualifiedNameCache.h */,
+				FE7CF1A5010000000000E000 /* QuotaExceededError.cpp */,
+				FE7CF1A5010000000000E001 /* QuotaExceededError.h */,
+				FE7CF1A5010000000000E003 /* QuotaExceededError.idl */,
+				FE7CF1A5010000000000E005 /* QuotaExceededErrorOptions.h */,
+				FE7CF1A5010000000000E004 /* QuotaExceededErrorOptions.idl */,
 				93F925420F7EF5B8007E37C9 /* RadioButtonGroups.cpp */,
 				93F925410F7EF5B8007E37C9 /* RadioButtonGroups.h */,
 				7C6771282527D28100FDEF00 /* Range+CSSOMView.idl */,
@@ -45885,6 +45902,7 @@
 				1AC2D89D1B1E291F00D52E87 /* FontAntialiasingStateSaver.h in Headers */,
 				F4E57EDC213F3F5F004EA98E /* FontAttributeChanges.h in Headers */,
 				F48D2A7E2157182600C6752B /* FontAttributes.h in Headers */,
+				72CC6D36304E3B91006895A1 /* FontBase.h in Headers */,
 				BCB92D4F1293550B00C8387F /* FontBaseline.h in Headers */,
 				B2C3DA630D006CD600EF6F26 /* FontCache.h in Headers */,
 				C2458E631FE897B000594759 /* FontCacheCoreText.h in Headers */,
@@ -48405,6 +48423,8 @@
 				9BAEE92C22388A7D004157A9 /* Quirks.h in Headers */,
 				7ABB0F602CE7C170009A837D /* QuirksData.h in Headers */,
 				05D4770CFFB4C18C6BA6928C /* QuirkTable.h in Headers */,
+				FE7CF1A5010000000000E002 /* QuotaExceededError.h in Headers */,
+				FE7CF1A5010000000000E006 /* QuotaExceededErrorOptions.h in Headers */,
 				379E371713736A6600B9E919 /* QuotedPrintable.h in Headers */,
 				B22279720D00BF220071B782 /* RadialGradientAttributes.h in Headers */,
 				93F925430F7EF5B8007E37C9 /* RadioButtonGroups.h in Headers */,

@@ -79,13 +79,13 @@ XrResult OpenXRInputSource::initialize(OpenXRSystemProperties&& systemProperties
 {
     String handednessName = handednessToString(m_handedness);
     m_subactionPathName = makeString(s_userHandPath, handednessName);
-    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, m_subactionPathName.utf8().data(), &m_subactionPath));
+    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, m_subactionPathName.utf8().legacyCStringPointer(), &m_subactionPath));
 
     auto prefix = makeString("input_"_s, handednessName);
     auto actionSetName = makeString(prefix, "_action_set"_s);
     auto createInfo = createOpenXRStruct<XrActionSetCreateInfo, XR_TYPE_ACTION_SET_CREATE_INFO>();
-    std::strncpy(createInfo.actionSetName, actionSetName.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
-    std::strncpy(createInfo.localizedActionSetName, actionSetName.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.actionSetName, actionSetName.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.localizedActionSetName, actionSetName.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
 
     RETURN_RESULT_IF_FAILED(xrCreateActionSet(m_instance, &createInfo, &m_actionSet));
 
@@ -327,7 +327,7 @@ XrResult OpenXRInputSource::updateInteractionProfile()
     for (auto& profile : openXRInteractionProfiles) {
         if (equalSpans(profile.path.span(), unsafeSpan(buffer))) {
             m_usingHandInteractionProfile = equalSpans(profile.path.span(), handInteractionProfilePath.span());
-            LOG(XR, "Input source %s using interaction profile %s", m_subactionPathName.utf8().data(), profile.path.span().data());
+            LOG(XR, "Input source %s using interaction profile %s", m_subactionPathName.utf8().legacyCStringPointer(), profile.path.span().data());
             for (const auto& id : profile.profileIds)
                 m_profiles.append(String::fromUTF8(id));
             break;
@@ -355,8 +355,8 @@ XrResult OpenXRInputSource::createAction(XrActionType actionType, const String& 
     createInfo.actionType = actionType;
     createInfo.countSubactionPaths = 1;
     createInfo.subactionPaths = &m_subactionPath;
-    std::strncpy(createInfo.actionName, name.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
-    std::strncpy(createInfo.localizedActionName, name.utf8().data(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.actionName, name.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
+    std::strncpy(createInfo.localizedActionName, name.utf8().legacyCStringPointer(), XR_MAX_ACTION_SET_NAME_SIZE - 1);
 
     return xrCreateAction(m_actionSet, &createInfo, &action);
 }
@@ -380,7 +380,7 @@ XrResult OpenXRInputSource::createBinding(const char* profilePath, XrAction acti
     ASSERT(!bindingPath.isEmpty());
 
     XrPath path = XR_NULL_PATH;
-    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, bindingPath.utf8().data(), &path));
+    RETURN_RESULT_IF_FAILED(xrStringToPath(m_instance, bindingPath.utf8().legacyCStringPointer(), &path));
 
     XrActionSuggestedBinding binding { action, path };
     if (auto it = bindings.find(profilePath); it != bindings.end())

@@ -2138,7 +2138,7 @@ void RenderLayerCompositor::logLayerInfo(const RenderLayer& layer, ASCIILiteral 
 
     logString.append(layer.name(), " - "_s, phase);
 
-    LOG(Compositing, "%s", logString.toString().utf8().data());
+    LOG(Compositing, "%s", logString.toString().utf8().legacyCStringPointer());
 }
 #endif
 

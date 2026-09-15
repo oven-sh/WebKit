@@ -207,7 +207,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
     if (selectionData.hasCustomData())
         gtk_target_list_add(list.get(), gdk_atom_intern_static_string(WebCore::PasteboardCustomData::gtkType().characters()), 0, ClipboardTargetType::Custom);
     for (const auto& type : selectionData.buffers().keys())
-        gtk_target_list_add(list.get(), gdk_atom_intern(type.utf8().data(), FALSE), 0, ClipboardTargetType::Buffer);
+        gtk_target_list_add(list.get(), gdk_atom_intern(type.utf8().legacyCStringPointer(), FALSE), 0, ClipboardTargetType::Buffer);
 
     int numberOfTargets;
     GtkTargetEntry* table = gtk_target_table_new_from_list(list.get(), &numberOfTargets);
@@ -228,7 +228,7 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
                 break;
             }
             case ClipboardTargetType::Text:
-                gtk_selection_data_set_text(selection, data.selectionData.text().utf8().data(), -1);
+                gtk_selection_data_set_text(selection, data.selectionData.text().utf8().legacyCStringPointer(), -1);
                 break;
             case ClipboardTargetType::Image: {
                 if (data.selectionData.hasImage()) {

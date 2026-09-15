@@ -49,31 +49,31 @@ protected:
 TEST_F(WebCoreBundleTest, BundleRootPath)
 {
     auto actual = WebCore::webKitBundlePath();
-    EXPECT_STREQ(m_root.utf8().data(), actual.utf8().data());
+    EXPECT_STREQ(m_root.utf8().legacyCStringPointer(), actual.utf8().legacyCStringPointer());
 }
 
 TEST_F(WebCoreBundleTest, BundlePathFromPath)
 {
     auto actual = WebCore::webKitBundlePath("WebInspectorUI\\Protocol\\InspectorBackendCommands.js"_s);
     auto expected = FileSystem::pathByAppendingComponents(m_root, std::initializer_list<StringView>({ "WebInspectorUI"_s, "Protocol"_s, "InspectorBackendCommands.js"_s }));
-    EXPECT_STREQ(expected.utf8().data(), actual.utf8().data());
+    EXPECT_STREQ(expected.utf8().legacyCStringPointer(), actual.utf8().legacyCStringPointer());
 }
 
 TEST_F(WebCoreBundleTest, BundlePathFromNameTypeDirectory)
 {
     auto actual = WebCore::webKitBundlePath("InspectorBackendCommands"_s, "js"_s, "WebInspectorUI\\Protocol"_s);
     auto expected = FileSystem::pathByAppendingComponents(m_root, std::initializer_list<StringView>({ "WebInspectorUI"_s, "Protocol"_s, "InspectorBackendCommands.js"_s }));
-    EXPECT_STREQ(expected.utf8().data(), actual.utf8().data());
+    EXPECT_STREQ(expected.utf8().legacyCStringPointer(), actual.utf8().legacyCStringPointer());
 
     actual = WebCore::webKitBundlePath("file-does-not"_s, "exist"_s, "file"_s);
     expected = emptyString();
-    EXPECT_STREQ(expected.utf8().data(), actual.utf8().data());
+    EXPECT_STREQ(expected.utf8().legacyCStringPointer(), actual.utf8().legacyCStringPointer());
 }
 
 TEST_F(WebCoreBundleTest, BundlePathFromComponents)
 {
     auto actual = WebCore::webKitBundlePath({ "WebInspectorUI"_s, "Protocol"_s, "InspectorBackendCommands.js"_s });
     auto expected = FileSystem::pathByAppendingComponents(m_root, std::initializer_list<StringView>({ "WebInspectorUI"_s, "Protocol"_s, "InspectorBackendCommands.js"_s }));
-    EXPECT_STREQ(expected.utf8().data(), actual.utf8().data());
+    EXPECT_STREQ(expected.utf8().legacyCStringPointer(), actual.utf8().legacyCStringPointer());
 }
 

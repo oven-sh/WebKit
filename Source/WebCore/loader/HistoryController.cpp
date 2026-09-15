@@ -520,7 +520,7 @@ void HistoryController::setDefersLoading(bool defer)
 
 void HistoryController::updateForBackForwardNavigation()
 {
-    LOG(History, "HistoryController %p updateForBackForwardNavigation: Updating History for back/forward navigation in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().data() : "");
+    LOG(History, "HistoryController %p updateForBackForwardNavigation: Updating History for back/forward navigation in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().legacyCStringPointer() : "");
 
     // Must grab the current scroll position before disturbing it
     if (!m_frameLoadComplete)
@@ -533,7 +533,7 @@ void HistoryController::updateForBackForwardNavigation()
 
 void HistoryController::updateForReloadOrReplace()
 {
-    LOG(History, "HistoryController %p updateForReloadOrReplace: Updating History for reload or replace in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().data() : "");
+    LOG(History, "HistoryController %p updateForReloadOrReplace: Updating History for reload or replace in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().legacyCStringPointer() : "");
 
     if (RefPtr currentItem = m_currentItem) {
         BackForwardCache::singleton().remove(*currentItem);
@@ -604,7 +604,7 @@ void HistoryController::updateForStandardLoad(HistoryUpdateType updateType)
 
 void HistoryController::updateForRedirectWithLockedBackForwardList()
 {
-    LOG(History, "HistoryController %p updateForRedirectWithLockedBackForwardList: Updating History for redirect load in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().data() : "");
+    LOG(History, "HistoryController %p updateForRedirectWithLockedBackForwardList: Updating History for redirect load in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().legacyCStringPointer() : "");
 
     RefPtr documentLoader = m_frame->loader().documentLoader();
     bool canRecordHistory = canRecordHistoryForFrame(m_frame);
@@ -652,7 +652,7 @@ void HistoryController::updateForRedirectWithLockedBackForwardList()
 
 void HistoryController::updateForClientRedirect()
 {
-    LOG(History, "HistoryController %p updateForClientRedirect: Updating History for client redirect in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().data() : "");
+    LOG(History, "HistoryController %p updateForClientRedirect: Updating History for client redirect in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().legacyCStringPointer() : "");
 
     // Clear out form data so we don't try to restore it into the incoming page.  Must happen after
     // webcore has closed the URL and saved away the form state.
@@ -673,7 +673,7 @@ void HistoryController::updateForClientRedirect()
 void HistoryController::updateForCommit()
 {
     Ref frameLoader = m_frame->loader();
-    LOG(History, "HistoryController %p updateForCommit: Updating History for commit in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().data() : "");
+    LOG(History, "HistoryController %p updateForCommit: Updating History for commit in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader() ? m_frame->loader().documentLoader()->url().string().utf8().legacyCStringPointer() : "");
 
     FrameLoadType type = frameLoader->loadType();
     if (isBackForwardLoadType(type)
@@ -1036,7 +1036,7 @@ void HistoryController::updateBackForwardListClippedAtTarget(bool doClip, WasCre
 
     if (wasCreatedByJSWithoutUserInteraction)
         item->setWasCreatedByJSWithoutUserInteraction(true);
-    LOG(History, "HistoryController %p updateBackForwardListClippedAtTarget: Adding backforward item %p in frame %p (main frame %d) %s", this, item.get(), m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader()->url().string().utf8().data());
+    LOG(History, "HistoryController %p updateBackForwardListClippedAtTarget: Adding backforward item %p in frame %p (main frame %d) %s", this, item.get(), m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader()->url().string().utf8().legacyCStringPointer());
     protect(page->backForward())->addItem(item.releaseNonNull());
 }
 

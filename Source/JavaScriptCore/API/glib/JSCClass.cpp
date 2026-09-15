@@ -153,7 +153,7 @@ static JSValueRef getProperty(JSContextRef callerContext, JSObjectRef object, JS
             continue;
 
         if (auto* getPropertyFunction = jscClass->priv->vtable->get_property) {
-            if (GRefPtr<JSCValue> value = adoptGRef(getPropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().data())))
+            if (GRefPtr<JSCValue> value = adoptGRef(getPropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().legacyCStringPointer())))
                 return jscValueGetJSValue(value.get());
         }
     }
@@ -183,7 +183,7 @@ static bool setProperty(JSContextRef callerContext, JSObjectRef object, JSString
         if (auto* setPropertyFunction = jscClass->priv->vtable->set_property) {
             if (!propertyValue)
                 propertyValue = jscContextGetOrCreateValue(context.get(), value);
-            if (setPropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().data(), propertyValue.get()))
+            if (setPropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().legacyCStringPointer(), propertyValue.get()))
                 return true;
         }
     }
@@ -208,7 +208,7 @@ static bool hasProperty(JSContextRef callerContext, JSObjectRef object, JSString
             continue;
 
         if (auto* hasPropertyFunction = jscClass->priv->vtable->has_property) {
-            if (hasPropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().data()))
+            if (hasPropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().legacyCStringPointer()))
                 return true;
         }
     }
@@ -236,7 +236,7 @@ static bool deleteProperty(JSContextRef callerContext, JSObjectRef object, JSStr
             continue;
 
         if (auto* deletePropertyFunction = jscClass->priv->vtable->delete_property) {
-            if (deletePropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().data()))
+            if (deletePropertyFunction(jscClass, context.get(), instance, propertyName->string().utf8().legacyCStringPointer()))
                 return true;
         }
     }

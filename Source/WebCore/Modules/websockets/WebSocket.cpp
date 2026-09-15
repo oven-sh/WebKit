@@ -239,7 +239,7 @@ void WebSocket::failAsynchronously()
 
 ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols)
 {
-    LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
+    LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().legacyCStringPointer());
     m_url = URL { url };
 
     Ref context = *scriptExecutionContext();
@@ -366,7 +366,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
 ExceptionOr<void> WebSocket::send(const String& message)
 {
-    LOG(Network, "WebSocket %p send() Sending String '%s'", this, message.utf8().data());
+    LOG(Network, "WebSocket %p send() Sending String '%s'", this, message.utf8().legacyCStringPointer());
     if (m_state == CONNECTING)
         return Exception { ExceptionCode::InvalidStateError };
     auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
@@ -426,7 +426,7 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 
 ExceptionOr<void> WebSocket::send(Blob& binaryData)
 {
-    LOG(Network, "WebSocket %p send() Sending Blob '%s'", this, binaryData.url().stringCenterEllipsizedToLength().utf8().data());
+    LOG(Network, "WebSocket %p send() Sending Blob '%s'", this, binaryData.url().stringCenterEllipsizedToLength().utf8().legacyCStringPointer());
     if (m_state == CONNECTING)
         return Exception { ExceptionCode::InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
@@ -446,7 +446,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     if (code == ThreadableWebSocketChannel::CloseEventCodeNotSpecified)
         LOG(Network, "WebSocket %p close() without code and reason", this);
     else {
-        LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().data());
+        LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().legacyCStringPointer());
         if (!(code == ThreadableWebSocketChannel::CloseEventCodeNormalClosure || (ThreadableWebSocketChannel::CloseEventCodeMinimumUserDefined <= code && code <= ThreadableWebSocketChannel::CloseEventCodeMaximumUserDefined)))
             return Exception { ExceptionCode::InvalidAccessError };
         CString utf8 = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
@@ -574,7 +574,7 @@ void WebSocket::didConnect()
 
 void WebSocket::didReceiveMessage(String&& message)
 {
-    LOG(Network, "WebSocket %p didReceiveMessage() Text message '%s'", this, message.utf8().data());
+    LOG(Network, "WebSocket %p didReceiveMessage() Text message '%s'", this, message.utf8().legacyCStringPointer());
     queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [message = WTF::move(message)](auto& socket) mutable {
         if (socket.m_state != OPEN)
             return;

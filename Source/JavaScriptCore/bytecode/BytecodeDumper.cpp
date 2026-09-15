@@ -213,7 +213,7 @@ void CodeBlockBytecodeDumper<Block>::dumpStringSwitchJumpTables()
             this->m_out.printf("  %1d = {\n", i);
             auto& unlinkedTable = this->block()->unlinkedStringSwitchJumpTable(i);
             for (const auto& entry : unlinkedTable.m_offsetTable)
-                this->m_out.printf("\t\t\"%s\" => %04d\n", entry.key->utf8().data(), entry.value.m_branchOffset);
+                this->m_out.printf("\t\t\"%s\" => %04d\n", entry.key->utf8().legacyCStringPointer(), entry.value.m_branchOffset);
             this->m_out.printf("\t\tdefault => %04d\n", unlinkedTable.m_defaultOffset);
             this->m_out.printf("      }\n");
             ++i;

@@ -1251,6 +1251,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/ProcessingInstruction.idl \
     $(WebCore)/dom/ProgressEvent.idl \
     $(WebCore)/dom/PromiseRejectionEvent.idl \
+    $(WebCore)/dom/QuotaExceededError.idl \
+    $(WebCore)/dom/QuotaExceededErrorOptions.idl \
     $(WebCore)/dom/Range+CSSOMView.idl \
     $(WebCore)/dom/Range+DOMParsing.idl \
     $(WebCore)/dom/Range.idl \

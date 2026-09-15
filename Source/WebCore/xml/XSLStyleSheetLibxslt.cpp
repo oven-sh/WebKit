@@ -180,7 +180,7 @@ bool XSLStyleSheet::parseString(const String& string)
     }
 
     m_stylesheetDoc = xmlCtxtReadMemory(ctxt, buffer, size,
-        finalURL().string().utf8().data(),
+        finalURL().string().utf8().legacyCStringPointer(),
         BOMHighByte == 0xFF ? "UTF-16LE" : "UTF-16BE",
         XML_PARSE_NOENT | XML_PARSE_DTDATTR | XML_PARSE_NOWARNING | XML_PARSE_NOCDATA);
     xmlFreeParserCtxt(ctxt);
@@ -204,7 +204,7 @@ void XSLStyleSheet::loadChildSheets()
     if (m_embedded) {
         // We have to locate (by ID) the appropriate embedded stylesheet element, so that we can walk the
         // import/include list.
-        xmlAttrPtr idNode = xmlGetID(document(), (const xmlChar*)(finalURL().string().utf8().data()));
+        xmlAttrPtr idNode = xmlGetID(document(), (const xmlChar*)(finalURL().string().utf8().legacyCStringPointer()));
         if (!idNode)
             return;
         stylesheetRoot = idNode->parent;

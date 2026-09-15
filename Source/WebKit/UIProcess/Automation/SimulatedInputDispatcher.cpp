@@ -348,7 +348,7 @@ void SimulatedInputDispatcher::transitionInputSourceToState(SimulatedInputSource
 #if !LOG_DISABLED
                     String interactionName = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(b.mouseInteraction.value());
                     String mouseButtonName = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(b.pressedMouseButton.value_or(MouseButton::None));
-                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating %s %s[button=%s] @ (%d, %d) for transition to %d.%d", this, pointerType.utf8().data(), interactionName.utf8().data(), mouseButtonName.utf8().data(), b.location.value().x(), b.location.value().y(), m_keyframeIndex, m_inputSourceStateIndex);
+                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating %s %s[button=%s] @ (%d, %d) for transition to %d.%d", this, pointerType.utf8().legacyCStringPointer(), interactionName.utf8().legacyCStringPointer(), mouseButtonName.utf8().legacyCStringPointer(), b.location.value().x(), b.location.value().y(), m_keyframeIndex, m_inputSourceStateIndex);
 #endif
 
                     if (isTouch) {
@@ -405,7 +405,7 @@ void SimulatedInputDispatcher::transitionInputSourceToState(SimulatedInputSource
                     simulatedAnInteraction = true;
 
 #if ENABLE(WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS)
-                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyPress[key=%s] for transition to %d.%d", this, charKey.utf8().data(), m_keyframeIndex, m_inputSourceStateIndex);
+                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyPress[key=%s] for transition to %d.%d", this, charKey.utf8().legacyCStringPointer(), m_keyframeIndex, m_inputSourceStateIndex);
 #else
                     LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyPress[key=%c] for transition to %d.%d", this, charKey, m_keyframeIndex, m_inputSourceStateIndex);
 #endif
@@ -423,7 +423,7 @@ void SimulatedInputDispatcher::transitionInputSourceToState(SimulatedInputSource
                         continue;
                     simulatedAnInteraction = true;
 #if ENABLE(WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS)
-                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyRelease[key=%s] for transition to %d.%d", this, charKey.utf8().data(), m_keyframeIndex, m_inputSourceStateIndex);
+                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyRelease[key=%s] for transition to %d.%d", this, charKey.utf8().legacyCStringPointer(), m_keyframeIndex, m_inputSourceStateIndex);
 #else
                     LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyRelease[key=%c] for transition to %d.%d", this, charKey, m_keyframeIndex, m_inputSourceStateIndex);
 #endif
@@ -440,7 +440,7 @@ void SimulatedInputDispatcher::transitionInputSourceToState(SimulatedInputSource
                     simulatedAnInteraction = true;
 #if !LOG_DISABLED
                     String virtualKeyName = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(iter.value);
-                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyPress[key=%s] for transition to %d.%d", this, virtualKeyName.utf8().data(), m_keyframeIndex, m_inputSourceStateIndex);
+                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyPress[key=%s] for transition to %d.%d", this, virtualKeyName.utf8().legacyCStringPointer(), m_keyframeIndex, m_inputSourceStateIndex);
 #endif
                     m_client.simulateKeyboardInteraction(protect(m_page), KeyboardInteraction::KeyPress, iter.value, WTF::move(eventDispatchFinished));
                 }
@@ -454,7 +454,7 @@ void SimulatedInputDispatcher::transitionInputSourceToState(SimulatedInputSource
                     simulatedAnInteraction = true;
 #if !LOG_DISABLED
                     String virtualKeyName = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(iter.value);
-                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyRelease[key=%s] for transition to %d.%d", this, virtualKeyName.utf8().data(), m_keyframeIndex, m_inputSourceStateIndex);
+                    LOG(Automation, "SimulatedInputDispatcher[%p]: simulating KeyRelease[key=%s] for transition to %d.%d", this, virtualKeyName.utf8().legacyCStringPointer(), m_keyframeIndex, m_inputSourceStateIndex);
 #endif
                     m_client.simulateKeyboardInteraction(protect(m_page), KeyboardInteraction::KeyRelease, iter.value, WTF::move(eventDispatchFinished));
                 }

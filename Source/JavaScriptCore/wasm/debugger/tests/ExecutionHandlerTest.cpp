@@ -92,7 +92,7 @@ UNUSED_FUNCTION bool doneTesting = false;
         }                                                       \
     } while (false)
 
-static void waitForConditionAndCheck(const char* errorMessage, std::function<bool()> predicate)
+static void waitForConditionAndCheck(ASCIILiteral errorMessage, std::function<bool()> predicate)
 {
     bool result = waitForCondition(predicate);
     CHECK(result, errorMessage);
@@ -233,7 +233,7 @@ static void testBreakpointContinueCycles()
         unsigned expectedReplyCount = getReplyCount() + 1;
         executionHandler->resume();
 
-        waitForConditionAndCheck("VMs did not stop at breakpoint in continue cycle", [&]() {
+        waitForConditionAndCheck("VMs did not stop at breakpoint in continue cycle"_s, [&]() {
             return getReplyCount() == expectedReplyCount;
         });
 
@@ -264,7 +264,7 @@ static void testBreakpointSingleStepping()
     unsigned expectedReplyCount = getReplyCount() + 1;
     executionHandler->resume();
 
-    waitForConditionAndCheck("Did not hit breakpoint after resume", [&]() {
+    waitForConditionAndCheck("Did not hit breakpoint after resume"_s, [&]() {
         bool stopped = getReplyCount() == expectedReplyCount;
         if (!stopped)
             return false;
@@ -286,11 +286,11 @@ static void testBreakpointSingleStepping()
         // Simulate lldb behavior:
         // 1. If at Regular breakpoint: remove it, step, then re-insert it
         // 2. If at one-time breakpoint: just step directly
-        Breakpoint* breakpoint = executionHandler->breakpointManager()->findBreakpoint(beforeStepAddress);
-        Breakpoint breakpointCopy;
+        RefPtr<Breakpoint> breakpoint = executionHandler->breakpointManager()->findBreakpoint(beforeStepAddress);
+        RefPtr<Breakpoint> breakpointCopy;
 
         if (breakpoint) {
-            breakpointCopy = *breakpoint;
+            breakpointCopy = Breakpoint::create(*breakpoint);
             CHECK(breakpoint->type == Breakpoint::Type::Regular, "One-time breakpoints are cleared before stop. So, this must be a regular breakpoint");
             executionHandler->breakpointManager()->removeBreakpoint(beforeStepAddress);
         }
@@ -298,12 +298,12 @@ static void testBreakpointSingleStepping()
         unsigned expectedReplyCount = getReplyCount() + 1;
         executionHandler->step();
 
-        waitForConditionAndCheck("VMs did not stop after step", [&]() {
+        waitForConditionAndCheck("VMs did not stop after step"_s, [&]() {
             return getReplyCount() == expectedReplyCount;
         });
 
         if (breakpoint)
-            executionHandler->breakpointManager()->setBreakpoint(beforeStepAddress, WTF::move(breakpointCopy));
+            executionHandler->breakpointManager()->setBreakpoint(beforeStepAddress, breakpointCopy.releaseNonNull());
 
         state = executionHandler->debuggeeStateForTest();
         CHECK(state->isStoppedAtBytecode(), "Should be at breakpoint after step");

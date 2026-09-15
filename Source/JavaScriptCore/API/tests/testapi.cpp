@@ -62,7 +62,7 @@ public:
     }
 
     APIString(const String& string)
-        : APIString(string.utf8().data())
+        : APIString(string.utf8().legacyCStringPointer())
     {
     }
 

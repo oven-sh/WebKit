@@ -162,7 +162,7 @@ NotificationClient::Permission WebNotificationManager::policyForOrigin(const Str
         auto origin = SecurityOriginData::fromURL(URL { originString });
         auto result = connection->sendSync(Messages::NotificationManagerMessageHandler::GetPermissionStateSync(WTF::move(origin)), WebProcess::singleton().sessionID().toUInt64());
         if (!result.succeeded())
-            RELEASE_LOG_ERROR(Notifications, "Could not look up notification permission for origin %" SENSITIVE_LOG_STRING": %u", originString.utf8().data(), static_cast<unsigned>(result.error()));
+            RELEASE_LOG_ERROR(Notifications, "Could not look up notification permission for origin %" SENSITIVE_LOG_STRING": %u", originString.utf8().legacyCStringPointer(), static_cast<unsigned>(result.error()));
 
         auto [pushPermission] = result.takeReplyOr(PushPermissionState::Denied);
         switch (pushPermission) {
@@ -206,7 +206,7 @@ bool WebNotificationManager::show(NotificationData&& notification, RefPtr<Notifi
 {
 #if ENABLE(NOTIFICATIONS)
     auto notificationID = notification.notificationID;
-    LOG(Notifications, "WebProcess %i going to show notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG(Notifications, "WebProcess %i going to show notification %s", getpid(), notificationID.toString().utf8().legacyCStringPointer());
 
     ASSERT(isMainRunLoop());
     if (page && !page->corePage()->settings().notificationsEnabled()) {
@@ -280,7 +280,7 @@ void WebNotificationManager::didShowNotification(const WTF::UUID& notificationID
 {
     ASSERT(isMainRunLoop());
 
-    LOG(Notifications, "WebProcess %i DID SHOW notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG(Notifications, "WebProcess %i DID SHOW notification %s", getpid(), notificationID.toString().utf8().legacyCStringPointer());
 
 #if ENABLE(NOTIFICATIONS)
     auto contextIdentifier = m_nonPersistentNotificationsContexts.get(notificationID);
@@ -300,14 +300,14 @@ void WebNotificationManager::didClickNotification(const WTF::UUID& notificationI
 {
     ASSERT(isMainRunLoop());
 
-    LOG(Notifications, "WebProcess %i DID CLICK notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG(Notifications, "WebProcess %i DID CLICK notification %s", getpid(), notificationID.toString().utf8().legacyCStringPointer());
 
 #if ENABLE(NOTIFICATIONS)
     auto contextIdentifier = m_nonPersistentNotificationsContexts.get(notificationID);
     if (!contextIdentifier)
         return;
 
-    LOG(Notifications, "WebProcess %i handling click event for notification %s", getpid(), notificationID.toString().utf8().data());
+    LOG(Notifications, "WebProcess %i handling click event for notification %s", getpid(), notificationID.toString().utf8().legacyCStringPointer());
 
     Notification::ensureOnNotificationThread(contextIdentifier, notificationID, [](auto* notification) {
         if (!notification)

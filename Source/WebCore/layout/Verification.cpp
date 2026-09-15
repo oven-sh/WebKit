@@ -174,7 +174,7 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
     bool firstMismatchingRect = true;
     auto outputRect = [&] (ASCIILiteral prefix, const LayoutRect& rendererRect, const LayoutRect& layoutRect) {
         if (firstMismatchingRect) {
-            stream << (renderer.element() ? renderer.element()->nodeName().utf8().data() : "") << " " << renderer.renderName().characters() << "(" << &renderer << ") layoutBox(" << &layoutBox << ")";
+            stream << (renderer.element() ? renderer.element()->nodeName().utf8().legacyCStringPointer() : "") << " " << renderer.renderName().characters() << "(" << &renderer << ") layoutBox(" << &layoutBox << ")";
             stream.nextLine();
             firstMismatchingRect = false;
         }
@@ -352,7 +352,7 @@ void LayoutContext::verifyAndOutputMismatchingLayoutTree(const LayoutState& layo
     showRenderTree(&rootRenderer);
     showLayoutTree(downcast<InitialContainingBlock>(layoutRoot), &layoutState);
 #endif
-    WTFLogAlways("%s", stream.release().utf8().data());
+    WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer());
     ASSERT_NOT_REACHED();
 }
 

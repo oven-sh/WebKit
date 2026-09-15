@@ -63,7 +63,7 @@ namespace Util {
 
 std::string toSTD(const char*);
 ALWAYS_INLINE std::string toSTD(ASCIILiteral literal) { return toSTD(literal.characters()); }
-ALWAYS_INLINE std::string toSTD(const String& string) { return toSTD(string.utf8().data()); }
+ALWAYS_INLINE std::string toSTD(const String& string) { return toSTD(string.utf8().legacyCStringPointer()); }
 
 #if USE(FOUNDATION)
 std::string toSTD(NSString *);

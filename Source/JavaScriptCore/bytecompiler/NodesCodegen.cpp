@@ -2031,7 +2031,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_idWithProfile(BytecodeGenerato
         node = node->m_next;
         ASSERT(node->m_expr->isString());
         const Identifier& ident = static_cast<StringNode*>(node->m_expr)->value();
-        speculation |= speculationFromString(ident.utf8().data());
+        speculation |= speculationFromString(ident.string());
     }
 
     return generator.move(dst, generator.emitIdWithProfile(idValue.get(), speculation));

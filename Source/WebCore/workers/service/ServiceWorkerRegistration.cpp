@@ -78,7 +78,7 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(ScriptExecutionContext& con
     , m_registrationData(WTF::move(registrationData))
     , m_container(WTF::move(container))
 {
-    LOG(ServiceWorker, "Creating registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().data());
+    LOG(ServiceWorker, "Creating registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().legacyCStringPointer());
 
     if (m_registrationData.installingWorker)
         m_installingWorker = ServiceWorker::getOrCreate(context, WTF::move(*m_registrationData.installingWorker));
@@ -94,7 +94,7 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(ScriptExecutionContext& con
 
 ServiceWorkerRegistration::~ServiceWorkerRegistration()
 {
-    LOG(ServiceWorker, "Deleting registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().data());
+    LOG(ServiceWorker, "Deleting registration %p for registration key %s", this, m_registrationData.key.loggingString().utf8().legacyCStringPointer());
 
     m_container->removeRegistration(*this);
 }

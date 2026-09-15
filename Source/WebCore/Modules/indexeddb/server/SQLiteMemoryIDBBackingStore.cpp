@@ -47,7 +47,7 @@ SQLiteMemoryIDBBackingStore::~SQLiteMemoryIDBBackingStore() = default;
 
 IDBError SQLiteMemoryIDBBackingStore::getOrEstablishDatabaseInfo(IDBDatabaseInfo& info)
 {
-    LOG(IndexedDB, "SQLiteMemoryIDBBackingStore::getOrEstablishDatabaseInfo - database %s (in-memory)", identifier().databaseName().utf8().data());
+    LOG(IndexedDB, "SQLiteMemoryIDBBackingStore::getOrEstablishDatabaseInfo - database %s (in-memory)", identifier().databaseName().utf8().legacyCStringPointer());
 
     if (databaseInfo()) {
         info = *databaseInfo();

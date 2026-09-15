@@ -74,7 +74,7 @@ void IDBConnectionToServer::callResultFunctionWithErrorLater(ResultFunction func
 
 void IDBConnectionToServer::deleteDatabase(const IDBOpenRequestData& request)
 {
-    LOG(IndexedDB, "IDBConnectionToServer::deleteDatabase - %s", request.databaseIdentifier().loggingString().utf8().data());
+    LOG(IndexedDB, "IDBConnectionToServer::deleteDatabase - %s", request.databaseIdentifier().loggingString().utf8().legacyCStringPointer());
     
     if (m_serverConnectionIsValid)
         protect(m_delegate)->deleteDatabase(request);
@@ -90,7 +90,7 @@ void IDBConnectionToServer::didDeleteDatabase(const IDBResultData& resultData)
 
 void IDBConnectionToServer::openDatabase(const IDBOpenRequestData& request)
 {
-    LOG(IndexedDB, "IDBConnectionToServer::openDatabase - %s (%s) (%" PRIu64 ")", request.databaseIdentifier().loggingString().utf8().data(), request.requestIdentifier().loggingString().utf8().data(), request.requestedVersion());
+    LOG(IndexedDB, "IDBConnectionToServer::openDatabase - %s (%s) (%" PRIu64 ")", request.databaseIdentifier().loggingString().utf8().legacyCStringPointer(), request.requestIdentifier().loggingString().utf8().legacyCStringPointer(), request.requestedVersion());
 
     if (m_serverConnectionIsValid)
         protect(m_delegate)->openDatabase(request);

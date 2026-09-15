@@ -4321,7 +4321,11 @@ private:
 
     bool m_lastNavigationWasAppInitiated { true };
     bool m_isRunningModalJavaScriptDialog { false };
-    Deque<Function<void(DialogDisposition)>> m_queuedModalDialogs;
+    struct QueuedModalDialog {
+        WeakPtr<WebFrameProxy> frame;
+        Function<void(DialogDisposition)> show;
+    };
+    Deque<QueuedModalDialog> m_queuedModalDialogs;
     bool m_isSuspended { false };
 
 #if HAVE(SAFE_BROWSING)

@@ -83,7 +83,7 @@ std::optional<Inspector::ExtensionError> WebInspectorUIExtensionController::pars
 
     auto valueOrException = result.value();
     if (!valueOrException.has_value()) {
-        LOG(Inspector, "Encountered exception while evaluating upon the frontend: %s", valueOrException.error().message.utf8().data());
+        LOG(Inspector, "Encountered exception while evaluating upon the frontend: %s", valueOrException.error().message.utf8().legacyCStringPointer());
         return Inspector::ExtensionError::InternalError;
     }
     
@@ -260,9 +260,9 @@ void WebInspectorUIExtensionController::evaluateScriptForExtension(const Inspect
         if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             if (!result.value().has_value()) {
                 auto exceptionDetails = result.value().error();
-                LOG(Inspector, "Internal error encountered while evaluating upon the frontend at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().data(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().data());
+                LOG(Inspector, "Internal error encountered while evaluating upon the frontend at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().legacyCStringPointer(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().legacyCStringPointer());
             } else
-                LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", extensionErrorToString(parsedError.value()).utf8().data());
+                LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", extensionErrorToString(parsedError.value()).utf8().legacyCStringPointer());
 
             completionHandler(makeUnexpected(std::nullopt), parsedError);
             return;
@@ -331,7 +331,7 @@ void WebInspectorUIExtensionController::reloadForExtension(const Inspector::Exte
         }
 
         if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
-            LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", Inspector::extensionErrorToString(*parsedError).utf8().data());
+            LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", Inspector::extensionErrorToString(*parsedError).utf8().legacyCStringPointer());
             completionHandler(parsedError);
             return;
         }
@@ -367,7 +367,7 @@ void WebInspectorUIExtensionController::showExtensionTab(const Inspector::Extens
         if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             if (!result.value().has_value()) {
                 auto exceptionDetails = result.value().error();
-                LOG(Inspector, "Internal error encountered while showing extension tab at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().data(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().data());
+                LOG(Inspector, "Internal error encountered while showing extension tab at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().legacyCStringPointer(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().legacyCStringPointer());
             } else
                 LOG(Inspector, "Internal error encountered while showing extension tab.");
 
@@ -407,7 +407,7 @@ void WebInspectorUIExtensionController::navigateTabForExtension(const Inspector:
         }
 
         if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
-            LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", Inspector::extensionErrorToString(*parsedError).utf8().data());
+            LOG(Inspector, "Internal error encountered while evaluating upon the frontend: %s", Inspector::extensionErrorToString(*parsedError).utf8().legacyCStringPointer());
             completionHandler(parsedError);
             return;
         }
@@ -448,7 +448,7 @@ void WebInspectorUIExtensionController::evaluateScriptInExtensionTab(const Inspe
         if (auto parsedError = protectedThis->parseExtensionErrorFromEvaluationResult(result)) {
             if (!result.value().has_value()) {
                 auto exceptionDetails = result.value().error();
-                LOG(Inspector, "Internal error encountered while evaluating upon the frontend: at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().data(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().data());
+                LOG(Inspector, "Internal error encountered while evaluating upon the frontend: at %s:%d:%d: %s", exceptionDetails.sourceURL.utf8().legacyCStringPointer(), exceptionDetails.lineNumber, exceptionDetails.columnNumber, exceptionDetails.message.utf8().legacyCStringPointer());
             } else
                 LOG(Inspector, "Internal error encountered while evaluating upon the frontend.");
 

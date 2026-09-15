@@ -3814,7 +3814,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerDisableCORS)
     String filenameRequestedOverHTTP;
     HTTPServer server([&] (Connection connection) {
         connection.receiveHTTPRequest([&, connection](Vector<char>&& bytes) mutable {
-            String requestString(bytes.span());
+            String requestString = String::fromLatin1(bytes.span());
             if (requestString.startsWithIgnoringASCIICase("OPTIONS"_s)) {
                 madeHTTPOptionsRequest = true;
                 connection.send(
@@ -3836,7 +3836,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerDisableCORS)
     auto testJS = makeString("fetch('http://127.0.0.1:"_s, server.port(), "/bar.xml', { headers: { 'Custom-Header': 'CustomHeaderValue' } });"_s);
 
     RetainPtr schemeHandler = adoptNS([ServiceWorkerSchemeHandler new]);
-    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:testJS.utf8().data()];
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:testJS.utf8().legacyCStringPointer()];
 
     WKWebViewConfiguration *webViewConfiguration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"ServiceWorkerPagePlugIn"];
     [webViewConfiguration setURLSchemeHandler:schemeHandler.get() forURLScheme:@"sw-ext"];
@@ -3862,7 +3862,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerDisableCORS)
 
     // It should load bar.xml.
     Util::run(&madeHTTPGetRequest);
-    EXPECT_STREQ(filenameRequestedOverHTTP.utf8().data(), "/bar.xml");
+    EXPECT_STREQ(filenameRequestedOverHTTP.utf8().legacyCStringPointer(), "/bar.xml");
 
     // It shouldn't have done a CORS preflight.
     EXPECT_FALSE(madeHTTPOptionsRequest);

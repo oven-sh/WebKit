@@ -1138,7 +1138,7 @@ TEST(WTF_HashMap, ReserveInitialCapacity)
     EXPECT_EQ(9999u, map.size());
     EXPECT_EQ(32768u, map.capacity());
     EXPECT_TRUE(map.contains("foo3"_str));
-    EXPECT_STREQ("bar3", map.get("foo3"_str).utf8().data());
+    EXPECT_STREQ("bar3", map.get("foo3"_str).utf8().legacyCStringPointer());
 
     for (int i = 0; i < 9999; ++i)
         map.add(makeString("excess"_s, i), makeString("baz"_s, i));
@@ -1149,7 +1149,7 @@ TEST(WTF_HashMap, ReserveInitialCapacity)
         EXPECT_TRUE(map.remove(makeString("foo"_s, i)));
     EXPECT_EQ(9999u, map.size());
     EXPECT_EQ(32768u, map.capacity());
-    EXPECT_STREQ("baz3", map.get("excess3"_str).utf8().data());
+    EXPECT_STREQ("baz3", map.get("excess3"_str).utf8().legacyCStringPointer());
 
     for (int i = 0; i < 9999; ++i)
         EXPECT_TRUE(map.remove(makeString("excess"_s, i)));

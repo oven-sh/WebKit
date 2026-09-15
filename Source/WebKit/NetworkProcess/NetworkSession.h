@@ -40,6 +40,7 @@
 #include <WebCore/BlobRegistryImpl.h>
 #include <WebCore/DNS.h>
 #include <WebCore/FetchIdentifier.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/SWServerDelegate.h>

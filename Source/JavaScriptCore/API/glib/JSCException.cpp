@@ -405,5 +405,5 @@ char* jsc_exception_report(JSCException* exception)
             report.append("  "_s, line, '\n');
     }
 
-    return g_strdup(report.toString().utf8().data());
+    return g_strdup(report.toString().utf8().legacyCStringPointer());
 }

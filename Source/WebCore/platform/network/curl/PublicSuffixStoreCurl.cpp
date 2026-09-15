@@ -38,7 +38,7 @@ bool PublicSuffixStore::platformIsPublicSuffix(StringView domain) const
 
     const psl_ctx_t* psl = psl_builtin();
     ASSERT(psl);
-    bool ret = psl_is_public_suffix2(psl, domain.toStringWithoutCopying().convertToLowercaseWithoutLocale().utf8().data(), PSL_TYPE_ANY | PSL_TYPE_NO_STAR_RULE);
+    bool ret = psl_is_public_suffix2(psl, domain.toStringWithoutCopying().convertToLowercaseWithoutLocale().utf8().legacyCStringPointer(), PSL_TYPE_ANY | PSL_TYPE_NO_STAR_RULE);
     return ret;
 }
 

@@ -77,7 +77,7 @@ ResourceResponse::ResourceResponse(SoupMessage* soupMessage, const CString& snif
 void ResourceResponse::updateSoupMessageHeaders(SoupMessageHeaders* soupHeaders) const
 {
     for (const auto& header : httpHeaderFields())
-        soup_message_headers_append(soupHeaders, header.key.utf8().data(), header.value.utf8().data());
+        soup_message_headers_append(soupHeaders, header.key.utf8().legacyCStringPointer(), header.value.utf8().legacyCStringPointer());
 }
 
 void ResourceResponse::updateFromSoupMessageHeaders(SoupMessageHeaders* soupHeaders)
@@ -138,7 +138,7 @@ String ResourceResponse::platformSuggestedFilename() const
     if (contentDisposition.is8Bit())
         contentDisposition = String::fromUTF8WithLatin1Fallback(contentDisposition.span8());
     GUniquePtr<SoupMessageHeaders> soupHeaders(soup_message_headers_new(SOUP_MESSAGE_HEADERS_RESPONSE));
-    soup_message_headers_append(soupHeaders.get(), "Content-Disposition", contentDisposition.utf8().data());
+    soup_message_headers_append(soupHeaders.get(), "Content-Disposition", contentDisposition.utf8().legacyCStringPointer());
     GRefPtr<GHashTable> params;
     soup_message_headers_get_content_disposition(soupHeaders.get(), nullptr, &params.outPtr());
     auto filename = params ? String::fromUTF8(static_cast<char*>(g_hash_table_lookup(params.get(), "filename"))) : String();
