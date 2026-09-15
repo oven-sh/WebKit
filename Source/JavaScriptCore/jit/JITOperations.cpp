@@ -46,6 +46,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "ICStats.h"
 #include "InlineCacheCompiler.h"
 #include "Interpreter.h"
+#include "IteratorOperations.h"
 #include "JIT.h"
 #include "JITExceptions.h"
 #include "JITThunks.h"
@@ -80,7 +81,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "PropertyInlineCache.h"
 #include "PropertyName.h"
 #include "PropertyNameInlines.h"
-#include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
 #include "SuperSampler.h"
@@ -2900,6 +2901,16 @@ JSC_DEFINE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regexp, areLegacyFeaturesEnabled));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationNewRegExpShared, JSCell*, (JSGlobalObject* globalObject, JSCell* regexpPtr, WriteBarrier<JSCell>* cachedObject, int32_t forTest))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, RegExpObject::literalAsReceiver(globalObject, callFrame->codeBlock(), static_cast<RegExp*>(regexpPtr), forTest, *cachedObject));
+}
+
 // The only reason for returning an UnusedPtr (instead of void) is so that we can reuse the
 // existing DFG slow path generator machinery when creating the slow path for CheckTraps
 // in the DFG. If a DFG slow path generator that supports a void return type is added in the
@@ -3432,6 +3443,23 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
 
     RELEASE_ASSERT_NOT_REACHED();
     OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationIteratorNextWithIndexInFrame, UGPRPair, (JSGlobalObject* globalObject, EncodedJSValue encodedIterable, EncodedJSValue* indexInFrame, void* metadataPointer))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto& metadata = *std::bit_cast<OpIteratorNext::Metadata*>(metadataPointer);
+    JSValue index = JSValue::decode(*indexInFrame);
+    JSValue value;
+    bool hasNext = iteratorNextWithIndexInFrame(globalObject, metadata, JSValue::decode(encodedIterable), index, value);
+    *indexInFrame = JSValue::encode(index);
+    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+
+    OPERATION_RETURN(scope, makeUGPRPair(JSValue::encode(jsBoolean(!hasNext)), JSValue::encode(value)));
 }
 
 #endif

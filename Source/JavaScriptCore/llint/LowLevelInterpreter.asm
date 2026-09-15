@@ -217,6 +217,7 @@ const IsWatched = constexpr IsWatched
 const IsInvalidated = constexpr IsInvalidated
 const InlineWatchpointSetThinFlag = constexpr InlineWatchpointSet::IsThinFlag
 const InlineWatchpointSetThinInvalidated = constexpr (InlineWatchpointSet::encodeState(IsInvalidated))
+const InlineWatchpointSetThinWatched = constexpr (InlineWatchpointSet::encodeState(IsWatched))
 
 # ShadowChicken data
 const ShadowChickenTailMarker = constexpr ShadowChicken::Packet::tailMarkerValue
@@ -1418,12 +1419,17 @@ macro skipIfIsRememberedOrInEden(cell, slowPath)
 .done:
 end
 
+# setData is the address of an InlineWatchpointSet's m_data.
+macro branchIfInlineWatchpointSetIsStillValid(setData, scratch, stillValid)
+    loadp setData, scratch
+    bpeq scratch, InlineWatchpointSetThinInvalidated, .invalidated
+    btpnz scratch, InlineWatchpointSetThinFlag, stillValid
+    bbneq WatchpointSet::m_state[scratch], IsInvalidated, stillValid
+.invalidated:
+end
+
 macro notifyWrite(set, scratch, slow)
-    loadp InlineWatchpointSet::m_data[set], scratch
-    bpeq scratch, InlineWatchpointSetThinInvalidated, .done
-    btpnz scratch, InlineWatchpointSetThinFlag, slow
-    bbneq WatchpointSet::m_state[scratch], IsInvalidated, slow
-.done:
+    branchIfInlineWatchpointSetIsStillValid(InlineWatchpointSet::m_data[set], scratch, slow)
 end
 
 macro varReadOnlyCheck(slowPath, scratch)

@@ -614,6 +614,7 @@ public:
     WriteBarrier<JSSentinel> m_fastArrayValuesSentinel;
     WriteBarrier<JSSentinel> m_fastArrayKeysSentinel;
     WriteBarrier<JSSentinel> m_fastArrayEntriesSentinel;
+    WriteBarrier<JSSentinel> m_fastArrayUnboxedSentinel;
     WriteBarrier<JSSentinel> m_fastMapKeysSentinel;
     WriteBarrier<JSSentinel> m_fastMapValuesSentinel;
     WriteBarrier<JSSentinel> m_fastMapEntriesSentinel;
@@ -696,6 +697,7 @@ public:
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
     JSSentinel* fastArrayKeysSentinel() { return m_fastArrayKeysSentinel.get(); }
     JSSentinel* fastArrayEntriesSentinel() { return m_fastArrayEntriesSentinel.get(); }
+    JSSentinel* fastArrayUnboxedSentinel() { return m_fastArrayUnboxedSentinel.get(); }
     JSSentinel* fastMapKeysSentinel() { return m_fastMapKeysSentinel.get(); }
     JSSentinel* fastMapValuesSentinel() { return m_fastMapValuesSentinel.get(); }
     JSSentinel* fastMapEntriesSentinel() { return m_fastMapEntriesSentinel.get(); }
