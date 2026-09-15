@@ -172,8 +172,9 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     auto iterator = m_exports.find(propertyName.uid());
     if (iterator == m_exports.end()) {
 #if USE(BUN_JSC_ADDITIONS)
-        if (propertyName == vm.propertyNames->__esModule) {
-            return Base::getOwnPropertySlot(this, globalObject, propertyName, slot);
+        if (m_hasESModuleMarker == WTF::TriState::True && propertyName == vm.propertyNames->__esModule) {
+            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), jsBoolean(true));
+            return true;
         }
 #endif
         return false;
@@ -265,8 +266,11 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
     auto* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
     if (thisObject->m_isOverridingValue) {
         return true;
-    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) [[unlikely]] {
-        RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
+    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid()) && value.toBoolean(globalObject)) [[unlikely]] {
+        // Once set, the marker is reported as a non-configurable own property, so a write that would
+        // remove it falls through to the ordinary namespace [[Set]] failure below.
+        thisObject->m_hasESModuleMarker = WTF::TriState::True;
+        return true;
     }
 #endif
 
@@ -300,6 +304,10 @@ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globa
         RETURN_IF_EXCEPTION(scope, false);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (thisObject->m_hasESModuleMarker == WTF::TriState::True && propertyName == vm.propertyNames->__esModule)
+        return false;
+#endif
     return !thisObject->m_exports.contains(propertyName.uid());
 }
 
@@ -326,7 +334,19 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
         thisObject->ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    const Identifier& esModuleIdent = vm.propertyNames->__esModule;
+    bool needsESModuleMarker = thisObject->m_hasESModuleMarker == WTF::TriState::True
+        && propertyNames.includeStringProperties()
+        && !thisObject->m_exports.contains(esModuleIdent.impl());
+#endif
     for (const auto& name : thisObject->m_exports.keys()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (needsESModuleMarker && WTF::codePointCompareLessThan(StringView(esModuleIdent.impl()), StringView(name.get()))) [[unlikely]] {
+            propertyNames.add(esModuleIdent);
+            needsESModuleMarker = false;
+        }
+#endif
         if (mode == DontEnumPropertiesMode::Exclude) {
             // Perform [[GetOwnProperty]] to throw ReferenceError if binding is uninitialized.
             PropertySlot slot(cell, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -337,6 +357,10 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
         }
         propertyNames.add(name);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (needsESModuleMarker)
+        propertyNames.add(esModuleIdent);
+#endif
     if (propertyNames.includeSymbolProperties()) {
         scope.release();
         thisObject->getOwnNonIndexPropertyNames(globalObject, propertyNames, mode);
@@ -364,8 +388,9 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
 #if USE(BUN_JSC_ADDITIONS)
     if (thisObject->m_isOverridingValue) {
         return true;
-    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) {
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
+    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid()) && descriptor.isDataDescriptor() && descriptor.value() && descriptor.value().toBoolean(globalObject)) {
+        thisObject->m_hasESModuleMarker = WTF::TriState::True;
+        return true;
     }
 #endif
 
