@@ -77,6 +77,67 @@ async function test() {
         assert(now.moduleExecutablesWithUnlinkedCode === 0, "linked and unlinked: " + JSON.stringify(now));
     assert($vm.codeBlockFor(c.describe) === $vm.codeBlockFor(d.describe), "shared declarations");
 
+    // A loader whose body throws is done with the code too: a later loader that runs the body to its end releases it.
+    const throws = "./resources/module-loaders-released-code/throws.js";
+    globalThis.moduleLoadersReleasedCodeThrowsStarted = 0;
+    globalThis.moduleLoadersReleasedCodeShouldThrow = true;
+    let thrown;
+    try {
+        await load(throws);
+    } catch (error) {
+        thrown = error;
+    }
+    assert(thrown instanceof Error && thrown.message === "the body throws" && globalThis.moduleLoadersReleasedCodeThrowsStarted === 1, "the first loader's body threw");
+    globalThis.moduleLoadersReleasedCodeShouldThrow = false;
+    const t = await load(throws);
+    assert(t.done === true && t.late() === "late" && globalThis.moduleLoadersReleasedCodeThrowsStarted === 2, "the second loader ran it to the end");
+    now = census();
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode === 0, "released although an earlier loader's body threw: " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode === 0, "linked and unlinked: " + JSON.stringify(now));
+
+    // So is a loader's record that never runs because a module it depends on threw,
+    const parent = "./resources/module-loaders-released-code/parent-of-throwing.js";
+    globalThis.moduleLoadersReleasedCodeParentStarted = 0;
+    globalThis.moduleLoadersReleasedCodeShouldThrow = true;
+    thrown = undefined;
+    try {
+        await load(parent);
+    } catch (error) {
+        thrown = error;
+    }
+    assert(thrown instanceof Error && thrown.message === "the dependency throws" && globalThis.moduleLoadersReleasedCodeParentStarted === 0, "the importer never ran");
+    globalThis.moduleLoadersReleasedCodeShouldThrow = false;
+    const p = await load(parent);
+    assert(p.late() === "late:7" && globalThis.moduleLoadersReleasedCodeParentStarted === 1, "the second loader ran the importer");
+    now = census();
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode === 0, "released although an earlier loader's record of it never ran: " + JSON.stringify(now));
+
+    // and one that is suspended at a top-level await when a sibling of it throws: it is never resumed.
+    const cycleRoot = "./resources/module-loaders-released-code/cycle-root.js";
+    globalThis.moduleLoadersReleasedCodeCycleRootStarted = 0;
+    globalThis.moduleLoadersReleasedCodeShouldThrow = true;
+    let openSecondGate;
+    globalThis.moduleLoadersReleasedCodeNextGate = new Promise((resolve) => { openSecondGate = resolve; });
+    thrown = undefined;
+    try {
+        await load(cycleRoot);
+    } catch (error) {
+        thrown = error;
+    }
+    assert(thrown instanceof Error && thrown.message === "the sibling throws" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 0, "the root of the cycle never ran");
+    openSecondGate();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    globalThis.moduleLoadersReleasedCodeShouldThrow = false;
+    globalThis.moduleLoadersReleasedCodeNextGate = undefined;
+    const r = await load(cycleRoot);
+    assert(r.describe() === "awaited:sibling" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 1, "the second loader ran the cycle");
+    now = census();
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode === 0, "released although an earlier loader left a record suspended: " + JSON.stringify(now));
+
     // All code is deleted between two loaders: the second one's environment is made from another symbol table than the
     // first one's, so what the second links (and the optimizing tiers specialize on its one environment) must not become
     // the code of declarations the first has not read yet.
