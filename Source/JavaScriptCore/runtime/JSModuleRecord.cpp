@@ -225,42 +225,57 @@ bool JSModuleRecord::isTopLevelExecutionFinished() const
     return !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing);
 }
 
+void JSModuleRecord::didFinishWithExecutable(VM& vm)
+{
+    ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
+    if (!executable)
+        return;
+    m_moduleProgramExecutable.clear();
+    executable->didFinishEvaluation(vm);
+}
+
 JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue, JSValue resumeMode)
 {
-    if (!m_moduleProgramExecutable) {
-        ASSERT_NOT_REACHED_WITH_MESSAGE("Can't evaluate a JSModuleRecord that has no executable");
-        return jsUndefined();
-    }
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Before the executable: a record with an error has given it up (CyclicModuleRecord::setEvaluationError).
     if (JSValue error = evaluationError()) {
         scope.throwException(globalObject, error);
         return { };
     }
 
+    if (!m_moduleProgramExecutable) {
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Can't evaluate a JSModuleRecord that has no executable");
+        return jsUndefined();
+    }
+
     // Every module this one imports from has its environment now. Filling the import
     // slots here rather than on first use (JSModuleEnvironment::fillImportSlot) keeps
     // optimized code shared with other records from meeting an empty slot per record.
+    ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
+
     JSModuleEnvironment* environment = moduleEnvironment();
     for (unsigned i = 0, count = importSlotCount(); i < count; ++i) {
         if (environment->importSlot(i))
             continue;
         Resolution resolution = resolveImport(globalObject, importSlotNames()[i]);
-        RETURN_IF_EXCEPTION(scope, { });
+        if (scope.exception()) [[unlikely]] {
+            didFinishWithExecutable(vm);
+            return { };
+        }
         if (resolution.type == Resolution::Type::Resolved)
             environment->importSlot(i).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
     }
 
-    ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    if (isTopLevelExecutionFinished()) {
-        m_moduleProgramExecutable.clear();
-        executable->didFinishEvaluation(vm);
+    if (scope.exception()) [[unlikely]] {
+        didFinishWithExecutable(vm);
+        return { };
     }
+
+    if (isTopLevelExecutionFinished())
+        didFinishWithExecutable(vm);
 
     RELEASE_AND_RETURN(scope, resultOrAwaitedValue);
 }

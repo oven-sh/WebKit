@@ -524,6 +524,14 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     m_initialized = true;
 }
 
+void CyclicModuleRecord::setEvaluationError(VM& vm, JSValue error)
+{
+    m_evaluationError.set(vm, this, error);
+    // With an error the record never runs its body (again), whether the error is its own or came from a module it depends on.
+    if (auto* jsModule = dynamicDowncast<JSModuleRecord>(this))
+        jsModule->didFinishWithExecutable(vm);
+}
+
 void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
 {
     // Link()
