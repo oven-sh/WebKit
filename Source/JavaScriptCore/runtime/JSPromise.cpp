@@ -99,9 +99,9 @@ JSValue JSPromise::createNewPromiseCapability(JSGlobalObject* globalObject, JSVa
 JSValue JSPromise::createPromiseCapability(VM& vm, JSGlobalObject* globalObject, JSObject* promise, JSObject* resolve, JSObject* reject)
 {
     auto* capability = constructEmptyObject(vm, globalObject->promiseCapabilityObjectStructure());
+    capability->putDirectOffset(vm, promiseCapabilityPromisePropertyOffset, promise);
     capability->putDirectOffset(vm, promiseCapabilityResolvePropertyOffset, resolve);
     capability->putDirectOffset(vm, promiseCapabilityRejectPropertyOffset, reject);
-    capability->putDirectOffset(vm, promiseCapabilityPromisePropertyOffset, promise);
     return capability;
 }
 
@@ -1249,14 +1249,16 @@ JSObject* promiseSpeciesConstructor(JSGlobalObject* globalObject, JSObject* this
 
 Structure* createPromiseCapabilityObjectStructure(VM& vm, JSGlobalObject& globalObject)
 {
+    // This object is what Promise.withResolvers() returns, so the property order is observable and must be
+    // "promise", "resolve", "reject". https://tc39.es/ecma262/#sec-promise.withResolvers
     Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), JSFinalObject::defaultInlineCapacity);
     PropertyOffset offset;
+    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->promise, 0, offset);
+    RELEASE_ASSERT(offset == promiseCapabilityPromisePropertyOffset);
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->resolve, 0, offset);
     RELEASE_ASSERT(offset == promiseCapabilityResolvePropertyOffset);
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->reject, 0, offset);
     RELEASE_ASSERT(offset == promiseCapabilityRejectPropertyOffset);
-    structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->promise, 0, offset);
-    RELEASE_ASSERT(offset == promiseCapabilityPromisePropertyOffset);
     return structure;
 }
 
