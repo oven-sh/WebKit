@@ -138,13 +138,88 @@ void MicrotaskQueue::enqueueSlow(QueuedTask&& task)
         scheduleToRunIfNeeded();
 }
 
+void MarkedMicrotaskDeque::appendSegment()
+{
+    auto* segment = new Segment;
+    if (m_tail)
+        m_tail->next = segment;
+    else {
+        m_head = segment;
+        m_front = segment->begin();
+    }
+    m_tail = segment;
+    m_back = segment->begin();
+    m_backLimit = segment->end();
+    ++m_segmentCount;
+}
+
+void MarkedMicrotaskDeque::removeHeadSegment()
+{
+    // The queue is not empty, so the tail is a later segment.
+    auto* segment = m_head;
+    m_head = segment->next;
+    m_front = m_head->begin();
+    --m_segmentCount;
+    delete segment;
+}
+
+void MarkedMicrotaskDeque::clear()
+{
+    while (auto* segment = m_head) {
+        m_head = segment->next;
+        delete segment;
+    }
+    m_tail = nullptr;
+    m_front = nullptr;
+    m_back = nullptr;
+    m_backLimit = nullptr;
+    m_segmentCount = 0;
+    m_markedBefore = 0;
+}
+
+template<typename Functor>
+ALWAYS_INLINE void MarkedMicrotaskDeque::forEachTaskAfter(size_t toSkip, const Functor& functor) const
+{
+    ASSERT(toSkip <= size());
+#if ASSERT_ENABLED
+    size_t remaining = size() - toSkip;
+#endif
+    auto* segment = m_head;
+    auto* task = m_front;
+    while (toSkip) {
+        size_t count = std::min(toSkip, static_cast<size_t>(segment->end() - task));
+        task += count;
+        toSkip -= count;
+        if (toSkip) {
+            segment = segment->next;
+            task = segment->begin();
+        }
+    }
+    for (; task != m_back; ++task) {
+        if (task == segment->end()) {
+            segment = segment->next;
+            task = segment->begin();
+        }
+#if ASSERT_ENABLED
+        ASSERT(remaining);
+        --remaining;
+#endif
+        if (functor(*task) == IterationStatus::Done)
+            return;
+    }
+    ASSERT(!remaining);
+}
+
 bool MarkedMicrotaskDeque::hasMicrotasksForFullyActiveDocument() const
 {
-    for (auto& task : m_queue) {
-        if (task.isRunnable())
-            return true;
-    }
-    return false;
+    bool result = false;
+    forEachTaskAfter(0, [&](QueuedTask& task) {
+        if (!task.isRunnable())
+            return IterationStatus::Continue;
+        result = true;
+        return IterationStatus::Done;
+    });
+    return result;
 }
 
 template<typename Visitor>
@@ -158,12 +233,12 @@ void MarkedMicrotaskDeque::visitAggregateImpl(Visitor& visitor)
     // This cursor is adjusted when an entry is dequeued. And we do not use any locking here, and that's fine: these
     // values are read by GC when CollectorPhase::FixPoint and CollectorPhase::Begin, and both suspend the mutator, thus,
     // there is no concurrency issue.
-    for (auto iterator = m_queue.begin() + m_markedBefore, end = m_queue.end(); iterator != end; ++iterator) {
-        auto& task = *iterator;
+    forEachTaskAfter(m_markedBefore, [&](QueuedTask& task) {
         visitor.appendUnbarriered(task.dispatcher());
         visitor.appendUnbarriered(task.m_arguments, QueuedTask::maxArguments);
-    }
-    m_markedBefore = m_queue.size();
+        return IterationStatus::Continue;
+    });
+    m_markedBefore = size();
 }
 DEFINE_VISIT_AGGREGATE(MarkedMicrotaskDeque);
 
