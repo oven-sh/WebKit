@@ -204,20 +204,27 @@ JSValue JSFinalizationRegistry::takeDeadHoldingsValue()
     return result;
 }
 
-void JSFinalizationRegistry::registerTarget(VM& vm, JSCell* target, JSValue holdings, JSValue token)
+bool JSFinalizationRegistry::registerTarget(VM& vm, JSCell* target, JSValue holdings, JSValue token)
 {
     Locker locker { cellLock() };
     Registration registration;
     registration.target = target;
     registration.holdings.setWithoutWriteBarrier(holdings);
-    if (token.isUndefined())
-        m_noUnregistrationLive.append(WTF::move(registration));
-    else {
+    if (token.isUndefined()) {
+        if (!m_noUnregistrationLive.tryAppend(WTF::move(registration))) [[unlikely]]
+            return false;
+    } else {
         RELEASE_ASSERT(token.isCell());
         auto result = m_liveRegistrations.add(token.asCell(), LiveRegistrations());
-        result.iterator->value.append(WTF::move(registration));
+        if (!result.iterator->value.tryAppend(WTF::move(registration))) [[unlikely]] {
+            // reconcileWeakReferencesAtGCEnd() expects every bucket to hold a registration.
+            if (result.isNewEntry)
+                m_liveRegistrations.remove(result.iterator);
+            return false;
+        }
     }
     vm.writeBarrier(this);
+    return true;
 }
 
 bool JSFinalizationRegistry::unregister(VM&, JSCell* token)
